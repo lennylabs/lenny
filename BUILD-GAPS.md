@@ -23423,22 +23423,28 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-14.1.1 — WORKSPACE_PLAN_SCHEMA_UNSUPPORTED returns 400, not 422; missing `details.knownVersion`/`details.encounteredVersion` [High] — OPEN
+### - [x] F-14.1.1 — WORKSPACE_PLAN_SCHEMA_UNSUPPORTED returns 400, not 422; missing `details.knownVersion`/`details.encounteredVersion` [High] — CLOSED
 - **Spec §14.1 line 326 (Gateway reconciliation — live consumer):** "...it MUST reject the operation with error code `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` (HTTP 422), including `details.knownVersion` and `details.encounteredVersion`."
 - **Evidence:** `pkg/workspaceplan/plan.go:281-294` builds a `ValidationError{Reason: ReasonUnsupportedSchemaVersion}` when `schemaVersion > SchemaVersion`. `pkg/gateway/sessionserver/sessionserver.go:739-765` (`writeWorkspacePlanError`) unconditionally writes `http.StatusBadRequest` (400) with code `WORKSPACE_PLAN_INVALID` for every `ValidationError`. There is no path that emits `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` (the proto error-code enum entry exists at `pkg/proto/adapter/v1/lenny-adapter.pb.go:105` but is never raised on the REST path). `grep -rn "knownVersion\|encounteredVersion" pkg/` returns zero matches.
 - **Impact:** A future-schemaVersion request returns `400 WORKSPACE_PLAN_INVALID` instead of `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`. Clients (and the §15.5 forward-read durable-consumer contract that gates upgrades) cannot distinguish "you submitted a bad plan" from "this gateway is too old to read this plan." The `details.knownVersion`/`details.encounteredVersion` payload that §14.1 mandates for rollback diagnosis is also absent.
 
-### - [ ] F-14.1.2 — Materializer fails the whole plan on an unknown `source.type` instead of skipping with a warning [High] — OPEN
+**Resolution:** `writeWorkspacePlanError` now branches on `ReasonUnsupportedSchemaVersion`, emitting `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` with `details.knownVersion` / `details.encounteredVersion`; the rest of the validation surface keeps `400 WORKSPACE_PLAN_INVALID`. `ValidationError` gained `KnownVersion`/`EncounteredVersion`, populated by the parser only when `schemaVersion > known` (a negative version stays an INVALID 400 with no version pair). Commit `0e07aad7`. F-14.1.1.
+
+### - [x] F-14.1.2 — Materializer fails the whole plan on an unknown `source.type` instead of skipping with a warning [High] — CLOSED
 - **Spec §14 line 334 (Unknown source.type handling):** "A consumer that encounters an unknown `source.type` MUST skip that source entry and emit a `workspace_plan_unknown_source_type` warning... rather than rejecting the entire plan."
 - **Evidence:** `pkg/adapter/workspace/materialize.go:36-59` — `materializeSource` returns `ErrUnknownSourceType` for any unknown type, and `Materialize` returns that error wrapped, aborting the whole materialization. Compare with `pkg/workspaceplan/plan.go:427-439` (parser) which correctly emits a warning and skips. The downstream consumer (the adapter) is the §14 "live consumer" and must apply the same rule.
 - **Impact:** A newer gateway that injects a new `source.type` to an older pod adapter (during a rolling upgrade) crashes the whole session setup at `FinalizeWorkspace` rather than gracefully degrading. The §14.1 backwards-compatibility guarantee ("Adding new optional fields or new `type` values to `sources` is a non-breaking addition") is violated by the materializer.
 
-### - [ ] F-14.1.3 — Adapter does not verify `WorkspacePlan.schemaVersion` at FinalizeWorkspace [High] — OPEN
+**Resolution:** `materializeSource`'s default case now returns a `workspace_plan_unknown_source_type` warning and continues instead of returning `ErrUnknownSourceType` (removed). The §14 line 334 fields ride end to end: `Warning.UnknownType` → new `WorkspacePlanWarning.{unknown_type,schema_version}` proto fields (stamped by `FinalizeWorkspace` from the plan) → `publishWorkspaceWarnings` adds `unknownType`/`schemaVersion` to the `workspace_plan_warning` event. Known sources before/after the unknown entry still materialize. Commit `0e07aad7`. F-14.1.2.
+
+### - [x] F-14.1.3 — Adapter does not verify `WorkspacePlan.schemaVersion` at FinalizeWorkspace [High] — CLOSED
 - **Spec §14.1 line 326:** Gateway-as-live-consumer rule. The adapter is the live consumer of the persisted plan at materialization time; per §14.1 it must reject `schemaVersion > known` with the `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` error before touching the filesystem.
 - **Evidence:** `pkg/adapter/staging.go:92-105` (`FinalizeWorkspace`) ignores `req.GetWorkspacePlan().GetSchemaVersion()`. `pkg/adapter/workspace/materialize.go:36` (`Materialize`) likewise has no schema-version check. The proto comment at `schemas/lenny-adapter.proto:253-259` documents the obligation ("Consumers that receive a value > 1 they don't recognize follow the §15.4.1 forward-read rule"), but the implementation does not honor it.
 - **Impact:** A version-skew rollout where the gateway is upgraded ahead of the in-pod adapter SDK silently materializes a higher-schemaVersion plan on a stale adapter that may interpret fields incorrectly. The §14.1 "MUST NOT proceed with workspace materialization" requirement is not enforced on the second live-consumer process.
 
-### - [ ] F-14.1.4 — Published JSON Schema uses `oneOf` for sources, contradicting §14 "MUST use `allOf` + `if`/`then`" rule [High] — OPEN
+**Resolution:** `FinalizeWorkspace` calls new `workspace.CheckSchemaVersion(plan.schemaVersion)` before any filesystem write; `schemaVersion > MaxKnownSchemaVersion` returns a `FailedPrecondition` status carrying an `adapterv1.Error{Code: ERROR_CODE_WORKSPACE_PLAN_SCHEMA_UNSUPPORTED}` detail with the version pair (schemaVersion 0 is treated as unstamped/legacy and allowed). `MaxKnownSchemaVersion` tracks `workspaceplan.SchemaVersion` via a drift-guard test. Commit `0e07aad7`. F-14.1.3.
+
+### - [x] F-14.1.4 — Published JSON Schema uses `oneOf` for sources, contradicting §14 "MUST use `allOf` + `if`/`then`" rule [High] — CLOSED
 - **Spec §14 line 336 (Per-variant field strictness):** "The `sources[]` item schema encodes this with JSON Schema 2020-12 `allOf` + per-variant `if`/`then` branching on `type.const` (**not `oneOf` — `oneOf` would require exactly-one-match, which is incompatible with the intent that an unknown-`type` entry matches no variant branch and is still accepted**)."
 - **Evidence:** `schemas/workspaceplan-v1.json:28-39`:
   ```json
@@ -23450,6 +23456,8 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
   }
   ```
 - **Impact:** Any client that runs the published canonical schema (`https://schemas.lenny.dev/workspaceplan/v1.json`) against a plan containing an unknown `source.type` will reject it at JSON Schema validation. This breaks the "open string discriminator" extensibility contract for every downstream JSON-Schema validator (CI gates, client SDKs, IDE tooling). The Go parser handles it correctly with its custom path, but the wire contract is the canonical schema — a §14.1 forward-compat regression.
+
+**Resolution:** The `source` `$def` now declares `properties.type` as a plain string and uses `allOf` with five `{if: {properties.type.const}, then: {$ref}}` branches (the §14 line 336 construction); the `oneOf` + `discriminator` block is gone. An unknown `type` fires no branch and validates (consumer skips it); a known `type` is validated strictly against its variant (`additionalProperties:false`). Locked in by two new tier-0 fixtures (`workspaceplan.unknown-source-type.json` valid, `workspaceplan.invalid-unknown-field.json` invalid). Commit `0e07aad7`. F-14.1.4.
 
 ### - [x] F-14.1.5 — Published JSON Schema rejects `$schema` keyword on the workspacePlan object [High] — CLOSED
 - **Spec §14.1 line 313:** "Clients MAY reference the inner schema via the optional `$schema` keyword on their `workspacePlan` object (matching the canonical example above) for local validation of the plan sub-object." The canonical example in §14 lines 11-13 includes `"$schema": "https://schemas.lenny.dev/workspaceplan/v1.json"`.
