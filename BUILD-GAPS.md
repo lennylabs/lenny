@@ -2397,6 +2397,22 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 
 ### - [ ] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — DEFERRED
 
+> **Re-deferred (commit d6a197a9, F-8.7.1):** The §8.7 fileExport
+> materialization path now exists and is wired into `Service.Delegate`,
+> and the `export.Materializer` scan branch is the production caller that
+> invokes `RunPreExportMaterialization` (with the distinct
+> `EXPORT_FILE_SCAN_UNAVAILABLE` code from F-8.7.8 and the
+> `delegation.export_scan_failed_open` emitter from F-8.7.9 already in
+> place). The remaining blocker is narrower: the scan branch fires only
+> when the effective DelegationPolicy sets `contentPolicy.scanExportedFiles:
+> true` AND the `ExportScanChainResolver` seam resolves the named
+> `interceptorRef` into a `*interceptor.Chain`. No named-interceptor-ref
+> registry exists in the gateway yet, so `cmd/lenny-gateway` injects a nil
+> resolver and a scan-required export fails closed with
+> `EXPORT_FILE_SCAN_UNAVAILABLE`. Closure of this finding now depends only
+> on building that interceptor-ref registry and wiring it into the
+> resolver, a distinct concern from the export path itself.
+>
 > **Deferred (verified iter17):** The `RunPreExportMaterialization` primitive
 > exists with comprehensive tests, but the §8.7 delegation file-export
 > materialization path it would hook into is not built — `delegate_task`
@@ -7455,6 +7471,8 @@ Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*,
 
 **Potential duplicate** (confidence: medium) — F-8.5.3, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
+**Progress (still OPEN):** The `fileExport` third of this finding is delivered by commit d6a197a9 (F-8.7.1): `lenny/delegate_task` now accepts `fileExport` + `fileExportLimits` and the materialization path runs end-to-end. The `LeaseSlice` request-tightening surface (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxParallelChildren, perChildMaxAge) and the `target` opacity concern remain OPEN here; they are a distinct resource-budget surface from the §8.7 export path.
+
 Spec §8.2 lines 13–34 define the signature as:
 
 ```
@@ -8654,6 +8672,8 @@ also closed by the same commit).
 
 **Potential duplicate** (confidence: medium) — F-8.2.1, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
+**Progress (still OPEN):** The `fileExport` half is delivered by commit d6a197a9 (F-8.7.1): the `lenny/delegate_task` schema + handler now carry `fileExport`/`fileExportLimits`, `delegation.Request` carries `FileExport`/`FileExportLimits`, and the §8.7 materialization path runs. The `LeaseSlice` half (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxParallelChildren, perChildMaxAge request-tightening) is unbuilt and keeps this OPEN.
+
 **Severity: High** (spec MUST: capability missing; §8.2/§8.7 unenforced via this surface)
 
 Spec §8.2/§8.5 define the tool as `lenny/delegate_task(target, task, lease_slice?)` where `TaskSpec` includes the `workspaceFiles.export` array, and `LeaseSlice` carries `maxTokenBudget`, `maxChildrenTotal`, `maxTreeSize`, `maxParallelChildren`, `perChildMaxAge`.
@@ -9431,7 +9451,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 ### Findings
 
-### - [ ] F-8.7.1 — `delegate_task` accepts no `fileExport` argument and the file-export materialization path does not exist [High] — OPEN
+### - [x] F-8.7.1 — `delegate_task` accepts no `fileExport` argument and the file-export materialization path does not exist [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-8.2.1, F-8.5.3 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
@@ -9450,6 +9470,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 **Impact:** The entire normative §8.7 surface — `source` glob resolution, base-path stripping, multi-entry overlay/overwrite ordering, `destPrefix` rebasing — is missing. A parent that supplies a `fileExport` block today is silently ignored (the field is dropped at JSON unmarshalling), and no file ever reaches the child workspace via delegation.
 
 **Progress (still OPEN):** The gateway-side materialization engine now exists as the reusable `pkg/gateway/delegation/export` `Materializer` (commit pending). It composes the §8.7 primitives that prior batches built: per-spec parent export via an injected `ParentExporter` (the §8.2-step-3 caller), `fileexport.ValidateDestPrefix` + `FileExportLimits.Check` (§8.7 lines 789-791), cross-export overwrite detection + the `delegation.export_overwrite` audit (§8.7 line 793 — F-8.7.6), archive routing to `uploadArchive` child sources so the §13.4 / §7.4 validators inherit (§8.7 line 792 — F-8.7.5), and the optional `interceptor.RunPreExportMaterialization` per-file scan, producing the §14 child `WorkspacePlan` upload sources (steps 4/6). Unit-tested (11 funcs: rebase, destPrefix/limit/overwrite/archive/scan-reject/scan-modify/misconfig). **Not yet wired**, so this stays OPEN: still required are the `delegate_task` schema + handler `fileExport` field (closes F-8.2.1 / F-8.5.3), the `delegation.Request.FileExport` field + `Service.Delegate` `ExportMaterializer` seam that runs the engine and stamps `child.WorkspacePlan`, the production `ParentExporter` over a new `adapterclient.ExportPaths` + running-parent-pod adapter resolution, a blob-store `Sink`, and the `cmd/lenny-gateway` wiring. F-8.2.4 steps 6/7 (child-pod streaming) are consumed unchanged by the existing §6.3 binder once the child plan carries the stamped `uploadFile` sources.
+
+**Resolution:** Wired end-to-end by commit d6a197a9. The `lenny/delegate_task` MCP schema + handler now accept a `fileExport` (and `fileExportLimits`) argument forwarded onto `delegation.Request.{FileExport,FileExportLimits}`. `Service.Delegate` mints the child id, runs the `export.Materializer` via a new `ExportMaterializer` seam when `fileExport` is non-empty (resolving the §8.3 `fileExportLimits` ceiling and the optional `contentPolicy` scan), and stamps the rendered §14 child `WorkspacePlan` (`export.Result.WorkspacePlanJSON`) on the child row before `store.Create` so the existing §6.3 binder delivers the files. The production seams live in the new `pkg/gateway/delegation/exportwire` package: `PodExporter` (the §8.2-step-3 `ExportPaths` RPC over the bound parent pod's adapter via the pod-session registry) and `BlobSink` (the §8.2-step-4 durable persistence over the §4.5 blob store under `ObjectTypeExport`, tenant+child scoped). `cmd/lenny-gateway` constructs and injects the materializer. Fail-closed: a `fileExport` with no materializer rejects with `EXPORT_NOT_CONFIGURED`, and a `scanExportedFiles:true` policy with no resolver rejects with `EXPORT_FILE_SCAN_UNAVAILABLE` (§8.3 rule 1). The live `scanExportedFiles` enforcement still awaits the named-interceptor-ref registry (a separate concern; the engine-level scan path is closed under F-8.7.7–F-8.7.11). The `LeaseSlice` half of the duplicate F-8.2.1 / F-8.5.3 (maxTokenBudget, maxChildrenTotal, etc.) is a distinct resource-budget surface and remains OPEN there.
 
 ### - [x] F-8.7.2 — Symlink/realpath validation against `/workspace/current` boundary is unimplemented [High] — CLOSED
 
@@ -9485,7 +9507,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Resolution:** New `fileexport.FileExportLimits{MaxFiles, MaxTotalSize}` with `DefaultFileExportLimits = {100, 100MiB}` (the §8.3 line 264 default) and a `Check(fileCount, totalBytes)` method returning `ErrTooManyFiles` / `ErrTotalSizeExceeded`. The boundary admits (exactly 100 files / exactly the byte cap) and one-over rejects; a non-positive limit disables that dimension (zero-means-unlimited, matching the platform's other limiters). This is the §15.1 line 1071 "export validation" that surfaces before the per-file `maxExportedFileSize` scan gate. Tests pin the boundary, one-over on each dimension, the empty export, and the unlimited case. Closed by commit 835a3dde.
 
-### - [ ] F-8.7.5 — Archive validator inheritance on exported files is unimplemented [High] — OPEN
+### - [x] F-8.7.5 — Archive validator inheritance on exported files is unimplemented [High] — CLOSED
 
 **Spec:** §8.7 line 792 — "Archive entries in exported files inherit the upload archive validators. If an exported file is an archive (or if the child's `workspacePlan` references it via `uploadArchive`), the same normative limits defined in §13.4 / §7.4 (max decompressed size, ratio, entry count, per-entry size, path depth and length, non-regular-entry rejection, symlink rules) apply when the child's gateway-mediated materialization unpacks it. Violations surface as `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` on the child-session materialization path."
 
@@ -9494,7 +9516,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** A compromised parent can push an archive whose decompressed content evades the upload validators because the delegation path never runs them. Critical zip-bomb / tar-bomb defense.
 
-### - [ ] F-8.7.6 — Multi-export overwrite warning + audit emission is unimplemented [Medium] — OPEN
+**Resolution:** Reachable as of commit d6a197a9, which wired the export Materializer into `Service.Delegate` (F-8.7.1). The engine's `childSource` routes an exported file whose extension marks it an archive (`.tar`, `.tar.gz`/`.tgz`, `.zip`) to a §14 `uploadArchive` source (rather than a verbatim `uploadFile`), so the child's gateway-mediated materialization unpacks it under the existing §13.4 / §7.4 upload-archive validators and a violation surfaces as `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` on the child path. `export.Result.WorkspacePlanJSON` renders the `uploadArchive` (mapping a root-level archive's empty prefix to `.` so the plan stays ParseStored-valid), and the end-to-end `TestDelegateExportEndToEndStampsPlan` asserts a `.tar.gz` export lands as an `uploadArchive` in the stamped child plan.
+
+### - [x] F-8.7.6 — Multi-export overwrite warning + audit emission is unimplemented [Medium] — CLOSED
 
 **Spec:** §8.7 line 793 — "If multiple exports or `destPrefix` settings cause file overwrites in the child workspace, the gateway logs a warning with the overwritten paths and the export entry that caused it. This is audited in the session's delegation audit trail."
 
@@ -9502,6 +9526,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 - No detection code exists (no F1 path). `grep -rn "overwrite\|overwritten" /Users/joan/projects/lenny/pkg/gateway/delegation` is empty.
 
 **Impact:** The "later entries overwrite earlier ones" precedence in §8.7 line 774 has no observability counterpart, so silent shadowing of exported files is undiagnosable.
+
+**Resolution:** Reachable as of commit d6a197a9, which wired the export Materializer into `Service.Delegate` (F-8.7.1). The engine processes `fileExport` specs in declared order, merging into a child-path map; a later spec writing a path an earlier spec already placed records an `Overwrite{path, specIndex, source}` and emits the §8.7 line 793 `delegation.export_overwrite` audit event through the injected Auditor (the gateway wires `mcpDelegationAuditor` for both the delegation Service and the export Materializer in `cmd/lenny-gateway`). The detail carries the overwritten path, the causing export source, and the spec index for the session's delegation audit trail. The overwrite-detection + audit emission is unit-tested in the export package and the collapsed (post-overwrite) set is what the §8.7 limit check and the stamped child plan reflect.
 
 ### - [x] F-8.7.7 — Fail-closed `PreExportMaterialization` returns the wrong §15.1 error code [High] — CLOSED
 
