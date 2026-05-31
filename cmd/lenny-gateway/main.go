@@ -1983,9 +1983,13 @@ func main() {
 	// PreDelegation only. It enforces the §8.3 contentPolicy.maxInputSize
 	// cap on TaskSpec.input (INPUT_TOO_LARGE); the §8.3 depth/fan-out/
 	// cycle/tag enforcement stays canonical in delegation.Service. The
-	// default cap is operator-tunable via --delegation-max-input-size.
+	// resolver reads the effective DelegationPolicy's per-policy
+	// maxInputSize (filled in once delegationSvc exists, below); a
+	// runtime that names no policy falls back to the operator-tunable
+	// default cap (--delegation-max-input-size). F-13.5.1 / F-8.2.9.
+	maxInputResolver := &maxInputSizeResolverHolder{}
 	if err := policyChain.Register(interceptor.PhasePreDelegation,
-		policy.NewDelegationPolicyEvaluator(nil, *delegationMaxInputSize)); err != nil {
+		policy.NewDelegationPolicyEvaluator(maxInputResolver, *delegationMaxInputSize)); err != nil {
 		log.Fatalf("lenny-gateway: register DelegationPolicyEvaluator: %v", err)
 	}
 	// §4.8 line 977: RetryPolicyEvaluator (priority 600) fires at PostRoute
@@ -2451,6 +2455,11 @@ func main() {
 		// delegation.ExperimentRouter via ApplyExperimentRouting.
 		ExperimentRouter: sessionSrv,
 	})
+	// §8.3 line 157 / §4.8 line 974: now that delegationSvc exists, fill
+	// in the holder so the DelegationPolicyEvaluator measures TaskSpec.input
+	// against the parent runtime's effective contentPolicy.maxInputSize
+	// rather than the cluster default alone. F-13.5.1 / F-8.2.9.
+	maxInputResolver.inner = delegationSvc
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,
@@ -4304,6 +4313,24 @@ func (l lastSeqStore) AdvanceLastSeq(ctx context.Context, tenantID, sessionID st
 // RetryPolicyEvaluator's RetryStateLookup: a missing session reads as
 // not-found (ok == false, the request is admitted), and any other store
 // fault surfaces as an error so the fail-closed evaluator rejects.
+// maxInputSizeResolverHolder lets the §4.8 DelegationPolicyEvaluator be
+// registered into the policy chain before delegationSvc is constructed:
+// the inner resolver is filled in once the service exists. Until then
+// (and whenever inner is nil) it reports "no policy", so the evaluator
+// falls back to the operator-configured default maxInputSize. The holder
+// is read on the request path after wiring completes, so the deferred
+// assignment is safe. spec: §4.8 line 974; §8.3 line 157. F-13.5.1 / F-8.2.9.
+type maxInputSizeResolverHolder struct {
+	inner policy.MaxInputSizeResolver
+}
+
+func (h *maxInputSizeResolverHolder) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessionID string) (int, bool) {
+	if h.inner == nil {
+		return 0, false
+	}
+	return h.inner.ResolveMaxInputSize(ctx, tenantID, parentSessionID)
+}
+
 type sessionRetryLookup struct{ sessions sessionstore.Store }
 
 func (l sessionRetryLookup) LookupRetryState(ctx context.Context, tenantID, sessionID string) (policy.RetryState, bool, error) {

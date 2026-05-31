@@ -1870,11 +1870,20 @@ func Register(srv *mcp.Server, deps Deps) {
 					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
 					// spec: §15.2.1 line 1386 — a manual MCP-only tool
 					// (lenny/delegate_task) must use the shared error
-					// taxonomy. INTERCEPTOR_REJECTED is the canonical
-					// CategoryPolicy / retryable:false code for a
-					// deliberate interceptor REJECT, so REST and MCP
-					// parity is preserved. F-15.2.11.
-					return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+					// taxonomy. A built-in evaluator that names a canonical
+					// §15.1 code on its Result (e.g. the §4.8
+					// DelegationPolicyEvaluator returns INPUT_TOO_LARGE for
+					// a §8.3 contentPolicy.maxInputSize overflow) surfaces
+					// that code so REST and MCP envelopes share the same
+					// (category, retryable) pair; a plain REJECT with no
+					// code falls back to INTERCEPTOR_REJECTED
+					// (CategoryPolicy / retryable:false). F-15.2.11 /
+					// F-13.5.1 / F-8.2.9.
+					code := "INTERCEPTOR_REJECTED"
+					if res.Code != "" {
+						code = res.Code
+					}
+					return mcp.ToolResult{}, mcp.NewToolError(code,
 						res.Reason,
 						map[string]any{"phase": string(interceptor.PhasePreDelegation)})
 				}

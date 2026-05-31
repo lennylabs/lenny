@@ -827,6 +827,39 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	return Result{Child: child, Depth: childDepth}, nil
 }
 
+// ResolveMaxInputSize returns the effective §8.3
+// `contentPolicy.maxInputSize` byte cap for a delegation issued by
+// parentSessionID, so the §4.8 DelegationPolicyEvaluator (PreDelegation,
+// priority 250) measures the TaskSpec.input against the per-policy
+// ceiling rather than the cluster-wide default alone. The cap is read
+// from the DelegationPolicy named by the parent's runtime
+// (`DelegationPolicyRef`): the same resolution chain Delegate runs for
+// the cycle gate and the export scan. It returns ok == false when no
+// runtime registry is wired, the runtime resolves no active policy, or
+// the policy leaves `maxInputSize` at zero, leaving the evaluator on its
+// configured default (§8.3 128 KiB).
+//
+// *Service implements policy.MaxInputSizeResolver. spec: §8.3 lines
+// 149-157; §4.8 line 974. F-13.5.1 / F-8.2.9.
+func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessionID string) (int, bool) {
+	if s.runtimes == nil || s.policies == nil || parentSessionID == "" {
+		return 0, false
+	}
+	parent, err := s.store.Get(ctx, tenantID, parentSessionID)
+	if err != nil {
+		return 0, false
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, parent.RuntimeRef)
+	if err != nil || rt.DelegationPolicyRef == "" {
+		return 0, false
+	}
+	pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef)
+	if err != nil || !pol.IsActive() || pol.ContentPolicy.MaxInputSize <= 0 {
+		return 0, false
+	}
+	return pol.ContentPolicy.MaxInputSize, true
+}
+
 // materializeExport runs the §8.7 file-export pipeline for one delegation
 // and returns the §14 child WorkspacePlan JSON the caller stamps on the
 // child row. It resolves the §8.3 fileExportLimits ceiling (defaulting to
