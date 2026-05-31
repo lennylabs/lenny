@@ -15478,7 +15478,7 @@ The §11.3 pre-running state caps (`maxCreated/Finalizing/Ready/StartingTimeoutS
 
 **Resolution:** Verify-closed; resolved by commit `2b826d1b` (F-5.2.26). The watchdog now drives terminal side effects through a `TerminalHook`: `cmd/lenny-gateway/main.go:3410` wires `WithTerminalHook(sessionSrv)`, so every watchdog-forced terminal transition (`recordCompleted` → `OnSessionTerminal` → `recordSessionCompleted` → `releaseExecutor`) drains the bound pod. For a `running`/`suspended` session expired via `sweepMaxAge`, `PodExecutor.Release` → `binder.Release` runs the §6.2 claimed → draining → terminated transition, which triggers the adapter's §11.4 line 258 graceful shutdown (SIGTERM, wait, then SIGKILL) — the runtime is stopped, not left running. For a pre-running session forced to `failed`, no pod is bound yet so the release is a no-op (nothing leaks). The grep-against-`pkg/gateway/watchdog` evidence is stale: the watchdog signals the runtime through the wired terminal hook rather than calling the adapter directly. Slot-release on watchdog expiry is covered by the F-5.2.26 tests.
 
-### - [ ] F-11.3.3 — `maxSessionAge` runs on a single global default and ignores per-pool/per-runtime configuration [High] — OPEN
+### - [x] F-11.3.3 — `maxSessionAge` runs on a single global default and ignores per-pool/per-runtime configuration [High] — CLOSED
 
 Spec §11.3 line 198 marks `maxSessionAge` "Yes (deployer cap)" — configurable per pool. The §5.1 / §6.2 cross-references and the `maxSessionAge` Note (line 242) make clear deployers must "tune `maxSessionAge` per Runtime."
 
@@ -15490,7 +15490,9 @@ Implementation:
 
 Consequence: a deployer who configures pool A with `maxSessionAgeSeconds: 14400` and pool B with `maxSessionAgeSeconds: 1800` sees both expire at the 7200s baked default — the per-pool setting is accepted into the store and ignored by the timeout enforcer.
 
-### - [ ] F-11.3.4 — `request_input_expired` event on the parent's `await_children` stream is never emitted [High] — OPEN
+**Resolution:** New `pkg/gateway/sessionage.Resolver` reads a session row's `RuntimeRef` (§5.1 `limits.maxSessionAgeSeconds`, resolved through the derived-runtime merge) and `PoolRef` (§5.2 pool `maxSessionAgeSeconds`) and returns the most-restrictive positive cap. The watchdog gains an optional `SessionAgeResolver` (wired via `WithSessionAgeResolver`); `sweepMaxAge` now computes the effective deadline through `effectiveAgeCap`, clamping the platform default by the resolver's per-runtime/pool cap and then by the per-session `retryPolicy.maxSessionAgeSeconds` (most-restrictive-wins). `cmd/lenny-gateway` wires `sessionage.New(runtimes, pools)`. A nil resolver or a zero result preserves the platform-default behaviour. Closed by commit b5ba3263.
+
+### - [x] F-11.3.4 — `request_input_expired` event on the parent's `await_children` stream is never emitted [High] — CLOSED
 
 Spec §11.3 line 238: "When a `request_input` times out, the gateway emits a `request_input_expired` event on the parent's `lenny/await_children` stream: `{ "type": "request_input_expired", "childId": "...", "requestId": "...", "expiredAt": "<ISO8601>" }`, allowing the parent to distinguish 'child's input request timed out' from 'child expired for other reasons.'"
 
@@ -15508,7 +15510,9 @@ The timeout branch only returns the tool error to the child caller. There is no 
 
 Consequence: a parent agent that has called `lenny/await_children` over a tree where one child blocks on `request_input` cannot distinguish "child failed because its input request timed out" from "child expired for some other reason." The spec required the disambiguation and named the event payload schema.
 
-### - [ ] F-11.3.5 — Session expiry warning (`session_expiring_soon`) and `DEADLINE_APPROACHING` adapter signal are absent [High] — OPEN
+**Resolution:** The `lenny/request_input` timeout branch now publishes a `request_input_expired` event on the parent session's event stream (the channel `await_children` observes) when the timed-out caller has a `ParentSessionID`, carrying the spec-named `{type, childId, requestId, expiredAt}` payload. A root session (no parent) has no awaiter, so the publish is skipped. The existing `REQUEST_INPUT_TIMEOUT` tool error to the child is unchanged. Closed by commit b5ba3263.
+
+### - [ ] F-11.3.5 — Session expiry warning (`session_expiring_soon`) and `DEADLINE_APPROACHING` adapter signal are absent [High] — DEFERRED
 
 Spec §11.3 line 240: "The gateway sends a `session_expiring_soon` event to the client and pod 5 minutes before `maxSessionAge` expires. […] The agent receives a `DEADLINE_APPROACHING` signal via the adapter."
 
@@ -15520,7 +15524,9 @@ Implementation:
 
 Consequence: an agent has no advance warning that its session is about to be terminated, breaking the spec's stated affordance for the agent to "checkpoint" and the client to "extend or wrap up."
 
-### - [ ] F-11.3.6 — Per-pool `maxRequestInputWaitSeconds`, `maxElicitationWaitSeconds`, and `maxElicitationsPerSession` are not configurable; the gateway uses hard-coded defaults [High] — OPEN
+**Deferred:** The `session_expiring_soon` SSE half is a watchdog pre-expiry pass (reuses the F-11.3.3 `effectiveAgeCap` plus a dedup flag). The `DEADLINE_APPROACHING` adapter half has no gateway→pod dispatch path: `pkg/adapter/lifecyclechannel.SignalDeadlineApproaching` writes the frame adapter→runtime, but `pkg/gateway/adapterclient` exposes no method and `schemas/lenny-adapter.proto` no gateway-initiated RPC to trigger it. Closing the finding (both halves) requires a new gateway→adapter command path (proto + adapter server handler + client + watchdog wiring); a SSE-only change would be a partial close. Deferred to a dedicated batch alongside F-11.3.7.
+
+### - [x] F-11.3.6 — Per-pool `maxRequestInputWaitSeconds`, `maxElicitationWaitSeconds`, and `maxElicitationsPerSession` are not configurable; the gateway uses hard-coded defaults [High] — CLOSED
 
 Spec §11.3 lines 202-204 mark these three timeouts as "Yes (per pool)" and §238 specifies the configuration path: "the `limits:` block of the RuntimeDefinition."
 
@@ -15532,7 +15538,9 @@ Implementation:
 
 Consequence: a deployer cannot configure these per pool. The mcptools wiring is also session-scoped at a global level — every session in every pool shares the same 600s / 600s / 50 caps with no override path.
 
-### - [ ] F-11.3.7 — `maxIdleTime` is not enforced for non-playground sessions [High] — OPEN
+**Resolution:** `maxRequestInputWaitSeconds` was already resolved per-runtime in `lenny/request_input` (`runtimestore.Resolve` → `Limits.MaxRequestInputWaitSeconds`, stale evidence). This batch added `MaxElicitationWaitSeconds` and `MaxElicitationsPerSession` to `runtimestore.Limits` (the §5.1 `limits:` block, additive JSON, validated non-negative in `admin.validateLimits`) and resolved them per-runtime inside the `lenny/request_elicitation` handler, shadowing the platform-default closure values for that call only — the same lookup `request_input` already performs. Closed by commit b5ba3263.
+
+### - [ ] F-11.3.7 — `maxIdleTime` is not enforced for non-playground sessions [High] — DEFERRED
 
 Spec §11.3 line 199 lists `maxIdleTime` (default 600s, "Yes" configurable).
 
@@ -15543,6 +15551,8 @@ Implementation:
 - The SandboxTemplate / RuntimeDefinition CRD has no `maxIdleTimeSeconds` field either: `grep -n "MaxIdleTime" pkg/apis/lenny/v1/sandboxtemplate_types.go` returns nothing.
 
 Consequence: a non-playground session can sit idle indefinitely (bounded only by `maxSessionAge` at 2h). The §11.3 control to reclaim warm pods from abandoned non-playground sessions is missing.
+
+**Deferred:** `maxIdleTime` cannot reuse the row's `UpdatedAt` (it advances on internal state writes, not on activity), so enforcement needs a dedicated `lastActivityAt` session column (migration + pgstore insert/update/select/Scan + the in-memory store), cross-cutting activity stamping on the message/request handlers, a new watchdog idle sweep with config, and a `maxIdleTimeSeconds` runtime field. That schema-plus-cross-cutting change is out of scope for this batch; deferred to a dedicated batch alongside F-11.3.5.
 
 ### - [x] F-11.3.8 — `maxResumeWindowSeconds` is not implemented [High] — CLOSED
 
