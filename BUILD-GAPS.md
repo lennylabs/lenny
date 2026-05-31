@@ -17980,13 +17980,22 @@ Spec: §12.3 R-03 ("All billing event inserts and audit log inserts MUST be rout
 
 The §12.3 invariant that R-03 is meant to preserve (no direct pool handle in billing/audit paths so a Tier 3 split is configuration-only) is currently violated by every production write.
 
-### - [ ] F-12.2.14 — 14 — Cloud-managed-pooler `__unset__` guard and `TestRLSTenantGuardMissingSetLocal` absent (High) [Medium] — OPEN
+### - [x] F-12.2.14 — 14 — Cloud-managed-pooler `__unset__` guard and `TestRLSTenantGuardMissingSetLocal` absent (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.3.1, F-17.9.2 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
 Spec: §12.3 item 5 — "An integration test (`TestRLSTenantGuardMissingSetLocal`) **must** exist that … asserts that the query raises an exception …". Spec §12.3 item 4 — gateway "**refuses to start** and exits with a fatal error" when `LENNY_POOLER_MODE=external` and the `lenny_tenant_guard` trigger is absent.
 
 Repo-wide grep for `TestRLSTenantGuardMissingSetLocal` finds zero Go test files (only spec/review-findings markdown). Grep for `LENNY_POOLER_MODE` startup detection in `cmd/lenny-gateway/` also returns nothing. The CI-required negative test that asserts the trigger blocks a no-SET-LOCAL query, and the gateway-startup refusal path, are both unimplemented. The `lenny_tenant_guard` trigger itself (`migrations/0002_rls_immutability_roles.up.sql:36-62`) exists and is correctly attached to `sessions`, `session_messages`, `issued_tokens`, `audit_log`, `billing_events` (and via subsequent migrations to credential_pools, etc.), but the spec's secondary defense — that any binary lacking the trigger refuses to boot under cloud-managed pooler mode — is not in the binary.
+
+**Resolution (`016fb593`):** Both halves closed. The startup refusal is the
+F-12.3.1 `integrity.VerifyCloudManagedPoolerDefense` path wired into
+`cmd/lenny-gateway`. `TestRLSTenantGuardMissingSetLocal` now exists as a
+tier-4 (`//go:build integration`) test in
+`tests/tier4_integration/rls_tenant_guard_test.go`: a no-SET-LOCAL write is
+rejected by the trigger, a no-SET-LOCAL `SELECT` (as `lenny_app`) is rejected
+by RLS, and a tenant-A-scoped read returns zero of tenant B's rows. It runs
+against the Postgres testcontainer in the `integration` CI tier.
 
 ### - [ ] F-12.2.15 — 15 — ArtifactStore interface-level `/{tenant_id}/` prefix validation not enforced (Medium) [Medium] — CLOSED
 
@@ -18088,7 +18097,7 @@ noteworthy but non-blocking.
 
 ---
 
-### - [ ] F-12.3.1 — `LENNY_POOLER_MODE` startup refusal is not implemented (§12.3 lines 49–56) [High] — OPEN
+### - [x] F-12.3.1 — `LENNY_POOLER_MODE` startup refusal is not implemented (§12.3 lines 49–56) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.14, F-17.9.2 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
@@ -18117,7 +18126,19 @@ Consequence: a cloud-managed deployment whose schema drifted (manual rollback,
 operator removing the trigger) starts without the required RLS defense layer
 and the spec's specified fatal error never fires.
 
-### - [ ] F-12.3.2 — `postgres.connectionPooler` Helm value and `LENNY_POOLER_MODE` env injection do not exist (§12.3 lines 54–56) [High] — OPEN
+**Resolution (`016fb593`):** Implemented the startup refusal.
+`integrity.VerifyCloudManagedPoolerDefense(ctx, db, poolerMode)` runs in
+`cmd/lenny-gateway/main.go` ahead of the §11.7 integrity check; when
+`LENNY_POOLER_MODE=external` it calls `integrity.TenantGuardCoverageGaps`,
+which computes from the live catalog the RLS-enabled `tenant_id`-bearing
+tables that lack an enabled `lenny_tenant_guard` trigger, and `log.Fatalf`s
+with the verbatim §12.3 line 56 message when any are missing. The check is
+independent of the §17.6 preflight Job, so a post-install migration rollback
+also trips it. Tier-1 fake-`Querier` tests cover the non-external no-op (no
+query issued), fatal-on-gap, pass-on-full-coverage, and error-propagation
+paths.
+
+### - [x] F-12.3.2 — `postgres.connectionPooler` Helm value and `LENNY_POOLER_MODE` env injection do not exist (§12.3 lines 54–56) [High] — CLOSED
 
 The spec specifies a `postgres.connectionPooler` Helm value with the
 defaulting rule "defaults to `external` when `backends = cloud-managed`," and
@@ -18138,7 +18159,19 @@ Evidence:
 
 Without this value, items 3 and 4 of §12.3 cannot fire even if implemented.
 
-### - [ ] F-12.3.3 — Migration does not create `lenny_tenant_guard` conditionally on `connectionPooler = external` (§12.3 line 54) [High] — OPEN
+**Resolution (`0ce4b747`):** The `postgres.connectionPooler` Helm value
+already existed (F-17.5.8); this batch wired `LENNY_POOLER_MODE` to it. New
+`lenny.connectionPooler` / `lenny.poolerMode` template helpers resolve the
+effective pooler (explicit value wins; defaults to `external` when
+`backends = cloud-managed`, else `pgbouncer`) and map it to the gateway env
+(`external`→`external`, otherwise `transactional`). The gateway-deployment
+env and the preflight `--connection-pooler` flag now read the same source,
+closing the divergence where `connectionPooler: external` left
+`LENNY_POOLER_MODE` at its `transactional` default so the §12.3 startup
+refusal never fired. The redundant `pgbouncer.poolerMode` value is retired.
+helm-unittest: 466 tests pass.
+
+### - [x] F-12.3.3 — Migration does not create `lenny_tenant_guard` conditionally on `connectionPooler = external` (§12.3 line 54) [High] — CLOSED
 
 Spec item 2: "The trigger/function MUST be created by the Lenny schema
 migration ... The migration detects whether `connect_query` sentinel support
@@ -18176,6 +18209,18 @@ that have `tenant_id` columns and post-date the §12.3 rule:
   reads on this table rely solely on application code paths annotated
   `-- platform-admin-cross-tenant-allowed`. Spec line 53 ("every tenant-scoped
   table") is in tension with this design decision.
+
+**Resolution (`016fb593`, prior `0065`):** Both genuine code gaps are
+closed. `session_eviction_state` gained the trigger in migration
+`0065_session_eviction_state_tenant_guard`. The spec-vs-impl tension over
+"creates the trigger when `connectionPooler = external`" is resolved in the
+implementation's favour without a spec edit: creating the trigger
+unconditionally is a superset of creating it only under `external`, so the
+clause is satisfied, and the new `integrity.TenantGuardCoverageGaps` startup
+check verifies coverage from the live catalog rather than from the Helm flag.
+`artifact_store` is deliberately platform-global (RLS disabled) and is
+correctly excluded by that check's `relrowsecurity` predicate, so it is not a
+coverage gap.
 
 ### - [ ] F-12.3.4 — Billing/audit write paths bypass `StoreRouter` (§12.3 lines 144 R-03) [High] — OPEN
 
@@ -32406,7 +32451,7 @@ choice is buried in deployer-written values overlays.
 
 ---
 
-### - [ ] F-17.9.2 — §17.9.7 cloud-managed pooler defense (`LENNY_POOLER_MODE`, conditional trigger creation, preflight check) is entirely absent [High] — OPEN
+### - [ ] F-17.9.2 — §17.9.7 cloud-managed pooler defense (`LENNY_POOLER_MODE`, conditional trigger creation, preflight check) is entirely absent [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-12.2.14, F-12.3.1 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
@@ -32474,6 +32519,20 @@ active per deployment"). Without `LENNY_POOLER_MODE`, the spec's
 - `/Users/joan/projects/lenny/pkg/audit/integrity/integrity.go` (unconditional trigger check)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:259-284` (postgres block lacks `connectionPooler`)
 - `/Users/joan/projects/lenny/pkg/preflight/run.go` (no cloud-pooler check)
+
+**Partial resolution + deferral (`016fb593`, `0ce4b747`):** Three of the four
+layers are now closed. Part 1 (chart `postgres.connectionPooler` value +
+`backends`-driven default) by F-17.5.8 and F-12.3.2; part 2 (the migration
+creates the trigger; unconditional creation is a superset of the `external`
+clause) by F-12.3.3; part 3 (gateway reads `LENNY_POOLER_MODE`, queries
+`pg_trigger`, refuses to start) by F-12.3.1. **Deferred:** part 4 — the
+preflight binary's actual Postgres `CloudPoolerSentinelDefense` check. The
+`--connection-pooler` flag is plumbed and validated, but `pkg/preflight/run.go`
+is a Kubernetes-API-only runner; adding the `pg_trigger` verification requires
+giving the preflight Job Postgres connectivity (a DSN flag, a datastore-secret
+mount, and pgx in the binary), a separate lift. The load-bearing runtime
+defense (part 3) is in place and backstops the install-time convenience, so
+the deferral leaves no unguarded window.
 
 ---
 
