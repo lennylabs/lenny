@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -90,6 +91,20 @@ type AuditEvent struct {
 	// TargetResource is the resource the operation affects (e.g.,
 	// the tenant id).
 	TargetResource string
+
+	// OperationID is the §11.7 lines 347-348 optional correlation
+	// token, sourced from the X-Lenny-Operation-ID request header (via
+	// the correlation context). The OCSF translator projects it onto
+	// metadata.correlation_uid. Empty when the request carried no
+	// header. spec: §11.7 line 347.
+	OperationID string
+
+	// CallerKind is the §11.7 lines 347-348 optional caller class,
+	// sourced from the OIDC caller_type claim ("human" / "service" /
+	// "agent"). The OCSF translator projects it onto actor.user.type /
+	// type_id, which the §25.9 human-vs-agent reporting reads. Empty
+	// when the token carried no claim. spec: §11.7 line 348.
+	CallerKind string
 
 	// Detail carries event-specific fields the auditor records
 	// verbatim in the hash-chain entry.
@@ -296,11 +311,18 @@ func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resour
 	if r.audit == nil {
 		return
 	}
+	// spec: §11.7 lines 347-348 — carry operation_id (from the
+	// correlation context populated off X-Lenny-Operation-ID) and
+	// caller_kind (from the OIDC caller_type claim) when available so
+	// the OCSF translator can project them onto metadata.correlation_uid
+	// and actor.user.type.
 	r.audit.EmitAdminEvent(ctx, AuditEvent{
 		Type:           eventType,
 		ActorSubject:   p.Subject,
 		ActorTenantID:  p.TenantID,
 		TargetResource: resource,
+		OperationID:    corr.From(ctx).OperationID,
+		CallerKind:     p.CallerType,
 		Detail:         detail,
 		At:             r.clock(),
 	})

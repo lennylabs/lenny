@@ -87,6 +87,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -1860,20 +1861,27 @@ func main() {
 	// restart. Both the admin router and the §10.7 ExperimentRouter
 	// rejection reporter commit events to it.
 	var (
-		auditSink     admin.AuditSink
-		wireAudit     func(*admin.Router) *admin.Router
-		auditAppender policy.AuditAppender
+		auditSink      admin.AuditSink
+		wireAudit      func(*admin.Router) *admin.Router
+		auditAppender  policy.AuditAppender
+		auditValidator *auditscope.Validator
 	)
 	if pgPool != nil {
 		pgAudit := auditstore.New(pgPool)
-		auditSink = admin.NewAuditLogSink(pgAudit, nil)
+		// spec: §11.7 line 428 — guard the caller-driven audit-write
+		// boundaries (the admin sink and the §4.8 policy-rejection sink)
+		// with the write-time tenant-scope validator so a forged-tenant
+		// row cannot be injected. Reads stay on the raw chain.
+		auditValidator = auditscope.New(pgAudit, nil)
+		auditSink = admin.NewAuditLogSink(auditValidator, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
 		// The §11.7 `interceptor.rejected` policy-rejection rows share
 		// the durable Postgres-backed per-tenant hash chain.
 		auditAppender = pgAudit
 	} else {
 		auditChains := audit.NewChainSet()
-		auditSink = admin.NewChainAuditSink(auditChains, nil)
+		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
+		auditSink = admin.NewAuditLogSink(auditValidator, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
 		// In-memory chain — lost on restart, used by the minimal gateway.
 		auditAppender = policy.NewChainSetAppender(auditChains, nil)
@@ -2001,7 +2009,9 @@ func main() {
 		if err := policyChain.Register(interceptor.PhasePostAuth, quotaEval); err != nil {
 			log.Fatalf("lenny-gateway: register QuotaEvaluator: %v", err)
 		}
-		policyAuditSink = policy.NewAuditSink(auditAppender, nil)
+		// spec: §11.7 line 428 — route policy-rejection audit rows through
+		// the write-time tenant-scope validator alongside the admin sink.
+		policyAuditSink = policy.NewAuditSink(auditValidator, nil)
 		// spec: §11.2 line 44 — quotaSyncIntervalSeconds is the cadence
 		// at which Redis quota and delegation-budget counters checkpoint
 		// to Postgres. Clamp the operator-supplied value up to the 10s

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
 // AuditLog is the §11.7 audit-chain surface the admin subsystem
@@ -96,12 +98,36 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	if tenant == "" {
 		tenant = "platform"
 	}
-	payload, _ := json.Marshal(map[string]any{
+	// spec: §11.7 lines 347-348 — operation_id and caller_kind are
+	// optional correlation fields the OCSF translator projects onto
+	// metadata.correlation_uid and actor.user.type. Prefer the values
+	// the emitter set explicitly; fall back to the request context so
+	// events constructed by direct EmitAdminEvent callers (the
+	// credential, delegation, playground, and auth-failure auditors)
+	// still carry them when the inbound request supplied them.
+	operationID := event.OperationID
+	if operationID == "" {
+		operationID = corr.From(ctx).OperationID
+	}
+	callerKind := event.CallerKind
+	if callerKind == "" {
+		if p, ok := authmw.FromContext(ctx); ok {
+			callerKind = p.CallerType
+		}
+	}
+	fields := map[string]any{
 		"actor_subject":   event.ActorSubject,
 		"actor_tenant_id": event.ActorTenantID,
 		"target_resource": event.TargetResource,
 		"detail":          event.Detail,
-	})
+	}
+	if operationID != "" {
+		fields["operation_id"] = operationID
+	}
+	if callerKind != "" {
+		fields["caller_kind"] = callerKind
+	}
+	payload, _ := json.Marshal(fields)
 	at := event.At
 	if at.IsZero() {
 		at = s.clock()
