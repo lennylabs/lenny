@@ -135,11 +135,7 @@ subjects:
    verifies the per-transaction lenny_tenant_guard trigger
    (CloudPoolerSentinelDefense check, §17.6 line 488). Surfaced here so
    the preflight binary gets the value via --connection-pooler. */ -}}
-{{- $postgresValues := .Values.postgres | default dict -}}
-{{- $connectionPooler := $postgresValues.connectionPooler | default "pgbouncer" -}}
-{{- if not (or (eq $connectionPooler "pgbouncer") (eq $connectionPooler "external")) -}}
-{{- fail (printf "§17.9.3: postgres.connectionPooler must be \"pgbouncer\" or \"external\", got %q" $connectionPooler) -}}
-{{- end -}}
+{{- $connectionPooler := include "lenny.connectionPooler" . -}}
 {{- /*
 §5.3 line 676 RuntimeClass requirements. The install requires the
 RuntimeClasses backing the isolation profiles its pods will use. Source

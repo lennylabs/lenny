@@ -97,3 +97,41 @@ processes, so the check runs on every render. F-16.9.8.
 {{- fail (printf "monitoring.format must be one of [prometheusrule configmap both]; got %q" $format) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+lenny.connectionPooler resolves the effective Postgres connection-pooler
+posture. An explicit postgres.connectionPooler wins; otherwise it
+defaults to "external" when backends is "cloud-managed" (so a
+cloud-managed install never silently runs without the lenny_tenant_guard
+trigger) and "pgbouncer" otherwise. The result is validated against the
+§17.9.3 allow-list, so a typo aborts the render rather than silently
+disabling the cloud-pooler defense.
+spec: §12.3 line 55 / §17.9.3.
+*/}}
+{{- define "lenny.connectionPooler" -}}
+{{- $explicit := (.Values.postgres | default dict).connectionPooler | default "" -}}
+{{- $effective := $explicit | default (ternary "external" "pgbouncer" (eq (.Values.backends | default "") "cloud-managed")) -}}
+{{- if not (or (eq $effective "pgbouncer") (eq $effective "external")) -}}
+{{- fail (printf "§17.9.3: postgres.connectionPooler must be \"pgbouncer\" or \"external\", got %q" $effective) -}}
+{{- end -}}
+{{- $effective -}}
+{{- end -}}
+
+{{/*
+lenny.poolerMode maps the effective connection-pooler posture to the
+gateway's LENNY_POOLER_MODE env. "external" (a managed out-of-process
+pooler that cannot run the connect_query __unset__ sentinel) stays
+"external"; the in-cluster pooler is "transactional". The gateway reads
+this to decide whether to enforce the §12.3 line 56 lenny_tenant_guard
+startup refusal, so deriving it from the same connectionPooler value the
+preflight check uses keeps the install-time and runtime defenses
+consistent.
+spec: §12.3 line 56 / §4.2 line 165.
+*/}}
+{{- define "lenny.poolerMode" -}}
+{{- if eq (include "lenny.connectionPooler" .) "external" -}}
+external
+{{- else -}}
+transactional
+{{- end -}}
+{{- end -}}

@@ -54,12 +54,11 @@ tests:
           path: data["pgbouncer.ini"]
           pattern: "pool_mode = session"
 
-  # spec: §4.2 line 165 — the chart wires LENNY_POOLER_MODE into the
-  # gateway env from pgbouncer.poolerMode. The default `transactional`
-  # is round-trippable from values.yaml without an override; the
-  # gateway logs the value at startup so operators can confirm the
-  # posture matches their pooler topology.
-  - it: pgbouncer.poolerMode default is transactional
+  # spec: §12.3 — the PgBouncer ConfigMap stamps pool_mode from
+  # pgbouncer.poolMode. The default `transaction` is the §12.3
+  # transaction-mode posture required for RLS via SET LOCAL; it is
+  # round-trippable from values.yaml without an override.
+  - it: pgbouncer.poolMode default is transaction
     asserts:
       - equal:
           path: data["pgbouncer.ini"]

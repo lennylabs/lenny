@@ -593,37 +593,10 @@ pgbouncer:
   # connection-reuse case, so deployers MAY override on their own
   # PgBouncer install.
   poolMode: "transaction"
-  # poolerMode names the deployment posture for the Postgres pooler.
-  # The value is propagated to the gateway as LENNY_POOLER_MODE and
-  # to lenny-ops binaries so the §4.2 __all__-sentinel guard knows
-  # whether the trigger may rely on the gateway's opt-in GUC alone
-  # or must additionally reject the sentinel when the pooler is out
-  # of process.
-  #
-  # Accepted values:
-  #   transactional — pooler runs as a sidecar / in-cluster workload
-  #                   the chart manages; the gateway's
-  #                   pgtenant.InAllTenants helper is trusted to opt
-  #                   in to the __all__ sentinel via the
-  #                   lenny.allow_all_sentinel GUC, and the
-  #                   lenny_tenant_guard trigger honours that
-  #                   opt-in.
-  #   external      — pooler is an out-of-process / managed offering
-  #                   (RDS Proxy, Cloud SQL Auth Proxy with
-  #                   pgBouncer). The gateway still opts in for its
-  #                   own platform-admin code paths; any leak that
-  #                   bypasses pgtenant.InAllTenants reaches the
-  #                   trigger with no opt-in GUC and is rejected.
-  #
-  # The two values share the same migration-time trigger code; the
-  # difference is operational. In `external` mode the operator
-  # cannot trust their own pooler to forward the
-  # lenny.allow_all_sentinel SET LOCAL, so the failure-closed
-  # default ensures every cross-tenant read goes through the
-  # gateway-mediated helper.
-  #
-  # spec: §4.2 line 165.
-  poolerMode: "transactional"
+  # The gateway's deployment posture (LENNY_POOLER_MODE) is derived from
+  # postgres.connectionPooler below, not from a separate pgbouncer value,
+  # so the install-time preflight check and the runtime startup refusal
+  # read one source of truth. spec: §12.3 line 56 / §4.2 line 165.
 
 # postgres configures the Postgres connection.
 postgres:
@@ -633,12 +606,16 @@ postgres:
   # 488) with the "external" value: when the deployer fronts Postgres
   # with RDS Proxy / Cloud SQL Auth Proxy / Azure PgBouncer, those
   # proxies cannot enforce the `__unset__` `app.current_tenant`
-  # sentinel via `connect_query`, so preflight must verify the
-  # per-transaction `lenny_tenant_guard` trigger exists. Accepted
-  # values: "pgbouncer" (default; in-cluster PgBouncer enforces the
-  # sentinel via `connect_query`) or "external" (cloud-managed pooler;
-  # preflight CloudPoolerSentinelDefense gates on the trigger).
-  connectionPooler: "pgbouncer"
+  # sentinel via `connect_query`, so preflight and the gateway startup
+  # check verify the per-transaction `lenny_tenant_guard` trigger
+  # exists. Accepted values: "pgbouncer" (in-cluster PgBouncer enforces
+  # the sentinel via `connect_query`) or "external" (cloud-managed
+  # pooler). It also feeds the gateway's LENNY_POOLER_MODE env
+  # (external -> external, otherwise transactional). Empty (the default)
+  # resolves to "external" when backends is "cloud-managed" and
+  # "pgbouncer" otherwise, so a cloud-managed install never silently
+  # runs without the trigger defense. spec: §12.3 lines 55-56.
+  connectionPooler: ""
   # cidr is the destination CIDR PgBouncer is allowed to reach
   # Postgres on (§13.2). Operators should tighten this to the
   # database endpoint; the broad default is bounded by the per-port

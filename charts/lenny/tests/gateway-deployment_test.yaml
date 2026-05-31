@@ -744,14 +744,29 @@ tests:
             name: LENNY_SLO_VALIDATED
             value: "true"
 
-  # spec: §4.2 line 165 — pgbouncer.poolerMode = external propagates
-  # to the gateway as LENNY_POOLER_MODE=external. The gateway logs
-  # the value at startup; the load-bearing __all__-sentinel guard is
-  # enforced by the migration 0057 trigger via the
-  # lenny.allow_all_sentinel GUC.
-  - it: renders LENNY_POOLER_MODE from pgbouncer.poolerMode override
+  # spec: §12.3 line 56 — postgres.connectionPooler = external derives
+  # LENNY_POOLER_MODE=external on the gateway, the value the §12.3
+  # startup refusal reads. One source of truth: the same value gates the
+  # preflight CloudPoolerSentinelDefense check.
+  - it: renders LENNY_POOLER_MODE=external from postgres.connectionPooler
     set:
-      pgbouncer.poolerMode: "external"
+      postgres.connectionPooler: "external"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOLER_MODE
+            value: "external"
+
+  # spec: §12.3 line 55 — backends=cloud-managed defaults connectionPooler
+  # to external when it is not explicitly set, so a cloud-managed install
+  # never silently runs without the lenny_tenant_guard trigger defense.
+  - it: backends cloud-managed defaults LENNY_POOLER_MODE to external
+    set:
+      backends: "cloud-managed"
     documentSelector:
       path: kind
       value: Deployment
