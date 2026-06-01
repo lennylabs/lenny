@@ -80,6 +80,11 @@ type Config struct {
 	// chart-shipped CRDs.
 	// spec: §10 line 443. F-15.5.12.
 	CRDNames []string
+	// Environment is the chart `environment` value (dev | staging |
+	// prod). It feeds the §5.3 line 669 cosign-production advisory; a
+	// production-or-staging install with cosign disabled gets a
+	// non-blocking WARNING. F-5.3.5.
+	Environment string
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -104,7 +109,17 @@ func Failed(report []CheckResult) bool {
 // and runs them. A cluster read that fails is surfaced as a failed
 // check, consistent with the fail-closed posture of the preflight Job.
 func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
-	report := make([]CheckResult, 0, 10)
+	report := make([]CheckResult, 0, 11)
+
+	// §5.3 line 669 — image provenance verification is a prerequisite
+	// for production and staging deployments. A pure-function advisory
+	// over the chart values: a production-or-staging install with
+	// cosign disabled gets a non-blocking WARNING, mirroring the §17.6
+	// disk-encryption posture warning. F-5.3.5.
+	report = append(report, CheckResult{
+		Name:     "cosign-production-posture",
+		Decision: CheckCosignProduction(cfg.Environment, cfg.Features.CosignVerify),
+	})
 
 	if deployed, err := gatherWebhooks(ctx, reader); err != nil {
 		report = append(report, CheckResult{

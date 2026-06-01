@@ -139,6 +139,18 @@ func main() {
 	compliance := flag.Bool("feature-compliance", false, "value of the features.compliance chart flag")
 	registryDigest := flag.Bool("feature-registry-digest", false,
 		"value of the platform.registry.requireDigest chart flag; gates the fail-closed lenny-registry-digest webhook (§17.2 line 56)")
+	cosignVerify := flag.Bool("feature-cosign-verify", false,
+		"value of the imageVerification.cosign.enabled chart flag; a production/staging install with it false gets a §5.3 line 669 advisory")
+	environment := flag.String("environment", "",
+		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 line 669 cosign-production advisory")
+	// §17.9.3 / §17.6 line 488 — the preflight-job template passes
+	// --connection-pooler so the CloudPoolerSentinelDefense check can
+	// see the effective pooler mode. The flag must be accepted here or
+	// flag.Parse (ExitOnError) aborts the Job before any check runs. The
+	// value is consumed once that check is wired; until then it is
+	// accepted so the rendered Job runs.
+	_ = flag.String("connection-pooler", "",
+		"value of the effective postgres.connectionPooler (pgbouncer | external); §17.9.3")
 	acceptDowngrade := flag.String("accept-downgrade", "",
 		"comma-separated feature flags whose admission-plane downgrade is acknowledged")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", "",
@@ -208,11 +220,13 @@ func main() {
 
 	report := preflight.Run(context.Background(), cl, preflight.Config{
 		Namespace: *namespace,
+		Environment: *environment,
 		Features: preflight.WebhookFeatureFlags{
 			LLMProxy:       *llmProxy,
 			DrainReadiness: *drainReadiness,
 			Compliance:     *compliance,
 			RegistryDigest: *registryDigest,
+			CosignVerify:   *cosignVerify,
 		},
 		AcceptDowngrade:        parseAcceptDowngrade(*acceptDowngrade),
 		SPIFFETrustDomain:      *spiffeTrustDomain,

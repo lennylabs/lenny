@@ -198,6 +198,12 @@ spec:
             # mandatory for air-gap installs (§25.8); track it in the
             # preflight expected set when digest pinning is required.
             - --feature-registry-digest={{ .Values.platform.registry.requireDigest }}
+            # §5.3 line 669 — image provenance verification is a
+            # prerequisite for production and staging deployments. A
+            # production-or-staging install with cosign disabled gets a
+            # non-blocking WARNING (F-5.3.5).
+            - --feature-cosign-verify={{ .Values.imageVerification.cosign.enabled }}
+            - --environment={{ .Values.environment | default "dev" }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
             # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The

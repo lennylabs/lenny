@@ -3874,7 +3874,7 @@ Consequence: the chart's bundled reference runtimes — the very runtimes shippe
 
 **Resolution (`8586f582`):** `RuntimeSpec.Image` gains a `+kubebuilder:validation:Pattern` of `@sha256:[A-Fa-f0-9]{64}$` (regenerated into `charts/lenny/crds/lenny.dev_runtimes.yaml`), so the API server rejects a `kubectl apply` of a tag-pinned Runtime — closing the GitOps bypass the admin-API check did not cover. The §26 reference-runtime catalog (`charts/lenny/values.yaml`) is converted from `:1.0.0` tags to digest-pinned references; the digests are release-pinned placeholders the release process substitutes per chart version, documented in the values comment. A helm-unittest assertion enforces the catalog stays digest-pinned.
 
-### - [ ] F-5.3.5 — Image signature verification (cosign) is opt-in and disabled by default [High] — OPEN
+### - [x] F-5.3.5 — Image signature verification (cosign) is opt-in and disabled by default [High] — CLOSED
 
 Spec §5.3 line 665: "Image signature verification via cosign/Sigstore, enforced by a ValidatingAdmissionWebhook (or OPA/Gatekeeper policy). The cosign admission webhook must be configured as **fail-closed** (`failurePolicy: Fail`)."
 
@@ -3885,6 +3885,8 @@ Implementation:
 - The `lenny-preflight` Job (`pkg/preflight/`) does not check the cosign webhook is present or enabled for production installs.
 
 Consequence: a production install can run with no signature verification and no operator notification. The spec's "prerequisite" wording is downgraded to "available if enabled" without preflight enforcement.
+
+**Resolution (`<PENDING>`):** New `preflight.CheckCosignProduction(environment, cosignEnabled)` emits the §5.3 line 669 non-blocking WARNING (`cosign-production-posture` check) when the chart `environment` is production-or-staging (`prod`/`production`/`staging`/`stage`, case-insensitive) and `imageVerification.cosign.enabled` is false, mirroring the §17.6 disk-encryption advisory: the install completes but the operator is told a pod can launch from an unsigned image. Warning-only by design (cosign needs signing material the chart cannot synthesize, so a hard failure would block every first production install). Wired into `preflight.Run` via new `Config.Environment` + `Features.CosignVerify`, the binary's new `--environment` / `--feature-cosign-verify` flags, and the preflight-job template args. Also fixed a latent crash: the Job template passed `--connection-pooler` (since `0ce4b747`) but the binary never defined the flag, so `flag.Parse` (ExitOnError) aborted the Job; the flag is now accepted. Tests: 3 tier-1 unit (`cosign_production_test.go`: dev-passes, prod/staging-warns, enabled-silent) + 2 tier-2 helm-unittest (default dev+disabled, prod+enabled).
 
 ### - [x] F-5.3.6 — No defense-in-depth that prevents the `internet` egress profile from being combined with `standard` isolation [High] — CLOSED
 
