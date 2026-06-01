@@ -1293,6 +1293,33 @@ gateway:
     # weight applies to the preferred form only. 100 is the maximum
     # weight Kubernetes accepts.
     weight: 100
+  # ingress optionally renders a Kubernetes Ingress that routes external
+  # HTTPS to the lenny-gateway Service on its named http port (§17.1
+  # row 7). Disabled by default so a stock development render produces no
+  # external entry point; the companion allow-gateway-ingress
+  # NetworkPolicy admits the controller in ingressControllerNamespace.
+  # When enabled and host is set, the controller terminates TLS using
+  # tls.secretName (deployer-supplied or cert-manager-issued out of
+  # band, distinct from the §10.3 lenny-gateway-tls mTLS material).
+  ingress:
+    enabled: false
+    # className selects the IngressClass (e.g. nginx, traefik). Empty
+    # leaves the cluster default IngressClass to apply.
+    className: ""
+    # host is the external hostname routed to the gateway. Empty renders
+    # a host-less rule that matches all inbound hosts.
+    host: ""
+    path: /
+    pathType: Prefix
+    # annotations are stamped onto the Ingress (controller-specific
+    # knobs, e.g. nginx.ingress.kubernetes.io/* or cert-manager.io/*).
+    annotations: {}
+    tls:
+      enabled: true
+      # secretName holds the public-facing serving certificate for host.
+      # Empty omits the per-host secretName so the controller falls back
+      # to its default certificate.
+      secretName: ""
   # serviceAccount.annotations are stamped onto the lenny-gateway
   # ServiceAccount. The §13 IRSA-on-EKS install sets
   # eks.amazonaws.com/role-arn here to bind the SA to the IAM role
@@ -1801,6 +1828,26 @@ ops:
   # whose in-memory event buffer holds their unread events.
   service:
     sessionAffinityTimeoutSeconds: 10800
+  # tls configures the §17.1 row 21 / §17 NET-070 admin-API TLS link.
+  # When internalEnabled is true the lenny-ops -> gateway admin-API link
+  # is required to be TLS; the serving material lives in the Secret
+  # named by certSecretName (default lenny-ops-tls). When certManager is
+  # enabled the chart renders a cert-manager Certificate (ops-tls.yaml)
+  # that issues that Secret automatically; otherwise the operator
+  # provisions it out of band. Defaults to disabled so a stock dev
+  # render runs the admin-API link in plaintext (dev-mode only).
+  tls:
+    internalEnabled: false
+    certSecretName: lenny-ops-tls
+    certManager:
+      enabled: false
+      issuerRef:
+        name: ""
+        kind: ClusterIssuer
+        group: cert-manager.io
+    # dnsNames overrides the SANs on the rendered Certificate. Empty
+    # defaults to the lenny-ops Service FQDN forms.
+    dnsNames: []
   # prometheus configures the §25.16 Production-tier "Prometheus (BYO)"
   # block (line 5124). When url is non-empty lenny-ops connects to the
   # supplied HTTP-API endpoint to evaluate cross-replica health
@@ -2038,6 +2085,21 @@ backups:
     # tag defaults to the chart appVersion when left empty.
     tag: ""
     pullPolicy: IfNotPresent
+  # postgres carries the narrowly-scoped backup DB role connection
+  # string rendered into the lenny-backup-postgres Secret (§17.1 row 21).
+  # The role is restricted to backup operations, distinct from the
+  # gateway/controller read-write DSN in lenny-datastore-conn. Empty
+  # renders no Secret; the lenny-backup Jobs then expect the credential
+  # to be provisioned out of band.
+  postgres:
+    dsn: ""
+  # minio carries the bucket-scoped backup access keys rendered into the
+  # lenny-backup-minio Secret (§17.1 row 21). The key is scoped to the
+  # backup bucket. Both accessKey and secretKey must be set for the
+  # Secret to render.
+  minio:
+    accessKey: ""
+    secretKey: ""
   # erasureReconciler gates the §12.8 post-restore GDPR erasure
   # reconciler: after a restore replays a backup, it re-applies erasure
   # jobs whose completion postdates the restored snapshot so a restore

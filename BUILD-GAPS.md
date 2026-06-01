@@ -28884,7 +28884,7 @@ because the PDB is the binding limit has no backing PDB to bind it.
 
 **Resolution:** Closed by F-10.4.4. The chart renders `kind: PodDisruptionBudget` (gated on `gateway.podDisruptionBudget.enabled`, defaulting true) with `maxUnavailable: 1`, and the rolling-update strategy is also rendered with `maxUnavailable: 1, maxSurge: 25%` per `gateway.rollingUpdate`. The metric emitter for `lenny_pdb_blocked_evictions_total` is wired via `pkg/gateway/pdbwatcher`.
 
-### - [ ] F-17.1.2 — 02 — Gateway Ingress is not rendered [Medium] — OPEN
+### - [x] F-17.1.2 — 02 — Gateway Ingress is not rendered [Medium] — CLOSED
 
 Spec row 7 begins "Deployment + Service + Ingress". The chart renders
 no `kind: Ingress` for the gateway. `values.yaml` carries
@@ -28897,6 +28897,14 @@ values.
 
 Verified: `grep -rn "kind: Ingress" /Users/joan/projects/lenny/charts/`
 returns no matches.
+
+**Resolution:** New `gateway-ingress.yaml` renders a `networking.k8s.io/v1`
+Ingress routing external HTTPS to the `lenny-gateway` Service's named
+`http` port. Opt-in via the new `gateway.ingress` values block
+(`enabled`/`className`/`host`/`path`/`pathType`/`annotations`/`tls`),
+matching the opt-in posture of `gateway.topologySpread`; a stock render
+emits nothing. Host-less rules and an absent TLS secret degrade
+gracefully. F-17.1.2.
 
 ### - [ ] F-17.1.3 — 03 — `lenny-ops` Ingress and PDB are not rendered [High] — OPEN
 
@@ -29004,7 +29012,7 @@ controller is absent.
 
 - **Resolution:** Closed by F-4.6.1 (commit 627d3cc6). The PSC now ships as its own `lenny-pool-scaling-controller` Deployment (2 replicas, dedicated leader-election lease, podAntiAffinity preferring scheduling away from the `lenny-controller` WPC) with a ServiceAccount and RBAC backing it; `charts/lenny/tests/pool-scaling-controller_test.yaml` locks the workload identity and CRD grants.
 
-### - [ ] F-17.1.7 — 07 — Gateway preStop hook and rolling-update / topology-spread blocks are not rendered [Medium] — OPEN
+### - [x] F-17.1.7 — 07 — Gateway preStop hook and rolling-update / topology-spread blocks are not rendered [Medium] — CLOSED
 
 Spec row 7 specifies a gateway `preStop` hook ("§10.1 preStop stage 2
 and the CheckpointBarrier fan-out at line 130"), `topology spread`,
@@ -29020,6 +29028,16 @@ block, no `terminationGracePeriodSeconds` override, no
 disruptions do not run the checkpoint fan-out the spec assumes; Tier 3
 multi-zone topology is not enforced by the chart.
 
+**Resolution (already resolved):** The finding's grep was stale.
+`gateway-deployment.yaml` already carries `spec.strategy.rollingUpdate`
+(`gateway.rollingUpdate.maxUnavailable`/`maxSurge`),
+`lifecycle.preStop` staged drain, `terminationGracePeriodSeconds`
+(`gateway.terminationGracePeriodSeconds`, default 240s),
+`topologySpreadConstraints` (`gateway.topologySpread`, commit
+`269d6c70`), and `affinity.podAntiAffinity`
+(`gateway.podAntiAffinity`, preferred/required forms keyed on
+`kubernetes.io/hostname`). All five §17.1-row-7 blocks render. F-17.1.7.
+
 ### - [ ] F-17.1.8 — 08 — Optional per-pool PDB on warm (idle) pods is not implemented [Medium] — OPEN
 
 Spec row 11: "optional PDB per pool on warm (idle) pods to enforce
@@ -29030,7 +29048,7 @@ objects per pool (no PDB write RBAC, no controller code under
 SandboxWarmPool spec does not surface the field needed to opt in. The
 feature is optional, but its absence should be tracked.
 
-### - [ ] F-17.1.9 — 09 — Optional `lenny-ops-tls` Secret and cert-manager `Certificate` for `ops.tls.internalEnabled` are not rendered [Medium] — OPEN
+### - [x] F-17.1.9 — 09 — Optional `lenny-ops-tls` Secret and cert-manager `Certificate` for `ops.tls.internalEnabled` are not rendered [Medium] — CLOSED
 
 Spec row 21: "optionally `lenny-ops-tls` when `ops.tls.internalEnabled:
 true`. When cert-manager is present, a `Certificate` object renders the
@@ -29041,7 +29059,18 @@ returns no matches. `values.yaml` carries no `ops.tls` block, and
 `ops-deployment.yaml` has no conditional volume mount or
 cert-manager-issued Certificate for the ops listener.
 
-### - [ ] F-17.1.10 — 10 — `lenny-backup-postgres` and `lenny-backup-minio` Secrets are not rendered [Medium] — OPEN
+**Resolution:** New `ops-tls.yaml` renders a `cert-manager.io/v1`
+Certificate issuing the `lenny-ops-tls` Secret when
+`ops.tls.internalEnabled` and `ops.tls.certManager.enabled` are both
+true. New `ops.tls` values block carries `internalEnabled`,
+`certSecretName` (default `lenny-ops-tls`), `certManager.issuerRef`,
+and `dnsNames` (defaulting to the `lenny-ops` Service FQDN forms). The
+chart renders only the Certificate, leaving cert-manager to produce the
+Secret per the spec; when cert-manager is absent the operator supplies
+the Secret out of band. A missing `issuerRef.name` fails the render.
+F-17.1.9.
+
+### - [x] F-17.1.10 — 10 — `lenny-backup-postgres` and `lenny-backup-minio` Secrets are not rendered [Medium] — CLOSED
 
 Spec row 21 also enumerates `lenny-backup-postgres` and
 `lenny-backup-minio` as chart-rendered Secrets carrying the
@@ -29052,6 +29081,16 @@ read-write DSNs, not a backup-scoped credential pair. Pairs with
 F-17.1-05 (no `lenny-backup-sa`, no backup Jobs): there is currently
 nothing in the chart that authenticates to Postgres or to MinIO with
 backup-scope credentials.
+
+**Resolution:** New `backup-secrets.yaml` renders the
+`lenny-backup-postgres` Secret (when `backups.postgres.dsn` is set) and
+the `lenny-backup-minio` Secret (when both `backups.minio.accessKey`
+and `backups.minio.secretKey` are set), mirroring the conditional
+rendering of `lenny-datastore-conn`. New credential sub-blocks added to
+the `backups` values block. A stock render emits nothing so credentials
+managed out of band are unaffected. The `lenny-backup-sa` and backup
+Jobs that consume these Secrets remain tracked under F-17.1.5.
+F-17.1.10.
 
 ### - [ ] F-17.1.11 — 11 — `PoolManager` interface and `kubernetes-sigs/agent-sandbox` default implementation are absent [Medium] — OPEN
 

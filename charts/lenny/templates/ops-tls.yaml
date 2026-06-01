@@ -1,0 +1,47 @@
+{{- /*
+The lenny-ops-tls Secret (§17.1 row 21: "optionally lenny-ops-tls when
+ops.tls.internalEnabled: true. When cert-manager is present, a
+Certificate object renders the TLS secret automatically").
+
+When ops.tls.internalEnabled is true, the admin-API link between
+lenny-ops and the gateway carries platform-admin JWTs over TLS (§17 NET-070).
+The serving material lives in the Secret named by ops.tls.certSecretName
+(default lenny-ops-tls). When cert-manager is present
+(ops.tls.certManager.enabled), the chart renders a Certificate that
+issues that Secret automatically; otherwise the operator provisions the
+Secret out of band and the chart renders nothing here.
+*/ -}}
+{{- $tls := .Values.ops.tls | default dict }}
+{{- if and $tls.internalEnabled ($tls.certManager | default dict).enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $cm := $tls.certManager }}
+{{- $secret := $tls.certSecretName | default "lenny-ops-tls" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-ops-tls
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: ops
+spec:
+  secretName: {{ $secret | quote }}
+  commonName: lenny-ops.{{ $ns }}.svc
+  dnsNames:
+    {{- if $tls.dnsNames }}
+    {{- toYaml $tls.dnsNames | nindent 4 }}
+    {{- else }}
+    - lenny-ops.{{ $ns }}.svc
+    - lenny-ops.{{ $ns }}.svc.cluster.local
+    {{- end }}
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ required "ops.tls.certManager.issuerRef.name is required when ops.tls.certManager.enabled is true (§17.1 row 21)" $cm.issuerRef.name | quote }}
+    kind: {{ $cm.issuerRef.kind | default "ClusterIssuer" }}
+    group: {{ $cm.issuerRef.group | default "cert-manager.io" }}
+{{- end }}
