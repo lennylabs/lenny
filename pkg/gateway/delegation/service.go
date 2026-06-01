@@ -306,6 +306,15 @@ type Service struct {
 	// caps exp, and runs the §13.3 actor-token freshness check. Nil
 	// skips the exchange leg. F-8.1.2 / F-8.2.7.
 	tokenMinter ChildTokenMinter
+	// maxActiveChildrenPerUser is the §11.1 line 9 per-user
+	// active-delegated-children admission cap: the maximum count of live
+	// (non-terminal) delegated children a single user may hold across all
+	// their sessions and trees. The per-session breadth is bounded by the
+	// §8.2 lease/treebudget axes; this scope bounds the aggregate a user
+	// can spread across many sessions. Zero or less leaves the scope
+	// unlimited. Operator-tunable via the gateway Helm value
+	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
+	maxActiveChildrenPerUser int
 }
 
 // Options configures a Service.
@@ -419,6 +428,15 @@ type Options struct {
 	// exchange leg, leaving the child without a parent-derived token
 	// (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
 	ChildTokenMinter ChildTokenMinter
+
+	// MaxActiveChildrenPerUser is the §11.1 line 9 per-user
+	// active-delegated-children admission cap. Before reserving tree
+	// budget, Delegate counts the owning user's live (non-terminal)
+	// delegated children across all their sessions; a count at or above
+	// this cap rejects with ErrUserChildrenExhausted. Zero or less leaves
+	// the scope unlimited. Operator-tunable via the gateway Helm value
+	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
+	MaxActiveChildrenPerUser int
 }
 
 // NewService returns a delegation Service.
@@ -464,6 +482,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
 		tokenMinter:                  opts.ChildTokenMinter,
+		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
 	}
 }
 
@@ -484,6 +503,13 @@ var (
 	// userless child would silently downgrade every one of those
 	// invariants for the entire subtree.
 	ErrParentNoUser = errors.New("delegation: parent session has no authenticated user identity")
+
+	// ErrUserChildrenExhausted — the owning user already holds the §11.1
+	// line 9 maximum count of live (non-terminal) delegated children
+	// across all their sessions. The admission is rejected before any
+	// tree budget is reserved. The §8.5 handler maps it to QUOTA_EXCEEDED.
+	// spec: §11.1 line 9 (Active delegated children — per-user). F-11.1.4.
+	ErrUserChildrenExhausted = errors.New("delegation: per-user active-delegated-children limit reached (§11.1)")
 
 	// ErrTargetNotAgent — the delegation target resolves to a
 	// `type: mcp` runtime. spec: §8.2 line 50 mandates `lenny/
@@ -833,6 +859,28 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	if rootSessionID == "" {
 		rootSessionID = parent.ID
 	}
+	// §11.1 line 9: the per-user active-delegated-children admission cap.
+	// The per-session breadth is bounded by the §8.2 lease/treebudget
+	// axes reserved below; this scope bounds the aggregate count of live
+	// children a single user can spread across all their sessions and
+	// trees. Counted and rejected before any tree budget is reserved so an
+	// over-limit delegation consumes no §12.4 counter state. The owning
+	// user is the child's effective user_id (req override, else the
+	// parent's, which §8.2 line 58 guarantees is non-empty). F-11.1.4.
+	if s.maxActiveChildrenPerUser > 0 {
+		owner := req.UserID
+		if owner == "" {
+			owner = parent.UserID
+		}
+		active, err := s.store.CountActiveDelegatedChildrenByUser(ctx, tenantID, owner)
+		if err != nil {
+			return Result{}, err
+		}
+		if active >= s.maxActiveChildrenPerUser {
+			return Result{}, ErrUserChildrenExhausted
+		}
+	}
+
 	// §8.2 lines 57, 127 / §12.4 line 213: gate the admission on the
 	// Redis-backed per-tree budget counters. Unlike the static
 	// ValidateChildSlice ceiling above (which only proves the child's

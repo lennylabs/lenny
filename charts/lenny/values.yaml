@@ -1287,6 +1287,22 @@ gateway:
     maxConcurrentPerSession: 0
     maxConcurrentGlobal: 0
     maxBytesPerSession: 0
+  # concurrentSessions caps the §11.1 line 8 concurrent-session admission
+  # scopes — the count of live (non-terminal) sessions admitted at
+  # POST /v1/sessions. The per-tenant scope is enforced separately
+  # against the tenant record (§11.2 MaxConcurrentSessions). Each scope is
+  # unlimited when its value is 0 or omitted, so the default posture is
+  # unchanged until an operator opts in.
+  #   global — gateway-wide ceiling across every tenant.
+  #   perUser — cap on the live sessions a single user holds in their
+  #     tenant; excess creates get 429 QUOTA_EXCEEDED.
+  #   perRuntime — cap on the live sessions targeting one runtime in a
+  #     tenant; excess creates get 429 QUOTA_EXCEEDED.
+  # F-11.1.3.
+  concurrentSessions:
+    global: 0
+    perUser: 0
+    perRuntime: 0
   # streamCeiling is the §4.1 / §16.5 per-replica streaming-connection
   # ceiling read by the GatewayActiveStreamsHigh alert via
   # scalar(lenny_gateway_stream_ceiling). When unset the chart falls
@@ -1488,6 +1504,16 @@ delegation:
   # §16.5 OrphanTasksPerTenantHigh alert fires above 80% of this value.
   # Override via LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT.
   maxOrphanTasksPerTenant: 100
+  # maxActiveChildrenPerUser is the §11.1 line 9 per-user
+  # active-delegated-children admission cap: the maximum count of live
+  # (non-terminal) delegated children a single user may hold across all
+  # their sessions and trees. The per-session breadth is bounded by the
+  # §8.2 lease/treebudget axes; this scope bounds the aggregate a user can
+  # spread across many sessions. Zero or omitted leaves the scope
+  # unlimited, so the default posture is unchanged until an operator opts
+  # in. Override via LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER.
+  # F-11.1.4.
+  maxActiveChildrenPerUser: 0
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:

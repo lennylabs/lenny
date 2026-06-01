@@ -2111,6 +2111,17 @@ func Register(srv *mcp.Server, deps Deps) {
 					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_NO_USER",
 						fmt.Sprintf("DELEGATION_PARENT_NO_USER: %s", err.Error()), nil)
 				}
+				// §11.1 line 9: the owning user already holds the maximum
+				// count of live delegated children across all their
+				// sessions. Surface the canonical QUOTA_EXCEEDED (the same
+				// code the §11.1 concurrent-session caps return) carrying
+				// the breached scope so the caller distinguishes a per-user
+				// admission cap from the per-tree BUDGET_EXHAUSTED. F-11.1.4.
+				if errors.Is(err, delegation.ErrUserChildrenExhausted) {
+					return mcp.ToolResult{}, mcp.NewToolError("QUOTA_EXCEEDED",
+						err.Error(),
+						map[string]any{"scope": "user", "control": "active_delegated_children"})
+				}
 				// §8.4 line 521: an `approvalMode: "deny"` lease is
 				// the platform-provided mechanism for an operator to opt
 				// a lease out of delegation entirely. spec: §15.2.1 —

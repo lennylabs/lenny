@@ -346,6 +346,15 @@ func main() {
 		"§11.1 line 7 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
 	rlPerPoolPerMin := flag.Int("rate-limit-per-pool-per-min", 0,
 		"§11.1 line 7 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
+	maxConcSessGlobal := flag.Int("max-concurrent-sessions-global",
+		envInt("LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL", 0),
+		"§11.1 line 8 global concurrent-session admission cap (live non-terminal sessions across every tenant). Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
+	maxConcSessPerUser := flag.Int("max-concurrent-sessions-per-user",
+		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_USER", 0),
+		"§11.1 line 8 per-user concurrent-session admission cap (live non-terminal sessions a single user holds in their tenant). Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
+	maxConcSessPerRuntime := flag.Int("max-concurrent-sessions-per-runtime",
+		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME", 0),
+		"§11.1 line 8 per-runtime concurrent-session admission cap (live non-terminal sessions targeting a single runtime in a tenant). Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
 	evalRLPerSessionPerMin := flag.Int("eval-rate-limit-per-session-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
 		"§10.7 line 938 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
@@ -411,6 +420,9 @@ func main() {
 		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
 	delegationDefaultMaxDepth := flag.Int("delegation-default-max-depth", envInt("LENNY_DELEGATION_DEFAULT_MAX_DEPTH", delegation.DefaultMaxDepth),
 		"§8.2.bis line 89 Helm fallback for delegationLease.maxDepth (gateway.delegation.defaultMaxDepth). Every effective delegation lease MUST carry a positive integer maxDepth; this value is consulted last in the precedence chain (client → preset → runtime default → policy ceiling → Helm fallback), so a delegation request that omits maxDepth still receives a bounded chain. Default 10. Override via LENNY_DELEGATION_DEFAULT_MAX_DEPTH.")
+	delegationMaxActiveChildrenPerUser := flag.Int("delegation-max-active-children-per-user",
+		envInt("LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER", 0),
+		"§11.1 line 9 per-user active-delegated-children admission cap: the maximum count of live (non-terminal) delegated children a single user may hold across all their sessions and trees (the per-session breadth is bounded by the §8.2 lease/treebudget axes). Zero disables the per-user scope. Override via LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER. F-11.1.4.")
 	gatewayAllowSelfRecursion := flag.Bool("gateway-allow-self-recursion", envFlag("LENNY_GATEWAY_ALLOW_SELF_RECURSION"),
 		"§8.2 LayerPlatform input to the cycle-detection three-layer AND gate (Helm value gateway.allowSelfRecursion). A self-recursive delegation hop (same runtime+pool tuple appears earlier in the lineage) is admitted under mode=enforce iff this flag, the resolved Runtime.allowSelfRecursion, and the resolved DelegationPolicy.allowSelfRecursion are all true. Default false. Override via LENNY_GATEWAY_ALLOW_SELF_RECURSION.")
 	interceptorWeakeningCooldownSeconds := flag.Int("interceptor-weakening-cooldown-seconds",
@@ -2263,6 +2275,12 @@ func main() {
 		PerRuntimePerMinute:       *rlPerRuntimePerMin,
 		PerPoolPerMinute:          *rlPerPoolPerMin,
 		RateLimitMetrics:          gwMetrics,
+		// spec: §11.1 line 8 — global, per-user, and per-runtime
+		// concurrent-session admission caps (live non-terminal session
+		// counts). Zero leaves a scope unlimited. F-11.1.3.
+		MaxConcurrentSessionsGlobal:     *maxConcSessGlobal,
+		MaxConcurrentSessionsPerUser:    *maxConcSessPerUser,
+		MaxConcurrentSessionsPerRuntime: *maxConcSessPerRuntime,
 		// §10.7 line 938 — the eval-submission rate limit shares the same
 		// §11.1 per-minute counter (Redis-backed across replicas) keyed by
 		// session_id and tenant_id. F-10.7.4 / F-11.2.19.
@@ -2545,6 +2563,9 @@ func main() {
 		ExportMaterializer: exportMaterializer,
 		TreeBudgetReserver: treeBudgetReserver,
 		ChildTokenMinter:   childTokenMinter,
+		// §11.1 line 9 — per-user active-delegated-children admission cap.
+		// Zero leaves the scope unlimited. F-11.1.4.
+		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
 		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.

@@ -727,6 +727,42 @@ type Store interface {
 	// spec: §11.2 (per-tenant concurrent-session quota with hard
 	// rejection).
 	CountActiveSessions(ctx context.Context, tenantID string) (int, error)
+
+	// CountActiveSessionsByUser returns the number of live (non-terminal)
+	// sessions owned by userID within tenantID. It backs the §11.1
+	// per-user concurrent-session admission limit so a single user cannot
+	// monopolize the tenant's concurrent-session capacity. An empty
+	// tenant or user, or a user with no live sessions, returns (0, nil).
+	// spec: §11.1 line 8 (Concurrency limits — per-user).
+	CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// CountActiveSessionsByRuntime returns the number of live
+	// (non-terminal) sessions targeting runtimeRef within tenantID. It
+	// backs the §11.1 per-runtime concurrent-session admission limit so a
+	// single runtime cannot be flooded with concurrent sessions. An empty
+	// tenant or runtime, or a runtime with no live sessions, returns
+	// (0, nil).
+	// spec: §11.1 line 8 (Concurrency limits — per-runtime).
+	CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error)
+
+	// CountActiveSessionsGlobal returns the number of live (non-terminal)
+	// sessions across every tenant. It backs the §11.1 global
+	// concurrent-session admission limit (the gateway-wide ceiling). The
+	// count is cross-tenant by design; the global cap bounds total live
+	// sessions regardless of tenant attribution.
+	// spec: §11.1 line 8 (Concurrency limits — global).
+	CountActiveSessionsGlobal(ctx context.Context) (int, error)
+
+	// CountActiveDelegatedChildrenByUser returns the number of live
+	// (non-terminal) delegated child sessions owned by userID within
+	// tenantID — sessions carrying a non-empty ParentSessionID. It backs
+	// the §11.1 per-user active-delegated-children admission limit, which
+	// bounds the in-flight delegation breadth a single user holds across
+	// all their sessions and trees (the per-session bound is the §8.2
+	// lease/treebudget machinery). A user with no in-flight children
+	// returns (0, nil).
+	// spec: §11.1 line 9 (Active delegated children — per-user).
+	CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 // ListFilter narrows the List result. Empty fields mean "no filter".

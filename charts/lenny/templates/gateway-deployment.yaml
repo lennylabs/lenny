@@ -576,6 +576,24 @@ spec:
               value: {{ .maxBytesPerSession | quote }}
             {{- end }}
             {{- end }}
+            # §11.1 line 8 — global, per-user, and per-runtime
+            # concurrent-session admission caps (live non-terminal session
+            # counts). The per-tenant scope is enforced separately against
+            # the tenant record. Zero leaves a scope unlimited. F-11.1.3.
+            {{- with .Values.gateway.concurrentSessions }}
+            {{- if gt (int .global) 0 }}
+            - name: LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL
+              value: {{ .global | quote }}
+            {{- end }}
+            {{- if gt (int .perUser) 0 }}
+            - name: LENNY_MAX_CONCURRENT_SESSIONS_PER_USER
+              value: {{ .perUser | quote }}
+            {{- end }}
+            {{- if gt (int .perRuntime) 0 }}
+            - name: LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME
+              value: {{ .perRuntime | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.delegation }}
             # §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
             # whole-tree recovery deadlines feed recovery.Config. F-8.10.6.
@@ -598,6 +616,14 @@ spec:
             {{- if hasKey . "maxOrphanTasksPerTenant" }}
             - name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT
               value: {{ .maxOrphanTasksPerTenant | quote }}
+            {{- end }}
+            # §11.1 line 9 — per-user active-delegated-children admission
+            # cap (live children across all of a user's sessions/trees).
+            # Zero (or omitted) leaves the scope unlimited and renders no
+            # env var. F-11.1.4.
+            {{- if gt (int (dig "maxActiveChildrenPerUser" 0 .)) 0 }}
+            - name: LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER
+              value: {{ .maxActiveChildrenPerUser | quote }}
             {{- end }}
             {{- end }}
             {{- with .Values.gc }}

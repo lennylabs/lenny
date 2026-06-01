@@ -449,6 +449,18 @@ func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (
 func (c *countingStore) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
 	return c.inner.CountActiveSessions(ctx, tenantID)
 }
+func (c *countingStore) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	return c.inner.CountActiveSessionsByUser(ctx, tenantID, userID)
+}
+func (c *countingStore) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
+	return c.inner.CountActiveSessionsByRuntime(ctx, tenantID, runtimeRef)
+}
+func (c *countingStore) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
+	return c.inner.CountActiveSessionsGlobal(ctx)
+}
+func (c *countingStore) CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	return c.inner.CountActiveDelegatedChildrenByUser(ctx, tenantID, userID)
+}
 
 // spec: §8.2 line 57 — lineage walk uses ParentSessionID from parent
 // up to root, defended against cycles by a visited set. F-8.2.16 —

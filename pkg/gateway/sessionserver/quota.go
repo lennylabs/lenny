@@ -56,6 +56,67 @@ func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, ten
 	return true
 }
 
+// requireConcurrencyLimits enforces the §11.1 line 8 concurrent-session
+// admission caps for the global, per-user, and per-runtime scopes (the
+// per-tenant scope is enforced by requireSessionQuota against the tenant
+// record, and the per-team scope is a §14 user-defined session label
+// with no admin-settable limit surface in the spec). Each scope is
+// checked only when its cap is configured (> 0). The scopes are
+// evaluated narrowest-first (per-user, per-runtime, global) so the
+// rejection names the tightest binding limit.
+//
+// A non-terminal session at or above a scope's cap rejects the create
+// with 429 QUOTA_EXCEEDED — the same code and status the per-tenant
+// concurrent-session cap returns — carrying the breached scope, its
+// limit, and the live count. A counter error fails the request closed
+// with 500 (an unenforceable admission cap must not silently admit).
+//
+// requireConcurrencyLimits returns true when the create may proceed;
+// when it returns false it has already written the response.
+//
+// spec: §11.1 line 8 (Concurrency limits — global, per-user,
+// per-runtime). F-11.1.3.
+func (s *Server) requireConcurrencyLimits(w http.ResponseWriter, r *http.Request, tenantID, userID, runtimeRef string) bool {
+	if s.maxConcSessPerUser > 0 && userID != "" {
+		active, err := s.store.CountActiveSessionsByUser(r.Context(), tenantID, userID)
+		if !s.admitConcurrencyScope(w, "user", s.maxConcSessPerUser, active, err) {
+			return false
+		}
+	}
+	if s.maxConcSessPerRuntime > 0 && runtimeRef != "" {
+		active, err := s.store.CountActiveSessionsByRuntime(r.Context(), tenantID, runtimeRef)
+		if !s.admitConcurrencyScope(w, "runtime", s.maxConcSessPerRuntime, active, err) {
+			return false
+		}
+	}
+	if s.maxConcSessGlobal > 0 {
+		active, err := s.store.CountActiveSessionsGlobal(r.Context())
+		if !s.admitConcurrencyScope(w, "global", s.maxConcSessGlobal, active, err) {
+			return false
+		}
+	}
+	return true
+}
+
+// admitConcurrencyScope applies one §11.1 concurrent-session scope
+// decision. A counter error fails closed with 500; an active count at
+// or above the cap rejects with 429 QUOTA_EXCEEDED. It returns true when
+// the scope admits the create. spec: §11.1 line 8. F-11.1.3.
+func (s *Server) admitConcurrencyScope(w http.ResponseWriter, scope string, limit, active int, err error) bool {
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"concurrent-session limit check failed: "+err.Error(), nil)
+		return false
+	}
+	if active >= limit {
+		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
+			"the "+scope+" concurrent-session limit was reached",
+			map[string]any{"scope": scope, "limit": limit, "active": active})
+		return false
+	}
+	return true
+}
+
 // requirePolicyChain runs the §4.8 PostAuth interceptor chain on the
 // session-creation path. The built-in QuotaEvaluator (priority 200)
 // enforces the §11.2 hierarchical token budget here; any registered

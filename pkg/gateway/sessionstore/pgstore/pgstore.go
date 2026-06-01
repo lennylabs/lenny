@@ -586,6 +586,99 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 	return count, nil
 }
 
+// CountActiveSessionsByUser implements Store — the §11.1 per-user
+// concurrent-session admission count. It counts the user's live
+// (non-terminal) sessions with a COUNT query, scoped to the tenant via
+// RLS. The non-terminal predicate matches session.TerminalStates()
+// verbatim. spec: §11.1 line 8 (Concurrency limits — per-user).
+func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, nil
+	}
+	var count int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE tenant_id = $1
+			     AND user_id = $2
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			tenantID, userID).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active sessions for user %s/%s: %w", tenantID, userID, err)
+	}
+	return count, nil
+}
+
+// CountActiveSessionsByRuntime implements Store — the §11.1 per-runtime
+// concurrent-session admission count. It counts live (non-terminal)
+// sessions targeting runtimeRef within the tenant. The non-terminal
+// predicate matches session.TerminalStates() verbatim.
+// spec: §11.1 line 8 (Concurrency limits — per-runtime).
+func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
+	if tenantID == "" || runtimeRef == "" {
+		return 0, nil
+	}
+	var count int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE tenant_id = $1
+			     AND runtime_ref = $2
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			tenantID, runtimeRef).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active sessions for runtime %s/%s: %w", tenantID, runtimeRef, err)
+	}
+	return count, nil
+}
+
+// CountActiveSessionsGlobal implements Store — the §11.1 global
+// concurrent-session admission count. It counts every live
+// (non-terminal) session across all tenants (InAllTenants) so the
+// gateway-wide ceiling bounds total live sessions. The non-terminal
+// predicate matches session.TerminalStates() verbatim.
+// spec: §11.1 line 8 (Concurrency limits — global).
+func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
+	var count int
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE state NOT IN ('completed', 'failed', 'cancelled', 'expired')`).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active sessions global: %w", err)
+	}
+	return count, nil
+}
+
+// CountActiveDelegatedChildrenByUser implements Store — the §11.1
+// per-user active-delegated-children admission count. It counts live
+// (non-terminal) sessions owned by userID within the tenant that carry
+// a non-empty parent_session_id (delegated children). The non-terminal
+// predicate matches session.TerminalStates() verbatim.
+// spec: §11.1 line 9 (Active delegated children — per-user).
+func (s *Store) CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, nil
+	}
+	var count int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE tenant_id = $1
+			     AND user_id = $2
+			     AND parent_session_id IS NOT NULL
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			tenantID, userID).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active delegated children for user %s/%s: %w", tenantID, userID, err)
+	}
+	return count, nil
+}
+
 // scanSession reads one row in selectList order into a Session.
 func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	var (

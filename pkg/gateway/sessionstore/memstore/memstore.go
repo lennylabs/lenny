@@ -269,6 +269,77 @@ func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, er
 	return count, nil
 }
 
+// CountActiveSessionsByUser implements the §11.1 per-user
+// concurrent-session admission count: live (non-terminal) sessions
+// owned by userID within tenantID.
+func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if row.TenantID == tenantID && row.UserID == userID && !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CountActiveSessionsByRuntime implements the §11.1 per-runtime
+// concurrent-session admission count: live (non-terminal) sessions
+// targeting runtimeRef within tenantID.
+func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtimeRef string) (int, error) {
+	if tenantID == "" || runtimeRef == "" {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if row.TenantID == tenantID && row.RuntimeRef == runtimeRef && !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CountActiveSessionsGlobal implements the §11.1 global
+// concurrent-session admission count: live (non-terminal) sessions
+// across every tenant.
+func (s *Store) CountActiveSessionsGlobal(_ context.Context) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CountActiveDelegatedChildrenByUser implements the §11.1 per-user
+// active-delegated-children admission count: live (non-terminal)
+// sessions owned by userID within tenantID that carry a non-empty
+// ParentSessionID (i.e. they were spawned via delegation).
+func (s *Store) CountActiveDelegatedChildrenByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if row.TenantID == tenantID && row.UserID == userID &&
+			row.ParentSessionID != "" && !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
 // interface. Removes every session belonging to tenantID.
 func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) {

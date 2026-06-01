@@ -14974,7 +14974,7 @@ sink are wired in `cmd/lenny-gateway/main.go`. Tier-1:
 reject/isolation/fail-open/nil-counter/empty-runtime-skip, per-pool
 reject via a fake-client-resolved pool, per-pool skip without a binder).
 
-### - [ ] F-11.1.3 — 03  Concurrency limits cover only per-tenant; per-user, per-team, per-runtime, and the global scope unimplemented [High] — OPEN
+### - [x] F-11.1.3 — 03  Concurrency limits cover only per-tenant; per-user, per-team, per-runtime, and the global scope unimplemented [High] — CLOSED
 
 **Spec:** §11.1 line 8 — "Concurrency limits (active sessions) | Global,
 per-user, per-team, per-runtime". The four enforcement scopes apply to
@@ -15008,7 +15008,27 @@ brake; and the global limit (gateway-wide concurrent sessions) is
 absent. Note: §10.1 wires `lenny_gateway_max_sessions_per_replica` as
 an HPA scaling signal, not as an admission gate.
 
-### - [ ] F-11.1.4 — 04  Active delegated children are bounded per-session but not per-user [High] — OPEN
+**Resolution:** The session store gained `CountActiveSessionsByUser`,
+`CountActiveSessionsByRuntime`, and `CountActiveSessionsGlobal` (memstore
++ pgstore, the latter via `InTx`/`InAllTenants` COUNT with the
+`session.TerminalStates()` predicate). New `requireConcurrencyLimits`
+runs on the §15.1 create path (before the rate-limit and policy gates so
+an over-limit create reserves no budget), enforcing the global, per-user,
+and per-runtime scopes narrowest-first; a scope at or above its cap
+rejects with 429 `QUOTA_EXCEEDED` carrying `{scope, limit, active}`, and a
+counter error fails closed with 500. The three caps are operator-tunable
+gateway flags/env (`LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL` / `_PER_USER` /
+`_PER_RUNTIME`) wired from Helm `gateway.concurrentSessions.*`; zero
+leaves a scope unlimited so the default posture is unchanged. The
+per-tenant scope is the existing `requireSessionQuota`. The **per-team**
+scope is not implemented: the spec models "team" only as a §14
+user-defined session label (cost-attribution metadata), with no team
+registry and no admin-settable per-team limit surface anywhere in the
+spec, so a per-team admission cap would require a spec-level team-config
+addition (reported, not invented per the spec-is-source-of-truth rule).
+Resolved by this batch's commit.
+
+### - [x] F-11.1.4 — 04  Active delegated children are bounded per-session but not per-user [High] — CLOSED
 
 **Spec:** §11.1 line 9 — "Active delegated children | Per-session,
 per-user". The two scopes bound the in-flight delegation tree
@@ -15037,6 +15057,22 @@ faces no aggregate cap.
 unenforced. A user with many sessions can collectively saturate the
 gateway's delegation capacity even when each individual session stays
 within its per-session lease budget.
+
+**Resolution:** Added `sessionstore.CountActiveDelegatedChildrenByUser`
+(memstore + pgstore; counts non-terminal sessions with a non-empty
+`parent_session_id` owned by the user within the tenant). The §8.2
+`delegation.Service.Delegate` now gates on it before reserving any §12.4
+tree budget: when `maxActiveChildrenPerUser > 0` and the owning user's
+live-children count is at or above the cap, it rejects with the new
+`ErrUserChildrenExhausted` (no child row, no budget reserved). The §8.5
+`lenny/delegate_task` handler maps the error to `QUOTA_EXCEEDED` with
+`{scope: user, control: active_delegated_children}` so the caller
+distinguishes the per-user admission cap from the per-tree
+`BUDGET_EXHAUSTED`. The cap is operator-tunable
+(`LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER`, Helm
+`delegation.maxActiveChildrenPerUser`); zero leaves the scope unlimited.
+The per-session breadth remains the §8.2 lease/treebudget axes. Resolved
+by this batch's commit.
 
 ### - [x] F-11.1.5 — 05  Concurrent uploads are not bounded per-session or globally [Medium] — CLOSED
 

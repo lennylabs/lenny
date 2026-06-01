@@ -128,6 +128,66 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --lease-extension-auto-max-per-min=0
 
+  # spec: §11.1 line 8 / line 9 (F-11.1.3 / F-11.1.4) — the global,
+  # per-user, per-runtime concurrent-session caps and the per-user
+  # active-delegated-children cap render env vars only when configured > 0.
+  - it: renders the §11.1 concurrent-session and delegated-children admission caps when set
+    set:
+      gateway.concurrentSessions.global: 500
+      gateway.concurrentSessions.perUser: 20
+      gateway.concurrentSessions.perRuntime: 100
+      delegation.maxActiveChildrenPerUser: 15
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL
+            value: "500"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_PER_USER
+            value: "20"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME
+            value: "100"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER
+            value: "15"
+
+  - it: omits the §11.1 concurrent-session and delegated-children caps at the default zero
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL
+            value: "0"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_PER_USER
+            value: "0"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME
+            value: "0"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER
+            value: "0"
+
   # spec: §10.3 lines 316, 334 (NET-064) — the lenny-preflight Job reads
   # these annotations to enforce uniqueness across Lenny Deployments in
   # the same cluster; without them the collision check is a no-op.

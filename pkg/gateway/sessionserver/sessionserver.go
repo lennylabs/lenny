@@ -156,6 +156,15 @@ type Server struct {
 	perRuntimePerMin int
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
+	// maxConcSessGlobal / maxConcSessPerUser / maxConcSessPerRuntime are
+	// the §11.1 line 8 concurrent-session admission caps (live
+	// non-terminal session counts) for the global, per-user, and
+	// per-runtime scopes. The per-tenant scope is enforced separately by
+	// requireSessionQuota against the tenant record. A non-positive value
+	// leaves the corresponding scope unlimited. F-11.1.3.
+	maxConcSessGlobal     int
+	maxConcSessPerUser    int
+	maxConcSessPerRuntime int
 	// evalRL is the §10.7 eval-submission rate-limit counter (per-session
 	// and per-tenant). It shares the §11.1 Counter type with admissionRL;
 	// production wires the same Redis-backed instance. Nil disables eval
@@ -780,6 +789,29 @@ type Options struct {
 	// enforcing without observability. spec: §11.1 line 7. F-11.1.2.
 	RateLimitMetrics AdmissionRateLimitMetrics
 
+	// MaxConcurrentSessionsGlobal caps the gateway-wide count of live
+	// (non-terminal) sessions across every tenant. Zero or less leaves
+	// the global concurrent-session scope unlimited. Operator-tunable via
+	// the gateway Helm value `gateway.maxConcurrentSessionsGlobal`.
+	// spec: §11.1 line 8 (Concurrency limits — global). F-11.1.3.
+	MaxConcurrentSessionsGlobal int
+
+	// MaxConcurrentSessionsPerUser caps the count of live (non-terminal)
+	// sessions a single user may hold within their tenant, so one user
+	// cannot monopolize the tenant's concurrent-session capacity. Zero or
+	// less leaves the per-user scope unlimited. Operator-tunable via
+	// `gateway.maxConcurrentSessionsPerUser`.
+	// spec: §11.1 line 8 (Concurrency limits — per-user). F-11.1.3.
+	MaxConcurrentSessionsPerUser int
+
+	// MaxConcurrentSessionsPerRuntime caps the count of live
+	// (non-terminal) sessions targeting a single runtime within a tenant,
+	// so one runtime cannot be flooded with concurrent sessions. Zero or
+	// less leaves the per-runtime scope unlimited. Operator-tunable via
+	// `gateway.maxConcurrentSessionsPerRuntime`.
+	// spec: §11.1 line 8 (Concurrency limits — per-runtime). F-11.1.3.
+	MaxConcurrentSessionsPerRuntime int
+
 	// EvalRateLimitCounter is the §10.7 per-minute counter for the
 	// eval-submission rate limit (per-session and per-tenant scopes on
 	// POST /v1/sessions/{id}/eval). Nil disables eval rate limiting.
@@ -1106,6 +1138,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		perRuntimePerMin:         opts.PerRuntimePerMinute,
 		perPoolPerMin:            opts.PerPoolPerMinute,
 		rlMetrics:                opts.RateLimitMetrics,
+		maxConcSessGlobal:        opts.MaxConcurrentSessionsGlobal,
+		maxConcSessPerUser:       opts.MaxConcurrentSessionsPerUser,
+		maxConcSessPerRuntime:    opts.MaxConcurrentSessionsPerRuntime,
 		evalRL:                   opts.EvalRateLimitCounter,
 		evalPerSessionPerMin:     resolveEvalLimit(opts.EvalPerSessionPerMinute, DefaultEvalPerSessionPerMin),
 		evalPerTenantPerMin:      resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
@@ -1524,6 +1559,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	}
 	tenantID := s.resolveTenant(r)
 	if !s.requireSessionQuota(w, r, tenantID) {
+		return
+	}
+	// spec: §11.1 line 8 — global, per-user, and per-runtime
+	// concurrent-session admission caps. Enforced before the rate-limit
+	// and policy gates so an over-limit create consumes no rate budget
+	// and reserves no token budget. The caller's subject is the per-user
+	// scope key; an unauthenticated principal leaves the per-user scope
+	// inert. F-11.1.3.
+	concUser := ""
+	if p, ok := getPrincipal(r); ok {
+		concUser = p.Subject
+	}
+	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
 		return
 	}
 	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
