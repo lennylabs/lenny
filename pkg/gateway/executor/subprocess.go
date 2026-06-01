@@ -87,7 +87,7 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 			SchemaVersion: 1,
 			Type:          "message",
 			ID:            newMessageID(),
-			From:          fromBlock{Kind: "client", ID: "client_gateway"},
+			From:          resolveFromBlock(m),
 			Input:         []wireOutputPart{{Type: "text", Inline: m.Content}},
 		}
 		line, err := json.Marshal(env)
@@ -307,6 +307,20 @@ type messageEnvelope struct {
 type fromBlock struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
+}
+
+// resolveFromBlock returns the §15.4.1 from-object for an outbound
+// message. A message carrying an explicit From (an inter-session
+// lenny/send_message whose sender the gateway authenticated) is stamped
+// verbatim; a message with no attribution defaults to the gateway-client
+// identity used for top-level client turns. The runtime never supplies
+// `from`; the gateway is authoritative. spec: §15.4.1 lines 1696-1707.
+// F-13.5.11.
+func resolveFromBlock(m Message) fromBlock {
+	if m.From.Kind != "" {
+		return fromBlock{Kind: m.From.Kind, ID: m.From.ID}
+	}
+	return fromBlock{Kind: "client", ID: "client_gateway"}
 }
 
 type wireOutputPart struct {

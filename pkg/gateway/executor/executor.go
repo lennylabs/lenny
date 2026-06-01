@@ -44,6 +44,30 @@ type Message struct {
 	// Content is the message text. Production extends this with
 	// multi-part content (image, file ref) per §15.4.1 OutputPart.
 	Content string
+
+	// From is the §15.4.1 from-object the gateway stamps onto the
+	// delivered envelope. The zero value defers to the executor's
+	// default gateway-client identity (a top-level client turn). An
+	// inter-session lenny/send_message sets it to the authenticated
+	// sending session so the target can attribute the message and the
+	// runtime never has to trust a caller-supplied origin. F-13.5.11.
+	From MessageFrom
+}
+
+// MessageFrom is the §15.4.1 MessageEnvelope `from` attribution the
+// gateway injects before delivering a message to the runtime. Kind is
+// the closed enum (`client`, `agent`, `system`, `external`); ID is the
+// kind-specific identifier (for an inter-session message, the sending
+// session id under kind `agent`). The zero value carries no attribution
+// and the executor stamps its default gateway-client identity.
+//
+// spec: §15.4.1 lines 1696-1707 — `from` is adapter-injected and the
+// runtime never supplies it; §13.5 mitigation 6 — `from` is always set
+// by the gateway from the calling session's authenticated identity.
+// F-13.5.11.
+type MessageFrom struct {
+	Kind string
+	ID   string
 }
 
 // OutputPart is the §15.4.1 outbound response envelope.

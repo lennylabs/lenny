@@ -59,7 +59,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			SchemaVersion: 1,
 			Type:          "message",
 			ID:            newMessageID(),
-			From:          fromBlock{Kind: "client", ID: "client_gateway"},
+			From:          resolveFromBlock(m),
 			Input:         []wireOutputPart{{Type: "text", Inline: m.Content}},
 		}
 		line, err := json.Marshal(env)

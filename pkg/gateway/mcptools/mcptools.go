@@ -644,8 +644,14 @@ func Register(srv *mcp.Server, deps Deps) {
 				messageBody = string(res.ModifiedContent)
 			}
 		}
+		// spec: §15.4.1 lines 1696-1707 / §13.5 mitigation 6 — the gateway
+		// stamps the delivered envelope's `from` from the authenticated
+		// sending session so the target can attribute the message and the
+		// runtime cannot forge an origin. An unattributed send (no principal
+		// session binding and no fromSessionId) defers to the executor's
+		// default gateway-client identity. F-13.5.11.
 		out, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
-			{Role: "user", Content: messageBody},
+			{Role: "user", Content: messageBody, From: senderFrom(senderID)},
 		})
 		if err != nil {
 			return mcp.ToolResult{}, err
@@ -2312,6 +2318,20 @@ type taskHandle struct {
 	// Out-of-spec but stable — useful for the caller to surface the tree
 	// position without re-walking the lineage.
 	Depth int `json:"depth"`
+}
+
+// senderFrom builds the §15.4.1 from-object for a delivered
+// lenny/send_message. An authenticated inter-session sender is attributed
+// as kind `agent` with its session id; an unattributed send (no principal
+// session binding and no fromSessionId) returns the zero value so the
+// executor stamps its default gateway-client identity. The gateway always
+// sets `from` — a caller cannot. spec: §15.4.1 lines 1696-1707; §13.5
+// mitigation 6. F-13.5.11.
+func senderFrom(senderID string) executor.MessageFrom {
+	if senderID == "" {
+		return executor.MessageFrom{}
+	}
+	return executor.MessageFrom{Kind: "agent", ID: senderID}
 }
 
 // recordChainRejection emits the §16.7 interceptor.rejected audit row
