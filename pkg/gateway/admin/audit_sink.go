@@ -109,6 +109,14 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	if operationID == "" {
 		operationID = corr.From(ctx).OperationID
 	}
+	// spec: §15.1 line 938 — X-Lenny-Agent-Name is propagated to audit
+	// records. Prefer the value the emitter set; fall back to the
+	// request context so direct EmitAdminEvent callers still carry it.
+	// F-15.1.10.
+	agentName := event.AgentName
+	if agentName == "" {
+		agentName = corr.From(ctx).AgentName
+	}
 	callerKind := event.CallerKind
 	if callerKind == "" {
 		if p, ok := authmw.FromContext(ctx); ok {
@@ -123,6 +131,9 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	}
 	if operationID != "" {
 		fields["operation_id"] = operationID
+	}
+	if agentName != "" {
+		fields["agent_name"] = agentName
 	}
 	if callerKind != "" {
 		fields["caller_kind"] = callerKind

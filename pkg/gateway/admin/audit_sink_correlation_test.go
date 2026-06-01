@@ -120,6 +120,92 @@ func TestEmitAdminEventOmitsEmptyCorrelationFields_F11713(t *testing.T) {
 	}
 }
 
+// spec: §15.1 line 938 — X-Lenny-Agent-Name is propagated to audit
+// records. The explicit AgentName field lands in the payload. F-15.1.10.
+func TestEmitAdminEventCarriesAgentName_spec_15_1_938(t *testing.T) {
+	chains := audit.NewChainSet()
+	sink := admin.NewChainAuditSink(chains, nil)
+	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
+		Type:          "admin.tenant.created",
+		ActorTenantID: "acme",
+		AgentName:     "alice-remediation-bot",
+		At:            time.Unix(0, 0).UTC(),
+	})
+	m := firstPayload(t, chains, "acme")
+	if m["agent_name"] != "alice-remediation-bot" {
+		t.Errorf("agent_name = %v, want alice-remediation-bot", m["agent_name"])
+	}
+}
+
+// When the emitter leaves AgentName empty, EmitAdminEvent recovers it
+// from the X-Lenny-Agent-Name correlation context. F-15.1.10.
+func TestEmitAdminEventAgentNameFallsBackToContext_spec_15_1_938(t *testing.T) {
+	chains := audit.NewChainSet()
+	sink := admin.NewChainAuditSink(chains, nil)
+	ctx := corr.With(context.Background(), corr.Fields{AgentName: "agent-ctx"})
+	sink.EmitAdminEvent(ctx, admin.AuditEvent{
+		Type:          "admin.user.created",
+		ActorTenantID: "acme",
+		At:            time.Unix(0, 0).UTC(),
+	})
+	m := firstPayload(t, chains, "acme")
+	if m["agent_name"] != "agent-ctx" {
+		t.Errorf("agent_name = %v, want agent-ctx", m["agent_name"])
+	}
+}
+
+// agent_name is optional: absent on both event and context, the payload
+// omits the key. F-15.1.10.
+func TestEmitAdminEventOmitsEmptyAgentName_spec_15_1_938(t *testing.T) {
+	chains := audit.NewChainSet()
+	sink := admin.NewChainAuditSink(chains, nil)
+	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
+		Type:          "admin.tenant.created",
+		ActorTenantID: "acme",
+		At:            time.Unix(0, 0).UTC(),
+	})
+	m := firstPayload(t, chains, "acme")
+	if _, ok := m["agent_name"]; ok {
+		t.Errorf("agent_name should be omitted, got %v", m["agent_name"])
+	}
+}
+
+// End-to-end through the admin router: the X-Lenny-Agent-Name carried on
+// the correlation context lands on the committed hash-chain row alongside
+// operation_id. spec: §15.1 lines 937-938. F-15.1.10.
+func TestRouterEmitPopulatesAgentName_spec_15_1_938(t *testing.T) {
+	chains := audit.NewChainSet()
+	sink := admin.NewChainAuditSink(chains, nil)
+	store := tenantstore.NewMemory()
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
+		Audit: sink,
+	})
+
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", DisplayName: "Acme"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))
+	ctx := corr.With(req.Context(), corr.Fields{OperationID: "op-router", AgentName: "alice-agent"})
+	ctx = authmw.WithPrincipal(ctx, authmw.Principal{
+		Subject:    "admin@acme.com",
+		TenantID:   "platform",
+		CallerType: "human",
+		Roles:      []pkgauth.Role{pkgauth.RolePlatformAdmin},
+	})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req.WithContext(ctx))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	m := firstPayload(t, chains, "platform")
+	if m["agent_name"] != "alice-agent" {
+		t.Errorf("agent_name = %v, want alice-agent", m["agent_name"])
+	}
+	if m["operation_id"] != "op-router" {
+		t.Errorf("operation_id = %v, want op-router", m["operation_id"])
+	}
+}
+
 // End-to-end through the admin router: emit populates the AuditEvent
 // from the principal's caller_type and the correlation context, so the
 // committed hash-chain row carries both fields.

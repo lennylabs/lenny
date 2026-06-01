@@ -23,6 +23,12 @@
 // RateLimitDegraded alert reads and increments
 // lenny_rate_limit_counter_failure_total so an outage is observable
 // even before the alert's persistence window.
+//
+// Every admitted and rejected response also carries the §15.1 lines
+// 1131-1138 rate-limit triplet (X-RateLimit-Limit, X-RateLimit-
+// Remaining, X-RateLimit-Reset) for the binding scope so clients can
+// proactively respect the budget, and the middleware injects Retry-After
+// on any downstream 503 that did not set its own (F-15.1.7).
 package ratelimit
 
 import (
@@ -192,12 +198,25 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	now := m.clock()
 
+	// spec: §15.1 lines 1131-1138 — every REST response carries the
+	// rate-limit triplet, and 429/503 responses carry Retry-After.
+	// Wrap the writer so a downstream 503 (circuit breaker, dual-store
+	// outage, backend error) gets a Retry-After it would not otherwise
+	// set; handlers that set their own value keep it. The triplet itself
+	// is written onto the header map before the inner handler runs.
+	rw := &rateLimitRW{ResponseWriter: w, retryAfter: strconv.Itoa(retryAfterSeconds(now))}
+
 	// counterFailed tracks whether ANY scope had to fail-open this
 	// request. We defer the per-episode cap evaluation to the end so the
 	// metric/log side-effects fire on the very first error AND the cap
 	// applies even when only the per-user scope sees the error. spec:
 	// §11.3 line 222; §12.4 line 220. F-11.3.22.
 	counterFailed := false
+
+	// scopes accumulates the (limit, count) of every scope counted this
+	// request so the §15.1 triplet can report the binding scope (the one
+	// with the least headroom). spec: §15.1 lines 1131-1138. F-15.1.7.
+	var scopes []scopeUsage
 
 	if m.opts.GlobalPerMinute > 0 {
 		count, err := m.opts.Counter.Incr(r.Context(), "global", now)
@@ -206,8 +225,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			m.onCounterError("global", err, now)
 		} else {
 			m.onCounterSuccess()
+			scopes = append(scopes, scopeUsage{limit: m.opts.GlobalPerMinute, count: count})
 			if count > m.opts.GlobalPerMinute {
-				m.writeRateLimited(w, "global", m.opts.GlobalPerMinute, now)
+				m.writeRateLimited(rw, "global", m.opts.GlobalPerMinute, now)
 				return
 			}
 		}
@@ -221,8 +241,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				m.onCounterError("user", err, now)
 			} else {
 				m.onCounterSuccess()
+				scopes = append(scopes, scopeUsage{limit: m.opts.PerUserPerMinute, count: count})
 				if count > m.opts.PerUserPerMinute {
-					m.writeRateLimited(w, "user", m.opts.PerUserPerMinute, now)
+					m.writeRateLimited(rw, "user", m.opts.PerUserPerMinute, now)
 					return
 				}
 			}
@@ -240,8 +261,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				m.onCounterError("tenant", err, now)
 			} else {
 				m.onCounterSuccess()
+				scopes = append(scopes, scopeUsage{limit: m.opts.PerTenantPerMinute, count: count})
 				if count > m.opts.PerTenantPerMinute {
-					m.writeRateLimited(w, "tenant", m.opts.PerTenantPerMinute, now)
+					m.writeRateLimited(rw, "tenant", m.opts.PerTenantPerMinute, now)
 					return
 				}
 			}
@@ -255,12 +277,124 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// handler so the cap is measured against the request's arrival.
 	// F-11.3.22.
 	if counterFailed && m.failOpenEpisodeExpired(now) {
-		m.writeFailOpenExceeded(w, now)
+		m.writeFailOpenExceeded(rw, now)
 		return
 	}
 
-	m.inner.ServeHTTP(w, r)
+	// spec: §15.1 lines 1131-1138 — admitted requests carry the triplet
+	// for the binding scope so clients can proactively respect the
+	// budget. With no configured scope (limits all zero, or an
+	// unauthenticated request under only per-user/per-tenant caps) there
+	// is nothing to report and the headers are omitted. F-15.1.7.
+	if binding, ok := bindingScope(scopes); ok {
+		setRateLimitHeaders(rw.Header(), binding.limit, binding.remaining(), windowResetUnix(now))
+	}
+
+	m.inner.ServeHTTP(rw, r)
 }
+
+// scopeUsage is one rate-limit scope's configured limit and the
+// request's running count within the current window.
+type scopeUsage struct {
+	limit int
+	count int
+}
+
+// remaining is the requests left in the window for this scope, floored
+// at zero. spec: §15.1 line 1134 (X-RateLimit-Remaining). F-15.1.7.
+func (s scopeUsage) remaining() int {
+	if r := s.limit - s.count; r > 0 {
+		return r
+	}
+	return 0
+}
+
+// bindingScope returns the scope with the least remaining headroom —
+// the one a client is closest to exhausting and therefore the one the
+// §15.1 triplet reports. ok is false when no scope was counted.
+// spec: §15.1 lines 1131-1138. F-15.1.7.
+func bindingScope(scopes []scopeUsage) (scopeUsage, bool) {
+	if len(scopes) == 0 {
+		return scopeUsage{}, false
+	}
+	binding := scopes[0]
+	for _, s := range scopes[1:] {
+		if s.remaining() < binding.remaining() {
+			binding = s
+		}
+	}
+	return binding, true
+}
+
+// windowResetUnix is the UTC epoch second at which the current
+// fixed one-minute window resets — the next minute boundary. It mirrors
+// the Counter's `now.Unix()/60` window bucketing. spec: §15.1 line 1135
+// (X-RateLimit-Reset). F-15.1.7.
+func windowResetUnix(now time.Time) int64 {
+	return (now.Unix()/60 + 1) * 60
+}
+
+// retryAfterSeconds is the whole-second backoff to the next window
+// boundary, floored at one so a request arriving in the final second of
+// a window never advertises a zero wait. spec: §15.1 line 1136
+// (Retry-After). F-15.1.7.
+func retryAfterSeconds(now time.Time) int {
+	s := 60 - now.Second()
+	if s <= 0 {
+		return 1
+	}
+	return s
+}
+
+// setRateLimitHeaders writes the §15.1 X-RateLimit triplet. It is the
+// single source of header-name truth so the admitted path and the
+// rejection envelopes stay consistent. spec: §15.1 lines 1131-1138.
+// F-15.1.7.
+func setRateLimitHeaders(h http.Header, limit, remaining int, reset int64) {
+	h.Set("X-RateLimit-Limit", strconv.Itoa(limit))
+	h.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+	h.Set("X-RateLimit-Reset", strconv.FormatInt(reset, 10))
+}
+
+// rateLimitRW injects Retry-After on a 503 the inner handler emits
+// without one, so the §15.1 "present on 429 and 503 responses"
+// guarantee holds for downstream Service-Unavailable responses (circuit
+// breaker, dual-store outage) that did not set their own backoff hint.
+// A handler that set Retry-After keeps it. spec: §15.1 line 1136.
+// F-15.1.7.
+type rateLimitRW struct {
+	http.ResponseWriter
+	retryAfter string
+	wrote      bool
+}
+
+func (rw *rateLimitRW) WriteHeader(code int) {
+	if !rw.wrote {
+		rw.wrote = true
+		if code == http.StatusServiceUnavailable && rw.Header().Get("Retry-After") == "" {
+			rw.Header().Set("Retry-After", rw.retryAfter)
+		}
+	}
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *rateLimitRW) Write(b []byte) (int, error) {
+	rw.wrote = true
+	return rw.ResponseWriter.Write(b)
+}
+
+// Flush forwards to the underlying http.Flusher so this wrapper does
+// not break §15.1 SSE streaming or the §4.9 LLM-proxy stream.
+func (rw *rateLimitRW) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		rw.wrote = true
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer to net/http's ResponseController so
+// Hijack and deadline capabilities the inner handlers rely on traverse.
+func (rw *rateLimitRW) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
 
 // onCounterError emits the §11.1 fail-open observability triplet — a
 // structured WARN log, the failopen-active gauge flip, and the
@@ -314,10 +448,7 @@ func (m *middleware) writeFailOpenExceeded(w http.ResponseWriter, now time.Time)
 		// distinguish a fail-closed rejection from a regular limit hit.
 		m.opts.Metrics.IncRateLimitRejected("failopen_exceeded")
 	}
-	retryAfter := 60 - now.Second()
-	if retryAfter <= 0 {
-		retryAfter = 1
-	}
+	retryAfter := retryAfterSeconds(now)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	w.WriteHeader(http.StatusTooManyRequests)
@@ -386,10 +517,10 @@ func (m *middleware) writeRateLimited(w http.ResponseWriter, scope string, limit
 	if m.opts.Metrics != nil {
 		m.opts.Metrics.IncRateLimitRejected(scope)
 	}
-	retryAfter := 60 - now.Second()
-	if retryAfter <= 0 {
-		retryAfter = 1
-	}
+	retryAfter := retryAfterSeconds(now)
+	// spec: §15.1 lines 1131-1138 — the 429 carries the triplet for the
+	// rejecting scope (remaining 0) alongside Retry-After. F-15.1.7.
+	setRateLimitHeaders(w.Header(), limit, 0, windowResetUnix(now))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	w.WriteHeader(http.StatusTooManyRequests)

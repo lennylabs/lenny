@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
 // WithEventBuffer wires the §25.3 GET /v1/admin/events/buffer endpoint
@@ -40,12 +41,29 @@ func (r *Router) emitOpsEvent(ctx context.Context, eventType events.EventType, s
 			payload = b
 		}
 	}
+	// spec: §15.1 lines 937-938 — operation_id and agent_name are
+	// propagated to operational events. They ride as CloudEvents
+	// extension attributes (lowercase-alphanumeric names) alongside the
+	// existing lenny-prefixed extensions, so an agent can join an
+	// operational event to its audit events and structured logs under a
+	// single orchestrated task. F-15.1.10.
+	var ext map[string]string
+	if f := corr.From(ctx); f.OperationID != "" || f.AgentName != "" {
+		ext = map[string]string{}
+		if f.OperationID != "" {
+			ext["lennyoperationid"] = f.OperationID
+		}
+		if f.AgentName != "" {
+			ext["lennyagentname"] = f.AgentName
+		}
+	}
 	_ = r.eventEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/admin",
 		Type:            eventType.CloudEventsType(),
 		Severity:        severity,
 		DataContentType: "application/json",
 		Data:            payload,
+		Extensions:      ext,
 	})
 }
 

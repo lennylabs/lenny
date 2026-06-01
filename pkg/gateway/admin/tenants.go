@@ -109,6 +109,14 @@ type AuditEvent struct {
 	// when the token carried no claim. spec: §11.7 line 348.
 	CallerKind string
 
+	// AgentName is the §15.1 line 938 human-readable agent instance
+	// identifier, sourced from the X-Lenny-Agent-Name request header
+	// (via the correlation context). §15.1 requires it be propagated to
+	// audit records so the §25.9 audit-query API can attribute a
+	// remediation to the operator agent that issued it. Empty when the
+	// request carried no header. spec: §15.1 line 938. F-15.1.10.
+	AgentName string
+
 	// Detail carries event-specific fields the auditor records
 	// verbatim in the hash-chain entry.
 	Detail map[string]any
@@ -358,10 +366,11 @@ func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resour
 	if r.audit == nil {
 		return
 	}
-	// spec: §11.7 lines 347-348 — carry operation_id (from the
-	// correlation context populated off X-Lenny-Operation-ID) and
-	// caller_kind (from the OIDC caller_type claim) when available so
-	// the OCSF translator can project them onto metadata.correlation_uid
+	// spec: §11.7 lines 347-348 / §15.1 line 938 — carry operation_id
+	// (from the correlation context populated off X-Lenny-Operation-ID),
+	// agent_name (off X-Lenny-Agent-Name), and caller_kind (from the
+	// OIDC caller_type claim) when available so the OCSF translator can
+	// project them onto metadata.correlation_uid, the agent attribution,
 	// and actor.user.type.
 	r.audit.EmitAdminEvent(ctx, AuditEvent{
 		Type:           eventType,
@@ -369,6 +378,7 @@ func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resour
 		ActorTenantID:  p.TenantID,
 		TargetResource: resource,
 		OperationID:    corr.From(ctx).OperationID,
+		AgentName:      corr.From(ctx).AgentName,
 		CallerKind:     p.CallerType,
 		Detail:         detail,
 		At:             r.clock(),

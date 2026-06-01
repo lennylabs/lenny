@@ -24481,7 +24481,7 @@ Impact: every SDK-generated paginator breaks. The spec also requires
 `sort` and `limit` clamping to `[1, 200]` with `VALIDATION_ERROR` on
 invalid values — none of the implementations enforce this.
 
-### - [ ] F-15.1.7 — Spec-required rate-limit headers are not emitted [High] — OPEN
+### - [x] F-15.1.7 — Spec-required rate-limit headers are not emitted [High] — CLOSED
 Spec (§15.1 lines 1131–1138): every REST response MUST include
 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`;
 429/503 responses MUST also include `Retry-After`.
@@ -24494,6 +24494,22 @@ ratelimit/circuit-breaker rejections only
 on 503s elsewhere. The rate-limit middleware itself never emits the
 `X-RateLimit-*` triplet, so clients cannot proactively respect the
 budget.
+
+**Resolution:** The §11.1 rate-limit middleware
+(`pkg/gateway/middleware/ratelimit/ratelimit.go`) now emits the §15.1
+triplet on every response it sees. It records each counted scope's
+(limit, count), reports the binding scope (least remaining headroom),
+and writes `X-RateLimit-Limit/Remaining/Reset` before the inner handler
+runs; `Reset` is the next one-minute window boundary in UTC epoch
+seconds matching the Counter's bucketing. The 429 rejections carry the
+triplet (remaining 0) alongside the existing `Retry-After`. A response
+writer wrapper injects `Retry-After` on any downstream 503 that did not
+set its own (circuit breaker / dual-store outage keep theirs), and
+forwards `Flush`/`Unwrap` so SSE streaming is unaffected. The triplet is
+omitted when no scope applies (limits unset, or an anonymous request
+under only per-user/per-tenant caps). Closed this batch; 9 tier-1 tests
+cover success/decrement/binding-scope/429/503-inject/503-preserve/omit
+cases.
 
 ### - [ ] F-15.1.8 — Pool-drain backpressure contract is not implementable [High] — OPEN
 Spec (§15.1 line 797) is dense: `POST /v1/admin/pools/{name}/drain`
@@ -24529,7 +24545,7 @@ circuit-breaker simulation response shapes are entirely absent. Bootstrap
 `?dryRun=true` does not emit the spec-mandated `platform.bootstrap_applied`
 audit event with `dryRun: true`.
 
-### - [ ] F-15.1.10 — Correlation / agent headers are dropped on the floor [High] — OPEN
+### - [x] F-15.1.10 — Correlation / agent headers are dropped on the floor [High] — CLOSED
 Spec (§15.1 lines 935–938): every admin-API request accepts
 `X-Lenny-Operation-ID` (UUID) and `X-Lenny-Agent-Name`; they MUST be
 propagated to audit events, operational events, and structured logs.
@@ -24540,6 +24556,23 @@ Implementation: `grep -rn "X-Lenny-Operation-ID\|X-Lenny-Agent-Name"
 field. The structured logger in `gatewaymetrics` does not include the
 field. The downstream §25.9 audit-query API therefore cannot satisfy
 "join multiple admin calls under a single orchestrated remediation".
+
+**Resolution:** The finding's three "no reads" claims are stale. The
+read chain landed under F-16.4.2/.3: `pkg/gateway/middleware/correlation`
+extracts both headers into the request context, `admin.emit`/
+`EmitAdminEvent` stamp `operation_id` into the audit payload, and
+`pkg/observability/logging` + `tracing` project `operation_id`/
+`agent_name` onto every log line and span. This batch closes the
+remaining §15.1-line-938 gap: `agent_name` is now stamped into audit
+records (`AuditEvent.AgentName`, with context fallback in
+`EmitAdminEvent` → `agent_name` payload field), and both `operation_id`
+and `agent_name` ride on operational events as the `lennyoperationid`/
+`lennyagentname` CloudEvents extension attributes (`admin.emitOpsEvent`).
+The "agent_name → operational metrics labels" clause is the §25.4
+lenny-ops surface (spec §25.4 line 124), tracked under the still-open
+lenny-ops metrics findings (F-25.4.18 / F-16.8.1), not this gateway
+admin-API finding. 7 tier-1 tests cover the audit + ops-event
+propagation.
 
 ### - [ ] F-15.1.11 — `POST /v1/sessions/start` lacks the spec-required `callbackUrl` [High] — OPEN
 Spec async-job table (lines 686–692): `POST /v1/sessions/start`
@@ -32846,7 +32879,7 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:790–800`
 - (No occurrence of either identifier anywhere in the tree.)
 
-### - [ ] F-17.8.8 — 8-05 — `lenny_pdb_blocked_evictions_total` metric is never emitted [Medium] — OPEN
+### - [x] F-17.8.8 — 8-05 — `lenny_pdb_blocked_evictions_total` metric is never emitted [Medium] — CLOSED
 
 §17.8.2 line 936 — Tier 3 scale-down narrative — names `lenny_pdb_blocked_evictions_total` and the `PDBBlockedEvictions` alert as the operator's observability handle for the PDB-bound scale-down floor. The metric is declared in the catalog (`pkg/observability/metrics/catalog.go:87`) and is referenced by the alert (`pkg/alerting/rules/rules.go:587–588`), but no Go code increments it (`grep -rn "pdb_blocked_evictions_total" pkg --include="*.go"` returns only the catalog declaration, the catalog test, and the alert expression).
 
@@ -32855,6 +32888,16 @@ The §17.8.2 / §17.8.7 statement "Operators observe the PDB-bound scale-down fl
 Evidence:
 - `/Users/joan/projects/lenny/pkg/observability/metrics/catalog.go:87`
 - `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:587–588`
+
+**Resolution:** Verify-closed — stale, resolved by F-10.4.4. The
+`pkg/gateway/pdbwatcher` package polls the gateway PDB and increments
+`lenny_pdb_blocked_evictions_total` (via `gatewaymetrics.IncPDBBlockedEvictions`)
+on every cycle that observes `Status.DisruptionsAllowed == 0`
+(`pdbwatcher.go:130`). It is wired into the gateway binary
+(`cmd/lenny-gateway/main.go:4513`), activating on production installs
+(cluster client wired + `--gateway-namespace` set) — exactly the Tier-3
+scale-down scenario the metric serves. The `PDBBlockedEvictions` alert
+now has a live producer.
 
 ### - [ ] F-17.8.9 — 8-06 — `tier-promotion` runbook contradicts the CLI surface [Medium] — OPEN
 
