@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-package main
+package localcli
 
 import (
+	"errors"
 	"fmt"
 	"io"
-	"strconv"
+	"os"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/oidc"
@@ -24,6 +25,11 @@ import (
 // gateway's Authorization header:
 //
 //	curl -H "Authorization: Bearer $(lenny token print)" https://localhost:8443/...
+//
+// spec: §24.9 line 120 — exits 0 on success; exits
+// 3 EMBEDDED_MODE_REQUIRED when invoked outside Embedded Mode (no
+// `lenny up` has written the persisted signing key, or the binary is
+// run as lenny-ctl against a remote gateway).
 func cmdToken(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "print" {
 		fmt.Fprintln(stderr, "lenny token: the only subcommand is 'print'")
@@ -49,12 +55,25 @@ func cmdToken(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	paths := stack.NewPaths(root)
+	keyFile := paths.OIDCKeyFile()
+	// The persisted signing key exists only after `lenny up`. Its
+	// absence is the §24.9 "outside Embedded Mode" condition, which
+	// exits 3 EMBEDDED_MODE_REQUIRED. Probing for the file first also
+	// avoids minting a token against a freshly generated key that no
+	// running gateway trusts.
+	if _, err := os.Stat(keyFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(stderr, "lenny token: no embedded stack found; run 'lenny up' first (EMBEDDED_MODE_REQUIRED)")
+			return exitEmbeddedModeRequired
+		}
+		fmt.Fprintf(stderr, "lenny token: %v\n", err)
+		return 1
+	}
 	// Load the running stack's persisted signing key. rotate=false
-	// reuses the key lenny up wrote; a missing key means no stack has
-	// been started.
-	provider, err := oidc.NewWithPersistedKey(paths.OIDCKeyFile(), false)
+	// reuses the key lenny up wrote.
+	provider, err := oidc.NewWithPersistedKey(keyFile, false)
 	if err != nil {
-		fmt.Fprintf(stderr, "lenny token: no embedded OIDC key found; run 'lenny up' first (%v)\n", err)
+		fmt.Fprintf(stderr, "lenny token: %v\n", err)
 		return 1
 	}
 	tok, err := provider.Issue(ttl)
@@ -77,29 +96,4 @@ func parseTTL(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("--ttl must be positive, got %q", s)
 	}
 	return d, nil
-}
-
-// parsePortFlags extracts --http-port and --https-port from args. An
-// unset or unparseable flag yields zero, which the stack resolves to
-// the §17.4 default.
-func parsePortFlags(args []string) (httpPort, httpsPort int) {
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--http-port":
-			if i+1 < len(args) {
-				if n, err := strconv.Atoi(args[i+1]); err == nil {
-					httpPort = n
-				}
-				i++
-			}
-		case "--https-port":
-			if i+1 < len(args) {
-				if n, err := strconv.Atoi(args[i+1]); err == nil {
-					httpsPort = n
-				}
-				i++
-			}
-		}
-	}
-	return httpPort, httpsPort
 }

@@ -705,3 +705,49 @@ func TestParseOpenBreakerRequiresScope_spec_24_7_106(t *testing.T) {
 		t.Errorf("error %q should mention --scope", err.Error())
 	}
 }
+
+// TestLennyCtlDelegatesLocalStatus confirms the §24.19 line 266
+// "one binary, two names" alias: `lenny-ctl status` behaves identically
+// to `lenny status`, dispatching to the Embedded Mode stack rather than
+// failing with an unknown-command error. F-24.19.2.
+func TestLennyCtlDelegatesLocalStatus_spec_24_19_266(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d (stderr %q), want 0", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "no embedded stack is running") {
+		t.Errorf("stdout = %q, want the local-stack status output", stdout.String())
+	}
+}
+
+// TestLennyCtlDelegatesTokenPrint confirms the §24.9.3 alias: `lenny-ctl
+// token print` resolves to the embedded token-mint path and returns the
+// §24.9 exit code 3 EMBEDDED_MODE_REQUIRED when no stack is running,
+// rather than `unknown command "token"`. F-24.9.3 / F-24.9.2.
+func TestLennyCtlDelegatesTokenPrint_spec_24_9_120(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"token", "print"}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit = %d (stderr %q), want 3 (EMBEDDED_MODE_REQUIRED)", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "unknown command") {
+		t.Errorf("stderr = %q, want the token command to be recognised", stderr.String())
+	}
+}
+
+// TestLennyCtlDelegatesRestart confirms `lenny-ctl restart <component>`
+// is wired to the §24.19 local-command surface. F-24.19.1 / F-24.19.2.
+func TestLennyCtlDelegatesRestart_spec_24_19_264(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"restart", "gateway"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (no running stack)", code)
+	}
+	if !strings.Contains(stderr.String(), "no embedded stack is running") {
+		t.Errorf("stderr = %q, want a no-stack message", stderr.String())
+	}
+}

@@ -81,6 +81,22 @@ func (p Paths) StateFile() string {
 	return filepath.Join(p.Run, "stack.json")
 }
 
+// RestartRequestFile returns the path of the §24.19 restart-request
+// file. `lenny restart <component>` writes the component name here and
+// signals the supervisor with SIGHUP; the supervisor reads it to learn
+// which component to restart.
+func (p Paths) RestartRequestFile() string {
+	return filepath.Join(p.Run, "restart.request")
+}
+
+// RestartResultFile returns the path of the §24.19 restart-result file.
+// The supervisor writes the outcome of a restart request here so the
+// `lenny restart` process, which runs separately, can report success or
+// the failure reason.
+func (p Paths) RestartResultFile() string {
+	return filepath.Join(p.Run, "restart.result")
+}
+
 // KMSMasterKey returns the path of the file-backed soft-HSM master
 // key. §17.4 warns operators not to reuse this key in production.
 func (p Paths) KMSMasterKey() string {

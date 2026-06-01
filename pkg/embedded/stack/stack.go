@@ -75,6 +75,12 @@ type Stack struct {
 	control *managedProcess
 	state   State
 	out     io.Writer
+	// gwSpec and ctlSpec retain the child-process specs so the
+	// supervisor can re-spawn a single component on a §24.19 restart
+	// request without tearing the rest of the stack down. ctlSpec.BinPath
+	// is empty when the controller did not start.
+	gwSpec  gatewaySpec
+	ctlSpec controllerSpec
 }
 
 // Up brings up the Embedded Mode stack. It is idempotent: when a stack
@@ -229,7 +235,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// key-file format the gateway's --bearer-trust-hmac-key-file flag
 	// reads. Pointing the gateway at it lets a `lenny token print`
 	// bearer verify on the §10.2 Authorization header.
-	gw, err := startGateway(gatewaySpec{
+	s.gwSpec = gatewaySpec{
 		BinPath:     gwBin,
 		HTTPAddr:    httpAddr,
 		PostgresDSN: dsn,
@@ -237,7 +243,8 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		Kubeconfig:  kubeconfig,
 		LogPath:     paths.Logs + "/gateway.log",
 		OIDCKeyFile: paths.OIDCKeyFile(),
-	})
+	}
+	gw, err := startGateway(s.gwSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -261,12 +268,13 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		if err != nil {
 			fmt.Fprintf(out, "lenny up: WARNING: controller binary not found: %v\n", err)
 		} else {
-			ctl, err := startController(controllerSpec{
+			s.ctlSpec = controllerSpec{
 				BinPath:     ctlBin,
 				PostgresDSN: dsn,
 				Kubeconfig:  kubeconfig,
 				LogPath:     paths.Logs + "/controller.log",
-			})
+			}
+			ctl, err := startController(s.ctlSpec)
 			if err != nil {
 				fmt.Fprintf(out, "lenny up: WARNING: controller did not start: %v\n", err)
 			} else {

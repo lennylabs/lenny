@@ -36046,7 +36046,7 @@ The §17.4 bootstrap workflow (`spec/17_deployment-topology.md:472,634`) and the
 
 ---
 
-### - [ ] F-24.9.2 — `lenny token print` does not return exit code `3 EMBEDDED_MODE_REQUIRED` outside Embedded Mode [Medium] — OPEN
+### - [x] F-24.9.2 — `lenny token print` does not return exit code `3 EMBEDDED_MODE_REQUIRED` outside Embedded Mode [Medium] — CLOSED
 
 **Spec** (`spec/24_lenny-ctl-command-reference.md:120`):
 
@@ -36071,9 +36071,9 @@ The functional behavior is correct (mints a token in Embedded Mode, fails non-ze
 2. In `cmdToken` (`cmd/lenny/token.go:55-59`), return that constant when `oidc.NewWithPersistedKey` fails with `os.ErrNotExist` (key file absent → no `lenny up`).
 3. Update `TestRunTokenWithoutStack` (`cmd/lenny/main_test.go:96-98`) to assert exit `3`.
 
----
+- **Resolution:** Closed in this batch. `cmdToken` (now `pkg/embedded/localcli/token.go`) stats the persisted OIDC signing key before loading it and returns the new `exitEmbeddedModeRequired = 3` constant with an `EMBEDDED_MODE_REQUIRED` message when the key file is absent (`os.ErrNotExist`), the §24.9 "outside Embedded Mode" condition. The stat-first probe also removes a latent bug where `oidc.NewWithPersistedKey(path, false)` could mint a token from a freshly generated key no gateway trusts. `TestRunTokenWithoutStack_spec_24_9_120` now asserts exit 3. The same constant is reused by `lenny image import`'s guard.
 
-### - [ ] F-24.9.3 — `lenny-ctl token print` alias is missing [Medium] — OPEN
+### - [x] F-24.9.3 — `lenny-ctl token print` alias is missing [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.19.2 — Both stem from the missing 'one binary, two names' lenny-ctl alias, but F-24.19.2 is about the up/down/status/logs local-command aliases while F-24.9.3 is specifically about token print; related root cause but different command surfaces.
 
@@ -36104,6 +36104,8 @@ Two routes; either is consistent with §24.9 and §24.19:
 - **Alias route (lighter)**: keep two binaries but have `cmd/lenny-ctl/main.go` dispatch `token`, `image`, `up`, `down`, `status`, `logs`, `restart`, and `session` cases that import `pkg/embedded/...` and call the same `cmdToken`, `cmdImage`, etc. functions. The exit-code constant from F-24.9.2 is shared.
 
 Either route lets the operator-side documentation in `docs/operator-guide/installation.md` and `docs/api/admin.md` continue to use `lenny-ctl admin users rotate-token` (when F-24.9.1 lands) without forcing operators to context-switch binary names.
+
+- **Resolution:** Closed by F-24.19.2 (same patch). The "alias route" was taken: the Embedded Mode local-command logic moved into a shared importable package `pkg/embedded/localcli`, and `cmd/lenny-ctl` now dispatches `localcli.Local(cmd)` commands (including `token`) through `localcli.Run`. `lenny-ctl token print` resolves to the embedded token-mint path and shares the §24.9.2 exit-code constant. `TestLennyCtlDelegatesTokenPrint_spec_24_9_120` exercises it.
 
 ---
 
@@ -36927,13 +36929,14 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 ### Findings
 
-### - [ ] F-24.19.1 — `lenny restart [<component>]` not implemented [High] — OPEN
+### - [x] F-24.19.1 — `lenny restart [<component>]` not implemented [High] — CLOSED
 - **Spec:** §24.19 line 264 — "Restart a single embedded component without tearing down the rest of the stack."
 - **Evidence:** `cmd/lenny/main.go` dispatch switch (around lines 56–62) handles `up`, `down`, `status`, `logs` only; no `restart` case. Grep for `cmdRestart` returns no matches.
 - **Gap:** Operators cannot recover a single failed component (e.g., gateway crashloop) without `down`/`up` of the full stack.
 - **Suggested resolution:** Add `cmdRestart` that targets a single supervised process by name and re-execs it, leaving k3s and the other components running.
+- **Resolution:** Closed in this batch. `lenny restart <component>` is wired in `pkg/embedded/localcli/restart.go`. Because the gateway and controller are child processes of the detached supervisor (not of the short-lived CLI), restart uses the supervisor as the actor: the CLI writes the component name to `Paths.RestartRequestFile()` and sends `SIGHUP`; `RunSupervisor` handles SIGHUP by calling `Stack.handleRestartRequest`, which stops and re-spawns the named child from the spec retained on the `Stack` (`gwSpec`/`ctlSpec`), updates the recorded PID, and writes a result file the CLI polls. The two supervised children (gateway, controller) are restartable; the in-process components (Postgres, Redis, OIDC, TLS proxy) and the k3s node share the supervisor lifecycle and are cycled with `down`/`up`, which the CLI states when an unrestartable component is named. Tier-1 tests cover argument validation, the unknown-component rejection, the no-stack and dead-supervisor paths, the SIGHUP handler's request/result round-trip, and the result-file wait/timeout.
 
-### - [ ] F-24.19.2 — `lenny-ctl <local-command>` alias unimplemented [High] — OPEN
+### - [x] F-24.19.2 — `lenny-ctl <local-command>` alias unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.9.3 — Both stem from the missing 'one binary, two names' lenny-ctl alias, but F-24.19.2 is about the up/down/status/logs local-command aliases while F-24.9.3 is specifically about token print; related root cause but different command surfaces.
 
@@ -36941,12 +36944,14 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Evidence:** `cmd/lenny` and `cmd/lenny-ctl` are two independent Go `package main` binaries, built separately by the Makefile. `cmd/lenny-ctl/main.go` has no `up`/`down`/`status`/`logs`/`image` dispatch — these inputs fall into the unknown-command path.
 - **Gap:** Operators following the §24 preamble's "one binary, two names" contract see `unknown command "up"` errors. The alias path is undocumented as a deferral.
 - **Suggested resolution:** Either link `lenny-ctl` to the same main package and switch by `argv[0]`, or have `lenny-ctl` dispatch a documented subset that explicitly excludes Embedded Mode commands.
+- **Resolution:** Closed in this batch via the alias route. The Embedded Mode local-command logic (up, down, status, logs, restart, token, image, session) moved out of `cmd/lenny` (which is now a thin wrapper) into the importable `pkg/embedded/localcli` package. `cmd/lenny-ctl/run` honors the `LENNY_EMBEDDED_SUPERVISE` gate (so `lenny-ctl up` can re-exec itself as the supervisor) and, when the command is `localcli.Local(name)`, delegates to `localcli.Run` so `lenny-ctl <local-command>` behaves identically to `lenny <local-command>`. The lenny-ctl usage banner documents the local-command group. `TestLennyCtlDelegatesLocalStatus_spec_24_19_266` and `TestLennyCtlDelegatesRestart_spec_24_19_264` exercise the delegation. Also closes F-24.9.3.
 
-### - [ ] F-24.19.3 — Default gateway URL contradicts §24.19 line 256 [High] — OPEN
+### - [x] F-24.19.3 — Default gateway URL contradicts §24.19 line 256 [High] — CLOSED
 - **Spec:** §24.19 line 256 — "the embedded gateway binds to `https://localhost:8443` by default."
 - **Evidence:** Per §17.4 audit (BUILD-GAPS finding 17.4 H4/H5), the embedded gateway has no TLS listener configured; bindings are plain HTTP. No `8443` reference appears in `cmd/lenny-gateway/main.go` flag defaults.
 - **Gap:** `lenny up` prints an HTTP URL, not the HTTPS endpoint §24.19 advertises.
 - **Suggested resolution:** Tracked under the §17.4 H4/H5 fixes; resolution must propagate the resulting port through the `lenny up` summary line.
+- **Resolution:** Verify-closed; the §17.4 TLS work landed. `pkg/embedded/stack/tlsproxy.go` runs a loopback TLS-terminating reverse proxy on `127.0.0.1:8443` (default `defaultHTTPSPort = 8443`, `stack.go`), fronting the plaintext gateway, and rejects non-loopback binds with `EMBEDDED_MODE_LOCAL_ONLY` (closed F-17.4.33). Both `Up` (`stack.go:318`) and `RunUp` (`lifecycle.go:55,107`) print the `https://localhost:8443` URL first in the ready summary, and the state file records `HTTPSAddr`. §24.19 line 256 (the embedded gateway binds to `https://localhost:8443` by default) is satisfied.
 
 ### - [x] F-24.19.4 — `lenny logs` lacks `--follow` and components list incomplete [Medium] — CLOSED
 

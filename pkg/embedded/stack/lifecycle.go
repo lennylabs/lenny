@@ -156,19 +156,30 @@ func RunSupervisor(ctx context.Context, opts UpOptions) error {
 		return err
 	}
 	// Block until a teardown signal arrives. lenny down sends SIGTERM
-	// to this process.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	select {
-	case <-sigCh:
-	case <-ctx.Done():
+	// to this process; lenny restart sends SIGHUP, which restarts a
+	// single component and keeps the supervisor running.
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	paths := NewPaths(root)
+	for {
+		var sig os.Signal
+		select {
+		case sig = <-sigCh:
+		case <-ctx.Done():
+		}
+		if sig == syscall.SIGHUP {
+			// spec: §24.19 line 264 — restart one component in place.
+			st.handleRestartRequest(ctx, paths)
+			continue
+		}
+		break
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := st.Stop(shutdownCtx); err != nil {
 		return err
 	}
-	_ = removeState(NewPaths(root).StateFile())
+	_ = removeState(paths.StateFile())
 	return nil
 }
 

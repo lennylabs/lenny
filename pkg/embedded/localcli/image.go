@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package main
+package localcli
 
 import (
 	"bytes"
@@ -13,12 +13,6 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-)
-
-// Exit codes for `lenny image` (§24.19.1).
-const (
-	exitInvalidImageRef = 2
-	exitK3sUnavailable  = 4
 )
 
 // imageRefPattern is a pragmatic OCI-reference check: a non-empty

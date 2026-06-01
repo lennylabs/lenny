@@ -53,6 +53,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
+	"github.com/lennylabs/lenny/pkg/embedded/localcli"
 )
 
 // version is the CLI build version. The release pipeline stamps it via
@@ -80,10 +81,26 @@ func progName() string {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// §24.19 line 256 / §17.4: when `lenny up` (or `lenny-ctl up`)
+	// re-executes os.Executable() as the detached supervisor, the
+	// running binary may be lenny-ctl. Honor the supervisor gate before
+	// normal dispatch so the same build supervises the stack under
+	// either name.
+	if localcli.Supervising() {
+		return localcli.RunSupervise(args, stdout, stderr)
+	}
 	flags, rest := parseGlobalFlags(args)
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, usage)
 		return 2
+	}
+	// §24.19 line 266 / §24.9 line 120: `lenny-ctl <local-command>`
+	// behaves identically to `lenny <local-command>` against the
+	// Embedded Mode stack. The gateway-targeting global flags do not
+	// apply to local commands, so delegate the raw arguments after the
+	// command name.
+	if localcli.Local(rest[0]) {
+		return localcli.Run(context.Background(), rest[0], rest[1:], stdout, stderr)
 	}
 	// §24.16 line 205: only the "json" output format is supported.
 	if flags.output != "" && flags.output != "json" {
@@ -222,7 +239,17 @@ Operability commands (§25.14, target lenny-ops):
   diagnose credential-pool <name>       Diagnose a credential pool
   drift report [--scope <s>] [--against <live|target|both>]
   drift validate --desired <file>       Validate desired state
-  drift reconcile [--scope <s>] [--confirm]`
+  drift reconcile [--scope <s>] [--confirm]
+
+Embedded Mode local commands (§24.19; identical to the lenny short name):
+  up [--http-port <n>] [--https-port <n>]   Start the local stack (idempotent)
+  down [--purge]                        Stop the local stack
+  status [--json]                       Print local component health
+  logs [<component>] [--follow]         Tail merged local-stack logs
+  restart <component>                   Restart one local component (gateway|controller)
+  token print [--ttl <d>]               Print a bearer for the built-in user
+  image <import|list|rm>                Manage the embedded containerd image store
+  session new --runtime <name>          Start a session against the local gateway`
 
 type globalFlags struct {
 	apiURL    string

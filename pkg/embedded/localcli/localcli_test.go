@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package main
+package localcli
 
 import (
 	"bytes"
@@ -8,9 +8,11 @@ import (
 	"testing"
 )
 
-func TestRunNoArgsPrintsUsage(t *testing.T) {
+const testVersion = "test-version"
+
+func TestMainNoArgsPrintsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(nil, &stdout, &stderr)
+	code := Main(nil, &stdout, &stderr, testVersion)
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -19,10 +21,10 @@ func TestRunNoArgsPrintsUsage(t *testing.T) {
 	}
 }
 
-func TestRunHelp(t *testing.T) {
+func TestMainHelp(t *testing.T) {
 	for _, arg := range []string{"help", "-h", "--help"} {
 		var stdout, stderr bytes.Buffer
-		code := run([]string{arg}, &stdout, &stderr)
+		code := Main([]string{arg}, &stdout, &stderr, testVersion)
 		if code != 0 {
 			t.Errorf("%s: exit code = %d, want 0", arg, code)
 		}
@@ -35,23 +37,23 @@ func TestRunHelp(t *testing.T) {
 // spec: §24.0 line 23, §17.6 line 360 — the embedded binary prints its
 // local build version offline. Confirms the -X main.version ldflag has a
 // symbol to bind to (F-24.0.4).
-func TestRunVersion(t *testing.T) {
+func TestMainVersion(t *testing.T) {
 	for _, arg := range []string{"version", "--version", "-v"} {
 		var stdout, stderr bytes.Buffer
-		code := run([]string{arg}, &stdout, &stderr)
+		code := Main([]string{arg}, &stdout, &stderr, testVersion)
 		if code != 0 {
 			t.Errorf("%s: exit code = %d, want 0", arg, code)
 		}
 		out := stdout.String()
-		if !strings.HasPrefix(out, "lenny ") || !strings.Contains(out, version) {
-			t.Errorf("%s: stdout = %q, want 'lenny %s'", arg, out, version)
+		if !strings.HasPrefix(out, "lenny ") || !strings.Contains(out, testVersion) {
+			t.Errorf("%s: stdout = %q, want 'lenny %s'", arg, out, testVersion)
 		}
 	}
 }
 
-func TestRunUnknownCommand(t *testing.T) {
+func TestMainUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"frobnicate"}, &stdout, &stderr)
+	code := Main([]string{"frobnicate"}, &stdout, &stderr, testVersion)
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -60,12 +62,38 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestMainRejectsDirectSupervise(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Main([]string{"__supervise"}, &stdout, &stderr, testVersion)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "internal subcommand") {
+		t.Errorf("stderr = %q, want the internal-subcommand rejection", stderr.String())
+	}
+}
+
+// spec: §24.19 line 266 — Local enumerates the Embedded Mode commands
+// that lenny-ctl delegates to the local stack so it behaves identically.
+func TestLocalEnumeratesEmbeddedCommands(t *testing.T) {
+	for _, name := range []string{"up", "down", "status", "logs", "restart", "token", "image", "session"} {
+		if !Local(name) {
+			t.Errorf("Local(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"admin", "bootstrap", "install", "health", "version", "frobnicate"} {
+		if Local(name) {
+			t.Errorf("Local(%q) = true, want false", name)
+		}
+	}
+}
+
 func TestRunStatusNoStack(t *testing.T) {
 	// With LENNY_HOME pointed at an empty directory, status reports no
 	// running stack and exits 0.
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"status"}, &stdout, &stderr)
+	code := Main([]string{"status"}, &stdout, &stderr, testVersion)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -77,7 +105,7 @@ func TestRunStatusNoStack(t *testing.T) {
 func TestRunStatusJSON(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"status", "--json"}, &stdout, &stderr)
+	code := Main([]string{"status", "--json"}, &stdout, &stderr, testVersion)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -89,7 +117,7 @@ func TestRunStatusJSON(t *testing.T) {
 func TestRunDownNoStack(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"down"}, &stdout, &stderr)
+	code := Main([]string{"down"}, &stdout, &stderr, testVersion)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -98,29 +126,33 @@ func TestRunDownNoStack(t *testing.T) {
 func TestRunLogsNoStack(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"logs"}, &stdout, &stderr)
+	code := Main([]string{"logs"}, &stdout, &stderr, testVersion)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
 }
 
-func TestRunTokenWithoutStack(t *testing.T) {
-	// token print needs the OIDC key lenny up writes; without a stack
-	// it fails with a clear message.
+// spec: §24.9 line 120 — token print exits 3 EMBEDDED_MODE_REQUIRED when
+// invoked outside Embedded Mode (no `lenny up` has written the persisted
+// signing key). (F-24.9.2)
+func TestRunTokenWithoutStack_spec_24_9_120(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"token", "print"}, &stdout, &stderr)
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+	code := Main([]string{"token", "print"}, &stdout, &stderr, testVersion)
+	if code != exitEmbeddedModeRequired {
+		t.Errorf("exit code = %d, want %d (EMBEDDED_MODE_REQUIRED)", code, exitEmbeddedModeRequired)
 	}
 	if !strings.Contains(stderr.String(), "lenny up") {
 		t.Errorf("stderr = %q, want guidance to run lenny up", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, want the EMBEDDED_MODE_REQUIRED marker", stderr.String())
 	}
 }
 
 func TestRunTokenRejectsBadSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"token", "mint"}, &stdout, &stderr)
+	code := Main([]string{"token", "mint"}, &stdout, &stderr, testVersion)
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -133,7 +165,7 @@ func TestRunTokenPrintAfterKeyWritten(t *testing.T) {
 	t.Setenv("LENNY_HOME", home)
 	seedOIDCKey(t, home)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"token", "print"}, &stdout, &stderr)
+	code := Main([]string{"token", "print"}, &stdout, &stderr, testVersion)
 	if code != 0 {
 		t.Fatalf("exit code = %d (stderr %q), want 0", code, stderr.String())
 	}
