@@ -64,6 +64,13 @@ type Tenant struct {
 	// Zero means the tenant has no token budget (unlimited).
 	TokenQuotaPerWindow int64
 
+	// QuotaResetPeriod is the §11.2 line 31 per-tenant token-quota reset
+	// period: `hourly`, `daily`, `monthly`, or `rolling`. Empty means
+	// the tenant inherits the platform-wide default period. The §4.8
+	// QuotaEvaluator reads this to scope the tenant's token-usage window
+	// independently of other tenants.
+	QuotaResetPeriod string
+
 	// ElicitationContentIntegrity is the §9.2 tenant-stored elicitation
 	// content-integrity mode (`off`, `detect-only`, or `enforce`). The
 	// gateway clamps it against the platform floor at use time. Empty

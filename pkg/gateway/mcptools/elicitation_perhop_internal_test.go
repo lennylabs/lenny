@@ -60,6 +60,9 @@ func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error)
 func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
 	panic("unused")
 }
+func (s *slowAncestorStore) CountActiveSessions(context.Context, string) (int, error) {
+	panic("unused")
+}
 
 // TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211
 // pins the §11.3 line 211 / §9.1 line 104 hard-coded 30s default.

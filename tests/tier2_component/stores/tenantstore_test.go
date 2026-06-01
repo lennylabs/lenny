@@ -49,6 +49,10 @@ func TestTenantStoreContract(t *testing.T) {
 			WorkspaceTier:         "T2",
 			MaxConcurrentSessions: 25,
 			StorageQuotaBytes:     1 << 30,
+			// spec: §11.2 — the token budget and per-tenant reset period
+			// persist through the Postgres tenant store (migration 0101).
+			TokenQuotaPerWindow: 1_000_000,
+			QuotaResetPeriod:    "monthly",
 		}
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -60,7 +64,9 @@ func TestTenantStoreContract(t *testing.T) {
 		if got.DisplayName != want.DisplayName || got.ComplianceProfile != want.ComplianceProfile ||
 			got.DataResidencyRegion != want.DataResidencyRegion || got.WorkspaceTier != want.WorkspaceTier ||
 			got.MaxConcurrentSessions != want.MaxConcurrentSessions ||
-			got.StorageQuotaBytes != want.StorageQuotaBytes {
+			got.StorageQuotaBytes != want.StorageQuotaBytes ||
+			got.TokenQuotaPerWindow != want.TokenQuotaPerWindow ||
+			got.QuotaResetPeriod != want.QuotaResetPeriod {
 			t.Errorf("field mismatch:\n got %+v\nwant %+v", got, want)
 		}
 		if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {

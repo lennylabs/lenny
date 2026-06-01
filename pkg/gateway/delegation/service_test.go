@@ -446,6 +446,9 @@ func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (in
 func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
 }
+func (c *countingStore) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
+	return c.inner.CountActiveSessions(ctx, tenantID)
+}
 
 // spec: §8.2 line 57 — lineage walk uses ParentSessionID from parent
 // up to root, defended against cycles by a visited set. F-8.2.16 —

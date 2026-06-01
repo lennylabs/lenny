@@ -718,6 +718,15 @@ type Store interface {
 	// (0, nil).
 	// spec: §5.2 line 521 (post-recovery rehydration; GetActiveSlotsByPod).
 	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
+
+	// CountActiveSessions returns the number of live (non-terminal)
+	// sessions belonging to tenantID. It backs the §11.2 per-tenant
+	// concurrent-session quota check on the session-creation path so the
+	// gateway counts active sessions without materializing every
+	// historical row. A tenant with no live sessions returns (0, nil).
+	// spec: §11.2 (per-tenant concurrent-session quota with hard
+	// rejection).
+	CountActiveSessions(ctx context.Context, tenantID string) (int, error)
 }
 
 // ListFilter narrows the List result. Empty fields mean "no filter".

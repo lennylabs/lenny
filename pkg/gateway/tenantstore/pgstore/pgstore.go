@@ -48,7 +48,8 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 	created_at, updated_at, deleted_at, min_isolation_profile,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
-	experiment_targeting, credential_policy, rbac_config`
+	experiment_targeting, credential_policy, rbac_config,
+	token_quota_per_window, quota_reset_period`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -117,13 +118,15 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
-		experiment_targeting, credential_policy, rbac_config
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		experiment_targeting, credential_policy, rbac_config,
+		token_quota_per_window, quota_reset_period
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
-		targeting, credPolicy, rbacConfig)
+		targeting, credPolicy, rbacConfig,
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -188,12 +191,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		updated_at = $8, deleted_at = $9, min_isolation_profile = $10,
 		elicitation_content_integrity = $11, billing_erasure_policy = $12,
 		no_environment_policy = $13, experiment_targeting = $14,
-		credential_policy = $15, rbac_config = $16 WHERE id = $1`,
+		credential_policy = $15, rbac_config = $16,
+		token_quota_per_window = $17, quota_reset_period = $18 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
-		targeting, credPolicy, rbacConfig); err != nil {
+		targeting, credPolicy, rbacConfig,
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -283,6 +288,7 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
+		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod,
 	); err != nil {
 		return tenantstore.Tenant{}, err
 	}

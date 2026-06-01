@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
+	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -723,6 +724,7 @@ type TenantPayload struct {
 	MaxConcurrentSessions   int                          `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes       int64                        `json:"storageQuotaBytes,omitempty"`
 	TokenQuotaPerWindow     int64                        `json:"tokenQuotaPerWindow,omitempty"`
+	QuotaResetPeriod        string                       `json:"quotaResetPeriod,omitempty"`
 	MinIsolationProfile     string                       `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy    string                       `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting     *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
@@ -750,6 +752,7 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
 		StorageQuotaBytes:     t.StorageQuotaBytes,
 		TokenQuotaPerWindow:   t.TokenQuotaPerWindow,
+		QuotaResetPeriod:      t.QuotaResetPeriod,
 		MinIsolationProfile:   t.MinIsolationProfile,
 		BillingErasurePolicy:  t.BillingErasurePolicy,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
@@ -779,6 +782,13 @@ func validBillingErasurePolicy(s string) bool {
 	return s == "" ||
 		s == tenantstore.BillingErasurePseudonymize ||
 		s == tenantstore.BillingErasureExempt
+}
+
+// validQuotaResetPeriod reports whether s is an accepted §11.2 line 31
+// per-tenant quota reset period: empty (inherit the platform default),
+// hourly, daily, monthly, or rolling.
+func validQuotaResetPeriod(s string) bool {
+	return s == "" || quota.ResetPeriod(s).IsValid()
 }
 
 // regulatedComplianceProfiles are the §12.8 compliance profiles for
@@ -939,6 +949,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "tokenQuotaPerWindow"})
 		return
 	}
+	if !validQuotaResetPeriod(body.QuotaResetPeriod) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"quotaResetPeriod must be hourly, daily, monthly, or rolling",
+			map[string]any{"field": "quotaResetPeriod"})
+		return
+	}
 	if body.MinIsolationProfile != "" && !isolation.IsValid(isolation.Profile(body.MinIsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"minIsolationProfile must be standard, sandboxed, or microvm",
@@ -975,6 +991,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		MaxConcurrentSessions: body.MaxConcurrentSessions,
 		StorageQuotaBytes:     body.StorageQuotaBytes,
 		TokenQuotaPerWindow:   body.TokenQuotaPerWindow,
+		QuotaResetPeriod:      body.QuotaResetPeriod,
 		MinIsolationProfile:   body.MinIsolationProfile,
 		BillingErasurePolicy:  body.BillingErasurePolicy,
 		CreatedAt:             r.clock(),
@@ -1063,6 +1080,7 @@ type UpdateTenantRequest struct {
 	MaxConcurrentSessions *int                         `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     *int64                       `json:"storageQuotaBytes,omitempty"`
 	TokenQuotaPerWindow   *int64                       `json:"tokenQuotaPerWindow,omitempty"`
+	QuotaResetPeriod      *string                      `json:"quotaResetPeriod,omitempty"`
 	MinIsolationProfile   *string                      `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy  *string                      `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting   *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
@@ -1093,6 +1111,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"tokenQuotaPerWindow must not be negative",
 			map[string]any{"field": "tokenQuotaPerWindow"})
+		return
+	}
+	if body.QuotaResetPeriod != nil && !validQuotaResetPeriod(*body.QuotaResetPeriod) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"quotaResetPeriod must be hourly, daily, monthly, or rolling",
+			map[string]any{"field": "quotaResetPeriod"})
 		return
 	}
 	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
@@ -1208,6 +1232,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.TokenQuotaPerWindow != nil {
 			t.TokenQuotaPerWindow = *body.TokenQuotaPerWindow
+		}
+		if body.QuotaResetPeriod != nil {
+			t.QuotaResetPeriod = *body.QuotaResetPeriod
 		}
 		if body.MinIsolationProfile != nil {
 			t.MinIsolationProfile = *body.MinIsolationProfile

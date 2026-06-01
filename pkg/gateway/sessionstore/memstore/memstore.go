@@ -252,6 +252,23 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error
 	return count, nil
 }
 
+// CountActiveSessions implements the §11.2 per-tenant concurrent-session
+// quota count: the number of live (non-terminal) sessions for tenantID.
+func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if row.TenantID == tenantID && !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
 // interface. Removes every session belonging to tenantID.
 func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) {

@@ -15527,15 +15527,19 @@ Spec §11.2 defaults `quotaSyncIntervalSeconds` to 30s with a 10s minimum and an
 
 **Resolution (2f57a191):** Added `quota.{DefaultSyncIntervalSeconds,MinSyncIntervalSeconds,ClampSyncIntervalSeconds}` (default 30, floor 10, kept `time`-free to match `MaxOvershoot`), a `--quota-sync-interval-seconds` flag (env `LENNY_QUOTA_SYNC_INTERVAL_SECONDS`) that clamps the operator value up to the floor and logs the effective checkpoint cadence at startup, and a `gateway.quotaSyncIntervalSeconds` Helm value wired through the gateway deployment env. The periodic Postgres checkpoint loop that consumes the cadence remains the separate F-11.2.4.
 
-### - [ ] F-11.2.17 — Concurrent-session quota check scans every session row per request [Medium] — OPEN
+### - [x] F-11.2.17 — Concurrent-session quota check scans every session row per request [Medium] — CLOSED
 
 `sessionserver/quota.go:41-52` (`requireSessionQuota`) lists every session in the tenant on each create. The §11.2 budget table names this as a per-tenant concurrent-session quota with hard rejection; the call path itself is correct, but on a tenant with thousands of historical sessions the list is unindexed. The spec's intent (and the analogous §11.2 token-counter path) is a Redis atomic counter so the check is O(1). Functional but the linear scan is unnecessarily expensive and the spec implies a counter-based design.
 
-### - [ ] F-11.2.18 — `Tenant.TokenQuotaPerWindow` is not reset-period-aware; the reset period is a single platform-wide setting [Medium] — OPEN
+**Resolution:** New `SessionStore.CountActiveSessions(tenantID)` replaces the full `List` + in-Go filter in `requireSessionQuota`. The pgstore implementation runs a `COUNT(*) … WHERE tenant_id = $1 AND state NOT IN (terminal)` (mirroring `GetActiveSlotsByPod`) backed by the new migration 0102 partial index `idx_sessions_active_by_tenant` so the count no longer materializes historical rows. A Redis counter was rejected in favor of the DB COUNT to avoid counter-drift on crashes while still removing the unindexed full-scan the finding flags. Resolved in the batch commit.
+
+### - [x] F-11.2.18 — `Tenant.TokenQuotaPerWindow` is not reset-period-aware; the reset period is a single platform-wide setting [Medium] — CLOSED
 
 Spec §11.2: "Quota reset periods are configurable per quota type: hourly, daily, monthly, or rolling window."
 
 The tenant row carries `TokenQuotaPerWindow int64` (`tenantstore.go:57-63`); the reset period is a platform-wide `TenantStoreLimitsOptions.Period` (`tenantlimits.go:50`). A deployer cannot configure one tenant on `daily` and another on `monthly` — every tenant shares the platform setting, contradicting the spec's "per quota type" wording.
+
+**Resolution:** New `Tenant.QuotaResetPeriod` field (empty inherits the platform default), validated against the closed §11.2 enum and plumbed through the admin create/update/response DTOs. `TenantStoreLimits.LookupLimits` now returns the per-tenant period when set so two tenants can run on `daily` and `monthly` simultaneously. Migration 0101 adds the `quota_reset_period` column and also persists `token_quota_per_window`, which the Postgres tenant store had silently never written (insert/update/select now round-trip both). Resolved in the batch commit.
 
 ### - [x] F-11.2.19 — Eval submission rate limits (`evalRateLimit.perSessionPerMinute`, `evalRateLimit.perTenantPerMinute`) are not implemented [Medium] — CLOSED
 

@@ -559,6 +559,33 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 	return count, nil
 }
 
+// CountActiveSessions implements Store — the §11.2 per-tenant
+// concurrent-session quota count. It counts the tenant's live
+// (non-terminal) sessions with a COUNT query so the gateway's quota
+// check does not materialize every historical row. The partial index
+// from migration 0102 (sessions(tenant_id) WHERE state NOT IN terminal)
+// keeps the count cheap on a tenant with a large session history. The
+// non-terminal predicate matches the index predicate and
+// session.TerminalStates() verbatim.
+// spec: §11.2 (per-tenant concurrent-session quota with hard rejection).
+func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	var count int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE tenant_id = $1
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			tenantID).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active sessions for tenant %s: %w", tenantID, err)
+	}
+	return count, nil
+}
+
 // scanSession reads one row in selectList order into a Session.
 func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	var (
@@ -584,7 +611,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.3 client-supplied retry policy and
 		// last_checkpoint_workspace_bytes columns from migration 0087
 		// (F-7.3.1 / F-7.3.21).
-		retryPolicyJSON []byte
+		retryPolicyJSON     []byte
 		lastCheckpointBytes *int64
 		// §8.2 line 52 delegation tracing_context and §8.3 line 266 /
 		// §8.10 cascade_on_failure lease policy from migration 0090

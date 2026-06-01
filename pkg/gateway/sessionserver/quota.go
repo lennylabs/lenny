@@ -6,10 +6,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
@@ -38,17 +36,13 @@ func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, ten
 	if tenant.MaxConcurrentSessions <= 0 {
 		return true
 	}
-	rows, err := s.store.List(r.Context(), tenantID, sessionstore.ListFilter{})
+	// §11.2: count the tenant's live sessions with an indexed COUNT
+	// rather than materializing every historical row in Go.
+	active, err := s.store.CountActiveSessions(r.Context(), tenantID)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"concurrent-session quota check failed: "+err.Error(), nil)
 		return false
-	}
-	active := 0
-	for _, row := range rows {
-		if !session.IsTerminal(row.State) {
-			active++
-		}
 	}
 	if active >= tenant.MaxConcurrentSessions {
 		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
