@@ -216,6 +216,50 @@ func TestResolveVariantRolesAcceptsZeroWeight(t *testing.T) {
 	}
 }
 
+// spec: §10.7 lines 695, 705-710
+// diagnosis: a variant's initialMinWarm is the bootstrap-mode static
+// minWarm floor. ResolveVariantRoles must stamp it onto the variant
+// pool's PoolConfig.MinWarm (which the controller feeds the strategy as
+// BootstrapMinWarm) so a freshly created variant pool warms to the
+// deployer-supplied floor before demand history exists. The base pool's
+// MinWarm is left untouched.
+func TestResolveVariantRolesAppliesInitialMinWarm_spec_10_7(t *testing.T) {
+	configs := []poolscaling.PoolConfig{poolNamed("base"), poolNamed("variant-a")}
+	variants := []poolscaling.ActiveVariant{
+		{ExperimentID: "exp-1", BasePool: "base", VariantPool: "variant-a", Weight: 0.1, InitialMinWarm: 5},
+	}
+	out, err := poolscaling.ResolveVariantRoles(configs, variants)
+	if err != nil {
+		t.Fatalf("ResolveVariantRoles: %v", err)
+	}
+	if got := findPool(t, out, "variant-a").MinWarm; got != 5 {
+		t.Errorf("variant-a MinWarm = %d, want 5 (initialMinWarm floor)", got)
+	}
+	// The base pool keeps its own configured floor; initialMinWarm is a
+	// per-variant-pool knob only.
+	if got := findPool(t, out, "base").MinWarm; got != config().MinWarm {
+		t.Errorf("base MinWarm = %d, want %d (untouched)", got, config().MinWarm)
+	}
+}
+
+// spec: §10.7 line 709
+// diagnosis: an omitted initialMinWarm defaults to 0 and must leave the
+// variant pool's MinWarm untouched rather than zeroing it, so the
+// no-history formula result governs the floor.
+func TestResolveVariantRolesOmittedInitialMinWarmLeavesMinWarm_spec_10_7(t *testing.T) {
+	configs := []poolscaling.PoolConfig{poolNamed("base"), poolNamed("variant-a")}
+	variants := []poolscaling.ActiveVariant{
+		{ExperimentID: "exp-1", BasePool: "base", VariantPool: "variant-a", Weight: 0.1},
+	}
+	out, err := poolscaling.ResolveVariantRoles(configs, variants)
+	if err != nil {
+		t.Fatalf("ResolveVariantRoles: %v", err)
+	}
+	if got := findPool(t, out, "variant-a").MinWarm; got != config().MinWarm {
+		t.Errorf("variant-a MinWarm = %d, want %d (omitted initialMinWarm leaves it untouched)", got, config().MinWarm)
+	}
+}
+
 // spec: 4.6.2
 // diagnosis: with no active experiments every pool stays a standard
 // pool with Σ variant_weights 0, and ResolveVariantRoles must not

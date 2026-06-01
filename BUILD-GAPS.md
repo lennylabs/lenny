@@ -14330,7 +14330,7 @@ external-provider integration always pays the per-session evaluation cost.
 
 ---
 
-### - [ ] F-10.7.7 — 07  `initialMinWarm` is stored but never reaches the scaling formula's `BootstrapMinWarm` [Medium] — OPEN
+### - [x] F-10.7.7 — 07  `initialMinWarm` is stored but never reaches the scaling formula's `BootstrapMinWarm` [Medium] — CLOSED
 
 **Spec:** §10.7 lines 695, 705–710 — each variant entry carries an optional
 `initialMinWarm` that the PoolScalingController uses "during bootstrap mode
@@ -14361,6 +14361,8 @@ against the §10.7 cold-start latency penalty for a new variant pool. Every
 new variant pool now bootstraps at `minWarm = 0` (the strategy's bootstrap
 path returns `BootstrapMinWarm` which is unset from the experiment
 definition), absorbing the full pod-startup latency for early traffic.
+
+- **Resolution:** `ActiveVariant` (`pkg/controller/poolscaling/variants.go`) now carries an `InitialMinWarm int32` field, and `ResolveVariantRoles` stamps it onto the variant pool's `PoolConfig.MinWarm` when positive. `controller.targetMinWarm` already feeds `cfg.MinWarm` to the strategy as `BootstrapMinWarm`, which the strategy returns only in bootstrap mode and discards on convergence (§17.8.2), so the §10.7 lines 705-710 lifecycle (applied at creation, dropped after convergence, default 0) holds without further wiring. The experiment-store transport that constructs `ActiveVariant` slices remains F-10.7.1's scope; the named resolver defect (the type omitted MinWarm and the resolver never set it) is closed. Resolved in this batch's commit.
 
 ---
 
