@@ -123,6 +123,17 @@ spec:
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days={{ .Values.ops.drift.snapshotStaleWarningDays }}
             - --drift-running-state-cache-ttl-seconds={{ .Values.ops.drift.runningStateCacheTTLSeconds }}
+            # §25.4 lines 1562-1564 / §17 security.oidc.issuerUrl — OIDC
+            # authentication + role gate. F-25.4.1, F-25.4.20.
+            {{- if .Values.security.oidc.issuerUrl }}
+            - --oidc-issuer-url={{ .Values.security.oidc.issuerUrl }}
+            {{- end }}
+            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+            {{- end }}
+            # §25.4 line 2001 per-service-account rate limiting. F-25.4.5.
+            - --rate-limit-rps={{ .Values.ops.rateLimiting.requestsPerSecond }}
+            - --rate-limit-burst={{ .Values.ops.rateLimiting.burst }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}
@@ -166,8 +177,15 @@ spec:
             capabilities:
               drop:
                 - ALL
-          {{- if .Values.platform.releaseChannel.publisher.enabled }}
+          {{- if or .Values.platform.releaseChannel.publisher.enabled .Values.security.oidc.bearerTrustKeySecret }}
           volumeMounts:
+            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            # §25.4 line 1562: the shared HMAC bearer-verify key. F-25.4.20.
+            - name: oidc-bearer-trust-key
+              mountPath: /etc/lenny/oidc
+              readOnly: true
+            {{- end }}
+            {{- if .Values.platform.releaseChannel.publisher.enabled }}
             - name: release-channel-signing-key
               mountPath: /etc/lenny/release-channel
               readOnly: true
@@ -179,11 +197,21 @@ spec:
               mountPath: /etc/lenny/release-channel-previous
               readOnly: true
             {{- end }}
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.ops.resources | nindent 12 }}
-      {{- if .Values.platform.releaseChannel.publisher.enabled }}
+      {{- if or .Values.platform.releaseChannel.publisher.enabled .Values.security.oidc.bearerTrustKeySecret }}
       volumes:
+        {{- if .Values.security.oidc.bearerTrustKeySecret }}
+        - name: oidc-bearer-trust-key
+          secret:
+            secretName: {{ .Values.security.oidc.bearerTrustKeySecret }}
+            items:
+              - key: key
+                path: key
+        {{- end }}
+        {{- if .Values.platform.releaseChannel.publisher.enabled }}
         - name: release-channel-signing-key
           secret:
             secretName: {{ .Values.platform.releaseChannel.publisher.signingKeySecret }}
@@ -194,6 +222,7 @@ spec:
         - name: release-channel-previous-key
           secret:
             secretName: {{ .Values.platform.releaseChannel.publisher.previousKeySecret }}
+        {{- end }}
         {{- end }}
       {{- end }}
 ---

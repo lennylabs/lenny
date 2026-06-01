@@ -5,6 +5,7 @@ package opsserver
 import (
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/remediationlock"
@@ -61,10 +62,22 @@ func (s *Server) locksUnavailable(w http.ResponseWriter) {
 		conventions.CategoryTransient, "the remediation-lock subsystem is not configured")
 }
 
-// callerRole returns the §25.4 caller role for a lock request. lenny-ops
-// authenticates the caller upstream; until that middleware lands the
-// X-Lenny-Role header carries the role, defaulting to platform-admin.
+// callerRole returns the §25.4 caller role for a lock request, mapped
+// from the verified principal the §25.4 auth middleware attached. The
+// requireAdminRole gate guarantees an authenticated caller holds
+// platform-admin or tenant-admin, so the principal resolves to one of
+// the two; platform-admin wins when both are present. The X-Lenny-Role
+// header is consulted only when no principal is present (dev / embedded
+// with no AuthConfig wired).
 func callerRole(r *http.Request) remediationlock.Role {
+	if p, ok := callerPrincipal(r); ok && len(p.Roles) > 0 {
+		if p.HasRole(auth.RolePlatformAdmin) {
+			return remediationlock.PlatformAdmin
+		}
+		if p.HasRole(auth.RoleTenantAdmin) {
+			return remediationlock.TenantAdmin
+		}
+	}
 	switch r.Header.Get("X-Lenny-Role") {
 	case "tenant-admin":
 		return remediationlock.TenantAdmin
@@ -73,9 +86,14 @@ func callerRole(r *http.Request) remediationlock.Role {
 	}
 }
 
-// callerTenant returns the §25.4 caller tenant for a lock request, read
-// from the X-Lenny-Tenant-ID header.
+// callerTenant returns the §25.4 caller tenant for a lock request,
+// read from the verified principal's tenant claim. The X-Lenny-Tenant-ID
+// header is consulted only when no principal is present (dev / embedded
+// with no AuthConfig wired).
 func callerTenant(r *http.Request) string {
+	if p, ok := callerPrincipal(r); ok && p.TenantID != "" {
+		return p.TenantID
+	}
 	return r.Header.Get("X-Lenny-Tenant-ID")
 }
 

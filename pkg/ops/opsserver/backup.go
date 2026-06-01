@@ -89,10 +89,15 @@ func readJSONBody(r *http.Request, v any) error {
 }
 
 // callerIdentity returns the §25.11 started_by value for a mutating
-// request. lenny-ops authenticates the caller upstream; until that
-// middleware lands the X-Lenny-Caller header carries the identity,
-// defaulting to "operator".
+// request. The §25.4 auth middleware authenticates the caller and
+// attaches the verified principal, whose sub claim is authoritative.
+// The X-Lenny-Caller header is only consulted when no principal is
+// present (dev / embedded with no AuthConfig wired); "operator" is the
+// final fallback.
 func callerIdentity(r *http.Request) string {
+	if p, ok := callerPrincipal(r); ok && p.Subject != "" {
+		return p.Subject
+	}
 	if v := r.Header.Get("X-Lenny-Caller"); v != "" {
 		return v
 	}

@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -49,7 +50,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
@@ -160,6 +163,31 @@ func main() {
 			"line 3822 running-state cache that backs GET /v1/admin/drift. Default 60; "+
 			"0 disables caching (every report reads fresh). "+
 			"Override via LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS.")
+	// spec: §25.4 lines 1562-1564 + §17 security.oidc.issuerUrl (line 916).
+	// lenny-ops validates bearer JWTs with the same OIDC issuer the gateway
+	// admin API trusts and requires platform-admin or tenant-admin on every
+	// endpoint. The v1 verify key is the shared HMAC signing key (the same
+	// --bearer-trust-hmac-key-file mechanism the §17.4 embedded gateway
+	// uses); --oidc-issuer-url pins the expected iss claim. F-25.4.1,
+	// F-25.4.20.
+	oidcIssuerURL := flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
+		"§25.4/§17 security.oidc.issuerUrl: the OIDC issuer whose tokens lenny-ops trusts. "+
+			"When set, a bearer whose iss claim differs is rejected. Override via LENNY_OIDC_ISSUER_URL.")
+	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
+		"§25.4 line 1562: path to the shared HMAC signing key (the gateway Token Service / "+
+			"embedded OIDC key file) lenny-ops verifies bearer JWTs against. Required when "+
+			"--production is set; when empty in dev the operability surface is unauthenticated. "+
+			"Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+	authMultiTenant := flag.Bool("auth-multi-tenant", envBool("LENNY_AUTH_MULTI_TENANT", false),
+		"§10.2: when true, lenny-ops extracts the tenant identifier from the JWT tenant claim "+
+			"(so tenant-admin scoping resolves to the bearer's tenant); when false every caller "+
+			"resolves to the built-in default tenant. Override via LENNY_AUTH_MULTI_TENANT.")
+	rateLimitRPS := flag.Float64("rate-limit-rps", envFloat("LENNY_OPS_RATE_LIMIT_RPS", opsserver.DefaultRateLimitRPS),
+		"§25.4 line 2001 ops.rateLimiting.requestsPerSecond: per-service-account token-bucket "+
+			"refill rate. Override via LENNY_OPS_RATE_LIMIT_RPS.")
+	rateLimitBurst := flag.Int("rate-limit-burst", envInt("LENNY_OPS_RATE_LIMIT_BURST", opsserver.DefaultRateLimitBurst),
+		"§25.4 line 2001 ops.rateLimiting.burst: per-service-account token-bucket depth. "+
+			"Override via LENNY_OPS_RATE_LIMIT_BURST.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -424,6 +452,18 @@ func main() {
 	)
 	go alertEvaluator.Run(ctx)
 
+	// §25.4 lines 1562-1564: build the OIDC authentication + role gate.
+	// The verify key is the shared HMAC signing key (the gateway Token
+	// Service / §17.4 embedded OIDC key). When no key is configured the
+	// surface is unauthenticated, which is rejected in production: serving
+	// the platform-admin remediation-lock / backup / drift surface without
+	// authentication is the §25.4 security regression the gate closes.
+	authCfg, err := buildAuthConfig(*bearerTrustHMACKeyFile, *oidcIssuerURL, *authMultiTenant,
+		*production, *rateLimitRPS, *rateLimitBurst)
+	if err != nil {
+		log.Fatalf("lenny-ops: %v", err)
+	}
+
 	// The §25.4 HTTP surface. Every replica serves it, leader or not. It
 	// hosts the §25.6 diagnostics, the §25.7 runbook index, the §25.4
 	// self-health, remediation-lock, and escalation endpoints, the
@@ -444,6 +484,7 @@ func main() {
 			EventStream:    eventStream,
 			ReleaseChannel: releaseChannelPub,
 			Production:     *production,
+			Auth:           authCfg,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -550,6 +591,62 @@ func envInt(name string, fallback int) int {
 	if v := os.Getenv(name); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// buildAuthConfig assembles the §25.4 lines 1562-1564 OIDC
+// authentication + role gate for the operability surface.
+//
+// The v1 verify key is the shared HMAC signing key at hmacKeyFile (the
+// gateway Token Service / §17.4 embedded OIDC key). When an issuer is
+// supplied the verifier additionally asserts the iss claim. The per-
+// service-account rate limiter (§25.4 line 2001) is always attached when
+// auth is enabled.
+//
+// When no key file is configured the surface is unauthenticated: that is
+// admitted only outside production. In production it is a fatal
+// misconfiguration (serving the platform-admin remediation-lock / backup
+// / drift surface anonymously is the §25.4 security regression the gate
+// exists to close), reported as an error so the caller can refuse to
+// start.
+func buildAuthConfig(hmacKeyFile, issuer string, multiTenant, production bool, rps float64, burst int) (*opsserver.AuthConfig, error) {
+	if hmacKeyFile == "" {
+		if production {
+			return nil, errors.New("§25.4 line 1562 requires authentication in production: set --bearer-trust-hmac-key-file (LENNY_BEARER_TRUST_HMAC_KEY_FILE)")
+		}
+		log.Printf("lenny-ops: §25.4 WARNING — no bearer verify key configured; the operability surface is UNAUTHENTICATED (dev only)")
+		return nil, nil
+	}
+	signer, err := jwt.LoadHMACKeyFile(hmacKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load bearer trust key %s: %w", hmacKeyFile, err)
+	}
+	var verifier jwt.Verifier = signer
+	if issuer != "" {
+		verifier = jwt.NewClaimChecker(verifier, jwt.ExpectedClaims{Issuer: issuer})
+	}
+	return &opsserver.AuthConfig{
+		Options: authmw.Options{
+			Verifier:    verifier,
+			MultiTenant: multiTenant,
+			// Outside production the dev headers (X-Lenny-Tenant-ID /
+			// X-Lenny-User-ID / X-Lenny-Roles) remain a convenience
+			// transport; production anchors every claim to the bearer JWT.
+			AllowDevHeaders: !production,
+			AllowDevRoles:   !production,
+		},
+		RateLimiter: opsserver.NewRateLimiter(rps, burst),
+	}, nil
+}
+
+// envFloat parses the named environment variable as a float64, falling
+// back when it is unset or malformed.
+func envFloat(name string, fallback float64) float64 {
+	if v := os.Getenv(name); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

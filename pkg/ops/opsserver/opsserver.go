@@ -132,6 +132,14 @@ type Options struct {
 	// Production reports whether this deployment is production, which
 	// gates the §25.11 confirm requirement for a full backup.
 	Production bool
+	// Auth, when non-nil, wraps every operability route (all paths except
+	// the Kubernetes probes /healthz and /readyz) in the §25.4 lines
+	// 1562-1564 OIDC authentication + platform-admin/tenant-admin role
+	// gate, and applies the §25.4 line 2001 per-service-account rate limit
+	// when a RateLimiter is set. A nil value leaves the surface
+	// unauthenticated (dev / embedded single-node only); the production
+	// binary always supplies it.
+	Auth *AuthConfig
 }
 
 // New returns a Server with the liveness probe, readiness probe, and
@@ -179,12 +187,21 @@ func New(opts Options) *Server {
 	s.mcp = mcp.NewServer(s.mcpInvoker())
 	s.mux.Handle("/mcp/management", s.mcp)
 	s.mux.Handle("/mcp/management/", s.mcp)
+	// §25.4 lines 1562-1564: when an AuthConfig is supplied, every
+	// operability route runs through the OIDC authentication + role gate
+	// (the Kubernetes probes are exempt). The auth wrapper sits inside the
+	// correlation/access-log middleware so a rejected request is still
+	// logged with its correlation context.
+	routes := http.Handler(s.mux)
+	if opts.Auth != nil {
+		routes = s.withOpsAuth(s.mux, opts.Auth)
+	}
 	// §25.4 lines 2499-2526: every request runs through the correlation
 	// middleware (stamps operation_id / agent_name / trace_id from inbound
 	// headers onto the request context) and the access-log middleware
 	// (one structured log line per request, projected through the §25.4
 	// JSON handler configured in main).
-	s.handler = withCorrelation(withAccessLog(s.mux))
+	s.handler = withCorrelation(withAccessLog(routes))
 	return s
 }
 
