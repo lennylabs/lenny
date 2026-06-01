@@ -248,6 +248,30 @@ type Hook struct {
 	// the concurrent invocation; the second call returns 200 with
 	// `already_fired: true`.
 	fired atomic.Bool
+	// draining records that the §10.1 Stage 1 readiness flip has
+	// happened: the hook sets it true as the first action of the
+	// staged drain so the gateway's /readyz probe reports NotReady,
+	// the Endpoints controller removes the pod from the Service, and
+	// the load balancer stops routing new requests before any drain
+	// logic begins. spec: §10.1 — "Stop accepting new work
+	// (readiness=false) ... before any drain logic begins".
+	draining atomic.Bool
+}
+
+// Draining reports whether the §10.1 preStop staged drain has begun on
+// this replica. The gateway's /readyz readiness handler consults this
+// so the Stage 1 readiness flip removes the pod from the Service
+// endpoints before the eviction-checkpoint drain runs. A nil Hook (the
+// in-memory / probe-disabled posture) is never draining.
+//
+// spec: §10.1 line — "The preStop hook immediately sets the pod's
+// readiness probe to false ... The readiness flip must happen before
+// any drain logic begins".
+func (h *Hook) Draining() bool {
+	if h == nil {
+		return false
+	}
+	return h.draining.Load()
 }
 
 // Summary is the JSON body the hook returns on success. Kubernetes
@@ -286,6 +310,12 @@ func (h *Hook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // summary so the test surface can verify outcomes without going
 // through HTTP.
 func (h *Hook) run(ctx context.Context) Summary {
+	// spec: §10.1 Stage 1 — flip readiness to false before any drain
+	// logic so the Endpoints controller removes this pod from the
+	// Service and the load balancer stops routing new requests. This is
+	// the first action of the staged drain so the readiness-propagation
+	// lag (1–5s) overlaps the checkpoint wait rather than racing it.
+	h.draining.Store(true)
 	grace := h.gracePeriod()
 	tiers := h.tiers()
 	sessions, err := h.Sessions.Snapshot(ctx)

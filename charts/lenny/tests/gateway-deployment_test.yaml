@@ -465,9 +465,12 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.port
           value: http
+      # §10.1 preStop Stage 1: readiness is a distinct /readyz probe so
+      # the preStop hook can flip the pod to NotReady (removed from the
+      # Service endpoints) without tripping the /healthz liveness probe.
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /healthz
+          value: /readyz
 
   - it: grants SandboxClaim create+delete and Sandbox status RBAC
     documentSelector:

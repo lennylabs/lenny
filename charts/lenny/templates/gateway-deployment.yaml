@@ -911,9 +911,15 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
+          # §10.1 preStop staged drain Stage 1: readiness is a distinct
+          # probe (/readyz) so the preStop hook can flip the pod to
+          # NotReady — removing it from the Service endpoints before the
+          # eviction-checkpoint drain begins — without also tripping the
+          # liveness probe (/healthz) and being killed mid-drain. /readyz
+          # also reports NotReady on NTP drift.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

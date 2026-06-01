@@ -3514,6 +3514,31 @@ func main() {
 	mux.Handle("POST /internal/prestop", prestopHook)
 	mux.Handle("GET /internal/prestop", prestopHook)
 
+	// ----- Readiness (unauthenticated) -----
+	// spec: §10.1 — the preStop staged drain's Stage 1 is a readiness
+	// flip: once the preStop hook fires, /readyz reports 503 so the
+	// Endpoints controller removes this pod from the Service and the
+	// load balancer stops routing new requests *before* the
+	// eviction-checkpoint drain begins. Liveness stays on /healthz so a
+	// draining pod is not also killed by the kubelet mid-drain. The
+	// readiness probe also fails on NTP drift so a clock-untrustworthy
+	// replica is removed from the endpoints (the §13.3.5 behaviour that
+	// previously rode on /healthz serving double duty). F-10.1.6.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		if prestopHook.Draining() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("draining\n"))
+			return
+		}
+		if driftMonitor.Degraded() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("clock_drift_exceeded\n"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
 
@@ -3721,6 +3746,7 @@ func main() {
 	handler = correlationmw.Wrap(handler, correlationmw.Options{
 		SkipPaths: map[string]bool{
 			"/healthz":                  true,
+			"/readyz":                   true,
 			"/metrics":                  true,
 			"/internal/drain-readiness": true,
 		},

@@ -370,6 +370,35 @@ func TestHook_IdempotentOnSecondInvocation(t *testing.T) {
 	}
 }
 
+// spec: §10.1 Stage 1 — the readiness flip happens before any drain
+// logic: Draining() is false before the hook fires and true after, so
+// /readyz removes the pod from the Service endpoints at the start of
+// the staged drain.
+func TestHook_DrainingFlipsReadiness_spec_10_1(t *testing.T) {
+	enum := &fakeEnumerator{sessions: []SessionInfo{{TenantID: "acme", SessionID: "s"}}}
+	hook := &Hook{
+		Sessions:   enum,
+		Checkpoint: func(_ context.Context, _, _ string, _ time.Duration) error { return nil },
+	}
+	if hook.Draining() {
+		t.Fatal("hook should not report draining before preStop fires")
+	}
+	hook.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/internal/prestop", nil))
+	if !hook.Draining() {
+		t.Fatal("hook must report draining once preStop has fired")
+	}
+}
+
+// spec: §10.1 — a nil Hook is never draining so a /readyz handler that
+// holds a nil reference (the in-memory / probe-disabled posture)
+// reports Ready.
+func TestHook_NilDrainingIsReady_spec_10_1(t *testing.T) {
+	var hook *Hook
+	if hook.Draining() {
+		t.Fatal("nil hook must not report draining")
+	}
+}
+
 // spec: §10.1 — a snapshot failure returns 200 with the error in the
 // summary; Kubernetes never gets a non-200 response so the drain
 // continues into the SIGTERM path.
