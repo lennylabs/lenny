@@ -26,6 +26,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/rediskeys"
 )
 
 // TenantID is the platform-issued tenant identifier.
@@ -170,6 +172,11 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	if id == "" {
 		id = "default"
 	}
+	// spec §12.4 line 195: tenant-key isolation is enforced in the Redis
+	// wrapper layer. Installing the Guard hook on the shared client makes
+	// every concern returned by RedisShard validate keys against the
+	// per-request scope (rediskeys.WithScope) before the command is issued.
+	cfg.Redis.AddHook(rediskeys.NewGuard())
 	return &SingleShardRouter{
 		pg:         cfg.Postgres,
 		rdb:        cfg.Redis,

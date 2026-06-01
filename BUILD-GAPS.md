@@ -19028,7 +19028,7 @@ Compare with the Postgres flow, which has live verification (`/Users/joan/projec
 
 - **Resolution:** `NewClient` now populates `FailoverOptions.TLSConfig` on the Sentinel path: enforcement (`AllowInsecure` false) forces TLS, and a dev deployment can opt into it via the new `Config.TLS` field (gateway/ops `--redis-tls` / `LENNY_REDIS_TLS`). Both paths pin `MinVersion: tls.VersionTLS12` — the direct-URL path raises the floor on the `rediss://` TLSConfig that `ParseURL` builds (`pinTLSFloor`, only when unset so an operator's higher pin is not downgraded), and the Sentinel path builds the config with that floor. Under enforcement a plaintext `redis://` URL is rejected with `ErrTLSRequired`. Commit 3ba36b17.
 
-### - [ ] F-12.4.3 — `t:{tenant_id}:` tenant-key isolation is not enforced at the wrapper layer [High] — OPEN
+### - [x] F-12.4.3 — `t:{tenant_id}:` tenant-key isolation is not enforced at the wrapper layer [High] — CLOSED
 
 Spec §12.4: "This convention is enforced in the Redis wrapper layer; no raw Redis command may be issued without the tenant prefix (or pod prefix for slot counters, or `cb:` prefix for circuit breakers, or `{root_session_id}:dlg:` prefix for delegation budget keys — the wrapper validates the calling tenant owns the `root_session_id` before permitting the operation)."
 
@@ -19036,7 +19036,9 @@ There is no Redis wrapper that performs prefix validation. Every store package b
 
 The `storerouter.SingleShardRouter.RedisShard` (`/Users/joan/projects/lenny/pkg/storerouter/storerouter.go:223-231`) requires a non-empty `tenantID` but returns the **same** `redis.UniversalClient` for every concern and every tenant; the returned handle carries no tenant-scoping behavior. `PlatformRedis` (line 234) hands out the same client for unscoped use. This means the spec's "enforced at the wrapper layer" guarantee is currently a documentation convention only, not a runtime check.
 
-### - [ ] F-12.4.4 — Mandated `TestRedisTenantKeyIsolation` integration test is absent [High] — OPEN
+**Resolution:** New `pkg/gateway/rediskeys` is the §12.4 wrapper layer. `ValidateKey(scope, key)` admits a key only when it leads with the scope's `t:{tenant_id}:` prefix, with a `cb:` or `lenny:pod:` exception prefix, or with a `{root}:dlg:` prefix for a root session the scope owns (the application-layer ownership check that compensates for the absent tenant prefix on delegation keys). The `Guard` go-redis `Hook` (ProcessHook + ProcessPipelineHook) extracts the key arguments of every command — including the numkeys-aware `EVAL`/`EVALSHA` family and the multi-key `DEL`/`MGET`/`MSET` forms — and validates them against the `rediskeys.Scope` carried in the command context (`WithScope`). `NewSingleShardRouter` installs the Guard on the shared client, so every concern returned by `RedisShard` is validated. A `t:globex:` key issued from an `acme`-scoped context is now rejected with `ErrCrossTenant` before reaching Redis. Enforcement is scope-gated: a command issued without a `WithScope` context passes through, so unmigrated call sites and platform-scoped `PlatformRedis` use are not broken; threading `WithScope` into the remaining store call paths is the incremental rollout. F-12.4.3.
+
+### - [x] F-12.4.4 — Mandated `TestRedisTenantKeyIsolation` integration test is absent [High] — CLOSED
 
 Spec §12.4: "An integration test (`TestRedisTenantKeyIsolation`) must verify that operations scoped to one tenant cannot read or mutate keys belonging to another tenant. The test suite **must include DLQ, inbox, semantic cache, and delegation budget key coverage**: (a)…(b)…(c)…(d)…(e)…(f)…"
 
@@ -19053,6 +19055,8 @@ The six specifically required coverage points are all absent:
 - (d) Semantic cache cross-tenant — the only test is in-memory; the Redis `semanticcache/redisstore` package has no cross-tenant integration test.
 - (e) Delegation budget `budget_reserve.lua` / `budget_return.lua` cross-tenant — the Lua scripts themselves are missing (see H8).
 - (f) EventBus cross-tenant subscribe — no test attempts a cross-channel receive.
+
+**Resolution:** `tests/tier4_integration/redis_tenant_isolation_test.go` adds `TestRedisTenantKeyIsolation` (build tag `integration`), one subtest per mandated coverage point against the real stores over a miniredis-backed client with the §12.4 Guard installed: (a) tenant-B `DLQ.DrainAll` of tenant-A's key is rejected with `ErrCrossTenant`; (b) tenant-B `DLQ.SweepExpired` on its own key returns zero of A's messages; (c) tenant-B `RedisInbox.Drain` of A's key is rejected and B's own inbox length is zero; (d) a tenant-B `semanticcache` Get for the identical query misses and a B-scoped Get of A's key is rejected; (e) the delegation-budget ownership gate rejects a B-scoped `{root-A}:dlg:tokens` (budget_reserve target) and `{root-A}:dlg:tree_memory` (budget_return target) and admits the owning scope — full `budget_reserve.lua`/`budget_return.lua` script coverage tracks F-12.4.8, which has not yet shipped the scripts; (f) a tenant-B `EventBus.Publish` on tenant-A's channel is rejected at the `PUBLISH` command. Depends on F-12.4.3 (the Guard wrapper). F-12.4.4.
 
 ### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — OPEN
 
