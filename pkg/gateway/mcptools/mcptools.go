@@ -1975,6 +1975,28 @@ func Register(srv *mcp.Server, deps Deps) {
 					PerChildMaxAge:      in.LeaseSlice.PerChildMaxAge,
 				}
 			}
+			// §8.2 line 59: build the RFC 8693 actor_token material from
+			// the authenticated principal — the parent pod's session
+			// token. The service runs the in-process child-token exchange
+			// over it (narrow scope, build the act chain, fix
+			// delegation_depth, read the parent jti against the §13.3
+			// revocation cache). Absent under the dev-headers path (no
+			// principal), which leaves the exchange leg unrun.
+			// F-8.1.2 / F-8.2.7.
+			var parentToken *delegation.ParentToken
+			if p, ok := authmw.FromContext(ctx); ok && p.Subject != "" {
+				var parentScope []string
+				for _, sc := range p.Scopes.Scopes() {
+					parentScope = append(parentScope, sc.String())
+				}
+				parentToken = &delegation.ParentToken{
+					Subject:    p.Subject,
+					SessionID:  in.ParentSessionID,
+					JTI:        p.JTI,
+					Scope:      parentScope,
+					CallerType: p.CallerType,
+				}
+			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
 				ParentSessionID:  in.ParentSessionID,
 				RuntimeRef:       in.RuntimeRef,
@@ -1983,6 +2005,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
 				LeaseSlice:       leaseSlice,
+				ParentToken:      parentToken,
 				FileExport:       fileExport,
 				FileExportLimits: fileExportLimits,
 				// §8.3 lines 311-319: the lease visibility boundary. Empty
@@ -2090,6 +2113,26 @@ func Register(srv *mcp.Server, deps Deps) {
 				// rather than admitting an unbudgeted child. F-8.2.18.
 				if errors.Is(err, delegation.ErrBudgetUnavailable) {
 					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_BUDGET_UNAVAILABLE",
+						err.Error(), nil)
+				}
+				// spec: §8.2 line 61 — the §13.3 actor-token freshness
+				// check found the parent token revoked mid-flight (the
+				// parent was rotated or recursively revoked between this
+				// call and the in-process child-token exchange). No child
+				// pod is allocated; surface the canonical
+				// DELEGATION_PARENT_REVOKED. F-8.1.2 / F-8.2.7.
+				if errors.Is(err, delegation.ErrParentRevoked) {
+					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_REVOKED",
+						err.Error(), map[string]any{"parentSessionId": in.ParentSessionID})
+				}
+				// spec: §8.2 line 63 — the per-tenant audit advisory lock
+				// timed out during the child-token exchange. Surface the
+				// retryable DELEGATION_AUDIT_CONTENTION; the parent agent
+				// retries the entire lenny/delegate_task so the full
+				// admission pipeline (including the freshness check)
+				// re-runs. F-8.1.2 / F-8.2.7.
+				if errors.Is(err, delegation.ErrAuditContention) {
+					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_AUDIT_CONTENTION",
 						err.Error(), nil)
 				}
 				// spec: §8.2 line 50 — the service-layer defence-in-depth

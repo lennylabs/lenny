@@ -62,6 +62,13 @@ type Principal struct {
 	// the spec maps to "no scope restriction beyond role". The dev-
 	// header path leaves Scopes zero (no scope narrowing in dev mode).
 	Scopes scopes.Set
+
+	// JTI is the JWT `jti` claim copied verbatim. The §8.2 line 61
+	// child-token exchange reads the delegating (parent) session token's
+	// jti against the §13.3 revocation cache; the §8.5 lenny/delegate_task
+	// handler forwards this onto the delegation ParentToken. Empty under
+	// the dev-headers path (no JWT). F-8.1.2 / F-8.2.7.
+	JTI string
 }
 
 // HasRole reports whether p holds r. Endpoints that gate behaviour on
@@ -403,6 +410,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Roles:      append([]auth.Role(nil), claims.Roles...),
 		Groups:     append([]string(nil), claims.Groups...),
 		Scopes:     scopeSet,
+		JTI:        claims.JWTID,
 	}
 	// spec: §10.2 line 294 — the platform-managed user→role mapping
 	// takes precedence over OIDC-derived roles. When the resolver

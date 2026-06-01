@@ -7223,7 +7223,7 @@ the gateway tree); `pkg/gateway/delegation/service.go::Delegate` body
 
 **Resolution (commits fa058dc4, 6b86cac9):** The `lease_slice` accept and the static `ValidateChildSlice` ceiling were wired into `delegate_task` in fa058dc4 (F-8.2.2). 6b86cac9 adds the missing Redis reservation leg: `delegation.Service.Delegate` now reserves the child's `maxTokenBudget` slice from the tree token pool (`{root_session_id}:dlg:tokens`) via `treebudget.Reserver.Reserve` at admission, capped at the parent's granted tree token budget, rejecting an over-budget carve with `BUDGET_EXHAUSTED` and failing closed (`DELEGATION_BUDGET_UNAVAILABLE`) on a Redis outage. The §8.1 token-budget invariant is now enforced in the gateway at delegation time. The consumption-time debit as in-tree LLM calls accrue remains the §8.6 leasecontrol / proxy concern; the RFC 8693 child-token-minting leg of §8.1's "gateway and Token Service" claim stays tracked under F-8.1.2 / F-8.2.7.
 
-### - [ ] F-8.1.2 — 1-F2 (High) — Token Service is not invoked on the delegation path (N3.b, N4) [Medium] — OPEN
+### - [x] F-8.1.2 — 1-F2 (High) — Token Service is not invoked on the delegation path (N3.b, N4) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.7 — Both report that the Token Service RFC 8693 child-token exchange leg is never invoked by the delegation path.
 
@@ -7285,6 +7285,17 @@ Evidence: `pkg/gateway/delegation/service.go` has no Token Service
 dependency; `grep -rn "tokenexchange\.\|tokenservice\." pkg/gateway`
 shows the only consumer is `pkg/gateway/credassign/client.go` (the
 credential-lease path).
+
+**Resolution (this batch):** Closed by F-8.2.7 (same wiring). The
+delegation path now invokes the §8.2 line 59 in-process RFC 8693
+child-token exchange via the `ChildTokenMinter` seam: the actor token
+(parent session token) is validated against the §13.3 revocation cache,
+the child token is minted with a complete `act` chain and
+`delegation_depth = parent + 1`, and `DELEGATION_PARENT_REVOKED` /
+`DELEGATION_AUDIT_CONTENTION` surface on the freshness and audit-contention
+paths. Enforcement no longer "sits in the gateway only" for the
+scope-subset axis: the N3.b scope-narrowing and N4 act-chain invariants
+run on every internal `lenny/delegate_task`.
 
 ### - [x] F-8.1.3 — 1-F3 (Medium) — Three-layer cycle gate hard-codes platform=false (N1, N3, follow-on §8.2) [Medium] — CLOSED
 
@@ -7626,7 +7637,7 @@ delegation-lease persistence work that ships with F-8.1.1 / F-8.2.2;
 the v1 chain always resolves through caller → Helm fallback so an
 omitted caller value still receives a positive bounded maxDepth.
 
-### - [ ] F-8.2.7 — Token Service token-exchange leg of child minting (§8.2 lines 59–63) is not invoked by the delegation path [High] — OPEN
+### - [x] F-8.2.7 — Token Service token-exchange leg of child minting (§8.2 lines 59–63) is not invoked by the delegation path [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.1.2 — Both report that the Token Service RFC 8693 child-token exchange leg is never invoked by the delegation path.
 
@@ -7643,6 +7654,31 @@ Implementation:
 - The child session is created without a token: `pkg/gateway/delegation/service.go:210-227` writes a `sessionstore.Session` row with no token field, no `act` chain, no `delegation_depth`. The pod that runs the child has no parent-derived JWT.
 
 Consequence: the actor-token freshness check that closes the "stale parent mints a long-lived child" race is structurally absent. The delegation path does not produce a token at all, so the rest of the platform that depends on the `act` chain (audit attribution, scope enforcement at the LLM proxy, the recursive-revocation propagation in §13.3) is bypassed for delegated children. The child session runs unauthenticated relative to the §13 trust model, or — if the runtime adapter mints its own — without an `act` claim linking it to the parent.
+
+**Resolution (this batch):** The delegation path now runs the §8.2 line
+59 in-process RFC 8693 child-token exchange. A new `ChildTokenMinter`
+seam on `delegation.Service` (Options + nil-safe field) is invoked from
+`Delegate` after every admission gate passes (cycle, depth, budget,
+export) and before the child row is committed, so a revoked parent
+rejects with no child created. The concrete
+`pkg/gateway/delegation/childtoken.Minter` composes the pure §13.3
+`tokenexchange.Validate` (scope-subset, audience-non-broaden,
+caller-type-non-elevation, `delegation_depth = parent + 1`, `exp` capped
+at `now + perDialectCap`) with the gateway's `revocation.Cache` (the
+actor-token `jti` freshness check) and an `AuditLock` seam. A revoked
+actor `jti` returns the new `delegation.ErrParentRevoked` →
+`DELEGATION_PARENT_REVOKED`; an audit advisory-lock timeout returns
+`delegation.ErrAuditContention` → the retryable
+`DELEGATION_AUDIT_CONTENTION`. The minted child token (narrowed scope,
+`act` chain naming the parent, capped exp, depth) is returned on
+`Result.ChildToken` and stamped on the `delegation.spawned` audit detail
+(`child_token_jti`, `act_chain`, `delegation_token_scope`). The §8.5
+`lenny/delegate_task` handler builds the RFC 8693 `actor_token` material
+(`delegation.ParentToken`) from the authenticated principal — `auth.Principal`
+now carries the JWT `jti` — and `cmd/lenny-gateway` wires the minter over
+the shared revocation cache so the leg runs in production. Per §8.2 the
+exchange is an in-process Token Service call, so no external endpoint
+traffic is introduced.
 
 ### - [x] F-8.2.8 — `target_not_an_agent` rejection of `type: mcp` targets is not enforced [High] — CLOSED
 

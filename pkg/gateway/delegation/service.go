@@ -95,6 +95,19 @@ type Request struct {
 	// blank.
 	UserID string
 
+	// ParentToken is the §8.2 line 59 RFC 8693 `actor_token` material —
+	// the parent session token the delegating pod presents. When set
+	// (and a ChildTokenMinter is wired), Delegate runs the in-process
+	// child-token exchange after admission: it mints the child session
+	// token with narrowed scope, the parent in the `act` chain,
+	// delegation_depth = parent + 1, and a capped exp, and reads the
+	// parent `jti` against the §13.3 revocation cache. A revoked parent
+	// rejects with ErrParentRevoked (DELEGATION_PARENT_REVOKED) and no
+	// child is created. Nil skips the exchange leg.
+	//
+	// spec: §8.2 lines 59-61. F-8.1.2 / F-8.2.7.
+	ParentToken *ParentToken
+
 	// ApprovalMode is the §8.4 closed enum on the delegation lease.
 	// The empty string and "policy"/"approval" share the auto-approval
 	// path (with "approval" recorded verbatim on audit per the v1
@@ -160,6 +173,13 @@ type Result struct {
 
 	// Depth is the child's depth in the delegation tree (root = 0).
 	Depth int
+
+	// ChildToken is the §8.2 line 59 minted child session token (narrowed
+	// scope, `act` chain, capped exp, delegation_depth = parent + 1). Nil
+	// when no ChildTokenMinter is wired or the request carried no
+	// ParentToken. The gateway hands it to the child pod at materialization
+	// so the child runs with a parent-derived identity. F-8.1.2 / F-8.2.7.
+	ChildToken *ChildToken
 }
 
 // MetricsRecorder receives §8.2 delegation admission and cycle-gate
@@ -280,6 +300,12 @@ type Service struct {
 	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
 	treeBudget TreeBudgetReserver
+	// tokenMinter performs the §8.2 line 59 internal RFC 8693
+	// child-token exchange after admission passes: it narrows scope,
+	// builds the `act` chain, fixes delegation_depth at parent + 1,
+	// caps exp, and runs the §13.3 actor-token freshness check. Nil
+	// skips the exchange leg. F-8.1.2 / F-8.2.7.
+	tokenMinter ChildTokenMinter
 }
 
 // Options configures a Service.
@@ -384,6 +410,15 @@ type Options struct {
 	// ValidateChildSlice ceiling enforced. F-8.2.18 / F-8.2.12 /
 	// F-8.1.1.
 	TreeBudgetReserver TreeBudgetReserver
+
+	// ChildTokenMinter, when set, performs the §8.2 line 59 internal
+	// RFC 8693 child-token exchange on every admitted delegation: it
+	// mints the child session token with narrowed scope, a complete
+	// `act` chain, delegation_depth = parent + 1, and a capped exp, and
+	// runs the §13.3 actor-token freshness check. Nil skips the
+	// exchange leg, leaving the child without a parent-derived token
+	// (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
+	ChildTokenMinter ChildTokenMinter
 }
 
 // NewService returns a delegation Service.
@@ -428,6 +463,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		exportMat:                    opts.ExportMaterializer,
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
+		tokenMinter:                  opts.ChildTokenMinter,
 	}
 }
 
@@ -861,6 +897,34 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		}
 		childPlan = plan
 	}
+	// §8.2 lines 59-61: mint the child session token via the in-process
+	// RFC 8693 token exchange. This runs after every admission gate has
+	// passed (cycle, depth, budget, export) but before the child row is
+	// committed, so a revoked parent (the §13.3 actor-token freshness
+	// check) rejects with ErrParentRevoked and no child session is
+	// created. The minter narrows scope per the lease, builds the `act`
+	// chain naming the parent, fixes delegation_depth at parent + 1, and
+	// caps exp. A nil minter or a request without ParentToken skips the
+	// leg (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
+	var childToken *ChildToken
+	if s.tokenMinter != nil && req.ParentToken != nil {
+		minted, err := s.tokenMinter.MintChildToken(ctx, ChildTokenParams{
+			TenantID:              tenantID,
+			ChildSessionID:        childID,
+			ParentSessionID:       parent.ID,
+			ParentSubject:         req.ParentToken.Subject,
+			ParentJTI:             req.ParentToken.JTI,
+			ParentDelegationDepth: int(parent.DelegationDepth),
+			ParentScope:           req.ParentToken.Scope,
+			RequestedScope:        req.ParentToken.Scope,
+			ParentCallerType:      req.ParentToken.CallerType,
+			Now:                   now,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		childToken = &minted
+	}
 	// rootSessionID was resolved above (the §12.4 budget counters are
 	// keyed by it). A child inherits its parent's RootSessionID rather
 	// than minting a new one; the §12.5 `idx_sessions_root` index
@@ -949,7 +1013,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		declaredMode = lease.ApprovalModePolicy
 	}
 	if s.auditor != nil {
-		s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", map[string]any{
+		detail := map[string]any{
 			"parent_session_id":       parent.ID,
 			"child_session_id":        child.ID,
 			"delegation_depth":        childDepth,
@@ -959,9 +1023,19 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 			"is_self_recursive":       decision.IsSelfRecursive,
 			"approval_mode":           string(declaredMode),
 			"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
-		})
+		}
+		// §8.2 line 59 / §11.7: when the child-token exchange ran, the
+		// audit record carries the minted `act` chain and child `jti` so
+		// audit attribution and the §13.3 recursive-revocation path can
+		// follow the parent→child identity link. F-8.1.2 / F-8.2.7.
+		if childToken != nil {
+			detail["child_token_jti"] = childToken.JTI
+			detail["act_chain"] = childToken.Act
+			detail["delegation_token_scope"] = childToken.Scope
+		}
+		s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", detail)
 	}
-	return Result{Child: child, Depth: childDepth}, nil
+	return Result{Child: child, Depth: childDepth, ChildToken: childToken}, nil
 }
 
 // ResolveMaxInputSize returns the effective §8.3

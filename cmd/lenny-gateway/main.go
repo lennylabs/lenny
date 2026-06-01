@@ -122,6 +122,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/childtoken"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/exportwire"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
@@ -2438,6 +2439,21 @@ func main() {
 	if redisClient != nil {
 		treeBudgetReserver = treebudget.New(redisClient, 0)
 	}
+	// §13.3 revocation cache: the auth middleware rejects a token whose
+	// jti is in this set, and the §8.2 line 61 child-token exchange reads
+	// the parent (actor) token's jti against it inside the minting step.
+	// Constructed here so both the delegation child-token minter and the
+	// revocation propagator (below) share the one cache instance. F-8.1.2.
+	revCache := revocation.NewCache()
+	// §8.2 line 59 / §13.3: the in-process child-token minter the
+	// delegation service runs after admission. It narrows scope, builds
+	// the act chain, fixes delegation_depth at parent + 1, caps exp, and
+	// fails closed with DELEGATION_PARENT_REVOKED when the parent jti is
+	// revoked. F-8.1.2 / F-8.2.7.
+	childTokenMinter := childtoken.NewMinter(childtoken.Options{
+		Revocations: revCache,
+		Clock:       clockinject.Now,
+	})
 	delegationSvc := delegation.NewService(sessions, delegation.Options{
 		Experiments:        experiments,
 		Runtimes:           runtimes,
@@ -2445,6 +2461,7 @@ func main() {
 		Clock:              clockinject.Now,
 		ExportMaterializer: exportMaterializer,
 		TreeBudgetReserver: treeBudgetReserver,
+		ChildTokenMinter:   childTokenMinter,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
 		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.
@@ -2556,8 +2573,8 @@ func main() {
 	// Redis pub/sub fan-out so a revocation on any replica reaches every
 	// replica within pub/sub latency; with no Redis the propagator is a
 	// local-only pass-through. revCache stays the read primitive the
-	// auth middleware and the rehydration loop use directly.
-	revCache := revocation.NewCache()
+	// auth middleware and the rehydration loop use directly. revCache is
+	// constructed above (shared with the §8.2 child-token minter).
 	revProp := revocationprop.New(revCache, securityBus, revocationprop.WithErrorHandler(func(err error) {
 		log.Printf("lenny-gateway: token-revocation pub/sub publish failed: %v", err)
 	}))
