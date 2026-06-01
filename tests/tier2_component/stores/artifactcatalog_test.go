@@ -145,6 +145,63 @@ func TestArtifactCatalogContract(t *testing.T) {
 		}
 	})
 
+	// Regression for F-12.5.25: the production retention GC sweep
+	// soft-deletes rows but never runs the optional Tombstone step, so
+	// hard-prune MUST remove soft_deleted rows past their deadline
+	// directly. A 'tombstoned'-only predicate would leak every
+	// retention-swept row. spec: §12.5 lines 333, 341.
+	t.Run("HardPruneExpired removes soft_deleted rows without an intervening Tombstone", func(t *testing.T) {
+		uri := "lenny-blob://acme/sess_sd/p_sd"
+		if err := cat.Insert(ctx, artifactcatalog.Record{
+			URI: uri, TenantID: "acme", SessionID: "sess_sd", PartID: "p_sd",
+		}); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		past := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		if err := cat.SoftDelete(ctx, uri, past); err != nil {
+			t.Fatalf("SoftDelete: %v", err)
+		}
+		got, _ := cat.Get(ctx, uri)
+		if got.State != artifactcatalog.StateSoftDeleted {
+			t.Fatalf("State = %q, want soft_deleted (no Tombstone called)", got.State)
+		}
+		now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+		n, err := cat.HardPruneExpired(ctx, now)
+		if err != nil {
+			t.Fatalf("HardPruneExpired: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("pruned = %d, want 1 (soft_deleted row past deadline)", n)
+		}
+		if _, err := cat.Get(ctx, uri); !errors.Is(err, artifactcatalog.ErrNotFound) {
+			t.Errorf("Get after prune = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("HardPruneExpired retains soft_deleted rows before the deadline", func(t *testing.T) {
+		uri := "lenny-blob://acme/sess_future/p_f"
+		if err := cat.Insert(ctx, artifactcatalog.Record{
+			URI: uri, TenantID: "acme", SessionID: "sess_future", PartID: "p_f",
+		}); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		future := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+		if err := cat.SoftDelete(ctx, uri, future); err != nil {
+			t.Fatalf("SoftDelete: %v", err)
+		}
+		now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+		n, err := cat.HardPruneExpired(ctx, now)
+		if err != nil {
+			t.Fatalf("HardPruneExpired: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("pruned = %d, want 0 (deadline in the future)", n)
+		}
+		if _, err := cat.Get(ctx, uri); err != nil {
+			t.Errorf("row removed before its deadline: %v", err)
+		}
+	})
+
 	t.Run("HardPruneExpired skips legal-held rows", func(t *testing.T) {
 		uri := "lenny-blob://acme/sess_5/p_5"
 		if err := cat.Insert(ctx, artifactcatalog.Record{

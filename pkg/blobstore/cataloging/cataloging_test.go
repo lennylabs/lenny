@@ -82,17 +82,11 @@ func (f *fakeCatalog) HardPruneExpired(_ context.Context, now time.Time) (int, e
 	defer f.mu.Unlock()
 	count := 0
 	for uri, r := range f.rows {
-		if r.State == artifactcatalog.StateTombstoned && !r.TombstoneDeadline.After(now) && !r.LegalHold {
-			delete(f.rows, uri)
-			count++
-		}
-		if r.State == artifactcatalog.StateSoftDeleted && !r.TombstoneDeadline.After(now) && !r.LegalHold {
-			// The decorator's HardPrune passes the catalog's
-			// HardPruneExpired straight through; the catalog moves
-			// soft_deleted past the deadline directly to deletion as
-			// the PgStore's SQL also encodes (the PgStore prunes
-			// `state = 'tombstoned' AND tombstone_deadline <= now`,
-			// which is set by the SoftDelete call here).
+		// Mirror the PgStore predicate: every non-live row past its
+		// deadline (soft_deleted from the retention sweep or tombstoned
+		// from the erasure fast-path) is pruned, not just tombstoned
+		// rows. F-12.5.25.
+		if r.State != artifactcatalog.StateLive && !r.TombstoneDeadline.After(now) && !r.LegalHold {
 			delete(f.rows, uri)
 			count++
 		}

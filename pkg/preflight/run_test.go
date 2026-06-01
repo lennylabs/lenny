@@ -254,3 +254,28 @@ func TestRunIgnoresNonLennyWebhooks(t *testing.T) {
 		t.Error("Run failed though only an unrelated third-party webhook was extra")
 	}
 }
+
+// Run runs the §12.4 redis-maxmemory-policy check only when a BYO Redis
+// prober is configured (the cloud profile sets the policy natively); a
+// drifted policy fails the install. F-12.4.15.
+func TestRunWiresRedisMaxmemoryPolicyCheck_spec_12_4(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	noProber := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if resultByName(noProber, "redis-maxmemory-policy") != (preflight.Decision{}) {
+		t.Error("redis-maxmemory-policy check ran with no prober configured")
+	}
+
+	drift := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace: preflightNS,
+		RedisConfigProber: preflight.RedisConfigProbeFunc(func(context.Context, string) (string, error) {
+			return "allkeys-lru", nil
+		}),
+	})
+	if d := resultByName(drift, "redis-maxmemory-policy"); d.Passed {
+		t.Error("redis-maxmemory-policy passed against an allkeys-lru BYO Redis")
+	}
+	if !preflight.Failed(drift) {
+		t.Error("Run did not fail the install despite a drifted Redis eviction policy")
+	}
+}

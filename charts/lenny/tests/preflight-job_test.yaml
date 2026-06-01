@@ -243,6 +243,29 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--feature-cosign-verify=true"
 
+  # §12.4 (F-12.4.15): the BYO-Redis maxmemory-policy audit is opt-in.
+  # At chart defaults no --redis-url flag is rendered.
+  - it: omits --redis-url at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+
+  - it: renders --redis-url when checkRedisMaxmemoryPolicy is set
+    set:
+      preflight.checkRedisMaxmemoryPolicy: true
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

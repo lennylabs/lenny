@@ -2044,6 +2044,13 @@ preflight:
   # slow API server is bounded so the install never hangs indefinitely.
   # Deployers can raise this for sluggish managed control planes.
   timeoutSeconds: 120
+  # checkRedisMaxmemoryPolicy opts the self-managed (bring-your-own
+  # Redis) profile into the §12.4 maxmemory-policy=noeviction preflight
+  # audit. The cloud Terraform sets the policy on managed Redis natively,
+  # so this stays false by default; set it true when redis.url points at
+  # an operator-managed Redis whose eviction policy is otherwise
+  # unverified. A drifted policy fails the install. F-12.4.15.
+  checkRedisMaxmemoryPolicy: false
   resources:
     requests:
       cpu: 50m

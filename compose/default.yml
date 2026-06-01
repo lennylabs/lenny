@@ -74,11 +74,17 @@ services:
   # in any deployment that admits a real tenant; the Helm path applies
   # the AUTH password (charts/lenny/values.yaml redis.url query param)
   # plus the in-cluster TLS port (redis.tlsPort) per §12.4 contract.
+  #
+  # §12.4 names the billing stream and per-tenant counters as keys that
+  # MUST NOT silently evict. --maxmemory-policy noeviction is set
+  # explicitly so the invariant is visible on the command line rather
+  # than relying on the Redis 7 default; a BYO Redis is validated by the
+  # lenny-preflight redis-maxmemory-policy check (--redis-url).
   redis:
     image: redis:7-alpine
     container_name: lenny-redis
     command:
-      ["redis-server", "--appendonly", "no", "--save", "", "--replica-announce-ip", "redis"]
+      ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory-policy", "noeviction", "--replica-announce-ip", "redis"]
     ports: ["16379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -98,8 +104,8 @@ services:
     image: redis:7-alpine
     container_name: lenny-redis-replica
     command:
-      ["redis-server", "--appendonly", "no", "--save", "", "--replicaof", "redis", "6379",
-       "--replica-announce-ip", "redis-replica"]
+      ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory-policy", "noeviction",
+       "--replicaof", "redis", "6379", "--replica-announce-ip", "redis-replica"]
     depends_on:
       redis:
         condition: service_healthy

@@ -39,11 +39,16 @@ CREATE TABLE artifact_store (
         CHECK (state IN ('live', 'soft_deleted', 'tombstoned'))
 );
 
--- §12.5 GC sweep: walk by (state, deadline) to find tombstoned
--- objects that have passed their retention window.
+-- §12.5 GC sweep (lines 333, 341): the hard-prune pass deletes every
+-- non-live row past its tombstone deadline, mirroring the spec's binary
+-- `deleted_at IS NOT NULL` predicate. The partial index spans both
+-- non-live states ('soft_deleted' produced by the retention sweep and
+-- 'tombstoned' produced by the §12.8 erasure fast-path) so the sweep is
+-- index-supported without depending on the intermediate transition.
+-- F-12.5.25.
 CREATE INDEX idx_artifact_store_gc
     ON artifact_store (state, tombstone_deadline)
-    WHERE state = 'tombstoned';
+    WHERE state <> 'live';
 
 -- Per-tenant listing for the §12.8 erasure orchestrator. The
 -- declaration sits on one line so the R-01 lint regex

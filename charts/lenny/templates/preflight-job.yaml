@@ -149,6 +149,12 @@ them from the chart's enabled runtimeClasses.profiles entries, skipping:
 {{- $rcReqs := list -}}
 {{- $rc := .Values.runtimeClasses | default dict -}}
 {{- $global := .Values.global | default dict -}}
+{{- /* §12.4 BYO-Redis maxmemory-policy audit. Opt-in: the cloud
+       Terraform sets noeviction natively, so only the self-managed
+       profile that brings its own Redis needs the preflight probe.
+       F-12.4.15. */ -}}
+{{- $redis := .Values.redis | default dict -}}
+{{- $checkRedis := and .Values.preflight $.Values.preflight.checkRedisMaxmemoryPolicy $redis.url (ne ($redis.url | toString) "") -}}
 {{- if and (not $rc.create) (not $global.devMode) -}}
 {{-   range $profile, $cfg := ($rc.profiles | default dict) -}}
 {{-     if and $cfg $cfg.enabled $cfg.name -}}
@@ -223,6 +229,12 @@ spec:
             - --minio-endpoint={{ $minio.endpoint }}
             - --minio-bucket={{ $minio.bucket }}
             - --minio-use-ssl={{ $useSSL }}
+            {{- end }}
+            {{- if $checkRedis }}
+            # §12.4 — verify the BYO Redis enforces maxmemory-policy=noeviction
+            # so the billing stream and per-tenant counters cannot evict.
+            # The URL carries AUTH/TLS per §12.4. F-12.4.15.
+            - --redis-url={{ $redis.url }}
             {{- end }}
             # §27.2 playground-config preflight inputs (F-27.2.2 /
             # F-27.2.4 / F-27.2.5 / F-27.2.6 / F-27.9.3). The

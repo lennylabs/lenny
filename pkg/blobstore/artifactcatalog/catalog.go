@@ -11,10 +11,12 @@
 //
 // The catalog backs the MinIO blob store: a write produces one
 // catalog row alongside the bucket object; a §12.5 soft-delete
-// transitions the row from 'live' to 'soft_deleted' and starts
-// the tombstone retention timer; the GC sweep transitions
-// 'soft_deleted' to 'tombstoned' once the retention window expires
-// and deletes the row + bucket object together.
+// transitions the row from 'live' to 'soft_deleted' and starts the
+// tombstone retention timer; the hard-prune sweep deletes the row +
+// bucket object once the deadline passes. The hard-prune predicate is
+// the spec's binary 'deleted_at IS NOT NULL' (every non-live row past
+// retention), so it does not depend on the optional 'tombstoned'
+// intermediate the §12.8 erasure fast-path stamps. F-12.5.25.
 package artifactcatalog
 
 import (
@@ -69,18 +71,18 @@ const (
 
 // Record is one row in the §12.5 artifact_store catalog.
 type Record struct {
-	URI               string
-	TenantID          string
-	SessionID         string
-	PartID            string
-	MimeType          string
+	URI       string
+	TenantID  string
+	SessionID string
+	PartID    string
+	MimeType  string
 	// SizeBytes maps to the §12.5 line 309 artifact_size_bytes column.
-	SizeBytes         int64
-	State             State
+	SizeBytes int64
+	State     State
 	// ArtifactType is the §4.4 / §12.5 artifact-kind tag. Empty maps
 	// to ArtifactTypeWorkspace (the default the migration 0063 column
 	// stamps onto pre-existing rows).
-	ArtifactType ArtifactType
+	ArtifactType      ArtifactType
 	KMSKeyAlias       string
 	LegalHold         bool
 	SoftDeletedAt     time.Time
@@ -224,8 +226,16 @@ func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
 	return out, nil
 }
 
-// SoftDelete transitions a live row to soft_deleted and records
-// the tombstone retention deadline.
+// SoftDelete transitions a live row to soft_deleted and records the
+// tombstone retention deadline. The `WHERE uri = $1 AND state = 'live'`
+// guard is the spec's monotonic single-writer soft-delete predicate
+// `WHERE id = $1 AND deleted_at IS NULL` (lines 333, 335): the first
+// writer to commit wins, a concurrent or crash-resumed writer observes
+// `RowsAffected == 0` and skips the matching MinIO delete and Redis
+// decrement. The catalog's `uri` primary key serves the spec's `id`
+// role; `state = 'live'` is the spec's `deleted_at IS NULL`. F-12.5.24.
+//
+// spec: §12.5 lines 333, 335.
 func (s *PgStore) SoftDelete(ctx context.Context, uri string, deadline time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE artifact_store
@@ -261,14 +271,33 @@ func (s *PgStore) Tombstone(ctx context.Context, uri string) error {
 	return nil
 }
 
-// HardPruneExpired removes every tombstoned row whose
-// tombstone_deadline is before now (and which is not under a
-// legal hold). Returns the count removed so the caller can also
-// delete the matching bucket objects.
+// HardPruneExpired removes every non-live row whose tombstone_deadline
+// is at or before now (and which is not under a legal hold). Returns the
+// count removed so the caller can also delete the matching bucket
+// objects.
+//
+// The §12.5 GC concurrency model (lines 333, 341) is written against a
+// binary soft-delete column: a row is either live (`deleted_at IS NULL`)
+// or removed (`deleted_at IS NOT NULL`), and the hard-prune deletes any
+// non-live row past the retention window. This catalog records the same
+// state in the `state` column — `soft_deleted` and `tombstoned` are both
+// the spec's `deleted_at IS NOT NULL`, and `soft_deleted_at` is the
+// spec's `deleted_at`. Hard-prune therefore selects `state <> 'live'`
+// rather than only `tombstoned`: the retention GC sweep transitions a
+// row to `soft_deleted` (it does not run the optional `Tombstone` step),
+// so a `tombstoned`-only predicate would never prune those rows and they
+// would accumulate. Selecting every non-live row makes the prune
+// independent of the intermediate transition and matches the spec's
+// binary predicate. F-12.5.25.
+//
+// spec: §12.5 lines 333, 341 — `deleted_at IS NOT NULL AND deleted_at <
+// now() - retention` hard-prune; the catalog's `uri` primary key serves
+// the spec's `WHERE id = $1` role (the migration has no `id` column).
+// F-12.5.24.
 func (s *PgStore) HardPruneExpired(ctx context.Context, now time.Time) (int, error) {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM artifact_store
-		 WHERE state = 'tombstoned'
+		 WHERE state <> 'live'
 		   AND tombstone_deadline IS NOT NULL
 		   AND tombstone_deadline <= $1
 		   AND legal_hold = false`,

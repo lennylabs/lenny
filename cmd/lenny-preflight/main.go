@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // parseRuntimeClassRequirements splits the comma-separated
@@ -113,6 +114,37 @@ func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool
 	})
 }
 
+// redisMaxmemoryProber builds a RedisConfigProber over the operator's
+// bring-your-own Redis for the §12.4 maxmemory-policy=noeviction audit.
+// An empty url returns nil so the check is skipped (the cloud Terraform
+// sets the policy natively; only a self-managed BYO Redis needs the
+// preflight probe). The client is constructed lazily on first probe so a
+// dial failure surfaces as a failed check rather than aborting the Job
+// before the other checks run.
+//
+// spec: §12.4 — billing stream and per-tenant counters must not evict.
+func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.RedisConfigProber {
+	if url == "" {
+		return nil
+	}
+	return preflight.RedisConfigProbeFunc(func(ctx context.Context, param string) (string, error) {
+		client, err := redisconn.NewClient(redisconn.Config{
+			URL:           url,
+			Password:      password,
+			AllowInsecure: allowInsecure,
+		})
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = client.Close() }()
+		m, err := client.ConfigGet(ctx, param).Result()
+		if err != nil {
+			return "", err
+		}
+		return m[param], nil
+	})
+}
+
 // parseAcceptDowngrade splits the comma-separated --accept-downgrade
 // value into the set of feature flags whose admission-plane downgrade
 // the operator has explicitly acknowledged.
@@ -165,6 +197,10 @@ func main() {
 		"MinIO artifact bucket name for the §12.5 line 297 SSE audit. Empty skips the check.")
 	minioUseSSL := flag.Bool("minio-use-ssl", true,
 		"use TLS when probing MinIO for the §12.5 line 297 SSE audit.")
+	redisURL := flag.String("redis-url", "",
+		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
+	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
+		"opt out of the §12.4 AUTH-and-TLS invariant when dialing the BYO Redis for the maxmemory-policy audit (dev only).")
 	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
 		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
 			"presence check requires; empty skips the check")
@@ -189,6 +225,11 @@ func main() {
 	// without embedding the secret value in the Job spec.
 	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY_ENV")
 	minioSecretKey := os.Getenv("MINIO_SECRET_KEY_ENV")
+
+	// The §12.4 Redis AUTH password is read from the environment so the
+	// Job spec can mount it via a secretKeyRef without embedding the
+	// secret in the command line.
+	redisPassword := os.Getenv("REDIS_PASSWORD_ENV")
 
 	// §12.8 clock-injection harness production-default gate. A
 	// production install that carries a non-zero
@@ -219,7 +260,7 @@ func main() {
 	}
 
 	report := preflight.Run(context.Background(), cl, preflight.Config{
-		Namespace: *namespace,
+		Namespace:   *namespace,
 		Environment: *environment,
 		Features: preflight.WebhookFeatureFlags{
 			LLMProxy:       *llmProxy,
@@ -234,6 +275,7 @@ func main() {
 		ComplianceProfile:      *complianceProfile,
 		MinIOBucket:            *minioBucket,
 		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
+		RedisConfigProber:      redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 		Playground: preflight.PlaygroundConfig{
 			Enabled:               *playgroundEnabled,

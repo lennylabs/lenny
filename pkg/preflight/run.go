@@ -85,6 +85,13 @@ type Config struct {
 	// production-or-staging install with cosign disabled gets a
 	// non-blocking WARNING. F-5.3.5.
 	Environment string
+	// RedisConfigProber, when non-nil, runs the §12.4
+	// maxmemory-policy=noeviction audit against the operator's
+	// bring-your-own Redis. The lenny-preflight Job constructs a real
+	// prober when --redis-url is supplied; the self-managed profile
+	// uses it to verify the policy the cloud Terraform sets natively but
+	// the chart cannot enforce on a BYO instance. F-12.4.15.
+	RedisConfigProber RedisConfigProber
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -288,6 +295,18 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Names:    cfg.CRDNames,
 		}.Decide(ctx, reader),
 	})
+
+	// spec: §12.4 — the billing stream and per-tenant counters must not
+	// silently evict. Runs only when a BYO Redis URL was supplied; the
+	// cloud Terraform sets maxmemory-policy=noeviction natively, but the
+	// self-managed profile's operator-supplied Redis is unverified
+	// otherwise. F-12.4.15.
+	if cfg.RedisConfigProber != nil {
+		report = append(report, CheckResult{
+			Name:     "redis-maxmemory-policy",
+			Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
+		})
+	}
 	return report
 }
 
