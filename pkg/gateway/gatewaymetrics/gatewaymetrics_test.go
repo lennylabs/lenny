@@ -143,6 +143,10 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 	m.IncBillingFlushPressure()
 	m.IncAuditChainIntegrity("verified")
 	m.IncAuditChainIntegrity("broken")
+	// §11.7 item 2 — the periodic integrity check increments grant-drift
+	// on detection; the AuditGrantDrift alert reads `> 0`. F-11.7.3.
+	m.IncAuditGrantDrift()
+	m.IncAuditGrantDrift()
 
 	rr := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -156,6 +160,7 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 		`lenny_billing_flush_pressure_total 2`,
 		`lenny_audit_chain_integrity_total{state="verified"} 1`,
 		`lenny_audit_chain_integrity_total{state="broken"} 1`,
+		`lenny_audit_grant_drift_total 2`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q\n---\n%s", want, body)

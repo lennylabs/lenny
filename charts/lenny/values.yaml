@@ -762,6 +762,18 @@ audit:
   # the gateway logs a WARN but does not refuse to start. A non-positive
   # value walks each tenant chain in full. F-12.3.9.
   startupChainCheckEntries: 1000
+  # §11.7 item 2 audit.grantCheckInterval (seconds): cadence of the
+  # periodic background integrity check that re-verifies append-only
+  # ledger grants/triggers/erasure guard and samples recent chain
+  # segments. 0 selects the profile default (regulated 60s, unregulated
+  # 300s). A value above the profile maximum (regulated 120s, unregulated
+  # 900s) is a fatal startup error. F-11.7.3.
+  grantCheckIntervalSeconds: 0
+  # §11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the
+  # periodic background integrity check initiates a graceful shutdown (in
+  # addition to the critical alert and lenny_audit_grant_drift_total
+  # increment). F-11.7.3.
+  hardFailOnDrift: false
   # §16.4 audit.retentionDays: the general Postgres audit-log retention
   # window in days. The audit GC applies it to non-gdpr.* rows. gdpr.*
   # rows are governed separately by gdprRetentionDays below. F-12.8.16.

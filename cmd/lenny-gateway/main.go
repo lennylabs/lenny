@@ -468,6 +468,12 @@ func main() {
 	auditStartupChainCheckEntries := flag.Int("audit-startup-chain-check-entries",
 		envInt("LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES", 1000),
 		"§12.3 line 101 audit.startupChainCheckEntries: the most-recent N audit rows per tenant the startup chain-continuity check re-verifies. A non-positive value walks each chain in full. Default 1000. Override via LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.")
+	auditGrantCheckIntervalSeconds := flag.Int("audit-grant-check-interval-seconds",
+		envInt("LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS", 0),
+		"§11.7 item 2 audit.grantCheckInterval: cadence of the periodic background integrity check that re-verifies append-only ledger grants/triggers/erasure guard and samples recent chain segments. 0 selects the profile default (regulated 60s, unregulated 300s). A value above the profile maximum (regulated 120s, unregulated 900s) is a fatal startup error. Override via LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS. F-11.7.3.")
+	auditHardFailOnDrift := flag.Bool("audit-hard-fail-on-drift",
+		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
+		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -1281,6 +1287,31 @@ func main() {
 		}
 	}
 	log.Printf("lenny-gateway: §12.8 audit.gdprRetentionDays floor active (gdpr.* retention %d days)", *gdprRetentionDays)
+
+	// spec: §11.7 item 2 lines 357-359 — resolve the periodic background
+	// integrity-check cadence against the active compliance posture. Any
+	// tenant with a regulated complianceProfile (soc2, fedramp, hipaa)
+	// tightens both the default (60s) and the maximum (120s); an
+	// unregulated deployment defaults to 300s with a 900s ceiling. A
+	// configured value above the profile maximum is a fatal startup
+	// error. The periodic goroutine is started under watchdogCtx below.
+	// F-11.7.3.
+	grantCheckRegulated := false
+	if profiles, err := activeComplianceProfiles(context.Background(), tenants); err != nil {
+		log.Printf("lenny-gateway: WARNING: §11.7 grant-check cadence preflight could not list tenants: %v", err)
+	} else {
+		for _, p := range profiles {
+			if audit.ComplianceProfile(p).IsRegulated() {
+				grantCheckRegulated = true
+				break
+			}
+		}
+	}
+	resolvedGrantCheckInterval, err := integrity.ResolveGrantCheckInterval(
+		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated)
+	if err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// ----- §7.1 uploadToken KeyRing + rotator -----
 	// The §7.1 line 67 contract requires the gateway to rotate signing
@@ -4489,6 +4520,37 @@ func main() {
 
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
+
+	// spec: §11.7 item 2 lines 356-359 — periodic background integrity
+	// check. After the signal handler is installed, run the grant /
+	// trigger / erasure-guard re-verification and recent-chain sample on
+	// the resolved cadence. A detected drift logs a critical line and
+	// increments lenny_audit_grant_drift_total; with audit.hardFailOnDrift
+	// it self-signals SIGTERM so the existing graceful-shutdown path
+	// drains in-flight work. Postgres-only: the in-memory chain has no
+	// grant surface to drift. F-11.7.3.
+	if pgPool != nil {
+		periodic := &integrity.PeriodicCheck{
+			DB: pgPool,
+			Cfg: integrity.PeriodicConfig{
+				Interval:        resolvedGrantCheckInterval,
+				HardFailOnDrift: *auditHardFailOnDrift,
+				ChainSampleN:    *auditStartupChainCheckEntries,
+			},
+			OnGrantDrift: gwMetrics.IncAuditGrantDrift,
+			OnChainState: gwMetrics.IncAuditChainIntegrity,
+			Logf:         func(format string, args ...any) { log.Printf("lenny-gateway: "+format, args...) },
+			Shutdown: func(string) {
+				if proc, perr := os.FindProcess(os.Getpid()); perr == nil {
+					_ = proc.Signal(syscall.SIGTERM)
+				}
+			},
+		}
+		log.Printf("lenny-gateway: §11.7 item 2 periodic audit integrity check active (interval=%s regulated=%v hardFailOnDrift=%v)",
+			resolvedGrantCheckInterval, grantCheckRegulated, *auditHardFailOnDrift)
+		go periodic.Run(watchdogCtx)
+	}
+
 	go func() {
 		log.Printf("lenny-gateway: listening on %s (dev_mode=%v multi_tenant=%v)",
 			*addr, *devMode, *multiTenant)

@@ -745,6 +745,19 @@ spec:
             - name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
               value: {{ .Values.audit.startupChainCheckEntries | quote }}
             {{- end }}
+            # §11.7 item 2 audit.grantCheckInterval / audit.hardFailOnDrift —
+            # cadence and drift policy of the periodic background integrity
+            # check. 0 selects the profile default (regulated 60s,
+            # unregulated 300s); a value above the profile maximum is a
+            # fatal startup error. F-11.7.3.
+            {{- if and .Values.audit (hasKey .Values.audit "grantCheckIntervalSeconds") }}
+            - name: LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS
+              value: {{ .Values.audit.grantCheckIntervalSeconds | quote }}
+            {{- end }}
+            {{- if and .Values.audit (hasKey .Values.audit "hardFailOnDrift") }}
+            - name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT
+              value: {{ .Values.audit.hardFailOnDrift | quote }}
+            {{- end }}
             # §12.8 line 839 audit.gdprRetentionDays: retention window for
             # gdpr.* audit rows. The gateway rejects a value below 2190
             # under a regulated complianceProfile at startup. F-12.8.16.

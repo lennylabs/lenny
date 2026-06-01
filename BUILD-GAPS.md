@@ -17063,7 +17063,7 @@ condition that should fire it never fires.
 named by the spec as the difference between a compliance-grade and a
 non-compliance-grade deployment (§11.7 lines 461–466).
 
-### - [ ] F-11.7.3 — 03  No periodic background integrity check; `audit.grantCheckInterval` and `audit.hardFailOnDrift` are inert [High] — OPEN
+### - [x] F-11.7.3 — 03  No periodic background integrity check; `audit.grantCheckInterval` and `audit.hardFailOnDrift` are inert [High] — CLOSED
 
 **Spec:** §11.7 item 2 lines 356–359 — a background goroutine MUST
 re-verify audit table grants on the profile-dependent cadence
@@ -17096,6 +17096,8 @@ by the `AuditGrantDrift` alert at `pkg/alerting/rules/rules.go` lines
 
 **Severity:** High — directly defeats a control the spec calls out as
 "closes the tamper-and-revert window described above."
+
+**Resolution:** New `integrity.PeriodicCheck` (`pkg/audit/integrity/periodic.go`) runs the §11.7 item 2 background loop: each cycle re-runs `Verify` (grants/triggers/erasure guard) and samples recent chain segments via `CheckChainContinuityRecent`. On drift it logs a CRITICAL line, increments the new `lenny_audit_grant_drift_total` counter (added to `gatewaymetrics`), reports chain states on `lenny_audit_chain_integrity_total`, and — when `audit.hardFailOnDrift` is set — self-signals SIGTERM through the existing graceful-shutdown path. `ResolveGrantCheckInterval` enforces the profile-dependent cadence (regulated default 60s / max 120s; unregulated 300s / 900s) with a fatal startup error above the maximum. The gateway resolves the interval against the active compliance posture, then starts the loop under `watchdogCtx`. Operator-tunable via `--audit-grant-check-interval-seconds` / `--audit-hard-fail-on-drift` and the `audit.grantCheckIntervalSeconds` / `audit.hardFailOnDrift` Helm values. Commit _pending_.
 
 ### - [ ] F-11.7.4 — 04  Audit hash-chain construction omits the spec-mandated input columns and uses non-canonical payload encoding [High] — OPEN
 

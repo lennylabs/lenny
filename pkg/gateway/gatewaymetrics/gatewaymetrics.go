@@ -408,6 +408,13 @@ type Metrics struct {
 	// via `increase(lenny_audit_chain_integrity_total{state="broken"}[15m])`.
 	// F-12.3.9.
 	auditChainIntegrity *prometheus.CounterVec
+	// auditGrantDrift is the §11.7 item 2 lenny_audit_grant_drift_total
+	// counter. The periodic background integrity check increments it when
+	// it detects unexpected UPDATE/DELETE grants (or a disabled
+	// tamper-evidence trigger / dropped erasure guard) on the append-only
+	// ledgers after startup; the §16.5 AuditGrantDrift alert reads
+	// `lenny_audit_grant_drift_total > 0`. F-11.7.3.
+	auditGrantDrift prometheus.Counter
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -1605,6 +1612,14 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §11.7 item 2 line 359 lenny_audit_grant_drift_total — the periodic
+	// background integrity check increments it when it detects a grant /
+	// trigger / erasure-guard drift after startup. Unlabeled to match the
+	// §16.5 AuditGrantDrift alert expression (`> 0`). F-11.7.3.
+	auditGrantDrift := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_grant_drift_total",
+		Help: "§11.7 item 2 unexpected UPDATE/DELETE grants (or disabled tamper triggers) detected on audit tables by the periodic background integrity check.",
+	})
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -1821,7 +1836,7 @@ func New() (*Metrics, error) {
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
-		auditChainIntegrity,
+		auditChainIntegrity, auditGrantDrift,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -1987,6 +2002,7 @@ func New() (*Metrics, error) {
 		postgresWriteIops:                    postgresWriteIops.WithLabelValues(),
 		postgresWriteCeilingIops:             postgresWriteCeilingIops.WithLabelValues(),
 		auditChainIntegrity:                  auditChainIntegrity,
+		auditGrantDrift:                      auditGrantDrift,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -3375,6 +3391,18 @@ func (m *Metrics) IncAuditChainIntegrity(state string) {
 		return
 	}
 	m.auditChainIntegrity.WithLabelValues(state).Inc()
+}
+
+// IncAuditGrantDrift advances the §11.7 item 2
+// lenny_audit_grant_drift_total counter. The periodic background
+// integrity check calls it when it detects a grant / trigger /
+// erasure-guard drift after startup; the §16.5 AuditGrantDrift alert
+// fires on `lenny_audit_grant_drift_total > 0`. F-11.7.3.
+func (m *Metrics) IncAuditGrantDrift() {
+	if m == nil {
+		return
+	}
+	m.auditGrantDrift.Inc()
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem
