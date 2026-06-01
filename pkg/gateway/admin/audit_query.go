@@ -513,4 +513,3 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 		TranslatorVersion:    version,
 	})
 }
-

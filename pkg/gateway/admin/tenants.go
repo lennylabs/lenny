@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -46,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -119,38 +121,44 @@ type AuditEvent struct {
 // only the resources the gateway has stores for; future commits add
 // users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants            tenantstore.Store
-	runtimes           runtimestore.Store
-	users              userstore.Store
-	pools              poolstore.Store
-	breakers           breakerstore.Store
-	connectors         connectorstore.Store
-	connectorOAuth     *ConnectorOAuth
-	delegationPolicies delegationpolicystore.Store
-	credentialPools    credentialpoolstore.Store
-	poolCredRevoker    PoolCredentialRevoker
-	customRoles        customrolestore.Store
-	tenantAccess       tenantaccessstore.Store
-	auditLog           AuditLog
-	tokenRevoker       IssuedTokenRevoker
-	revocationCache    RevocationCache
-	userPods           UserPodTerminator
-	userLeases         UserLeaseRevoker
-	userTokens         UserTokenRevoker
-	userPlayground     UserPlaygroundRevoker
-	erasureRunner      ErasureRunner
-	erasureJobs        erasurejob.Store
-	billing            billingstore.Store
-	corrections        correctionstore.Store
-	dualControlThresh  float64
-	sessions           sessionstore.Store
-	interactions       interactionstore.Store
-	experiments        experimentstore.Store
-	environments       environmentstore.Store
-	evals              evalstore.Store
-	clock              func() time.Time
-	audit              AuditSink
-	metrics            RBACConfigMetrics
+	tenants        tenantstore.Store
+	runtimes       runtimestore.Store
+	users          userstore.Store
+	pools          poolstore.Store
+	breakers       breakerstore.Store
+	connectors     connectorstore.Store
+	connectorOAuth *ConnectorOAuth
+	// connectorTester / connectorCreds / connectorTestLimiter back the
+	// §15.1 `POST /v1/admin/connectors/{id}/test` live-connectivity
+	// endpoint. A nil connectorTester leaves the route unregistered.
+	connectorTester      ConnectorTester
+	connectorCreds       connectorcredstore.Store
+	connectorTestLimiter ratelimit.Counter
+	delegationPolicies   delegationpolicystore.Store
+	credentialPools      credentialpoolstore.Store
+	poolCredRevoker      PoolCredentialRevoker
+	customRoles          customrolestore.Store
+	tenantAccess         tenantaccessstore.Store
+	auditLog             AuditLog
+	tokenRevoker         IssuedTokenRevoker
+	revocationCache      RevocationCache
+	userPods             UserPodTerminator
+	userLeases           UserLeaseRevoker
+	userTokens           UserTokenRevoker
+	userPlayground       UserPlaygroundRevoker
+	erasureRunner        ErasureRunner
+	erasureJobs          erasurejob.Store
+	billing              billingstore.Store
+	corrections          correctionstore.Store
+	dualControlThresh    float64
+	sessions             sessionstore.Store
+	interactions         interactionstore.Store
+	experiments          experimentstore.Store
+	environments         environmentstore.Store
+	evals                evalstore.Store
+	clock                func() time.Time
+	audit                AuditSink
+	metrics              RBACConfigMetrics
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -518,6 +526,12 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
 		mux.Handle("PUT /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
 		mux.Handle("DELETE /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
+		if r.connectorTester != nil {
+			// §15.1 line 791 live-connectivity test. The §15.1 line 1163
+			// contract grants this to platform-admin and tenant-admin.
+			mux.Handle("POST /v1/admin/connectors/{id}/test",
+				r.requireTenantResourceAdmin(http.HandlerFunc(r.handleTestConnector)))
+		}
 		if r.connectorOAuth != nil {
 			// §9.3 connector OAuth 2.1 authorization-code flow. The
 			// initiation endpoint requires an authenticated caller — the

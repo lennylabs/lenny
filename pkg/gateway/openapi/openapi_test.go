@@ -149,6 +149,7 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/pools/{name}",
 		"/v1/admin/connectors",
 		"/v1/admin/connectors/{id}",
+		"/v1/admin/connectors/{id}/test",
 		"/v1/admin/connectors/{id}/oauth/authorize",
 		"/v1/admin/connectors/oauth/callback",
 		"/v1/admin/circuit-breakers",

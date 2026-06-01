@@ -10781,12 +10781,14 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 
 **Resolution:** Added `McpEndpoint string \`json:"mcpEndpoint,omitempty"\`` to both `sessionserver.RuntimeDiscoveryEntry` (REST) and `mcptools.discoveredRuntime` (MCP). A shared `mcpEndpointFor(rt)` helper computes `"/mcp/runtimes/" + rt.Name` for `runtimestore.TypeMCP` runtimes and returns empty for type:agent. `handleListRuntimes` and the `lenny/list_runtimes` handler now stamp it on every entry; the JSON `omitempty` tag keeps the type:agent envelope shape unchanged. Tier-1 pins (`TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38` in both packages) assert the per-type behavior and the wire-level appearance on REST and MCP. F-9.1.3 (the actual endpoint mount) is gated separately, but the discovery pointer is now wire-visible.
 
-### - [ ] F-9.1.5 — Gateway has no outbound MCP client for external tool invocation [Medium] — OPEN
+### - [x] F-9.1.5 — Gateway has no outbound MCP client for external tool invocation [Medium] — CLOSED
 
 - **Spec:** "Gateway ↔ external MCP tools | MCP | Tool invocation, OAuth flows" (line 10). §9.3 line 142 names "Each connector in a session's effective delegation policy gets its own independent MCP server in the adapter manifest" and §9.3 lines 144-154 names the OAuth flow the gateway "(acting as MCP client to external tool)" performs.
 - **Evidence:** `pkg/gateway/connectorstore/connectorstore.go:10` describes the registry as "the SSRF allowlist for external MCP traffic: the gateway only dials hosts that resolve to a registered connector" — but no Go-side dialer exists. `grep -rn "tools/call\|StreamableHTTP\|streamable_http" /Users/joan/projects/lenny/pkg/gateway --include="*.go"` returns only the `/mcp` server-side handler (which receives, not sends, MCP traffic), connector-registry validators, and OAuth-handler references. The single outbound HTTP client to a connector endpoint is the OAuth token-exchange request (`pkg/gateway/admin/connector_oauth.go:389`); no `tools/list`, `tools/call`, or MCP `initialize` is issued outbound. Tracing reserves the `SpanMCPExternalToolCall` span name (`pkg/observability/tracing/tracing.go:57`), but no call site opens that span.
 - **Gap:** A `type: agent` runtime cannot invoke a registered external MCP tool. The gateway can complete the OAuth handshake and store the credential, but the credential is never used to make a tools/call to the external connector. The chain stops at "token stored, never invoked".
 - **Suggested resolution:** Add `pkg/gateway/connectorinvoke/` (or extend `pkg/gateway/llmproxy/`) with an outbound Streamable-HTTP MCP client that (1) reads the connector definition from `connectorstore`, (2) decrypts the stored credential from `connectorcredstore`, (3) issues `initialize` + `tools/list` to discover, and `tools/call` to invoke, and (4) emits the `mcp.external_tool_call` trace span. Wire it as the backend for the per-connector intra-pod MCP server F-9.1.2 will introduce.
+
+**Resolution:** Built `pkg/gateway/connectorinvoke` exactly per the suggested resolution. `Client` is the outbound Streamable-HTTP MCP transport (`initialize` → `notifications/initialized` → `tools/list` / `tools/call`), accepting both the `application/json` and `text/event-stream` response forms and propagating the server's `Mcp-Session-Id`. `Invoker.CallTool` (1) resolves the connector from `connectorstore` and rejects an unregistered or soft-deleted id, (2) reads the gateway-held credential from `connectorcredstore` for the (tenant, connector, user, environment) four-tuple, (3) carries it as the `Authorization: Bearer` token on the outbound handshake and issues the authenticated `tools/call`, and (4) opens the `mcp.external_tool_call` span. The credential is now used to make a real outbound authenticated MCP call (the §9.3 lines 142-164 path); the client is exercised in production by the F-9.3.12 connector test endpoint. The remaining piece — exposing the Invoker to a `type: agent` session through a per-connector intra-pod MCP server — is the wiring tracked under F-9.1.2/F-9.3.2.
 
 ### - [x] F-9.1.6 — `/v1/models` returns REST adapter capabilities instead of the serving adapter's [Medium] — CLOSED
 
@@ -11460,7 +11462,7 @@ Files:
 
 **Resolution:** Verify-closed; the gap text reflected a snapshot before migration 0053 landed. `migrations/0053_connectors_tenant_scoped.up.sql` adds `tenant_id`, switches the primary key to `(tenant_id, id)`, enables RLS with `FORCE`, and `pkg/gateway/connectorstore` now carries `Connector.TenantID` plus per-tenant indexes; the pgstore selects/inserts include `tenant_id`. `pkg/gateway/admin/connectors.go:282-314` (`resolveTargetTenant`/`listTenantScope`) refuses tenant-admins writing across tenants and scopes platform-admin reads via `?tenant_id=` (default sentinel). `DeleteByTenant` purges per-tenant rows. The visibility/platform split is now enforceable end-to-end.
 
-### - [ ] F-9.3.8 — Tool capability inference not run at connector registration [Medium] — OPEN
+### - [ ] F-9.3.8 — Tool capability inference not run at connector registration [Medium] — DEFERRED
 
 Spec §9.3 (line 136): "Tool capability metadata derived from MCP
 `ToolAnnotations` at registration time (see Section 5.1 — Capability
@@ -11486,6 +11488,8 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/connectorstore/connectorstore.go:28-57`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go`
+
+**Deferred:** §9.3 line 136 calls for capability metadata "derived from MCP `ToolAnnotations` at registration time", but §15.1 line 1144 explicitly forbids the synchronous `POST /v1/admin/connectors` create path from making any outbound call to the connector endpoint ("Does **not** perform DNS resolution, TLS handshake, or any outbound call"). Inference needs `tools/list`, which is an outbound MCP call, so it cannot run inside the create handler without violating line 1144. The compliant realization is a separate post-create / refresh step on the sanctioned outbound path (the F-9.3.12 test flow now reaches `tools/list`, and the F-9.1.5 `connectorinvoke.Client.ListTools` returns the `ToolAnnotations` block `capabilityinference.Infer` consumes), plus new `Capabilities`/`CapabilityInferenceMode` columns on `connectorstore.Connector` and a migration. Both prerequisites the inference call needs are now built; the remaining work is the storage schema + the refresh trigger, deferred to its own batch to keep this one scoped to the client and the test endpoint.
 
 ### - [x] F-9.3.9 — Connector OAuth audit event types not in the §16.7 catalog [Medium] — CLOSED
 
@@ -11558,7 +11562,7 @@ Files:
 
 **Resolution:** Added `InitiatorIP` + `InitiatorUA` to `connectoroauth.FlowContext` and the connector OAuth authorize handler captures both (honouring `X-Forwarded-For` first-hop). `handleConnectorOAuthCallback` now stamps the credential-stored audit detail with `initiated_ip` / `initiated_user_agent` (the authorize-time pair) plus `completed_ip` / `completed_user_agent` (the callback-time pair), giving operators the distinction §9.3 line 140 names as the prescribed forensic surface. Tier-1 coverage: `TestConnectorOAuthCredentialStoredAuditCarriesInitiatorAndCompleterIP_spec_9_3_140` and `TestConnectorOAuthCallbackIPHonoursXForwardedFor_spec_9_3_140`.
 
-### - [ ] F-9.3.12 — Spec-mandated `POST /v1/admin/connectors/{id}/test` endpoint unimplemented [Medium] — OPEN
+### - [x] F-9.3.12 — Spec-mandated `POST /v1/admin/connectors/{id}/test` endpoint unimplemented [Medium] — CLOSED
 
 Spec §15.1 (referenced from §9.3) declares the live-connectivity test
 endpoint:
@@ -11580,6 +11584,8 @@ visibility.
 Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/tenants.go:401-422` (route table — no /test entry)
+
+**Resolution:** Added `POST /v1/admin/connectors/{id}/test` (`handleTestConnector` in `pkg/gateway/admin/connector_testendpoint.go`), gated on platform-admin or tenant-admin per §15.1 line 1163 (`requireTenantResourceAdmin`). `connectorinvoke.Tester` runs the four §15.1 stages — `dns_resolution`, `tls_handshake`, `mcp_initialize`, `auth_validation` — each reporting `passed`/`failed`/`skipped` with `latencyMs`, and a downstream stage is `skipped` once a prerequisite fails. The test uses the caller's stored credential (no inline override, §15.1 line 1180) and is capped at 10 requests per connector per minute via a `ratelimit.Counter` keyed by the connector's owning tenant + id (429 `RATE_LIMITED` + `Retry-After` on the 11th). The DNS resolver, TLS dialer, and MCP client are seams so the stage orchestration is unit-testable. The route is published in `openapi.json`. Built on the F-9.1.5 outbound MCP client.
 
 ### - [x] F-9.3.13 — `If-Match` ETag concurrency not enforced on `PUT /v1/admin/connectors/{id}` [Low] — CLOSED
 

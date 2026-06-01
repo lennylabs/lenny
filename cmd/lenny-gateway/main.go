@@ -102,6 +102,7 @@ import (
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
@@ -2707,6 +2708,15 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors).
 		WithConnectorOAuth(connectorOAuth).
+		// §15.1 connector live-connectivity test. The outbound MCP
+		// client dials untrusted external endpoints, so it carries a
+		// bounded egress timeout; the per-connector limiter enforces the
+		// §15.1 line 1180 10/min cap.
+		WithConnectorTest(
+			connectorinvoke.NewTester(connectorinvoke.New(&http.Client{Timeout: 15 * time.Second})),
+			connectorCreds,
+			ratelimit.NewMemory(),
+		).
 		WithDelegationPolicies(delegationPolicies).
 		WithCredentialPools(credentialPools).
 		WithCustomRoles(customRoles).

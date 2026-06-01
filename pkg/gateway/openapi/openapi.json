@@ -1622,6 +1622,22 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/connectors/{id}/test": {
+      "post": {
+        "summary": "Live connectivity test: DNS, TLS, MCP handshake, auth validation (rate-limited 10/min per connector)",
+        "x-lenny-mcp-tool": "admin.test_connector",
+        "x-lenny-scope": "admin.connectors.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Per-stage pass/fail report" },
+          "404": { "description": "Connector not found" },
+          "429": { "description": "Per-connector rate limit exceeded" }
+        }
+      }
+    },
     "/v1/admin/connectors/{id}/oauth/authorize": {
       "post": {
         "summary": "Initiate the §9.3 connector OAuth 2.1 authorization-code flow",
