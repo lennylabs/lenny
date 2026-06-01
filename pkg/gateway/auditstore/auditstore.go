@@ -36,12 +36,36 @@ import (
 // ErrNotFound — no audit row at the requested sequence number.
 var ErrNotFound = errors.New("auditstore: audit row not found")
 
+// ErrEmptyScope — an erasure primitive was called with an empty tenant
+// id (or user id). Empty arguments must never be treated as "delete
+// everything" (§12.8 line 753).
+var ErrEmptyScope = errors.New("auditstore: erasure requires a non-empty tenant_id (and user_id)")
+
+// EventStore is the §12.2 EventStore (audit) role interface. *Store
+// satisfies it. Alongside the append/verify primitives it exposes the
+// §12.1 mandatory erasure pair so a substitute backend that omits
+// either method cannot compile into the gateway binary.
+//
+// spec: §12.1 line 5 — every store role interface MUST expose
+// DeleteByUser and DeleteByTenant, enforced at compile time by Go
+// interface satisfaction.
+type EventStore interface {
+	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
+	Rows(ctx context.Context, tenantID string) ([]audit.Row, error)
+	Verify(ctx context.Context, tenantID string) (audit.VerifyResult, error)
+	Get(ctx context.Context, tenantID string, seq uint64) (audit.Row, error)
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
 // Store is the Postgres-backed audit chain. Construct with New.
 type Store struct {
 	pool    *pgxpool.Pool
 	lockCfg LockConfig
 	metrics *LockMetrics
 }
+
+var _ EventStore = (*Store)(nil)
 
 // Option configures a Store at construction time.
 type Option func(*Store)
@@ -235,6 +259,62 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 		return audit.Row{}, err
 	}
 	return row, nil
+}
+
+// DeleteByUser satisfies the §12.1 mandatory-erasure primitive. The
+// audit ledger is deliberately retained on user erasure: gdpr.* rows
+// (erasure receipts) are exempt and kept for the full audit period,
+// dead-lettered rows are PII-redacted in place rather than deleted,
+// and the audit_log table is keyed only by (tenant_id,
+// sequence_number) with no user_id column, so there is nothing this
+// store can delete keyed by user without breaking the §11.7 hash
+// chain. The substantive §12.8 step-13 selective deletion and step-14
+// OCSF dead-letter redaction are tracked under F-12.2.5; this method
+// satisfies the §12.1 compile-time contract and returns (0, nil) after
+// rejecting empty arguments (§12.8 line 753).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.8 line 775 (audit
+// retention carve-out for gdpr.* and dead-lettered rows).
+func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, ErrEmptyScope
+	}
+	return 0, nil
+}
+
+// DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
+// removes the tenant's entire audit chain for the §12.8 Phase-4 tenant
+// teardown and returns the count deleted. audit_log is append-only:
+// the lenny_audit_immutability trigger rejects DELETE unless the
+// transaction sets lenny.erasure_mode = 'true', and the table-level
+// DELETE privilege is held only by the lenny_erasure role, so this
+// method must run on a connection that runs as lenny_erasure (the same
+// requirement billingstore.DeleteByTenant carries; wiring the
+// erasure-role connection into the orchestrator is F-12.2.16). Empty
+// tenant id is rejected.
+//
+// spec: §12.1 line 5 (mandatory primitive); §11.7 item 7 (erasure_mode
+// escape on the append-only ledger); §12.8 Phase 4 (tenant deletion).
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, ErrEmptyScope
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM audit_log WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
 }
 
 // scanTail reads the highest-sequence row for the tenant. hasTail is

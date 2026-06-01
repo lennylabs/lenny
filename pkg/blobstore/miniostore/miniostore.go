@@ -662,6 +662,15 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 // check is the in-process defense for dev-mode deployments without a
 // durable catalog.
 //
+// DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
+// is session-scoped (§12.8 step 7), so this whole-user call is a no-op
+// returning (0, nil).
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+var _ blobstore.Eraser = (*Store)(nil)
+
 // spec: §12.5 ll. 295; §12.8 line 735.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {

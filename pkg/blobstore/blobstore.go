@@ -328,6 +328,27 @@ type TenantPrefixDeleter interface {
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
+// Eraser is the §12.1 mandatory-erasure interface for the §12.2
+// ArtifactStore role. Every blob backend exposes both primitives so a
+// substitute backend that omits either cannot compile into the gateway
+// binary.
+//
+// DeleteByTenant is the §12.5 / §12.8 Phase-4 prefix-scoped purge
+// (same method as TenantPrefixDeleter). DeleteByUser is a no-op on the
+// artifact store: blobs are keyed by (tenant, object_type, session,
+// part) with no user dimension, so the §12.8 step-7 per-user artifact
+// erasure runs per session via DeleteBySession over the user's
+// sessions, not through a whole-user call. The method is present to
+// satisfy the §12.1 compile-time contract.
+//
+// spec: §12.1 line 5 — every store role interface MUST expose
+// DeleteByUser and DeleteByTenant; §12.8 step 7 (artifact erasure is
+// session-scoped).
+type Eraser interface {
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
 // BlobState is the §12.5 lifecycle classification surfaced by
 // StatIncludingTombstones. The GC sweep and observability paths use
 // it to distinguish a soft-deleted blob (still discoverable for the
@@ -585,6 +606,18 @@ func (s *MemoryStore) DeleteBySession(_ context.Context, tenantID, sessionID str
 	return deleted, nil
 }
 
+// DeleteByUser implements the §12.1 Eraser primitive. Blobs carry no
+// user dimension (they are keyed by session), so per-user artifact
+// erasure runs per session via DeleteBySession over the user's
+// sessions (§12.8 step 7); this whole-user call is a no-op returning
+// (0, nil).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.8 step 7 (session-
+// scoped artifact erasure).
+func (s *MemoryStore) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
 // DeleteByTenant implements TenantPrefixDeleter — the §12.8 Phase 4
 // tenant-erasure adapter. It drops every blob under the tenant's
 // prefix (live or tombstoned) in a single pass and returns the count
@@ -759,3 +792,15 @@ func (s *TenantScoped) DeleteByTenant(ctx context.Context, tenantID string) (int
 	}
 	return del.DeleteByTenant(ctx, tenantID)
 }
+
+// DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
+// is session-scoped (§12.8 step 7), so this whole-user call is a no-op
+// returning (0, nil), as it is on every blob backend.
+func (s *TenantScoped) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+var (
+	_ Eraser = (*MemoryStore)(nil)
+	_ Eraser = (*TenantScoped)(nil)
+)

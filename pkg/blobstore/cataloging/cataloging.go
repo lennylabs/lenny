@@ -247,6 +247,15 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 	return deleted, nil
 }
 
+// DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
+// is session-scoped (§12.8 step 7), so this whole-user call is a no-op
+// returning (0, nil).
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+var _ blobstore.Eraser = (*Store)(nil)
+
 // DeleteByTenant forwards the §12.8 Phase 4 prefix-scoped bulk delete
 // to the inner store, then drops the tenant's catalog rows so the
 // §12.5 ledger no longer references the erased tenant. The bucket

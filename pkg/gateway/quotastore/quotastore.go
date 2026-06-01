@@ -27,10 +27,34 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
+// ErrEmptyScope — an erasure primitive was called with an empty tenant
+// id (or user id). Empty arguments must never be treated as "delete
+// everything" (§12.8 line 753).
+var ErrEmptyScope = errors.New("quotastore: erasure requires a non-empty tenant_id (and user_id)")
+
+// QuotaStore is the §12.2 QuotaStore role interface. *Counter satisfies
+// it. Alongside the usage-counter primitives it exposes the §12.1
+// mandatory erasure pair so a substitute backend that omits either
+// method cannot compile into the gateway binary.
+//
+// spec: §12.1 line 5 — every store role interface MUST expose
+// DeleteByUser and DeleteByTenant, enforced at compile time by Go
+// interface satisfaction.
+type QuotaStore interface {
+	Add(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time, tokens int64) (int64, error)
+	Usage(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time) (int64, error)
+	SlidingAdd(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time, tokens int64) (int64, error)
+	SlidingUsage(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time) (int64, error)
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
 // Counter is the Redis-backed token-usage counter. Construct with New.
 type Counter struct {
 	client redis.UniversalClient
 }
+
+var _ QuotaStore = (*Counter)(nil)
 
 // New returns a Counter backed by client.
 func New(client redis.UniversalClient) *Counter { return &Counter{client: client} }
@@ -198,4 +222,76 @@ func slidingBucketKey(tenantID, userID string, resolution time.Duration, at time
 	bucket := at.UTC().Truncate(resolution).Unix()
 	return fmt.Sprintf("t:%s:quota:tokens:%s:sliding-%d-%d",
 		tenantID, userID, int64(resolution.Seconds()), bucket)
+}
+
+// DeleteByUser satisfies the §12.1 mandatory-erasure primitive. It
+// removes every per-user rate-limit / budget counter the tenant holds
+// for userID — both the fixed-window keys and the sliding-window
+// buckets all live under t:{tenant_id}:quota:tokens:{user_id}:* — and
+// returns the count dropped. It is idempotent: a user with no recorded
+// usage is a no-op returning (0, nil). Empty arguments are rejected
+// (§12.8 line 753).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.8 step 6 ("QuotaStore —
+// delete per-user rate-limit counters and budget tracking").
+func (c *Counter) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, ErrEmptyScope
+	}
+	return scanDelete(ctx, c.client, "t:"+tenantID+":quota:tokens:"+userID+":*")
+}
+
+// DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
+// removes every token-usage counter under the tenant's §12.4 key
+// prefix t:{tenant_id}:quota:tokens:* across all users and windows,
+// and returns the count dropped. It is idempotent: a tenant with no
+// counters is a no-op returning (0, nil). Empty tenant id is rejected.
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.2 (QuotaStore key
+// prefix); §12.8 Phase 4 (tenant deletion).
+func (c *Counter) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, ErrEmptyScope
+	}
+	return scanDelete(ctx, c.client, "t:"+tenantID+":quota:tokens:*")
+}
+
+// scanDelete SCANs the keyspace for pattern and deletes the matched
+// keys in batches, returning the count removed. SCAN is cursor-based
+// and non-blocking, so a large keyspace does not stall Redis. Keys
+// that expire between SCAN and DEL simply do not count.
+func scanDelete(ctx context.Context, client redis.UniversalClient, pattern string) (int, error) {
+	const delBatch = 256
+	var (
+		batch   []string
+		deleted int
+	)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		n, err := client.Del(ctx, batch...).Result()
+		if err != nil {
+			return err
+		}
+		deleted += int(n)
+		batch = batch[:0]
+		return nil
+	}
+	iter := client.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		batch = append(batch, iter.Val())
+		if len(batch) >= delBatch {
+			if err := flush(); err != nil {
+				return deleted, err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return deleted, err
+	}
+	if err := flush(); err != nil {
+		return deleted, err
+	}
+	return deleted, nil
 }

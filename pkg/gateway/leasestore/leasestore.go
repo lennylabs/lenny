@@ -37,7 +37,30 @@ var (
 	ErrNotHeld = errors.New("leasestore: caller does not hold the session lease")
 	// ErrNotFound — no lease exists for the session.
 	ErrNotFound = errors.New("leasestore: no lease for session")
+	// ErrEmptyScope — an erasure primitive was called with an empty
+	// tenant id (or user id). Empty arguments must never be treated as
+	// "delete everything" (§12.8 line 753).
+	ErrEmptyScope = errors.New("leasestore: erasure requires a non-empty tenant_id (and user_id)")
 )
+
+// LeaseStore is the §12.2 LeaseStore role interface. *Store satisfies
+// it. Alongside the session-coordination primitives it exposes the
+// §12.1 mandatory erasure pair so a substitute backend that omits
+// either method cannot compile into the gateway binary.
+//
+// spec: §12.1 line 5 — every store role interface MUST expose
+// DeleteByUser and DeleteByTenant, enforced at compile time by Go
+// interface satisfaction.
+type LeaseStore interface {
+	Acquire(ctx context.Context, tenantID, sessionID, holder string, ttl time.Duration) (Lease, error)
+	Renew(ctx context.Context, tenantID, sessionID, holder string, ttl time.Duration) (Lease, error)
+	Release(ctx context.Context, tenantID, sessionID, holder string) error
+	Get(ctx context.Context, tenantID, sessionID string) (Lease, error)
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+var _ LeaseStore = (*Store)(nil)
 
 // Lease describes a held session-coordination lease.
 type Lease struct {
@@ -176,4 +199,80 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (Lease, err
 		Holder:    holder,
 		ExpiresAt: s.now().Add(pttl),
 	}, nil
+}
+
+// DeleteByUser satisfies the §12.1 mandatory-erasure primitive. Session
+// leases are coordination state keyed by session, not user data, and
+// every lease carries a TTL that self-expires, so there is nothing
+// user-scoped to erase here; the §12.8 step-1 lease release for the
+// user's sessions is driven per-session by the erasure orchestrator,
+// not by this whole-user method. It rejects empty arguments (§12.8
+// line 753) and otherwise returns (0, nil).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.8 step 1 (lease
+// release is session-scoped); F-12.1.3 suggested resolution ("for
+// LeaseStore the erasure primitive can be a no-op — leases are
+// TTL-bound — but the method must still be present").
+func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, ErrEmptyScope
+	}
+	return 0, nil
+}
+
+// DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
+// removes every session lease under the tenant's §12.4 key prefix
+// t:{tenant_id}:lease:session:* and returns the count dropped. Leases
+// are TTL-bound, so an unreleased lease would self-expire; the active
+// sweep makes the §12.8 Phase-4 tenant teardown deterministic rather
+// than waiting out the TTL. It is idempotent: a tenant with no leases
+// is a no-op returning (0, nil).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.2 (LeaseStore key
+// prefix); §12.8 Phase 4 (tenant deletion).
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, ErrEmptyScope
+	}
+	return scanDelete(ctx, s.client, "t:"+tenantID+":lease:session:*")
+}
+
+// scanDelete SCANs the keyspace for pattern and deletes the matched
+// keys in batches, returning the count removed. SCAN is cursor-based
+// and non-blocking, so a large keyspace does not stall Redis. Keys
+// that vanish between SCAN and DEL (TTL expiry) simply do not count.
+func scanDelete(ctx context.Context, client redis.UniversalClient, pattern string) (int, error) {
+	const delBatch = 256
+	var (
+		batch   []string
+		deleted int
+	)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		n, err := client.Del(ctx, batch...).Result()
+		if err != nil {
+			return err
+		}
+		deleted += int(n)
+		batch = batch[:0]
+		return nil
+	}
+	iter := client.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		batch = append(batch, iter.Val())
+		if len(batch) >= delBatch {
+			if err := flush(); err != nil {
+				return deleted, err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return deleted, err
+	}
+	if err := flush(); err != nil {
+		return deleted, err
+	}
+	return deleted, nil
 }
