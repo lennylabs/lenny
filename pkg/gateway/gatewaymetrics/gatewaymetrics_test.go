@@ -922,23 +922,29 @@ func TestCheckpointStorageFailureReasonLabel(t *testing.T) {
 }
 
 // spec: §12.5 ll. 341 — the hard-prune sweep increments the
-// `lenny_gc_tombstones_pruned_total` counter once per row removed.
+// `lenny_gc_tombstones_pruned_total{table}` counter once per row
+// removed, labeled by the GC-managed row class it swept
+// (`artifact_store` or `partial_manifest`).
 func TestGCTombstonesPrunedCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m.AddGCTombstonesPruned(0)  // no-op guard
-	m.AddGCTombstonesPruned(-3) // no-op guard for negative input
-	m.AddGCTombstonesPruned(4)
-	m.AddGCTombstonesPruned(2)
+	m.AddGCTombstonesPruned("artifact_store", 0)  // no-op guard
+	m.AddGCTombstonesPruned("artifact_store", -3) // no-op guard for negative input
+	m.AddGCTombstonesPruned("artifact_store", 4)
+	m.AddGCTombstonesPruned("artifact_store", 2)
+	m.AddGCTombstonesPruned("partial_manifest", 5)
 
 	rr := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rr.Body.String()
 
-	if !strings.Contains(body, "lenny_gc_tombstones_pruned_total 6") {
-		t.Errorf("/metrics missing the expected counter value 6\n---\n%s", body)
+	if !strings.Contains(body, `lenny_gc_tombstones_pruned_total{table="artifact_store"} 6`) {
+		t.Errorf("/metrics missing the expected artifact_store counter value 6\n---\n%s", body)
+	}
+	if !strings.Contains(body, `lenny_gc_tombstones_pruned_total{table="partial_manifest"} 5`) {
+		t.Errorf("/metrics missing the expected partial_manifest counter value 5\n---\n%s", body)
 	}
 }
 

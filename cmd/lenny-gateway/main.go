@@ -4164,15 +4164,35 @@ func main() {
 					case <-watchdogCtx.Done():
 						return
 					case <-ticker.C:
+						// §12.5 ll. 341: the single hard-prune pass sweeps
+						// both GC-managed row classes — artifact_store
+						// catalog rows and partial-checkpoint manifest rows
+						// — on the same deleted_at retention predicate.
 						count, err := blobsCataloged.HardPrune(watchdogCtx, clockinject.Now())
 						if err != nil {
 							log.Printf("lenny-gateway: §12.5 hard-prune sweep error: %v", err)
+						} else {
+							gwMetrics.AddGCTombstonesPruned("artifact_store", count)
+							if count > 0 {
+								log.Printf("lenny-gateway: §12.5 hard-prune removed %d tombstoned artifact_store rows past retention",
+									count)
+							}
+						}
+						// §12.5 ll. 316, 341: partial-manifest rows live in
+						// the checkpoint metadata table and follow the
+						// identical post-soft-delete lifecycle. Prune those
+						// whose soft-delete tombstone predates
+						// now - gc.tombstoneRetentionSeconds.
+						pmCutoff := clockinject.Now().Add(-gcTombstoneRetention)
+						pmCount, pmErr := hardPrunePartialManifests(watchdogCtx, partialManifests, pmCutoff)
+						if pmErr != nil {
+							log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune sweep error: %v", pmErr)
 							continue
 						}
-						gwMetrics.AddGCTombstonesPruned(count)
-						if count > 0 {
-							log.Printf("lenny-gateway: §12.5 hard-prune removed %d tombstoned artifacts past retention",
-								count)
+						gwMetrics.AddGCTombstonesPruned("partial_manifest", pmCount)
+						if pmCount > 0 {
+							log.Printf("lenny-gateway: §12.5 hard-prune removed %d tombstoned partial_manifest rows past retention",
+								pmCount)
 						}
 					}
 				}
@@ -5346,6 +5366,35 @@ func (o *kmsBreakerObserver) metrics() *gatewaymetrics.Metrics {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.m
+}
+
+// hardPrunePartialManifests runs the §12.5 ll. 341 tombstone hard-prune
+// pass over the partial-checkpoint manifest table: it physically removes
+// every row whose soft-delete tombstone predates cutoff
+// (now - gc.tombstoneRetentionSeconds). The pass is the sibling of the
+// artifact_store hard-prune and runs on the same GC cycle so partial
+// manifests follow the identical post-soft-delete lifecycle. Per-row
+// HardDelete failures are logged and skipped — the next cycle retries
+// them; a list failure returns the error with no rows pruned. Returns
+// the number of rows physically removed.
+//
+// spec: §12.5 ll. 316, 341 — partial-manifest rows are swept by the same
+// hard-prune pass on the same deleted_at retention predicate.
+func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.Store, cutoff time.Time) (int, error) {
+	expired, err := store.ListSoftDeletedBefore(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	pruned := 0
+	for _, r := range expired {
+		if derr := store.HardDelete(ctx, r.TenantID, r.SessionID, r.Generation); derr != nil {
+			log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune row %s/%s gen=%d: %v",
+				r.TenantID, r.SessionID, r.Generation, derr)
+			continue
+		}
+		pruned++
+	}
+	return pruned, nil
 }
 
 // runStartupChainContinuityCheck implements the §12.3 line 101 startup

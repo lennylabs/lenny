@@ -291,12 +291,16 @@ type Metrics struct {
 	// `service_instance_id`.
 	sigkillStreams *prometheus.CounterVec
 	// gcTombstonesPruned counts the §12.5 ll. 341 hard-prune
-	// removals: catalog rows whose tombstone deadline has elapsed and
-	// were physically removed from the artifact_store table together
-	// with the matching bucket object. No labels — the counter rolls up
-	// across all tenants and artifact classes because the §12.5
-	// monitoring contract treats hard-prune as a single rollup metric.
-	gcTombstonesPruned prometheus.Counter
+	// removals: rows whose tombstone deadline has elapsed and were
+	// physically removed once the retention window passed. The `table`
+	// label distinguishes the two GC-managed row classes the single
+	// hard-prune pass sweeps: `artifact_store` (blob catalog rows) and
+	// `partial_manifest` (partial-checkpoint manifest rows in the
+	// checkpoint metadata table).
+	//
+	// spec: §12.5 ll. 341 — `lenny_gc_tombstones_pruned_total`
+	// (counter, labeled by `table: artifact_store|partial_manifest`).
+	gcTombstonesPruned *prometheus.CounterVec
 	// gcRuns counts §12.5 ll. 321 retention GC sweep invocations by
 	// outcome ("success" or "error"). One Inc per Tick.
 	gcRuns *prometheus.CounterVec
@@ -1398,14 +1402,14 @@ func New() (*Metrics, error) {
 		return nil, err
 	}
 	// §12.5 ll. 341 — `lenny_gc_tombstones_pruned_total` counts the
-	// soft-deleted catalog rows physically removed by the hard-prune
-	// sweep once the tombstone retention window has elapsed. No
-	// labels — the §12.5 monitoring contract treats hard-prune as a
-	// single rollup metric across tenants and artifact classes.
-	gcTombstonesPruned := prometheus.NewCounter(prometheus.CounterOpts{
+	// soft-deleted rows physically removed by the hard-prune sweep once
+	// the tombstone retention window has elapsed. The `table` label
+	// (`artifact_store|partial_manifest`) names which GC-managed row
+	// class the single hard-prune pass removed.
+	gcTombstonesPruned := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "lenny_gc_tombstones_pruned_total",
-		Help: "Soft-deleted artifact_store rows physically removed by the §12.5 hard-prune sweep.",
-	})
+		Help: "Soft-deleted rows physically removed by the §12.5 hard-prune sweep, labeled by table (artifact_store|partial_manifest).",
+	}, []string{"table"})
 
 	// §12.5 ll. 321 — retention GC sweep observability. `outcome` is
 	// `success` or `error`. The four metrics together cover sweep
@@ -2459,16 +2463,18 @@ func (m *Metrics) IncCheckpointKMSUnavailable() {
 }
 
 // AddGCTombstonesPruned bumps the §12.5 ll. 341
-// `lenny_gc_tombstones_pruned_total` counter by n. The §12.5 hard-prune
-// sweep emits the count of catalog rows it removed; passing it through
-// the gateway-side accessor keeps the metric registration centralised.
+// `lenny_gc_tombstones_pruned_total{table}` counter by n. The §12.5
+// hard-prune sweep emits the count of rows it removed for each table it
+// sweeps; passing it through the gateway-side accessor keeps the metric
+// registration centralised. table is `artifact_store` or
+// `partial_manifest`.
 //
 // spec: §12.5 ll. 341.
-func (m *Metrics) AddGCTombstonesPruned(n int) {
+func (m *Metrics) AddGCTombstonesPruned(table string, n int) {
 	if m == nil || n <= 0 {
 		return
 	}
-	m.gcTombstonesPruned.Add(float64(n))
+	m.gcTombstonesPruned.WithLabelValues(table).Add(float64(n))
 }
 
 // IncGCRun bumps the §12.5 ll. 321 `lenny_gc_runs_total` counter once

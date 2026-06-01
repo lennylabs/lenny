@@ -19603,7 +19603,7 @@ Consequence: under sustained workload the GC sweep on a versioned bucket
 the spec's required configuration the chart should fail-loud on render if
 versioning is enabled without the lifecycle rule.
 
-### - [ ] F-12.5.6 — checkpoint storage path uses no `{object_type}` segment, breaking eviction-context prefix scoping (§12.5 lines 295, 315) [High] — OPEN
+### - [x] F-12.5.6 — checkpoint storage path uses no `{object_type}` segment, breaking eviction-context prefix scoping (§12.5 lines 295, 315) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.5.2, F-12.5.29 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
 
@@ -19632,6 +19632,18 @@ column stores a MinIO object key (identified by the `/{tenant_id}/eviction/`
 key prefix)" (line 315) cannot be implemented as written because no caller
 puts an `eviction/` segment into the key. The GC sweep loses its only
 identifier for the eviction-context object class.
+
+**Resolution:** Verify-closed; the cited gap was fixed by commit
+`a35ee6b3` (F-4.5.2 / F-12.5.29 sibling work). `blobstore.URI` now carries
+an `ObjectType` field and the `ParseURI` / `String` round-trip honours the
+§12.5 line 295 4-segment `/{tenant_id}/{object_type}/{session_id}/{part_id}`
+wire format. `objectKey()` in every backend (`miniostore.go:212`,
+`s3.go:209`, `gcs.go:209`, `azureblob.go:223`) embeds the object-type
+segment, and `miniostore.sessionPrefix(tenant, objectType, session)` lets the
+§12.5 line 315 prefix-scoped GC sweep target the `/{tenant_id}/eviction/`
+object class. `ObjectTypeEviction` is the closed-enum value the eviction
+fallback writer stamps. The finding's evidence (2-segment key, parser rejects
+the segment) is stale.
 
 ### - [ ] F-12.5.7 — `DeleteByTenant` prefix-scoped bulk delete is absent (§12.5 line 295) [High] — CLOSED
 
@@ -19771,7 +19783,7 @@ Consequence: the entire §12.5 GC concurrency model is unbacked. The
 gauge. The spec's "convergent, idempotent, single-writer" guarantee (line 339)
 is vacuous: there is no writer.
 
-### - [ ] F-12.5.11 — tombstone hard-prune sweep is unwired; spec'd metric never emitted (§12.5 line 341) [High] — OPEN
+### - [x] F-12.5.11 — tombstone hard-prune sweep is unwired; spec'd metric never emitted (§12.5 line 341) [High] — CLOSED
 
 Line 341 mandates a companion "tombstone hard-prune" pass on every GC cycle:
 `DELETE FROM artifact_store WHERE deleted_at IS NOT NULL AND deleted_at < now() - (gc.tombstoneRetentionSeconds * interval '1 second')`
@@ -19787,6 +19799,24 @@ Evidence:
   returns zero hits — the metric is defined and never incremented.
 - The `table=artifact_store|partial_manifest` label distinction (line 341) is
   not modelled.
+
+**Resolution:** The `artifact_store` half of the hard-prune sweep was wired
+by the F-4.5.5 catalog work (`cmd/lenny-gateway/main.go` GC goroutine calls
+`blobsCataloged.HardPrune` → `cataloging.Store.HardPrune` → catalog
+`HardPruneExpired`), so the "no caller / metric never incremented" evidence
+was already stale for that table. This batch completes the finding: the
+`lenny_gc_tombstones_pruned_total` metric is now a `CounterVec` labeled by
+`table` (`gatewaymetrics.AddGCTombstonesPruned(table, n)`), the artifact_store
+sweep emits `table="artifact_store"`, and the spec's
+`Partial-checkpoint manifest rows are swept by the same hard-prune pass`
+mandate (line 341) is implemented by a new `hardPrunePartialManifests` pass in
+the same GC goroutine that walks `partialmanifeststore.ListSoftDeletedBefore`
+(cutoff `now − gc.tombstoneRetentionSeconds`) and `HardDelete`s each expired
+row, emitting `table="partial_manifest"`. This also lands the §12.5
+periodic backstop hard-prune worker that F-12.5.13 deferred to the
+retention/gc track. Tests: `gatewaymetrics` labeled-counter assertion for both
+tables; `hardPrunePartialManifests` unit test (active/not-yet-expired rows
+survive, expired rows pruned, boundary cutoff no-op). Commit `<pending>`.
 
 ### - [ ] F-12.5.12 — checkpoint "latest 2 per session / per-slot" rotation rule is not implemented (§12.5 lines 313, 326) [High] — OPEN
 

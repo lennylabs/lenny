@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -646,5 +647,62 @@ func TestParseWindowOverrides_spec_25_3_596(t *testing.T) {
 	}
 	if parseWindowOverrides("") != nil {
 		t.Error("empty input must yield a nil map")
+	}
+}
+
+// spec: §12.5 ll. 316, 341 — the tombstone hard-prune pass physically
+// removes partial-manifest rows whose soft-delete tombstone predates the
+// retention cutoff and leaves active and not-yet-expired rows intact.
+func TestHardPrunePartialManifests(t *testing.T) {
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return base })
+	ctx := context.Background()
+
+	put := func(session string, gen int64) {
+		if err := store.Put(ctx, partialmanifeststore.Record{
+			TenantID:               "acme",
+			SessionID:              session,
+			Generation:             gen,
+			PartialObjectKeyPrefix: "/acme/checkpoints/" + session + "/partial/cp/",
+			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		}); err != nil {
+			t.Fatalf("Put %s/%d: %v", session, gen, err)
+		}
+	}
+	put("sess-a", 1)
+	put("sess-b", 1)
+	put("sess-c", 1) // stays active
+
+	// Soft-delete two rows at base; the third remains active.
+	if err := store.SoftDelete(ctx, "acme", "sess-a", 1); err != nil {
+		t.Fatalf("SoftDelete a: %v", err)
+	}
+	if err := store.SoftDelete(ctx, "acme", "sess-b", 1); err != nil {
+		t.Fatalf("SoftDelete b: %v", err)
+	}
+
+	// Cutoff at the tombstone instant: nothing is past retention yet
+	// (DeletedAt.Before(cutoff) is false), so no row is pruned.
+	if n, err := hardPrunePartialManifests(ctx, store, base); err != nil || n != 0 {
+		t.Fatalf("hardPrunePartialManifests(cutoff=base) = (%d, %v); want (0, nil)", n, err)
+	}
+
+	// Cutoff after the tombstone instant: both soft-deleted rows are past
+	// retention and physically removed; the active row is untouched.
+	n, err := hardPrunePartialManifests(ctx, store, base.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("hardPrunePartialManifests: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("pruned = %d; want 2", n)
+	}
+	if _, err := store.Get(ctx, "acme", "sess-a", 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("sess-a still present after hard-prune: %v", err)
+	}
+	if _, err := store.Get(ctx, "acme", "sess-b", 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("sess-b still present after hard-prune: %v", err)
+	}
+	if _, err := store.Get(ctx, "acme", "sess-c", 1); err != nil {
+		t.Errorf("active sess-c was pruned: %v", err)
 	}
 }
