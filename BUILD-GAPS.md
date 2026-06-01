@@ -26690,7 +26690,7 @@ Spec impact: every "Span boundaries (instrumented)" entry in the
 collector / Jaeger / Tempo / Cloud Trace backend would see zero spans
 from a running Lenny cluster.
 
-### - [ ] F-16.3.2 — No OTLP exporter or `TracerProvider` is initialized in any binary [High] — OPEN
+### - [x] F-16.3.2 — No OTLP exporter or `TracerProvider` is initialized in any binary [High] — CLOSED
 
 **High.** None of `cmd/lenny-gateway/main.go`,
 `cmd/lenny-controller/main.go`, `cmd/lenny-adapter/main.go`,
@@ -26713,6 +26713,8 @@ env var set on the gateway pod
 (`charts/lenny/templates/gateway-deployment.yaml:184-187`) is read by
 no Go code (verified by
 `grep -rn OTEL_EXPORTER_OTLP_ENDPOINT cmd/ pkg/` — zero hits).
+
+**Resolution:** New `tracing.InitProvider` (`pkg/observability/tracing/provider.go`) builds an SDK `TracerProvider` with `ParentBased(AlwaysSample())` (100% head sampling per §16.3 line 359 — the Collector tail-samples), an OTLP/HTTP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and a stdout exporter otherwise, installs it as the global provider, installs the W3C trace-context + baggage propagator, and returns a flush-on-shutdown func. Wired into `cmd/lenny-gateway`, `cmd/lenny-controller`, `cmd/lenny-adapter`, and `cmd/lenny-ops` mains, each reading `OTEL_EXPORTER_OTLP_ENDPOINT`. Spans started through `Tracer.Start` now land on a real provider instead of the no-op. Span *emission* at the 23 call sites stays tracked under F-16.3.1; HTTP/gRPC propagation middleware stays tracked under F-16.3.3. Commit f5e46144.
 
 ### - [ ] F-16.3.3 — No HTTP or gRPC middleware extracts the W3C `traceparent` header [High] — OPEN
 
@@ -26760,7 +26762,7 @@ egress NetworkPolicy and the gateway env var. The §16.3 sampling
 policy (100% for errors, 100% for slow requests, 100% for delegation
 trees) is therefore neither configured in-cluster nor verifiable.
 
-### - [ ] F-16.3.5 — Span attributes mandated for `delegation.budget_reserve` / `delegation.budget_return` are not declared [High] — OPEN
+### - [x] F-16.3.5 — Span attributes mandated for `delegation.budget_reserve` / `delegation.budget_return` are not declared [High] — CLOSED
 
 **High.** §16.3 lines 347–348 require the
 `delegation.budget_reserve` and `delegation.budget_return` spans to
@@ -26781,6 +26783,8 @@ When emission is wired, the attribute keys will have to be agreed at
 each call site, increasing the risk of drift from the spec's
 attribute names.
 
+**Resolution:** `pkg/observability/tracing/tracing.go` declares the missing keys as constants: `AttrOutcome` (`outcome`), `AttrRootSessionID` (`root_session_id`), `AttrLuaQueueWaitMs` (`lua_queue_wait_ms`), and `AttrGeneration` (`generation`). `tenant_id` and `pool` were already projected from `correlation.Fields` by `Start`. Call sites set the spec's exact names rather than ad-hoc strings; verified by `TestBudgetAndHandoffAttributeKeys_spec_16_3`. Commit f5e46144.
+
 ### - [ ] F-16.3.6 — Runtime sidecar / agent-pod OTel SDK egress is admitted but no Go-side emitter exists [Medium] — OPEN
 
 **Medium.** `charts/lenny/values.yaml:232-257` and
@@ -26796,7 +26800,7 @@ configuration affordance, but no Lenny-side code path produces traces
 that would use it. Combined with H1–H3, the trace pipeline is
 unconfigured end-to-end on the platform side.
 
-### - [ ] F-16.3.7 — The §16.3 error taxonomy is implemented twice with divergent vocabularies [Medium] — OPEN
+### - [x] F-16.3.7 — The §16.3 error taxonomy is implemented twice with divergent vocabularies [Medium] — CLOSED
 
 **Medium.** `pkg/observability/tracing/tracing.go:87-92` declares
 `CategoryTransient`, `CategoryPermanent`, `CategoryPolicy`,
@@ -26814,7 +26818,9 @@ needs to align with §16.3 — either by extending §16.3 to recognize
 `AUTH` or by mapping §25.2 categories onto the §16.3 set at the span
 boundary.
 
-### - [ ] F-16.3.8 — Dev-mode tracing exporter (Jaeger / stdout) is unimplemented [Medium] — OPEN
+**Resolution:** The spec is the source of truth (§16.3 enumerates TRANSIENT/PERMANENT/POLICY/UPSTREAM), so the §25.2 vocabulary is mapped onto it at the span boundary rather than the spec extended. New `conventions.ErrorCategory.SpanCategory()` returns the §16.3 `tracing.ErrorCategory`: TRANSIENT/PERMANENT/POLICY map 1:1 and AUTH folds into UPSTREAM (§16.3 line 372 lists "auth failure" under UPSTREAM); an unrecognized category also maps to UPSTREAM. A span's `error.category` therefore never carries AUTH nor omits UPSTREAM. Verified by `TestSpanCategoryMapsOpsTaxonomyOntoSpec163`. Commit f5e46144.
+
+### - [x] F-16.3.8 — Dev-mode tracing exporter (Jaeger / stdout) is unimplemented [Medium] — CLOSED
 
 **Medium.** §16.3 line 359 states: "In dev mode, 100% sampling is
 enabled with a local Jaeger instance (or stdout exporter for `make
@@ -26823,6 +26829,8 @@ run`)." The chart's `global.devMode` flag exists
 exporter, and `make run` (verified by inspecting the gateway main —
 no exporter init at all, H2) emits nothing locally. A developer
 following the spec to set up a local trace view receives no spans.
+
+**Resolution:** `tracing.InitProvider` selects the stdout exporter (`go.opentelemetry.io/otel/exporters/stdout/stdouttrace`) whenever `OTEL_EXPORTER_OTLP_ENDPOINT` is empty or `DevMode` is set, so `make run` and any dev-mode binary emit spans to stdout (§16.3 line 359). The gateway and controller pass their `--dev-mode` flag through as `ProviderConfig.DevMode`. Verified by `TestNewExporterStdoutWhenNoEndpoint_spec_16_3` and `TestNewExporterDevModeForcesStdout_spec_16_3`. A local Jaeger instance is a deployer-side affordance reached by pointing `OTEL_EXPORTER_OTLP_ENDPOINT` at it. Commit f5e46144.
 
 ### - [x] F-16.3.9 — The §16.3 catalog test only counts entries, not parity with the spec table [Low] — CLOSED
 
