@@ -20959,9 +20959,11 @@ preflight re-run before step 8 of `DeleteByUser`. Deployment guidance (c)
 is the existing §12.8 spec text. Migration 0096 provides the reserved
 `__preflight__` FK parent for the default Postgres backend's probe row.
 
-### - [ ] F-12.8.10 — `processing_restricted` clear endpoint and erasure-job retry endpoint are unimplemented [Medium] — OPEN
+### - [x] F-12.8.10 — `processing_restricted` clear endpoint and erasure-job retry endpoint are unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.12.3 — F-12.8.10 and F-24.12.3 both report the missing clear-processing-restriction endpoint (F-12.8.10 also covers retry, overlapping with the separate retry-endpoint finding F-24.12.2).
+
+**Resolution (commit d815b0c9):** Closed by F-24.12.2 (the `POST .../retry` endpoint) and F-24.12.3 (the `POST .../clear-processing-restriction` endpoint, which sets the `lenny.clear_processing_restriction` session-local bypass migration 0042 expects). Both halves this finding names are now implemented.
 
 **Spec:** §12.8 line 764 ("the job must be retried or cleared explicitly via `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` (requires `platform-admin`; this endpoint records the operator identity and justification in the audit trail)"). §12.8 line 766 ("retry via `POST /v1/admin/erasure-jobs/{job_id}/retry`").
 
@@ -36255,7 +36257,7 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 
 ### Findings
 
-### - [ ] F-24.12.1 — `lenny-ctl admin erasure-jobs` group not implemented [High] — OPEN
+### - [x] F-24.12.1 — `lenny-ctl admin erasure-jobs` group not implemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.12.5 — Both concern the erasure-jobs CLI group, but one is the missing spec-defined subcommands and the other proposes an unspecified list command.
 
@@ -36264,13 +36266,17 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Gap:** Operators cannot retrieve job status, retry stuck jobs, or clear an over-applied `processing_restricted` flag from the documented CLI surface.
 - **Suggested resolution:** Add `cmdErasureJobs` to `cmdAdmin` with `get`/`retry`/`clear-restriction` subcommands, mirroring the API mapping table.
 
-### - [ ] F-24.12.2 — `POST /v1/admin/erasure-jobs/{job_id}/retry` not registered [High] — OPEN
+**Resolution (commit d815b0c9):** Added `cmdErasureJobs` to `cmdAdmin` with `get` (GET .../{job_id}), `retry` (POST .../retry), and `clear-restriction <job-id> --justification <text>` (POST .../clear-processing-restriction) subcommands; the admin usage hint lists `erasure-jobs`. CLI tests cover routing for all three plus the missing-`--justification` exit-2 path.
+
+### - [x] F-24.12.2 — `POST /v1/admin/erasure-jobs/{job_id}/retry` not registered [High] — CLOSED
 - **Spec:** §24.12 line 143 maps `retry` to the named POST.
 - **Evidence:** `pkg/gateway/admin/erasure.go` exposes only the `EraseUser` initiate path and the `GET .../{job_id}` status reader. No retry handler exists; grep for `/retry` against the admin tree returns no matches.
 - **Gap:** A failed job has no operator-driven recovery path. Today the only recourse is to delete and re-create the entire job entry from the DB.
 - **Suggested resolution:** Add `handleRetryErasureJob`, validate `state == failed`, clear transient error fields, transition phase back to the last persisted checkpoint, and re-enqueue on the `erasurejob.Runner`.
 
-### - [ ] F-24.12.3 — `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` not registered [High] — OPEN
+**Resolution (commit d815b0c9):** `handleRetryErasureJob` (platform-admin) validates `job.Phase == failed` (else 409 `ERASURE_JOB_NOT_FAILED`), clears `Failure`/`CompletedAt`, resets the job to `initiated`, and re-enqueues `runErasureToCompletion` on the runner. The runner re-runs the full idempotent DeleteByUser sequence (it has no mid-phase checkpoint), so `initiated` is the safe resume point; on success the shared completion path lifts the processing restriction. Tests: failed→retry→completed with restriction lifted, completed-job rejection (409), unknown-job 404.
+
+### - [x] F-24.12.3 — `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` not registered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.8.10 — F-12.8.10 and F-24.12.3 both report the missing clear-processing-restriction endpoint (F-12.8.10 also covers retry, overlapping with the separate retry-endpoint finding F-24.12.2).
 
@@ -36279,11 +36285,15 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Gap:** A user whose erasure job failed remains `processing_restricted` (per migration 0042's DB-level trigger) with no operator override, blocking all session creation for that user indefinitely.
 - **Suggested resolution:** Add `handleClearErasureRestriction`, require `--justification`, emit a `gdpr.processing_restriction_cleared` audit event with operator identity, and update both the user-store row and any cached state.
 
-### - [ ] F-24.12.4 — `gdpr.processing_restriction_cleared` and `gdpr.erasure_job_retried` audit events absent [Medium] — OPEN
+**Resolution (commit d815b0c9):** `handleClearErasureRestriction` (platform-admin) requires a non-empty `justification` (else 422-class 400 `VALIDATION_ERROR`), resolves the job's user, and clears the flag via the new `userstore.Store.ClearProcessingRestriction` primitive. The pgstore implementation sets `SET LOCAL lenny.clear_processing_restriction = 'true'` inside the write transaction so the migration 0042 Article 18 trigger exempts the clear (the in-memory store has no trigger). Emits `gdpr.processing_restriction_cleared` with operator identity + justification. Closes duplicate F-12.8.10. Tests: flag lifted + audit recorded, missing-justification rejection leaves the flag set, unknown-job 404, memory-store primitive unit test.
+
+### - [x] F-24.12.4 — `gdpr.processing_restriction_cleared` and `gdpr.erasure_job_retried` audit events absent [Medium] — CLOSED
 - **Spec:** §24.12 lines 143–144 require audit-trail capture for retry and clear-restriction.
 - **Evidence:** `pkg/observability/audit/catalog.go` has no constants for these event names; OCSF mapping for prefixed `gdpr.` events lists only erasure-initiation, completion, blocked-by-hold, and the hold override.
 - **Gap:** Even if F-24.12.2 and F-24.12.3 ship, the operator actions will not appear in the §11.7 audit chain or stream to the SIEM forwarder.
 - **Suggested resolution:** Add `EventGDPRErasureJobRetried` and `EventGDPRProcessingRestrictionCleared` to the catalog with OCSF severity Notice; wire emitters from the two new handlers.
+
+**Resolution (commit d815b0c9):** Added `EventGDPRErasureJobRetried` and `EventGDPRProcessingRestrictionCleared` typed constants, emitted from the two new handlers. They are registered in `auxKnownEventTypes` (recognized by `IsKnownEventType` so audit-sink validators accept them) rather than the §16.7 `catalog`, because §16.7 line 693 enumerates the gdpr.* erasure-receipt/legal-hold rows but not these two operator-recovery events; adding them to `catalog` would fail the §16.7-parity test. OCSF: exact mappings to Entity Management — `gdpr.erasure_job_retried`→Delete, `gdpr.processing_restriction_cleared`→Update — at Notice severity (regenerated `schemas/ocsf-mapping.yaml`).
 
 ### - [x] F-24.12.5 — `lenny-ctl admin erasure-jobs list` is not specified but is operationally needed [Info] — CLOSED
 
