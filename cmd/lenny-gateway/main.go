@@ -500,6 +500,8 @@ func main() {
 		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
+	saTokenAudience := flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
+		"§10.3 line 334 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	llmSemanticCache := flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
@@ -3526,7 +3528,7 @@ func main() {
 			idgen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
 		}
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, mtlsDeny)
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -4542,7 +4544,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, replicaID, tlsCert, tlsKey, clientCA, trustDomain string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -4622,7 +4624,17 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// verified mTLS chain, since the handler trusts the session_id in the
 	// request body and has no other proof of the caller's identity.
 	// F-8.6.4 / F-15.3.1.
-	opts = append(opts, grpc.UnaryInterceptor(leasecontrol.RequireVerifiedPeerInterceptor(clientCA != "")))
+	//
+	// spec: §10.3 line 334 — the gateway validates the projected SA
+	// token's deployment-specific audience claim on every pod→gateway
+	// request, the SA-token layer of the §10.3 defense-in-depth chain.
+	// The interceptor is a no-op when no audience is configured (the
+	// local-development path), so it composes with the mTLS gate above
+	// without disturbing dev runs. F-10.3.20.
+	opts = append(opts, grpc.ChainUnaryInterceptor(
+		leasecontrol.RequireVerifiedPeerInterceptor(clientCA != ""),
+		leasecontrol.RequireSATokenAudienceInterceptor(saTokenAudience),
+	))
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil

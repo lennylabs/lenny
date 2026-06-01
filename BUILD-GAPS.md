@@ -12664,13 +12664,15 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution:** New `charts/lenny/templates/admission-policies/kyverno-agent-sa-rolebinding-policy.yaml` ships a Kyverno `ClusterPolicy` (`lenny-disallow-agent-sa-rolebindings`, `Enforce` mode) matching `RoleBinding`/`ClusterRoleBinding` and denying any binding that grants a ServiceAccount in an agent namespace. Two deny conditions cover both an explicit-namespace SA subject (ClusterRoleBindings + cross-namespace RoleBindings) and a RoleBinding in an agent namespace whose SA subject omits a namespace (RBAC defaults it to the binding's). The agent-namespace value list is derived from `.Values.agentNamespaces`; gated by the new `admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled` value (default true under the Kyverno block). Gatekeeper users configure an equivalent ConstraintTemplate. F-10.3.18.
 
-### - [ ] F-10.3.19 — 10.3-G19. `lenny_interceptor_mtls_handshake_duration_seconds` metric is uninstrumented [Medium] — OPEN
+### - [ ] F-10.3.19 — 10.3-G19. `lenny_interceptor_mtls_handshake_duration_seconds` metric is uninstrumented [Medium] — DEFERRED
 
 **Spec lines:** 332 ("Handshake outcomes are instrumented via `lenny_interceptor_mtls_handshake_duration_seconds{result}`").
 **Evidence:** `pkg/observability/metrics/catalog.go:106` registers the metric in the catalog and `pkg/alerting/rules/rules.go:1262` defines the alert, but a grep for the metric name across `pkg/` returns no `Observe(...)`/`Record(...)` call. The `result` label values (`success`, `san_mismatch`, `cert_expired`, `cert_missing`, `tls_error`) are documented in `tests/tier9_security/reviews/full-system-review.md` but never produced.
 **Impact:** The `InterceptorMTLSHandshakeFailure` alert is structurally a no-op until the interceptor mTLS link (gap G3) is wired and the metric is emitted.
 
-### - [ ] F-10.3.20 — 10.3-G20. Projected SA token `expirationSeconds: 900` not configured on agent-pod template [High] — OPEN
+**Deferred:** The metric labels a gateway→interceptor handshake outcome, but the gateway↔interceptor mTLS link (NET-063) does not yet exist — F-10.3.3 (G3) tracks wiring it. There is no handshake to instrument until that link lands, so emitting the counter now would require fabricating an outcome from a code path that never runs. Will be wired alongside F-10.3.3.
+
+### - [x] F-10.3.20 — 10.3-G20. Projected SA token `expirationSeconds: 900` not configured on agent-pod template [High] — CLOSED
 
 **Spec lines:** 334 ("Configured with `expirationSeconds: 900` (15 minutes). Kubelet auto-refreshes the token before expiry. The gateway validates the audience claim on every pod→gateway request").
 **Evidence:**
@@ -12678,6 +12680,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - The gateway middleware does not parse or validate an SA token audience claim; `pkg/gateway/middleware/auth/auth.go` reads only the JWT `Audience` field but never compares it to the required `lenny-gateway-<cluster-name>` form.
 
 **Impact:** Pod→gateway calls authenticate (when mTLS is also wired — see G1/G9) only on the cert layer. The SA-token defense-in-depth control is structurally absent.
+
+**Resolution (two-layer):** The pod-template half (heading) was already implemented: `podspec.injectSATokenVolume` projects the SA token with `expirationSeconds: 900` and the deployment-specific `Audience`, mounted read-only, with the audience flowing from the `lenny-controller --sa-token-audience` flag (covered by `sa_token_test.go`). This batch adds the gateway-validation half: new `leasecontrol.RequireSATokenAudienceInterceptor` extracts the `authorization: Bearer` SA token from the GatewayControl request metadata, decodes the JWT `aud` claim (string or array, no signature verification — mTLS already authenticates the peer; this layer blocks cross-deployment audience replay), and rejects a missing / malformed / mismatched audience with `Unauthenticated`. Chained after `RequireVerifiedPeerInterceptor` on the §8.6 listener, gated by the new gateway `--sa-token-audience` flag (wired from `global.saTokenAudience` in `gateway-deployment.yaml`); empty audience is a no-op (dev path). The adapter side adds `gatewaycontrol.SATokenCredentials` / `WithSAToken` per-RPC credential that re-reads the projected token per call so a kubelet refresh is picked up. F-10.3.20.
 
 ### - [ ] F-10.3.21 — 10.3-G21. CA rotation overlap window not coordinated with chart trust bundle [Medium] — OPEN
 
