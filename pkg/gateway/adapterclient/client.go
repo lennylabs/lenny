@@ -14,6 +14,7 @@ import (
 	"io"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
@@ -37,7 +38,13 @@ func New(conn *grpc.ClientConn) *Client {
 
 // Dial opens a gRPC connection to the adapter at target and wraps it.
 // The caller supplies the transport-credential dial option.
+//
+// spec: §16.3 line 327 ("Gateway → Pod (gRPC metadata)") — the OTel client
+// stats handler injects the current trace context into outgoing gRPC
+// metadata so the pod adapter's spans become children of the gateway span
+// that issued the call. F-16.3.3.
 func Dial(target string, opts ...grpc.DialOption) (*Client, error) {
+	opts = append([]grpc.DialOption{grpc.WithStatsHandler(otelgrpc.NewClientHandler())}, opts...)
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("adapterclient: dial %s: %w", target, err)

@@ -28,6 +28,9 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
@@ -67,6 +70,15 @@ func Wrap(next http.Handler, opts Options) http.Handler {
 		incoming := corr.FromHTTPHeader(r.Header)
 		merged := corr.From(r.Context()).Merge(incoming)
 		ctx := corr.With(r.Context(), merged)
+
+		// spec: §16.3 lines 320, 326 ("Client → Gateway (HTTP headers)") —
+		// extract the inbound W3C traceparent through the process-wide OTel
+		// propagator so a span opened by a downstream §16.3 handler continues
+		// the client's trace instead of starting a detached root. corr.From
+		// captures trace_id/span_id as strings for the §16.4 log line; this
+		// step establishes the real OTel remote SpanContext that tracer.Start
+		// parents under. F-16.3.3.
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
 		r = r.WithContext(ctx)
 
 		if opts.SkipPaths[r.URL.Path] {

@@ -51,6 +51,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -4743,6 +4744,11 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		leasecontrol.RequireVerifiedPeerInterceptor(clientCA != ""),
 		leasecontrol.RequireSATokenAudienceInterceptor(saTokenAudience),
 	))
+	// spec: §16.3 line 328 ("Pod → Gateway (delegation tool calls carry
+	// parent trace context)") — extract the inbound traceparent from gRPC
+	// metadata so the gateway's GatewayControl spans continue the pod's
+	// trace. F-16.3.3.
+	opts = append(opts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil

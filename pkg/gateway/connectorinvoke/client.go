@@ -24,6 +24,9 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // ProtocolVersion is the MCP protocol revision the gateway advertises
@@ -266,6 +269,11 @@ func (s *Session) newRequest(ctx context.Context, body []byte) (*http.Request, e
 	if s.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", s.sessionID)
 	}
+	// spec: §16.3 line 330 ("Gateway → External MCP tools (HTTP headers)") —
+	// inject the current trace context as a W3C traceparent so the external
+	// connector's spans (if it participates in tracing) stitch into the
+	// gateway's mcp.external_tool_call trace. F-16.3.3.
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	return req, nil
 }
 

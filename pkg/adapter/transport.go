@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,6 +25,12 @@ import (
 // set to SERVING; the gateway probes adapter liveness through it
 // (§4.7). Pass TLSServerOption to serve the §4.7 mTLS link.
 func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
+	// spec: §16.3 line 327 ("Gateway → Pod (gRPC metadata)") — the OTel
+	// stats handler extracts the inbound traceparent from gRPC metadata so
+	// the adapter's spans continue the gateway's trace, and propagates it
+	// onward. Prepended so a caller-supplied handler in opts cannot shadow
+	// the propagation seam. F-16.3.3.
+	opts = append([]grpc.ServerOption{grpc.StatsHandler(otelgrpc.NewServerHandler())}, opts...)
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterAdapterServer(gs, s)
 
