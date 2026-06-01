@@ -26720,7 +26720,7 @@ no Go code (verified by
 
 **Resolution:** New `tracing.InitProvider` (`pkg/observability/tracing/provider.go`) builds an SDK `TracerProvider` with `ParentBased(AlwaysSample())` (100% head sampling per §16.3 line 359 — the Collector tail-samples), an OTLP/HTTP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and a stdout exporter otherwise, installs it as the global provider, installs the W3C trace-context + baggage propagator, and returns a flush-on-shutdown func. Wired into `cmd/lenny-gateway`, `cmd/lenny-controller`, `cmd/lenny-adapter`, and `cmd/lenny-ops` mains, each reading `OTEL_EXPORTER_OTLP_ENDPOINT`. Spans started through `Tracer.Start` now land on a real provider instead of the no-op. Span *emission* at the 23 call sites stays tracked under F-16.3.1; HTTP/gRPC propagation middleware stays tracked under F-16.3.3. Commit f5e46144.
 
-### - [ ] F-16.3.3 — No HTTP or gRPC middleware extracts the W3C `traceparent` header [High] — OPEN
+### - [x] F-16.3.3 — No HTTP or gRPC middleware extracts the W3C `traceparent` header [High] — CLOSED
 
 **High.** `pkg/observability/correlation/correlation.go` exposes
 `FromHTTPHeader` (line 178) and `InjectHTTPHeader` (line 196) for the
@@ -26746,7 +26746,25 @@ nowhere instantiated. A `traceparent` received from a client is
 discarded; an outbound HTTP/gRPC call to an external MCP server or to
 the pod adapter carries no `traceparent`.
 
-### - [ ] F-16.3.4 — `global.traceSamplingRate` Helm value is undefined; collector tail-sampling configuration absent [High] — OPEN
+**Resolution (commit bc7b973a):** Each §16.3 line 326-330 hop now runs the
+process-wide OTel propagator that F-16.3.2 installed. (1) Client → Gateway
+(HTTP): the gateway correlation middleware (`pkg/gateway/middleware/correlation`)
+calls `otel.GetTextMapPropagator().Extract` over the inbound headers, so an
+inbound `traceparent` establishes the remote `SpanContext` a downstream
+`Tracer.Start` parents under instead of being discarded. (2) Gateway → Pod and
+Pod → Gateway (gRPC metadata): `otelgrpc.NewServerHandler` stats handlers on
+`adapter.NewGRPCServer` and the gateway's GatewayControl server, and
+`otelgrpc.NewClientHandler` stats handlers on `adapterclient.Dial` and
+`gatewaycontrol.Dial`, so trace context flows through gRPC metadata both
+directions. (3) Gateway → External MCP tools (HTTP): the `connectorinvoke`
+client injects `traceparent` on every outbound request. Tests: a middleware
+unit test asserts an inbound `traceparent` becomes the remote parent (and the
+no-header case stays rootable), a bufconn contract test asserts the adapter's
+server RPC span inherits the gateway client span's trace id, and a
+connectorinvoke test asserts the outbound request carries the injected
+`traceparent`.
+
+### - [x] F-16.3.4 — `global.traceSamplingRate` Helm value is undefined; collector tail-sampling configuration absent [High] — CLOSED
 
 **High.** §16.3 line 359 states: "The default probabilistic sampling
 rate is 10% for normal operations (configurable via
@@ -26765,6 +26783,28 @@ templates). The chart's tracing surface is limited to the agent-pod
 egress NetworkPolicy and the gateway env var. The §16.3 sampling
 policy (100% for errors, 100% for slow requests, 100% for delegation
 trees) is therefore neither configured in-cluster nor verifiable.
+
+**Resolution (commit 5da00bd6):** `global.traceSamplingRate` is now defined
+(default `0.1`) in `charts/lenny/values.yaml`. A new `templates/otel-collector.yaml`
+renders an opt-in OpenTelemetry Collector (ConfigMap + Service + Deployment,
+gated by the new `tracing.collector.enabled`, off by default to match the
+opt-in posture of `observability.otlpEndpoint`). The collector uses the
+contrib image (tail_sampling lives there) and runs a `tail_sampling`
+processor with three keep-at-100% policies — `status_code: [ERROR]`,
+`latency: threshold_ms: 500` (the §16.5 P99 SLO), and the configurable
+`probabilistic` default sourced from `global.traceSamplingRate` (rendered via
+`mulf … 100`). Tail sampling buffers whole traces before deciding, so the
+"all spans in a delegation tree sampled if the root is" completeness rule
+holds by construction and error/latency conditions are known at decision
+time. The gateway's `OTEL_EXPORTER_OTLP_ENDPOINT` falls back to the
+in-cluster collector's OTLP/HTTP port when the collector is enabled and no
+explicit `observability.otlpEndpoint` is set. The collector pod carries the
+§13.2 NET-046 `observability.otlpPodLabel` so the existing
+`allow-pod-egress-otlp` policy admits agent-pod egress to it. Eight
+helm-unittest cases cover opt-in absence, the three-document render, the
+derived/default sampling rate, the always-keep error/latency policies, the
+backend-exporter path, the NET-046 pod label, and the gateway endpoint
+fallback/override.
 
 ### - [x] F-16.3.5 — Span attributes mandated for `delegation.budget_reserve` / `delegation.budget_return` are not declared [High] — CLOSED
 
