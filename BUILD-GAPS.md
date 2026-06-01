@@ -7157,7 +7157,7 @@ flags follow-on coverage where the mechanics live.
 
 ### Findings
 
-### - [ ] F-8.1.1 — 1-F1 (High) — Token budget is not carved at delegation admission (N3.a, N4) [Medium] — OPEN
+### - [x] F-8.1.1 — 1-F1 (High) — Token budget is not carved at delegation admission (N3.a, N4) [Medium] — CLOSED
 
 §8.1 states the gateway carves the child's token budget out of the
 parent's remaining budget on every delegation hop. The downstream
@@ -7220,6 +7220,8 @@ callers (`grep -rn "lease.ValidateChildSlice"` returns no matches in
 the gateway tree); `pkg/gateway/delegation/service.go::Delegate` body
 (lines 156-232) shows no budget read; `pkg/gateway/mcptools/mcptools.go`
 `lenny/delegate_task` handler shows no `lease_slice` accept.
+
+**Resolution (commits fa058dc4, 6b86cac9):** The `lease_slice` accept and the static `ValidateChildSlice` ceiling were wired into `delegate_task` in fa058dc4 (F-8.2.2). 6b86cac9 adds the missing Redis reservation leg: `delegation.Service.Delegate` now reserves the child's `maxTokenBudget` slice from the tree token pool (`{root_session_id}:dlg:tokens`) via `treebudget.Reserver.Reserve` at admission, capped at the parent's granted tree token budget, rejecting an over-budget carve with `BUDGET_EXHAUSTED` and failing closed (`DELEGATION_BUDGET_UNAVAILABLE`) on a Redis outage. The §8.1 token-budget invariant is now enforced in the gateway at delegation time. The consumption-time debit as in-tree LLM calls accrue remains the §8.6 leasecontrol / proxy concern; the RFC 8693 child-token-minting leg of §8.1's "gateway and Token Service" claim stays tracked under F-8.1.2 / F-8.2.7.
 
 ### - [ ] F-8.1.2 — 1-F2 (High) — Token Service is not invoked on the delegation path (N3.b, N4) [Medium] — OPEN
 
@@ -7719,7 +7721,7 @@ Implementation:
 
 Consequence: the parent's "what does this delegation look like from the agent's perspective" model is a series of REST-shaped session reads rather than the spec's virtual MCP interface. Pending-elicitation continuity across parent failover is broken: a parent that fails mid-elicitation will resume with no record of the pending request. The §8.2 explicit guarantee that pod addresses, internal endpoints, and raw credentials are hidden by the virtual interface is achieved only by virtue of the in-memory child not existing at all.
 
-### - [ ] F-8.2.12 — `maxTreeMemoryBytes` budget, atomic Redis counter, and `BUDGET_EXHAUSTED` rejection are not implemented [Medium] — OPEN
+### - [x] F-8.2.12 — `maxTreeMemoryBytes` budget, atomic Redis counter, and `BUDGET_EXHAUSTED` rejection are not implemented [Medium] — CLOSED
 
 Spec §8.2 lines 114-127 add a `maxTreeMemoryBytes` (default 2 MB) lease field with:
 - An atomic Redis counter alongside `maxTreeSize`.
@@ -7732,6 +7734,8 @@ Implementation:
 - No Redis counter, no Postgres checkpoint, no rejection path. The minimal lease (`pkg/delegation/lease/lease.go:24-47`) does not include the field.
 
 Consequence: a long-lived delegation tree can accumulate per-node state without any platform-level memory bound. The metric exists only as a name.
+
+**Resolution (commit 6b86cac9):** Added the `maxTreeMemoryBytes` axis to `lease.LeaseSlice`, `sessionstore.DelegationLease`, and the `delegate_task` MCP `leaseSlice` surface (rides the existing JSONB blob, no migration). `treebudget` maintains the atomic `{root_session_id}:dlg:tree_memory` Redis counter alongside `tree_size`; each admission reserves the ~12 KB per-node footprint (`treebudget.PerNodeMemoryBytes`) against the cap, defaulting to 2 MB (`DefaultMaxTreeMemoryBytes`) when the lease declares none, and rejects an over-cap delegation with `BUDGET_EXHAUSTED`. The platform-level memory bound now exists at admission. The periodic-Postgres-checkpoint + reconstruction-on-Redis-recovery leg is the §12.4 reconciliation concern; the offload decrement (M-2) is wired through `treebudget.Return` but its invocation on completed-subtree offload remains under F-8.2.13.
 
 ### - [ ] F-8.2.13 — Completed-subtree offload (§8.2 line 129) is not implemented [Medium] — OPEN
 
@@ -7800,7 +7804,7 @@ Consequence: the same chain the spec says fires for top-level sessions does not 
 
 **Resolution (closed by F-4.8.11):** The `lenny/delegate_task` handler now runs `Chain.Run(PhasePreRoute)` over the child's augmented `childRouteSpec` (`tenant_id`/`requested_runtime`/`input`) after PreDelegation passes and before `delegation.Service.Delegate`. A REJECT blocks the delegation (no child session created); a MODIFY rewrites the child's `input`; a MODIFY altering `tenant_id`/`user_id` is rejected with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. The top-level session-creation PreRoute/PostRoute wiring lands under F-4.8.11. Registering `ExperimentRouter` itself as a chain interceptor remains tracked under F-4.8.5. Resolved in commit d9d7de77.
 
-### - [ ] F-8.2.18 — The Redis-backed budget counters that §8.2 step 2 names (`maxTreeSize`, `maxParallelChildren`, `maxTreeMemoryBytes`) are not the basis of admission decisions [Medium] — OPEN
+### - [x] F-8.2.18 — The Redis-backed budget counters that §8.2 step 2 names (`maxTreeSize`, `maxParallelChildren`, `maxTreeMemoryBytes`) are not the basis of admission decisions [Medium] — CLOSED
 
 Spec §8.2 line 57: "`maxTreeSize` and `maxParallelChildren` depend on Redis-backed budget counters and are subject to the fail-closed behavior described in §12.4."
 
@@ -7810,6 +7814,8 @@ Implementation:
 - `pkg/gateway/leasecontrol/membudget.go` provides an in-memory `MemoryBudgetSource` for the §8.6 extension flow only — it does not gate admission.
 
 Consequence: the per-tree size and parallel-children invariants the spec relies on are unenforced. A tree can grow to arbitrary node count and a parent can have arbitrarily many concurrent children, both well above the lease-declared limits.
+
+**Resolution (commit 6b86cac9):** New `pkg/gateway/treebudget` package implements the §12.4 `budget_reserve.lua` / `budget_return.lua` atomic multi-key scripts over the `{root_session_id}:dlg:*` keys (`tree_size`, `tree_memory`, per-parent `parallel_children:{parent}` and `children_total:{parent}`, `tokens`), with the `{root_session_id}` hash tag for single-slot co-location. `delegation.Service.Delegate` now invokes `Reserver.Reserve` on every admission (after the static `ValidateChildSlice` ceiling): a cap breach rejects with `BUDGET_EXHAUSTED`, a Redis outage fails closed with `DELEGATION_BUDGET_UNAVAILABLE` (§12.4 line 213, classified retryable). Wired into `cmd/lenny-gateway` when Redis is configured. On a downstream error before the child row commits, the reservation is released via `Return`. The Postgres-checkpoint reconstruction-on-recovery leg remains the §12.4 reconciliation concern; the offload-decrement leg is tracked under F-8.2.13.
 
 ### - [x] F-8.2.19 — The MCP delegate handler returns a hand-rolled JSON string rather than a `TaskHandle` envelope [Low] — CLOSED
 
@@ -9196,7 +9202,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:250–267`; `pkg/gateway/leasecontrol/membudget.go:223–237`; `pkg/delegation/lease/lease.go`.
 
-**Deferred (re-verified after F-8.2.2):** Part (a) — persisting the delegation lease on the session row — now exists: F-8.2.2 added `sessions.delegation_lease` (migration 0099) and `delegation.Service.Delegate` stamps + validates the granted slice. Part (b) remains the blocker: there is still no production `RegisterTree` call populating the leasecontrol budget source from those persisted slices, and no Redis-backed tree counter that a post-grant `ApplyGrant` mutation can raise so `pkg/delegation/lease` admission reads the extended limit. The static admission ceiling F-8.2.2 enforces is per-call (child slice ≤ ancestor slice); the live per-tree token/child counter the extension grant must raise is the F-8.2.12 Redis-counter machinery. Re-attempt once F-8.2.12 lands the tree-budget counter and the leasecontrol grant is wired to it.
+**Deferred (re-verified after F-8.2.12 / commit 6b86cac9):** Part (a) — persisting the delegation lease — exists since F-8.2.2. The F-8.2.12 blocker is now partially cleared: the Redis-backed per-tree token counter (`{root_session_id}:dlg:tokens`) and its admission-time reservation exist in `pkg/gateway/treebudget` and `delegation.Service.Delegate`. The remaining gap is the leasecontrol→counter bridge: `treebudget.Reserve` re-derives the token cap from the parent's persisted `LeaseSlice.MaxTokenBudget` on each call, so a `leasecontrol.ApplyGrant` extension that raises `MemoryBudgetSource` does not yet propagate to that cap. Closing F-8.6.3 requires the extension grant to mutate the persisted tree token cap (or a dedicated Redis cap key the reserve script reads) so post-grant admissions observe the raised limit, plus the production `ExtendLease` trigger (F-8.6.6). This is a distinct wiring task, not a direct unblock; re-attempt as its own batch.
 
 ### - [x] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — CLOSED
 
