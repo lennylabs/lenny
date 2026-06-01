@@ -129,3 +129,72 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 		},
 	}
 }
+
+// SIEMForwarder is the §11.7 SIEM delivery view a health probe reads.
+// *siem.Forwarder satisfies Healthy(); *siem.CountingMetrics satisfies
+// FailureRate(). The probe stays free of the siem import by depending on
+// these narrow readers.
+type SIEMForwarder interface {
+	// Healthy reports whether the most recent SIEM batch delivery
+	// succeeded.
+	Healthy() bool
+}
+
+// SIEMFailureRate reports the §11.7 SIEM delivery failure rate as a
+// percentage so the probe can compare it against
+// audit.siem.failureThresholdPercent.
+type SIEMFailureRate interface {
+	FailureRate() float64
+}
+
+// SIEM returns a §11.7 item 4 health.Checker for the SIEM forwarder. It
+// reports degraded when the delivery failure rate exceeds
+// thresholdPercent (default 5%) or the most recent batch delivery
+// failed, matching the spec's "if the failure rate exceeds the
+// configured threshold ... the /healthz endpoint reports degraded
+// status". The status is StatusDegraded rather than StatusUnhealthy
+// because audit rows continue to persist durably in Postgres during a
+// SIEM outage — the external copy is impaired, not the audit pipeline.
+//
+// The gateway does not gate its liveness probe (/healthz) or readiness
+// probe (/readyz) on this component: a SIEM outage is shared across
+// every replica, so failing readiness would remove all replicas from
+// the Service and turn an audit-integrity degradation into a full
+// outage. The degraded verdict surfaces on the §25.3 health API and
+// drives the §16.5 alert instead. spec: §11.7 item 4 line 372.
+func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, name string) health.Checker {
+	if thresholdPercent <= 0 {
+		thresholdPercent = 5
+	}
+	return health.CheckerFunc{
+		ComponentName: name,
+		Fn: func(context.Context) health.Component {
+			fr := rate.FailureRate()
+			if fr > thresholdPercent {
+				return health.Component{
+					Name:            name,
+					Status:          health.StatusDegraded,
+					Detail:          fmt.Sprintf("SIEM delivery failure rate %.1f%% exceeds the %.1f%% threshold; audit rows persist in Postgres but the external immutable copy is lagging", fr, thresholdPercent),
+					Issue:           "AUDIT_SIEM_DELIVERY_DEGRADED",
+					SuggestedAction: "verify SIEM endpoint reachability and credentials; the audit hash chain is durable in Postgres but the independent SIEM copy is incomplete until delivery recovers",
+					RunbookRef:      health.RunbookFor("siem"),
+				}
+			}
+			if !fwd.Healthy() {
+				return health.Component{
+					Name:            name,
+					Status:          health.StatusDegraded,
+					Detail:          "the most recent SIEM batch delivery failed",
+					Issue:           "AUDIT_SIEM_DELIVERY_DEGRADED",
+					SuggestedAction: "verify SIEM endpoint reachability and credentials; the audit hash chain is durable in Postgres but the independent SIEM copy is incomplete until delivery recovers",
+					RunbookRef:      health.RunbookFor("siem"),
+				}
+			}
+			return health.Component{
+				Name:   name,
+				Status: health.StatusHealthy,
+				Detail: "SIEM delivery healthy",
+			}
+		},
+	}
+}

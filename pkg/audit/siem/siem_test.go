@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 )
 
@@ -56,6 +57,88 @@ func sampleRecord() ocsf.Record {
 			UID: "id-1", Sequence: 1, TenantUID: "acme", Version: ocsf.Version,
 			Product: ocsf.Product{Name: "Lenny", VendorName: "Lenny"},
 		},
+	}
+}
+
+// fakeTranslationStore is a minimal ocsf.TranslationStore for the
+// translator → forwarder integration test. It mirrors the per-row state
+// the auditstore drives in production.
+type fakeTranslationStore struct {
+	mu   sync.Mutex
+	rows []ocsf.TranslatableRow
+}
+
+func (s *fakeTranslationStore) PendingTranslation(_ context.Context, limit int) ([]ocsf.TranslatableRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ocsf.TranslatableRow
+	for _, r := range s.rows {
+		if r.State == audit.OCSFPending || r.State == audit.OCSFRetryPending {
+			out = append(out, r)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeTranslationStore) SetTranslationState(_ context.Context, tenantID string, seq uint64,
+	state audit.OCSFTranslationState, retryCount int,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.rows {
+		if s.rows[i].Input.TenantID == tenantID && s.rows[i].Input.Sequence == seq {
+			s.rows[i].State = state
+			s.rows[i].RetryCount = retryCount
+			return nil
+		}
+	}
+	return errors.New("fakeTranslationStore: row not found")
+}
+
+func (s *fakeTranslationStore) state(seq uint64) audit.OCSFTranslationState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.rows {
+		if r.Input.Sequence == seq {
+			return r.State
+		}
+	}
+	return ""
+}
+
+// spec: §11.7 Wire Format — the gateway wires the OCSF translator's sink
+// to the SIEM forwarder so a pending audit row flows
+// translator → Forwarder → Sink and its ocsf_translation_state advances
+// to succeeded. This is the exact seam cmd/lenny-gateway constructs.
+// F-11.7.1 / F-11.7.11.
+func TestTranslatorForwardsPendingRowToSIEM(t *testing.T) {
+	store := &fakeTranslationStore{rows: []ocsf.TranslatableRow{{
+		Input: ocsf.Input{
+			ID: "id-1", Sequence: 1, TenantID: "acme",
+			EventType: "session.created", Payload: json.RawMessage(`{}`),
+		},
+		Topic: "session_lifecycle",
+		State: audit.OCSFPending,
+	}}}
+	sink := &fakeSink{}
+	fwd := NewForwarder(sink, DefaultForwarderConfig(), NewCountingMetrics())
+	tr := ocsf.NewTranslator(store, fwd, ocsf.DefaultTranslationConfig(), nil)
+
+	res, err := tr.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("RunCycle: %v", err)
+	}
+	if res.Translated != 1 {
+		t.Fatalf("Translated = %d, want 1", res.Translated)
+	}
+	if sink.delivered() != 1 {
+		t.Errorf("SIEM sink received %d records, want 1", sink.delivered())
+	}
+	if st := store.state(1); st != audit.OCSFSucceeded {
+		t.Errorf("row state = %q, want succeeded", st)
 	}
 }
 

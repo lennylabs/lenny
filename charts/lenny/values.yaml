@@ -851,9 +851,35 @@ audit:
   # tenant to a regulated complianceProfile (soc2, fedramp, hipaa) and
   # creating an environment under one with COMPLIANCE_SIEM_REQUIRED; in
   # production a regulated tenant with no endpoint is a fatal startup
-  # error. Configure this before enabling a regulated tenant. F-11.7.2.
+  # error. Configure this before enabling a regulated tenant. When set,
+  # the gateway validates SIEM connectivity at startup (refuses to start
+  # until a test event is acknowledged) and runs the §11.7 OCSF translator
+  # → SIEM forwarder pipeline. F-11.7.1 / F-11.7.2.
   siem:
     endpoint: ""
+    # §11.7 SIEM HMAC shared secret. When set, the SIEM HTTP sink signs
+    # each OCSF batch with an HMAC-SHA256 X-Lenny-SIEM-Signature header.
+    # Prefer sourcing this from a Secret rather than committing it to
+    # values. F-11.7.1.
+    secret: ""
+    # §11.7 item 4 audit.siem.failureThresholdPercent: when the SIEM
+    # delivery failure rate exceeds this percentage, the §25.3 health API
+    # reports the `siem` component degraded (default 5). F-11.7.16.
+    failureThresholdPercent: 5
+  # §11.7 OCSF translator: the background state machine that serializes
+  # each audit row to the canonical OCSF v1.1.0 wire form and multicasts
+  # it to the SIEM forwarder, advancing ocsf_translation_state. F-11.7.1
+  # / F-11.7.11.
+  ocsf:
+    # audit.ocsf.retryInterval (seconds): cadence at which pending /
+    # retry_pending rows are re-driven toward succeeded | dead_lettered.
+    retryIntervalSeconds: 30
+    # audit.ocsf.maxAttempts: the per-row translation attempt budget; the
+    # final failed attempt dead-letters the row.
+    maxAttempts: 10
+    # per-cycle batch size: the maximum number of pending rows one
+    # translation cycle drains.
+    batchSize: 256
   # §16.4 audit.retentionDays: the general Postgres audit-log retention
   # window in days. The audit GC applies it to non-gdpr.* rows. gdpr.*
   # rows are governed separately by gdprRetentionDays below. F-12.8.16.

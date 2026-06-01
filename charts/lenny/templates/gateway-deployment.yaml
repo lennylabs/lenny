@@ -788,6 +788,32 @@ spec:
             - name: LENNY_AUDIT_SIEM_ENDPOINT
               value: {{ .Values.audit.siem.endpoint | quote }}
             {{- end }}
+            # §11.7 SIEM HMAC secret + delivery health threshold. The
+            # secret signs each OCSF batch; the threshold drives the §25.3
+            # `siem` component degraded verdict. F-11.7.1 / F-11.7.16.
+            {{- if and .Values.audit .Values.audit.siem .Values.audit.siem.secret }}
+            - name: LENNY_AUDIT_SIEM_SECRET
+              value: {{ .Values.audit.siem.secret | quote }}
+            {{- end }}
+            {{- if and .Values.audit .Values.audit.siem (hasKey .Values.audit.siem "failureThresholdPercent") }}
+            - name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
+              value: {{ .Values.audit.siem.failureThresholdPercent | quote }}
+            {{- end }}
+            # §11.7 OCSF translator retry cadence / attempt budget / batch
+            # size. The translator advances ocsf_translation_state and
+            # multicasts each row to the SIEM forwarder. F-11.7.1 / F-11.7.11.
+            {{- if and .Values.audit .Values.audit.ocsf (hasKey .Values.audit.ocsf "retryIntervalSeconds") }}
+            - name: LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS
+              value: {{ .Values.audit.ocsf.retryIntervalSeconds | quote }}
+            {{- end }}
+            {{- if and .Values.audit .Values.audit.ocsf (hasKey .Values.audit.ocsf "maxAttempts") }}
+            - name: LENNY_AUDIT_OCSF_MAX_ATTEMPTS
+              value: {{ .Values.audit.ocsf.maxAttempts | quote }}
+            {{- end }}
+            {{- if and .Values.audit .Values.audit.ocsf (hasKey .Values.audit.ocsf "batchSize") }}
+            - name: LENNY_AUDIT_OCSF_BATCH_SIZE
+              value: {{ .Values.audit.ocsf.batchSize | quote }}
+            {{- end }}
             # §12.8 line 839 audit.gdprRetentionDays: retention window for
             # gdpr.* audit rows. The gateway rejects a value below 2190
             # under a regulated complianceProfile at startup. F-12.8.16.

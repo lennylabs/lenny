@@ -71,6 +71,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
+	"github.com/lennylabs/lenny/pkg/audit/ocsf"
+	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
@@ -504,7 +506,22 @@ func main() {
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
 	auditSIEMEndpoint := flag.String("audit-siem-endpoint",
 		os.Getenv("LENNY_AUDIT_SIEM_ENDPOINT"),
-		"§11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When empty, the §11.7 compliance gate rejects creating or updating a tenant to a regulated complianceProfile (soc2, fedramp, hipaa), and creating an environment under one, with COMPLIANCE_SIEM_REQUIRED; in production a regulated tenant with no endpoint is a fatal startup error. Override via LENNY_AUDIT_SIEM_ENDPOINT. F-11.7.2.")
+		"§11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When empty, the §11.7 compliance gate rejects creating or updating a tenant to a regulated complianceProfile (soc2, fedramp, hipaa), and creating an environment under one, with COMPLIANCE_SIEM_REQUIRED; in production a regulated tenant with no endpoint is a fatal startup error. When set, the gateway validates SIEM connectivity at startup (a test event must be acknowledged or the gateway refuses to start) and runs the §11.7 OCSF translator → SIEM forwarder pipeline. Override via LENNY_AUDIT_SIEM_ENDPOINT. F-11.7.1 / F-11.7.2.")
+	auditSIEMSecret := flag.String("audit-siem-secret",
+		os.Getenv("LENNY_AUDIT_SIEM_SECRET"),
+		"§11.7 SIEM HMAC shared secret. When set, the SIEM HTTP sink signs each OCSF batch with an HMAC-SHA256 X-Lenny-SIEM-Signature header so the receiver can authenticate the gateway. Override via LENNY_AUDIT_SIEM_SECRET. F-11.7.1.")
+	auditSIEMFailureThresholdPercent := flag.Float64("audit-siem-failure-threshold-percent",
+		envFloat("LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT", 5),
+		"§11.7 item 4 audit.siem.failureThresholdPercent: when the SIEM delivery failure rate exceeds this percentage, the §25.3 health API reports the siem component degraded (default 5%). Override via LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT. F-11.7.16.")
+	auditOCSFRetryIntervalSeconds := flag.Int("audit-ocsf-retry-interval-seconds",
+		envInt("LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS", 30),
+		"§11.7 audit.ocsf.retryInterval: cadence at which the OCSF translator re-drives pending / retry_pending audit rows toward succeeded | dead_lettered. Default 30s. Override via LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS. F-11.7.11.")
+	auditOCSFMaxAttempts := flag.Int("audit-ocsf-max-attempts",
+		envInt("LENNY_AUDIT_OCSF_MAX_ATTEMPTS", 10),
+		"§11.7 audit.ocsf.maxAttempts: the per-row OCSF translation attempt budget; on the final failed attempt the row transitions to dead_lettered and a translation-failure receipt advances the SIEM delivery pointer. Default 10. Override via LENNY_AUDIT_OCSF_MAX_ATTEMPTS. F-11.7.11.")
+	auditOCSFBatchSize := flag.Int("audit-ocsf-batch-size",
+		envInt("LENNY_AUDIT_OCSF_BATCH_SIZE", 256),
+		"§11.7 OCSF translator per-cycle batch size: the maximum number of pending audit rows one translation cycle drains. Default 256. Override via LENNY_AUDIT_OCSF_BATCH_SIZE. F-11.7.1.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -2157,10 +2174,11 @@ func main() {
 	// restart. Both the admin router and the §10.7 ExperimentRouter
 	// rejection reporter commit events to it.
 	var (
-		auditSink      admin.AuditSink
-		wireAudit      func(*admin.Router) *admin.Router
-		auditAppender  policy.AuditAppender
-		auditValidator *auditscope.Validator
+		auditSink            admin.AuditSink
+		wireAudit            func(*admin.Router) *admin.Router
+		auditAppender        policy.AuditAppender
+		auditValidator       *auditscope.Validator
+		ocsfTranslationStore ocsf.TranslationStore
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2191,6 +2209,10 @@ func main() {
 		// The §11.7 `interceptor.rejected` policy-rejection rows share
 		// the durable Postgres-backed per-tenant hash chain.
 		auditAppender = pgAudit
+		// The auditstore drives the §11.7 OCSF translation state machine
+		// (ocsf_translation_state). Hoisted so the OCSF translator wired
+		// below reads pending rows from the durable chain. F-11.7.1.
+		ocsfTranslationStore = pgAudit
 	} else {
 		auditChains := audit.NewChainSet()
 		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
@@ -2206,6 +2228,51 @@ func main() {
 	// observer; the observer shares the per-tenant chain backend
 	// chosen above and writes to the platform tenant.
 	rotatingVerifier.SetObserver(jwtaudit.NewObserver(auditAppender))
+
+	// spec: §11.7 item 4 + Wire Format — wire the OCSF translator and
+	// SIEM forwarder into the gateway binary. The translator drains the
+	// auditstore's ocsf_translation_state rows, serializes each to the
+	// canonical OCSF v1.1.0 wire form, and multicasts to its sink; the
+	// SIEM forwarder is that sink (it implements ocsf.Sink). When a SIEM
+	// endpoint is configured the gateway validates connectivity at startup
+	// and refuses to start until a test event is acknowledged; at runtime
+	// the §25.3 health API reports the `siem` component degraded once the
+	// delivery failure rate crosses the threshold. With no SIEM the
+	// translator still advances the per-row state machine so audit rows do
+	// not pin in `pending`. F-11.7.1 / F-11.7.11 / F-11.7.16.
+	var (
+		ocsfTranslator    *ocsf.Translator
+		siemHealthChecker health.Checker
+	)
+	ocsfCfg := ocsf.TranslationConfig{
+		RetryInterval: time.Duration(*auditOCSFRetryIntervalSeconds) * time.Second,
+		MaxAttempts:   *auditOCSFMaxAttempts,
+		BatchSize:     *auditOCSFBatchSize,
+	}
+	if *auditSIEMEndpoint != "" {
+		siemMetrics := siem.NewCountingMetrics()
+		forwarder := siem.NewForwarder(
+			siem.NewHTTPSink(siem.HTTPSinkOptions{
+				Endpoint: *auditSIEMEndpoint,
+				Secret:   *auditSIEMSecret,
+			}),
+			siem.ForwarderConfig{},
+			siemMetrics,
+		)
+		validateCtx, cancelValidate := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := forwarder.ValidateConnectivity(validateCtx); err != nil {
+			cancelValidate()
+			log.Fatalf("lenny-gateway: §11.7 SIEM startup connectivity validation failed (the gateway refuses to start until the SIEM endpoint acknowledges a test event): %v", err)
+		}
+		cancelValidate()
+		log.Printf("lenny-gateway: §11.7 SIEM forwarder validated connectivity to %s; OCSF audit egress active", *auditSIEMEndpoint)
+		siemHealthChecker = backends.SIEM(forwarder, siemMetrics, *auditSIEMFailureThresholdPercent, "siem")
+		if ocsfTranslationStore != nil {
+			ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, forwarder, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
+		}
+	} else if ocsfTranslationStore != nil {
+		ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, nil, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
+	}
 
 	// §12.8: re-surface any tenant that combines billingErasurePolicy
 	// exempt with a regulated compliance profile so the retention
@@ -2451,8 +2518,8 @@ func main() {
 		// lists a settled child's catalogued artifacts to populate
 		// TaskResult.output.artifactRefs. Nil in the in-memory posture.
 		// F-8.8.2.
-		Artifacts:                  artifactCatalog,
-		Events:                     eventBus,
+		Artifacts: artifactCatalog,
+		Events:    eventBus,
 		// spec: §10.1 item 2 — gate session.create with 503 + Retry-After
 		// while both coordination stores are unreachable. Nil monitor
 		// (single-store / in-memory posture) leaves the gate open. F-10.1.3.
@@ -3265,6 +3332,16 @@ func main() {
 	}
 	if breakerCache != nil {
 		healthAgg.Register(backends.CircuitBreakerCache(breakerCache, "circuit-breaker-cache"))
+	}
+	// spec: §11.7 item 4 line 372 — the SIEM delivery health check feeds
+	// the §25.3 health verdict. Registered only when a SIEM endpoint is
+	// configured; a degraded verdict reports the external audit copy is
+	// lagging while the durable Postgres chain stays intact. The gateway
+	// deliberately does not gate /healthz or /readyz on this component so a
+	// shared-SIEM outage cannot pull every replica out of the Service.
+	// F-11.7.16.
+	if siemHealthChecker != nil {
+		healthAgg.Register(siemHealthChecker)
 	}
 	// §25.3: emit a health_status_changed operational event when the
 	// aggregate health verdict transitions.
@@ -4730,6 +4807,17 @@ func main() {
 		go periodic.Run(watchdogCtx)
 	}
 
+	// spec: §11.7 Wire Format — start the OCSF translator's background
+	// retry loop. It drains pending audit rows into OCSF records and
+	// multicasts them to the SIEM forwarder (when configured), advancing
+	// each row's ocsf_translation_state on the resolved cadence.
+	// F-11.7.1 / F-11.7.11.
+	if ocsfTranslator != nil {
+		log.Printf("lenny-gateway: §11.7 OCSF translator active (siem=%v retryInterval=%ds maxAttempts=%d batchSize=%d)",
+			*auditSIEMEndpoint != "", *auditOCSFRetryIntervalSeconds, *auditOCSFMaxAttempts, *auditOCSFBatchSize)
+		go ocsfTranslator.Run(watchdogCtx)
+	}
+
 	go func() {
 		log.Printf("lenny-gateway: listening on %s (dev_mode=%v multi_tenant=%v)",
 			*addr, *devMode, *multiTenant)
@@ -5474,6 +5562,22 @@ func (o memoryStoreObserver) SetRecordCount(tenantID string, count int) {
 func (o memoryStoreObserver) IncUserOverThreshold(tenantID string) {
 	o.metrics.IncMemoryStoreUserOverThreshold(tenantID, o.backend)
 }
+
+// ocsfMetricsAdapter bridges the §11.7 OCSF translator's metric surface
+// onto the gateway's Prometheus registry: a per-row translation failure
+// advances lenny_audit_ocsf_translation_failed_total labeled by event
+// type and ocsf.ErrorClass. Success and dead-letter counts stay on the
+// translator's in-memory CountingMetrics (no dedicated Prometheus series
+// exists for them in the §16.1 catalog). F-11.7.1 / F-11.7.15.
+type ocsfMetricsAdapter struct{ metrics *gatewaymetrics.Metrics }
+
+func (a ocsfMetricsAdapter) TranslationFailed(eventType string, class ocsf.ErrorClass) {
+	a.metrics.IncAuditOCSFTranslationFailed(eventType, string(class))
+}
+
+func (a ocsfMetricsAdapter) TranslationSucceeded(string) {}
+
+func (a ocsfMetricsAdapter) DeadLettered(string) {}
 
 // userstorePlatformRoles adapts a userstore.Store into the §10.2 line
 // 294 platform-managed role resolver consulted by the auth middleware.

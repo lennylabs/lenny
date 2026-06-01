@@ -425,6 +425,13 @@ type Metrics struct {
 	// ledgers after startup; the §16.5 AuditGrantDrift alert reads
 	// `lenny_audit_grant_drift_total > 0`. F-11.7.3.
 	auditGrantDrift prometheus.Counter
+	// auditOCSFTranslationFailed is the §16.1
+	// lenny_audit_ocsf_translation_failed_total counter, labeled by
+	// `event_type` and `error_class` (the §11.7 ocsf.ErrorClass enum). The
+	// §11.7 OCSF translator increments it on every per-row translation
+	// failure as the background state machine advances the row toward
+	// retry_pending / dead_lettered. F-11.7.1 / F-11.7.15.
+	auditOCSFTranslationFailed *prometheus.CounterVec
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -1641,6 +1648,18 @@ func New() (*Metrics, error) {
 		Name: "lenny_audit_grant_drift_total",
 		Help: "§11.7 item 2 unexpected UPDATE/DELETE grants (or disabled tamper triggers) detected on audit tables by the periodic background integrity check.",
 	})
+	// §16.1 lenny_audit_ocsf_translation_failed_total — the §11.7 OCSF
+	// translator (now wired into the gateway, F-11.7.1) increments this on
+	// each per-row translation failure, labeled by the event type and the
+	// ocsf.ErrorClass; it feeds the §16.5 OCSFTranslationBacklog signal.
+	// F-11.7.15.
+	auditOCSFTranslationFailed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_ocsf_translation_failed_total",
+		Help: "§11.7 per-row OCSF translation failures by event_type and error_class.",
+	}, []string{"event_type", "error_class"})
+	if err != nil {
+		return nil, err
+	}
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -1858,7 +1877,7 @@ func New() (*Metrics, error) {
 		dualStoreUnavailable,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
-		auditChainIntegrity, auditGrantDrift,
+		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -2026,6 +2045,7 @@ func New() (*Metrics, error) {
 		postgresWriteCeilingIops:             postgresWriteCeilingIops.WithLabelValues(),
 		auditChainIntegrity:                  auditChainIntegrity,
 		auditGrantDrift:                      auditGrantDrift,
+		auditOCSFTranslationFailed:           auditOCSFTranslationFailed,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -3444,6 +3464,19 @@ func (m *Metrics) IncAuditGrantDrift() {
 		return
 	}
 	m.auditGrantDrift.Inc()
+}
+
+// IncAuditOCSFTranslationFailed advances the §16.1
+// lenny_audit_ocsf_translation_failed_total counter for one per-row
+// OCSF translation failure. The §11.7 translator's Metrics adapter
+// calls it as the state machine advances the row toward retry_pending /
+// dead_lettered; the (event_type, error_class) labels let operators
+// localize an event-schema gap. F-11.7.1 / F-11.7.15.
+func (m *Metrics) IncAuditOCSFTranslationFailed(eventType, errorClass string) {
+	if m == nil {
+		return
+	}
+	m.auditOCSFTranslationFailed.WithLabelValues(eventType, errorClass).Inc()
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem

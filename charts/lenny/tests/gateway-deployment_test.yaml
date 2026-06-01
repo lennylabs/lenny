@@ -583,10 +583,13 @@ tests:
       # + LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS /
       #   LENNY_AUDIT_HARD_FAIL_ON_DRIFT (§11.7 item 2, F-11.7.3)
       # + LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS (§10.1 item 4,
-      #   F-10.1.3) = 46.
+      #   F-10.1.3)
+      # + LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT (§11.7 item 4,
+      #   F-11.7.16) + LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS /
+      #   _MAX_ATTEMPTS / _BATCH_SIZE (§11.7 Wire Format, F-11.7.1) = 50.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 46
+          count: 50
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1328,6 +1331,53 @@ tests:
           content:
             name: LENNY_AUDIT_SIEM_ENDPOINT
             value: "https://siem.acme.example/ingest"
+
+  # spec: §11.7 Wire Format / item 4 — the OCSF translator cadence and the
+  # SIEM delivery health threshold render from chart defaults; the SIEM
+  # HMAC secret renders only when set. F-11.7.1 / F-11.7.16.
+  - it: wires the OCSF translator and SIEM failure-threshold env from chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
+            value: "5"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS
+            value: "30"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_OCSF_MAX_ATTEMPTS
+            value: "10"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_OCSF_BATCH_SIZE
+            value: "256"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_SECRET
+          any: true
+
+  - it: renders LENNY_AUDIT_SIEM_SECRET only when audit.siem.secret is set
+    set:
+      audit.siem.secret: "shared-hmac-secret"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_SECRET
+            value: "shared-hmac-secret"
 
   # spec: §12.8 line 839 — audit.gdprRetentionDays flows through to
   # LENNY_AUDIT_GDPR_RETENTION_DAYS. F-12.8.16.

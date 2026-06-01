@@ -571,6 +571,40 @@ func TestIncErasureJobFailed_spec_12_8_cmp_026(t *testing.T) {
 	}
 }
 
+// spec: §11.7 / §16.1 — the wired OCSF translator increments
+// lenny_audit_ocsf_translation_failed_total labeled by event_type and
+// error_class on each per-row translation failure. F-11.7.1 / F-11.7.15.
+func TestIncAuditOCSFTranslationFailed_spec_11_7(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncAuditOCSFTranslationFailed("session.created", "class_mapping_missing")
+	m.IncAuditOCSFTranslationFailed("session.created", "class_mapping_missing")
+	m.IncAuditOCSFTranslationFailed("credential.leased", "schema_violation")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_audit_ocsf_translation_failed_total{error_class="class_mapping_missing",event_type="session.created"} 2`,
+		`lenny_audit_ocsf_translation_failed_total{error_class="schema_violation",event_type="credential.leased"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// IncAuditOCSFTranslationFailed must be nil-safe like the other emitters.
+func TestIncAuditOCSFTranslationFailedNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncAuditOCSFTranslationFailed("session.created", "other")
+}
+
 func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
