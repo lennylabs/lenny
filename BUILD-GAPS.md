@@ -28904,7 +28904,7 @@ Ingress routing external HTTPS to the `lenny-gateway` Service's named
 (`enabled`/`className`/`host`/`path`/`pathType`/`annotations`/`tls`),
 matching the opt-in posture of `gateway.topologySpread`; a stock render
 emits nothing. Host-less rules and an absent TLS secret degrade
-gracefully. F-17.1.2.
+gracefully. F-17.1.2 (commit c625edae).
 
 ### - [ ] F-17.1.3 — 03 — `lenny-ops` Ingress and PDB are not rendered [High] — OPEN
 
@@ -29036,7 +29036,7 @@ multi-zone topology is not enforced by the chart.
 `topologySpreadConstraints` (`gateway.topologySpread`, commit
 `269d6c70`), and `affinity.podAntiAffinity`
 (`gateway.podAntiAffinity`, preferred/required forms keyed on
-`kubernetes.io/hostname`). All five §17.1-row-7 blocks render. F-17.1.7.
+`kubernetes.io/hostname`). All five §17.1-row-7 blocks render. F-17.1.7 (verified at c625edae).
 
 ### - [ ] F-17.1.8 — 08 — Optional per-pool PDB on warm (idle) pods is not implemented [Medium] — OPEN
 
@@ -29068,7 +29068,7 @@ and `dnsNames` (defaulting to the `lenny-ops` Service FQDN forms). The
 chart renders only the Certificate, leaving cert-manager to produce the
 Secret per the spec; when cert-manager is absent the operator supplies
 the Secret out of band. A missing `issuerRef.name` fails the render.
-F-17.1.9.
+F-17.1.9 (commit c625edae).
 
 ### - [x] F-17.1.10 — 10 — `lenny-backup-postgres` and `lenny-backup-minio` Secrets are not rendered [Medium] — CLOSED
 
@@ -29090,7 +29090,7 @@ rendering of `lenny-datastore-conn`. New credential sub-blocks added to
 the `backups` values block. A stock render emits nothing so credentials
 managed out of band are unaffected. The `lenny-backup-sa` and backup
 Jobs that consume these Secrets remain tracked under F-17.1.5.
-F-17.1.10.
+F-17.1.10 (commit c625edae).
 
 ### - [ ] F-17.1.11 — 11 — `PoolManager` interface and `kubernetes-sigs/agent-sandbox` default implementation are absent [Medium] — OPEN
 
