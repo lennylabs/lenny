@@ -47,7 +47,7 @@ func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id s
 func TestAuditStoreContract(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
-	store := auditstore.New(pg.Pool)
+	store := auditstore.New(pg.Router(t))
 	ctx := context.Background()
 
 	t.Run("append builds a verifiable per-tenant chain", func(t *testing.T) {

@@ -263,7 +263,7 @@ func TestRLSAllTenantsContext(t *testing.T) {
 		// query category. The platform-admin's audit chain is
 		// `platform` per §11.7 (a pseudo-tenant id, not a row in
 		// tenants).
-		store := auditstore.New(pg.Pool)
+		store := auditstore.New(pg.Router(t))
 		payload := json.RawMessage(
 			`{"actor_subject":"alice@acme.com","endpoint":"/v1/admin/tenants","category":"tenant_list"}`,
 		)

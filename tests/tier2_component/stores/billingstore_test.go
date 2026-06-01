@@ -28,7 +28,7 @@ import (
 func TestBillingStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
-	store := billingpg.New(pg.Pool)
+	store := billingpg.New(pg.Router(t))
 	ctx := context.Background()
 
 	t.Run("append and round-trip an event", func(t *testing.T) {

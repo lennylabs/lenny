@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
@@ -30,8 +31,33 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 	if limit <= 0 {
 		limit = 256
 	}
+	shards, err := s.allShards(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var out []eventbus.RetranscribeRow
-	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+	for _, sh := range shards {
+		batch, berr := s.pendingRepublishOnShard(ctx, sh.Pool, maxRetryAttempts, limit)
+		if berr != nil {
+			return nil, berr
+		}
+		out = append(out, batch...)
+	}
+	// §12.3 line 141: emit one cross_tenant_read per worker
+	// invocation. The EventBus retranscribe worker category is
+	// `audit_event_retranscribe_worker`.
+	if err := s.emitCrossTenantRead(ctx, "audit_event_retranscribe_worker", len(out)); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// pendingRepublishOnShard runs the §12.3.7 failed-publish scan on a
+// single audit shard pool. PendingRepublish fans it across every shard
+// returned by the §12.3 R-03 router.
+func (s *Store) pendingRepublishOnShard(ctx context.Context, pool *pgxpool.Pool, maxRetryAttempts, limit int) ([]eventbus.RetranscribeRow, error) {
+	var out []eventbus.RetranscribeRow
+	err := pgtenant.InAllTenants(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 		SELECT a.tenant_id, a.sequence_number, a.id, a.event_type,
 		       a.event_schema_version, a.created_at, a.payload,
@@ -88,12 +114,6 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, err
-	}
-	// §12.3 line 141: emit one cross_tenant_read per worker
-	// invocation. The EventBus retranscribe worker category is
-	// `audit_event_retranscribe_worker`.
-	if err := s.emitCrossTenantRead(ctx, "audit_event_retranscribe_worker", len(out)); err != nil {
 		return nil, err
 	}
 	return out, nil

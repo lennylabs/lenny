@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
@@ -38,8 +39,34 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 	if limit <= 0 {
 		limit = 256
 	}
+	shards, err := s.allShards(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var out []ocsf.TranslatableRow
-	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+	for _, sh := range shards {
+		batch, berr := s.pendingTranslationOnShard(ctx, sh.Pool, limit)
+		if berr != nil {
+			return nil, berr
+		}
+		out = append(out, batch...)
+	}
+	// §12.3 line 141: every code path that sets app.current_tenant
+	// = '__all__' MUST emit one cross_tenant_read audit event per
+	// API/worker invocation. The OCSF translation worker uses the
+	// `audit_ocsf_translation_worker` category.
+	if err := s.emitCrossTenantRead(ctx, "audit_ocsf_translation_worker", len(out)); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// pendingTranslationOnShard runs the §11.7 pending-translation scan on a
+// single audit shard pool. PendingTranslation fans it across every
+// shard returned by the §12.3 R-03 router.
+func (s *Store) pendingTranslationOnShard(ctx context.Context, pool *pgxpool.Pool, limit int) ([]ocsf.TranslatableRow, error) {
+	var out []ocsf.TranslatableRow
+	err := pgtenant.InAllTenants(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 		SELECT a.tenant_id, a.sequence_number, a.id, a.event_type,
 		       a.event_schema_version, a.created_at, a.payload,
@@ -97,13 +124,6 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 	if err != nil {
 		return nil, err
 	}
-	// §12.3 line 141: every code path that sets app.current_tenant
-	// = '__all__' MUST emit one cross_tenant_read audit event per
-	// API/worker invocation. The OCSF translation worker uses the
-	// `audit_ocsf_translation_worker` category.
-	if err := s.emitCrossTenantRead(ctx, "audit_ocsf_translation_worker", len(out)); err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 
@@ -132,7 +152,11 @@ func (s *Store) SetTranslationState(ctx context.Context, tenantID string, seq ui
 	if !state.IsValid() {
 		return fmt.Errorf("auditstore: %q is not a §11.7 OCSF translation state", state)
 	}
-	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	return pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtext($1))`, "audit:"+tenantID); err != nil {
 			return err
@@ -162,7 +186,11 @@ func (s *Store) SetPublishState(ctx context.Context, tenantID string, seq uint64
 	if !state.IsValid() {
 		return fmt.Errorf("auditstore: %q is not a §12.3.7 publish state", state)
 	}
-	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	return pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtext($1))`, "audit:"+tenantID); err != nil {
 			return err
@@ -185,9 +213,13 @@ func (s *Store) SetPublishState(ctx context.Context, tenantID string, seq uint64
 // TranslationState returns a row's current ocsf_translation_state and
 // retry_count. Callers use it to confirm a state-machine transition.
 func (s *Store) TranslationState(ctx context.Context, tenantID string, seq uint64) (audit.OCSFTranslationState, int, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return "", 0, err
+	}
 	var state string
 	var retryCount int
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT ocsf_translation_state, retry_count FROM audit_log
 			WHERE tenant_id = $1 AND sequence_number = $2`,
@@ -205,9 +237,13 @@ func (s *Store) TranslationState(ctx context.Context, tenantID string, seq uint6
 // PublishState returns a row's current eventbus_publish_state and
 // retry_count.
 func (s *Store) PublishState(ctx context.Context, tenantID string, seq uint64) (eventbus.PublishState, int, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return "", 0, err
+	}
 	var state string
 	var retryCount int
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT eventbus_publish_state, retry_count FROM audit_log
 			WHERE tenant_id = $1 AND sequence_number = $2`,

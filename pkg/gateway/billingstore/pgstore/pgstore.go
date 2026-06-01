@@ -23,16 +23,37 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
+
+// Router is the §12.3 R-03 routing surface this ledger depends on: it
+// resolves the Postgres pool for a tenant's billing-event writes.
+// *storerouter.SingleShardRouter satisfies it. The store never holds a
+// raw *pgxpool.Pool, so a future shard split rotates only the router
+// implementation and no billing-write call site changes.
+//
+// spec: §12.3 R-03 line 144 — all billing event inserts MUST be routed
+// through the StoreRouter interface rather than accessing a Postgres
+// pool directly.
+type Router interface {
+	BillingShard(ctx context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error)
+}
 
 // Store is the Postgres-backed billing event ledger. Construct with New.
 type Store struct {
-	pool *pgxpool.Pool
+	router Router
 }
 
-// New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// New returns a Store that routes every billing write through router
+// (§12.3 R-03). The router must resolve to a database that has the
+// migrations/ schema applied.
+func New(router Router) *Store { return &Store{router: router} }
+
+// shard resolves the billing Postgres pool for tenantID through the
+// §12.3 R-03 router.
+func (s *Store) shard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+	return s.router.BillingShard(ctx, storerouter.TenantID(tenantID))
+}
 
 var _ billingstore.Store = (*Store)(nil)
 
@@ -50,8 +71,12 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 		return billingstore.Event{}, err
 	}
 	e = billingstore.Normalize(e, time.Now())
+	pool, err := s.shard(ctx, e.TenantID)
+	if err != nil {
+		return billingstore.Event{}, err
+	}
 	var committed billingstore.Event
-	err := pgtenant.InTx(ctx, s.pool, e.TenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, e.TenantID, func(tx pgx.Tx) error {
 		// Serialize sequence assignment for this tenant; other tenants
 		// proceed in parallel because the lock key is per tenant.
 		if _, err := tx.Exec(ctx,
@@ -90,8 +115,12 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 // Since returns the tenant's events with sequence_number greater than
 // since, in ascending sequence order, capped at limit.
 func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit int) ([]billingstore.Event, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	var out []billingstore.Event
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		q := `SELECT ` + selectList + ` FROM billing_events
 			WHERE tenant_id = $1 AND sequence_number > $2
 			ORDER BY sequence_number`
@@ -185,7 +214,11 @@ func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, stre
 		return err
 	}
 	e = billingstore.Normalize(e, time.Now())
-	return pgtenant.InTx(ctx, s.pool, e.TenantID, func(tx pgx.Tx) error {
+	pool, err := s.shard(ctx, e.TenantID)
+	if err != nil {
+		return err
+	}
+	return pgtenant.InTx(ctx, pool, e.TenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtext($1))`, "billing:"+e.TenantID); err != nil {
 			return err
@@ -238,8 +271,12 @@ func (s *Store) PseudonymizeUser(ctx context.Context, tenantID, userID string, s
 		return 0, billingstore.ErrPseudonymizeArg
 	}
 	pseudonym := billingstore.Pseudonymize(userID, salt)
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}
@@ -268,8 +305,12 @@ func (s *Store) CountUser(ctx context.Context, tenantID, userID string) (int, er
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("billingstore/pgstore: CountUser requires non-empty tenant_id and user_id")
 	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT COUNT(*) FROM billing_events WHERE tenant_id = $1 AND user_id = $2`,
 			tenantID, userID).Scan(&n)
@@ -310,8 +351,12 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	if tenantID == "" {
 		return 0, errors.New("billingstore/pgstore: DeleteByTenant requires a concrete tenant_id")
 	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}
@@ -341,8 +386,12 @@ func (s *Store) DeleteOlderThan(ctx context.Context, tenantID string, cutoff tim
 	if tenantID == "" {
 		return 0, errors.New("billingstore/pgstore: DeleteOlderThan requires a concrete tenant_id")
 	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}

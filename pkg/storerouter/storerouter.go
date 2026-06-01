@@ -128,6 +128,12 @@ var (
 	// ErrUnknownStoreType reports that the supplied store type is
 	// not one of the documented StoreType* constants.
 	ErrUnknownStoreType = errors.New("storerouter: unknown store type")
+	// ErrRedisUnavailable reports that a Redis accessor was called on
+	// a router constructed in Postgres-only mode (Config.Redis nil).
+	// The §12.3 R-03 billing/audit write paths route only Postgres
+	// shards, so a Postgres-only deployment can still satisfy R-03
+	// without a Redis instance.
+	ErrRedisUnavailable = errors.New("storerouter: router has no redis client (postgres-only mode)")
 )
 
 // SingleShardRouter is the v1 implementation: every Postgres
@@ -151,7 +157,12 @@ type Config struct {
 	// Postgres is the single pool every accessor returns. Required.
 	Postgres *pgxpool.Pool
 	// Redis is the single Redis client every concern resolves to.
-	// Required.
+	// Optional: when nil the router runs in Postgres-only mode and the
+	// Redis accessors (RedisShard, PlatformRedis) return
+	// ErrRedisUnavailable. The §12.3 R-03 billing/audit write paths
+	// route only Postgres shards, so a Postgres-only deployment (and
+	// the billing/audit store component tests) can wire the router
+	// without a Redis instance.
 	Redis redis.UniversalClient
 	// DefaultShardID is the ShardID assigned to the single shard
 	// returned by AllSessionShards and AllAuditShards. A zero value
@@ -165,9 +176,6 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	if cfg.Postgres == nil {
 		return nil, fmt.Errorf("storerouter: Postgres pool is required")
 	}
-	if cfg.Redis == nil {
-		return nil, fmt.Errorf("storerouter: Redis client is required")
-	}
 	id := cfg.DefaultShardID
 	if id == "" {
 		id = "default"
@@ -176,7 +184,10 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	// wrapper layer. Installing the Guard hook on the shared client makes
 	// every concern returned by RedisShard validate keys against the
 	// per-request scope (rediskeys.WithScope) before the command is issued.
-	cfg.Redis.AddHook(rediskeys.NewGuard())
+	// In Postgres-only mode (Redis nil) there is no client to guard.
+	if cfg.Redis != nil {
+		cfg.Redis.AddHook(rediskeys.NewGuard())
+	}
 	return &SingleShardRouter{
 		pg:         cfg.Postgres,
 		rdb:        cfg.Redis,
@@ -234,11 +245,18 @@ func (r *SingleShardRouter) RedisShard(_ context.Context, tenantID TenantID, con
 	if !validConcern(concern) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownRedisConcern, concern)
 	}
+	if r.rdb == nil {
+		return nil, ErrRedisUnavailable
+	}
 	return r.rdb, nil
 }
 
-// PlatformRedis returns the sole Redis client.
+// PlatformRedis returns the sole Redis client, or ErrRedisUnavailable
+// when the router runs in Postgres-only mode.
 func (r *SingleShardRouter) PlatformRedis(_ context.Context) (redis.UniversalClient, error) {
+	if r.rdb == nil {
+		return nil, ErrRedisUnavailable
+	}
 	return r.rdb, nil
 }
 

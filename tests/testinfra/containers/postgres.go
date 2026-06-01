@@ -25,6 +25,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
 // defaultImage is the Postgres image used by tests. It is the official
@@ -62,6 +64,20 @@ type Postgres struct {
 	Pool *pgxpool.Pool
 	// container is the underlying testcontainers handle.
 	container testcontainers.Container
+}
+
+// Router wraps the container's pool in the §12.3 R-03 single-shard
+// StoreRouter in Postgres-only mode (no Redis). Billing and audit store
+// component and integration tests construct their stores through it so
+// the test path matches production: billing/audit writes route through
+// StoreRouter rather than holding a raw pool. spec: §12.3 R-03 line 144.
+func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
+	t.Helper()
+	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: p.Pool})
+	if err != nil {
+		t.Fatalf("containers: store router: %v", err)
+	}
+	return r
 }
 
 // StartPostgres provisions a Postgres container, optionally applies

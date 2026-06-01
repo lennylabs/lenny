@@ -31,6 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
 // ErrNotFound — no audit row at the requested sequence number.
@@ -58,9 +59,25 @@ type EventStore interface {
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
+// Router is the §12.3 R-03 routing surface this chain depends on: it
+// resolves the Postgres pool for a tenant's audit-log writes.
+// *storerouter.SingleShardRouter satisfies it. The store never holds a
+// raw *pgxpool.Pool, so a future audit-shard split rotates only the
+// router implementation and no audit-write call site changes.
+//
+// spec: §12.3 R-03 line 144 — all audit log inserts MUST be routed
+// through the StoreRouter interface rather than accessing a Postgres
+// pool directly. AllAuditShards is the §25.9 scatter-gather surface the
+// OCSF translation and EventBus retranscribe workers iterate so a
+// cross-tenant drain visits every audit shard.
+type Router interface {
+	AuditShard(ctx context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error)
+	AllAuditShards(ctx context.Context) ([]storerouter.ShardHandle, error)
+}
+
 // Store is the Postgres-backed audit chain. Construct with New.
 type Store struct {
-	pool    *pgxpool.Pool
+	router  Router
 	lockCfg LockConfig
 	metrics *LockMetrics
 }
@@ -79,15 +96,29 @@ func WithLockConfig(cfg LockConfig) Option { return func(s *Store) { s.lockCfg =
 // no samples.
 func WithLockMetrics(m *LockMetrics) Option { return func(s *Store) { s.metrics = m } }
 
-// New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied. Lock acquisition
-// uses the §11.7 spec defaults unless WithLockConfig overrides them.
-func New(pool *pgxpool.Pool, opts ...Option) *Store {
-	s := &Store{pool: pool, lockCfg: DefaultLockConfig()}
+// New returns a Store that routes every audit write through router
+// (§12.3 R-03). The router must resolve to a database that has the
+// migrations/ schema applied. Lock acquisition uses the §11.7 spec
+// defaults unless WithLockConfig overrides them.
+func New(router Router, opts ...Option) *Store {
+	s := &Store{router: router, lockCfg: DefaultLockConfig()}
 	for _, o := range opts {
 		o(s)
 	}
 	return s
+}
+
+// shard resolves the audit Postgres pool for tenantID through the
+// §12.3 R-03 router.
+func (s *Store) shard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+	return s.router.AuditShard(ctx, storerouter.TenantID(tenantID))
+}
+
+// allShards returns every audit Postgres shard for the §25.9
+// cross-tenant scatter-gather worker drains (OCSF translation and
+// EventBus retranscribe). v1 returns one shard.
+func (s *Store) allShards(ctx context.Context) ([]storerouter.ShardHandle, error) {
+	return s.router.AllAuditShards(ctx)
 }
 
 const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
@@ -105,6 +136,10 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
 // failure is returned immediately without consuming a retry.
 // spec: §11.7 item 3 line 368.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return audit.Row{}, err
+	}
 	cfg := s.lockCfg.withDefaults()
 	var lastErr error
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
@@ -114,7 +149,7 @@ func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload 
 			}
 		}
 		var committed audit.Row
-		err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		err := pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 			if err := acquireAuditLock(ctx, tx, tenantID, cfg, s.metrics); err != nil {
 				return err
 			}
@@ -139,8 +174,12 @@ func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload 
 
 // Rows returns the tenant's audit rows in sequence order.
 func (s *Store) Rows(ctx context.Context, tenantID string) ([]audit.Row, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	var out []audit.Row
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT `+selectList+` FROM audit_log WHERE tenant_id = $1
 			 ORDER BY sequence_number`, tenantID)
@@ -176,8 +215,12 @@ func (s *Store) Verify(ctx context.Context, tenantID string) (audit.VerifyResult
 
 // Get returns the row at seq for the tenant, or ErrNotFound.
 func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return audit.Row{}, err
+	}
 	var out audit.Row
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM audit_log
 			 WHERE tenant_id = $1 AND sequence_number = $2`, tenantID, int64(seq))
@@ -299,8 +342,12 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	if tenantID == "" {
 		return 0, ErrEmptyScope
 	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	var deleted int64
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}

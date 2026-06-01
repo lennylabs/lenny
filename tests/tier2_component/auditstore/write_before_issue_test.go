@@ -46,7 +46,7 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 	}
 
 	store := issuedtokenstore.New(pg.Pool)
-	chain := auditstore.New(pg.Pool)
+	chain := auditstore.New(pg.Router(t))
 
 	now := time.Now().UTC()
 	tok := issuedtokenstore.IssuedToken{
@@ -111,7 +111,7 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 	ctx := context.Background()
 	_, _ = pg.Pool.Exec(ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "globex")
 	store := issuedtokenstore.New(pg.Pool)
-	chain := auditstore.New(pg.Pool)
+	chain := auditstore.New(pg.Router(t))
 
 	now := time.Now().UTC()
 	for i, jti := range []string{"jti-a", "jti-b", "jti-c"} {
@@ -152,7 +152,7 @@ func TestRecordWithAuditRollsBackOnDuplicateJTI(t *testing.T) {
 	ctx := context.Background()
 	_, _ = pg.Pool.Exec(ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "initech")
 	store := issuedtokenstore.New(pg.Pool)
-	chain := auditstore.New(pg.Pool)
+	chain := auditstore.New(pg.Router(t))
 
 	now := time.Now().UTC()
 	tok := issuedtokenstore.IssuedToken{

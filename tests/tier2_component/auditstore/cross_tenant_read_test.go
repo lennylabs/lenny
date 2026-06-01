@@ -28,7 +28,7 @@ func startAuditStore(t *testing.T) (*auditstore.Store, *containers.Postgres) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ('platform', '\x00')`); err != nil {
 		t.Fatalf("seed platform tenant: %v", err)
 	}
-	return auditstore.New(pg.Pool), pg
+	return auditstore.New(pg.Router(t)), pg
 }
 
 // spec: §12.3 line 141

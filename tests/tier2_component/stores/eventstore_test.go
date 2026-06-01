@@ -42,7 +42,7 @@ import (
 func TestEventStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
-	store := auditstore.New(pg.Pool)
+	store := auditstore.New(pg.Router(t))
 	ctx := context.Background()
 
 	t.Run("append builds a verifiable hash chain with monotonic sequence", func(t *testing.T) {
@@ -453,7 +453,7 @@ func TestPublishingAppenderAuditBearingPublish(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	store := auditstore.New(pg.Pool)
+	store := auditstore.New(pg.Router(t))
 	bus := eventbus.NewRedisEventBus(pubsub.New(rd.Client), eventbus.NewCountingBusMetrics())
 	app := auditstore.NewPublishingAppender(store, bus, "gw-test")
 	ctx := context.Background()

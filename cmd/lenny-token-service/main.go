@@ -60,6 +60,7 @@ import (
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/spiffeid"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
 	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
@@ -185,7 +186,15 @@ func main() {
 		// write-before-issue tx. The in-memory auditor is wired
 		// alongside to cover the rate-limit and revocation paths.
 		issuedTokens = issuedtokenstore.New(pool)
-		auditor = auditstore.New(pool)
+		// §12.3 R-03: the audit chain routes its writes through the
+		// StoreRouter rather than holding a raw pool. The Token Service
+		// audit path is Postgres-only (it never touches Redis), so the
+		// single-shard router is built in Postgres-only mode. F-12.3.4.
+		auditRouter, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pool})
+		if err != nil {
+			log.Fatalf("lenny-token-service: store router: %v", err)
+		}
+		auditor = auditstore.New(auditRouter)
 	} else {
 		// Dev path: keep an in-memory chain so the rate-limit /
 		// revocation audit emits still produce rows (lost on restart).

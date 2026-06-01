@@ -243,6 +243,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -967,7 +968,9 @@ func main() {
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
 		connectors = connectorpg.New(pool)
-		billing = billingpg.New(pool)
+		// billing is constructed below via the §12.3 R-03 StoreRouter,
+		// once the Redis client (if any) is resolved, so the ledger never
+		// holds a raw pool. F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.7.1.
 		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
 	} else {
 		sessions = memstore.New()
@@ -1138,6 +1141,32 @@ func main() {
 		}
 	} else {
 		breakers = breakerstore.NewMemory()
+	}
+
+	// §12.3 R-03 line 144: billing and audit writes route through the
+	// StoreRouter so a future Tier-3 shard split is a router swap with no
+	// billing/audit call-site changes. v1 wires the single-shard router;
+	// it runs in Postgres-only mode when Redis is unconfigured because
+	// the billing/audit paths route only Postgres shards. The router is
+	// built only with a real Postgres pool; in-memory deployments keep
+	// the billingstore.NewMemory ledger set above and leave storeRouter
+	// nil (the audit chain below is likewise Postgres-only). The redis
+	// client is passed through the UniversalClient interface only when it
+	// is a real *redis.Client — a typed-nil would defeat the nil check in
+	// NewSingleShardRouter, matching the securityBus guard below.
+	// F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.6.2 / F-12.7.1.
+	var storeRouter storerouter.StoreRouter
+	if pgPool != nil {
+		var routerRedis redis.UniversalClient
+		if redisClient != nil {
+			routerRedis = redisClient
+		}
+		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, Redis: routerRedis})
+		if err != nil {
+			log.Fatalf("lenny-gateway: store router: %v", err)
+		}
+		storeRouter = r
+		billing = billingpg.New(r)
 	}
 
 	// §11 line 37 storage-quota release. The cataloging decorator
@@ -2003,7 +2032,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: audit lock metrics: %v", err)
 		}
-		pgAudit := auditstore.New(pgPool,
+		// §12.3 R-03: the audit chain routes through the same StoreRouter
+		// built above (non-nil whenever pgPool is). F-12.3.4 / F-12.6.1.
+		pgAudit := auditstore.New(storeRouter,
 			auditstore.WithLockConfig(auditstore.LockConfig{
 				AcquireTimeoutMs: *auditLockAcquireTimeoutMs,
 				MaxRetries:       *auditLockMaxRetries,

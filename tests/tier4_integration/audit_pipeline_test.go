@@ -66,7 +66,7 @@ func TestAuditPipeline(t *testing.T) {
 
 	// Assemble the §11.7 pipeline: Postgres audit store → OCSF
 	// translator → SIEM forwarder → SIEM sink.
-	store := auditstore.New(pg.Pool)
+	store := auditstore.New(pg.Router(t))
 	forwarder := siem.NewForwarder(
 		siem.NewHTTPSink(siem.HTTPSinkOptions{Endpoint: sinkStub.URL()}),
 		siem.DefaultForwarderConfig(),

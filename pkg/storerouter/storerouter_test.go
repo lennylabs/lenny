@@ -52,17 +52,19 @@ func newRouter(t *testing.T) *storerouter.SingleShardRouter {
 	return r
 }
 
-// spec: 12.6
-// diagnosis: NewSingleShardRouter accepted a nil pool or nil Redis
-// client and produced a router that would panic on first use. The
-// constructor MUST reject these so a misconfigured caller fails
-// fast.
-func TestNewSingleShardRouterRejectsNilDependencies(t *testing.T) {
+// spec: §12.6; §12.3 R-03 line 144
+// diagnosis: NewSingleShardRouter accepted a nil pool and produced a
+// router that would panic on first Postgres use, so the constructor MUST
+// reject a nil pool. A nil Redis client is permitted: the §12.3 R-03
+// billing/audit paths route only Postgres shards, so the router runs in
+// Postgres-only mode and the Redis accessors return ErrRedisUnavailable
+// (covered by TestSingleShardRouterPostgresOnly_spec_12_3_R03).
+func TestNewSingleShardRouterRejectsNilPostgres(t *testing.T) {
 	if _, err := storerouter.NewSingleShardRouter(storerouter.Config{Redis: fakeRedis(t)}); err == nil {
 		t.Error("nil Postgres: expected error")
 	}
-	if _, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: fakePool(t)}); err == nil {
-		t.Error("nil Redis: expected error")
+	if _, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: fakePool(t)}); err != nil {
+		t.Errorf("nil Redis (Postgres-only mode): unexpected error %v", err)
 	}
 }
 
