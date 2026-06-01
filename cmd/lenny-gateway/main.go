@@ -2529,6 +2529,7 @@ func main() {
 		Executor:                   exec,
 		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
+		Users:                      users,
 		Runtimes:                   runtimes,
 		Environments:               environments,
 		Tenants:                    tenants,

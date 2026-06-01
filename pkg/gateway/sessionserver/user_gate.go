@@ -24,6 +24,15 @@ import (
 // requireActiveUser returns true when the request may proceed. When it
 // returns false it has already written the response.
 func (s *Server) requireActiveUser(w http.ResponseWriter, r *http.Request) bool {
+	return s.requireActiveUserForAction(w, r, "cannot create sessions")
+}
+
+// requireActiveUserForAction is the shared §11.4 / §12.8 gate. The
+// action clause is folded into the 403 message so each call site names
+// the operation it blocks (session creation, interaction resolution,
+// delegated-task creation). spec: §11.4 — hard_disable also blocks new
+// delegated tasks and rejects pending delegation approvals.
+func (s *Server) requireActiveUserForAction(w http.ResponseWriter, r *http.Request, action string) bool {
 	if s.users == nil {
 		return true
 	}
@@ -42,7 +51,7 @@ func (s *Server) requireActiveUser(w http.ResponseWriter, r *http.Request) bool 
 	}
 	if !user.IsActive() {
 		s.writeError(w, http.StatusForbidden, "USER_INVALIDATED",
-			"the authenticated user has been invalidated and cannot create sessions", nil)
+			"the authenticated user has been invalidated and "+action, nil)
 		return false
 	}
 	// §12.8 / GDPR Article 18: a user with a pending erasure request is

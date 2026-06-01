@@ -16022,7 +16022,7 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 
 ### Findings
 
-### - [ ] F-11.4.1 — hard_disable does not block new delegated tasks [High] — OPEN
+### - [x] F-11.4.1 — hard_disable does not block new delegated tasks [High] — CLOSED
 
 Spec: hard_disable "also block[s] new delegated tasks".
 
@@ -16032,7 +16032,9 @@ Consequence: a running parent session whose owning user has been hard-disabled a
 
 Fix sketch: add a `Users userstore.Store` field to `mcptools.Deps`, resolve the parent session's `UserID` at the `lenny/delegate_task` entry, and reject when the user is not `IsActive()`. Same gating belongs in `delegation.Service.Delegate` for any non-MCP delegation caller.
 
-### - [ ] F-11.4.2 — hard_disable does not reject pending delegation approvals [High] — OPEN
+**Resolution:** `mcptools.Deps` gains a `Users userstore.Store` field; the new `requireActiveDelegator` helper resolves the parent session's owning `UserID` at the `lenny/delegate_task` entry (right after arg unmarshal, before any side effect) and rejects with `USER_INVALIDATED` when the owner is hard-disabled or fully-revoked. An owner with no registry row, a nil user store, or an unresolvable parent proceeds, matching the REST session-creation gate's carve-out. The gateway wires `Users: users` in `cmd/lenny-gateway/main.go`. Closed in this batch's commit.
+
+### - [x] F-11.4.2 — hard_disable does not reject pending delegation approvals [High] — CLOSED
 
 Spec: hard_disable "reject[s] pending delegation approvals for the user".
 
@@ -16041,6 +16043,8 @@ Implementation: there is no separate "delegation approval" primitive in the code
 Consequence: a hard-disabled user can continue to respond to pending elicitations or approve/deny pending tool-use prompts, even though hard_disable was supposed to reject them.
 
 Fix sketch: invoke `requireActiveUser` (or an equivalent userstore gate) at the entry of `resolveInteraction`. Decide whether full_revoke and hard_disable should dismiss pending tool-use approvals (currently only full_revoke dismisses elicitations; hard_disable does nothing here). Clarify spec wording for what "delegation approval" maps to in code (likely the tool-use approval issued when `lenny/delegate_task` is called under a §11.2 delegation policy).
+
+**Resolution:** `resolveInteraction` now calls the new shared `requireActiveUserForAction` gate at entry, so a soft-disabled, hard-disabled, or fully-revoked user can no longer approve/deny a pending tool-use or respond/dismiss a pending elicitation — the resolution returns 403 `USER_INVALIDATED` and the interaction stays pending. The tool-use approval is the in-code form of the §11.4 "pending delegation approval" (the approval issued when `lenny/delegate_task` runs under a §11.2 policy). `requireActiveUser` for session creation now delegates to the same parameterised helper. Closed in this batch's commit.
 
 ### - [ ] F-11.4.3 — full_revoke step 2 has no cross-replica pod-Terminate fan-out [High] — OPEN
 

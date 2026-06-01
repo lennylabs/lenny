@@ -86,6 +86,14 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 			"gateway has no interaction store configured", nil)
 		return
 	}
+	// spec: §11.4 — hard_disable rejects pending delegation approvals
+	// for the user. A tool-use approval (the gateway-issued approval
+	// when lenny/delegate_task runs under a §11.2 delegation policy) and
+	// the elicitation responses are the in-code form of those pending
+	// approvals; a disabled or revoked user may not resolve them.
+	if !s.requireActiveUserForAction(w, r, "cannot resolve interactions") {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 	sessionID := r.PathValue("id")
 

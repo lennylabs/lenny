@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/task"
@@ -169,6 +170,15 @@ type Deps struct {
 	// Delegation is the §8 delegation service. Optional — when nil,
 	// the lenny/delegate_task tool is not registered.
 	Delegation *delegation.Service
+
+	// Users is the §11.4 user registry. Optional — when set,
+	// lenny/delegate_task resolves the parent session's owning user and
+	// rejects the delegation when that user has been hard-disabled or
+	// fully-revoked ("block new delegated tasks"). A nil store leaves
+	// the in-session delegation path ungated, matching the dev-header
+	// and service-token principals that were never provisioned through
+	// the admin user API. spec: §11.4; F-11.4.1.
+	Users userstore.Store
 
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
@@ -1821,6 +1831,14 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
+			// spec: §11.4 — hard_disable "also block[s] new delegated
+			// tasks". The in-session delegation path (lenny/delegate_task)
+			// is otherwise ungated: the REST session-creation gate never
+			// runs here. Resolve the parent session's owning user and
+			// reject when it is no longer active. F-11.4.1.
+			if err := requireActiveDelegator(ctx, deps, tenant, in.ParentSessionID); err != nil {
+				return mcp.ToolResult{}, err
+			}
 			// §8.4: validate the closed enum at the MCP boundary so a
 			// malformed value (typo, casing, post-v1 mode) is rejected
 			// with INVALID_LEASE_FIELD before the parent lookup runs.
@@ -2627,6 +2645,44 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// requireActiveDelegator enforces the §11.4 rule that hard_disable
+// "also block[s] new delegated tasks". It resolves the parent session's
+// owning user and rejects the delegation with USER_INVALIDATED when that
+// user is no longer active. When no user store is wired, the parent
+// session is unresolvable, or the owning user has no registry row, the
+// delegation proceeds — mirroring the REST session-creation gate, which
+// admits principals that were never provisioned through the admin user
+// API. spec: §11.4; F-11.4.1.
+func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessionID string) error {
+	if deps.Users == nil || deps.Store == nil || parentSessionID == "" {
+		return nil
+	}
+	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
+	if err != nil {
+		// A missing or unreadable parent is the delegation service's
+		// concern (it returns PARENT_NOT_FOUND); the user gate stays out
+		// of the way so the canonical error surfaces downstream.
+		return nil
+	}
+	if parent.UserID == "" {
+		return nil
+	}
+	user, err := deps.Users.Get(ctx, tenant, parent.UserID)
+	if errors.Is(err, userstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return mcp.NewToolError("INTERNAL_ERROR",
+			"user-invalidation check failed: "+err.Error(), nil)
+	}
+	if !user.IsActive() {
+		return mcp.NewToolError("USER_INVALIDATED",
+			"the owning user has been invalidated and cannot spawn new delegated tasks",
+			map[string]any{"userId": parent.UserID})
+	}
+	return nil
 }
 
 // filterByEffectiveDelegationPolicy narrows a candidate agent set to
