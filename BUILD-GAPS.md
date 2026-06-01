@@ -6767,7 +6767,7 @@ Implementation: `pkg/observability/metrics/catalog.go:74` declares the metric in
 
 **Deferred:** the metric belongs on the §7.4 extraction abort paths the gateway will own once F-7.4.1 lands (extraction moves from pod adapter to gateway). Wiring the counter in the adapter today emits gateway-side metrics from a pod-side surface, which violates the §16.1 separation. Will retire automatically alongside F-7.4.1.
 
-### - [ ] F-7.4.12 — No atomic staging→current promotion; no per-§7.4 staging directory [Medium] — OPEN
+### - [x] F-7.4.12 — No atomic staging→current promotion; no per-§7.4 staging directory [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.5 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
@@ -6776,6 +6776,8 @@ Spec: §7.4 line 433 — "Files are first written to `/workspace/staging`, valid
 Implementation: the adapter has a single `WorkspaceRoot` (`pkg/adapter/server.go:62`) pointing at `/workspace/current`. `Materialize` (`pkg/adapter/workspace/materialize.go:36`) writes uploaded files **directly** into `WorkspaceRoot`. There is no `/workspace/staging` analogue, no atomic `os.Rename` from staging to current, and consequently no rollback option if a later source in the same plan fails.
 
 The `StagingDir` (`pkg/adapter/staging.go:25-30`) is a tempdir holding raw upload payloads keyed by a SHA-256 of the upload ref — it is **not** the §7.4 `/workspace/staging` filesystem the spec describes; nothing is "promoted" from it.
+
+**Resolution:** `MaterializeWithPolicy` now builds the resolved tree in the §7.4 `/workspace/staging` sibling (`promotionBuildDir`, guarded against aliasing the raw-upload `StagingDir` or the root), then atomically promotes it onto `/workspace/current` via a single `os.Rename` (`promoteStaging`) only after every source succeeds. A failure in any source (not only the last) discards the whole build tree, so a partial plan never reaches `/workspace/current` and the prior root is left untouched. After promotion every symlink is re-validated against its promoted location under root (`revalidatePromotedSymlinks` reusing `upload.ValidateSymlinkTarget`); an escape rolls the promotion back and restores the previous root. Closes F-13.4.5 (same defect/fix). Commit `91bfb753`.
 
 ### - [x] F-7.4.13 — No atomic cleanup of partial extraction on failure [Medium] — CLOSED
 
@@ -23072,7 +23074,7 @@ is canonicalized via `upload.ValidateSymlinkTarget` (rejecting `/proc`,
 also enforces the same forbidden-mount list. The post-promotion re-walk
 remains tracked under F-7.4.12 (atomic staging→current promotion).
 
-### - [ ] F-13.4.5 — The staging → validation → promotion pattern is not implemented for uploadArchive extraction [High] — OPEN
+### - [x] F-13.4.5 — The staging → validation → promotion pattern is not implemented for uploadArchive extraction [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.12 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
@@ -23110,6 +23112,8 @@ storage quota state can drift if a failed extraction commits some bytes that
 are never accounted for in the §11.2 quota reservation reconciliation
 (`pkg/gateway/sessionserver/upload.go` reconciliation is on the blob upload,
 not on the post-materialisation footprint).
+
+**Resolution:** Closed by F-7.4.12 (same defect/fix). `MaterializeWithPolicy` builds the resolved tree in `/workspace/staging` and atomically promotes it onto `/workspace/current` only after every source succeeds; any source failure discards the whole build tree, so a partial archive never reaches the workspace root. Combined with the per-archive `archiveSession` rollback (F-7.4.13) this returns the staging area to its pre-extraction state on every abort path. The `FilesUpdated` mid-session notification remains distinct work under F-7.4.6. Commit `91bfb753`.
 
 ### - [x] F-13.4.6 — `tar.TypeLink`, `tar.TypeChar`, `tar.TypeBlock`, `tar.TypeFifo` entries are silently dropped instead of being rejected with `non_regular_entry` [High] — CLOSED
 
