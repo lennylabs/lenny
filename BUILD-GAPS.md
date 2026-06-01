@@ -10329,8 +10329,7 @@ than re-evaluating the live runtime registry. The lease-scoped
 `minIsolationProfile` rides the session's first-class `IsolationProfile`
 column and is not duplicated. v1 does not implement
 `snapshotPolicyAtLease`, so `snapshotted_pool_ids` stays empty (live pool
-labels) exactly as a pre-failure call would evaluate. Closed by commit
-HEAD (see below).
+labels) exactly as a pre-failure call would evaluate. Closed by ec46848d.
 
 ---
 
