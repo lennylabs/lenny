@@ -21181,9 +21181,11 @@ intersect §12.9 control surfaces.
 
 ---
 
-### - [ ] F-12.9.1 — severity [High] — OPEN
+### - [x] F-12.9.1 — severity [High] — CLOSED
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body (same shape as F-12.9.8 and F-12.9.15); the §12.9 High cluster lives in the sibling F-12.9.2..F-12.9.7 entries. No code surface to fix. (batch commit `d625cbe2`)
 
-### - [ ] F-12.9.2 — 9-01 — Pool controller does not inject `lenny.dev/workspace-tier: t4`; T4 dedicated-node webhook predicate is effectively unreachable in production [High] — OPEN
+### - [x] F-12.9.2 — 9-01 — Pool controller does not inject `lenny.dev/workspace-tier: t4`; T4 dedicated-node webhook predicate is effectively unreachable in production [High] — CLOSED
+- **Resolution:** Verify-closed (stale evidence) and closed as dup of F-6.4.4. The Runtime CRD now carries `WorkspaceTier` (`pkg/apis/lenny/v1/runtime_types.go:84`); the sandbox reconciler resolves it (`pkg/controller/sandbox/controller.go:322`, `WorkspaceTier: rt.Spec.WorkspaceTier`) and the pod builder stamps `lenny.dev/workspace-tier: t4` plus the T4 nodeSelector and NoSchedule toleration whenever the resolved tier is T4 (`pkg/controller/sandbox/podspec/podspec.go:705,730`). The §6.4 fail-closed webhook predicate therefore has a production producer. Resolved by commit `a7a4e4cb` (F-6.4.9 + F-6.4.4).
 
 **Potential duplicate** (confidence: high) — F-6.4.4 — Both report the pool controller not injecting lenny.dev/workspace-tier:t4, making the T4 node-isolation webhook predicate unreachable.
 
@@ -21224,7 +21226,8 @@ Evidence:
   field), `pkg/apis/lenny/v1/runtime_types.go` (no `WorkspaceTier`
   field)
 
-### - [ ] F-12.9.3 — 9-02 — Bootstrap path bypasses the §12.9 workspaceTier ratchet, KMS probe, and tier validation [High] — OPEN
+### - [x] F-12.9.3 — 9-02 — Bootstrap path bypasses the §12.9 workspaceTier ratchet, KMS probe, and tier validation [High] — CLOSED
+- **Resolution:** `upsertTenants` (`pkg/gateway/admin/bootstrap.go`) now validates the closed enum (`validWorkspaceTier`, rejecting T1/T2/T5/...), enforces the §12.9 stricter-only ratchet (`tenantstore.IsWorkspaceTierDowngrade`) on update so a re-run with a looser tier is rejected even under `--force-update`, and runs the §12.5 admin-time KMS availability probe (`bootstrapT4KMSProbe`) on a T4 create and on a T4 re-assert before persisting. A probe failure or a ratchet/enum violation is recorded per-entry as `SEED_VALIDATION` without mutating the row. (commit `d625cbe2`)
 
 `pkg/gateway/admin/bootstrap.go:106-169` upserts tenants directly via
 `tenantstore.Store.Create` / `Update` without invoking
@@ -21245,7 +21248,8 @@ Evidence:
 - `pkg/gateway/admin/tenants.go:950-1014` (the production-path checks
   that bootstrap omits)
 
-### - [ ] F-12.9.4 — 9-03 — Tier value not validated; arbitrary strings persist as `workspaceTier` [High] — OPEN
+### - [x] F-12.9.4 — 9-03 — Tier value not validated; arbitrary strings persist as `workspaceTier` [High] — CLOSED
+- **Resolution:** `validWorkspaceTier` (delegating to the new canonical `tenantstore.ValidWorkspaceTier`) gates both POST `/v1/admin/tenants` and PUT `/v1/admin/tenants/{id}`: a value outside the closed tenant-settable enum (empty, T3, T4) is rejected with 400 `VALIDATION_ERROR` before the PUT ratchet runs, so an off-ladder string like "T2" can no longer slip past `IsWorkspaceTierDowngrade` and persist as "not T4". The OpenAPI Tenant schema now carries `"enum": ["T3","T4"]`, and migration 0103 adds the `tenants_workspace_tier_check` CHECK constraint (`workspace_tier IN ('', 'T3', 'T4')`) as the storage-boundary backstop. (commit `d625cbe2`)
 
 The §12.9 table defines a closed enum (T1, T2, T3, T4). The §15.1
 admin contract restricts the tenant-settable values to T3 (default)
@@ -21327,7 +21331,8 @@ Evidence:
 - `pkg/blobstore/blobstore.go` (`Store` interface has no tier
   argument).
 
-### - [ ] F-12.9.7 — 9-06 — Gateway policy engine does not validate tenant classification at session creation [High] — OPEN
+### - [x] F-12.9.7 — 9-06 — Gateway policy engine does not validate tenant classification at session creation [High] — CLOSED
+- **Resolution:** New `policy.ValidateTenantClassification` (`pkg/gateway/policy/classification.go`) returns a `ClassificationError` for a tenant whose `workspaceTier` is not a recognized §12.9 tier. The session-creation path calls it through `sessionserver.requireTenantClassification` (`pkg/gateway/sessionserver/quota.go`), wired into `handleCreateAndStart` ahead of the quota and interceptor chain: a misconfigured tier rejects the create with 422 `CLASSIFICATION_CONTROL_VIOLATION` carrying `details.reason = invalid_workspace_tier`, instead of deferring the violation to a runtime write the happy path may never reach. Unknown/unwired tenants admit (the §10.2 tenant-claim path governs them). (commit `d625cbe2`)
 
 Spec line 1048: "The gateway policy engine ([Section 4.8]) validates
 tenant classification configuration at session creation."
@@ -21354,7 +21359,8 @@ Evidence:
 ### - [x] F-12.9.8 — severity [Medium] — CLOSED
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body (same shape as F-12.9.15); the §12.9 Medium cluster lives in the sibling F-12.9.9..F-12.9.14 entries. No code surface to fix. (commit `c4ae0116`)
 
-### - [ ] F-12.9.9 — 9-07 — No environment-level `workspaceTier` override (the spec promises a stricter-only env override) [Medium] — OPEN
+### - [x] F-12.9.9 — 9-07 — No environment-level `workspaceTier` override (the spec promises a stricter-only env override) [Medium] — CLOSED
+- **Resolution:** `environmentstore.Environment` gains a `WorkspaceTier` field (persisted in the env `body` jsonb alongside the other non-key scalars, so no schema migration is required), and `Environment.Validate` rejects an out-of-enum value via `tenantstore.ValidWorkspaceTier`. The admin `EnvironmentPayload` carries `workspaceTier`, and `requireEnvironmentTierOverride` (`pkg/gateway/admin/environments.go`, wired into create + update) enforces the §12.9 line 1033 stricter-only rule against the parent tenant: a stricter or equal override (e.g. T4 over a T3 tenant) is admitted, an empty value inherits, and a looser override is rejected with 422 `CLASSIFICATION_CONTROL_VIOLATION` (`reason = tier_override_looser`). (commit `d625cbe2`)
 
 Spec line 1033: "This setting is inherited by all environments under
 the tenant unless explicitly overridden at the environment level to a
