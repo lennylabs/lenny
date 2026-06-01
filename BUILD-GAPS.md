@@ -36592,7 +36592,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Audit-incident remediation (failed OCSF translation, stuck publish queue, blocked partition) has no CLI path; the listed remediation endpoints do not exist on the server side either.
 
-### - [ ] F-24.15.6 — `lenny-ctl backup` group is unimplemented [High] — OPEN
+### - [x] F-24.15.6 — `lenny-ctl backup` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.7 — F-24.15.6 and F-24.15.7 cover distinct lenny-ctl command groups (backup vs restore), each a separate missing CLI wrapper.
 
@@ -36602,7 +36602,9 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Agents must invoke `lenny-ops` HTTP directly; the documented `lenny-ctl backup` UX promised in §24.15 is unavailable.
 
-### - [ ] F-24.15.7 — `lenny-ctl restore` group is unimplemented [High] — OPEN
+**Resolution:** Added `cmdBackup` (list/get/create/verify/schedule get|set/policy get|set) in `cmd/lenny-ctl/ops.go`, wired the `backup` group through `withOps` in `main.go`, matching the §25.14 lines 4950-4955 API mapping. Commit pending this batch.
+
+### - [x] F-24.15.7 — `lenny-ctl restore` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.6 — F-24.15.6 and F-24.15.7 cover distinct lenny-ctl command groups (backup vs restore), each a separate missing CLI wrapper.
 
@@ -36611,6 +36613,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impl:** Full handler set is wired on `lenny-ops` (`pkg/ops/opsserver/backup.go:62-67` covers preview, safety-check, execute, status, resume, confirm-legal-hold-ledger). No `case "restore"` in `cmd/lenny-ctl/main.go`.
 
 **Impact:** Disaster-recovery flows have no CLI entry point.
+
+**Resolution:** Added `cmdRestore` (safety-check/preview/execute/status/resume/confirm-legal-hold-ledger) in `cmd/lenny-ctl/ops.go`, wired the `restore` group through `withOps` in `main.go`, matching the §25.14 lines 4956-4961 API mapping (safety-check/resume use the spec query params `backupId`/`restoreId`). Commit pending this batch.
 
 ### - [ ] F-24.15.8 — `lenny-ctl logs` group is unimplemented [High] — OPEN
 
@@ -36628,7 +36632,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Operators cannot drive the management MCP server from the CLI; the §24.15-promised scripting surface is unreachable through the documented entry point.
 
-### - [ ] F-24.15.10 — `lenny-ctl diagnose` lacks platform-connectivity subcommand parity [Medium] — OPEN
+### - [x] F-24.15.10 — `lenny-ctl diagnose` lacks platform-connectivity subcommand parity [Medium] — CLOSED
 
 **Spec (§24.15 line 183):** `lenny-ctl diagnose` covers sessions, pools, credential pools, and **platform connectivity** via `/v1/admin/diagnostics/*`.
 
@@ -36636,7 +36640,9 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Status:** Resolved on re-check; the CLI subcommands match the spec for this group.
 
-### - [ ] F-24.15.11 — `lenny-ctl drift` lacks the snapshot-refresh subcommand [Medium] — OPEN
+**Resolution:** Verify-closed. `cmdDiagnose` (`cmd/lenny-ctl/ops.go`) already dispatches `session`, `pool`, `connectivity`, and `credential-pool`, matching §25.14 lines 4911-4914; the checkbox is now flipped to reflect the prior re-check.
+
+### - [x] F-24.15.11 — `lenny-ctl drift` lacks the snapshot-refresh subcommand [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-17.7.3 — Related to drift-snapshot-refresh but distinct defects: F-17.7.3 is a missing operator runbook doc, F-24.15.11 is a missing lenny-ctl drift snapshot-refresh subcommand.
 
@@ -36646,13 +36652,17 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Agents cannot trigger desired-state-snapshot refresh after intentional cluster mutations; reconciliation will keep flagging the change as drift until the next scheduled refresh.
 
-### - [ ] F-24.15.12 — `lenny-ctl locks` lacks the steal subcommand [Medium] — OPEN
+**Resolution:** Added the `drift snapshot refresh --desired <file> [--confirm]` subcommand to `cmdDrift` (`cmd/lenny-ctl/ops.go`), wrapping `POST /v1/admin/drift/snapshot/refresh` (handler already wired at `pkg/ops/opsserver/drift.go:56`). Without `--confirm` the server returns the §25.2 dry-run preview. Commit pending this batch.
+
+### - [x] F-24.15.12 — `lenny-ctl locks` lacks the steal subcommand [Medium] — CLOSED
 
 **Spec (§24.15 line 190):** `lenny-ctl locks` must **inspect, steal, and release** remediation locks via `/v1/admin/remediation-locks`, `/v1/admin/remediation-locks/{id}`, `/v1/admin/remediation-locks/{id}/steal`.
 
 **Impl:** `cmdLocks` (`cmd/lenny-ctl/ops.go:100`) supports `list`, `acquire`, `release`. The lock-steal action wrapping `POST /v1/admin/remediation-locks/{id}/steal` (the handler exists at `pkg/ops/opsserver/locks.go:218`) is missing from the CLI. The spec also calls for an explicit per-id inspect call (`get`), which is absent.
 
 **Impact:** Stuck-replica recovery (the canonical use case for `steal`) cannot be driven from the CLI; agents must reach `lenny-ops` HTTP directly.
+
+**Resolution:** Added `locks get <id>` (GET `/v1/admin/remediation-locks/{id}`) and `locks steal <id> [--confirm] [--reason <text>] [--ttl <secs>]` (POST `.../steal`) to `cmdLocks` (`cmd/lenny-ctl/ops.go`); both handlers were already wired (`pkg/ops/opsserver/locks.go:52,55`). `--confirm` requires `--reason` client-side; omitting `--confirm` yields the §25.2 dry-run preview. Commit pending this batch.
 
 ### - [x] F-24.15.13 — Help text and routing comments do not mention the absent groups [Low] — CLOSED
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 )
@@ -96,15 +97,25 @@ func cmdRunbooks(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 }
 
 // cmdLocks dispatches the §25.14 `locks` group, which maps to the
-// §25.4 remediation-lock endpoints on lenny-ops.
+// §25.4 remediation-lock endpoints on lenny-ops. spec: §25.14 lines
+// 4877-4879 (list/acquire/release); §24.15 line 190 names inspect, steal,
+// and release, so `get` and `steal` round out the group. F-24.15.12.
 func cmdLocks(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: locks requires a subcommand (list|acquire|release)")
+		fmt.Fprintln(stderr, "lenny-ctl: locks requires a subcommand (list|get|acquire|release|steal)")
 		return 2
 	}
 	switch args[0] {
 	case "list":
 		return opsGet(ctx, c, "/v1/admin/remediation-locks", stdout, stderr)
+	case "get":
+		// §24.15 line 190 calls for an explicit per-id inspect; it maps to
+		// GET /v1/admin/remediation-locks/{id}. F-24.15.12.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: locks get requires <id>")
+			return 2
+		}
+		return opsGet(ctx, c, "/v1/admin/remediation-locks/"+url.PathEscape(args[1]), stdout, stderr)
 	case "acquire":
 		scope := flagValue(args[1:], "--scope")
 		op := flagValue(args[1:], "--op")
@@ -120,6 +131,34 @@ func cmdLocks(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 			return 2
 		}
 		return opsSend(ctx, c, "DELETE", "/v1/admin/remediation-locks/"+url.PathEscape(args[1]), nil, stdout, stderr)
+	case "steal":
+		// §25.4 line 2106: steal takes over an existing lock and requires
+		// confirm:true and a reason. Without --confirm the server returns
+		// the §25.2 dry-run preview, so --reason is enforced client-side
+		// only when --confirm is present. F-24.15.12.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: locks steal requires <id>")
+			return 2
+		}
+		confirm := hasFlag(args[2:], "--confirm")
+		reason := flagValue(args[2:], "--reason")
+		if confirm && reason == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: locks steal --confirm requires --reason <text>")
+			return 2
+		}
+		body := map[string]any{"confirm": confirm}
+		if reason != "" {
+			body["reason"] = reason
+		}
+		if ttl := flagValue(args[2:], "--ttl"); ttl != "" {
+			secs, err := strconv.Atoi(ttl)
+			if err != nil || secs <= 0 {
+				fmt.Fprintf(stderr, "lenny-ctl: locks steal --ttl must be a positive integer, got %q\n", ttl)
+				return 2
+			}
+			body["ttlSeconds"] = secs
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/remediation-locks/"+url.PathEscape(args[1])+"/steal", body, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown locks subcommand %q\n", args[0])
 		return 2
@@ -198,10 +237,35 @@ func cmdDiagnose(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 // §25.10 configuration-drift endpoints on lenny-ops.
 func cmdDrift(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: drift requires a subcommand (report|validate|reconcile)")
+		fmt.Fprintln(stderr, "lenny-ctl: drift requires a subcommand (report|validate|snapshot|reconcile)")
 		return 2
 	}
 	switch args[0] {
+	case "snapshot":
+		// §25.14 line 4943: `drift snapshot refresh --desired <file>`
+		// replaces the stored desired-state snapshot via
+		// POST /v1/admin/drift/snapshot/refresh. §25.10 keeps refresh an
+		// explicit operator action: without --confirm the server returns
+		// the §25.2 dry-run preview and no snapshot is replaced. F-24.15.11.
+		if len(args) < 2 || args[1] != "refresh" {
+			fmt.Fprintln(stderr, "lenny-ctl: drift snapshot requires the refresh subcommand")
+			return 2
+		}
+		desired := flagValue(args[2:], "--desired")
+		if desired == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: drift snapshot refresh requires --desired <file>")
+			return 2
+		}
+		snapshot, err := readJSONFile(desired)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 1
+		}
+		body := map[string]any{"desired": snapshot}
+		if hasFlag(args[2:], "--confirm") {
+			body["confirm"] = true
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/drift/snapshot/refresh", body, stdout, stderr)
 	case "report":
 		// `drift report` maps to GET /v1/admin/drift with the optional
 		// --scope and --against query parameters.
@@ -242,6 +306,168 @@ func cmdDrift(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return opsSend(ctx, c, "POST", "/v1/admin/drift/reconcile", body, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown drift subcommand %q\n", args[0])
+		return 2
+	}
+}
+
+// cmdBackup dispatches the §25.14 `backup` group, which maps to the
+// §25.11 backup endpoints on lenny-ops. spec: §25.14 lines 4950-4955.
+// F-24.15.6.
+func cmdBackup(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: backup requires a subcommand (list|get|create|verify|schedule|policy)")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return opsGet(ctx, c, "/v1/admin/backups", stdout, stderr)
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: backup get requires <id>")
+			return 2
+		}
+		return opsGet(ctx, c, "/v1/admin/backups/"+url.PathEscape(args[1]), stdout, stderr)
+	case "create":
+		// §25.14 line 4952: --type is required; --confirm guards the
+		// production-side §25.2 confirm pattern.
+		typ := flagValue(args[1:], "--type")
+		if typ == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: backup create requires --type <full|postgres|config>")
+			return 2
+		}
+		body := map[string]any{"type": typ}
+		if hasFlag(args[1:], "--confirm") {
+			body["confirm"] = true
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/backups", body, stdout, stderr)
+	case "verify":
+		// §25.14 line 4953: `backup verify <id> [--mode test-restore]`.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: backup verify requires <id>")
+			return 2
+		}
+		path := "/v1/admin/backups/" + url.PathEscape(args[1]) + "/verify"
+		if mode := flagValue(args[2:], "--mode"); mode != "" {
+			path += "?mode=" + url.QueryEscape(mode)
+		}
+		return opsSend(ctx, c, "POST", path, nil, stdout, stderr)
+	case "schedule":
+		// §25.14 line 4954: `backup schedule get|set` → GET/PUT
+		// /v1/admin/backups/schedule.
+		return cmdBackupSubresource(ctx, c, "schedule", args[1:], stdout, stderr)
+	case "policy":
+		// §25.14 line 4955: `backup policy get|set` → GET/PUT
+		// /v1/admin/backups/policy.
+		return cmdBackupSubresource(ctx, c, "policy", args[1:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown backup subcommand %q\n", args[0])
+		return 2
+	}
+}
+
+// cmdBackupSubresource implements the get/set verbs shared by the §25.14
+// `backup schedule` and `backup policy` subcommands. get maps to a GET;
+// set maps to a PUT whose body is read from --from-file. F-24.15.6.
+func cmdBackupSubresource(ctx context.Context, c *ctl.Client, name string, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintf(stderr, "lenny-ctl: backup %s requires a verb (get|set)\n", name)
+		return 2
+	}
+	path := "/v1/admin/backups/" + name
+	switch args[0] {
+	case "get":
+		return opsGet(ctx, c, path, stdout, stderr)
+	case "set":
+		file := flagValue(args[1:], "--from-file")
+		if file == "" {
+			fmt.Fprintf(stderr, "lenny-ctl: backup %s set requires --from-file <%s.json>\n", name, name)
+			return 2
+		}
+		body, err := readJSONFile(file)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 1
+		}
+		return opsSend(ctx, c, "PUT", path, body, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown backup %s verb %q\n", name, args[0])
+		return 2
+	}
+}
+
+// cmdRestore dispatches the §25.14 `restore` group, which maps to the
+// §25.11 restore endpoints on lenny-ops. spec: §25.14 lines 4956-4961.
+// F-24.15.7.
+func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: restore requires a subcommand (safety-check|preview|execute|status|resume|confirm-legal-hold-ledger)")
+		return 2
+	}
+	switch args[0] {
+	case "safety-check":
+		// §25.14 line 4956: GET /v1/admin/restore/safety-check?backupId=.
+		backupID := flagValue(args[1:], "--backup")
+		if backupID == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: restore safety-check requires --backup <id>")
+			return 2
+		}
+		return opsGet(ctx, c, "/v1/admin/restore/safety-check?backupId="+url.QueryEscape(backupID), stdout, stderr)
+	case "preview":
+		// §25.14 line 4957: POST /v1/admin/restore/preview {backupId}.
+		backupID := flagValue(args[1:], "--backup")
+		if backupID == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: restore preview requires --backup <id>")
+			return 2
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/restore/preview", map[string]any{"backupId": backupID}, stdout, stderr)
+	case "execute":
+		// §25.14 line 4958: POST /v1/admin/restore/execute. Without
+		// --confirm the server returns the §25.2 dry-run preview; the
+		// destructive run additionally requires --acknowledge-data-loss.
+		backupID := flagValue(args[1:], "--backup")
+		if backupID == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: restore execute requires --backup <id>")
+			return 2
+		}
+		body := map[string]any{"backupId": backupID}
+		if hasFlag(args[1:], "--confirm") {
+			body["confirm"] = true
+		}
+		if hasFlag(args[1:], "--acknowledge-data-loss") {
+			body["acknowledgeDataLoss"] = true
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/restore/execute", body, stdout, stderr)
+	case "status":
+		// §25.14 line 4959: GET /v1/admin/restore/{id}/status.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: restore status requires <id>")
+			return 2
+		}
+		return opsGet(ctx, c, "/v1/admin/restore/"+url.PathEscape(args[1])+"/status", stdout, stderr)
+	case "resume":
+		// §25.14 line 4960: POST /v1/admin/restore/resume?restoreId=.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: restore resume requires <id>")
+			return 2
+		}
+		return opsSend(ctx, c, "POST", "/v1/admin/restore/resume?restoreId="+url.QueryEscape(args[1]), nil, stdout, stderr)
+	case "confirm-legal-hold-ledger":
+		// §25.14 line 4961: POST /v1/admin/restore/{id}/confirm-legal-hold-
+		// ledger {justification}.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: restore confirm-legal-hold-ledger requires <id>")
+			return 2
+		}
+		justification := flagValue(args[2:], "--justification")
+		if justification == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: restore confirm-legal-hold-ledger requires --justification <text>")
+			return 2
+		}
+		return opsSend(ctx, c, "POST",
+			"/v1/admin/restore/"+url.PathEscape(args[1])+"/confirm-legal-hold-ledger",
+			map[string]any{"justification": justification}, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown restore subcommand %q\n", args[0])
 		return 2
 	}
 }

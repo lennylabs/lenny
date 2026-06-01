@@ -13,10 +13,12 @@
 // The §25.14 operability groups wrap the lenny-ops API:
 //
 //	lenny-ctl runbooks list|get
-//	lenny-ctl locks list|acquire|release
+//	lenny-ctl locks list|get|acquire|release|steal
 //	lenny-ctl escalations list|create|resolve
 //	lenny-ctl diagnose session|pool|connectivity|credential-pool
-//	lenny-ctl drift report|validate|reconcile
+//	lenny-ctl drift report|validate|snapshot refresh|reconcile
+//	lenny-ctl backup list|get|create|verify|schedule|policy
+//	lenny-ctl restore safety-check|preview|execute|status|resume|confirm-legal-hold-ledger
 //
 // Standalone commands:
 //
@@ -166,6 +168,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
 			return cmdDrift(ctx, ops, rest[1:], stdout, stderr)
 		})
+	case "backup":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdBackup(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "restore":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdRestore(ctx, ops, rest[1:], stdout, stderr)
+		})
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 		return 0
@@ -228,8 +238,11 @@ Operability commands (§25.14, target lenny-ops):
   runbooks list [--alert <name>]        List runbooks (optionally by alert)
   runbooks get <name>                   Print a runbook
   locks list                            List remediation locks
+  locks get <id>                        Inspect a single remediation lock
   locks acquire --scope <s> --op <op>   Acquire a remediation lock
   locks release <id>                    Release a remediation lock
+  locks steal <id> --confirm --reason <text> [--ttl <secs>]
+                                        Take over a lock held by another caller (audited)
   escalations list                      List escalations
   escalations create --severity <s> --summary <text>
   escalations resolve <id>              Mark an escalation resolved
@@ -239,7 +252,20 @@ Operability commands (§25.14, target lenny-ops):
   diagnose credential-pool <name>       Diagnose a credential pool
   drift report [--scope <s>] [--against <live|target|both>]
   drift validate --desired <file>       Validate desired state
+  drift snapshot refresh --desired <file> [--confirm]   Replace the stored desired-state snapshot
   drift reconcile [--scope <s>] [--confirm]
+  backup list                           List backups
+  backup get <id>                       Show backup details
+  backup create --type <full|postgres|config> [--confirm]   Trigger a backup
+  backup verify <id> [--mode test-restore]   Verify backup integrity
+  backup schedule get|set [--from-file <f>]  Get or replace the backup schedule
+  backup policy get|set [--from-file <f>]    Get or replace the retention policy
+  restore safety-check --backup <id>    Estimate data loss before a restore
+  restore preview --backup <id>         Preview a restore
+  restore execute --backup <id> --confirm --acknowledge-data-loss   Execute a restore
+  restore status <id>                   Per-shard restore status
+  restore resume <id>                   Resume a partially-completed restore
+  restore confirm-legal-hold-ledger <id> --justification <text>
 
 Embedded Mode local commands (§24.19; identical to the lenny short name):
   up [--http-port <n>] [--https-port <n>]   Start the local stack (idempotent)
