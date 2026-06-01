@@ -24132,7 +24132,10 @@ gaps (e.g. `/sessions/{id}/artifacts`, `/sessions/{id}/workspace`,
 `/sessions/{id}/logs`) are first-tier client features the SDK
 documentation already references.
 
-### - [ ] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — OPEN
+### - [x] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — CLOSED
+
+**Resolution (commit ddf6035a):** Replaced every `INVALID_REQUEST` emission with the canonical §15.1-line-978 `VALIDATION_ERROR` across the gateway (sessionserver, admin, credentialserver, playground, mcptools) and ops handlers, and removed the `INVALID_REQUEST` entry from the `errorclassify` table so it no longer registers as a known code. `AUTH_REQUIRED` was already replaced with `UNAUTHORIZED` (F-10.2.12); the only remaining references were a stale openapi.json example string and a test traceback comment, both updated. New `TestClassifyDropsNonSpecInvalidRequest_spec_15_1` guards the classifier.
+
 Spec error-code catalog (lines 974–1099) is closed. The closest codes
 for bad JSON / missing auth are `VALIDATION_ERROR` (400, line 978) and
 `UNAUTHORIZED` (401, line 986).
@@ -24281,7 +24284,10 @@ SSRF validation (the `INVALID_CALLBACK_URL` error code at line 1097 is
 in the catalog but unreachable). Clients that depend on the documented
 async-completion path get no notification.
 
-### - [ ] F-15.1.12 — `GET /v1/admin/connectors/{id}` path-param mismatch [High] — OPEN
+### - [x] F-15.1.12 — `GET /v1/admin/connectors/{id}` path-param mismatch [High] — CLOSED
+
+**Resolution (commit ddf6035a):** Connector admin CRUD, test, and OAuth-authorize routes now use `{name}` per §15.1 line 767; the handlers read `PathValue("name")` and the openapi.json path templates and path-param names were updated to `{name}`. `TestDocumentMatchesEndpoints` / `openapi_test` assert the corrected templates.
+
 Spec lines 786–791 use `{name}` for connectors; impl
 (`pkg/gateway/admin/tenants.go:402-405`) uses `{id}`. The §15.1 prose at
 line 767 is explicit: "All admin CRUD resources use `{name}` as the path
@@ -24293,10 +24299,12 @@ endpoint declares its `x-lenny-scope`" plus the convention check) is
 broken; SDK code generated from §15.1 emits a different method signature
 than the gateway accepts.
 
-### - [ ] F-15.1.13 — Path param naming drift on `/v1/credentials/{credential_ref}` [High] — OPEN
+### - [x] F-15.1.13 — Path param naming drift on `/v1/credentials/{credential_ref}` [High] — CLOSED
 Spec lines 711–715 use `{credential_ref}`; impl
 (`pkg/gateway/credentialserver/credentialserver.go:37-39`) uses `{ref}`.
 Same OpenAPI-generator break as H11 / H12.
+
+**Resolution (commit ddf6035a):** The credential rotate/revoke/delete routes now use `{credential_ref}` per §15.1 lines 711-715, and the handlers read `PathValue("credential_ref")`. The full-routing `credentialserver_test` PUT exercises the corrected template.
 
 ### - [ ] F-15.1.14 — Derive-failure audit row reachability rules are silently dropped [High] — OPEN
 Spec lines 647–663 mandate a precise reachability matrix for
