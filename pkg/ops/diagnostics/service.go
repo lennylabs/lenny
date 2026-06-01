@@ -4,6 +4,7 @@ package diagnostics
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 
@@ -89,9 +90,13 @@ type PodCountBreakdown struct {
 }
 
 // PoolConfigSummary is the §25.6 PoolDiagnosis configuration summary.
+// spec: §25.17 line 5195 — the worked example surfaces minWarm, maxPods,
+// and image so the watchdog can reason about headroom before it scales.
 type PoolConfigSummary struct {
 	MinWarm int    `json:"minWarm"`
 	MaxWarm int    `json:"maxWarm,omitempty"`
+	MaxPods int    `json:"maxPods,omitempty"`
+	Image   string `json:"image,omitempty"`
 	Runtime string `json:"runtime,omitempty"`
 }
 
@@ -101,9 +106,16 @@ type SyncStatus struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// PoolBottleneck is the §25.6 classified warm-pool bottleneck.
+// PoolBottleneck is the §25.6 classified warm-pool bottleneck. Details
+// carries the per-category telemetry the §25.17 worked example reads
+// (claim rate and replenishment rate for a demand bottleneck, the
+// observed failure count for an infrastructure bottleneck) so an agent
+// can choose between competing remediations without a second metrics
+// query. spec: §25.6 lines 2861-2867 (PoolBottleneck.Details), §25.17
+// line 5199.
 type PoolBottleneck struct {
 	Category BottleneckCategory `json:"category"`
+	Details  json.RawMessage    `json:"details,omitempty"`
 	Summary  string             `json:"summary"`
 }
 
@@ -281,13 +293,76 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 	if category, found := ClassifyPoolBottleneck(signals); found {
 		diag.Bottleneck = &PoolBottleneck{
 			Category: category,
+			Details:  bottleneckDetails(category, signals),
 			Summary:  bottleneckSummary[category],
 		}
+		// spec: §25.17 lines 5201-5202 / §25.6 line 473 — WARM_POOL_EXHAUSTED
+		// is a ranked-alternatives alert, so the demand bottleneck carries a
+		// SCALE_WARM_POOL suggestedAction the watchdog can apply directly.
+		diag.SuggestedActions = suggestedActionsFor(category, rec)
 		diag.Status = "unhealthy"
 	} else {
 		diag.Status = "healthy"
 	}
 	return diag, nil
+}
+
+// scaleStep is the §25.17 increment the demand-bottleneck SCALE_WARM_POOL
+// action proposes (the worked example scales minWarm 5 → 15). spec:
+// §25.17 line 5216.
+const scaleStep = 10
+
+// suggestedActionsFor returns the §25.6 ranked remediations for a
+// classified bottleneck. Only DEMAND_EXCEEDS_SUPPLY maps to an API-driven
+// remediation (scale the warm pool); the infrastructure bottlenecks
+// (image pull, node pressure, quota, setup failure, CRD lag) require
+// cluster-side action, so they carry no auto-applicable action and the
+// watchdog routes to the runbook prose instead. spec: §25.6 lines
+// 2895-2897, §25.17 lines 5201-5216.
+func suggestedActionsFor(category BottleneckCategory, rec PoolRecord) []conventions.SuggestedAction {
+	if category != BottleneckDemandExceedsSupply {
+		return []conventions.SuggestedAction{}
+	}
+	target := rec.Config.MinWarm + scaleStep
+	body, _ := json.Marshal(map[string]any{"minWarm": target})
+	return []conventions.SuggestedAction{{
+		Action:     "SCALE_WARM_POOL",
+		Endpoint:   "PUT /v1/admin/pools/" + rec.Name + "/warm-count",
+		Body:       body,
+		Reasoning:  "claim rate exceeds the warm-pool replenishment rate; raising minWarm restores headroom",
+		Runbook:    "warm-pool-exhaustion",
+		Confidence: 0.9,
+		Risk:       "low",
+	}}
+}
+
+// bottleneckDetails renders the §25.17 per-category telemetry envelope.
+// The demand bottleneck reports the two rates the agent compares; the
+// failure bottlenecks report the observed warm-up failure count for the
+// matching error_type. spec: §25.17 line 5199.
+func bottleneckDetails(category BottleneckCategory, s PoolSignals) json.RawMessage {
+	var m map[string]any
+	switch category {
+	case BottleneckDemandExceedsSupply:
+		m = map[string]any{"claimRate": s.ClaimRate, "replenishmentRate": s.ReplenishmentRate}
+	case BottleneckImagePull:
+		m = map[string]any{"imagePullFailures": s.ImagePullFailures}
+	case BottleneckNodePressure:
+		m = map[string]any{"nodePressureFailures": s.NodePressureFailures}
+	case BottleneckQuotaExhausted:
+		m = map[string]any{"quotaExceededFailures": s.QuotaExceededFailures}
+	case BottleneckSetupFailure:
+		m = map[string]any{"setupFailures": s.SetupFailures}
+	case BottleneckCRDSyncLag:
+		m = map[string]any{"crdSynced": false}
+	default:
+		return nil
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // DiagnoseCredentialPool builds the §25.6 credential-pool health

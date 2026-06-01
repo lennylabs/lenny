@@ -501,6 +501,11 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListPools)))
 		mux.Handle("GET /v1/admin/pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetPool)))
 		mux.Handle("PUT /v1/admin/pools/{name}", poolManage(http.HandlerFunc(r.handleUpdatePool)))
+		// §25.17 lines 5232-5239: the agent-operability worked example and
+		// the warm-pool-exhaustion runbook scale a pool through the dedicated
+		// warm-count sub-route with the `minWarm` field. It runs on the same
+		// manage_pools gate as the §15.1 PUT it delegates to.
+		mux.Handle("PUT /v1/admin/pools/{name}/warm-count", poolManage(http.HandlerFunc(r.handleUpdatePoolWarmCount)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 		// §4.6.2 item 3 (c): operator-initiated reset of a stuck pool's
 		// admission-denial backoff. Only registered when a
@@ -1474,4 +1479,12 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{"code": code, "message": message, "details": details},
 	})
+}
+
+// writeJSON writes v as a JSON body with the given status code. It is the
+// success-path counterpart to writeError for the admin handlers.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

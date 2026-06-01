@@ -231,6 +231,65 @@ func TestUpdatePool(t *testing.T) {
 	}
 }
 
+// TestUpdatePoolWarmCount covers §25.17 lines 5232-5239 — the warm-count
+// sub-route maps the operability `minWarm` field onto the §15.1 warm-count
+// update and applies it when confirm:true.
+func TestUpdatePoolWarmCount_spec_25_17(t *testing.T) {
+	router, store, _, _ := newPoolAdmin(t)
+	_ = store.Create(context.Background(), poolstore.Pool{
+		Name: "default-gvisor", IsolationProfile: isolation.ProfileSandboxed, WarmCount: 5,
+	})
+	rr := poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/default-gvisor/warm-count",
+		map[string]any{"minWarm": 15, "confirm": true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "default-gvisor")
+	if row.WarmCount != 15 {
+		t.Errorf("WarmCount: %d, want 15", row.WarmCount)
+	}
+}
+
+// TestUpdatePoolWarmCountDryRun covers §25.2 dry-run/confirm — without
+// confirm the warm-count route returns a preview and does not scale.
+func TestUpdatePoolWarmCountDryRun_spec_25_17(t *testing.T) {
+	router, store, _, _ := newPoolAdmin(t)
+	_ = store.Create(context.Background(), poolstore.Pool{
+		Name: "p", IsolationProfile: isolation.ProfileSandboxed, WarmCount: 5,
+	})
+	rr := poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p/warm-count",
+		map[string]any{"minWarm": 15})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	if out["dryRun"] != true {
+		t.Errorf("dryRun = %v, want true", out["dryRun"])
+	}
+	row, _ := store.Get(context.Background(), "p")
+	if row.WarmCount != 5 {
+		t.Errorf("WarmCount: %d, want unchanged 5 on a dry run", row.WarmCount)
+	}
+}
+
+// TestUpdatePoolWarmCountRejectsMissingAndNegative covers the §25.17
+// warm-count validation: minWarm is required and must not be negative.
+func TestUpdatePoolWarmCountRejectsMissingAndNegative_spec_25_17(t *testing.T) {
+	router, store, _, _ := newPoolAdmin(t)
+	_ = store.Create(context.Background(), poolstore.Pool{Name: "p", IsolationProfile: isolation.ProfileSandboxed})
+	missing := poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p/warm-count",
+		map[string]any{"confirm": true})
+	if missing.Code != http.StatusBadRequest {
+		t.Errorf("missing minWarm: got %d, want 400", missing.Code)
+	}
+	negative := poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p/warm-count",
+		map[string]any{"minWarm": -1, "confirm": true})
+	if negative.Code != http.StatusBadRequest {
+		t.Errorf("negative minWarm: got %d, want 400", negative.Code)
+	}
+}
+
 func TestUpdatePoolRejectsBadIsolation(t *testing.T) {
 	router, store, _, _ := newPoolAdmin(t)
 	_ = store.Create(context.Background(), poolstore.Pool{Name: "p", IsolationProfile: isolation.ProfileSandboxed})

@@ -39634,7 +39634,9 @@ Step 2 (line 5177) then has the agent read `severity: "critical"` and `runbook: 
 
 ---
 
-### - [ ] F-25.17.3 — 17-03 — `PUT /v1/admin/pools/{name}/warm-count` is not implemented; the runbook and §25.17 example reference a path the gateway does not serve [High] — OPEN
+### - [x] F-25.17.3 — 17-03 — `PUT /v1/admin/pools/{name}/warm-count` is not implemented; the runbook and §25.17 example reference a path the gateway does not serve [High] — CLOSED
+
+**Resolution.** Added the §25.17 `PUT /v1/admin/pools/{name}/warm-count` sub-route (option (a)): `handleUpdatePoolWarmCount` accepts the operability `{"minWarm", "confirm"}` body, applies the §25.2 dry-run/confirm convention (preview without `confirm:true`), and delegates to the new shared `applyPoolUpdate` core so the §15.1 validation, audit emission, and §4.6.2 sync-status response all apply. Registered on the `manage_pools` gate next to the existing PUT and documented in `openapi.json` (commit 7b67e891).
 
 **Potential overlap** (confidence: high) — F-25.17.11 — Both concern warm-count mutation, but one is the missing lenny-ctl pool subcommand and the other is the missing PUT /v1/admin/pools/{name}/warm-count gateway route.
 
@@ -39730,7 +39732,9 @@ Line 5264 states the audit trail "shows four calls tied to operation `550e8400-.
 
 ---
 
-### - [ ] F-25.17.7 — 17-07 — `DiagnosePool` does not populate `suggestedActions`, and `bottleneck.details` is missing [Medium] — OPEN
+### - [x] F-25.17.7 — 17-07 — `DiagnosePool` does not populate `suggestedActions`, and `bottleneck.details` is missing [Medium] — CLOSED
+
+**Resolution.** `DiagnosePool` now populates both: a `DEMAND_EXCEEDS_SUPPLY` bottleneck yields a `SCALE_WARM_POOL` `suggestedAction` (endpoint `PUT /v1/admin/pools/{name}/warm-count`, body `{"minWarm": current+10}`, runbook `warm-pool-exhaustion`, confidence/risk set per §25.6 line 473 ranked-alternatives contract); infrastructure bottlenecks carry no auto-applicable action (cluster-side fix). `PoolBottleneck` gained `Details json.RawMessage` (spec line 2861-2867), filled per category from `PoolSignals` (claim/replenishment rates, or the matching failure count). `PoolConfigSummary` gained `maxPods`/`image` per the §25.17 line 5195 sample. Commit 7b67e891.
 
 **Spec:** §25.17 Step 3 response (lines 5189–5206):
 

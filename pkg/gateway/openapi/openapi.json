@@ -1533,6 +1533,18 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/pools/{name}/warm-count": {
+      "put": {
+        "summary": "Set a pool's warm count (§25.17 operability scale path)",
+        "x-lenny-mcp-tool": "admin.set_pool_warm_count",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/pools/{name}/tenant-access": {
       "post": {
         "summary": "Grant a tenant access to a pool",

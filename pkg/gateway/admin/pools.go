@@ -621,6 +621,67 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
+	r.applyPoolUpdate(w, req, name, body)
+}
+
+// WarmCountRequest is the §25.17 PUT /v1/admin/pools/{name}/warm-count
+// body. The agent-operability worked example and the warm-pool-exhaustion
+// runbook address the pool's warm count by the field name `minWarm` and
+// gate the mutation behind a confirm flag, distinct from the §15.1
+// UpdatePoolRequest `warmCount` field name. spec: §25.17 lines 5232-5239.
+type WarmCountRequest struct {
+	MinWarm *int `json:"minWarm"`
+	Confirm bool `json:"confirm"`
+}
+
+// handleUpdatePoolWarmCount serves the §25.17 PUT
+// /v1/admin/pools/{name}/warm-count sub-route the diagnostic
+// suggestedAction and the runbook point at. It maps the operability
+// `minWarm` field onto the §15.1 warm-count update and delegates to the
+// shared pool-update path so the same validation, audit emission, and
+// sync-status resolution apply. spec: §25.17 lines 5232-5239.
+func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	var body WarmCountRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	if body.MinWarm == nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "minWarm is required", nil)
+		return
+	}
+	if *body.MinWarm < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "minWarm must not be negative", nil)
+		return
+	}
+	// spec: §25.17 line 5238 — the scale request carries confirm:true; the
+	// §25.2 dry-run/confirm convention returns a preview without confirm so
+	// a retried watchdog does not scale on an exploratory call.
+	if !body.Confirm {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"dryRun": true,
+			"preview": map[string]any{
+				"pool":          name,
+				"field":         "minWarm",
+				"proposedValue": *body.MinWarm,
+				"warnings": []string{
+					"This sets the warm count for pool " + name +
+						". Re-run with confirm:true to apply.",
+				},
+			},
+		})
+		return
+	}
+	warmCount := *body.MinWarm
+	r.applyPoolUpdate(w, req, name, UpdatePoolRequest{WarmCount: &warmCount})
+}
+
+// applyPoolUpdate validates the §15.1 pool-update body, applies it, emits
+// the audit event, and writes the §4.6.2 sync-status response. It is the
+// shared core of the PUT /v1/admin/pools/{name} handler and the §25.17
+// warm-count sub-route.
+func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) {
 	if body.IsolationProfile != nil && *body.IsolationProfile != "" &&
 		!isolation.IsValid(isolation.Profile(*body.IsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",

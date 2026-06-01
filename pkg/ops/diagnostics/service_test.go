@@ -4,6 +4,7 @@ package diagnostics_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
@@ -132,6 +133,86 @@ func TestDiagnosePoolNotFound(t *testing.T) {
 	_, err := svc.DiagnosePool(context.Background(), "ghost")
 	if diagnostics.CodeOf(err) != diagnostics.ErrCodePoolNotFound {
 		t.Errorf("err code = %q, want POOL_NOT_FOUND", diagnostics.CodeOf(err))
+	}
+}
+
+// TestDiagnosePoolDemandSuggestsScale covers §25.17 lines 5199-5216 — a
+// DEMAND_EXCEEDS_SUPPLY bottleneck populates bottleneck.details with the
+// two compared rates and a SCALE_WARM_POOL suggestedAction pointing at the
+// warm-count sub-route with minWarm = current + 10.
+func TestDiagnosePoolDemandSuggestsScale_spec_25_17(t *testing.T) {
+	svc := diagnostics.NewService(fakeSource{pool: diagnostics.PoolRecord{
+		Name:      "default-gvisor",
+		Config:    diagnostics.PoolConfigSummary{MinWarm: 5},
+		Signals:   diagnostics.PoolSignals{ReplenishmentRate: 0.8, ClaimRate: 4.2},
+		CRDSynced: true,
+		Found:     true,
+	}})
+	diag, err := svc.DiagnosePool(context.Background(), "default-gvisor")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if diag.Bottleneck == nil || diag.Bottleneck.Category != diagnostics.BottleneckDemandExceedsSupply {
+		t.Fatalf("bottleneck = %+v, want DEMAND_EXCEEDS_SUPPLY", diag.Bottleneck)
+	}
+	var details map[string]any
+	if err := json.Unmarshal(diag.Bottleneck.Details, &details); err != nil {
+		t.Fatalf("details unmarshal: %v", err)
+	}
+	if details["claimRate"] != 4.2 || details["replenishmentRate"] != 0.8 {
+		t.Errorf("details = %v, want claimRate=4.2 replenishmentRate=0.8", details)
+	}
+	if len(diag.SuggestedActions) != 1 {
+		t.Fatalf("suggestedActions has %d entries, want 1", len(diag.SuggestedActions))
+	}
+	act := diag.SuggestedActions[0]
+	if act.Action != "SCALE_WARM_POOL" {
+		t.Errorf("action = %q, want SCALE_WARM_POOL", act.Action)
+	}
+	if act.Endpoint != "PUT /v1/admin/pools/default-gvisor/warm-count" {
+		t.Errorf("endpoint = %q, want the warm-count sub-route", act.Endpoint)
+	}
+	if act.Runbook != "warm-pool-exhaustion" {
+		t.Errorf("runbook = %q, want warm-pool-exhaustion", act.Runbook)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(act.Body, &body); err != nil {
+		t.Fatalf("action body unmarshal: %v", err)
+	}
+	if body["minWarm"] != float64(15) {
+		t.Errorf("body.minWarm = %v, want 15 (current 5 + 10)", body["minWarm"])
+	}
+}
+
+// TestDiagnosePoolFailureBottleneckHasNoScaleAction covers §25.6 — an
+// infrastructure bottleneck (image pull) reports its failure count in
+// details but carries no auto-applicable suggestedAction, since the fix
+// is cluster-side rather than an API scale.
+func TestDiagnosePoolFailureBottleneckHasNoScaleAction_spec_25_6(t *testing.T) {
+	svc := diagnostics.NewService(fakeSource{pool: diagnostics.PoolRecord{
+		Name:      "default-gvisor",
+		Config:    diagnostics.PoolConfigSummary{MinWarm: 5, MaxPods: 50, Image: "ghcr.io/acme/agent:1"},
+		Signals:   diagnostics.PoolSignals{ImagePullFailures: 3},
+		CRDSynced: true,
+		Found:     true,
+	}})
+	diag, err := svc.DiagnosePool(context.Background(), "default-gvisor")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if len(diag.SuggestedActions) != 0 {
+		t.Errorf("suggestedActions = %v, want empty for an infrastructure bottleneck", diag.SuggestedActions)
+	}
+	var details map[string]any
+	if err := json.Unmarshal(diag.Bottleneck.Details, &details); err != nil {
+		t.Fatalf("details unmarshal: %v", err)
+	}
+	if details["imagePullFailures"] != float64(3) {
+		t.Errorf("details = %v, want imagePullFailures=3", details)
+	}
+	// §25.17 line 5195 — config carries maxPods and image alongside minWarm.
+	if diag.Config.MaxPods != 50 || diag.Config.Image != "ghcr.io/acme/agent:1" {
+		t.Errorf("config = %+v, want maxPods=50 image set", diag.Config)
 	}
 }
 
