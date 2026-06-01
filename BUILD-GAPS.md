@@ -12170,7 +12170,7 @@ Spec: line 161 ("monitor the `lenny_gateway_sigkill_streams_total` metric (strea
 
 Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:98`. No emitter exists, which follows from F6 (no preStop hook to drive the metric).
 
-**Resolution:** F6 (the preStop staged drain) has since landed in `pkg/gateway/prestop`. Added the `lenny_gateway_sigkill_streams_total{pool,service_instance_id}` counter to `gatewaymetrics`, extended the prestop `CapMetricsEmitter` interface with `IncSigkillStreams`, and emit it once per session whose eviction checkpoint returns `context.DeadlineExceeded` during the drain — those are the in-flight streams the kubelet SIGKILLs at the grace deadline. The hook `Summary` also reports `sigkilled_streams`. Three tier-1 unit tests cover the deadline-exceeded emission, the non-deadline-failure no-emit path, and the label values.
+**Resolution:** F6 (the preStop staged drain) has since landed in `pkg/gateway/prestop`. Added the `lenny_gateway_sigkill_streams_total{pool,service_instance_id}` counter to `gatewaymetrics`, extended the prestop `CapMetricsEmitter` interface with `IncSigkillStreams`, and emit it once per session whose eviction checkpoint returns `context.DeadlineExceeded` during the drain — those are the in-flight streams the kubelet SIGKILLs at the grace deadline. The hook `Summary` also reports `sigkilled_streams`. Three tier-1 unit tests cover the deadline-exceeded emission, the non-deadline-failure no-emit path, and the label values. (commit 7655a55a)
 
 ### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — DEFERRED
 
@@ -13316,7 +13316,7 @@ Implementation:
 
 Severity is Medium because the K8s defaults do roll. The gap is the absence of an explicit, auditable rolling-update strategy that survives chart customization (a user setting `gateway.deployment.strategy: Recreate` would silently breaks the §10.5 invariant).
 
-**Resolution:** The gateway already carried an explicit `strategy` block (F-4.1.2). Added the matching `spec.strategy.type: RollingUpdate` block to `controller-deployment.yaml` (maxUnavailable 1 / maxSurge 1, leader-election-aware) and `token-service-deployment.yaml` (maxUnavailable 0 / maxSurge 1, zero-downtime on the auth path), each driven by a new operator-tunable `controller.rollingUpdate` / `tokenService.rollingUpdate` values block so the posture is auditable and survives chart customization. Four helm-unittest cases assert the default and override paths.
+**Resolution:** The gateway already carried an explicit `strategy` block (F-4.1.2). Added the matching `spec.strategy.type: RollingUpdate` block to `controller-deployment.yaml` (maxUnavailable 1 / maxSurge 1, leader-election-aware) and `token-service-deployment.yaml` (maxUnavailable 0 / maxSurge 1, zero-downtime on the auth path), each driven by a new operator-tunable `controller.rollingUpdate` / `tokenService.rollingUpdate` values block so the posture is auditable and survives chart customization. Four helm-unittest cases assert the default and override paths. (commit 7655a55a)
 
 ### - [x] F-10.5.10 — 10  Down-migration runbook references nonexistent CLI surface [Low] — CLOSED
 
