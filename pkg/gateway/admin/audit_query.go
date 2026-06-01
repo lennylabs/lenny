@@ -3,7 +3,9 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -11,7 +13,63 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	auditcat "github.com/lennylabs/lenny/pkg/observability/audit"
 )
+
+// scopeRawCanonical and scopeRetranslate are the §25.9 scope strings
+// gating the audit-recovery surface, in the §15.2 canonical
+// `tools:<domain>:<action>` taxonomy form (the spec's shorthand
+// `audit:raw-canonical:read` / `audit:retranslate` map onto the
+// `audit` domain, matching the `audit:republish` aka
+// `tools:audit:republish` convention §25.9 names). HasScope returns
+// true when the JWT carries no scope claim, so the surrounding
+// requireAuditReader role gate still applies in that case.
+//
+// spec: §25.9 line 3653, line 3662; §15.2 scope taxonomy.
+const (
+	scopeRawCanonical = "tools:audit:raw_canonical_read"
+	scopeRetranslate  = "tools:audit:retranslate"
+)
+
+// auditTranslationLog is the optional §25.9 OCSF-translation-state
+// surface. The Postgres-backed auditstore implements it; the in-memory
+// audit.ChainSet does not, because it translates inline at query time
+// and never dead-letters a row. When the wired backend does not
+// implement it, every row is treated as `succeeded` (translated
+// inline) and the retranslate endpoint reports rows ineligible.
+//
+// spec: §11.7 lines 422-426 (the ocsf_translation_state machine).
+type auditTranslationLog interface {
+	TranslationState(ctx context.Context, tenantID string, seq uint64) (audit.OCSFTranslationState, int, error)
+	SetTranslationState(ctx context.Context, tenantID string, seq uint64, state audit.OCSFTranslationState, retryCount int) error
+}
+
+// rowTranslationState resolves a row's §11.7 ocsf_translation_state.
+// Backends without translation-state tracking translate inline at
+// query time, so their rows are reported `succeeded`.
+func (r *Router) rowTranslationState(ctx context.Context, tenant string, seq uint64) (audit.OCSFTranslationState, int, error) {
+	ts, ok := r.auditLog.(auditTranslationLog)
+	if !ok {
+		return audit.OCSFSucceeded, 0, nil
+	}
+	return ts.TranslationState(ctx, tenant, seq)
+}
+
+// rowToCanonical projects a canonical audit row onto the §25.9
+// raw-canonical wire tuple — the exact field set Postgres hashed over,
+// for chain auditors recomputing the hash independently.
+func rowToCanonical(row audit.Row) AuditEventPayload {
+	return AuditEventPayload{
+		Seq:       row.Seq,
+		TenantID:  row.TenantID,
+		EventType: row.EventType,
+		Payload:   row.Payload,
+		Timestamp: row.Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
+		PrevHash:  row.PrevHash,
+		Hash:      row.Hash,
+		Redacted:  row.Redacted,
+	}
+}
 
 // AuditEventPayload is the §25.9 audit-event canonical Postgres tuple.
 // The default response wire form is the OCSF translation per §4.4
@@ -150,10 +208,35 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		limit = n
 	}
 
+	// spec: §25.9 line 3659 — ?ocsf_translation_state filters rows by
+	// the §11.7 translator state (pending | retry_pending | succeeded |
+	// dead_lettered). Combining filters is AND. An unparseable value is
+	// rejected rather than ignored.
+	var stateFilter audit.OCSFTranslationState
+	if v := req.URL.Query().Get("ocsf_translation_state"); v != "" {
+		stateFilter = audit.OCSFTranslationState(v)
+		if !stateFilter.IsValid() {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"ocsf_translation_state must be one of pending, retry_pending, succeeded, dead_lettered", nil)
+			return
+		}
+	}
+
 	items := make([]json.RawMessage, 0, limit)
 	for _, row := range rows {
 		if row.Seq <= afterSeq {
 			continue
+		}
+		if stateFilter != "" {
+			st, _, serr := r.rowTranslationState(req.Context(), tenant, row.Seq)
+			if serr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"audit translation-state lookup failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+serr.Error(), nil)
+				return
+			}
+			if st != stateFilter {
+				continue
+			}
 		}
 		ocsfBytes, terr := translateRowToOCSF(row)
 		if terr != nil {
@@ -191,6 +274,18 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
 		return
 	}
+	// spec: §25.9 line 3653 — ?format=raw-canonical returns the
+	// Lenny-internal canonical tuple (pre-OCSF) for chain auditors who
+	// recompute the hash against the exact bytes Postgres hashed over.
+	// Scope-restricted to audit:raw-canonical:read.
+	rawCanonical := req.URL.Query().Get("format") == "raw-canonical"
+	if rawCanonical {
+		if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRawCanonical) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"raw-canonical format requires the audit:raw-canonical:read scope", nil)
+			return
+		}
+	}
 	rows, err := r.auditLog.Rows(req.Context(), tenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -199,6 +294,11 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	}
 	for _, row := range rows {
 		if row.Seq == seq {
+			if rawCanonical {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(rowToCanonical(row))
+				return
+			}
 			ocsfBytes, terr := translateRowToOCSF(row)
 			if terr != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -279,5 +379,138 @@ func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// retranslateRequest is the §25.9 POST .../retranslate body. The
+// translatorVersion is optional and defaults to the active translator.
+type retranslateRequest struct {
+	TranslatorVersion string `json:"translatorVersion"`
+}
+
+// retranslateResponse echoes the updated row state and the receiving
+// translator version per §25.9.
+type retranslateResponse struct {
+	Seq                  uint64 `json:"seq"`
+	OCSFTranslationState string `json:"ocsfTranslationState"`
+	TranslatorVersion    string `json:"translatorVersion"`
+}
+
+// handleRetranslateAuditEvent implements
+// POST /v1/admin/audit-events/{seq}/retranslate. It re-queues a single
+// audit row for OCSF translation after a translator-version bump or a
+// schema-gap fix. Only rows in retry_pending or dead_lettered are
+// eligible; other rows return 409 ocsf_translation_not_retryable. A
+// redacted dead-letter row returns 410 DEADLETTER_REDACTED because its
+// canonical payload was rewritten by the §12.8 GDPR erasure path and
+// cannot be re-translated. On success the row transitions back to
+// pending for the next translator sweep.
+//
+// spec: §25.9 line 3662; §11.7 lines 418, 424 (DEADLETTER_REDACTED on
+// a redacted dead-letter row).
+func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Request) {
+	tenant, ok := r.auditTenant(w, req)
+	if !ok {
+		return
+	}
+	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRetranslate) {
+		writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"retranslate requires the audit:retranslate scope", nil)
+		return
+	}
+	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
+		return
+	}
+	var body retranslateRequest
+	if req.Body != nil {
+		raw, _ := io.ReadAll(io.LimitReader(req.Body, 1<<16))
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid JSON body", nil)
+				return
+			}
+		}
+	}
+
+	ts, ok := r.auditLog.(auditTranslationLog)
+	if !ok {
+		// Backends without translation-state tracking translate inline at
+		// query time, so no row is ever retry_pending or dead_lettered.
+		writeError(w, http.StatusConflict, "ocsf_translation_not_retryable",
+			"audit backend translates inline; no row is eligible for retranslation", nil)
+		return
+	}
+
+	// Locate the row to honor the §11.7 DEADLETTER_REDACTED rule before
+	// touching translator state.
+	rows, err := r.auditLog.Rows(req.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit query failed: "+err.Error(), nil)
+		return
+	}
+	var found *audit.Row
+	for i := range rows {
+		if rows[i].Seq == seq {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "audit event not found", nil)
+		return
+	}
+
+	state, _, err := ts.TranslationState(req.Context(), tenant, seq)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit translation-state lookup failed: "+err.Error(), nil)
+		return
+	}
+
+	// spec: §11.7 line 424 — a retranslate against a redacted
+	// dead-letter row is rejected: the canonical payload was rewritten
+	// by the §12.8 erasure step and the original bytes are gone.
+	if found.Redacted && state == audit.OCSFDeadLettered {
+		writeError(w, http.StatusGone, "DEADLETTER_REDACTED",
+			"the dead-lettered row was GDPR-redacted and cannot be re-translated", nil)
+		return
+	}
+
+	if state != audit.OCSFRetryPending && state != audit.OCSFDeadLettered {
+		writeError(w, http.StatusConflict, "ocsf_translation_not_retryable",
+			"only retry_pending or dead_lettered rows are eligible for retranslation; row is "+string(state), nil)
+		return
+	}
+
+	// Reset to pending and clear the retry counter so the next
+	// translator sweep re-runs translation against the active version.
+	if err := ts.SetTranslationState(req.Context(), tenant, seq, audit.OCSFPending, 0); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit translation-state update failed: "+err.Error(), nil)
+		return
+	}
+
+	version := body.TranslatorVersion
+	if version == "" {
+		version = ocsf.TranslatorVersion
+	}
+	if p, pok := authmw.FromContext(req.Context()); pok {
+		r.emit(req.Context(), p, auditcat.EventAuditOcsfRetranslateRequested.String(),
+			"audit-event/"+strconv.FormatUint(seq, 10), map[string]any{
+				"tenantId":          tenant,
+				"seq":               seq,
+				"priorState":        string(state),
+				"translatorVersion": version,
+			})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(retranslateResponse{
+		Seq:                  seq,
+		OCSFTranslationState: string(audit.OCSFPending),
+		TranslatorVersion:    version,
+	})
 }
 

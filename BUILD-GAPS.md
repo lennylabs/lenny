@@ -17220,7 +17220,7 @@ them.
 Downgraded relative to F-11.7-01 because this finding is the
 state-machine sub-symptom and F-11.7-01 captures the root absence.
 
-### - [ ] F-11.7.12 — 12  No `GET /v1/admin/audit-events/{id}?format=raw-canonical` or `POST /v1/admin/audit-events/{id}/retranslate` endpoint; no `?ocsf_translation_state=dead_lettered` filter [Medium] — OPEN
+### - [x] F-11.7.12 — 12  No `GET /v1/admin/audit-events/{id}?format=raw-canonical` or `POST /v1/admin/audit-events/{id}/retranslate` endpoint; no `?ocsf_translation_state=dead_lettered` filter [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.9.4 — Both report the missing POST /v1/admin/audit-events/{id}/retranslate endpoint (and related dead-letter query surface).
 
@@ -17253,7 +17253,7 @@ endpoint does not exist.
 
 **Severity:** Medium — operability gap on the audit-recovery surface.
 
-### - [x] F-11.7.13 — 13  `AuditEvent` plumbing omits `operation_id` and `caller_kind` fields [Medium] — CLOSED
+**Resolution:** `audit_query.go` now serves the audit-recovery surface. `GET /v1/admin/audit-events/{seq}?format=raw-canonical` returns the pre-OCSF canonical tuple, scope-gated on `tools:audit:raw_canonical_read`. `GET /v1/admin/audit-events?ocsf_translation_state=` filters by the §11.7 translator state (enum-validated; an unparseable value is 400). `POST /v1/admin/audit-events/{seq}/retranslate` (scope `tools:audit:retranslate`) resets eligible rows (`retry_pending`/`dead_lettered`) to `pending` via the optional `auditTranslationLog` interface the Postgres `auditstore.Store` satisfies, rejects other rows with `409 ocsf_translation_not_retryable`, returns `410 DEADLETTER_REDACTED` for a redacted dead-letter row (the §11.7 line-424 GDPR rule, keyed off `audit.Row.Redacted`), and emits `audit.ocsf_retranslate_requested`. The in-memory ChainSet backend translates inline, so it reports rows ineligible. Full Postgres enforcement of the 410 rule depends on the redaction-receipt persistence (separate §12.8 gap) surfacing `Redacted` through `auditstore.scanRow`. Closes F-25.9.4 (dup). Commit pending below. — 13  `AuditEvent` plumbing omits `operation_id` and `caller_kind` fields [Medium] — CLOSED
 
 **Spec:** §11.7 lines 347–348 — every audit event MUST carry the
 optional `operation_id` (from `X-Lenny-Operation-ID`) and
@@ -38012,9 +38012,11 @@ where `AuditEventPayload` (lines 15-25) carries `seq`, `tenantId`, `eventType`, 
 
 `handleListAuditEvents` performs `r.auditLog.Rows(req.Context(), tenant)` (line 91) which fetches all rows for the tenant via `auditstore.Rows` (`pkg/gateway/auditstore/auditstore.go:111-134`, `SELECT ... FROM audit_log WHERE tenant_id = $1 ORDER BY sequence_number`) before applying `afterSeq` and `limit` in-process. Unbounded queries are not disabled by policy, no time-range cap is enforced, and the spec'd `AUDIT_QUERY_TOO_BROAD` error code is unused in the repository. The full-table read pattern is also a scalability problem in its own right.
 
-### - [ ] F-25.9.4 — `retranslate` endpoint not implemented [High] — OPEN
+### - [x] F-25.9.4 — `retranslate` endpoint not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-11.7.12 — Both report the missing POST /v1/admin/audit-events/{id}/retranslate endpoint (and related dead-letter query surface).
+
+**Resolution:** Closed by F-11.7.12 (same commit). `POST /v1/admin/audit-events/{seq}/retranslate` is registered, gated on the `tools:audit:retranslate` scope, accepts the optional `{"translatorVersion"}` body, restricts eligibility to `retry_pending`/`dead_lettered` (else `409 ocsf_translation_not_retryable`), resets the row to `pending`, and emits `audit.ocsf_retranslate_requested`.
 
 `§25.9` line 3662 specifies `POST /v1/admin/audit-events/{id}/retranslate` with body `{"translatorVersion": "<semver>"}`, eligibility restricted to `ocsf_translation_state IN ('retry_pending', 'dead_lettered')`, `409 ocsf_translation_not_retryable` for other rows, `audit:retranslate` scope, and `audit.ocsf_retranslate_requested` emission.
 
@@ -38036,11 +38038,13 @@ No matching route is registered (`grep -rn "audit-partitions" pkg/` returns no m
 
 `§25.9` line 3661 specifies `GET /v1/admin/audit-events/summary` with `?since=`, `?until=`, `?groupBy=eventType|actorId|resourceType`. No such handler or route exists; the mux in `pkg/gateway/admin/tenants.go:484-486` lacks any `/summary` route, and the codebase does not reference `groupBy`. Investigators that need aggregate counts must page through the full event list manually.
 
-### - [ ] F-25.9.8 — `format=raw-canonical` not implemented; scope absent [High] — OPEN
+### - [x] F-25.9.8 — `format=raw-canonical` not implemented; scope absent [High] — CLOSED
 
 `§25.9` line 3653 mandates a scope-restricted `?format=raw-canonical` parameter that returns the Lenny-internal canonical tuple "for chain auditors who need to verify the hash chain against the exact bytes Postgres hashed over", requiring the `audit:raw-canonical:read` scope.
 
 Implementation inverts the default: the standard list response is already the raw canonical tuple (see High #1) and there is no OCSF path. The `audit:raw-canonical:read` scope name is not present anywhere in `pkg/` or `internal/`. Chain auditors and OCSF consumers cannot distinguish between the two formats at the protocol level.
+
+**Resolution:** Closed by F-11.7.12 (same commit). The default list/get wire form is already the OCSF envelope (fixed in the prior OCSF-default rewrite); `GET /v1/admin/audit-events/{seq}?format=raw-canonical` now returns the pre-OCSF canonical tuple (`AuditEventPayload`), gated on the §15.2-canonical `tools:audit:raw_canonical_read` scope (the spec shorthand `audit:raw-canonical:read` on the `audit` domain). A caller carrying a scope claim lacking it receives 403; an absent scope claim defers to the platform/tenant-admin role ceiling per §25.1.
 
 ### - [ ] F-25.9.9 — `chainIntegrity` per-row field is never populated by query responses [High] — OPEN
 

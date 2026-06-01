@@ -613,6 +613,11 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))
 		mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))
 		mux.Handle("GET /v1/admin/audit-events/{seq}", r.requireAuditReader(http.HandlerFunc(r.handleGetAuditEvent)))
+		// §25.9 line 3662 audit-recovery: re-queue a row for OCSF
+		// translation after a translator-version bump. Scope-gated on
+		// audit:retranslate inside the handler.
+		mux.Handle("POST /v1/admin/audit-events/{seq}/retranslate",
+			r.requireAuditReader(http.HandlerFunc(r.handleRetranslateAuditEvent)))
 	}
 	if r.platformWired {
 		// §25.3 platform introspection. Version + config are
