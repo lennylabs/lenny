@@ -229,11 +229,11 @@ func TestHardPrune(t *testing.T) {
 // diagnosis: when KMSKeyResolver returns a non-empty key, the writer's KMSKeyName is set.
 func TestPutAppliesKMSResolver(t *testing.T) {
 	f := newFakeGCS()
-	store := newWithClient(f, "lenny-test", func(u blobstore.URI) string {
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
 		if u.TenantID == "acme" {
-			return "projects/p/locations/us/keyRings/r/cryptoKeys/k-acme"
+			return "projects/p/locations/us/keyRings/r/cryptoKeys/k-acme", true, nil
 		}
-		return ""
+		return "", false, nil
 	})
 	u := testURI("acme", "s1", "p1")
 	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
@@ -242,6 +242,67 @@ func TestPutAppliesKMSResolver(t *testing.T) {
 	got := f.objects[objectKey(u)].kmsKeyName
 	if got != "projects/p/locations/us/keyRings/r/cryptoKeys/k-acme" {
 		t.Errorf("KMSKeyName: got %q", got)
+	}
+}
+
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// fail-closed contract: a resolver returning (requireKey=true, err)
+// for a T4 tenant rejects the write with
+// blobstore.ErrClassificationControlViolation, persists nothing, and
+// fires the KMS-unavailable hook.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
+	f := newFakeGCS()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", true, errors.New("cloud kms unreachable")
+	})
+	var fired string
+	store.SetOnKMSUnavailable(func(tenantID string) { fired = tenantID })
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+	if _, ok := f.objects[objectKey(u)]; ok {
+		t.Errorf("object persisted on fail-closed rejection")
+	}
+	if fired != "acme" {
+		t.Errorf("onKMSUnavailable: got %q, want acme", fired)
+	}
+}
+
+// TestPutFailsClosedWhenT4ResolverEmptyKey asserts a T4 tenant whose
+// resolver returns (requireKey=true) with an empty key fails closed
+// rather than falling through to the bucket default.
+//
+// spec: §12.5 line 303.
+func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
+	f := newFakeGCS()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", true, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+}
+
+// TestPutT3EmptyKeyFallsThrough asserts the T3 path: a resolver that
+// returns (requireKey=false) with an empty key admits the write under
+// the bucket default with no per-object KMS key.
+//
+// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
+	f := newFakeGCS()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", false, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if got := f.objects[objectKey(u)].kmsKeyName; got != "" {
+		t.Errorf("KMSKeyName: got %q, want empty (bucket default)", got)
 	}
 }
 

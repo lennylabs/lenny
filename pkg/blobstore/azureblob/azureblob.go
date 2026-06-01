@@ -41,9 +41,20 @@ type objectClient interface {
 	List(ctx context.Context) ([]string, error)
 }
 
-// CPKResolver returns the per-tenant customer-provided key info. The
-// caller passes nil when the storage-account default applies.
-type CPKResolver func(u blobstore.URI) *blob.CPKInfo
+// CPKResolver returns the per-tenant customer-provided key info.
+//
+// Return semantics mirror the §4.5 MinIO backend so every artifact
+// store fails closed identically for a T4 tenant (§12.5 line 303):
+//   - (cpk, requireKey=false, nil) — use cpk when non-nil, otherwise
+//     fall through to the storage-account default (the T3 path).
+//   - (cpk, requireKey=true, nil) — T4 tenant. The Put MUST wrap under
+//     cpk; a nil cpk fails closed.
+//   - (nil, true, err) — T4 tenant whose key is unreachable at the
+//     resolver level. The Put fails closed with
+//     blobstore.ErrClassificationControlViolation.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+type CPKResolver func(u blobstore.URI) (cpk *blob.CPKInfo, requireKey bool, err error)
 
 // Config configures a Store.
 type Config struct {
@@ -68,6 +79,7 @@ type Store struct {
 	container             string
 	resolver              CPKResolver
 	onArtifactUploadError func(tenantID, errorType string)
+	onKMSUnavailable      func(tenantID string)
 }
 
 // SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
@@ -78,6 +90,51 @@ type Store struct {
 // spec: §16.5 ArtifactUploadError.
 func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
+}
+
+// SetOnKMSUnavailable registers the §12.5 line 303 fail-closed write
+// callback the gateway uses to drive
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// whenever a Put rejects a T4 tenant whose per-tenant key is
+// unavailable.
+//
+// spec: §12.5 line 303.
+func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
+	s.onKMSUnavailable = fn
+}
+
+// resolveCPK resolves the per-tenant customer-provided key for u,
+// failing closed for a T4 tenant whose key is unavailable. A nil
+// returned *blob.CPKInfo leaves the storage-account default in force
+// (the T3 path).
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func (s *Store) resolveCPK(u blobstore.URI) (*blob.CPKInfo, error) {
+	if s.resolver == nil {
+		return nil, nil
+	}
+	cpk, requireKey, err := s.resolver(u)
+	switch {
+	case err != nil && requireKey:
+		s.fireKMSUnavailable(u.TenantID)
+		return nil, fmt.Errorf("%w: tenant=%s: %v", blobstore.ErrClassificationControlViolation, u.TenantID, err)
+	case err != nil:
+		return nil, fmt.Errorf("blobstore/azureblob: CPK resolver for tenant %s: %w", u.TenantID, err)
+	case requireKey && cpk == nil:
+		s.fireKMSUnavailable(u.TenantID)
+		return nil, fmt.Errorf("%w: tenant=%s: resolver returned no key", blobstore.ErrClassificationControlViolation, u.TenantID)
+	}
+	return cpk, nil
+}
+
+// fireKMSUnavailable invokes the gateway-registered hook on a
+// fail-closed T4 write rejection. It is a no-op when no hook is wired.
+//
+// spec: §12.5 line 303.
+func (s *Store) fireKMSUnavailable(tenantID string) {
+	if s.onKMSUnavailable != nil {
+		s.onKMSUnavailable(tenantID)
+	}
 }
 
 // classifyAzurePutError maps an Azure Blob write error onto the §16.5
@@ -193,10 +250,12 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	opts := &azblob.UploadBufferOptions{
 		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: &mimeType},
 	}
-	if s.resolver != nil {
-		if cpk := s.resolver(u); cpk != nil {
-			opts.CPKInfo = cpk
-		}
+	cpk, err := s.resolveCPK(u)
+	if err != nil {
+		return "", err
+	}
+	if cpk != nil {
+		opts.CPKInfo = cpk
 	}
 	if err := s.client.UploadBuffer(ctx, key, body, opts); err != nil {
 		if s.onArtifactUploadError != nil {

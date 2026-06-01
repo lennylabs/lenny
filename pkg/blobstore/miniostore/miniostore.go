@@ -80,11 +80,12 @@ type Config struct {
 
 // ErrClassificationControlViolation is the §12.5 ll. 303 fail-closed
 // write sentinel: a T4 tenant whose per-tenant SSE-KMS key is
-// unavailable at Put time. The §15.1 error catalog maps it to the
-// `CLASSIFICATION_CONTROL_VIOLATION` error code.
+// unavailable at Put time. It aliases the canonical
+// blobstore.ErrClassificationControlViolation so every §4.5 backend
+// raises one comparable error and `errors.Is` matches across stores.
 //
 // spec: §12.5 ll. 303.
-var ErrClassificationControlViolation = errors.New("miniostore: T4 tenant SSE-KMS key unavailable; CLASSIFICATION_CONTROL_VIOLATION")
+var ErrClassificationControlViolation = blobstore.ErrClassificationControlViolation
 
 // Store is the MinIO-backed §4.5 blobstore.Store. It is goroutine-safe;
 // the underlying MinIO client is safe for concurrent use.

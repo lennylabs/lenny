@@ -65,6 +65,19 @@ var (
 
 	// ErrInvalidURI — the URI does not match the §4.5 shape.
 	ErrInvalidURI = errors.New("blobstore: invalid lenny-blob URI")
+
+	// ErrClassificationControlViolation is the §12.5 line 303 / §12.9
+	// line 1046 fail-closed write sentinel: a T4 tenant whose per-tenant
+	// KMS key is unavailable at write time. Every §4.5 ArtifactStore
+	// backend (MinIO, S3, Azure, GCS) returns it — wrapped with the
+	// offending tenant id — so a Put never silently downgrades a T4
+	// tenant to a deployment-wide or bucket-default key. The §15.1 error
+	// catalog maps it to `CLASSIFICATION_CONTROL_VIOLATION` and the
+	// gateway counts each rejection in
+	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}.
+	//
+	// spec: §12.5 line 303; §12.9 line 1046.
+	ErrClassificationControlViolation = errors.New("blobstore: T4 tenant KMS key unavailable; CLASSIFICATION_CONTROL_VIOLATION")
 )
 
 // ObjectType is the §12.5 line 295 / §4.5 line 309 object-class tag

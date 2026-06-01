@@ -53,7 +53,18 @@ const (
 	// §12.8 "Inheritance": an environment must inherit or match the
 	// tenant region; a divergent value is REGION_CONSTRAINT_VIOLATED.
 	CodeRegionConstraintViolated = "REGION_CONSTRAINT_VIOLATED"
+
+	// CodeRegionCrossTransferProhibited rejects a T4 resource that
+	// resolves to a region other than its tenant's pinned region. §12.9
+	// line 1046 (data-residency row) tightens the T3 rule for a
+	// Restricted-tier tenant: cross-region transfer is prohibited for
+	// every region-bearing resource, not only environment-scoped ones.
+	CodeRegionCrossTransferProhibited = "REGION_CROSS_TRANSFER_PROHIBITED"
 )
+
+// TierT4 is the §12.9 Restricted classification tier. A request that
+// carries it triggers the cross-region-transfer-prohibited check.
+const TierT4 = "T4"
 
 // Request is the input to Decide. It carries the resolved region
 // configuration of the deployment plus the residency-relevant fields
@@ -85,6 +96,13 @@ type Request struct {
 	// Region is non-empty, Region must equal TenantRegion. A Tenant
 	// resource sets this false: a tenant has no parent to inherit from.
 	IsEnvironmentScoped bool
+
+	// WorkspaceTier is the §12.9 classification tier of the tenant the
+	// resource belongs to ("T1".."T4"), resolved by the webhook
+	// alongside TenantRegion. When it is TierT4 the §12.9 line 1046
+	// cross-region-transfer-prohibited rule applies. Empty defaults to
+	// the T1–T3 behavior (no extra constraint beyond the §12.8 rule).
+	WorkspaceTier string
 
 	// DeclaredRegions is the set of regions declared in the
 	// deployment's storage.regions Helm map. A resolved region absent
@@ -120,19 +138,40 @@ func (r Request) EffectiveRegion() string {
 // Decide applies the §12.8 data-residency admission rule.
 //
 // It admits a resource that declares no region and inherits none — an
-// unconstrained resource imposes no residency requirement. For an
-// Environment-scoped resource that declares a region differing from
-// its tenant's region it rejects with REGION_CONSTRAINT_VIOLATED
-// (§12.8 inheritance). Otherwise it resolves the effective region and
-// rejects with REGION_CONSTRAINT_UNRESOLVABLE when that region is not
-// declared in storage.regions. The check is fail-closed: any resolved
-// region the deployment cannot place is rejected, never admitted.
+// unconstrained resource imposes no residency requirement. For a T4
+// tenant it rejects with REGION_CROSS_TRANSFER_PROHIBITED when the
+// resource resolves to a region other than the tenant's pinned region,
+// regardless of scope (§12.9 line 1046). For an Environment-scoped
+// resource that declares a region differing from its tenant's region
+// it rejects with REGION_CONSTRAINT_VIOLATED (§12.8 inheritance).
+// Otherwise it resolves the effective region and rejects with
+// REGION_CONSTRAINT_UNRESOLVABLE when that region is not declared in
+// storage.regions. The check is fail-closed: any resolved region the
+// deployment cannot place is rejected, never admitted.
 func Decide(r Request) Decision {
 	// §12.8 inheritance: an environment-scoped resource may inherit the
 	// tenant region or restate it, but never diverge from it. This
 	// check runs before the storage.regions lookup so a divergent
 	// environment region is reported as a constraint violation rather
 	// than as an unresolvable region.
+	// §12.9 line 1046 (data-residency row): a T4 tenant prohibits
+	// cross-region transfer. The §12.8 inheritance rule below only
+	// constrains environment-scoped resources to their tenant region;
+	// for a Restricted-tier tenant the constraint extends to every
+	// region-bearing resource, so a session- or claim-scoped resource
+	// that resolves to a region other than the tenant's pinned region is
+	// a cross-region transfer and is rejected even when both regions are
+	// declared in storage.regions. This check runs first so the T4 case
+	// is reported with its dedicated code rather than as a generic
+	// environment-inheritance violation or an unresolvable region.
+	if r.WorkspaceTier == TierT4 && r.Region != "" && r.TenantRegion != "" &&
+		r.Region != r.TenantRegion {
+		return reject(CodeRegionCrossTransferProhibited, r.Kind, r.fieldName(),
+			fmt.Sprintf("declares dataResidencyRegion %q but its T4 tenant is pinned to %q; "+
+				"a Restricted-tier (T4) tenant prohibits cross-region transfer — data residency "+
+				"must match the tenant region", r.Region, r.TenantRegion))
+	}
+
 	if r.IsEnvironmentScoped && r.Region != "" && r.TenantRegion != "" &&
 		r.Region != r.TenantRegion {
 		return reject(CodeRegionConstraintViolated, r.Kind, r.fieldName(),

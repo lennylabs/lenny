@@ -156,6 +156,111 @@ func TestEnvironmentDivergingFromTenantRegionRejected(t *testing.T) {
 	}
 }
 
+// TestT4SessionScopedCrossRegionTransferRejected asserts the §12.9
+// line 1046 T4 rule: a non-environment-scoped resource (a session or
+// claim) that resolves to a region other than its T4 tenant's pinned
+// region is rejected as a cross-region transfer even though both
+// regions are declared in storage.regions. The same request under T3
+// is admitted (TestT3SessionScopedDifferentDeclaredRegionAdmitted),
+// which is the distinct enforcement layer T4 adds.
+//
+// spec: §12.9 line 1046 (data-residency row).
+func TestT4SessionScopedCrossRegionTransferRejected(t *testing.T) {
+	d := drv.Decide(drv.Request{
+		Kind:            "SandboxClaim",
+		WorkspaceTier:   drv.TierT4,
+		Region:          "us-east-1",
+		TenantRegion:    "eu-west-1",
+		DeclaredRegions: regions("eu-west-1", "us-east-1"),
+	})
+	if d.Allowed {
+		t.Fatal("a T4 cross-region transfer must be rejected even when both regions are declared")
+	}
+	if d.Code != 403 {
+		t.Errorf("code = %d, want 403", d.Code)
+	}
+	if !strings.Contains(d.Reason, drv.CodeRegionCrossTransferProhibited) {
+		t.Errorf("reason %q does not carry the REGION_CROSS_TRANSFER_PROHIBITED code", d.Reason)
+	}
+}
+
+// TestT3SessionScopedDifferentDeclaredRegionAdmitted asserts the T3
+// baseline the T4 rule tightens: a non-environment-scoped resource may
+// resolve to a declared region other than the tenant region under T3.
+//
+// spec: §12.9 line 1046 (T3 row).
+func TestT3SessionScopedDifferentDeclaredRegionAdmitted(t *testing.T) {
+	d := drv.Decide(drv.Request{
+		Kind:            "SandboxClaim",
+		WorkspaceTier:   "T3",
+		Region:          "us-east-1",
+		TenantRegion:    "eu-west-1",
+		DeclaredRegions: regions("eu-west-1", "us-east-1"),
+	})
+	if !d.Allowed {
+		t.Fatalf("a T3 session resolving to a declared region should be admitted: %+v", d)
+	}
+}
+
+// TestT4MatchingTenantRegionAdmitted asserts a T4 resource that
+// restates its tenant's pinned region imposes no cross-region transfer
+// and is admitted.
+//
+// spec: §12.9 line 1046.
+func TestT4MatchingTenantRegionAdmitted(t *testing.T) {
+	d := drv.Decide(drv.Request{
+		Kind:            "SandboxClaim",
+		WorkspaceTier:   drv.TierT4,
+		Region:          "eu-west-1",
+		TenantRegion:    "eu-west-1",
+		DeclaredRegions: regions("eu-west-1"),
+	})
+	if !d.Allowed {
+		t.Fatalf("a T4 resource matching its tenant region should be admitted: %+v", d)
+	}
+}
+
+// TestT4EnvironmentDivergenceReportedAsCrossTransfer asserts that when
+// a T4 environment diverges from its tenant region, the T4 cross-
+// region-transfer code takes precedence over the generic §12.8
+// environment-inheritance code, so the operator sees the Restricted-
+// tier rationale.
+//
+// spec: §12.9 line 1046.
+func TestT4EnvironmentDivergenceReportedAsCrossTransfer(t *testing.T) {
+	d := drv.Decide(drv.Request{
+		Kind:                "Environment",
+		IsEnvironmentScoped: true,
+		WorkspaceTier:       drv.TierT4,
+		Region:              "us-east-1",
+		TenantRegion:        "eu-west-1",
+		DeclaredRegions:     regions("eu-west-1", "us-east-1"),
+	})
+	if d.Allowed {
+		t.Fatal("a divergent T4 environment must be rejected")
+	}
+	if !strings.Contains(d.Reason, drv.CodeRegionCrossTransferProhibited) {
+		t.Errorf("reason %q should carry the T4 cross-transfer code, not the generic violation code", d.Reason)
+	}
+}
+
+// TestT4WithNoTenantRegionAdmitted asserts that a T4 resource whose
+// tenant pins no region has nothing to transfer across, so the cross-
+// region check does not fire (the effective-region path still applies).
+//
+// spec: §12.9 line 1046.
+func TestT4WithNoTenantRegionAdmitted(t *testing.T) {
+	d := drv.Decide(drv.Request{
+		Kind:            "SandboxClaim",
+		WorkspaceTier:   drv.TierT4,
+		Region:          "eu-west-1",
+		DeclaredRegions: regions("eu-west-1"),
+	})
+	if !d.Allowed {
+		t.Fatalf("a T4 resource with no pinned tenant region should be admitted: %+v", d)
+	}
+}
+
 func TestRejectionNamesOffendingField(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:            "SandboxClaim",

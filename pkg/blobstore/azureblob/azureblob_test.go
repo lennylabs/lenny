@@ -155,6 +155,64 @@ func TestPutRejectsConflict(t *testing.T) {
 	}
 }
 
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// fail-closed contract: a CPK resolver returning (requireKey=true, err)
+// for a T4 tenant rejects the write with
+// blobstore.ErrClassificationControlViolation, persists nothing, and
+// fires the KMS-unavailable hook.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
+	f := newFakeBlob()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {
+		return nil, true, errors.New("cpk vault unreachable")
+	})
+	var fired string
+	store.SetOnKMSUnavailable(func(tenantID string) { fired = tenantID })
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+	if _, ok := f.objects[objectKey(u)]; ok {
+		t.Errorf("object persisted on fail-closed rejection")
+	}
+	if fired != "acme" {
+		t.Errorf("onKMSUnavailable: got %q, want acme", fired)
+	}
+}
+
+// TestPutFailsClosedWhenT4ResolverNoKey asserts a T4 tenant whose
+// resolver returns (requireKey=true) with a nil CPKInfo fails closed
+// rather than falling through to the storage-account default.
+//
+// spec: §12.5 line 303.
+func TestPutFailsClosedWhenT4ResolverNoKey(t *testing.T) {
+	f := newFakeBlob()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {
+		return nil, true, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+}
+
+// TestPutT3NilCPKFallsThrough asserts the T3 path: a resolver returning
+// (requireKey=false) with a nil CPKInfo admits the write under the
+// storage-account default.
+//
+// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+func TestPutT3NilCPKFallsThrough(t *testing.T) {
+	f := newFakeBlob()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {
+		return nil, false, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+}
+
 // spec: §4.5 — Get on a missing URI returns ErrNotFound.
 // diagnosis: BlobNotFound surfaces as ErrNotFound.
 func TestGetMissing(t *testing.T) {

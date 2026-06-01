@@ -19797,7 +19797,8 @@ Consequence: spec readers and the rehydration query stipulated in §12.4 line
 to a column that does not exist. Whichever code path eventually wires
 rehydration must accommodate the rename or migrate the column.
 
-### - [ ] F-12.5.16 — fail-closed write rejection (`CLASSIFICATION_CONTROL_VIOLATION` / `kms_unavailable`) is not emitted (§12.5 line 303) [High] — OPEN
+### - [x] F-12.5.16 — fail-closed write rejection (`CLASSIFICATION_CONTROL_VIOLATION` / `kms_unavailable`) is not emitted (§12.5 line 303) [High] — CLOSED
+- **Resolution (two layers).** (1) MinIO (the production §4.5 ArtifactStore): already wired — `miniostore.Store.Put`/`Copy` reject a T4 tenant whose SSE-KMS key is unavailable with `CLASSIFICATION_CONTROL_VIOLATION`, the gateway resolver (`newSSEKeyResolver`) returns `requireKey=true` for every T4 tenant, and `SetOnKMSUnavailable` drives `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`. (2) The alternative cloud adapters this finding also flagged (S3, Azure, GCS) now fail closed identically: a shared `blobstore.ErrClassificationControlViolation` sentinel replaces the per-store one; each resolver signature carries a `requireKey bool, err error` dimension; `Put` (and S3 `Copy`) reject under `requireKey` when the resolver errors or returns an empty/nil key, persisting nothing; each store gained `SetOnKMSUnavailable`/`fireKMSUnavailable` so the same metric advances when these backends are wired. The §12.9 dup F-12.9.10 closes alongside. (commit `__BATCH_COMMIT__`)
 
 **Potential duplicate** (confidence: high) — F-12.9.10 — Both report that the fail-closed CLASSIFICATION_CONTROL_VIOLATION/kms_unavailable write rejection is never emitted, the MinIO path silently falling back to default encryption.
 
@@ -21310,7 +21311,8 @@ Evidence:
 
 ---
 
-### - [ ] F-12.9.8 — severity [Medium] — OPEN
+### - [x] F-12.9.8 — severity [Medium] — CLOSED
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body (same shape as F-12.9.15); the §12.9 Medium cluster lives in the sibling F-12.9.9..F-12.9.14 entries. No code surface to fix. (commit `__BATCH_COMMIT__`)
 
 ### - [ ] F-12.9.9 — 9-07 — No environment-level `workspaceTier` override (the spec promises a stricter-only env override) [Medium] — OPEN
 
@@ -21333,7 +21335,8 @@ gap is medium because the most-conservative posture (tenant-tier
 applies everywhere) is the safe default; the missing capability is a
 known shortcoming rather than a control bypass.
 
-### - [ ] F-12.9.10 — 9-08 — `CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable` is not emitted at write time when the T4 KMS key disappears between probes [Medium] — OPEN
+### - [x] F-12.9.10 — 9-08 — `CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable` is not emitted at write time when the T4 KMS key disappears between probes [Medium] — CLOSED
+- **Resolution:** Verify-closed (stale evidence). The MinIO write path no longer silently falls back: `miniostore.Store.Put`/`Copy` consult the gateway-wired `newSSEKeyResolver` (`cmd/lenny-gateway/main.go:1036`, `:5210`), which returns `requireKey=true` for every T4 tenant, and reject with `blobstore.ErrClassificationControlViolation` (mapped to `CLASSIFICATION_CONTROL_VIOLATION`) when the per-tenant SSE-KMS key is unavailable. The `SetOnKMSUnavailable` callback fires `gwMetrics.IncCheckpointKMSUnavailable()` so `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}` advances at write time. Resolved by the F-12.5.3 wiring and confirmed/extended here; closed alongside its High dup F-12.5.16. (commit `__BATCH_COMMIT__`)
 
 **Potential duplicate** (confidence: high) — F-12.5.16 — Both report that the fail-closed CLASSIFICATION_CONTROL_VIOLATION/kms_unavailable write rejection is never emitted, the MinIO path silently falling back to default encryption.
 
@@ -21451,7 +21454,8 @@ control — that one is wired into the alert table
 This is medium: the operationally-relevant erasure deadlines work; the
 retention default the spec promises is the cleanest fix.
 
-### - [ ] F-12.9.14 — 9-12 — Data-residency validator is tier-agnostic; T4 "cross-region transfer prohibited" is not a distinct enforcement layer [Medium] — OPEN
+### - [x] F-12.9.14 — 9-12 — Data-residency validator is tier-agnostic; T4 "cross-region transfer prohibited" is not a distinct enforcement layer [Medium] — CLOSED
+- **Resolution:** `data_residency_validator.Request` gains a `WorkspaceTier` field and the decision logic a distinct T4 layer (`TierT4`, `CodeRegionCrossTransferProhibited = "REGION_CROSS_TRANSFER_PROHIBITED"`). For a T4 tenant, any region-bearing resource — not only environment-scoped ones — that resolves to a region other than the tenant's pinned region is rejected as a cross-region transfer even when both regions are declared in `storage.regions`; the same request under T3 is admitted (the distinct enforcement layer the §12.9 line 1046 table documents). The T4 branch runs before the §12.8 environment-inheritance check so a divergent T4 environment is reported with the Restricted-tier code. Empty tier preserves the T1–T3 behavior; the webhook transport resolves tier alongside `TenantRegion` (same pattern as today). (commit `__BATCH_COMMIT__`)
 
 Spec line 1046:
 - T3: "Respects `dataResidencyRegion`".

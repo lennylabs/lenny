@@ -273,11 +273,11 @@ func TestHardPruneRespectsRetention(t *testing.T) {
 // diagnosis: when SSEKeyResolver returns a non-empty key id, PutObject sets SSE-KMS with that id.
 func TestPutAppliesSSEKMSResolver(t *testing.T) {
 	f := newFakeS3()
-	store := newWithClient(f, "lenny-test", func(u blobstore.URI) string {
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
 		if u.TenantID == "acme" {
-			return "alias/lenny/tenant/acme"
+			return "alias/lenny/tenant/acme", true, nil
 		}
-		return ""
+		return "", false, nil
 	})
 	u := testURI("acme", "s1", "p1")
 	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
@@ -285,6 +285,91 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 	}
 	if got := f.objects[objectKey(u)].sseKMSKeyID; got != "alias/lenny/tenant/acme" {
 		t.Errorf("SSEKMSKeyID: got %q, want alias/lenny/tenant/acme", got)
+	}
+}
+
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// fail-closed contract: a resolver that returns (requireKey=true, err)
+// for a T4 tenant rejects the write with
+// blobstore.ErrClassificationControlViolation, persists nothing, and
+// fires the KMS-unavailable hook so
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// advances.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
+	f := newFakeS3()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", true, errors.New("kms registry unreachable")
+	})
+	var fired string
+	store.SetOnKMSUnavailable(func(tenantID string) { fired = tenantID })
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+	if _, ok := f.objects[objectKey(u)]; ok {
+		t.Errorf("object persisted on fail-closed rejection")
+	}
+	if fired != "acme" {
+		t.Errorf("onKMSUnavailable: got %q, want acme", fired)
+	}
+}
+
+// TestPutFailsClosedWhenT4ResolverEmptyKey asserts that a T4 tenant
+// whose resolver returns (requireKey=true) but an empty key id fails
+// closed rather than falling through to the bucket default.
+//
+// spec: §12.5 line 303.
+func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
+	f := newFakeS3()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", true, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Put: want ErrClassificationControlViolation, got %v", err)
+	}
+}
+
+// TestPutT3EmptyKeyFallsThrough asserts the T3 path: a resolver that
+// returns (requireKey=false) with an empty key admits the write under
+// the bucket default with no per-object SSE-KMS key set.
+//
+// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
+	f := newFakeS3()
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", false, nil
+	})
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if got := f.objects[objectKey(u)].sseKMSKeyID; got != "" {
+		t.Errorf("SSEKMSKeyID: got %q, want empty (bucket default)", got)
+	}
+}
+
+// TestCopyFailsClosedWhenT4ResolverEmptyKey asserts the §4.5 derive
+// Copy path honors the same §12.5 line 303 fail-closed contract as Put.
+//
+// spec: §12.5 line 303; §4.5 ll. 311.
+func TestCopyFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
+	f := newFakeS3()
+	// Seed a live source object written with no resolver, then attach a
+	// fail-closed T4 resolver before the Copy.
+	src := testURI("acme", "s1", "p1")
+	f.objects[objectKey(src)] = &fakeObject{body: []byte("x"), mimeType: "text/plain"}
+	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
+		return "", true, nil
+	})
+	dst := testURI("acme", "s2", "p2")
+	if err := store.Copy(src, dst); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("Copy: want ErrClassificationControlViolation, got %v", err)
+	}
+	if _, ok := f.objects[objectKey(dst)]; ok {
+		t.Errorf("dst persisted on fail-closed Copy rejection")
 	}
 }
 

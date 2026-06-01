@@ -47,9 +47,19 @@ type objectClient interface {
 }
 
 // SSEKeyResolver returns the per-tenant SSE-KMS key id for an object.
-// An empty return value selects the bucket default (SSE-S3 or the
-// bucket-wide SSE-KMS key).
-type SSEKeyResolver func(u blobstore.URI) string
+//
+// Return semantics mirror the §4.5 MinIO backend so every artifact
+// store fails closed identically for a T4 tenant (§12.5 line 303):
+//   - (kmsID, requireKey=false, nil) — use kmsID when non-empty,
+//     otherwise fall through to the bucket default (the T3 path).
+//   - (kmsID, requireKey=true, nil) — T4 tenant. The Put MUST wrap
+//     under kmsID; an empty kmsID fails closed.
+//   - ("", true, err) — T4 tenant whose key is unreachable at the
+//     resolver level. The Put fails closed with
+//     blobstore.ErrClassificationControlViolation.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+type SSEKeyResolver func(u blobstore.URI) (kmsID string, requireKey bool, err error)
 
 // Config configures a Store.
 type Config struct {
@@ -70,6 +80,7 @@ type Store struct {
 	bucket                string
 	resolver              SSEKeyResolver
 	onArtifactUploadError func(tenantID, errorType string)
+	onKMSUnavailable      func(tenantID string)
 }
 
 // SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
@@ -80,6 +91,53 @@ type Store struct {
 // spec: §16.5 ArtifactUploadError.
 func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
+}
+
+// SetOnKMSUnavailable registers the §12.5 line 303 fail-closed write
+// callback the gateway uses to drive
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// whenever a Put or Copy rejects a T4 tenant whose per-tenant SSE-KMS
+// key is unavailable.
+//
+// spec: §12.5 line 303.
+func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
+	s.onKMSUnavailable = fn
+}
+
+// fireKMSUnavailable invokes the gateway-registered hook on a
+// fail-closed T4 write rejection. It is a no-op when no hook is wired.
+//
+// spec: §12.5 line 303.
+func (s *Store) fireKMSUnavailable(tenantID string) {
+	if s.onKMSUnavailable != nil {
+		s.onKMSUnavailable(tenantID)
+	}
+}
+
+// applySSE resolves the per-tenant SSE-KMS key for u and stamps it onto
+// the supplied setter, failing closed for a T4 tenant whose key is
+// unavailable. It centralizes the §12.5 line 303 / §12.9 line 1046
+// fail-closed contract for both Put and Copy.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func (s *Store) applySSE(u blobstore.URI, set func(kmsID string)) error {
+	if s.resolver == nil {
+		return nil
+	}
+	kmsID, requireKey, err := s.resolver(u)
+	switch {
+	case err != nil && requireKey:
+		s.fireKMSUnavailable(u.TenantID)
+		return fmt.Errorf("%w: tenant=%s: %v", blobstore.ErrClassificationControlViolation, u.TenantID, err)
+	case err != nil:
+		return fmt.Errorf("blobstore/s3: SSE key resolver for tenant %s: %w", u.TenantID, err)
+	case requireKey && kmsID == "":
+		s.fireKMSUnavailable(u.TenantID)
+		return fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", blobstore.ErrClassificationControlViolation, u.TenantID)
+	case kmsID != "":
+		set(kmsID)
+	}
+	return nil
 }
 
 // classifyS3PutError maps an AWS S3 error onto the §16.5 error_type
@@ -180,11 +238,11 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		Body:        bytes.NewReader(body),
 		ContentType: awssdk.String(mimeType),
 	}
-	if s.resolver != nil {
-		if kmsID := s.resolver(u); kmsID != "" {
-			in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
-			in.SSEKMSKeyId = awssdk.String(kmsID)
-		}
+	if err := s.applySSE(u, func(kmsID string) {
+		in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+		in.SSEKMSKeyId = awssdk.String(kmsID)
+	}); err != nil {
+		return "", err
 	}
 	if _, err := s.client.PutObject(ctx, in); err != nil {
 		if s.onArtifactUploadError != nil {
@@ -229,11 +287,11 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 		Key:        awssdk.String(dstKey),
 		CopySource: awssdk.String(s.bucket + "/" + srcKey),
 	}
-	if s.resolver != nil {
-		if kmsID := s.resolver(dst); kmsID != "" {
-			in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
-			in.SSEKMSKeyId = awssdk.String(kmsID)
-		}
+	if err := s.applySSE(dst, func(kmsID string) {
+		in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+		in.SSEKMSKeyId = awssdk.String(kmsID)
+	}); err != nil {
+		return err
 	}
 	if _, err := s.client.CopyObject(ctx, in); err != nil {
 		return fmt.Errorf("blobstore/s3: CopyObject: %w", err)

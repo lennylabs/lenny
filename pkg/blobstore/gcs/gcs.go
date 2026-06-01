@@ -51,8 +51,20 @@ type readCloser interface {
 }
 
 // KMSKeyResolver returns the per-tenant Cloud KMS resource name for an
-// object. An empty return value selects the bucket default.
-type KMSKeyResolver func(u blobstore.URI) string
+// object.
+//
+// Return semantics mirror the §4.5 MinIO backend so every artifact
+// store fails closed identically for a T4 tenant (§12.5 line 303):
+//   - (kmsKey, requireKey=false, nil) — use kmsKey when non-empty,
+//     otherwise fall through to the bucket default (the T3 path).
+//   - (kmsKey, requireKey=true, nil) — T4 tenant. The Put MUST wrap
+//     under kmsKey; an empty kmsKey fails closed.
+//   - ("", true, err) — T4 tenant whose key is unreachable at the
+//     resolver level. The Put fails closed with
+//     blobstore.ErrClassificationControlViolation.
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+type KMSKeyResolver func(u blobstore.URI) (kmsKey string, requireKey bool, err error)
 
 // Config configures a Store.
 type Config struct {
@@ -72,6 +84,7 @@ type Store struct {
 	bucket                string
 	resolver              KMSKeyResolver
 	onArtifactUploadError func(tenantID, errorType string)
+	onKMSUnavailable      func(tenantID string)
 }
 
 // SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
@@ -82,6 +95,50 @@ type Store struct {
 // spec: §16.5 ArtifactUploadError.
 func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
+}
+
+// SetOnKMSUnavailable registers the §12.5 line 303 fail-closed write
+// callback the gateway uses to drive
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// whenever a Put rejects a T4 tenant whose per-tenant KMS key is
+// unavailable.
+//
+// spec: §12.5 line 303.
+func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
+	s.onKMSUnavailable = fn
+}
+
+// resolveKMSKey resolves the per-tenant Cloud KMS resource name for u,
+// failing closed for a T4 tenant whose key is unavailable. An empty
+// returned key leaves the bucket default in force (the T3 path).
+//
+// spec: §12.5 line 303; §12.9 line 1046.
+func (s *Store) resolveKMSKey(u blobstore.URI) (string, error) {
+	if s.resolver == nil {
+		return "", nil
+	}
+	kmsKey, requireKey, err := s.resolver(u)
+	switch {
+	case err != nil && requireKey:
+		s.fireKMSUnavailable(u.TenantID)
+		return "", fmt.Errorf("%w: tenant=%s: %v", blobstore.ErrClassificationControlViolation, u.TenantID, err)
+	case err != nil:
+		return "", fmt.Errorf("blobstore/gcs: KMS key resolver for tenant %s: %w", u.TenantID, err)
+	case requireKey && kmsKey == "":
+		s.fireKMSUnavailable(u.TenantID)
+		return "", fmt.Errorf("%w: tenant=%s: resolver returned empty key", blobstore.ErrClassificationControlViolation, u.TenantID)
+	}
+	return kmsKey, nil
+}
+
+// fireKMSUnavailable invokes the gateway-registered hook on a
+// fail-closed T4 write rejection. It is a no-op when no hook is wired.
+//
+// spec: §12.5 line 303.
+func (s *Store) fireKMSUnavailable(tenantID string) {
+	if s.onKMSUnavailable != nil {
+		s.onKMSUnavailable(tenantID)
+	}
 }
 
 // classifyGCSPutError maps a GCS write error onto the §16.5 error_type
@@ -170,9 +227,9 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	} else if !errors.Is(err, storage.ErrObjectNotExist) {
 		return "", fmt.Errorf("blobstore/gcs: Attrs: %w", err)
 	}
-	kmsKey := ""
-	if s.resolver != nil {
-		kmsKey = s.resolver(u)
+	kmsKey, err := s.resolveKMSKey(u)
+	if err != nil {
+		return "", err
 	}
 	w := s.client.NewWriter(ctx, key, mimeType, kmsKey)
 	if _, err := io.Copy(w, data); err != nil {
