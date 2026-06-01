@@ -30,6 +30,116 @@ func TestHealthzReportsOK(t *testing.T) {
 	}
 }
 
+// spec: §25.4 line 1055 — F-25.4.10. The strict gate (?strict=true)
+// returns 200 only when both Postgres and the Kubernetes API are
+// reachable; the readiness probe uses it so traffic is not routed to a
+// replica that cannot serve the full §25 API.
+func TestHealthzStrictReadyWhenCriticalDepsUp(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres":   func(context.Context) error { return nil },
+		"kubernetes": func(context.Context) error { return nil },
+		"redis":      func(context.Context) error { return errors.New("down") },
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/healthz?strict=true", nil))
+
+	// Redis is degraded but not a strict-gate dependency, so the replica
+	// is ready.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 when Postgres and K8s are up", rec.Code)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Status != "ok" {
+		t.Errorf("status = %q, want ok", body.Status)
+	}
+}
+
+// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// down yields 503 with the degraded dependency named.
+func TestHealthzStrict503WhenCriticalDepDown(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres":   func(context.Context) error { return errors.New("connection refused") },
+		"kubernetes": func(context.Context) error { return nil },
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/healthz?strict=true", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when Postgres is down", rec.Code)
+	}
+	var body struct {
+		Status   string   `json:"status"`
+		Degraded []string `json:"degraded"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+	found := false
+	for _, d := range body.Degraded {
+		if d == "postgres" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("degraded = %v, want it to name postgres", body.Degraded)
+	}
+}
+
+// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// not even registered cannot be confirmed reachable and counts as
+// degraded (the production binary always wires both).
+func TestHealthzStrict503WhenCriticalDepAbsent(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres": func(context.Context) error { return nil },
+		// kubernetes probe intentionally absent.
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/healthz?strict=true", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when the K8s probe is unwired", rec.Code)
+	}
+	var body struct {
+		Degraded []string `json:"degraded"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	found := false
+	for _, d := range body.Degraded {
+		if d == "kubernetes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("degraded = %v, want it to name kubernetes", body.Degraded)
+	}
+}
+
+// spec: §25.4 lines 1054-1057 — F-25.4.10. The permissive /healthz
+// (liveness, startup) stays 200 even when a dependency is down so a
+// transient outage does not restart an otherwise-healthy pod.
+func TestHealthzPermissiveIgnoresDependencyOutage(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres":   func(context.Context) error { return errors.New("down") },
+		"kubernetes": func(context.Context) error { return errors.New("down") },
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for the permissive liveness probe", rec.Code)
+	}
+}
+
 func TestReadyzReportsReady(t *testing.T) {
 	rec := httptest.NewRecorder()
 	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))

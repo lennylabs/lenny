@@ -1,0 +1,83 @@
+{{- /*
+The §25.4 lenny-ops Ingress and PodDisruptionBudget (§25.4 lines
+991-1024, 1313-1324). §25.4 documents lenny-ops as external-only:
+agents reach the §25 operability surface through this Ingress, which
+the controller terminates TLS for and forwards to the lenny-ops
+ClusterIP Service on its http port. The companion
+lenny-ops-allow-ingress-from-ingress-controller NetworkPolicy
+(ops-network-policies.yaml) admits the controller pods to that port.
+
+The Ingress is opt-in via ops.ingress.enabled so a stock development
+render (no external entry point) emits nothing, matching the gateway
+Ingress posture. The idleTimeoutSeconds value drives the controller's
+read/send timeout so the §25.5 SSE long-lived connections are not
+severed mid-stream; it renders as nginx proxy-timeout annotations,
+merged under any operator-supplied annotations.
+
+The PodDisruptionBudget is rendered regardless of replica count (§25.4
+line 1316): at one replica it is a no-op, but scaling up then requires
+no chart change. minAvailable: 1 caps voluntary disruptions during node
+drains; the lease (15s) expires and a new pod is elected leader.
+*/ -}}
+{{- with .Values.ops.ingress }}
+{{- if .enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lenny-ops
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    app: lenny-ops
+  annotations:
+    {{- /* §25.4 line 1004/1009 — keep SSE clients on one replica and
+       hold the long-lived stream open past the idle timeout. */ -}}
+    {{- if .idleTimeoutSeconds }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .idleTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .idleTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    {{- end }}
+    {{- with .annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .className }}
+  ingressClassName: {{ .className | quote }}
+  {{- end }}
+  {{- if .host }}
+  tls:
+    - hosts:
+        - {{ .host | quote }}
+      {{- if .tlsSecretName }}
+      secretName: {{ .tlsSecretName | quote }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - {{- if .host }}
+      host: {{ .host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: {{ .path | default "/" | quote }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: lenny-ops
+                port:
+                  name: http
+---
+{{- end }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-ops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    app: lenny-ops
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: lenny-ops

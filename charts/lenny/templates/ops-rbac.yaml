@@ -1,0 +1,106 @@
+{{- /*
+The §25.4 lenny-ops authorization bindings beyond leader election
+(§25.4 lines 1066-1115). lenny-ops drives platform operations through
+the Kubernetes API: it patches Deployments for upgrades, scales them,
+reads pod logs and events for diagnostics, creates and deletes backup
+Jobs, reads ConfigMaps for runtime config, and reads CRDs, lenny.dev
+custom resources, and Nodes for version introspection and drift
+detection. The ServiceAccount and the leader-election Role live in
+ops-deployment.yaml; this file adds the namespace Role
+lenny-ops-namespace (release-namespace-scoped, where possible) and the
+ClusterRole lenny-ops-cluster (for the genuinely cluster-scoped CRD and
+Node reads). lenny-preflight (§17.6) runs `kubectl auth can-i` against
+every verb/resource below using the lenny-ops-sa token and flags any
+missing binding.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-ops-namespace
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  # §25.4 lines 1075-1080 — Deployment patching and scaling for the
+  # §25.9 upgrade orchestration (OpsRoll / GatewayRoll / ControllerRoll).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  # §25.4 lines 1082-1084 — pod, pod-log, and event reads for the §25.6
+  # diagnostics surface (the log-proxy and pod-state fallbacks).
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+  # §25.4 lines 1086-1088 — backup, restore, and verify Job lifecycle
+  # (§25.11). lenny-ops creates and deletes the lenny-backup Jobs.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # §25.4 lines 1090-1092 — ConfigMap reads for runtime configuration
+  # (the bundled alerting-rules ConfigMap and platform config).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
+  # The mutating lease lifecycle lives on the lenny-ops-leader-election
+  # Role (ops-deployment.yaml); this read grant matches the spec rule.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-ops-namespace
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-ops-namespace
+subjects:
+  - kind: ServiceAccount
+    name: lenny-ops-sa
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-ops-cluster
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  # §25.4 lines 1104-1106 — CRD reads for version introspection and the
+  # §25.10 drift detection that compares installed CRDs against the
+  # bootstrap seed snapshot.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # §25.4 lines 1108-1110 — lenny.dev custom resources (Runtime,
+  # SandboxWarmPool, etc.) for drift detection and inventory.
+  - apiGroups: ["lenny.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # §25.4 lines 1112-1114 — Node reads for the §25.6 node diagnostics.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-ops-cluster
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-ops-cluster
+subjects:
+  - kind: ServiceAccount
+    name: lenny-ops-sa
+    namespace: {{ .Release.Namespace }}

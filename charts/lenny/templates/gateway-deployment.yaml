@@ -973,6 +973,9 @@ metadata:
     lenny.dev/component: gateway
 spec:
   clusterIP: None
+  # §25.4 line 1064 — only ready replicas are returned via DNS so the
+  # lenny-ops per-replica fan-out skips replicas that cannot serve.
+  publishNotReadyAddresses: false
   selector:
     app.kubernetes.io/name: {{ .Chart.Name }}
     lenny.dev/component: gateway

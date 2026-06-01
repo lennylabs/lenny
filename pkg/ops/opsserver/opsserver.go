@@ -210,12 +210,58 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// handleHealthz is the liveness probe: it reports that the process is
-// running and able to serve. It does not check downstream
-// dependencies, so a dependency outage does not cause Kubernetes to
-// restart an otherwise-healthy lenny-ops pod.
-func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+// strictHealthDeps are the dependencies the §25.4 strict readiness
+// gate requires reachable before a replica accepts traffic: the
+// Postgres connection and the Kubernetes API (spec: §25.4 line 1055 —
+// "200 only when both Postgres connection AND K8s API are reachable").
+var strictHealthDeps = []string{ProbePostgresName, ProbeK8sAPIName}
+
+// Probe names the strict readiness gate keys on. They mirror the
+// opsservice.Probe* constants the binary registers; redeclared here so
+// the opsserver package does not import the wiring package.
+const (
+	ProbePostgresName = "postgres"
+	ProbeK8sAPIName   = "kubernetes"
+)
+
+// handleHealthz serves both §25.4 probe modes on the same path (spec:
+// §25.4 lines 1033-1057):
+//
+//   - permissive (the default, used by liveness and startup): it reports
+//     that the process is running. It does not fail on a downstream
+//     dependency outage, so a transient Postgres or Kubernetes API blip
+//     does not cause Kubernetes to restart an otherwise-healthy pod.
+//   - strict (?strict=true, used by readiness): 200 only when both the
+//     Postgres connection and the Kubernetes API are reachable; otherwise
+//     503 with a body naming the degraded dependencies so traffic is not
+//     routed to a replica that cannot serve the full §25 API.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("strict") != "true" {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	// spec: §25.4 line 1055 — strict gate. A required probe that is
+	// absent from the map (e.g. no Kubernetes client wired) cannot be
+	// confirmed reachable, so it counts as degraded.
+	results := probe.Run(r.Context(), s.probes, probeTimeout)
+	var degraded []string
+	for _, dep := range strictHealthDeps {
+		if res, ok := results[dep]; !ok || !res.OK {
+			degraded = append(degraded, dep)
+		}
+	}
+	if len(degraded) > 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"status":       "degraded",
+			"degraded":     degraded,
+			"dependencies": dependencyReport(results),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"dependencies": dependencyReport(results),
+	})
 }
 
 // handleReadyz is the readiness probe. §25 has lenny-ops degrade

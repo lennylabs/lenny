@@ -531,6 +531,11 @@ tests:
       - equal:
           path: spec.clusterIP
           value: None
+      # spec: §25.4 line 1064 — F-25.4.10. Only ready replicas are
+      # returned so the lenny-ops fan-out skips replicas that cannot serve.
+      - equal:
+          path: spec.publishNotReadyAddresses
+          value: false
 
   - it: renders POD_NAME, LENNY_MAX_SESSIONS_PER_REPLICA, and §4.1 extraction-threshold env with stock values (no data-store env)
     documentSelector:

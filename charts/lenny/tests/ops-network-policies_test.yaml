@@ -1,0 +1,152 @@
+suite: lenny-ops and lenny-backup NetworkPolicies
+# spec: §25.4 lines 1119-1403 — F-25.4.12, F-17.1.4. The three §25.4
+# policies beyond the lenny-ops-deny-all-ingress baseline.
+templates:
+  - ops-network-policies.yaml
+tests:
+  - it: renders the allow-ingress-from-controller, ops-egress, and backup-job policies
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: admits the Ingress controller to the lenny-ops http port
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-allow-ingress-from-ingress-controller
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels.app
+          value: lenny-ops
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress-nginx
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 8090
+
+  - it: renders the §25.4 lenny-ops-egress with paired namespace and pod selectors
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - equal:
+          path: spec.policyTypes[0]
+          value: Egress
+      # Postgres via PgBouncer (NET-061: both selectors present).
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: NAMESPACE
+                podSelector:
+                  matchLabels:
+                    lenny.dev/component: pgbouncer
+            ports:
+              - protocol: TCP
+                port: 5432
+      # Kubernetes API scoped to the apiserver ClusterIP range via ipBlock.
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: "10.96.0.0/12"
+            ports:
+              - protocol: TCP
+                port: 443
+
+  - it: renders the dual-family webhook internet egress with SSRF except blocks
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      # IPv4 peer excludes cluster pod/service CIDRs, RFC1918, and IMDS.
+      - contains:
+          path: spec.egress[7].to[0].ipBlock.except
+          content: "10.244.0.0/16"
+      - contains:
+          path: spec.egress[7].to[0].ipBlock.except
+          content: "169.254.169.254/32"
+      # IPv6 peer carries only IPv6 except entries (NET-062).
+      - equal:
+          path: spec.egress[8].to[0].ipBlock.cidr
+          value: "::/0"
+      - contains:
+          path: spec.egress[8].to[0].ipBlock.except
+          content: "fc00::/7"
+
+  - it: selects the gateway TLS port when ops.tls.internalEnabled is true
+    set:
+      ops:
+        tls:
+          internalEnabled: true
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            protocol: TCP
+            port: 8443
+
+  - it: selects the gateway plaintext port when ops.tls.internalEnabled is false
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            protocol: TCP
+            port: 8080
+
+  - it: renders the lenny-backup-job policy with no ingress and storage egress
+    documentSelector:
+      path: metadata.name
+      value: lenny-backup-job
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels.app
+          value: lenny-backup
+      - equal:
+          path: spec.ingress
+          value: []
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: NAMESPACE
+                podSelector:
+                  matchLabels:
+                    lenny.dev/component: postgres
+            ports:
+              - protocol: TCP
+                port: 5432
+
+  - it: honors the ops.networkPolicy.storageNamespace override per NET-061
+    set:
+      ops:
+        networkPolicy:
+          storageNamespace: lenny-storage
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: lenny-storage
+                podSelector:
+                  matchLabels:
+                    lenny.dev/component: redis
+            ports:
+              - protocol: TCP
+                port: 6380

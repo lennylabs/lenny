@@ -119,6 +119,87 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
 
+  # spec: §25.4 lines 1034-1039 — F-25.4.10. The startup probe uses the
+  # permissive /healthz with a 30×2s budget covering Postgres connection.
+  - it: renders the §25.4 startup probe on the permissive /healthz
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 30
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.periodSeconds
+          value: 2
+
+  # spec: §25.4 line 1055 — F-25.4.10. In production the readiness probe
+  # uses the strict gate so traffic is not routed to a replica that
+  # cannot reach both Postgres and the Kubernetes API.
+  - it: uses the strict readiness gate when ops.production is true
+    set:
+      ops:
+        production: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz?strict=true
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.failureThreshold
+          value: 3
+
+  # spec: §25.4 line 1027 — F-25.4.10. A writable /tmp emptyDir backs the
+  # read-only root filesystem posture.
+  - it: mounts a writable /tmp emptyDir under the read-only root
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tmp
+            emptyDir: {}
+
+  # spec: §25.4 line 1028 — F-25.4.10. topologySpreadConstraints render
+  # only when lenny-ops scales past one replica.
+  - it: omits topologySpreadConstraints at the default single replica
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: spec.template.spec.topologySpreadConstraints
+
+  - it: spreads replicas across nodes when ops.replicas >= 2 per §25.4 line 1028
+    set:
+      ops:
+        replicas: 2
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].maxSkew
+          value: 1
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels.app
+          value: lenny-ops
+
   - it: renders the lenny-ops Service keyed on the app label with HTTP and metrics ports
     documentSelector:
       path: kind

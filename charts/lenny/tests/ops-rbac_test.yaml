@@ -1,0 +1,112 @@
+suite: lenny-ops RBAC
+# spec: §25.4 lines 1066-1115 — F-25.4.11. The lenny-ops namespace Role
+# and cluster ClusterRole beyond leader election.
+templates:
+  - ops-rbac.yaml
+tests:
+  - it: renders the namespace Role, its binding, the ClusterRole, and its binding
+    asserts:
+      - hasDocuments:
+          count: 4
+
+  - it: grants the §25.4 namespace Role deployment patch and scale verbs
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops-namespace
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "patch", "update"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments/scale"]
+            verbs: ["get", "patch"]
+
+  - it: grants pod-log, event, Job, and ConfigMap access for §25.6 diagnostics and §25.11 backups
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods", "pods/log", "events"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["get", "list", "watch", "create", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["configmaps"]
+            verbs: ["get", "list", "watch"]
+
+  - it: grants the §25.4 ClusterRole CRD, lenny.dev, and Node reads
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops-cluster
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["*"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["nodes"]
+            verbs: ["get", "list"]
+
+  - it: binds both roles to the lenny-ops-sa ServiceAccount
+    documentSelector:
+      path: kind
+      value: RoleBinding
+    asserts:
+      - equal:
+          path: roleRef.name
+          value: lenny-ops-namespace
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: lenny-ops-sa
+            namespace: NAMESPACE
+
+  - it: binds the ClusterRole to the lenny-ops-sa ServiceAccount
+    documentSelector:
+      path: kind
+      value: ClusterRoleBinding
+    asserts:
+      - equal:
+          path: roleRef.name
+          value: lenny-ops-cluster
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: lenny-ops-sa
+            namespace: NAMESPACE

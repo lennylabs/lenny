@@ -159,26 +159,53 @@ spec:
             # the metrics endpoint on the rendered pod spec. F-16.9.10.
             - name: metrics
               containerPort: {{ .Values.ops.httpPort }}
+          # §25.4 lines 1033-1057 — the permissive /healthz covers
+          # startup and liveness so a transient Postgres or Kubernetes
+          # API blip does not restart an otherwise-healthy pod; the
+          # startup probe's 30×2s budget covers Postgres connection
+          # establishment.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
+          # §25.4 line 1055 — readiness uses the strict gate so traffic
+          # is not routed to a replica that cannot reach both Postgres
+          # and the Kubernetes API. Strict readiness is gated on
+          # ops.production: the stock degraded single-process render
+          # (LENNY_POSTGRES_DSN unset) would never reach Ready under the
+          # strict gate, so it falls back to the graceful /readyz report.
           readinessProbe:
             httpGet:
+              {{- if .Values.ops.production }}
+              path: /healthz?strict=true
+              {{- else }}
               path: /readyz
+              {{- end }}
               port: http
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-          {{- if or .Values.platform.releaseChannel.publisher.enabled .Values.security.oidc.bearerTrustKeySecret }}
           volumeMounts:
+            # §25.4 line 1027 — writable scratch for the read-only root
+            # filesystem posture. lenny-ops writes no temp files today,
+            # but §25.4 calls the seam out explicitly so any future temp
+            # write does not fail against the read-only root.
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.security.oidc.bearerTrustKeySecret }}
             # §25.4 line 1562: the shared HMAC bearer-verify key. F-25.4.20.
             - name: oidc-bearer-trust-key
@@ -198,11 +225,24 @@ spec:
               readOnly: true
             {{- end }}
             {{- end }}
-          {{- end }}
           resources:
             {{- toYaml .Values.ops.resources | nindent 12 }}
-      {{- if or .Values.platform.releaseChannel.publisher.enabled .Values.security.oidc.bearerTrustKeySecret }}
+      {{- /* §25.4 line 1028 — spread replicas across nodes once
+         lenny-ops scales past one replica, so a single node loss never
+         takes the whole operability plane down. */ -}}
+      {{- if ge (int .Values.ops.replicas) 2 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: lenny-ops
+      {{- end }}
       volumes:
+        # §25.4 line 1027 — writable /tmp scratch under read-only root.
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.security.oidc.bearerTrustKeySecret }}
         - name: oidc-bearer-trust-key
           secret:
@@ -224,7 +264,6 @@ spec:
             secretName: {{ .Values.platform.releaseChannel.publisher.previousKeySecret }}
         {{- end }}
         {{- end }}
-      {{- end }}
 ---
 # lenny-ops Service. The metrics port maps to the HTTP listener because
 # the binary serves /metrics on the same mux as the §25 HTTP surface;

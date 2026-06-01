@@ -1962,6 +1962,36 @@ ops:
     # dnsNames overrides the SANs on the rendered Certificate. Empty
     # defaults to the lenny-ops Service FQDN forms.
     dnsNames: []
+  # ingress configures the §25.4 lenny-ops Ingress (lines 991-1024).
+  # lenny-ops is external-only: agents reach the §25 operability surface
+  # through this Ingress, which the controller terminates TLS for and
+  # forwards to the lenny-ops Service http port. Opt-in via enabled so a
+  # stock dev render (no external entry point) emits no Ingress; the PDB
+  # renders regardless. idleTimeoutSeconds must exceed the §25.5 SSE
+  # client hold time so the controller does not sever a live stream; it
+  # renders as nginx proxy-read/send-timeout annotations.
+  ingress:
+    enabled: false
+    host: ""
+    tlsSecretName: ""
+    className: "nginx"
+    annotations: {}
+    idleTimeoutSeconds: 900
+    path: "/"
+    pathType: "Prefix"
+  # networkPolicy configures the §25.4 lenny-ops-egress and
+  # lenny-backup-job NetworkPolicies (lines 1146-1403). storageNamespace
+  # defaults to the release namespace (storage co-locates with
+  # lenny-system in the single-namespace install); set it when Postgres,
+  # Redis, and MinIO run in their own namespace. The Prometheus
+  # destination is deployer-supplied, so its namespace and pod label are
+  # separately overridable to match the operator's Prometheus chart.
+  networkPolicy:
+    storageNamespace: ""
+    prometheusNamespace: ""
+    prometheusPodLabel:
+      key: "app"
+      value: "prometheus"
   # prometheus configures the §25.16 Production-tier "Prometheus (BYO)"
   # block (line 5124). When url is non-empty lenny-ops connects to the
   # supplied HTTP-API endpoint to evaluate cross-replica health

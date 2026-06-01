@@ -1,0 +1,84 @@
+suite: lenny-ops Ingress and PodDisruptionBudget
+# spec: §25.4 lines 991-1024, 1313-1324 — F-25.4.10. The lenny-ops
+# Ingress (opt-in) and the always-rendered PodDisruptionBudget.
+templates:
+  - ops-ingress.yaml
+tests:
+  - it: renders the PDB alone when the Ingress is disabled by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: PodDisruptionBudget
+
+  - it: renders minAvailable 1 regardless of replica count per §25.4 line 1316
+    documentSelector:
+      path: kind
+      value: PodDisruptionBudget
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels.app
+          value: lenny-ops
+
+  - it: renders the Ingress and the PDB when ops.ingress.enabled is true
+    set:
+      ops:
+        ingress:
+          enabled: true
+          host: ops.acme.com
+          tlsSecretName: lenny-ops-tls
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: targets the lenny-ops Service http port and the configured host
+    set:
+      ops:
+        ingress:
+          enabled: true
+          host: ops.acme.com
+          tlsSecretName: lenny-ops-tls
+    documentSelector:
+      path: kind
+      value: Ingress
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+      - equal:
+          path: spec.rules[0].host
+          value: ops.acme.com
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: lenny-ops
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.name
+          value: http
+      - equal:
+          path: spec.tls[0].secretName
+          value: lenny-ops-tls
+
+  - it: renders the SSE idle-timeout proxy annotations per §25.4 line 1004
+    set:
+      ops:
+        ingress:
+          enabled: true
+          host: ops.acme.com
+          idleTimeoutSeconds: 1200
+    documentSelector:
+      path: kind
+      value: Ingress
+    asserts:
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]
+          value: "1200"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]
+          value: "1200"
