@@ -147,7 +147,7 @@ run_claude_capture() {
         --permission-mode auto
         --add-dir "$REPO"
         --model claude-opus-4-8
-        --effort high
+        --effort xhigh
         --output-format json)
   if [[ -n "$resume_id" ]]; then
     cmd+=(--resume "$resume_id")
