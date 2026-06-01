@@ -387,6 +387,30 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 	}
 }
 
+// spec: §12.3 line 47 / §16.5 line 510 — PgBouncerPoolSaturated must
+// evaluate the pgbouncer_exporter sidecar's native client-wait stat
+// (pgbouncer_pools_client_maxwait_seconds). The earlier
+// lenny_pgbouncer_client_waiting_seconds metric was never emitted by any
+// code or exporter, so the alert silently matched no series. F-12.3.11.
+func TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PgBouncerPoolSaturated" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PgBouncerPoolSaturated missing from Catalog")
+	}
+	if !strings.Contains(got.Expr, "pgbouncer_pools_client_maxwait_seconds") {
+		t.Errorf("expression %q must reference the exporter metric pgbouncer_pools_client_maxwait_seconds", got.Expr)
+	}
+	if strings.Contains(got.Expr, "lenny_pgbouncer_client_waiting_seconds") {
+		t.Errorf("expression %q still references the never-emitted lenny_pgbouncer_client_waiting_seconds metric", got.Expr)
+	}
+}
+
 // spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
 // the lenny_session_time_to_first_token_seconds histogram directly
 // via the le="10" bucket (the 10s TTFT SLO). The earlier

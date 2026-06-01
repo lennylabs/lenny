@@ -18615,7 +18615,7 @@ interface and call `BillingShard` / `AuditShard` per write, so a future
 shard split is a router swap. `TestBillingAuditRoutedThroughStoreRouter`
 is the R-03-mandated contract test (F-12.6.2).
 
-### - [ ] F-12.3.5 — `LENNY_PG_BILLING_AUDIT_DSN` (separate billing/audit Postgres instance) not wired (§12.3 lines 103, 112) [High] — OPEN
+### - [x] F-12.3.5 — `LENNY_PG_BILLING_AUDIT_DSN` (separate billing/audit Postgres instance) not wired (§12.3 lines 103, 112) [High] — CLOSED
 
 Spec lines 103 and the load-shedding table line 112 reference
 `LENNY_PG_BILLING_AUDIT_DSN`: "The gateway supports separate connection
@@ -18630,6 +18630,17 @@ Evidence:
 - `cmd/lenny-gateway/main.go` constructs `billing` and `pgAudit` from the
   single `pgPool` (see High finding above).
 - Tier-3 capacity headroom strategy as written cannot be activated.
+
+**Resolution:** `storerouter.Config.BillingAuditPostgres` adds an optional
+dedicated pool; `BillingShard`/`AuditShard`/`AllAuditShards` resolve to it
+when set and fall back to the primary otherwise (§12.3 R-03 routing
+unchanged). `cmd/lenny-gateway` parses `--postgres-billing-audit-dsn` /
+`LENNY_PG_BILLING_AUDIT_DSN`, opens and schema-verifies the second pool, and
+runs the §11.7 ledger integrity check + startup chain-continuity check
+against the instance the ledgers physically live on (the separate pool when
+configured). The chart adds `postgres.billingAuditDSN`, rendering it into the
+`lenny-datastore-conn` Secret as `billing-audit-postgres-dsn` and the gateway
+env `LENNY_PG_BILLING_AUDIT_DSN`.
 
 ### - [ ] F-12.3.6 — SIEM outbox / forwarder pattern is not implemented (§12.3 lines 93–97) [High] — OPEN
 
@@ -18754,7 +18765,7 @@ The gateway invokes it at startup after Postgres is reachable
 with the gap boundary sequences and timestamp range, and does not refuse to
 start.
 
-### - [ ] F-12.3.10 — PgBouncer Deployment, PDB, readiness probe, and exporter are not chart-managed (§12.3 lines 40–47) [Medium] — OPEN
+### - [x] F-12.3.10 — PgBouncer Deployment, PDB, readiness probe, and exporter are not chart-managed (§12.3 lines 40–47) [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-12.3.11 — Both concern PgBouncer not being chart-managed, but one is the missing Deployment/PDB/probe topology and the other is the missing exporter metric feeding an alert.
 
@@ -18784,7 +18795,18 @@ provisions; the chart does not. Operators must read the spec and assemble
 their own PgBouncer + PDB + readiness probe + exporter, which contradicts
 the spec wording "PgBouncer Deployment ... MUST."
 
-### - [ ] F-12.3.11 — `pgbouncer_exporter` metric `lenny_pgbouncer_client_waiting_seconds` is not emitted (§12.3 line 47) [Medium] — OPEN
+**Resolution:** New `charts/lenny/templates/pgbouncer-deployment.yaml` renders
+the in-cluster topology gated on `pgbouncer.deploy` (default false, since
+cloud-managed deployments use the provider proxy per §12.3 line 38): a
+`lenny-pgbouncer` Deployment (≥2 replicas, `lenny.dev/component: pgbouncer`
+label the §13.2 NetworkPolicies select, transaction `POOL_MODE`, mounts the
+connect_query ConfigMap), a backend-connectivity readiness probe (SELECT 1
+through the injected `DATABASE_URL`, TCP fallback otherwise), a ClusterIP
+Service, a PodDisruptionBudget (minAvailable 1 / maxUnavailable 1 at 3+
+replicas), topology spread, and the `pgbouncer_exporter` sidecar (closes
+F-12.3.11). Eleven helm-unittest cases cover the matrix.
+
+### - [x] F-12.3.11 — `pgbouncer_exporter` metric `lenny_pgbouncer_client_waiting_seconds` is not emitted (§12.3 line 47) [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-12.3.10 — Both concern PgBouncer not being chart-managed, but one is the missing Deployment/PDB/probe topology and the other is the missing exporter metric feeding an alert.
 
@@ -18802,7 +18824,15 @@ Evidence:
   `tests/tier8_chaos/scaffolds_test.go:118`) is a scaffold that logs and
   exits — the live saturation injector is on the ops backlog.
 
-### - [x] F-12.3.12 — `__unset__` sentinel via `connect_query` is not configured (§12.3 line 38) [Medium] — CLOSED
+**Resolution:** Closed alongside F-12.3.10. The pgbouncer-deployment template
+adds the `pgbouncer_exporter` sidecar, which exposes the native
+`pgbouncer_pools_client_maxwait_seconds` stat (the SHOW POOLS `cl_waiting_time`
+maxwait). The `PgBouncerPoolSaturated` alert expr is rewired from the
+never-emitted `lenny_pgbouncer_client_waiting_seconds` (absent from the §16.1
+catalog and from every emitter) to `max(pgbouncer_pools_client_maxwait_seconds)
+> 1` in `pkg/alerting/rules/rules.go`, regenerated into the chart fragment and
+docs, so the alert now evaluates the metric the exporter actually produces.
+`TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11` guards it.
 
 **Potential duplicate** (confidence: high) — F-4.2.8 — Both describe the PgBouncer connect_query __unset__ sentinel not being configured in charts/pooler.
 
@@ -20767,7 +20797,7 @@ Files:
 
 **Resolution:** Closed by F-12.6.10 (`f9ac30e2`). The `EventBus` interface now exists and `RedisEventBus` satisfies it; the audit-write path depends on the interface. (The two auditstore files cited here only ever referenced eventbus value types — `Event`, `RetranscribeRow`, `PublishState` — never the concrete `*RedisEventBus`, so they needed no change.)
 
-### - [ ] F-12.7.5 — 5 — Token-store / Vault-migration seam present and aligned [Medium] — OPEN
+### - [x] F-12.7.5 — 5 — Token-store / Vault-migration seam present and aligned [Medium] — CLOSED
 
 **Severity: Info**
 
@@ -20779,6 +20809,15 @@ R-12.7-5 is honored:
 - No HashiCorp Vault adapter exists yet (consistent with R-12.7-4 "only under real pressure"), and the seam is documented at `pkg/kms/kms.go:26,115,138`.
 
 This finding is informational; no action is required. It is recorded because the swap seam interacts with F-12.7-2 (the cloud KMS adapters that exist cannot be wired today).
+
+**Resolution:** Verify-closed. Re-confirmed against the current tree: the two
+registries remain separate packages with separate `Store` interfaces
+(`connectorcredstore.go:96`, `credentialstore.go:92`) and separate pgstore
+subpackages, both taking a `kms.Provider` for envelope encryption
+(`connectorcredstore/pgstore/pgstore.go:44`, `credentialstore/pgstore/pgstore.go:63`);
+`jwt.NewKMSSigner` threads a `kms.Provider`, so a Vault/cloud-KMS swap is a new
+`kms.Provider` implementation with no consumer change. No Vault adapter exists
+yet, consistent with R-12.7-5. The finding required no code action.
 
 ### Summary
 

@@ -1481,6 +1481,38 @@ tests:
             name: LENNY_REDIS_URL
           any: true
 
+  # spec: §12.3 line 103 — the gateway reads LENNY_PG_BILLING_AUDIT_DSN
+  # from the datastore Secret when the separate billing/audit instance is
+  # configured. F-12.3.5.
+  - it: wires LENNY_PG_BILLING_AUDIT_DSN from the datastore Secret when postgres.billingAuditDSN is set
+    set:
+      postgres.billingAuditDSN: "postgres://lenny:lenny@billing-db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_BILLING_AUDIT_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: billing-audit-postgres-dsn
+
+  - it: omits LENNY_PG_BILLING_AUDIT_DSN when only postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_BILLING_AUDIT_DSN
+          any: true
+
   - it: wires LENNY_REDIS_URL from the datastore Secret when redis.url is set
     set:
       redis.url: "redis://redis.svc:6379"

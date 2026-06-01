@@ -102,6 +102,78 @@ func TestSingleShardRouterReturnsSamePoolForEveryAccessor(t *testing.T) {
 	}
 }
 
+// spec: §12.3 line 103 — when LENNY_PG_BILLING_AUDIT_DSN is configured,
+// BillingShard, AuditShard, and AllAuditShards route to the separate
+// billing/audit instance while every other accessor stays on the
+// primary. This is the Tier-3 instance-separation posture (§12.3 line
+// 130) that offloads the two largest append-only write sources. F-12.3.5.
+func TestSingleShardRouterBillingAuditPool_spec_12_3_line_103(t *testing.T) {
+	t.Parallel()
+	primary := fakePool(t)
+	billingAudit := fakePool(t)
+	r, err := storerouter.NewSingleShardRouter(storerouter.Config{
+		Postgres:             primary,
+		BillingAuditPostgres: billingAudit,
+	})
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	ctx := context.Background()
+	tenant := storerouter.TenantID("acme")
+
+	// Billing and audit writes route to the separate instance.
+	if got, _ := r.BillingShard(ctx, tenant); got != billingAudit {
+		t.Errorf("BillingShard = %p, want billing/audit pool %p", got, billingAudit)
+	}
+	if got, _ := r.AuditShard(ctx, tenant); got != billingAudit {
+		t.Errorf("AuditShard = %p, want billing/audit pool %p", got, billingAudit)
+	}
+	// The audit scatter-gather scan visits the separate instance.
+	shards, err := r.AllAuditShards(ctx)
+	if err != nil {
+		t.Fatalf("AllAuditShards: %v", err)
+	}
+	if len(shards) != 1 || shards[0].Pool != billingAudit {
+		t.Errorf("AllAuditShards pool = %v, want billing/audit pool %p", shards, billingAudit)
+	}
+	// Every other accessor stays on the primary.
+	if got, _ := r.TenantShard(ctx, tenant); got != primary {
+		t.Errorf("TenantShard = %p, want primary %p", got, primary)
+	}
+	if got, _ := r.SessionShard(ctx, "01234567-89ab-8cde-9f12-3456789abcde"); got != primary {
+		t.Errorf("SessionShard = %p, want primary %p", got, primary)
+	}
+	if got, _ := r.PlatformPostgres(ctx); got != primary {
+		t.Errorf("PlatformPostgres = %p, want primary %p", got, primary)
+	}
+	if sess, _ := r.AllSessionShards(ctx); len(sess) != 1 || sess[0].Pool != primary {
+		t.Errorf("AllSessionShards pool = %v, want primary %p", sess, primary)
+	}
+}
+
+// spec: §12.3 line 103 — when no separate billing/audit DSN is
+// configured (the default), billing and audit writes fall back to the
+// primary pool so a single well-provisioned primary serves Tier-3 load
+// unchanged. F-12.3.5.
+func TestSingleShardRouterBillingAuditFallsBackToPrimary_spec_12_3_line_103(t *testing.T) {
+	t.Parallel()
+	primary := fakePool(t)
+	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: primary})
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	ctx := context.Background()
+	if got, _ := r.BillingShard(ctx, "acme"); got != primary {
+		t.Errorf("BillingShard = %p, want primary %p", got, primary)
+	}
+	if got, _ := r.AuditShard(ctx, "acme"); got != primary {
+		t.Errorf("AuditShard = %p, want primary %p", got, primary)
+	}
+	if shards, _ := r.AllAuditShards(ctx); len(shards) != 1 || shards[0].Pool != primary {
+		t.Errorf("AllAuditShards pool = %v, want primary %p", shards, primary)
+	}
+}
+
 // spec: 12.6 SessionShard / TenantShard
 // diagnosis: an empty tenant or session id slipped past the router
 // into a SQL call, where it would have either errored deep in the

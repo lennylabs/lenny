@@ -38,6 +38,7 @@ only the env vars it can satisfy.
 {{- $redis := .Values.redis -}}
 {{- $minio := .Values.minio -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- $hasBillingAuditPg := and $pg (hasKey $pg "billingAuditDSN") (ne $pg.billingAuditDSN "") -}}
 {{- $hasRedis := and $redis $redis.url (ne $redis.url "") -}}
 {{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
 {{- /* §12.5 line 279 — TLS-mandate posture. tls.enabled selects HTTPS
@@ -844,6 +845,17 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: postgres-dsn
+            {{- end }}
+            {{- if $hasBillingAuditPg }}
+            # §12.3 line 103 LENNY_PG_BILLING_AUDIT_DSN: the separate
+            # billing/audit Postgres instance. When set, the §12.3 R-03
+            # StoreRouter routes billing-event and audit-log writes here
+            # while all other writes stay on the primary. F-12.3.5.
+            - name: LENNY_PG_BILLING_AUDIT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: billing-audit-postgres-dsn
             {{- end }}
             {{- if $hasRedis }}
             - name: LENNY_REDIS_URL

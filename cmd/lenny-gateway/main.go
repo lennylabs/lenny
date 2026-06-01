@@ -292,6 +292,15 @@ func main() {
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
+	// spec: §12.3 line 103 — optional dedicated Postgres instance for the
+	// billing-event and audit-log write paths (the Tier-3 instance-
+	// separation step at §12.3 line 130). When set, the §12.3 R-03
+	// StoreRouter routes BillingShard/AuditShard/AllAuditShards to this
+	// pool while every other write stays on the primary. Requires
+	// --postgres-dsn; the schema (billing_events, audit_log) must already
+	// be applied on the separate instance. F-12.3.5.
+	billingAuditDSN := flag.String("postgres-billing-audit-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DSN"),
+		"§12.3 line 103 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used. Mutually exclusive with --redis-sentinel-addrs.")
 	redisSentinelAddrs := flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
@@ -946,14 +955,15 @@ func main() {
 	// otherwise. The remaining stores are in-memory pending their
 	// Redis (circuit breakers, quota) or Postgres backings.
 	var (
-		sessions    sessionstore.Store
-		tenants     tenantstore.Store
-		runtimes    runtimestore.Store
-		transcripts transcriptstore.Store
-		users       userstore.Store
-		connectors  connectorstore.Store
-		billing     billingstore.Store
-		pgPool      *pgxpool.Pool
+		sessions         sessionstore.Store
+		tenants          tenantstore.Store
+		runtimes         runtimestore.Store
+		transcripts      transcriptstore.Store
+		users            userstore.Store
+		connectors       connectorstore.Store
+		billing          billingstore.Store
+		pgPool           *pgxpool.Pool
+		billingAuditPool *pgxpool.Pool
 	)
 	if *postgresDSN != "" {
 		pool, err := pgxpool.New(context.Background(), *postgresDSN)
@@ -975,17 +985,44 @@ func main() {
 		if err := integrity.VerifyCloudManagedPoolerDefense(context.Background(), pool, *poolerMode); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
+		pgPool = pool
+		// §12.3 line 103 — when the separate billing/audit instance is
+		// configured, open and verify its pool here so the §12.3 R-03
+		// StoreRouter below can route billing/audit writes to it. The
+		// separate instance carries the migrations/ schema for the
+		// append-only ledgers (billing_events, audit_log); the
+		// cloud-managed-pooler defense is primary-only (the separate
+		// instance is operator-provisioned for write isolation, not a
+		// tenant-facing RLS surface), so only the schema check runs here.
+		// F-12.3.5.
+		if *billingAuditDSN != "" {
+			bapool, err := pgxpool.New(context.Background(), *billingAuditDSN)
+			if err != nil {
+				log.Fatalf("lenny-gateway: billing/audit postgres: %v", err)
+			}
+			if err := verifyPostgresSchema(context.Background(), bapool); err != nil {
+				log.Fatalf("lenny-gateway: billing/audit postgres: %v", err)
+			}
+			billingAuditPool = bapool
+			log.Printf("lenny-gateway: §12.3 routing billing-event and audit-log writes to the separate LENNY_PG_BILLING_AUDIT_DSN instance")
+		}
 		// §11.7 startup integrity check: the append-only ledgers must
 		// keep their grants, triggers, and erasure guard intact.
 		// Production refuses to start on a violation; other
-		// environments log a warning and continue.
-		if err := integrity.Verify(context.Background(), pool); err != nil {
+		// environments log a warning and continue. The check runs against
+		// the instance where the ledgers physically live — the separate
+		// billing/audit pool when configured, otherwise the primary.
+		// F-12.3.5.
+		ledgerPool := pool
+		if billingAuditPool != nil {
+			ledgerPool = billingAuditPool
+		}
+		if err := integrity.Verify(context.Background(), ledgerPool); err != nil {
 			if os.Getenv("LENNY_ENV") == "production" {
 				log.Fatalf("lenny-gateway: audit integrity check failed: %v", err)
 			}
 			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
 		}
-		pgPool = pool
 		sessions = sessionpg.New(pool)
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
@@ -1185,7 +1222,7 @@ func main() {
 		if redisClient != nil {
 			routerRedis = redisClient
 		}
-		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, Redis: routerRedis})
+		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, BillingAuditPostgres: billingAuditPool, Redis: routerRedis})
 		if err != nil {
 			log.Fatalf("lenny-gateway: store router: %v", err)
 		}
@@ -2033,9 +2070,15 @@ func main() {
 	// audit.startupChainCheckEntries rows of each tenant's hash chain,
 	// emits lenny_audit_chain_integrity_total per tenant, and logs a WARN
 	// per detected gap. It never refuses to start — a gap is a compliance
-	// signal. F-12.3.9.
+	// signal. The check reads audit_log from the instance it lives on —
+	// the separate §12.3 billing/audit pool when configured. F-12.3.9 /
+	// F-12.3.5.
 	if pgPool != nil {
-		runStartupChainContinuityCheck(context.Background(), pgPool, *auditStartupChainCheckEntries, gwMetrics)
+		chainPool := pgPool
+		if billingAuditPool != nil {
+			chainPool = billingAuditPool
+		}
+		runStartupChainContinuityCheck(context.Background(), chainPool, *auditStartupChainCheckEntries, gwMetrics)
 	}
 
 	// spec: §25.13 line 4737 / §16.5 — emit the configured Tier preset

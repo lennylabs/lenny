@@ -944,7 +944,7 @@ groups:
             description: Instantaneous Postgres write IOPS exceeded the configured burst ceiling more than 3 times in the past 10 minutes. A single burst is not actionable; sustained repetition indicates quota-flush storms or session-creation spikes regularly saturating burst headroom. Review postgres.writeCeilingIops against the Phase 13.5 Lenny-specific write-pattern benchmark.
             summary: Postgres write burst IOPS exceeded the burst ceiling more than 3 times in 10 minutes
         - alert: PgBouncerPoolSaturated
-          expr: lenny_pgbouncer_client_waiting_seconds > 1
+          expr: max(pgbouncer_pools_client_maxwait_seconds) > 1
           for: 1m
           labels:
             severity: warning

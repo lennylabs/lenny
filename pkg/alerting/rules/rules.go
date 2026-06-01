@@ -1199,8 +1199,12 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "PgBouncerPoolSaturated",
-			Expr:        `lenny_pgbouncer_client_waiting_seconds > 1`,
+			Name: "PgBouncerPoolSaturated",
+			// spec: §12.3 line 47 / §16.5 line 510 — the pgbouncer_exporter
+			// sidecar exposes the SHOW POOLS maxwait stat (cl_waiting_time)
+			// as pgbouncer_pools_client_maxwait_seconds; the alert fires when
+			// any pool's longest-waiting client exceeds 1s. F-12.3.11.
+			Expr:        `max(pgbouncer_pools_client_maxwait_seconds) > 1`,
 			For:         60 * time.Second,
 			Severity:    SeverityWarning,
 			Summary:     "PgBouncer connection pool saturated",

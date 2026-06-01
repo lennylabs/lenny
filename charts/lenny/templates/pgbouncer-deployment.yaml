@@ -1,0 +1,194 @@
+{{- /*
+The §12.3 lines 40-47 in-cluster PgBouncer topology: a Deployment
+(minimum 2 replicas) behind a ClusterIP Service, a PodDisruptionBudget,
+a backend-connectivity readiness probe, and a pgbouncer_exporter
+sidecar.
+
+Rendering is gated on `pgbouncer.deploy` (default false), distinct from
+`pgbouncer.enabled` (the connect_query ConfigMap). Cloud-managed
+deployments leave `deploy` false and front Postgres with the provider's
+proxy (§12.3 line 38); self-managed deployments set `deploy: true` to
+have the chart run PgBouncer. The pod carries the
+`lenny.dev/component: pgbouncer` label the §13.2 system NetworkPolicies
+already select, and mounts the connect_query ConfigMap (pgbouncer-config.yaml)
+so every fresh server connection runs the §4.2 `__unset__` sentinel.
+
+spec: §12.3 lines 40-47 (PgBouncer Deployment topology, PDB, readiness
+probe, pgbouncer_exporter sidecar). F-12.3.10 / F-12.3.11.
+*/ -}}
+{{- if .Values.pgbouncer.deploy }}
+{{- $pb := .Values.pgbouncer }}
+{{- $hasDBURL := and $pb.databaseURLSecret (ne $pb.databaseURLSecret "") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-pgbouncer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: pgbouncer
+spec:
+  # §12.3 line 40 — minimum 2 replicas so a single pod loss does not
+  # take the pooler down.
+  replicas: {{ $pb.replicas }}
+  selector:
+    matchLabels:
+      lenny.dev/component: pgbouncer
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: pgbouncer
+      annotations:
+        {{- if $pb.exporter.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $pb.exporter.port | quote }}
+        prometheus.io/path: /metrics
+        {{- end }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pgbouncer
+          image: "{{ $pb.image.repository }}:{{ $pb.image.tag }}"
+          imagePullPolicy: {{ $pb.image.pullPolicy }}
+          ports:
+            - name: pgbouncer
+              containerPort: {{ $pb.port }}
+          env:
+            - name: POOL_MODE
+              value: {{ $pb.poolMode | quote }}
+            {{- if $hasDBURL }}
+            # §12.3 line 45 — DATABASE_URL is the upstream Postgres DSN.
+            # The readiness probe runs SELECT 1 through it to verify a
+            # backend connection can be established.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pb.databaseURLSecret }}
+                  key: {{ $pb.databaseURLKey }}
+            {{- end }}
+          # §12.3 line 45 — readiness verifies backend Postgres
+          # connectivity, not just process liveness. With a DATABASE_URL
+          # secret the probe runs the configured SELECT 1; otherwise it
+          # falls back to a TCP check of the listen port.
+          readinessProbe:
+            {{- if $hasDBURL }}
+            exec:
+              command:
+                {{- toYaml $pb.readiness.command | nindent 16 }}
+            {{- else }}
+            tcpSocket:
+              port: pgbouncer
+            {{- end }}
+            periodSeconds: {{ $pb.readiness.periodSeconds }}
+            failureThreshold: {{ $pb.readiness.failureThreshold }}
+            timeoutSeconds: {{ $pb.readiness.timeoutSeconds }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # §4.2 / §12.3 — the connect_query __unset__ sentinel config.
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer
+              readOnly: true
+          resources:
+            {{- toYaml $pb.resources | nindent 12 }}
+        {{- if $pb.exporter.enabled }}
+        # §12.3 line 47 — pgbouncer_exporter sidecar. Exposes
+        # pgbouncer_pools_client_maxwait_seconds (the §16.5
+        # PgBouncerPoolSaturated alert numerator) and the pool-utilization
+        # gauges. F-12.3.11.
+        - name: pgbouncer-exporter
+          image: "{{ $pb.exporter.image.repository }}:{{ $pb.exporter.image.tag }}"
+          imagePullPolicy: {{ $pb.exporter.image.pullPolicy }}
+          args:
+            - --web.listen-address=:{{ $pb.exporter.port }}
+            {{- if $hasDBURL }}
+            - --pgBouncer.connectionString=$(DATABASE_URL)
+            {{- end }}
+          {{- if $hasDBURL }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pb.databaseURLSecret }}
+                  key: {{ $pb.databaseURLKey }}
+          {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ $pb.exporter.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml $pb.exporterResources | nindent 12 }}
+        {{- end }}
+      {{- /* §12.3 line 40 — spread replicas across nodes so a single
+         node loss never removes the whole pooler tier. */ -}}
+      {{- if ge (int $pb.replicas) 2 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      {{- end }}
+      volumes:
+        - name: pgbouncer-config
+          configMap:
+            name: {{ $pb.configMapName }}
+---
+# §12.3 line 43 — ClusterIP Service. PgBouncer is stateless, so multiple
+# replicas behind the Service provide transparent failover.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-pgbouncer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: pgbouncer
+spec:
+  selector:
+    lenny.dev/component: pgbouncer
+  ports:
+    - name: pgbouncer
+      port: {{ $pb.port }}
+      targetPort: pgbouncer
+    {{- if $pb.exporter.enabled }}
+    - name: metrics
+      port: {{ $pb.exporter.port }}
+      targetPort: metrics
+    {{- end }}
+---
+# §12.3 line 44 — PodDisruptionBudget. minAvailable: 1 at 2 replicas, or
+# maxUnavailable: 1 at 3+ replicas, so a rolling update or node drain
+# never terminates every PgBouncer replica at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-pgbouncer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: pgbouncer
+spec:
+  {{- if ge (int $pb.replicas) 3 }}
+  maxUnavailable: 1
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      lenny.dev/component: pgbouncer
+{{- end }}

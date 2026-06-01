@@ -147,6 +147,7 @@ var (
 // only billing/audit accessors.
 type SingleShardRouter struct {
 	pg         *pgxpool.Pool
+	billingPG  *pgxpool.Pool
 	rdb        redis.UniversalClient
 	defaultID  ShardID
 	platformID ShardID
@@ -156,6 +157,19 @@ type SingleShardRouter struct {
 type Config struct {
 	// Postgres is the single pool every accessor returns. Required.
 	Postgres *pgxpool.Pool
+	// BillingAuditPostgres is the optional dedicated pool for the
+	// billing-event and audit-log write paths. When set (the §12.3
+	// Tier-3 LENNY_PG_BILLING_AUDIT_DSN separate-instance posture),
+	// BillingShard, AuditShard, and AllAuditShards resolve to this pool
+	// while every other accessor stays on Postgres. When nil the
+	// billing/audit paths share the Postgres pool, so a single
+	// well-provisioned primary serves Tier-3 load unchanged.
+	//
+	// spec: §12.3 line 103 — "The gateway supports separate connection
+	// strings for the billing/audit write path (LENNY_PG_BILLING_AUDIT_DSN).
+	// When configured, billing and audit inserts are routed to this
+	// instance while all other writes continue to the primary."
+	BillingAuditPostgres *pgxpool.Pool
 	// Redis is the single Redis client every concern resolves to.
 	// Optional: when nil the router runs in Postgres-only mode and the
 	// Redis accessors (RedisShard, PlatformRedis) return
@@ -190,10 +204,24 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	}
 	return &SingleShardRouter{
 		pg:         cfg.Postgres,
+		billingPG:  cfg.BillingAuditPostgres,
 		rdb:        cfg.Redis,
 		defaultID:  id,
 		platformID: id,
 	}, nil
+}
+
+// billingAuditPool returns the dedicated billing/audit pool when the
+// §12.3 LENNY_PG_BILLING_AUDIT_DSN separate instance is configured,
+// otherwise the primary pool. Routing both the billing and audit write
+// paths through this single resolver keeps the §12.3 R-03 discipline:
+// the two append-only write sources move to the separate instance
+// together, matching the §12.3 line 130 instance-separation step.
+func (r *SingleShardRouter) billingAuditPool() *pgxpool.Pool {
+	if r.billingPG != nil {
+		return r.billingPG
+	}
+	return r.pg
 }
 
 var _ StoreRouter = (*SingleShardRouter)(nil)
@@ -219,20 +247,24 @@ func (r *SingleShardRouter) SessionShard(_ context.Context, sessionID SessionID)
 	return r.pg, nil
 }
 
-// BillingShard returns the sole Postgres pool, routed by tenant_id.
+// BillingShard returns the billing/audit pool, routed by tenant_id.
+// When LENNY_PG_BILLING_AUDIT_DSN is configured this is the separate
+// §12.3 instance; otherwise it is the primary pool.
 func (r *SingleShardRouter) BillingShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	return r.pg, nil
+	return r.billingAuditPool(), nil
 }
 
-// AuditShard returns the sole Postgres pool, routed by tenant_id.
+// AuditShard returns the billing/audit pool, routed by tenant_id. When
+// LENNY_PG_BILLING_AUDIT_DSN is configured this is the separate §12.3
+// instance; otherwise it is the primary pool.
 func (r *SingleShardRouter) AuditShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	return r.pg, nil
+	return r.billingAuditPool(), nil
 }
 
 // RedisShard returns the sole Redis client. The concern is
@@ -273,10 +305,13 @@ func (r *SingleShardRouter) PlatformPostgres(_ context.Context) (*pgxpool.Pool, 
 	return r.pg, nil
 }
 
-// AllAuditShards returns one ShardHandle wrapping the sole Postgres
-// pool.
+// AllAuditShards returns one ShardHandle wrapping the audit pool. When
+// LENNY_PG_BILLING_AUDIT_DSN is configured the §25.9 scatter-gather
+// audit scans (OCSF translation, EventBus retranscribe) iterate the
+// separate §12.3 instance, so a cross-tenant audit drain reaches the
+// rows the write path landed there.
 func (r *SingleShardRouter) AllAuditShards(_ context.Context) ([]ShardHandle, error) {
-	return []ShardHandle{{ID: r.defaultID, Pool: r.pg}}, nil
+	return []ShardHandle{{ID: r.defaultID, Pool: r.billingAuditPool()}}, nil
 }
 
 // ShardCount returns 1 for every documented StoreType. An unknown

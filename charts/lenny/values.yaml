@@ -659,6 +659,65 @@ pgbouncer:
   # postgres.connectionPooler below, not from a separate pgbouncer value,
   # so the install-time preflight check and the runtime startup refusal
   # read one source of truth. spec: §12.3 line 56 / §4.2 line 165.
+  #
+  # deploy gates the in-cluster PgBouncer topology (§12.3 lines 40-47):
+  # a Deployment (≥2 replicas) behind a ClusterIP Service, a
+  # PodDisruptionBudget, a backend-connectivity readiness probe, and a
+  # pgbouncer_exporter sidecar. It is distinct from `enabled` (the
+  # connect_query ConfigMap): cloud-managed deployments leave `deploy`
+  # false and front Postgres with the provider's proxy (§12.3 line 38),
+  # while self-managed deployments set `deploy: true` to have the chart
+  # run PgBouncer. When true, the rendered Deployment mounts the
+  # connect_query ConfigMap above. F-12.3.10.
+  deploy: false
+  # replicas is the PgBouncer replica count. §12.3 line 40 requires a
+  # minimum of 2 so a single pod loss does not take the pooler down.
+  replicas: 2
+  # image is the PgBouncer container image. The default tracks the same
+  # build the tier-2 RLS-leak compose harness exercises.
+  image:
+    repository: edoburu/pgbouncer
+    tag: "v1.23.1-p3"
+    pullPolicy: IfNotPresent
+  # port is the PgBouncer client listen port the Service and gateway
+  # connect to.
+  port: 6432
+  # databaseURLSecret/databaseURLKey inject a DATABASE_URL env into the
+  # PgBouncer container. The readiness probe runs SELECT 1 through this
+  # DSN to verify backend Postgres connectivity (§12.3 line 45), and the
+  # edoburu image derives its upstream from it. Leave the secret empty to
+  # manage the upstream entirely via the mounted ConfigMap; the default
+  # readiness probe then falls back to a TCP check of the listen port.
+  databaseURLSecret: ""
+  databaseURLKey: "url"
+  # exporter is the §12.3 line 47 pgbouncer_exporter sidecar. It scrapes
+  # SHOW POOLS / SHOW STATS over the PgBouncer admin interface and
+  # exposes Prometheus metrics (including pgbouncer_pools_client_maxwait_seconds,
+  # which the §16.5 PgBouncerPoolSaturated alert evaluates). F-12.3.11.
+  exporter:
+    enabled: true
+    image:
+      repository: prometheuscommunity/pgbouncer-exporter
+      tag: "v0.10.2"
+      pullPolicy: IfNotPresent
+    port: 9127
+  # readiness verifies backend Postgres connectivity, not just process
+  # liveness (§12.3 line 45). The default exec probe runs SELECT 1
+  # through the local PgBouncer port via the injected DATABASE_URL; set
+  # databaseURLSecret for it to work, or override `command` for a
+  # different image. periodSeconds/failureThreshold/timeoutSeconds match
+  # the §12.3 line 45 recommended settings.
+  readiness:
+    command:
+      - /bin/sh
+      - -c
+      - 'psql "$DATABASE_URL" -tAc "SELECT 1"'
+    periodSeconds: 5
+    failureThreshold: 2
+    timeoutSeconds: 3
+  # resources for the PgBouncer container and the exporter sidecar.
+  resources: {}
+  exporterResources: {}
 
 # postgres configures the Postgres connection.
 postgres:
@@ -702,6 +761,19 @@ postgres:
   # renders the value into the lenny-datastore-conn Secret and both
   # Deployments read LENNY_POSTGRES_DSN from that Secret.
   dsn: ""
+  # §12.3 line 103 billingAuditDSN: optional connection string for a
+  # dedicated Postgres instance carrying the append-only billing_events
+  # and audit_log ledgers (the Tier-3 instance-separation step at §12.3
+  # line 130). When set, the gateway routes billing-event and audit-log
+  # writes (and the audit chain-integrity / scatter-gather reads) to this
+  # instance through the §12.3 R-03 StoreRouter while every other write
+  # stays on the primary `dsn`. The separate instance must already carry
+  # the migrations/ schema for those ledgers. Empty (the default) keeps
+  # both paths on the primary; a single well-provisioned primary serves
+  # Tier-3 sustained load unchanged. When set, the chart renders the
+  # value into the lenny-datastore-conn Secret and the gateway reads
+  # LENNY_PG_BILLING_AUDIT_DSN from it. F-12.3.5.
+  billingAuditDSN: ""
   # §12.3 line 123 writeCeilingIops: the measured sustained write-IOPS
   # ceiling for the primary Postgres instance. The gateway emits it
   # unlabelled on lenny_postgres_write_ceiling_iops at startup so the
