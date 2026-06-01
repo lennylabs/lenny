@@ -1,0 +1,138 @@
+suite: OpenTelemetry Collector and trace sampling (F-16.3.4, spec §16.3 line 359)
+templates:
+  - otel-collector.yaml
+  - gateway-deployment.yaml
+# global.spiffeTrustDomain is a §10.3 required value the gateway-deployment
+# template enforces; set it suite-wide so every render succeeds.
+set:
+  global.spiffeTrustDomain: lenny-acme-prod
+tests:
+  - it: renders no collector with stock values (opt-in)
+    templates:
+      - otel-collector.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the ConfigMap, Service, and Deployment when enabled
+    templates:
+      - otel-collector.yaml
+    set:
+      tracing.collector.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 3
+      - documentIndex: 0
+        isKind:
+          of: ConfigMap
+      - documentIndex: 0
+        equal:
+          path: metadata.name
+          value: lenny-otel-collector
+      - documentIndex: 1
+        isKind:
+          of: Service
+      - documentIndex: 2
+        isKind:
+          of: Deployment
+      - documentIndex: 2
+        equal:
+          path: metadata.name
+          value: lenny-otel-collector
+
+  - it: derives the tail_sampling probabilistic rate from global.traceSamplingRate
+    templates:
+      - otel-collector.yaml
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    set:
+      tracing.collector.enabled: true
+      global.traceSamplingRate: 0.25
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "sampling_percentage: 25"
+      # spec: §16.3 line 359 — errors and slow requests are always kept.
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "status_codes: \\[ERROR\\]"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "threshold_ms: 500"
+
+  - it: defaults the probabilistic rate to 10 percent
+    templates:
+      - otel-collector.yaml
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    set:
+      tracing.collector.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "sampling_percentage: 10"
+
+  - it: exports to the deployer backend when backendEndpoint is set
+    templates:
+      - otel-collector.yaml
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    set:
+      tracing.collector.enabled: true
+      tracing.collector.backendEndpoint: tempo.monitoring.svc:4317
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "otlp/backend"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "endpoint: \"tempo.monitoring.svc:4317\""
+
+  - it: carries the NET-046 otlp pod label so agent-pod egress is admitted
+    templates:
+      - otel-collector.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      tracing.collector.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: otel-collector
+
+  - it: points the gateway at the in-cluster collector when enabled and no explicit endpoint
+    templates:
+      - gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.spiffeTrustDomain: lenny-acme-prod
+      tracing.collector.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://lenny-otel-collector.lenny-system.svc:4318
+
+  - it: prefers an explicit observability.otlpEndpoint over the bundled collector
+    templates:
+      - gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.spiffeTrustDomain: lenny-acme-prod
+      tracing.collector.enabled: true
+      observability.otlpEndpoint: https://otlp.acme.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: https://otlp.acme.com

@@ -577,6 +577,44 @@ observability:
   # instead of the in-cluster namespace/pod selector (§13.2 NET-046).
   otlpCIDR: ""
 
+# tracing configures the §16.3 distributed-tracing pipeline. The
+# platform emits 100% of traces (head sampling) to an OpenTelemetry
+# Collector, which applies tail-based sampling and exports to the
+# deployer's backend (§16.3 line 359). The bundled collector below is
+# opt-in: a stock development render leaves observability.otlpEndpoint
+# empty and tracing.collector.enabled false, so no collector is created
+# and the gateway falls back to its stdout span exporter. Enable the
+# collector to run the tail-sampling pipeline in-cluster.
+tracing:
+  collector:
+    # enabled renders the OpenTelemetry Collector Deployment, Service,
+    # and config ConfigMap, and points the gateway's
+    # OTEL_EXPORTER_OTLP_ENDPOINT at the collector's OTLP/HTTP port when
+    # observability.otlpEndpoint is not set explicitly. Off by default
+    # so a stock install does not require the collector image or a
+    # tracing backend (§16.3 line 359). F-16.3.4.
+    enabled: false
+    # image is the collector image. tail_sampling lives in the contrib
+    # distribution, so the contrib image is required (the core
+    # otel/opentelemetry-collector image omits the processor).
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    imagePullPolicy: IfNotPresent
+    replicas: 1
+    # backendEndpoint is the OTLP endpoint of the deployer's tracing
+    # backend (Jaeger, Tempo, Zipkin via OTLP, Cloud Trace, X-Ray). When
+    # empty the collector only debug-logs the sampled traces, which is
+    # enough to verify the pipeline before a backend is wired (§16.3
+    # line 359: "The backend is deployer-configured").
+    backendEndpoint: ""
+    # backendInsecure disables TLS verification on the backend OTLP
+    # exporter. Leave false for a TLS backend; set true only for an
+    # in-cluster plaintext backend.
+    backendInsecure: false
+    # resources for the collector container. Empty leaves the container
+    # unconstrained; production deployments set requests and limits sized
+    # to the trace volume.
+    resources: {}
+
 # pgbouncer configures the §4.2 / §12.3 PgBouncer connect_query
 # sentinel ConfigMap. The chart does not deploy PgBouncer itself
 # (the pooler is operator-managed: self-hosted on a separate workload
@@ -916,6 +954,17 @@ global:
   # existing Lenny Deployment in the same cluster (NET-064). The embedded
   # Quickstart path (§17.4) derives a per-install value instead. F-10.3.4.
   spiffeTrustDomain: ""
+  # traceSamplingRate is the §16.3 line 359 default probabilistic
+  # tail-sampling rate the OpenTelemetry Collector applies to normal
+  # traces (10% by default). The gateway head-samples 100% of traces
+  # (the in-process TracerProvider always samples; see pkg/observability/
+  # tracing/provider.go) and the Collector makes the keep/drop decision
+  # tail-side, where error status and latency are already known. This
+  # value is rendered into the tail_sampling probabilistic policy on the
+  # bundled collector (tracing.collector.enabled). Errors, slow session
+  # creation (>500ms P99 SLO), and whole delegation traces are kept at
+  # 100% regardless of this rate. F-16.3.4.
+  traceSamplingRate: 0.1
   # saTokenAudience is the §10.3 line 334 projected SA-token audience
   # the gateway validates on every pod→gateway request. The value MUST
   # be deployment-specific (e.g. `lenny-gateway-<cluster-name>`) so a

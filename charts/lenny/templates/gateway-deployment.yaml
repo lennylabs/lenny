@@ -662,9 +662,15 @@ spec:
               value: {{ .p99TTFBSeconds | quote }}
             {{- end }}
             {{- end }}
-            {{- with .Values.observability.otlpEndpoint }}
+            {{- if .Values.observability.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ . | quote }}
+              value: {{ .Values.observability.otlpEndpoint | quote }}
+            {{- else if .Values.tracing.collector.enabled }}
+            # §16.3 line 359 — with no explicit OTLP endpoint and the
+            # bundled collector enabled, the gateway exports spans to the
+            # in-cluster collector's OTLP/HTTP port. F-16.3.4.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ printf "http://lenny-otel-collector.%s.svc:4318" (.Values.observability.otlpNamespace | default "lenny-system") | quote }}
             {{- end }}
             {{- with .Values.billing.sink }}
             - name: LENNY_BILLING_SINK

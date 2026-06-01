@@ -1,0 +1,149 @@
+{{- /*
+The §16.3 OpenTelemetry Collector. The platform emits 100% of traces
+(head sampling) to this collector, which applies tail-based sampling and
+exports to the deployer's backend (§16.3 line 359). Tail sampling buffers
+every span of a trace until the decision window elapses, then keeps or
+drops the whole trace at once — so the spec's "all spans in a delegation
+tree are sampled if the root is sampled" completeness rule holds by
+construction, and error/latency conditions are known at decision time.
+
+Three keep-at-100% policies plus the configurable probabilistic default:
+  - errors: any span with ERROR status.
+  - slow session creation: trace latency over 500ms (the §16.5 P99 SLO).
+  - probabilistic: global.traceSamplingRate (default 10%) for the rest.
+
+The object is opt-in via tracing.collector.enabled, matching the opt-in
+posture of the rest of the tracing surface (observability.otlpEndpoint is
+empty by default). The pod carries the observability.otlpPodLabel so the
+§13.2 NET-046 allow-pod-egress-otlp policy admits agent-pod egress to it,
+and it runs in observability.otlpNamespace for the same reason.
+*/ -}}
+{{- if .Values.tracing.collector.enabled }}
+{{- $c := .Values.tracing.collector }}
+{{- $ns := .Values.observability.otlpNamespace | default "lenny-system" }}
+{{- $samplePct := mulf .Values.global.traceSamplingRate 100.0 }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-otel-collector
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:{{ .Values.observability.otlpPort | default 4317 }}
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      # spec: §16.3 line 359 — tail-based sampling. The probabilistic
+      # default is global.traceSamplingRate; errors and slow session
+      # creation are always kept.
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        expected_new_traces_per_sec: 100
+        policies:
+          - name: errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: slow-requests
+            type: latency
+            latency:
+              threshold_ms: 500
+          - name: probabilistic-default
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: {{ $samplePct }}
+      batch: {}
+    exporters:
+      debug:
+        verbosity: normal
+      {{- if $c.backendEndpoint }}
+      otlp/backend:
+        endpoint: {{ $c.backendEndpoint | quote }}
+        tls:
+          insecure: {{ $c.backendInsecure | default false }}
+      {{- end }}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [tail_sampling, batch]
+          exporters: [{{ if $c.backendEndpoint }}otlp/backend{{ else }}debug{{ end }}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-otel-collector
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: otel-collector
+spec:
+  selector:
+    lenny.dev/component: otel-collector
+    {{ .Values.observability.otlpPodLabel }}: {{ .Values.observability.otlpPodLabelValue | quote }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.observability.otlpPort | default 4317 }}
+      targetPort: {{ .Values.observability.otlpPort | default 4317 }}
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-otel-collector
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: otel-collector
+spec:
+  replicas: {{ $c.replicas | default 1 }}
+  selector:
+    matchLabels:
+      lenny.dev/component: otel-collector
+      {{ .Values.observability.otlpPodLabel }}: {{ .Values.observability.otlpPodLabelValue | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: otel-collector
+        {{ .Values.observability.otlpPodLabel }}: {{ .Values.observability.otlpPodLabelValue | quote }}
+      annotations:
+        # Roll the collector when its config changes.
+        checksum/config: {{ tpl (toYaml $c) . | sha256sum }}
+    spec:
+      containers:
+        - name: otel-collector
+          image: {{ $c.image | quote }}
+          imagePullPolicy: {{ $c.imagePullPolicy | default "IfNotPresent" }}
+          args:
+            - "--config=/etc/otel-collector/config.yaml"
+          ports:
+            - name: otlp-grpc
+              containerPort: {{ .Values.observability.otlpPort | default 4317 }}
+            - name: otlp-http
+              containerPort: 4318
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-collector
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: lenny-otel-collector
+{{- end }}
