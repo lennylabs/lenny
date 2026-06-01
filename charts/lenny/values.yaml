@@ -2082,6 +2082,23 @@ storage:
   #       escrowKekId: "" # platform:legal_hold_escrow:<region> KEK id
   regions: {}
 
+  # t4KmsProbeInterval is the §12.5 line 307 (STO-021) cadence in seconds
+  # for the leader-elected continuous T4 KMS availability probe. Each
+  # cycle re-runs a zero-byte encrypt/decrypt round-trip against every
+  # workspaceTier: T4 tenant's tenant:{tenant_id} key so silent
+  # post-provisioning key drift (operator disable, provider-side
+  # deletion, IAM grant loss) becomes observable on
+  # lenny_t4_kms_probe_last_success_timestamp before a checkpoint-path
+  # outage cascades. The T4KmsKeyUnusable alert fires at 2× this value.
+  # Bounded below by 60s (enforced at Helm-validate). Default 300 (5 min).
+  t4KmsProbeInterval: 300
+  # t4KmsProbeRateLimit is the §12.5 line 307 token-bucket ceiling on
+  # probe issuance, in probes/sec, so a large T4 fleet (e.g. 10 000
+  # tenants) does not burst the KMS backend within a single sweep. Under
+  # rate-limit pressure a sweep completes asynchronously and may exceed
+  # t4KmsProbeInterval. Default 10.
+  t4KmsProbeRateLimit: 10
+
 # backups configures the §25.11 backup-and-restore subsystem. lenny-ops
 # orchestrates backup, verify, and restore Kubernetes Jobs that run the
 # lenny-backup image; the values here cover the shared image, the

@@ -575,6 +575,16 @@ func main() {
 	gcTombstoneRetentionSeconds := flag.Int("gc-tombstone-retention-seconds",
 		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
 		"§12.5 line 341 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
+	// spec: §12.5 line 307 (STO-021) — the leader-elected continuous T4
+	// KMS availability probe. The cadence floor (60s) and the
+	// token-bucket rate ceiling keep a large T4 fleet from bursting the
+	// KMS backend; both are operator-tunable.
+	t4KmsProbeIntervalSeconds := flag.Int("t4-kms-probe-interval-seconds",
+		envInt("LENNY_T4_KMS_PROBE_INTERVAL_SECONDS", int(tenantkms.DefaultProbeInterval/time.Second)),
+		"§12.5 line 307 storage.t4KmsProbeInterval: the leader-elected continuous T4 KMS availability probe cadence in seconds (default 300, minimum 60; a smaller value is clamped up to the floor). Override via LENNY_T4_KMS_PROBE_INTERVAL_SECONDS.")
+	t4KmsProbeRateLimit := flag.Float64("t4-kms-probe-rate-limit",
+		envFloat("LENNY_T4_KMS_PROBE_RATE_LIMIT", tenantkms.DefaultProbeRateLimit),
+		"§12.5 line 307 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
 	maxCreatedStateTimeoutSeconds := flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
 		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
@@ -2742,7 +2752,19 @@ func main() {
 		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
 	}
 
+	// spec: §12.5 line 301 / line 307 — the §12.5 T4 KMS availability
+	// probe Lifecycle, backed by the resolved §4 kms.Provider so the
+	// zero-byte encrypt/decrypt round-trip uses the same provider
+	// credentials a T4 artifact write would. One Lifecycle instance is
+	// shared by the admin-time probe (WithKMSProbe below, F-12.5.3) and
+	// the leader-elected continuous probe (the Prober wired with the GC
+	// loops, F-12.5.4) so the `t4KmsLastProbeSuccessAt` admin field and
+	// the `lenny_t4_kms_probe_last_success_timestamp` gauge read the
+	// same recorded last-success time.
+	kmsProbeLifecycle := tenantkms.NewProviderProbeLifecycle(kmsProvider, clockinject.Now)
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
+		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
@@ -3897,6 +3919,39 @@ func main() {
 				}
 			})
 		}
+	}
+
+	// ----- §12.5 line 307 continuous T4 KMS availability probe (STO-021) -----
+	// A leader-elected background goroutine, co-located with the GC
+	// sweeps under the same gateway lease (the leader-election lease is
+	// the §10.1 model the GC loops above already run under). On each
+	// cadence it enumerates T4 tenants, re-runs the zero-byte
+	// encrypt/decrypt round-trip against every tenant:{tenant_id} key,
+	// and updates lenny_t4_kms_probe_last_success_timestamp /
+	// lenny_t4_kms_probe_result_total so the T4KmsKeyUnusable alert and
+	// the admin t4KmsLastProbeSuccessAt field observe silent
+	// post-provisioning key drift. The token-bucket rate ceiling caps
+	// KMS API spend; the cadence floor is enforced inside Prober.Start.
+	{
+		probeMetrics, err := tenantkms.NewProbeMetrics(gwMetrics.Registerer())
+		if err != nil {
+			log.Fatalf("lenny-gateway: §12.5 T4 KMS probe metrics: %v", err)
+		}
+		prober := &tenantkms.Prober{
+			Lifecycle: kmsProbeLifecycle,
+			Tenants:   t4TenantSource{tenants},
+			Metrics:   probeMetrics,
+			Interval:  time.Duration(*t4KmsProbeIntervalSeconds) * time.Second,
+			RateLimit: *t4KmsProbeRateLimit,
+			Now:       clockinject.Now,
+		}
+		log.Printf("lenny-gateway: §12.5 continuous T4 KMS probe interval=%ds rate=%.1f/s",
+			*t4KmsProbeIntervalSeconds, *t4KmsProbeRateLimit)
+		go func() {
+			if err := prober.Start(watchdogCtx); err != nil {
+				log.Printf("lenny-gateway: §12.5 T4 KMS probe loop exited: %v", err)
+			}
+		}()
 	}
 
 	// ----- §10.1 session-coordination lease sweeper -----
@@ -5412,6 +5467,30 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 	out = append(out, "default")
 	for _, row := range rows {
 		out = append(out, row.ID)
+	}
+	return out, nil
+}
+
+// t4TenantSource adapts a tenantstore.Store into a
+// tenantkms.TenantSource so the §12.5 line 307 continuous probe
+// enumerates exactly the active tenants at workspaceTier T4 — the only
+// tenants holding a tenant-scoped KMS key. Soft-deleted tenants are
+// dropped (their key is destroyed in §12.8 Phase 4a, so probing it is
+// pointless and would flatline the gauge for a tenant that is gone).
+type t4TenantSource struct {
+	store tenantstore.Store
+}
+
+func (t t4TenantSource) T4Tenants(ctx context.Context) ([]string, error) {
+	rows, err := t.store.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.IsActive() && row.WorkspaceTier == tenantkms.WorkspaceTierT4 {
+			out = append(out, row.ID)
+		}
 	}
 	return out, nil
 }

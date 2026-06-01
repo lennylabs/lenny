@@ -509,10 +509,12 @@ tests:
       #   F-12.3.9)
       # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8 line 839, F-12.8.16)
       # + LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN / _PER_TENANT_PER_MIN
-      #   (§10.7 line 938, F-10.7.4) = 41.
+      #   (§10.7 line 938, F-10.7.4)
+      # + LENNY_T4_KMS_PROBE_INTERVAL_SECONDS / _RATE_LIMIT (§12.5 line 307,
+      #   STO-021, F-12.5.4) = 43.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 41
+          count: 43
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -752,6 +754,60 @@ tests:
           content:
             name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
             value: "172800"
+
+  # spec: §12.5 line 307 (STO-021) / F-12.5.4 — the continuous T4 KMS
+  # probe cadence and rate ceiling default to 300s and 10 probes/sec and
+  # flow through to the gateway env.
+  - it: renders the default storage.t4KmsProbeInterval / t4KmsProbeRateLimit env
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_T4_KMS_PROBE_INTERVAL_SECONDS
+            value: "300"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_T4_KMS_PROBE_RATE_LIMIT
+            value: "10"
+
+  - it: renders storage.t4KmsProbeInterval / t4KmsProbeRateLimit overrides
+    set:
+      storage.t4KmsProbeInterval: 120
+      storage.t4KmsProbeRateLimit: 25
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_T4_KMS_PROBE_INTERVAL_SECONDS
+            value: "120"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_T4_KMS_PROBE_RATE_LIMIT
+            value: "25"
+
+  # spec: §12.5 line 307 — the 60s cadence floor is enforced at
+  # Helm-validate so a misconfigured value fails the install closed.
+  - it: rejects storage.t4KmsProbeInterval below the 60s floor
+    set:
+      storage.t4KmsProbeInterval: 30
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5 line 307: storage.t4KmsProbeInterval=30 is below the 60s minimum; raise it to at least 60."
+
+  - it: rejects a non-positive storage.t4KmsProbeRateLimit
+    set:
+      storage.t4KmsProbeRateLimit: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5 line 307: storage.t4KmsProbeRateLimit=0 must be a positive probes/sec ceiling."
 
   # spec: §16.5 line 623 / F-16.5.5 — slo.validated = true suppresses
   # the gateway's provisional-SLO startup warning once the Phase 14.5

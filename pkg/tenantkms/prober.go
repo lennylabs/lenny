@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/time/rate"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
@@ -21,6 +23,20 @@ import (
 // 2 * the cadence, so a 5-minute interval lets the alert fire within
 // 10 minutes of a KMS outage.
 const DefaultProbeInterval = 5 * time.Minute
+
+// MinProbeInterval is the §12.5 line 307 floor on the continuous-probe
+// cadence ("the interval is bounded below by a minimum of 60s enforced
+// at Helm-validate to prevent excessive KMS API spend"). Start clamps a
+// configured interval up to this floor as defense-in-depth so a binary
+// launched with a sub-60s interval cannot busy-probe the KMS backend
+// even when the Helm gate is bypassed.
+const MinProbeInterval = 60 * time.Second
+
+// DefaultProbeRateLimit is the §12.5 line 307 default token-bucket
+// ceiling on probe issuance (`storage.t4KmsProbeRateLimit`, default
+// 10 probes/sec) so a fleet of 10 000 T4 tenants does not burst the KMS
+// backend within a single sweep.
+const DefaultProbeRateLimit = 10.0
 
 // TenantSource is the read seam the continuous probe uses to enumerate
 // the T4 tenants whose keys it must probe each cycle. The §15.1 admin
@@ -103,11 +119,22 @@ type Prober struct {
 	// last-success time).
 	Metrics *ProbeMetrics
 	// Interval is the probe cadence. A non-positive value selects
-	// DefaultProbeInterval.
+	// DefaultProbeInterval; a positive value below MinProbeInterval is
+	// clamped up to the floor at Start.
 	Interval time.Duration
+	// RateLimit bounds probe issuance to RateLimit probes/sec via a
+	// token bucket (§12.5 line 307 storage.t4KmsProbeRateLimit). A
+	// non-positive value disables rate limiting. The bucket is built
+	// once and shared across cycles, so a sweep that overruns Interval
+	// under a large T4 fleet keeps honouring the ceiling instead of
+	// resetting its burst allowance each tick.
+	RateLimit float64
 	// Now returns the current time. A nil value defaults to
 	// time.Now().UTC, the same clock the Lifecycle uses.
 	Now func() time.Time
+
+	limiterOnce sync.Once
+	limiter     *rate.Limiter
 }
 
 var (
@@ -121,8 +148,15 @@ var (
 func (p *Prober) Start(ctx context.Context) error {
 	logger := log.FromContext(ctx).WithName("tenantkms-prober")
 	interval := p.Interval
-	if interval <= 0 {
+	switch {
+	case interval <= 0:
 		interval = DefaultProbeInterval
+	case interval < MinProbeInterval:
+		// spec: §12.5 line 307 — the cadence floor is 60s; clamp up so
+		// a misconfigured value cannot busy-probe the KMS backend.
+		logger.Info("t4 KMS probe interval below floor; clamping",
+			"configured", interval.String(), "floor", MinProbeInterval.String())
+		interval = MinProbeInterval
 	}
 
 	p.runCycle(ctx, logger)
@@ -164,8 +198,17 @@ func (p *Prober) runCycle(ctx context.Context, logger probeLogger) error {
 		logger.Error(err, "list T4 tenants for KMS probe")
 		return err
 	}
+	limiter := p.rateLimiter()
 	now := p.now()
 	for _, tenant := range tenants {
+		// spec: §12.5 line 307 — token-bucket rate limit so a large T4
+		// fleet does not burst the KMS backend. A cancelled ctx ends
+		// the sweep cleanly; the next tick retries from the top.
+		if limiter != nil {
+			if err := limiter.Wait(ctx); err != nil {
+				return nil
+			}
+		}
 		err := p.Lifecycle.ProbeAvailability(ctx, tenant, WorkspaceTierT4)
 		if err == nil {
 			if p.Metrics != nil {
@@ -201,4 +244,20 @@ func (p *Prober) now() time.Time {
 		return p.Now()
 	}
 	return time.Now().UTC()
+}
+
+// rateLimiter lazily builds the §12.5 line 307 token bucket from
+// RateLimit and caches it so the burst allowance is shared across every
+// cycle. A non-positive RateLimit returns nil (rate limiting disabled).
+func (p *Prober) rateLimiter() *rate.Limiter {
+	p.limiterOnce.Do(func() {
+		if p.RateLimit > 0 {
+			burst := int(p.RateLimit)
+			if burst < 1 {
+				burst = 1
+			}
+			p.limiter = rate.NewLimiter(rate.Limit(p.RateLimit), burst)
+		}
+	})
+	return p.limiter
 }
