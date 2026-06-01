@@ -99,7 +99,7 @@ M. **Tread carefully — this is a large codebase.** Search broadly (do not rest
 
 N. **Re-attempt unblocked deferrals.** Before exiting, scan BUILD-GAPS.md for DEFERRED findings whose Resolution notes cite this batch's closed F-IDs as the blocker. Re-attempt any that are now unblocked and mark CLOSED (or re-DEFERRED with a fresh note). Tackle only direct unblocks; do not chase second-order unblocks.
 
-O. **Revalidate proposed fixes.** Before addrressing any gap, re-assess the proposed fix against the spec and the current codebase, as the code may have changed significantlysince the finding was reported.
+O. **Do not blindly implement proposed fixes.** Before addressing any gap, re-assess the finding's proposed fix against the spec and the current codebase, as the code may have changed significantlysince the finding was reported.
 
 YOUR TASK THIS INVOCATION
 
