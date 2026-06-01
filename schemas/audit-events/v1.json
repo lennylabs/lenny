@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.dev/schemas/audit-events/v1.json",
+  "title": "Lenny audit event (schema v1)",
+  "description": "Per-version registry of the §11.7 hash-chained audit_log canonical record. event_schema_version 'v1' matches the audit_log column default (migrations/0001). This schema describes the canonical Postgres-tuple view a verifier reconstructs the per-tenant hash chain from; the on-the-wire OCSF projection is described by the OCSF class/activity mapping in schemas/ocsf-mapping.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "sequence_number",
+    "id",
+    "event_type",
+    "event_schema_version",
+    "payload",
+    "created_at"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Per-tenant chain selector. The pseudo-tenant 'platform' carries platform-admin actions."
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per-tenant sequence number; the chain orders rows by (tenant_id, sequence_number)."
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Row UUID."
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Lenny event type. Maps to an OCSF class/activity via schemas/ocsf-mapping.yaml; an event type with no mapping dead-letters as class_mapping_missing."
+    },
+    "event_schema_version": {
+      "const": "v1",
+      "description": "Schema version of this record. Pins the verifier to this registry file."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Complete Lenny-internal event payload. Fields with an explicit OCSF mapping are projected onto OCSF objects; all other keys route verbatim into unmapped.lenny.*."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Row creation timestamp (RFC 3339)."
+    },
+    "prev_hash": {
+      "type": ["string", "null"],
+      "description": "Hex-encoded SHA-256 chain link to the predecessor row. Null/absent only on the first row of a tenant chain, where the per-tenant genesis hash is used instead."
+    },
+    "genesis_nonce": {
+      "type": "string",
+      "description": "256-bit hex nonce present on the first row of a tenant chain only. genesis_hash = SHA-256(\"lenny-audit-genesis\" || tenant_id || genesis_nonce)."
+    },
+    "chain_integrity": {
+      "type": "string",
+      "enum": [
+        "verified",
+        "broken",
+        "unchecked",
+        "rechained_post_outage",
+        "gap_suspected",
+        "redacted_gdpr"
+      ],
+      "description": "Verifier state for the chain segment containing this row, per §11.7."
+    }
+  }
+}

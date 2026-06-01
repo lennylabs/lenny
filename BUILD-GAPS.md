@@ -17418,7 +17418,7 @@ construct events directly), they are recovered from the request context
 `type_id`, so the §25.9 human-vs-agent breakdown and operation
 correlation now resolve. F-11.7.13.
 
-### - [ ] F-11.7.14 — 14  `schemas/ocsf-mapping.yaml` and `schemas/audit-events/v*.json` registries are absent [Medium] — OPEN
+### - [x] F-11.7.14 — 14  `schemas/ocsf-mapping.yaml` and `schemas/audit-events/v*.json` registries are absent [Medium] — CLOSED
 
 **Spec:** §11.7 line 414 — "The full mapping is maintained in
 `schemas/ocsf-mapping.yaml` committed alongside the spec and
@@ -17440,6 +17440,8 @@ is not implemented. Release artifacts cannot ship the per-version
 schemas the spec promises.
 
 **Severity:** Medium — external-contract gap.
+
+**Resolution:** `schemas/ocsf-mapping.yaml` now mirrors the §11.7 event-type → OCSF class/activity catalog. A new `ocsf.Catalog()` / `ocsf.MarshalMappingYAML()` pair serializes the exact + prefix mapping rows (with class/category/activity names resolved) to YAML; `cmd/lenny-ocsf-mapping-gen` regenerates the committed file (`go run ./cmd/lenny-ocsf-mapping-gen`) and `TestMappingYAMLInSync` is the CI guard that fails when the Go catalog and the committed mirror drift. `schemas/audit-events/v1.json` is the §11.7 line 365 per-version registry: a JSON-Schema 2020-12 document for the canonical hash-chained audit_log record, with `event_schema_version` pinned to `v1` (the audit_log column default). Both files are now validated in tier-0 (`schemas/README.md` + `tests/tier0_static/schemas_test.go`). The metric-emitter half of §11.7 observability stays under F-11.7.15.
 
 ### - [ ] F-11.7.15 — 15  Most §11.7 metrics are catalog entries with no emitter [Medium] — OPEN
 
@@ -18675,7 +18677,7 @@ Evidence:
   `tests/tier8_chaos/scaffolds_test.go:118`) is a scaffold that logs and
   exits — the live saturation injector is on the ops backlog.
 
-### - [ ] F-12.3.12 — `__unset__` sentinel via `connect_query` is not configured (§12.3 line 38) [Medium] — OPEN
+### - [x] F-12.3.12 — `__unset__` sentinel via `connect_query` is not configured (§12.3 line 38) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.2.8 — Both describe the PgBouncer connect_query __unset__ sentinel not being configured in charts/pooler.
 
@@ -18693,6 +18695,8 @@ Evidence:
 
 Result: in self-managed PgBouncer mode, the second layer of defense
 (connection-checkout sentinel) is unconfigured.
+
+**Resolution:** Closed by F-4.2.8 (confirmed duplicate, high confidence). `charts/lenny/templates/pgbouncer-config.yaml` renders the `lenny-pgbouncer-config` ConfigMap carrying the `pgbouncer.ini` fragment with `connect_query = 'SET app.current_tenant = ''__unset__'''` and `pool_mode = transaction`; operators mount it on their self-managed PgBouncer workload (the pooler is operator-managed per §12.3). The `pgbouncer:` values block (`enabled`, `configMapName`, `connectQuery`, `poolMode`) exposes the overrides and `charts/lenny/tests/pgbouncer-config_test.yaml` asserts the rendered sentinel. The in-cluster PgBouncer Deployment/PDB/exporter topology remains open under F-12.3.10 / F-12.3.11.
 
 ### - [ ] F-12.3.13 — `billingFlushIntervalMs`, `billingFlushBatchSize`, `billingFlushMaxPending`, `billing_flush_pressure` not tunable / not emitted (§12.3 line 76) [Medium] — CLOSED
 

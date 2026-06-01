@@ -35,6 +35,8 @@ func TestPhase1SchemasParse(t *testing.T) {
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
 		"schemas/lifecycle-events.schema.json",
+		// spec: §11.7 line 365 — per-version audit-event registry.
+		"schemas/audit-events/v1.json",
 	}
 
 	for _, rel := range cases {
