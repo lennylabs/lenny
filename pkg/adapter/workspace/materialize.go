@@ -17,11 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/upload"
 )
 
 // Warning is one non-fatal §14 advisory the adapter raised against a
@@ -82,11 +84,45 @@ func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) 
 	return MaterializeWithPolicy(root, stagingDir, sources, ArchivePolicy{WorkspaceRoot: root})
 }
 
-// MaterializeWithPolicy writes the workspace sources into root in order.
+const (
+	// promotionStagingName is the §7.4 line 433 /workspace/staging build
+	// tree. MaterializeWithPolicy lays the resolved workspace down here,
+	// then atomically promotes it onto the workspace root
+	// (/workspace/current). It is a sibling of the root so the promotion
+	// rename never crosses a filesystem boundary. spec: §7.4 line 433 —
+	// F-7.4.12, F-13.4.5.
+	promotionStagingName = "staging"
+	// promotionBackupSuffix names the directory the pre-promotion workspace
+	// root is moved aside to while the staging tree is renamed into place,
+	// so a failed post-promotion symlink re-validation can restore it.
+	// spec: §7.4 line 433 — F-7.4.12.
+	promotionBackupSuffix = ".prev"
+	// promotionBuildFallbackSuffix is the build-tree name used when the
+	// spec-default sibling (/workspace/staging) would alias the configured
+	// raw-upload staging directory or the workspace root itself.
+	promotionBuildFallbackSuffix = ".build"
+	// promotionStagingMode is the permission mode of the build tree. The
+	// promotion rename carries the materialized entries' own modes onto the
+	// workspace root, so the build tree only needs the adapter's own
+	// traverse access while it is assembled.
+	promotionStagingMode = 0o755
+)
+
+// MaterializeWithPolicy writes the workspace sources into the workspace
+// root in order, using the §7.4 staging→validation→promotion pattern.
 // It handles every §14 source type: inlineFile and mkdir write directly;
 // uploadFile and uploadArchive extract content staged under stagingDir
 // by PrepareWorkspace; gitClone extracts the repository archive the
 // gateway cloned and staged under stagingDir.
+//
+// Per §7.4 line 433 the resolved tree is built in a sibling
+// /workspace/staging directory and atomically promoted onto root only
+// after every source succeeds, so the runtime never observes a partial
+// workspace and a failure in any source (not only the last) leaves the
+// prior /workspace/current untouched. After promotion every symlink is
+// re-validated against its new location under root; an escape rolls the
+// whole promotion back and restores the previous root. spec: §7.4 line
+// 433 and the §7.4 symlink-handling bullet — F-7.4.12, F-13.4.5.
 //
 // archive carries the §13.4 per-Runtime opt-ins (allowSymlinks +
 // workspace root for symlink-target validation). It is consulted only
@@ -98,18 +134,145 @@ func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) 
 // than aborting materialization, per §7.4 line 459. spec: §7.4 line
 // 459; §7.4 lines 458, 462; §13.4 — F-7.4.4, F-7.4.15.
 func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+	root = filepath.Clean(root)
 	if archive.WorkspaceRoot == "" {
 		archive.WorkspaceRoot = root
 	}
+	// spec: §7.4 line 433 — build into /workspace/staging, not directly
+	// into /workspace/current. Symlink targets are validated against the
+	// intended final root (archive.WorkspaceRoot) at extraction time; the
+	// definitive check runs against root after promotion.
+	buildDir := promotionBuildDir(root, stagingDir)
+	if err := os.RemoveAll(buildDir); err != nil {
+		return nil, fmt.Errorf("clear workspace staging %q: %w", buildDir, err)
+	}
+	if err := os.MkdirAll(buildDir, promotionStagingMode); err != nil {
+		return nil, fmt.Errorf("create workspace staging %q: %w", buildDir, err)
+	}
+
 	var warnings []Warning
 	for i, src := range sources {
-		w, err := materializeSource(root, stagingDir, i, src, archive)
+		w, err := materializeSource(buildDir, stagingDir, i, src, archive)
 		warnings = append(warnings, w...)
 		if err != nil {
+			// spec: §7.4 line 460 — a failure at any source returns the
+			// staging tree to its pre-extraction state. Discarding the whole
+			// build tree leaves the live workspace root untouched.
+			_ = os.RemoveAll(buildDir)
 			return warnings, fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
 		}
 	}
+
+	// spec: §7.4 line 433 — atomic staging→current promotion.
+	promo, err := promoteStaging(buildDir, root)
+	if err != nil {
+		_ = os.RemoveAll(buildDir)
+		return warnings, err
+	}
+	// spec: §7.4 symlink-handling bullet — re-validate every symlink against
+	// its promoted location under root; an escape rolls the promotion back.
+	if err := revalidatePromotedSymlinks(root); err != nil {
+		promo.rollback()
+		return warnings, err
+	}
+	promo.commit()
 	return warnings, nil
+}
+
+// promotionBuildDir returns the §7.4 /workspace/staging build tree as a
+// sibling of root. It never aliases the workspace root itself or the
+// configured raw-upload staging directory (which holds the compressed
+// upload payloads the extractors read from), falling back to a
+// root-adjacent name in the rare case of a collision. spec: §7.4 line
+// 433 — F-7.4.12.
+func promotionBuildDir(root, stagingDir string) string {
+	dir := filepath.Join(filepath.Dir(root), promotionStagingName)
+	if dir == root || (stagingDir != "" && dir == filepath.Clean(stagingDir)) {
+		return root + promotionBuildFallbackSuffix
+	}
+	return dir
+}
+
+// promotion records the state needed to commit or roll back an atomic
+// staging→current promotion. spec: §7.4 line 433 — F-7.4.12.
+type promotion struct {
+	root    string
+	backup  string
+	hadPrev bool
+}
+
+// promoteStaging atomically replaces root with the build tree. The prior
+// root (the warm-time empty /workspace/current, or a previously
+// materialized tree) is moved aside to a backup so a failed
+// post-promotion check can restore it. The build→root rename is a single
+// atomic syscall, so the runtime sees either the complete promoted tree
+// or the prior root, never a partial workspace. spec: §7.4 line 433 —
+// F-7.4.12.
+func promoteStaging(build, root string) (*promotion, error) {
+	p := &promotion{root: root, backup: root + promotionBackupSuffix}
+	if err := os.RemoveAll(p.backup); err != nil {
+		return nil, fmt.Errorf("clear promotion backup %q: %w", p.backup, err)
+	}
+	if _, err := os.Lstat(root); err == nil {
+		if err := os.Rename(root, p.backup); err != nil {
+			return nil, fmt.Errorf("move workspace root aside: %w", err)
+		}
+		p.hadPrev = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("stat workspace root: %w", err)
+	}
+	if err := os.Rename(build, root); err != nil {
+		if p.hadPrev {
+			_ = os.Rename(p.backup, root)
+		}
+		return nil, fmt.Errorf("promote staging to workspace root: %w", err)
+	}
+	return p, nil
+}
+
+// commit drops the saved previous root after a successful promotion and
+// re-validation. spec: §7.4 line 433 — F-7.4.12.
+func (p *promotion) commit() { _ = os.RemoveAll(p.backup) }
+
+// rollback removes the promoted tree and restores the previous root. When
+// no prior root existed it recreates an empty one so the §6.1 warm-time
+// invariant ("/workspace/current exists") holds after a rolled-back
+// promotion. spec: §7.4 symlink-handling bullet, §6.1 line 11 — F-7.4.12.
+func (p *promotion) rollback() {
+	_ = os.RemoveAll(p.root)
+	if p.hadPrev {
+		_ = os.Rename(p.backup, p.root)
+		return
+	}
+	_ = os.MkdirAll(p.root, promotionStagingMode)
+}
+
+// revalidatePromotedSymlinks re-resolves every symlink in the promoted
+// tree against its new location under root and fails when any target
+// escapes root or traverses a forbidden pseudo-filesystem mount. The
+// staging-time check resolves targets relative to the symlink's location
+// in /workspace/staging; because the promoted location differs, §7.4
+// mandates this second pass against /workspace/current. spec: §7.4
+// symlink-handling bullet — F-7.4.12, F-7.4.4.
+func revalidatePromotedSymlinks(root string) error {
+	root = filepath.Clean(root)
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			return fmt.Errorf("read promoted symlink %q: %w", p, err)
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return fmt.Errorf("locate promoted symlink %q: %w", p, err)
+		}
+		return upload.ValidateSymlinkTarget(filepath.ToSlash(rel), target, filepath.ToSlash(root))
+	})
 }
 
 func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {

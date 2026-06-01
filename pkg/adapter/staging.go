@@ -91,7 +91,10 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 //
 // Validation of the streamed PrepareWorkspace content against the plan
 // arrives with the PrepareWorkspace RPC; this RPC materializes the
-// filesystem-native plan sources via workspace.Materialize.
+// filesystem-native plan sources via workspace.Materialize, which builds
+// the resolved tree in /workspace/staging and atomically promotes it onto
+// /workspace/current so the runtime never observes a partial workspace.
+// spec: §7.4 line 433 — F-7.4.12.
 func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
 	if req.GetSessionId().GetValue() == "" {
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
