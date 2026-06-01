@@ -31,8 +31,8 @@ func (f *fakeCatalog) Insert(context.Context, artifactcatalog.Record) error { re
 func (f *fakeCatalog) Get(context.Context, string) (artifactcatalog.Record, error) {
 	return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
 }
-func (f *fakeCatalog) SoftDelete(context.Context, string, time.Time) error  { return nil }
-func (f *fakeCatalog) Tombstone(context.Context, string) error              { return nil }
+func (f *fakeCatalog) SoftDelete(context.Context, string, time.Time) error      { return nil }
+func (f *fakeCatalog) Tombstone(context.Context, string) error                  { return nil }
 func (f *fakeCatalog) HardPruneExpired(context.Context, time.Time) (int, error) { return 0, nil }
 func (f *fakeCatalog) ListBySession(_ context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error) {
 	if f.rowsErr != nil {
@@ -52,6 +52,8 @@ func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]ar
 }
 
 func (f *fakeCatalog) DeleteByTenant(context.Context, string) (int, error) { return 0, nil }
+
+func (f *fakeCatalog) SumLiveBytes(context.Context, string) (int64, error) { return 0, nil }
 
 // fakeAppender records every Append.
 type fakeAppender struct {

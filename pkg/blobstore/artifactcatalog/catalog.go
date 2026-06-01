@@ -116,6 +116,17 @@ type Store interface {
 	//
 	// spec: §12.8 line 739.
 	SessionsWithLegalHoldAndCheckpoints(ctx context.Context) ([]SessionRef, error)
+	// SumLiveBytes returns the total artifact_size_bytes across the
+	// tenant's live (non-deleted) catalog rows. It is the §11 line 37
+	// rehydration source: on a Redis restart the gateway reconstructs the
+	// per-tenant storage-quota counter from this authoritative Postgres
+	// sum. Soft-deleted and tombstoned rows are excluded because their
+	// bytes were already released from the counter at soft-delete time.
+	//
+	// spec: §11 line 37 — rehydrate per-tenant storage counters from the
+	// sum of artifact_size_bytes across active (non-deleted) artifacts.
+	SumLiveBytes(ctx context.Context, tenantID string) (int64, error)
+
 	// DeleteByTenant removes every catalog row scoped to tenantID that
 	// is not under a legal hold and returns the count removed. It is the
 	// §12.8 Phase 4 tenant-deletion adapter on the metadata side — a
@@ -326,6 +337,25 @@ func (s *PgStore) DeleteByTenant(ctx context.Context, tenantID string) (int, err
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// SumLiveBytes implements Store. It sums artifact_size_bytes across the
+// tenant's live rows so the §11 line 37 Redis-restart recovery can
+// rehydrate the per-tenant storage-quota counter from the authoritative
+// Postgres total. COALESCE makes a tenant with no live rows return 0
+// rather than a NULL scan error.
+//
+// spec: §11 line 37.
+func (s *PgStore) SumLiveBytes(ctx context.Context, tenantID string) (int64, error) {
+	var sum int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(artifact_size_bytes), 0)
+		  FROM artifact_store
+		 WHERE tenant_id = $1 AND state = 'live'`, tenantID).Scan(&sum)
+	if err != nil {
+		return 0, fmt.Errorf("artifactcatalog: sum live bytes for %s: %w", tenantID, err)
+	}
+	return sum, nil
 }
 
 // ListBySession returns every catalog row for one session.

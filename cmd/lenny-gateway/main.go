@@ -1140,6 +1140,35 @@ func main() {
 		breakers = breakerstore.NewMemory()
 	}
 
+	// §11 line 37 storage-quota release. The cataloging decorator
+	// decrements the per-tenant storage counter by a deleted artifact's
+	// size after its catalog row commits with `deleted_at` set, so a
+	// terminal session's GC-collected artifacts free their reserved
+	// bytes and a tenant near its cap can upload again. The decorator is
+	// built before storageCounter is resolved (the Redis-backed counter
+	// is wired above), so the releaser is installed here through the
+	// setter. F-11.2.9.
+	if blobsCataloged != nil {
+		blobsCataloged.SetQuotaReleaser(storageCounter)
+		// §11 line 37 Redis-restart rehydration: reconstruct each tenant's
+		// storage counter from the authoritative sum of live artifact bytes
+		// in Postgres (same recovery path as the token quota counters). A
+		// per-tenant fault is logged and skipped so one tenant cannot block
+		// startup. Runs before the HTTP listener accepts traffic, so no
+		// reservation races the absolute Set.
+		if artifactCatalog != nil {
+			rehydrateCtx, cancelRehydrate := context.WithTimeout(context.Background(), 30*time.Second)
+			if ids, lerr := (tenantsLister{tenants}).ListTenants(rehydrateCtx); lerr != nil {
+				log.Printf("lenny-gateway: §11 storage-quota rehydration: list tenants: %v", lerr)
+			} else if rerr := storagequota.Rehydrate(rehydrateCtx, storageCounter, ids, artifactCatalog.SumLiveBytes); rerr != nil {
+				log.Printf("lenny-gateway: §11 storage-quota rehydration: %v", rerr)
+			} else if len(ids) > 0 {
+				log.Printf("lenny-gateway: §11 storage-quota counters rehydrated from artifact_store for %d tenants", len(ids))
+			}
+			cancelRehydrate()
+		}
+	}
+
 	// §4.9 / §10.3 / §13.3 security-cache pub/sub substrate. The
 	// gateway's revocation cache and the two deny lists are per-replica
 	// in-memory sets; the Bus fans a local mutation out to peer replicas
@@ -1167,6 +1196,7 @@ func main() {
 	// the in-process MemStream, which gives a single-replica deployment
 	// the same two-tier code path without a Redis dependency.
 	var billingStream failover.StreamTier
+	var billingTier *redisstream.Tier
 	if pgStore, ok := billing.(*billingpg.Store); ok && redisClient != nil {
 		tier, err := redisstream.New(redisstream.Options{
 			Client:       redisClient,
@@ -1177,6 +1207,7 @@ func main() {
 			log.Fatalf("lenny-gateway: billing failover stream: %v", err)
 		}
 		billingStream = tier
+		billingTier = tier
 		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 backed by the Redis stream (consumer %s)", replica)
 	} else {
 		billingStream = failover.NewMemStream()
@@ -4003,9 +4034,24 @@ func main() {
 	// ----- §11.2.1 billing failover Tier 2 flusher -----
 	// Drains the in-memory write-ahead buffer into the primary billing
 	// ledger once Postgres connectivity is restored, preserving the
-	// monotonic ordering guarantee. The Tier 1 Redis stream drains
-	// itself through its own consumer-group flusher.
+	// monotonic ordering guarantee.
 	go billingPipeline.RunFlusher(watchdogCtx)
+
+	// ----- §11 line 144 billing failover Tier 1 per-tenant flusher -----
+	// When the Tier 1 stream is Redis-backed, a per-tenant flusher
+	// goroutine drains each tenant's billing stream back into Postgres
+	// after a transient Postgres outage and runs the startup
+	// fast-recovery XAUTOCLAIM that claims entries a predecessor replica
+	// left. Without it the stream accumulates until billingStreamTTLSeconds
+	// and the events are lost. The manager reconciles the per-tenant
+	// goroutine set against the tenant store on its own interval.
+	// F-11.2.8.
+	if billingTier != nil {
+		flushInterval := time.Duration(*billingFlushIntervalMs) * time.Millisecond
+		mgr := billingTier.NewFlusherManager(tenantsLister{tenants}, flushInterval, 0)
+		go mgr.Run(watchdogCtx)
+		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 per-tenant flusher started (flush every %s)", flushInterval)
+	}
 
 	// ----- §12.3 lines 115-125 Postgres write-IOPS sampler -----
 	// Periodically differentiates the pg_stat_database row-write total

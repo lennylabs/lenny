@@ -106,3 +106,66 @@ func TestUsedIsPerTenant(t *testing.T) {
 		t.Errorf("an untouched tenant must report 0 used, got %d", used)
 	}
 }
+
+// spec: §11 line 37 — Set overwrites the counter with an absolute value
+// (the rehydration write) and clamps a negative value to zero.
+func TestSetOverwritesAndClamps(t *testing.T) {
+	c := storagequota.NewMemory()
+	ctx := context.Background()
+	if _, err := c.Reserve(ctx, "acme", 400, 10000); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if err := c.Set(ctx, "acme", 900); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if used, _ := c.Used(ctx, "acme"); used != 900 {
+		t.Errorf("Used after Set: got %d, want 900", used)
+	}
+	if err := c.Set(ctx, "acme", -5); err != nil {
+		t.Fatalf("Set negative: %v", err)
+	}
+	if used, _ := c.Used(ctx, "acme"); used != 0 {
+		t.Errorf("Set negative must clamp to 0, got %d", used)
+	}
+}
+
+// spec: §11 line 37 — Rehydrate reconstructs each tenant's counter from
+// the authoritative live-byte sum after a Redis restart.
+func TestRehydrateReconstructsPerTenantCounters(t *testing.T) {
+	c := storagequota.NewMemory()
+	ctx := context.Background()
+	sums := map[string]int64{"acme": 1234, "globex": 56}
+	sizeOf := func(_ context.Context, tenantID string) (int64, error) {
+		return sums[tenantID], nil
+	}
+	if err := storagequota.Rehydrate(ctx, c, []string{"acme", "globex", ""}, sizeOf); err != nil {
+		t.Fatalf("Rehydrate: %v", err)
+	}
+	if used, _ := c.Used(ctx, "acme"); used != 1234 {
+		t.Errorf("acme rehydrated = %d, want 1234", used)
+	}
+	if used, _ := c.Used(ctx, "globex"); used != 56 {
+		t.Errorf("globex rehydrated = %d, want 56", used)
+	}
+}
+
+// spec: §11 line 37 — a per-tenant read fault is collected and the
+// sweep continues so one tenant cannot abort the rest.
+func TestRehydrateCollectsErrorsAndContinues(t *testing.T) {
+	c := storagequota.NewMemory()
+	ctx := context.Background()
+	boom := errors.New("boom")
+	sizeOf := func(_ context.Context, tenantID string) (int64, error) {
+		if tenantID == "globex" {
+			return 0, boom
+		}
+		return 100, nil
+	}
+	err := storagequota.Rehydrate(ctx, c, []string{"acme", "globex"}, sizeOf)
+	if err == nil {
+		t.Fatal("Rehydrate should report the globex fault")
+	}
+	if used, _ := c.Used(ctx, "acme"); used != 100 {
+		t.Errorf("acme must still rehydrate despite globex fault, got %d", used)
+	}
+}

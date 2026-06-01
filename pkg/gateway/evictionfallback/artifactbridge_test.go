@@ -49,6 +49,7 @@ func (r *recordingCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) 
 	return nil, nil
 }
 func (r *recordingCatalog) DeleteByTenant(context.Context, string) (int, error) { return 0, nil }
+func (r *recordingCatalog) SumLiveBytes(context.Context, string) (int64, error) { return 0, nil }
 
 // TestCatalogBridgeRecordsEvictionContextRow verifies the bridge
 // stamps `artifact_type = eviction_context` and forwards the URI /

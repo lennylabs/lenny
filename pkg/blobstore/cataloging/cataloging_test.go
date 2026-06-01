@@ -48,6 +48,18 @@ func (f *fakeCatalog) Get(_ context.Context, uri string) (artifactcatalog.Record
 	return r, nil
 }
 
+func (f *fakeCatalog) SumLiveBytes(_ context.Context, tenantID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var sum int64
+	for _, r := range f.rows {
+		if r.TenantID == tenantID && r.State == artifactcatalog.StateLive {
+			sum += r.SizeBytes
+		}
+	}
+	return sum, nil
+}
+
 func (f *fakeCatalog) SoftDelete(_ context.Context, uri string, deadline time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
