@@ -12652,7 +12652,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** An idle pod claimed at the tail of its 4h cert TTL begins a session with minutes of cert validity remaining. The proactive-drain mitigation the spec describes does not run.
 
-### - [ ] F-10.3.18 — 10.3-G18. Admission policy preventing RoleBindings on agent ServiceAccounts is missing [High] — OPEN
+### - [x] F-10.3.18 — 10.3-G18. Admission policy preventing RoleBindings on agent ServiceAccounts is missing [High] — CLOSED
 
 **Spec lines:** 336 ("A Kyverno or Gatekeeper policy must validate that ServiceAccounts used by agent pods in the `lenny-agents` and `lenny-agents-kata` namespaces have no RoleBindings or ClusterRoleBindings").
 **Evidence:**
@@ -12661,6 +12661,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - No `ConstraintTemplate` (Gatekeeper) or `ClusterPolicy` (Kyverno) shipped.
 
 **Impact:** A deployer who adds a RoleBinding to `lenny-agent` SA bypasses the zero-RBAC posture the §10.3 SA-token defense-in-depth chain rests on.
+
+**Resolution:** New `charts/lenny/templates/admission-policies/kyverno-agent-sa-rolebinding-policy.yaml` ships a Kyverno `ClusterPolicy` (`lenny-disallow-agent-sa-rolebindings`, `Enforce` mode) matching `RoleBinding`/`ClusterRoleBinding` and denying any binding that grants a ServiceAccount in an agent namespace. Two deny conditions cover both an explicit-namespace SA subject (ClusterRoleBindings + cross-namespace RoleBindings) and a RoleBinding in an agent namespace whose SA subject omits a namespace (RBAC defaults it to the binding's). The agent-namespace value list is derived from `.Values.agentNamespaces`; gated by the new `admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled` value (default true under the Kyverno block). Gatekeeper users configure an equivalent ConstraintTemplate. F-10.3.18.
 
 ### - [ ] F-10.3.19 — 10.3-G19. `lenny_interceptor_mtls_handshake_duration_seconds` metric is uninstrumented [Medium] — OPEN
 

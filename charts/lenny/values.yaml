@@ -122,6 +122,14 @@ admissionPolicies:
     # disables the webhook keeps the rejection by enabling this policy.
     shareProcessNamespace:
       enabled: true
+    # agentServiceAccountRoleBindings rejects RoleBindings and
+    # ClusterRoleBindings that grant a ServiceAccount in an agent
+    # namespace, satisfying the §10.3 "Admission-time RBAC enforcement"
+    # clause. Agent ServiceAccounts carry zero RBAC bindings by design;
+    # this policy blocks an accidental binding at admission rather than
+    # relying on convention. Default enabled when the Kyverno block is on.
+    agentServiceAccountRoleBindings:
+      enabled: true
 
 # webhookIngressCIDR is the source CIDR allowed to reach the admission
 # webhook pods (§13.2). The kube-apiserver calls webhooks from a node

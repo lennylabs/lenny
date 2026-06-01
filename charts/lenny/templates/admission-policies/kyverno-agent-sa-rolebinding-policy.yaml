@@ -1,0 +1,104 @@
+{{- /*
+Kyverno ClusterPolicy that rejects RoleBindings and ClusterRoleBindings
+which grant any ServiceAccount in an agent namespace, satisfying the
+spec §10.3 "Admission-time RBAC enforcement" clause:
+
+  "A Kyverno or Gatekeeper policy must validate that ServiceAccounts used
+   by agent pods in the lenny-agents and lenny-agents-kata namespaces
+   have no RoleBindings or ClusterRoleBindings. This prevents accidental
+   RBAC escalation — if a deployer or automation adds a binding to an
+   agent SA, the policy blocks pod admission until the binding is
+   removed."
+
+The agent ServiceAccount carries zero RBAC bindings by design (§10.3).
+This policy shifts that invariant left to admission time so a binding
+added by a deployer or automation is rejected at apply time rather than
+relied on by convention.
+
+This template renders only when both:
+
+  - admissionPolicies.kyverno.enabled is true, AND
+  - admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled is
+    true (the default when the Kyverno block is enabled).
+
+The deny conditions cover both forms of agent-SA binding:
+
+  1. A binding whose subject names a ServiceAccount with an explicit
+     namespace that is an agent namespace (covers ClusterRoleBindings and
+     cross-namespace RoleBindings).
+  2. A RoleBinding that itself lives in an agent namespace and names a
+     ServiceAccount subject with no explicit namespace — RBAC defaults the
+     subject namespace to the binding's namespace, so this still grants an
+     agent SA.
+
+Operators using Gatekeeper instead of Kyverno should leave
+admissionPolicies.kyverno.enabled at its default (false) and configure an
+equivalent ConstraintTemplate / Constraint pair enforcing the same rule.
+The Kyverno CRDs must be present in the cluster for this manifest to be
+accepted by the API server.
+*/ -}}
+{{- if and .Values.admissionPolicies.kyverno.enabled .Values.admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled }}
+{{- $agentNamespaces := list }}
+{{- range .Values.agentNamespaces }}
+{{- $agentNamespaces = append $agentNamespaces .name }}
+{{- end }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: lenny-disallow-agent-sa-rolebindings
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: "Lenny: disallow RoleBindings/ClusterRoleBindings on agent ServiceAccounts"
+    policies.kyverno.io/category: "Lenny / §10.3 mTLS PKI"
+    policies.kyverno.io/severity: "high"
+    policies.kyverno.io/subject: "RoleBinding, ClusterRoleBinding"
+    policies.kyverno.io/description: >-
+      Spec §10.3 Admission-time RBAC enforcement: ServiceAccounts used by
+      agent pods must have no RoleBindings or ClusterRoleBindings. This
+      policy rejects any binding that grants an agent-namespace
+      ServiceAccount, blocking accidental RBAC escalation at admission.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: deny-agent-sa-bindings
+      match:
+        any:
+          - resources:
+              kinds:
+                - RoleBinding
+                - ClusterRoleBinding
+      validate:
+        message: >-
+          RoleBindings and ClusterRoleBindings that grant a ServiceAccount
+          in an agent namespace ({{ join ", " $agentNamespaces }}) are
+          forbidden (spec §10.3; agent ServiceAccounts must have zero RBAC
+          bindings).
+        deny:
+          conditions:
+            any:
+              # 1. A ServiceAccount subject with an explicit agent-namespace.
+              - key: {{ `{{ request.object.subjects[?kind=='ServiceAccount'].namespace }}` | quote }}
+                operator: AnyIn
+                value:
+                  {{- range $agentNamespaces }}
+                  - {{ . | quote }}
+                  {{- end }}
+              # 2. A RoleBinding in an agent namespace naming a ServiceAccount
+              #    subject with no explicit namespace (RBAC defaults it to the
+              #    binding's namespace).
+              - all:
+                  - key: {{ `{{ request.object.kind }}` | quote }}
+                    operator: Equals
+                    value: RoleBinding
+                  - key: {{ `{{ request.object.metadata.namespace }}` | quote }}
+                    operator: AnyIn
+                    value:
+                      {{- range $agentNamespaces }}
+                      - {{ . | quote }}
+                      {{- end }}
+                  - key: {{ `{{ length(request.object.subjects[?kind=='ServiceAccount']) }}` | quote }}
+                    operator: GreaterThan
+                    value: 0
+{{- end }}
