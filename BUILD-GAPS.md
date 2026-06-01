@@ -13208,7 +13208,7 @@ Cross-cutting: the §10.5 expand-contract discipline (Phases 1/2/3 with the PL/p
 - `scripts/lint-migrations.sh` lints rollback presence and test references; it does not lint Phase 3 gate blocks or nullability of Phase 1 columns.
 - No `Phase 3 gate failed` string anywhere under `migrations/`, `cmd/lenny-migrate/`, or `tests/tier2_component/migrations/`. The §10.5 normative rule "The runner ... aborts the migration with a non-zero exit code if the result is nonzero" has no implementation in the current `lenny-migrate run()` (`cmd/lenny-migrate/main.go:42–121`) — `m.Up()` simply runs the embedded SQL.
 
-### - [ ] F-10.5.3 — 03  `lenny-ctl migrate status` and `lenny-ctl migrate down` are unimplemented [High] — OPEN
+### - [x] F-10.5.3 — 03  `lenny-ctl migrate status` and `lenny-ctl migrate down` are unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.13.1, F-24.13.2 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
 
@@ -13220,6 +13220,8 @@ Implementation:
 - §17.6 runbook step `lenny-ctl preflight --config <values.yaml>` (line 65 of `docs/runbooks/crd-upgrade.md`) and §17.7 schema-migration-failure runbook (`spec/17_deployment-topology.md:811–813`) instruct the operator to run commands that the CLI does not support.
 
 Concrete consequence: an operator cannot determine the expand-contract phase of any migration, cannot read `gateCheckResult`, and cannot roll back a dirty migration via the supported interface.
+
+**Resolution (1a2a5ecb):** Added `lenny-ctl migrate status` / `migrate down --version N --confirm` and the `GET /v1/admin/schema/migrations/status` + `POST /v1/admin/schema/migrations/{version}/down` admin endpoints (platform-admin), backed by `pkg/schemamigrate` over the embedded migrations. The down path requires `{confirm:true}` (422 otherwise), reverses the current version (409 mismatch otherwise), clears the dirty flag, and emits `platform.schema_migration_rolled_back`. v1 migrations are single-file, so `status` reports applied migrations as `phase: complete` / `gateCheckResult: not_run` truthfully; the richer expand-contract phase data (`phase1_applied`…) and its storage remain tracked under F-24.13.4. Closes F-24.13.1, F-24.13.2, F-24.13.3, F-24.13.6.
 
 ### - [ ] F-10.5.4 — 04  CRD upgrade procedure is undefended: no schema-version annotation, no `lenny-ctl preflight`, no `scripts/lenny-upgrade.sh`, no `make upgrade` target [High] — OPEN
 
@@ -36048,7 +36050,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 
 ### Findings
 
-### - [ ] F-24.13.1 — `lenny-ctl migrate status` is not implemented [High] — OPEN
+### - [x] F-24.13.1 — `lenny-ctl migrate status` is not implemented [High] — CLOSED
+
+**Resolution (1a2a5ecb):** Closed by F-10.5.3. `lenny-ctl migrate status` is wired and calls `GET /v1/admin/schema/migrations/status`. True expand-contract phase values remain F-24.13.4 (phase-tracking storage).
 
 **Potential duplicate** (confidence: high) — F-10.5.3, F-24.13.2 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
 
@@ -36057,7 +36061,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Gap:** Operators have no CLI path to confirm Phase 1 deployment is complete before starting Phase 2, or to verify the Phase 3 enforcement-gate check passed before approving a Phase 3 deployment. The phase coordination workflow documented at §24.13 lines 153–164 and the runbook citations at §17.7 line 812 cannot be executed.
 - **Suggested resolution:** Add a `migrate` group to `cmd/lenny-ctl/main.go` with a `status` subcommand that calls `GET /v1/admin/schema/migrations/status`; implement the corresponding handler in `pkg/gateway/admin/` that reads the phase tracker (see F-24.13.4) and joins it against the `schema_migrations` table and the latest migration `Job` per version.
 
-### - [ ] F-24.13.2 — `lenny-ctl migrate down --version <N> --confirm` is not implemented [High] — OPEN
+### - [x] F-24.13.2 — `lenny-ctl migrate down --version <N> --confirm` is not implemented [High] — CLOSED
+
+**Resolution (1a2a5ecb):** Closed by F-10.5.3. `lenny-ctl migrate down --version N --confirm` calls `POST /v1/admin/schema/migrations/{version}/down`; the handler enforces the `{confirm:true}` guard (422 `CONFIRMATION_REQUIRED`), reverses the current version (forcing the dirty flag clean then applying `down.sql`), and emits `platform.schema_migration_rolled_back`. golang-migrate's session-scoped advisory lock covers the lock-release requirement.
 
 **Potential duplicate** (confidence: high) — F-10.5.3, F-24.13.1 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
 
@@ -36066,7 +36072,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Gap:** The only operator-facing recovery path for a dirty migration is `kubectl exec` into a `lenny-migrate` Job with a hand-written DSN, which (a) cannot target a single version, (b) provides no confirmation guard against accidental full rollback, (c) leaves no audit trail, and (d) cannot clear stale advisory locks that may have been left by the crashed migration. The §17.7 runbook step "(3) **Down-migration (last resort):** ... `lenny-ctl migrate down --version <N> --confirm`" cannot be executed.
 - **Suggested resolution:** Add `cmdMigrateDown` to lenny-ctl with `--version <N>` and `--confirm` flags; add `POST /v1/admin/schema/migrations/{version}/down` to the admin router with the `{"confirm": true}` body check (return `422 CONFIRMATION_REQUIRED` otherwise per §15.1 line 892); the handler launches a per-version Kubernetes Job that releases advisory locks, applies the `down.sql` from the embedded migrations FS, clears the `dirty` flag for that version, and emits `EventPlatformSchemaMigrationRolledBack` with the payload fields documented at §16 line 686 (`version`, `requester_sub`, `rollback_reason`, `dirty_flag_cleared: true`, `advisory_locks_released`).
 
-### - [ ] F-24.13.3 — No `/v1/admin/schema/migrations/*` routes registered in the gateway admin surface [High] — OPEN
+### - [x] F-24.13.3 — No `/v1/admin/schema/migrations/*` routes registered in the gateway admin surface [High] — CLOSED
+
+**Resolution (1a2a5ecb):** Closed by F-10.5.3. `pkg/gateway/admin/migrations.go` registers both routes behind `requireAdmin` (platform-admin) via `Router.WithMigrationManager`, wired in `cmd/lenny-gateway` when a Postgres DSN is set. Both paths are also registered in `openapi.json` with the four `x-lenny-*` extensions.
 - **Spec:** §24.13 maps both commands to `/v1/admin/schema/migrations/...` endpoints; §15.1 lines 891–892 list both as `platform-admin`-gated admin API routes.
 - **Evidence:** Grep across `pkg/gateway/admin/` for `schema/migrations`, `admin/schema`, `MigrationStatus`, or `migrate` returns no matches (only a passing `migration` mention in `tenants_test.go`). `pkg/gateway/admin/` has 65 source files but none register migration routes. The `pkg/releasechannel/manifest.go:67` reference to `schema_migrations` is a string literal documenting an SQL query, not a route.
 - **Gap:** The spec's §15.1 admin-API contract for migration management is unbacked. Any operator tooling (lenny-ctl, scripts, or AI agents per §25.14) attempting these endpoints receives 404.
@@ -36084,7 +36092,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Gap:** Two divergences. First, `lenny-migrate down` without arguments will roll **every** migration back to version 0, with no `--confirm` and no audit event — a strictly more dangerous variant of the spec's `migrate down --version <N> --confirm`, accessible to anyone with DSN access. Second, `lenny-migrate goto <version>` provides ad-hoc forward/reverse jumping outside any of the §24.13/§10.5 phase discipline; nothing prevents an operator from running `goto 42` to skip the Phase 3 enforcement gate.
 - **Suggested resolution:** Either (a) remove `down` and `goto` from `cmd/lenny-migrate/main.go` and have lenny-migrate accept only `up` (forward-only, with phase tracking writes per F-24.13.4) and have all rollbacks go through the audited admin-API path in F-24.13.2; or (b) keep `down`/`goto` as a break-glass DBA tool but rename the binary (or fence with a `--break-glass --confirm "I-know-what-i-am-doing"` guard) and document in §17.7 that operators must use `lenny-ctl migrate down` for any non-break-glass rollback.
 
-### - [ ] F-24.13.6 — `EventPlatformSchemaMigrationRolledBack` is declared in the audit catalog but never emitted [Medium] — OPEN
+### - [x] F-24.13.6 — `EventPlatformSchemaMigrationRolledBack` is declared in the audit catalog but never emitted [Medium] — CLOSED
+
+**Resolution (1a2a5ecb):** Closed by F-10.5.3. The `POST …/{version}/down` handler emits `platform.schema_migration_rolled_back` on success with the §16.6 payload (`version`, `requester_sub`, `rollback_reason`, `dirty_flag_cleared`, `advisory_locks_released`); a rejected or failed rollback emits nothing. Covered by `TestMigrationDownHappyPathAudits_spec_15_1_892`.
 - **Spec:** §24.13 line 151 requires the down operation to be audited as `platform.schema_migration_rolled_back`. §16.8 line 686 documents the payload as `version`, `requester_sub`, `rollback_reason`, `dirty_flag_cleared: true`, `advisory_locks_released`.
 - **Evidence:** `pkg/observability/audit/catalog.go:122` declares `EventPlatformSchemaMigrationRolledBack = "platform.schema_migration_rolled_back"` and `catalog_test.go:69` confirms it in the completeness list, but grep for the constant across `pkg/` and `cmd/` returns only the declaration site and the test. `cmd/lenny-migrate/main.go` makes no audit calls (it has no `pkg/observability/audit` import).
 - **Gap:** Whether the rollback path is built via lenny-ctl/admin-API (F-24.13.2) or kept inside lenny-migrate (F-24.13.5(b)), today no audit row is written, so SIEM forwarders (§11.7) and platform-admin compliance reviews will never see a schema rollback occur.
