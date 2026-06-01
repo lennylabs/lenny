@@ -214,6 +214,7 @@ import (
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/treearchive/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
@@ -468,6 +469,8 @@ func main() {
 		"§7.2 maxInboxSize: per-session inbox capacity before the oldest buffered message is evicted with a message_dropped(inbox_overflow) receipt. Override via LENNY_MESSAGING_MAX_INBOX_SIZE.")
 	messagingMaxDLQSize := flag.Int("messaging-max-dlq-size", envInt("LENNY_MESSAGING_MAX_DLQ_SIZE", 500),
 		"§7.2 maxDLQSize: per-session dead-letter-queue capacity before the oldest entry is evicted with a message_dropped(dlq_overflow) receipt. Override via LENNY_MESSAGING_MAX_DLQ_SIZE.")
+	treeArchiveCacheEntries := flag.Int("tree-archive-cache-entries", envInt("LENNY_TREE_ARCHIVE_CACHE_ENTRIES", 128),
+		"§8.10 per-replica LRU cache size fronting the Postgres session_tree_archive (default 128 entries). Override via LENNY_TREE_ARCHIVE_CACHE_ENTRIES.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
 		"path to the gateway's client certificate for the §4.7 mTLS link to pod adapters. Empty dials adapters in plaintext (local development only).")
 	adapterTLSKey := flag.String("adapter-tls-key", os.Getenv("LENNY_ADAPTER_TLS_KEY"),
@@ -1557,8 +1560,27 @@ func main() {
 		})
 	}
 	// One §8.10 tree archive shared by the sessionserver (which archives
-	// children on terminal transitions) and the platform MCP tools.
-	treeArchive := treearchive.NewMemory()
+	// children on terminal transitions) and the platform MCP tools. In
+	// production the durable record lives in Postgres (migration 0100);
+	// a per-replica LRU cache (§8.10 line 129, default 128 entries)
+	// fronts it so a parent re-reading a child's result does not hit
+	// Postgres every time. Developer mode keeps the in-memory archive,
+	// which is durable for the lifetime of the single replica.
+	var treeArchive treearchive.Store = treearchive.NewMemory()
+	if pgPool != nil {
+		treeArchive = treearchive.NewCached(treearchivepg.New(pgPool, nil), *treeArchiveCacheEntries)
+	}
+	// §8.2 lines 57, 127 / §12.4 lines 193, 213: the Redis-backed
+	// per-tree delegation budget counters gate every admission and are
+	// decremented when a child settles (the §8.2 line 130 completed-
+	// subtree offload). Shared by the delegation service (admission
+	// Reserve) and the sessionserver (terminal-state Return). When Redis
+	// is not configured the reserver stays nil and only the static
+	// ValidateChildSlice ceiling is enforced. F-8.2.18 / F-8.2.12 / F-8.2.13.
+	var treeBudgetReserver delegation.TreeBudgetReserver
+	if redisClient != nil {
+		treeBudgetReserver = treebudget.New(redisClient, 0)
+	}
 	// One §9.2 interaction store shared by the sessionserver (which
 	// serves the respond/dismiss endpoints) and the platform MCP tools
 	// (lenny/request_elicitation), so an elicitation a tool records is
@@ -2196,9 +2218,10 @@ func main() {
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
-		SessionLogHook:  &sessionlogstore.CloseHook{Store: sessionLogs},
-		TreeArchive:     treeArchive,
-		Interceptors:    policyChain,
+		SessionLogHook:     &sessionlogstore.CloseHook{Store: sessionLogs},
+		TreeArchive:        treeArchive,
+		TreeBudgetReturner: treeBudgetReserver,
+		Interceptors:       policyChain,
 		PolicyAuditSink: policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
@@ -2426,18 +2449,6 @@ func main() {
 			exportwire.NewBlobSink(blobs, 0),
 			mcpDelegationAuditor{sink: auditSink},
 		)
-	}
-	// §8.2 lines 57, 127 / §12.4 lines 193, 213: the Redis-backed
-	// per-tree delegation budget counters gate every admission on the
-	// live tree node count, gateway memory footprint, per-parent
-	// concurrent-children / total-descendant counters, and tree token
-	// pool. A Redis outage fails the admission path closed
-	// (DELEGATION_BUDGET_UNAVAILABLE). When Redis is not configured the
-	// reserver stays nil and only the static ValidateChildSlice ceiling
-	// is enforced. F-8.2.18 / F-8.2.12 / F-8.1.1.
-	var treeBudgetReserver delegation.TreeBudgetReserver
-	if redisClient != nil {
-		treeBudgetReserver = treebudget.New(redisClient, 0)
 	}
 	// §13.3 revocation cache: the auth middleware rejects a token whose
 	// jti is in this set, and the §8.2 line 61 child-token exchange reads

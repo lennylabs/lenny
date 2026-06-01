@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/task"
@@ -329,21 +330,51 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	// a newer replica knows a later schema therefore cannot silently
 	// rewrite a record an older replica created. F-8.8.11.
 	existingVer := 0
+	alreadyArchived := false
 	if prev, err := s.treeArchive.GetByNode(ctx, sess.TenantID, sess.ID); err == nil {
+		alreadyArchived = true
 		var prevResult task.Result
 		if json.Unmarshal([]byte(prev.Result), &prevResult) == nil {
 			existingVer = prevResult.SchemaVersion
 		}
 	}
+	root := s.treeRoot(ctx, sess)
 	result, _ := json.Marshal(s.materializeTaskResult(ctx, sess, existingVer))
 	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
 		TenantID:        sess.TenantID,
-		RootSessionID:   s.treeRoot(ctx, sess),
+		RootSessionID:   root,
 		NodeSessionID:   sess.ID,
 		ParentSessionID: sess.ParentSessionID,
 		State:           string(sess.State),
 		Result:          string(result),
 		SettledAt:       s.clock(),
+	})
+	// spec: §8.2 line 130 — completed-subtree offload returns the §12.4
+	// tree budget the node held: maxTreeMemoryBytes (the node's in-memory
+	// footprint moves to Postgres) and the parent's parallel_children
+	// slot (the child stopped running). Guarded on the first archive so a
+	// re-archive on cascade does not double-return; the returnScript also
+	// clamps at zero as a backstop.
+	if !alreadyArchived {
+		s.returnTreeBudget(ctx, sess, root)
+	}
+}
+
+// returnTreeBudget releases the §12.4 budget a settled child consumed.
+// It decrements the tree's maxTreeMemoryBytes counter by the per-node
+// footprint and the per-parent parallel_children counter by one. Best
+// effort: a return failure leaks budget conservatively (the §12.4 TTL
+// reclaims it) and never fails the transition that triggered it.
+// spec: §8.2 line 130; §12.4 line 193.
+func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session, rootSessionID string) {
+	if s.treeBudgetReturner == nil {
+		return
+	}
+	_ = s.treeBudgetReturner.Return(ctx, treebudget.Reservation{
+		RootSessionID:         rootSessionID,
+		ParentSessionID:       sess.ParentSessionID,
+		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+		ParallelChildrenDelta: 1,
 	})
 }
 

@@ -65,6 +65,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -208,6 +209,7 @@ type Server struct {
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
+	treeBudgetReturner    TreeBudgetReturner
 	maxOrphanTasks        int
 	evals                 evalstore.Store
 	memory                memorystore.Store
@@ -473,6 +475,17 @@ type PartialManifestLookup interface {
 	// exists; a store error returns the error so the resume path can
 	// degrade gracefully (falls back to ResumeFull).
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
+}
+
+// TreeBudgetReturner releases the §12.4 delegation tree budget a
+// settled child consumed. The §8.2 line 130 completed-subtree offload
+// decrements the tree's maxTreeMemoryBytes counter when a node is
+// archived and the per-parent parallel_children counter when the child
+// stops running, so a long-running tree's freed concurrency slot and
+// in-memory footprint are returned to the budget. *treebudget.Reserver
+// implements it. A nil returner on the Server disables the decrement.
+type TreeBudgetReturner interface {
+	Return(ctx context.Context, r treebudget.Reservation) error
 }
 
 // SessionLogHook is the §4.4 line 226 close-hook the gateway invokes
@@ -835,6 +848,13 @@ type Options struct {
 	// delegation-tree archiving.
 	TreeArchive treearchive.Store
 
+	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
+	// budget a settled child consumed: the §8.2 line 130 maxTreeMemoryBytes
+	// offload decrement and the per-parent parallel_children decrement
+	// fire once per child as it reaches a terminal state. Nil disables
+	// the decrement (developer mode without Redis-backed counters).
+	TreeBudgetReturner TreeBudgetReturner
+
 	// MaxOrphanTasksPerTenant caps a tenant's active orphan tasks per
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
@@ -1070,6 +1090,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		evictionStateLookup:      opts.EvictionStateLookup,
 		partialManifestLookup:    opts.PartialManifestLookup,
 		treeArchive:              opts.TreeArchive,
+		treeBudgetReturner:       opts.TreeBudgetReturner,
 		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,
 		runtimes:                 opts.Runtimes,
 		environments:             opts.Environments,

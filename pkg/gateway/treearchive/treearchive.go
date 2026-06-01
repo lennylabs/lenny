@@ -45,6 +45,11 @@ type ArchivedNode struct {
 	SettledAt time.Time
 	// ArchivedAt is the instant the node was written to the archive.
 	ArchivedAt time.Time
+	// CompletionSeq is the §15.1 reattach predicate: the
+	// children_reattached synthesis streams archived nodes whose
+	// CompletionSeq exceeds the resuming client's resumeFromSeq. A v1
+	// writer that does not track a per-session sequence leaves it 0.
+	CompletionSeq int64
 }
 
 // ErrNotFound is returned by Get for an unknown node or a tenant

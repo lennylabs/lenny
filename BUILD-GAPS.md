@@ -7773,7 +7773,7 @@ Consequence: a long-lived delegation tree can accumulate per-node state without 
 
 **Resolution (commit 6b86cac9):** Added the `maxTreeMemoryBytes` axis to `lease.LeaseSlice`, `sessionstore.DelegationLease`, and the `delegate_task` MCP `leaseSlice` surface (rides the existing JSONB blob, no migration). `treebudget` maintains the atomic `{root_session_id}:dlg:tree_memory` Redis counter alongside `tree_size`; each admission reserves the ~12 KB per-node footprint (`treebudget.PerNodeMemoryBytes`) against the cap, defaulting to 2 MB (`DefaultMaxTreeMemoryBytes`) when the lease declares none, and rejects an over-cap delegation with `BUDGET_EXHAUSTED`. The platform-level memory bound now exists at admission. The periodic-Postgres-checkpoint + reconstruction-on-Redis-recovery leg is the §12.4 reconciliation concern; the offload decrement (M-2) is wired through `treebudget.Return` but its invocation on completed-subtree offload remains under F-8.2.13.
 
-### - [ ] F-8.2.13 — Completed-subtree offload (§8.2 line 129) is not implemented [Medium] — OPEN
+### - [x] F-8.2.13 — Completed-subtree offload (§8.2 line 129) is not implemented [Medium] — CLOSED
 
 Spec §8.2 line 129: "When a child session reaches a terminal state… the gateway offloads its virtual child interface state and buffered results to Postgres (`session_tree_archive`)… replaced by a lightweight stub… per-replica LRU cache."
 
@@ -7783,6 +7783,8 @@ Implementation:
 - The `maxTreeMemoryBytes` decrement on offload (M-2) is not wired.
 
 Consequence: the spec's "long-running trees with many completed branches do not accumulate unbounded memory" guarantee depends on M-2 and this offload mechanism; both are absent.
+
+**Resolution:** The §8.10 archive is now Postgres-backed (F-8.9.3), and `treearchive.Cached` (default 128 entries, `--tree-archive-cache-entries` / `LENNY_TREE_ARCHIVE_CACHE_ENTRIES`) is the per-replica LRU that fronts it — the durable record lives in Postgres while the in-memory footprint is bounded to the hot set, which is the §8.2 line 130 "lightweight stub + on-demand fetch + LRU cache" memory-bound guarantee. The M-2 decrement is wired: `sessionserver.returnTreeBudget` fires once per child on its terminal transition (guarded by `alreadyArchived` so a cascade re-archive does not double-return) and decrements the tree's `maxTreeMemoryBytes` counter by `treebudget.PerNodeMemoryBytes` and the parent's `parallel_children` counter by one via `treebudget.Reserver.Return`. Wired through the new `Options.TreeBudgetReturner`; nil in developer mode without Redis. Committed this batch.
 
 ### - [x] F-8.2.14 — Delegation tracing (§8.2 line 52 "automatic `tracingContext` injection") is implemented in memory but not persisted on Postgres-backed sessions [Medium] — CLOSED
 
@@ -9953,7 +9955,7 @@ HTTP 422). `buildTree`/`buildTreeNode` honor the caller's effective visibility
 via `sessionstore.VisibleTree`. The `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE`
 rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
 
-### - [ ] F-8.9.3 — §8.10 `session_tree_archive` has no Postgres backing — production loses tree archive on restart [High] — OPEN
+### - [x] F-8.9.3 — §8.10 `session_tree_archive` has no Postgres backing — production loses tree archive on restart [High] — CLOSED
 - **Spec:** Lines 129, 1062 in `08_recursive-delegation.md`; §7.1 lines 426–433 in `07_session-lifecycle.md`; §12.7 line 783 in `12_storage-architecture.md`. The `session_tree_archive` is described as a Postgres table keyed by `(root_session_id, node_session_id)` and is listed in the §12.7 erasure ordering (must precede `SessionStore` deletion to satisfy the FK on `session_tree_archive.root_session_id → sessions.id`).
 - **Evidence:**
   - `find /Users/joan/projects/lenny -path '*/treearchive*' -name '*.go'` returns only `pkg/gateway/treearchive/treearchive.go` and its tests. There is no `pgstore` subdirectory and no Postgres-backed `Store` implementation.
@@ -9962,6 +9964,8 @@ rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
   - `pkg/storerouter/storerouter.go:60` includes `session_tree_archive` in the `StoreTypeSession` doc comment, but no router enumerates a Postgres shard for it.
 - **Gap:** On every gateway restart (rolling upgrade, replica failover, coordinator handoff), the archive of every settled child result is lost. This breaks (a) the §8.10 "re-await protocol" (lines 1062–1063) — a resumed parent cannot stream pre-handoff settled results because they are gone; (b) the §7.1 `awaiting_client_action` durability story (lines 426–433) — child completion events the spec promises to durably persist do not survive a restart; (c) the §15.1 coordinator-handoff reattach test (lines 1412–1421 of `spec/15_external-api-surface.md`) — `children_reattached` cannot be reconstructed because the archive is empty.
 - **Suggested resolution:** Add a `0050_session_tree_archive.up.sql` migration creating the table with columns `(tenant_id, root_session_id UUID, node_session_id UUID, parent_session_id UUID, state TEXT, result JSONB, settled_at TIMESTAMPTZ, archived_at TIMESTAMPTZ, completion_seq BIGINT)`, FKs to `sessions(id)`, and RLS by `tenant_id`. Implement `pkg/gateway/treearchive/pgstore` against the `treearchive.Store` interface and switch the gateway binary off `NewMemory()`. Add `completion_seq` so the §15.1 reattach test's `completion_seq > resumeFromSeq` predicate has a real column to read.
+
+**Resolution:** Migration `0100_session_tree_archive` creates the table with the prescribed columns, PK `(root_session_id, node_session_id)`, FK `root_session_id → sessions(id)` with no ON DELETE action (RESTRICT, so the §12.7 line 807 erasure ordering holds), `tenant_id → tenants(id)`, the `tenant_id`-leading scatter-gather index, a `(tenant_id, node_session_id)` index for `GetByNode`, RLS policy, and the `lenny_tenant_guard` trigger. `pkg/gateway/treearchive/pgstore` implements the `treearchive.Store` contract via `pgtenant.InTx` (Archive is an idempotent `ON CONFLICT … DO UPDATE` upsert; Replay orders by `settled_at, completion_seq`). `cmd/lenny-gateway` switches off the bare `NewMemory()`: when a Postgres pool is configured it wires `treearchive.NewCached(treearchivepg.New(pool), cap)` (the §8.10 LRU fronting the durable store), keeping the in-memory store only for developer mode. Tier-1 cache tests pin write-through/eviction/replay-warming; tier-2 `tests/tier2_component/rls/session_tree_archive_test.go` pins the trigger, RLS isolation, upsert idempotency, and settlement-order replay. Committed this batch.
 
 ### - [ ] F-8.9.4 — `treeUsage` is not aggregated or surfaced; no tree-walk usage rollup exists [High] — OPEN
 
@@ -10022,7 +10026,7 @@ rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
 
 **Resolution:** Added `RootSessionID string` to `sessionstore.Session`; pgstore selectList now reads `COALESCE(root_session_id::text, '')` and `scanSession` populates it. `delegation.Service.Delegate` stamps `RootSessionID = parent.RootSessionID` (falling back to `parent.ID` when the parent has no tracked root) so every child in a delegation tree shares the same root. Both memstore.Create and pgstore.Create implicitly inherit the parent's RootSessionID when the caller did not stamp one (memstore: in-memory lookup; pgstore: subquery), so derived sessions, watchdog-recreated rows, and tests that seed a chain without stamping `RootSessionID` end up in the parent's tree automatically. A standalone session (no parent) becomes its own root. Tier-1 pins (`TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010`, `TestCreateChildInheritsParentRoot_spec_8_9_1010`, `TestCreateCallerProvidedRootWins_spec_8_9_1010`, `TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010`) cover the standalone, inheritance, caller-stamped, and deep-tree delegation paths.
 
-### - [ ] F-8.9.9 — `treearchive.Memory` is unbounded (no LRU, no eviction); spec calls for a 128-entry per-replica cache [Medium] — DEFERRED
+### - [x] F-8.9.9 — `treearchive.Memory` is unbounded (no LRU, no eviction); spec calls for a 128-entry per-replica cache [Medium] — CLOSED
 - **Spec:** Line 129 — "If the parent later reads the child's result, the gateway fetches it from Postgres on demand (with a per-replica LRU cache, default 128 entries)."
 - **Evidence:**
   - `pkg/gateway/treearchive/treearchive.go:83-145::Memory` uses `map[string]ArchivedNode` with no size cap, no LRU, no TTL.
@@ -10030,7 +10034,7 @@ rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
 - **Gap:** A long-lived gateway with many delegated trees will grow the archive map without bound. The spec's "default 128 entries" cache assumes a Postgres-backed authoritative store with the in-memory copy serving as a hot cache; the current implementation conflates the two.
 - **Suggested resolution:** Once the Postgres backing exists (F-8.9.3), repurpose the memory implementation as an LRU cache with `default 128 entries` and a configurable cap, fronting the Postgres store rather than acting as the durable record.
 
-**Resolution:** Deferred to F-8.9.3 (Postgres backing). The finding's own suggested resolution explicitly gates the LRU work on F-8.9.3 — adding an in-memory cap before the durable backing exists would evict tree-archive entries with no fallback store to restore them from, regressing correctness rather than improving it. The unbounded growth observation remains valid; the right fix is the cap + Postgres-fronting pair landing together.
+**Resolution:** Unblocked by F-8.9.3 and closed in the same batch. `pkg/gateway/treearchive/cache.go` adds `Cached`, an LRU (`container/list` MRU/LRU + map) keyed by `(tenant_id, node_session_id)` that fronts the durable `Store`. `DefaultCacheEntries = 128` matches the spec; `NewCached(inner, cap)` takes a configurable cap (`--tree-archive-cache-entries` / `LENNY_TREE_ARCHIVE_CACHE_ENTRIES`). Archive writes through and refreshes the entry; Replay warms the cache; Get/GetByNode share one entry per node and evict the LRU tail past the cap. `cmd/lenny-gateway` wires `NewCached(treearchivepg.New(pool), cap)` as the production archive, so `treearchive.Memory` is now only the developer-mode durable store rather than the unbounded production record. Tier-1 `cache_test.go` pins write-through, miss-then-hit, node-key sharing, the eviction bound, replay warming, the default cap, and root-mismatch fall-through.
 
 ### - [x] F-8.9.10 — Cycle guard in tree walker uses node-id `seen` set rather than relying on the §8.2 cycle detector [Low] — CLOSED
 - **Spec:** §8.2 cycle detection runs at delegation time. §8.9 / §8.10 traversal assumes the tree is acyclic.
