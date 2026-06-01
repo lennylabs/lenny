@@ -17,8 +17,10 @@ import (
 
 func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
 	// §25.3: the OnTransition hook fires when the aggregate status
-	// changes between Reports — the health_status_changed signal.
-	agg := health.NewAggregator()
+	// changes between Reports — the health_status_changed signal. The
+	// probe cache is disabled so a mutated checker is re-evaluated on
+	// each Report rather than served from the §25.3 line 526 cache.
+	agg := health.NewAggregatorWithCache(0, nil)
 	status := health.StatusHealthy
 	agg.Register(health.CheckerFunc{
 		ComponentName: "db",
@@ -168,14 +170,30 @@ func TestHandlerHealthyReturns200(t *testing.T) {
 	}
 }
 
-func TestHandlerUnhealthyReturns503(t *testing.T) {
+// TestHandlerUnhealthyReturns200_spec_25_3_530 asserts the health
+// endpoint never returns 5xx: an unhealthy verdict still returns 200
+// with status: unhealthy in the body so an agent distinguishes "the
+// platform is unhealthy" from "the request to the health endpoint
+// failed". spec: §25.3 line 530.
+func TestHandlerUnhealthyReturns200_spec_25_3_530(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(failing("redis", health.StatusUnhealthy))
+	for _, path := range []string{"/v1/admin/health", "/v1/admin/health/summary", "/v1/admin/health/redis"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		health.Handler(agg).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s: got %d, want 200 (health endpoint never returns 5xx)", path, rr.Code)
+		}
+	}
+	// The full-report body still carries the unhealthy verdict.
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health", nil)
 	rr := httptest.NewRecorder()
 	health.Handler(agg).ServeHTTP(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Errorf("unhealthy: got %d, want 503", rr.Code)
+	var report health.Report
+	_ = json.Unmarshal(rr.Body.Bytes(), &report)
+	if report.Status != health.StatusUnhealthy {
+		t.Errorf("report status: %q, want unhealthy", report.Status)
 	}
 }
 
@@ -222,6 +240,58 @@ func TestHandlerUnknownComponent404(t *testing.T) {
 	health.Handler(agg).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown component: got %d, want 404", rr.Code)
+	}
+	// spec: §25.3 line 547 — the health surface's only error code.
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &body)
+	if body.Error.Code != "UNKNOWN_HEALTH_COMPONENT" {
+		t.Errorf("error code = %q, want UNKNOWN_HEALTH_COMPONENT", body.Error.Code)
+	}
+}
+
+// TestProbeResultsCachedFor5Seconds_spec_25_3_526 asserts a component's
+// Check result is reused within the 5-second per-replica cache window
+// and re-run once the window elapses, so concurrent health requests do
+// not stampede the backing dependency. spec: §25.3 line 526.
+func TestProbeResultsCachedFor5Seconds_spec_25_3_526(t *testing.T) {
+	clock := time.Unix(1_000_000, 0)
+	agg := health.NewAggregatorWithCache(5*time.Second, func() time.Time { return clock })
+
+	var calls atomic.Int64
+	agg.Register(health.CheckerFunc{
+		ComponentName: "postgres",
+		Fn: func(context.Context) health.Component {
+			calls.Add(1)
+			return health.Component{Name: "postgres", Status: health.StatusHealthy}
+		},
+	})
+
+	// First Report probes; the next several within the window are served
+	// from cache.
+	for i := 0; i < 4; i++ {
+		agg.Report(context.Background())
+		agg.Component(context.Background(), "postgres")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("within the cache window the checker ran %d times, want 1", got)
+	}
+
+	// Advance just under the TTL — still cached.
+	clock = clock.Add(4 * time.Second)
+	agg.Report(context.Background())
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("at 4s the checker ran %d times, want 1 (still cached)", got)
+	}
+
+	// Advance past the TTL — the probe runs again.
+	clock = clock.Add(2 * time.Second)
+	agg.Report(context.Background())
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("past the 5s TTL the checker ran %d times, want 2", got)
 	}
 }
 

@@ -14,9 +14,17 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
+
+// probeCacheTTL is the §25.3 per-replica probe-result cache window: a
+// component's last Check result is reused for this long so concurrent
+// health requests do not stampede the backing dependency.
+// spec: §25.3 line 526 — "Component probe results are cached in-memory
+// for 5 seconds to avoid probe storms from concurrent health checks."
+const probeCacheTTL = 5 * time.Second
 
 // Status is the §25.3 health verdict enum.
 type Status string
@@ -123,6 +131,13 @@ type Report struct {
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
+// cachedProbe is a component's Check result stamped with the time it
+// was produced so the Aggregator can serve it within probeCacheTTL.
+type cachedProbe struct {
+	comp Component
+	at   time.Time
+}
+
 // Aggregator holds the registered Checkers and rolls them up.
 // Goroutine-safe.
 type Aggregator struct {
@@ -130,11 +145,73 @@ type Aggregator struct {
 	checkers     map[string]Checker
 	lastStatus   Status
 	onTransition func(prev, curr Status)
+
+	// §25.3 line 526 per-replica probe-result cache. cacheTTL of 0
+	// disables caching (every request runs the probes); the clock is
+	// injectable so tests can advance it deterministically.
+	cacheMu  sync.Mutex
+	cache    map[string]cachedProbe
+	cacheTTL time.Duration
+	now      func() time.Time
 }
 
-// NewAggregator returns an empty Aggregator.
+// NewAggregator returns an empty Aggregator with the §25.3 5-second
+// per-replica probe-result cache enabled (line 526).
 func NewAggregator() *Aggregator {
-	return &Aggregator{checkers: map[string]Checker{}}
+	return newAggregator(probeCacheTTL, time.Now)
+}
+
+// NewAggregatorWithCache returns an Aggregator whose probe-result cache
+// uses the given TTL and clock. A non-positive ttl disables caching. A
+// nil clock falls back to time.Now. The gateway uses NewAggregator;
+// this variant exists so the §25.3 cache can be exercised against a
+// controllable clock.
+func NewAggregatorWithCache(ttl time.Duration, now func() time.Time) *Aggregator {
+	return newAggregator(ttl, now)
+}
+
+func newAggregator(ttl time.Duration, now func() time.Time) *Aggregator {
+	if now == nil {
+		now = time.Now
+	}
+	return &Aggregator{
+		checkers: map[string]Checker{},
+		cache:    map[string]cachedProbe{},
+		cacheTTL: ttl,
+		now:      now,
+	}
+}
+
+// probe runs c's Check unless a result cached within probeCacheTTL is
+// still fresh, in which case the cached Component is returned without
+// touching the backing dependency. spec: §25.3 line 526.
+func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
+	name := c.Name()
+	if a.cacheTTL > 0 {
+		a.cacheMu.Lock()
+		if hit, ok := a.cache[name]; ok && a.now().Sub(hit.at) < a.cacheTTL {
+			a.cacheMu.Unlock()
+			return hit.comp
+		}
+		a.cacheMu.Unlock()
+	}
+	comp := c.Check(ctx)
+	if comp.Name == "" {
+		comp.Name = name
+	}
+	// spec: §25.7 line 3234 — when the checker stamps Issue and leaves
+	// RunbookRef empty, the §17.7 issueRunbooks table is the source of
+	// truth so the agent receives the runbook pointer without
+	// per-checker duplication.
+	if comp.RunbookRef == "" && comp.Issue != "" {
+		comp.RunbookRef = RunbookForIssue(comp.Issue)
+	}
+	if a.cacheTTL > 0 {
+		a.cacheMu.Lock()
+		a.cache[name] = cachedProbe{comp: comp, at: a.now()}
+		a.cacheMu.Unlock()
+	}
+	return comp
 }
 
 // OnTransition registers a callback the Aggregator invokes when a
@@ -176,18 +253,7 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 		wg.Add(1)
 		go func(i int, c Checker) {
 			defer wg.Done()
-			comp := c.Check(ctx)
-			if comp.Name == "" {
-				comp.Name = c.Name()
-			}
-			// spec: §25.7 line 3234 — when the checker stamps Issue
-			// and leaves RunbookRef empty, the §17.7 issueRunbooks
-			// table is the source of truth so the agent receives the
-			// runbook pointer without per-checker duplication.
-			if comp.RunbookRef == "" && comp.Issue != "" {
-				comp.RunbookRef = RunbookForIssue(comp.Issue)
-			}
-			components[i] = comp
+			components[i] = a.probe(ctx, c)
 		}(i, c)
 	}
 	wg.Wait()
@@ -249,15 +315,7 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 	if !ok {
 		return Component{}, false
 	}
-	comp := c.Check(ctx)
-	if comp.Name == "" {
-		comp.Name = name
-	}
-	// spec: §25.7 line 3234 — same back-fill rule as Report so the
-	// /v1/admin/health/{component} response carries the runbook
-	// pointer when the checker stamped only Issue.
-	if comp.RunbookRef == "" && comp.Issue != "" {
-		comp.RunbookRef = RunbookForIssue(comp.Issue)
-	}
-	return comp, true
+	// Shares the §25.3 line 526 probe-result cache with Report so a
+	// single-component pull does not bypass the 5-second window.
+	return a.probe(ctx, c), true
 }

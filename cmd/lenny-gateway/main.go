@@ -337,6 +337,21 @@ func main() {
 	deprecatedAPIVersionsCSV := flag.String("deprecated-api-versions",
 		os.Getenv("LENNY_DEPRECATED_API_VERSIONS"),
 		"§15.5 item 1 / docs/api/index.md line 124 — comma-separated REST URL version prefixes currently in their 6-month sunset window. Each match stamps the `X-Lenny-Deprecated-Version` response header. Empty disables the header (v1 default). Override via LENNY_DEPRECATED_API_VERSIONS. F-15.5.11.")
+	// spec: §25.3 lines 596, 604, 625 — operator knobs for the capacity
+	// recommendations service. disabled-rules skips noisy rules across
+	// every replica; window-overrides shrinks a rule's sliding window to
+	// cut ring-buffer memory; disable-on-prometheus-outage fails closed
+	// with RECOMMENDATIONS_UNAVAILABLE instead of computing from a
+	// fallback reader. F-25.3.12.
+	recommendationsDisabledRules := flag.String("recommendations-disabled-rules",
+		os.Getenv("LENNY_RECOMMENDATIONS_DISABLED_RULES"),
+		"§25.3 line 604 — comma-separated recommendation rule IDs to disable across all replicas. Override via LENNY_RECOMMENDATIONS_DISABLED_RULES. F-25.3.12.")
+	recommendationsWindowOverrides := flag.String("recommendations-window-overrides",
+		os.Getenv("LENNY_RECOMMENDATIONS_WINDOW_OVERRIDES"),
+		"§25.3 line 596 — comma-separated per-category sliding-window overrides as category=duration (e.g. warm_pool_sizing=12h,credential_pool_sizing=72h). Override via LENNY_RECOMMENDATIONS_WINDOW_OVERRIDES. F-25.3.12.")
+	recommendationsDisableOnOutage := flag.Bool("recommendations-disable-on-prometheus-outage",
+		envFlag("LENNY_RECOMMENDATIONS_DISABLE_ON_PROMETHEUS_OUTAGE"),
+		"§25.3 line 625 — return 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from a fallback reader when the metric source is unreachable. Override via LENNY_RECOMMENDATIONS_DISABLE_ON_PROMETHEUS_OUTAGE. F-25.3.12.")
 	rlGlobalPerMin := flag.Int("rate-limit-global-per-min", 0,
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
@@ -2933,8 +2948,13 @@ func main() {
 		WithExperiments(experiments).
 		WithEnvironments(environments).
 		WithEvalResults(evals).
-		WithRecommendations(recommendations.NewCapacityService(
-			recommendations.NewWindowStore(7 * 24 * time.Hour),
+		WithRecommendations(recommendations.NewCapacityServiceWithConfig(
+			recommendations.NewWindowStore(7*24*time.Hour),
+			recommendations.Config{
+				DisabledRules:             splitCSV(*recommendationsDisabledRules),
+				WindowOverrides:           parseWindowOverrides(*recommendationsWindowOverrides),
+				DisableOnPrometheusOutage: *recommendationsDisableOnOutage,
+			},
 		))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEventBuffer).
@@ -6197,6 +6217,31 @@ func parseTerminationGrace() time.Duration {
 		seconds = prestop.DefaultTerminationGraceSeconds
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+// parseWindowOverrides parses the §25.3 recommendations window-override
+// flag (comma-separated category=duration pairs, e.g.
+// "warm_pool_sizing=12h,credential_pool_sizing=72h") into the map the
+// recommendations.Config expects. Malformed pairs and unparseable
+// durations are skipped so one bad entry does not drop the rest.
+// spec: §25.3 line 596. F-25.3.12.
+func parseWindowOverrides(raw string) map[string]time.Duration {
+	out := map[string]time.Duration{}
+	for _, pair := range splitAndTrim(raw) {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil || d <= 0 {
+			continue
+		}
+		out[strings.TrimSpace(k)] = d
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // splitAndTrim splits a comma-separated string and drops empty entries

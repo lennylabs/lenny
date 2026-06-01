@@ -310,6 +310,20 @@ spec:
             {{- with .Values.gateway.deprecatedAPIVersions }}
             - --deprecated-api-versions={{ join "," . }}
             {{- end }}
+            # spec: §25.3 lines 596, 604, 625 — Capacity Recommendations
+            # operator knobs. Rendered only when set so the gateway keeps
+            # the spec defaults (all rules active, default windows, no
+            # outage opt-out) when the operator leaves them empty.
+            # F-25.3.12.
+            {{- with .Values.gateway.recommendations.disabledRules }}
+            - --recommendations-disabled-rules={{ join "," . }}
+            {{- end }}
+            {{- with .Values.gateway.recommendations.windowOverrides }}
+            - --recommendations-window-overrides={{- $pairs := list }}{{- range $k, $v := . }}{{- $pairs = append $pairs (printf "%s=%s" $k $v) }}{{- end }}{{ join "," $pairs }}
+            {{- end }}
+            {{- if .Values.gateway.recommendations.disableOnPrometheusOutage }}
+            - --recommendations-disable-on-prometheus-outage=true
+            {{- end }}
             # §10.2 line 212 — OIDC claim the gateway extracts the
             # tenant identifier from. Operator-configurable so an
             # upstream IdP that stamps tenant identity under a non-

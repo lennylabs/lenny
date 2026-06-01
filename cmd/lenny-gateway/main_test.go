@@ -622,3 +622,29 @@ func TestBuildStartupProbeTLSConfig_spec_10_3(t *testing.T) {
 		t.Error("a CA bundle with no certificates must be rejected")
 	}
 }
+
+// TestParseWindowOverrides_spec_25_3_596 covers the §25.3 recommendations
+// window-override flag parser: well-formed category=duration pairs map
+// through, malformed pairs and unparseable or non-positive durations are
+// skipped, and an all-empty input yields a nil map. F-25.3.12.
+func TestParseWindowOverrides_spec_25_3_596(t *testing.T) {
+	got := parseWindowOverrides("warm_pool_sizing=12h, credential_pool_sizing=72h ,bogus,gateway_scaling=0s,resource_limits=notaduration")
+	if len(got) != 2 {
+		t.Fatalf("parsed %d overrides, want 2: %v", len(got), got)
+	}
+	if got["warm_pool_sizing"] != 12*time.Hour {
+		t.Errorf("warm_pool_sizing = %v, want 12h", got["warm_pool_sizing"])
+	}
+	if got["credential_pool_sizing"] != 72*time.Hour {
+		t.Errorf("credential_pool_sizing = %v, want 72h", got["credential_pool_sizing"])
+	}
+	if _, ok := got["gateway_scaling"]; ok {
+		t.Error("a non-positive (0s) duration must be skipped")
+	}
+	if _, ok := got["resource_limits"]; ok {
+		t.Error("an unparseable duration must be skipped")
+	}
+	if parseWindowOverrides("") != nil {
+		t.Error("empty input must yield a nil map")
+	}
+}

@@ -1155,6 +1155,25 @@ gateway:
   # /v2/ lands, set this to `[v1]` for the duration of the sunset.
   # spec: §15.5 item 1; docs/api/index.md line 124 — F-15.5.11.
   deprecatedAPIVersions: []
+  # recommendations tunes the §25.3 Capacity Recommendations service.
+  # spec: §25.3 lines 596, 604, 625 — F-25.3.12.
+  recommendations:
+    # disabledRules names recommendation rule IDs to disable across all
+    # replicas (e.g. ["GatewayScalingPressure"]). A disabled rule never
+    # runs and never appears in /v1/admin/recommendations. Defaults empty
+    # (all rules active). spec: §25.3 line 604.
+    disabledRules: []
+    # windowOverrides shrinks a rule's sliding window per §25.3 category
+    # to reduce ring-buffer memory at the cost of recommendation
+    # accuracy, e.g. { warm_pool_sizing: 12h, credential_pool_sizing: 72h }.
+    # Defaults empty (the per-rule defaults: 24h pool sizing, 7d credential
+    # sizing). spec: §25.3 line 596.
+    windowOverrides: {}
+    # disableOnPrometheusOutage makes the recommendations endpoints return
+    # 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from the
+    # fallback in-process reader when the metric source is unreachable.
+    # spec: §25.3 line 625.
+    disableOnPrometheusOutage: false
   # healthTracker gates the §25.13 in-process alert tracker. When
   # useCompiledRules is true (default), the gateway runs the §16.5
   # compiled-in alert evaluator so /v1/admin/health derives its
