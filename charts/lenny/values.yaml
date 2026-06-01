@@ -774,6 +774,14 @@ audit:
   # addition to the critical alert and lenny_audit_grant_drift_total
   # increment). F-11.7.3.
   hardFailOnDrift: false
+  # §11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When
+  # empty (default), the compliance gate rejects creating or updating a
+  # tenant to a regulated complianceProfile (soc2, fedramp, hipaa) and
+  # creating an environment under one with COMPLIANCE_SIEM_REQUIRED; in
+  # production a regulated tenant with no endpoint is a fatal startup
+  # error. Configure this before enabling a regulated tenant. F-11.7.2.
+  siem:
+    endpoint: ""
   # §16.4 audit.retentionDays: the general Postgres audit-log retention
   # window in days. The audit GC applies it to non-gdpr.* rows. gdpr.*
   # rows are governed separately by gdprRetentionDays below. F-12.8.16.

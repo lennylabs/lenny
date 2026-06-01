@@ -474,6 +474,9 @@ func main() {
 	auditHardFailOnDrift := flag.Bool("audit-hard-fail-on-drift",
 		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
+	auditSIEMEndpoint := flag.String("audit-siem-endpoint",
+		os.Getenv("LENNY_AUDIT_SIEM_ENDPOINT"),
+		"§11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When empty, the §11.7 compliance gate rejects creating or updating a tenant to a regulated complianceProfile (soc2, fedramp, hipaa), and creating an environment under one, with COMPLIANCE_SIEM_REQUIRED; in production a regulated tenant with no endpoint is a fatal startup error. Override via LENNY_AUDIT_SIEM_ENDPOINT. F-11.7.2.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -1311,6 +1314,22 @@ func main() {
 		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated)
 	if err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
+	}
+
+	// spec: §11.7 line 450 — a regulated-profile tenant with no configured
+	// audit.siem.endpoint is a fatal startup error in production mode; a
+	// non-production deployment logs a warning and continues. This catches
+	// a SIEM endpoint accidentally removed from Helm values from silently
+	// invalidating a live compliance posture. F-11.7.2.
+	if err := admin.ValidateSIEMForRegulatedTenants(context.Background(), tenants, *auditSIEMEndpoint != ""); err != nil {
+		if err.Error() == admin.SIEMStartupFatalMessage {
+			if os.Getenv("LENNY_ENV") == "production" {
+				log.Fatalf("lenny-gateway: %s", err.Error())
+			}
+			log.Printf("lenny-gateway: WARNING: %s (non-production, continuing)", err.Error())
+		} else {
+			log.Printf("lenny-gateway: WARNING: §11.7 SIEM compliance preflight could not list tenants: %v", err)
+		}
 	}
 
 	// ----- §7.1 uploadToken KeyRing + rotator -----
@@ -2945,6 +2964,11 @@ func main() {
 	// handlers reject a runtime whose setupPolicy.timeoutSeconds exceeds
 	// gateway.maxFinalizingTimeoutSeconds.
 	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(*maxFinalizingTimeoutSeconds)
+	// spec: §11.7 lines 445-451 — record whether audit.siem.endpoint is
+	// configured so the admin compliance gate can reject regulated-profile
+	// tenant create/update and environment creation with
+	// COMPLIANCE_SIEM_REQUIRED when SIEM is absent. F-11.7.2.
+	adminRouter = adminRouter.WithSIEMConfigured(*auditSIEMEndpoint != "")
 	// §15.1 lines 891-892 / §24.13 lines 150-151: wire the
 	// schema-migration management endpoints when a Postgres DSN is set
 	// (the migrations the runner applies live in the same database).

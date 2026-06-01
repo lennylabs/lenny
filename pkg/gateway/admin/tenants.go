@@ -172,6 +172,13 @@ type Router struct {
 	kmsProbe         KMSProbe
 	elicitationFloor string
 
+	// siemConfigured mirrors whether the platform has an
+	// `audit.siem.endpoint` configured. The §11.7 compliance enforcement
+	// gate rejects creating or updating a tenant to a regulated
+	// complianceProfile (and creating an environment under one) with
+	// COMPLIANCE_SIEM_REQUIRED when it is false. spec: §11.7 lines 445-451.
+	siemConfigured bool
+
 	reconciliationResumer ReconciliationResumer
 	poolStatus            PoolStatusReader
 	crdGenerations        CRDGenerationReader
@@ -316,6 +323,33 @@ func (r *Router) WithMaxFinalizingTimeoutSeconds(seconds int) *Router {
 func (r *Router) WithElicitationFloor(mode string) *Router {
 	r.elicitationFloor = mode
 	return r
+}
+
+// WithSIEMConfigured records whether the platform has an
+// `audit.siem.endpoint` configured. When false, the §11.7 compliance
+// enforcement gate rejects creating or updating a tenant to a regulated
+// complianceProfile (soc2, fedramp, hipaa), and creating an environment
+// under such a tenant, with COMPLIANCE_SIEM_REQUIRED (HTTP 422). The
+// production gateway passes `audit.siem.endpoint != ""`.
+// spec: §11.7 lines 445-451.
+func (r *Router) WithSIEMConfigured(configured bool) *Router {
+	r.siemConfigured = configured
+	return r
+}
+
+// complianceSIEMRequiredMessage is the §11.7 line 448 verbatim 422 body
+// for the SIEM hard-requirement gate.
+func complianceSIEMRequiredMessage(profile string) string {
+	return "tenant.complianceProfile '" + profile + "' requires audit.siem.endpoint to be configured. " +
+		"A database superuser can bypass INSERT-only grants; an independent SIEM copy is mandatory for compliance-grade audit integrity."
+}
+
+// requireSIEMForProfile reports whether the §11.7 gate must reject an
+// operation that lands a tenant on the given complianceProfile: the
+// profile is regulated (soc2, fedramp, hipaa) and no SIEM endpoint is
+// configured. spec: §11.7 lines 445-451.
+func (r *Router) requireSIEMForProfile(profile string) bool {
+	return regulatedComplianceProfiles[profile] && !r.siemConfigured
 }
 
 // emit fires an audit event when an AuditSink is wired. Never
@@ -931,6 +965,33 @@ func EmitBillingErasureExemptRegulatedStartup(ctx context.Context, tenants tenan
 	return nil
 }
 
+// SIEMStartupFatalMessage is the §11.7 line 450 verbatim fatal message
+// the gateway logs when it refuses to start with a regulated tenant and
+// no configured SIEM.
+const SIEMStartupFatalMessage = "FATAL: one or more tenants have a regulated complianceProfile but audit.siem.endpoint is not configured. Configure SIEM or downgrade tenant complianceProfile to 'none' via POST /v1/admin/tenants/{id}/compliance-profile/decommission."
+
+// ValidateSIEMForRegulatedTenants enforces the §11.7 line 450 startup
+// gate: when any active tenant carries a regulated complianceProfile
+// (soc2, fedramp, hipaa) and no SIEM endpoint is configured, it returns
+// an error carrying SIEMStartupFatalMessage so the production gateway
+// refuses to start. When siemConfigured is true the scan is skipped.
+// spec: §11.7 lines 445-451.
+func ValidateSIEMForRegulatedTenants(ctx context.Context, tenants tenantstore.Store, siemConfigured bool) error {
+	if siemConfigured {
+		return nil
+	}
+	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return err
+	}
+	for _, t := range rows {
+		if regulatedComplianceProfiles[t.ComplianceProfile] {
+			return errors.New(SIEMStartupFatalMessage)
+		}
+	}
+	return nil
+}
+
 // handleCreateTenant implements POST /v1/admin/tenants.
 func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	var body TenantPayload
@@ -1002,6 +1063,16 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 				map[string]any{"field": "credentialPolicy"})
 			return
 		}
+	}
+	// spec: §11.7 line 446 — creating a tenant with a regulated
+	// complianceProfile when no audit.siem.endpoint is configured is
+	// rejected with COMPLIANCE_SIEM_REQUIRED. The gate is unbypassable;
+	// the deployer must configure SIEM before enabling a regulated tenant.
+	if r.requireSIEMForProfile(body.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
+			complianceSIEMRequiredMessage(body.ComplianceProfile),
+			map[string]any{"field": "complianceProfile", "complianceProfile": body.ComplianceProfile})
+		return
 	}
 
 	t := tenantstore.Tenant{
@@ -1190,6 +1261,17 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 					"currentProfile":   current.ComplianceProfile,
 					"requestedProfile": *body.ComplianceProfile,
 				})
+			return
+		}
+		// spec: §11.7 line 446 — updating a tenant to a regulated
+		// complianceProfile when no audit.siem.endpoint is configured is
+		// rejected with COMPLIANCE_SIEM_REQUIRED, symmetric with create.
+		// The downgrade ratchet above runs first so a regulated→lower
+		// transition still routes through COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED.
+		if body.ComplianceProfile != nil && r.requireSIEMForProfile(*body.ComplianceProfile) {
+			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
+				complianceSIEMRequiredMessage(*body.ComplianceProfile),
+				map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
 			return
 		}
 		// §12.9 workspaceTier ratchet. §15.1 names §12.9 as the authority

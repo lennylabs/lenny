@@ -289,6 +289,18 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 			map[string]any{"bodyTenantId": body.TenantID, "authorizedTenantId": tenant})
 		return
 	}
+	// spec: §11.7 line 449 — environment creation under a regulated
+	// tenant re-checks audit.siem.endpoint presence on every request and
+	// rejects with COMPLIANCE_SIEM_REQUIRED when SIEM has become absent
+	// since the tenant was created. The parent tenant's complianceProfile
+	// is read fresh so a SIEM removal cannot be papered over by an
+	// already-admitted tenant row.
+	if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requireSIEMForProfile(row.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
+			complianceSIEMRequiredMessage(row.ComplianceProfile),
+			map[string]any{"tenantId": tenant, "complianceProfile": row.ComplianceProfile})
+		return
+	}
 	env := toEnvironment(body, tenant)
 	if err := r.environments.Create(req.Context(), env); err != nil {
 		if errors.Is(err, environmentstore.ErrAlreadyExists) {

@@ -1285,6 +1285,33 @@ tests:
             name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT
             value: "true"
 
+  # spec: §11.7 — audit.siem.endpoint renders LENNY_AUDIT_SIEM_ENDPOINT
+  # only when non-empty; the default (empty) leaves it unset so the
+  # compliance gate treats the platform as SIEM-unconfigured. F-11.7.2.
+  - it: omits LENNY_AUDIT_SIEM_ENDPOINT when audit.siem.endpoint is empty (default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_ENDPOINT
+          any: true
+
+  - it: renders LENNY_AUDIT_SIEM_ENDPOINT from audit.siem.endpoint when set
+    set:
+      audit.siem.endpoint: "https://siem.acme.example/ingest"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_ENDPOINT
+            value: "https://siem.acme.example/ingest"
+
   # spec: §12.8 line 839 — audit.gdprRetentionDays flows through to
   # LENNY_AUDIT_GDPR_RETENTION_DAYS. F-12.8.16.
   - it: wires LENNY_AUDIT_GDPR_RETENTION_DAYS from the chart default
