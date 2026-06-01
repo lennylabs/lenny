@@ -51,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
@@ -183,6 +184,23 @@ func main() {
 	// loops and the leader-election goroutine.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// W3C propagator so lenny-ops spans reach the OTLP Collector instead of
+	// the no-op provider. With no OTEL endpoint a stdout exporter is used.
+	// F-16.3.2.
+	traceShutdown, err := tracing.InitProvider(ctx, tracing.ProviderConfig{
+		ServiceName:  "lenny-ops",
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if err != nil {
+		log.Fatalf("lenny-ops: tracing init: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceShutdown(shutdownCtx)
+	}()
 
 	// Postgres: optional. §25.4 has lenny-ops degrade gracefully when
 	// Postgres is unavailable, so a missing DSN is not fatal.

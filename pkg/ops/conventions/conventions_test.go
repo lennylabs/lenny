@@ -10,8 +10,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
+
+// spec: §16.3 line 372 — the §25.2 ops error taxonomy (TRANSIENT, PERMANENT,
+// POLICY, AUTH) maps onto the §16.3 span taxonomy (TRANSIENT, PERMANENT,
+// POLICY, UPSTREAM). AUTH folds into UPSTREAM ("external dependency failure
+// (MCP tool error, auth failure)"); the other three share names. A span's
+// error.category must therefore never carry AUTH nor omit UPSTREAM. F-16.3.7.
+func TestSpanCategoryMapsOpsTaxonomyOntoSpec163(t *testing.T) {
+	cases := []struct {
+		in   conventions.ErrorCategory
+		want tracing.ErrorCategory
+	}{
+		{conventions.CategoryTransient, tracing.CategoryTransient},
+		{conventions.CategoryPermanent, tracing.CategoryPermanent},
+		{conventions.CategoryPolicy, tracing.CategoryPolicy},
+		{conventions.CategoryAuth, tracing.CategoryUpstream},
+		{conventions.ErrorCategory("UNKNOWN"), tracing.CategoryUpstream},
+	}
+	for _, c := range cases {
+		if got := c.in.SpanCategory(); got != c.want {
+			t.Errorf("%q.SpanCategory() = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	// Every mapped value is one of the four §16.3 categories.
+	valid := map[tracing.ErrorCategory]bool{
+		tracing.CategoryTransient: true,
+		tracing.CategoryPermanent: true,
+		tracing.CategoryPolicy:    true,
+		tracing.CategoryUpstream:  true,
+	}
+	for _, in := range []conventions.ErrorCategory{
+		conventions.CategoryTransient, conventions.CategoryPermanent,
+		conventions.CategoryPolicy, conventions.CategoryAuth,
+	} {
+		if !valid[in.SpanCategory()] {
+			t.Errorf("%q.SpanCategory() = %q is outside the §16.3 taxonomy", in, in.SpanCategory())
+		}
+	}
+}
 
 func TestParsePageParamsDefaults(t *testing.T) {
 	p, err := conventions.ParsePageParams(url.Values{}, "desc")

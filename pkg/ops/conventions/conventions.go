@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // Page-size bounds for the §25.4 canonical `limit` parameter.
@@ -169,6 +171,31 @@ const (
 	// CategoryAuth is an authentication or authorization failure.
 	CategoryAuth ErrorCategory = "AUTH"
 )
+
+// SpanCategory maps a §25.2 ops error category onto the §16.3 span error
+// taxonomy (TRANSIENT, PERMANENT, POLICY, UPSTREAM). The two taxonomies
+// share three names; §25.2 splits out AUTH, which §16.3 folds into UPSTREAM
+// ("external dependency failure (MCP tool error, auth failure)"). Recording
+// the §16.3 value on the span's error.category attribute keeps spans within
+// the four categories §16.3 enumerates, so a span never carries a value the
+// trace taxonomy does not list (AUTH) nor omits one it requires (UPSTREAM).
+// spec: §16.3 line 372 (UPSTREAM includes auth failure); §25.2 ErrorCategory.
+func (c ErrorCategory) SpanCategory() tracing.ErrorCategory {
+	switch c {
+	case CategoryTransient:
+		return tracing.CategoryTransient
+	case CategoryPermanent:
+		return tracing.CategoryPermanent
+	case CategoryPolicy:
+		return tracing.CategoryPolicy
+	case CategoryAuth:
+		return tracing.CategoryUpstream
+	default:
+		// An unrecognized category is treated as an upstream/dependency
+		// failure rather than silently emitting an off-taxonomy value.
+		return tracing.CategoryUpstream
+	}
+}
 
 // ErrorBody is the inner object of the §25.2 canonical error envelope.
 type ErrorBody struct {

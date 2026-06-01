@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // version is the adapter build version, reported during gateway
@@ -151,6 +152,24 @@ func main() {
 	if *runtimeBin != "" && *runtimeSocket != "" {
 		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
 	}
+
+	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// W3C propagator so the pod adapter's §16.3 spans (session.upload,
+	// session.finalize_workspace, session.run_setup, session.start,
+	// session.tool_call) reach the OTLP Collector instead of the no-op
+	// provider. With no OTEL endpoint a stdout exporter is used. F-16.3.2.
+	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
+		ServiceName:  "lenny-adapter",
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if err != nil {
+		log.Fatalf("lenny-adapter: tracing init: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceShutdown(ctx)
+	}()
 
 	// §4.7 lines 870-877: run the mandatory SO_PEERCRED startup self-test
 	// before any other setup. On failure, crash-loop the pod so it never

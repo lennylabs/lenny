@@ -106,6 +106,29 @@ func (e *CategorizedError) Unwrap() error { return e.Err }
 // on OTel spans.
 const AttrErrorCategory = "error.category"
 
+// Span attribute keys mandated by §16.3 beyond the correlation projection.
+// The delegation.budget_reserve and delegation.budget_return spans carry
+// outcome, tenant_id, root_session_id, and lua_queue_wait_ms (spec: §16.3
+// lines 347-348); coordinator.handoff carries pool, outcome, and generation
+// (spec: §16.3 line 357). tenant_id and pool are already projected from
+// correlation.Fields by Start; the keys below cover the remainder so call
+// sites set the spec's exact attribute names rather than ad-hoc strings.
+const (
+	// AttrOutcome labels a span's terminal disposition (for budget spans,
+	// e.g. "reserved"/"rejected"/"returned"; for coordinator.handoff,
+	// e.g. "acquired"/"contended"). spec: §16.3 lines 347-348, 357.
+	AttrOutcome = "outcome"
+	// AttrRootSessionID is the delegation-tree root session id carried on
+	// the budget spans. spec: §16.3 lines 347-348.
+	AttrRootSessionID = "root_session_id"
+	// AttrLuaQueueWaitMs is the milliseconds a budget Lua script waited
+	// behind the per-root serialization queue. spec: §16.3 lines 347-348.
+	AttrLuaQueueWaitMs = "lua_queue_wait_ms"
+	// AttrGeneration is the coordinator-handoff generation counter that the
+	// 3-step handoff protocol advances. spec: §16.3 line 357.
+	AttrGeneration = "generation"
+)
+
 // Tracer is the Lenny-flavored wrapper around trace.Tracer. Construct it
 // with NewTracer.
 type Tracer struct {

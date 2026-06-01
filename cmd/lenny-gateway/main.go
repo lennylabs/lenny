@@ -232,6 +232,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -771,6 +772,21 @@ func main() {
 	// accidental production dev-mode install is visible in the logs.
 	if *devMode {
 		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
+	}
+
+	// spec: §16.3 line 359 — install the process-wide OpenTelemetry
+	// TracerProvider and W3C trace-context propagator so the §16.3 span
+	// catalog has a real exporter behind it instead of the global no-op
+	// provider. The gateway emits 100% (head) and an OTLP/HTTP exporter
+	// ships spans to OTEL_EXPORTER_OTLP_ENDPOINT; with no endpoint (or in
+	// dev mode) a stdout exporter covers `make run`. F-16.3.2 / F-16.3.8.
+	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
+		ServiceName:  "lenny-gateway",
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		DevMode:      *devMode,
+	})
+	if err != nil {
+		log.Fatalf("lenny-gateway: tracing init: %v", err)
 	}
 
 	// spec: §16.5 lines 609, 623 — surface the provisional-SLO startup
@@ -4337,6 +4353,8 @@ func main() {
 	log.Printf("lenny-gateway: shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
+	// Flush buffered spans before the process exits (§16.3 batch processor).
+	_ = traceShutdown(ctx)
 	_ = httpSrv.Shutdown(ctx)
 	if llmProxySrv != nil {
 		_ = llmProxySrv.Shutdown(ctx)

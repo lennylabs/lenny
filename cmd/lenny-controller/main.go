@@ -60,6 +60,7 @@ import (
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -207,6 +208,23 @@ func main() {
 	if devMode {
 		log.Printf("lenny-controller: %s", isolation.DevModeIsolationWarning)
 	}
+
+	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// W3C propagator so the controller's §16.3 spans (session.claim_pod)
+	// reach the OTLP Collector instead of the no-op provider. F-16.3.2.
+	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
+		ServiceName:  "lenny-controller",
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		DevMode:      devMode,
+	})
+	if err != nil {
+		log.Fatalf("lenny-controller: tracing init: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceShutdown(ctx)
+	}()
 
 	// spec: §17.5 line 3 — assemble the §5.3 isolation-profile to
 	// RuntimeClass-name override map. An unset flag leaves the chart-
