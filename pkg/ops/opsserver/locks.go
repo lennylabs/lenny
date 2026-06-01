@@ -116,12 +116,12 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		OperationID string `json:"operationId"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
 	if body.Scope == "" {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "scope is required")
 		return
 	}
@@ -185,7 +185,7 @@ func (s *Server) handleExtendLock(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int `json:"ttlSeconds"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -229,7 +229,7 @@ func (s *Server) handleStealLock(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int    `json:"ttlSeconds"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -259,7 +259,7 @@ func (s *Server) handleStealLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Reason == "" {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "a reason is required to steal a lock")
 		return
 	}

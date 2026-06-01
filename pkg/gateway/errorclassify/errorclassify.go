@@ -54,7 +54,9 @@ type entry struct {
 // table is the §15.2.1 code → (category, retryable) map. The keys
 // are the canonical lenny error codes the gateway emits.
 var table = map[string]entry{
-	"INVALID_REQUEST":         {CategoryPermanent, false},
+	// spec: §15.1 lines 974-1099 error catalog — the canonical 400
+	// validation code is VALIDATION_ERROR. The non-spec INVALID_REQUEST
+	// code was removed (F-15.1.4).
 	"VALIDATION_ERROR":        {CategoryPermanent, false},
 	"WORKSPACE_PLAN_INVALID":  {CategoryPermanent, false},
 	"RESOURCE_NOT_FOUND":      {CategoryPermanent, false},

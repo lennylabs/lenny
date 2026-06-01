@@ -112,7 +112,7 @@ func (s *Server) handleDriftValidate(w http.ResponseWriter, r *http.Request) {
 		Stored  map[string]any `json:"stored,omitempty"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -141,7 +141,7 @@ func (s *Server) handleDriftSnapshotRefresh(w http.ResponseWriter, r *http.Reque
 		Confirm bool           `json:"confirm"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}

@@ -93,7 +93,7 @@ func (r *Router) WithConnectors(s connectorstore.Store) *Router {
 func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request) {
 	var body ConnectorPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())
@@ -171,7 +171,7 @@ func (r *Router) handleListConnectors(w http.ResponseWriter, req *http.Request) 
 }
 
 func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
+	id := req.PathValue("name")
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -193,10 +193,10 @@ func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
+	id := req.PathValue("name")
 	var body ConnectorPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())
@@ -247,7 +247,7 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 }
 
 func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
+	id := req.PathValue("name")
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",

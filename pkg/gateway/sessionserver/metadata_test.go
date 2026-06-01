@@ -100,7 +100,7 @@ func TestCreateSessionMetadataAbsentOmitsField_spec_F_7_3_20(t *testing.T) {
 	}
 }
 
-// spec: a non-string metadata value rejects with 400 INVALID_REQUEST so
+// spec: a non-string metadata value rejects with 400 VALIDATION_ERROR so
 // the on-row shape stays a flat string→string map. The decoder enforces
 // this via the typed CreateSessionRequest.Metadata field.
 func TestCreateSessionMetadataNonStringRejects_spec_F_7_3_20(t *testing.T) {

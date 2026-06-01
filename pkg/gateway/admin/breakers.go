@@ -120,7 +120,7 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body OpenBreakerRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())

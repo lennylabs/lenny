@@ -47,7 +47,7 @@ func (r *Router) handleClearExtensionDenial(w http.ResponseWriter, req *http.Req
 	rootSessionID := req.PathValue("rootSessionId")
 	sessionID := req.PathValue("sessionId")
 	if rootSessionID == "" || sessionID == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"rootSessionId and sessionId path segments are required", nil)
 		return
 	}

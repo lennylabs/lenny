@@ -732,7 +732,7 @@ func (p RuntimePayload) validateIntegrationLevelOnType() error {
 func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	var body RuntimePayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if err := runtimestore.ValidateName(body.Name); err != nil {
@@ -900,7 +900,7 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body UpdateRuntimeRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	// Validate enums when present.
@@ -1330,7 +1330,7 @@ func storedGeneratorVersion(entries []runtimestore.PublishedMetadataEntry) strin
 func (r *Router) handleRegenerateCards(w http.ResponseWriter, req *http.Request) {
 	var body RegenerateCardsRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	rows, err := r.runtimes.List(req.Context(), runtimestore.ListFilter{})

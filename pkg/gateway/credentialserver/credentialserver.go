@@ -63,9 +63,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/credentials", s.handleRegister)
 	mux.HandleFunc("GET /v1/credentials", s.handleList)
-	mux.HandleFunc("PUT /v1/credentials/{ref}", s.handleRotate)
-	mux.HandleFunc("POST /v1/credentials/{ref}/revoke", s.handleRevoke)
-	mux.HandleFunc("DELETE /v1/credentials/{ref}", s.handleDelete)
+	// spec: §15.1 lines 711-715 — the credential path identifier is
+	// `{credential_ref}` (F-15.1.13).
+	mux.HandleFunc("PUT /v1/credentials/{credential_ref}", s.handleRotate)
+	mux.HandleFunc("POST /v1/credentials/{credential_ref}/revoke", s.handleRevoke)
+	mux.HandleFunc("DELETE /v1/credentials/{credential_ref}", s.handleDelete)
 	return mux
 }
 
@@ -92,12 +94,12 @@ type RegisterRequest struct {
 	Secret      string `json:"secret"`
 }
 
-// RotateRequest is the §15.1 PUT /v1/credentials/{ref} body.
+// RotateRequest is the §15.1 PUT /v1/credentials/{credential_ref} body.
 type RotateRequest struct {
 	Secret string `json:"secret"`
 }
 
-// RevokeRequest is the optional POST /v1/credentials/{ref}/revoke body.
+// RevokeRequest is the optional POST /v1/credentials/{credential_ref}/revoke body.
 // The reason is recorded in the §4.9.2 credential.user_revoked audit
 // event. An empty or absent body is valid.
 type RevokeRequest struct {
@@ -146,7 +148,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	var req RegisterRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON")
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON")
 		return
 	}
 	if req.Secret == "" {
@@ -205,14 +207,14 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	ref := r.PathValue("ref")
+	ref := r.PathValue("credential_ref")
 	if !s.ownedBy(r, tenant, user, ref) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
 	}
 	var req RotateRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON")
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON")
 		return
 	}
 	if req.Secret == "" {
@@ -247,7 +249,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	ref := r.PathValue("ref")
+	ref := r.PathValue("credential_ref")
 	if !s.ownedBy(r, tenant, user, ref) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
@@ -285,7 +287,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	ref := r.PathValue("ref")
+	ref := r.PathValue("credential_ref")
 	// Get the credential before deleting so the §4.9.2 audit event can
 	// record its provider, and to enforce per-user ownership.
 	c, err := s.store.Get(r.Context(), tenant, ref)

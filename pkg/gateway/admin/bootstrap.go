@@ -153,12 +153,12 @@ func (s *BootstrapSection) add(index int, id, action, code, message string, conf
 func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(req.Body, 8<<20))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body could not be read", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body could not be read", nil)
 		return
 	}
 	var body BootstrapRequest
 	if err := json.Unmarshal(raw, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 

@@ -49,7 +49,7 @@ func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 	jti := req.PathValue("jti")
 	var body RevokeTokenRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if body.TenantID == "" {

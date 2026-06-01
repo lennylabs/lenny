@@ -59,7 +59,7 @@ func (r *Router) handleMigrationDown(w http.ResponseWriter, req *http.Request) {
 	versionStr := req.PathValue("version")
 	version, err := strconv.ParseUint(versionStr, 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"version path segment must be a positive integer", nil)
 		return
 	}
@@ -70,7 +70,7 @@ func (r *Router) handleMigrationDown(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.ContentLength != 0 {
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 			return
 		}
 	}

@@ -127,7 +127,7 @@ type AuthorizeConnectorResponse struct {
 }
 
 // handleAuthorizeConnector implements the §9.3 authorization-initiation
-// endpoint: POST /v1/admin/connectors/{id}/oauth/authorize.
+// endpoint: POST /v1/admin/connectors/{name}/oauth/authorize.
 //
 // It builds the provider authorization URL for the path connector with
 // a PKCE S256 code_challenge and a signed state, stores the
@@ -144,7 +144,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 			map[string]any{"reason": "auth_required"})
 		return
 	}
-	id := req.PathValue("id")
+	id := req.PathValue("name")
 	// spec: §4.2 line 173 — connectors are tenant-scoped; OAuth
 	// authorize resolves the connector under the caller's tenant.
 	conn, err := r.connectors.Get(req.Context(), principal.TenantID, id)

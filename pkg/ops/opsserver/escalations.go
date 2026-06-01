@@ -58,7 +58,7 @@ func (s *Server) handleCreateEscalation(w http.ResponseWriter, r *http.Request) 
 	}
 	var body escalation.CreateRequest
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	params, err := conventions.ParsePageParams(q, "desc")
 	if err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, err.Error())
 		return
 	}
@@ -120,7 +120,7 @@ func (s *Server) handleUpdateEscalation(w http.ResponseWriter, r *http.Request) 
 	}
 	var body escalation.UpdateRequest
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}

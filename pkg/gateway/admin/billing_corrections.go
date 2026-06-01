@@ -101,7 +101,7 @@ func correctionPayload(c correctionstore.PendingCorrection) billingCorrectionPay
 func (r *Router) handleCreateBillingCorrection(w http.ResponseWriter, req *http.Request) {
 	var body BillingCorrectionRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if body.TenantID == "" {

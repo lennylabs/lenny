@@ -111,7 +111,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		Confirm bool   `json:"confirm"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	params, err := conventions.ParsePageParams(q, "desc")
 	if err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, err.Error())
 		return
 	}
@@ -225,7 +225,7 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	var body backup.BackupSchedule
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -259,7 +259,7 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	var body backup.RetentionPolicy
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -282,7 +282,7 @@ func (s *Server) handleRestorePreview(w http.ResponseWriter, r *http.Request) {
 		BackupID string `json:"backupId"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
@@ -322,7 +322,7 @@ func (s *Server) handleRestoreExecute(w http.ResponseWriter, r *http.Request) {
 		AcknowledgeDataLoss bool   `json:"acknowledgeDataLoss"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
-		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}

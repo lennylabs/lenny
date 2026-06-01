@@ -27,7 +27,7 @@ type ConnectorTester interface {
 	Test(ctx context.Context, conn connectorstore.Connector, bearer string) connectorinvoke.TestReport
 }
 
-// WithConnectorTest wires the §15.1 `POST /v1/admin/connectors/{id}/test`
+// WithConnectorTest wires the §15.1 `POST /v1/admin/connectors/{name}/test`
 // endpoint: the live-connectivity tester, the connector-credential store
 // the test reads the stored credential from, and the per-connector
 // fixed-window rate limiter. A nil tester leaves the route unregistered.
@@ -39,14 +39,14 @@ func (r *Router) WithConnectorTest(tester ConnectorTester, creds connectorcredst
 }
 
 // handleTestConnector implements §15.1 line 791:
-// `POST /v1/admin/connectors/{id}/test`. It performs a live connectivity
+// `POST /v1/admin/connectors/{name}/test`. It performs a live connectivity
 // check (DNS, TLS, MCP initialize, auth validation) against an
 // already-registered connector using the connector's stored credential.
 // It does not accept inline credential overrides (§15.1 line 1180).
 //
 // spec: §15.1 line 791, lines 1163-1180.
 func (r *Router) handleTestConnector(w http.ResponseWriter, req *http.Request) {
-	id := req.PathValue("id")
+	id := req.PathValue("name")
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",

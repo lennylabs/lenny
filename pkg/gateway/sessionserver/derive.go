@@ -193,7 +193,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		body := jsonReader(w, r)
 		defer body.Close()
 		if err := json.NewDecoder(body).Decode(&req); err != nil {
-			s.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 			return
 		}
 	}

@@ -129,7 +129,7 @@ type Router struct {
 	connectors     connectorstore.Store
 	connectorOAuth *ConnectorOAuth
 	// connectorTester / connectorCreds / connectorTestLimiter back the
-	// §15.1 `POST /v1/admin/connectors/{id}/test` live-connectivity
+	// §15.1 `POST /v1/admin/connectors/{name}/test` live-connectivity
 	// endpoint. A nil connectorTester leaves the route unregistered.
 	connectorTester      ConnectorTester
 	connectorCreds       connectorcredstore.Store
@@ -523,13 +523,16 @@ func (r *Router) Handler() http.Handler {
 	if r.connectors != nil {
 		mux.Handle("POST /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleCreateConnector)))
 		mux.Handle("GET /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleListConnectors)))
-		mux.Handle("GET /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
-		mux.Handle("PUT /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
-		mux.Handle("DELETE /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
+		// spec: §15.1 line 767 — admin CRUD resources use `{name}` as the
+		// path identifier; connectors are keyed by their registry name
+		// (F-15.1.12).
+		mux.Handle("GET /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
+		mux.Handle("PUT /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
+		mux.Handle("DELETE /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
 		if r.connectorTester != nil {
 			// §15.1 line 791 live-connectivity test. The §15.1 line 1163
 			// contract grants this to platform-admin and tenant-admin.
-			mux.Handle("POST /v1/admin/connectors/{id}/test",
+			mux.Handle("POST /v1/admin/connectors/{name}/test",
 				r.requireTenantResourceAdmin(http.HandlerFunc(r.handleTestConnector)))
 		}
 		if r.connectorOAuth != nil {
@@ -542,10 +545,10 @@ func (r *Router) Handler() http.Handler {
 			// it is intentionally not gated, and the signed `state`
 			// parameter is its anti-CSRF control. The literal
 			// `oauth/callback` segment takes precedence over the
-			// `{id}` wildcard in Go's ServeMux.
+			// `{name}` wildcard in Go's ServeMux.
 			mux.Handle("GET /v1/admin/connectors/oauth/callback",
 				http.HandlerFunc(r.handleConnectorOAuthCallback))
-			mux.Handle("POST /v1/admin/connectors/{id}/oauth/authorize",
+			mux.Handle("POST /v1/admin/connectors/{name}/oauth/authorize",
 				http.HandlerFunc(r.handleAuthorizeConnector))
 		}
 	}
@@ -927,7 +930,7 @@ func EmitBillingErasureExemptRegulatedStartup(ctx context.Context, tenants tenan
 func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	var body TenantPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if body.ID == "" {
@@ -1106,7 +1109,7 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
 	var body UpdateTenantRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if body.MaxConcurrentSessions != nil && *body.MaxConcurrentSessions < 0 {
@@ -1353,7 +1356,7 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 	id := req.PathValue("id")
 	var body DecommissionComplianceRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if !body.AcknowledgeDataRemediation {

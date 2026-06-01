@@ -48,7 +48,7 @@ func (s *Server) handleElicitationRespond(w http.ResponseWriter, r *http.Request
 	reader := jsonReader(w, r)
 	defer reader.Close()
 	if err := json.NewDecoder(reader).Decode(&body); err != nil {
-		s.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	s.resolveInteraction(w, r, interactionResolution{

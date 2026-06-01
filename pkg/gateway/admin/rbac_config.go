@@ -168,7 +168,7 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 	}
 	var body RBACConfigPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	// §10.6: an omitted noEnvironmentPolicy is treated as deny-all.

@@ -114,7 +114,7 @@ func TestMemoryWriteRejectsInvalid(t *testing.T) {
 		{
 			"malformed JSON", "/v1/sessions/sess_user/memory",
 			[]byte(`{not-json}`),
-			http.StatusBadRequest, "INVALID_REQUEST",
+			http.StatusBadRequest, "VALIDATION_ERROR",
 		},
 	}
 	for _, c := range cases {

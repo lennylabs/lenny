@@ -383,7 +383,7 @@ func tokenServiceRBACPatch(missing []string) string {
 func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Request) {
 	var body CredentialPoolPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -495,7 +495,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	name := req.PathValue("name")
 	var body CredentialPoolPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -681,7 +681,7 @@ func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request
 	credID := req.PathValue("credId")
 	body, err := decodeOptionalRevokeBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
@@ -728,7 +728,7 @@ func (r *Router) handleRevokePool(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	body, err := decodeOptionalRevokeBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
@@ -796,7 +796,7 @@ func (r *Router) handleReEnableCredential(w http.ResponseWriter, req *http.Reque
 	credID := req.PathValue("credId")
 	body, err := decodeOptionalRevokeBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))

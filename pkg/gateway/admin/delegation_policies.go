@@ -169,7 +169,7 @@ func writeDelegationPolicyStoreError(w http.ResponseWriter, err error) {
 func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.Request) {
 	var body DelegationPolicyPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())
@@ -281,7 +281,7 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 	name := req.PathValue("name")
 	var body DelegationPolicyPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())

@@ -280,7 +280,7 @@ func writeDryRun(w http.ResponseWriter, status int, body any) {
 func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request) {
 	var body ExperimentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -379,7 +379,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 	name := req.PathValue("name")
 	var body ExperimentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -457,7 +457,7 @@ func (r *Router) handlePatchExperiment(w http.ResponseWriter, req *http.Request)
 	name := req.PathValue("name")
 	var body PatchExperimentRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))

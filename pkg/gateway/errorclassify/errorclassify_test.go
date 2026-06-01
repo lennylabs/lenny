@@ -166,3 +166,17 @@ func TestClassifyUnknownCodeIsTransientRetryable(t *testing.T) {
 		t.Errorf("unknown-code retryable = false, want true (transient fallback)")
 	}
 }
+
+// spec: §15.1 lines 974-1099 — the error catalog has no INVALID_REQUEST
+// code; the canonical 400 validation code is VALIDATION_ERROR. The
+// non-spec INVALID_REQUEST entry was removed from the classifier so it
+// no longer registers as a known PERMANENT code (F-15.1.4).
+func TestClassifyDropsNonSpecInvalidRequest_spec_15_1(t *testing.T) {
+	if _, ok := table["INVALID_REQUEST"]; ok {
+		t.Fatal("INVALID_REQUEST must not be a registered error code (non-spec per §15.1)")
+	}
+	cat, retr := Classify("INVALID_REQUEST")
+	if cat != CategoryTransient || !retr {
+		t.Errorf("INVALID_REQUEST classify = (%q, %v), want transient fallback (%q, true)", cat, retr, CategoryTransient)
+	}
+}

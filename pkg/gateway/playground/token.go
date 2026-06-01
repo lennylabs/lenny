@@ -48,7 +48,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	// §27.3.1: the request body is an empty JSON object reserved for
 	// future sessionMetadata fields. A malformed body is rejected.
 	if !emptyJSONBody(r) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"POST /v1/playground/token requires an empty JSON object body {}", nil)
 		return
 	}

@@ -462,7 +462,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			IdempotencyKey string `json:"idempotencyKey,omitempty"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				fmt.Sprintf("invalid arguments: %v", err), nil)
 		}
 		if in.RuntimeRef == "" {
@@ -1578,7 +1578,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				Response      json.RawMessage `json:"response"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 					fmt.Sprintf("invalid arguments: %v", err), nil)
 			}
 			if in.SessionID == "" || in.ElicitationID == "" {
@@ -1607,7 +1607,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				Reason        string `json:"reason"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 					fmt.Sprintf("invalid arguments: %v", err), nil)
 			}
 			if in.SessionID == "" || in.ElicitationID == "" {

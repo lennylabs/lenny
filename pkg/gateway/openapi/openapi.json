@@ -28,7 +28,7 @@
             "type": "object",
             "required": ["code", "category", "message", "retryable"],
             "properties": {
-              "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, AUTH_REQUIRED, MCP_PROTOCOL_VERSION_RETIRED)." },
+              "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, UNAUTHORIZED, MCP_PROTOCOL_VERSION_RETIRED)." },
               "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "§15.1 line 972 — coarse classification used by SDK retry logic." },
               "message":   { "type": "string", "description": "Human-readable failure summary." },
               "retryable": { "type": "boolean", "description": "§15.1 line 972 — true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
@@ -146,7 +146,7 @@
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
           "metadata": {
             "type": "object",
-            "description": "§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 INVALID_REQUEST.",
+            "description": "§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 VALIDATION_ERROR.",
             "additionalProperties": { "type": "string" }
           },
           "retryPolicy": { "$ref": "#/components/schemas/RetryPolicy" }
@@ -1590,7 +1590,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/connectors/{id}": {
+    "/v1/admin/connectors/{name}": {
       "get": {
         "summary": "Get a connector",
         "x-lenny-mcp-tool": "admin.get_connector",
@@ -1598,7 +1598,7 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
@@ -1608,7 +1608,7 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
@@ -1618,11 +1618,11 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
       }
     },
-    "/v1/admin/connectors/{id}/test": {
+    "/v1/admin/connectors/{name}/test": {
       "post": {
         "summary": "Live connectivity test: DNS, TLS, MCP handshake, auth validation (rate-limited 10/min per connector)",
         "x-lenny-mcp-tool": "admin.test_connector",
@@ -1630,7 +1630,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "Per-stage pass/fail report" },
           "404": { "description": "Connector not found" },
@@ -1638,7 +1638,7 @@
         }
       }
     },
-    "/v1/admin/connectors/{id}/oauth/authorize": {
+    "/v1/admin/connectors/{name}/oauth/authorize": {
       "post": {
         "summary": "Initiate the §9.3 connector OAuth 2.1 authorization-code flow",
         "x-lenny-mcp-tool": "admin.authorize_connector_oauth",
@@ -1647,7 +1647,7 @@
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "environment", "in": "query", "required": false, "schema": { "type": "string" } }
         ],
         "responses": {

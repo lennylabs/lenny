@@ -71,7 +71,7 @@ func (r *Router) handleCreateCustomRole(w http.ResponseWriter, req *http.Request
 	}
 	var body CustomRolePayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	role := customrolestore.CustomRole{
@@ -146,7 +146,7 @@ func (r *Router) handleUpdateCustomRole(w http.ResponseWriter, req *http.Request
 	name := req.PathValue("name")
 	var body UpdateCustomRoleRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	updated, err := r.customRoles.Update(req.Context(), tenant, name, func(role *customrolestore.CustomRole) error {

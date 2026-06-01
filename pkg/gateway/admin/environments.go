@@ -271,7 +271,7 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Request) {
 	var body EnvironmentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -349,7 +349,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	name := req.PathValue("name")
 	var body EnvironmentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)

@@ -180,7 +180,7 @@ func (r *Router) validateRoleNames(ctx context.Context, tenant string, roles []a
 func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	var body UserPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
@@ -293,7 +293,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 	}
 	var body UpdateUserRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
@@ -424,7 +424,7 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 	subject := req.PathValue("user_id")
 	var body InvalidateUserRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	switch body.Mode {

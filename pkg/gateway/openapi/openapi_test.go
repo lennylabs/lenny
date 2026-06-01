@@ -148,9 +148,9 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/pools",
 		"/v1/admin/pools/{name}",
 		"/v1/admin/connectors",
-		"/v1/admin/connectors/{id}",
-		"/v1/admin/connectors/{id}/test",
-		"/v1/admin/connectors/{id}/oauth/authorize",
+		"/v1/admin/connectors/{name}",
+		"/v1/admin/connectors/{name}/test",
+		"/v1/admin/connectors/{name}/oauth/authorize",
 		"/v1/admin/connectors/oauth/callback",
 		"/v1/admin/circuit-breakers",
 		"/v1/admin/circuit-breakers/{name}",
@@ -433,9 +433,9 @@ func TestConnectorOAuthEndpointsDeclaredInDocument_spec_9_3_157(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	paths, _ := parsed["paths"].(map[string]any)
-	authorize, ok := paths["/v1/admin/connectors/{id}/oauth/authorize"].(map[string]any)
+	authorize, ok := paths["/v1/admin/connectors/{name}/oauth/authorize"].(map[string]any)
 	if !ok {
-		t.Fatal("missing /v1/admin/connectors/{id}/oauth/authorize")
+		t.Fatal("missing /v1/admin/connectors/{name}/oauth/authorize")
 	}
 	if _, ok := authorize["post"]; !ok {
 		t.Error("authorize endpoint missing POST verb")

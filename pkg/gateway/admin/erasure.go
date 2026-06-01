@@ -65,7 +65,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	var body EraseUserRequest
 	if req.Body != nil {
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 			return
 		}
 	}
@@ -113,7 +113,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		// §12.8: a platform-admin may override the preflight with a
 		// recorded justification. A tenant-admin cannot self-override.
 		if body.Justification == "" {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"acknowledgeHoldOverride requires a non-empty justification", nil)
 			return
 		}
