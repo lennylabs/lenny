@@ -41,8 +41,12 @@ type Tenant struct {
 	// specific region per §12.8. Empty for unscoped tenants.
 	DataResidencyRegion string
 
-	// WorkspaceTier is the §12.9 storage tier (`T1`, `T2`, `T3`,
-	// `T4`). Empty defaults to platform default at write time.
+	// WorkspaceTier is the §12.9 data-classification tier. The
+	// tenant-settable values per §15.1 are `T3` (the Confidential
+	// default) and `T4` (Restricted). Empty defaults to T3 at write
+	// time. `T1`/`T2` classify other data categories and are not
+	// selectable as a tenant workspaceTier; ValidWorkspaceTier rejects
+	// them, IsWorkspaceTierDowngrade ratchets T3↔T4.
 	WorkspaceTier string
 
 	// MaxConcurrentSessions is the §11.2 per-tenant concurrent-session
@@ -143,6 +147,57 @@ type Tenant struct {
 
 // IsActive reports whether the tenant has not been soft-deleted.
 func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
+
+// §12.9 data-classification tier values a tenant (or a stricter
+// environment override) may carry. T1/T2 classify other data categories
+// and are not tenant-settable workspace tiers; the tenant-settable set
+// per §15.1 is T3 (default) and T4. spec: §12.9 lines 1025-1033.
+const (
+	WorkspaceTierT3 = "T3"
+	WorkspaceTierT4 = "T4"
+)
+
+// workspaceTierRank maps the §12.9 tenant-settable classification tier to
+// a strictness ordinal. The empty string is the T3 default, so it shares
+// T3's rank. Off-ladder values (T1, T2, or any unrecognized string) are
+// absent from the map. spec: §12.9 lines 1033, 1048; §15.1 line 816.
+var workspaceTierRank = map[string]int{
+	"":              1,
+	WorkspaceTierT3: 1,
+	WorkspaceTierT4: 2,
+}
+
+// ValidWorkspaceTier reports whether s is a §12.9 tenant-settable
+// data-classification tier: the empty string (the T3 default), T3, or T4.
+// Per §15.1 the tenant-settable values are restricted to T3 and T4; a
+// value like "T2", "T5", or "prod" is a misconfiguration that downstream
+// consumers would silently treat as "not T4". spec: §12.9 line 1048.
+func ValidWorkspaceTier(s string) bool {
+	_, ok := workspaceTierRank[s]
+	return ok
+}
+
+// WorkspaceTierRank returns the §12.9 strictness ordinal for tier and
+// whether tier is on the ratchet ladder. A higher ordinal is stricter.
+func WorkspaceTierRank(tier string) (rank int, onLadder bool) {
+	r, ok := workspaceTierRank[tier]
+	return r, ok
+}
+
+// IsWorkspaceTierDowngrade reports whether a transition from current to
+// requested lowers the §12.9 classification tier. §15.1 states that
+// workspaceTier is ratcheted stricter-only, exactly as the §11.7
+// complianceProfile is. A transition that involves an off-ladder tier is
+// not treated as a downgrade (the enum validator rejects those values
+// before they reach the ratchet). spec: §12.9 line 1033; §15.1 line 816.
+func IsWorkspaceTierDowngrade(current, requested string) bool {
+	cur, curOnLadder := workspaceTierRank[current]
+	req, reqOnLadder := workspaceTierRank[requested]
+	if !curOnLadder || !reqOnLadder {
+		return false
+	}
+	return req < cur
+}
 
 // IdentityProvider is the §10.6 tenant identity-provider configuration.
 // v1 carries the OIDC provider type and the introspectionEnabled toggle

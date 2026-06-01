@@ -893,29 +893,12 @@ func isComplianceDowngrade(current, requested string) bool {
 	return req < cur
 }
 
-// workspaceTierRank maps the §12.9 storage-classification tier to an
-// ordinal. The tenant-settable workspaceTier is T3 or T4; an unset
-// value defaults to T3, so the empty string ranks with T3. A value
-// outside the ladder is absent from the map and is not ratcheted.
-var workspaceTierRank = map[string]int{
-	"":   1,
-	"T3": 1,
-	"T4": 2,
-}
-
-// isWorkspaceTierDowngrade reports whether a transition from current to
-// requested lowers the §12.9 storage-classification tier. §15.1 states
-// that workspaceTier is ratcheted stricter-only, exactly as the §11.7
-// complianceProfile is. The ratchet is evaluated only between ladder
-// tiers.
-func isWorkspaceTierDowngrade(current, requested string) bool {
-	cur, curOnLadder := workspaceTierRank[current]
-	req, reqOnLadder := workspaceTierRank[requested]
-	if !curOnLadder || !reqOnLadder {
-		return false
-	}
-	return req < cur
-}
+// validWorkspaceTier reports whether s is a §12.9 tenant-settable
+// data-classification tier (empty, T3, or T4). It delegates to the
+// canonical tenantstore validator so the admin API, the bootstrap
+// upsert path, and the §10.6 environment override agree on the closed
+// enum. spec: §12.9 line 1048; §15.1 line 816.
+func validWorkspaceTier(s string) bool { return tenantstore.ValidWorkspaceTier(s) }
 
 // emitBillingErasureExemptRegulated emits the §12.8
 // compliance.billing_erasure_exempt_regulated audit event when a tenant
@@ -1061,6 +1044,17 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"billingErasurePolicy must be pseudonymize or exempt",
 			map[string]any{"field": "billingErasurePolicy"})
+		return
+	}
+	// spec: §12.9 line 1048; §15.1 line 816 — workspaceTier is a closed
+	// enum (tenant-settable T3 default or T4). An arbitrary string such as
+	// "T2", "T5", or "prod" would be silently treated as "not T4" by every
+	// downstream consumer (KMS probe skipped, t4-node-isolation predicate
+	// skipped), so reject it at the registration boundary.
+	if !validWorkspaceTier(body.WorkspaceTier) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"workspaceTier must be T3 or T4",
+			map[string]any{"field": "workspaceTier"})
 		return
 	}
 	if body.ExperimentTargeting != nil {
@@ -1238,6 +1232,17 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "billingErasurePolicy"})
 		return
 	}
+	// spec: §12.9 line 1048; §15.1 line 816 — reject an out-of-enum
+	// workspaceTier before the ratchet check below, which only recognizes
+	// the closed T3/T4 ladder. Without this gate a value like "T2" slips
+	// past isWorkspaceTierDowngrade (off-ladder, so not a downgrade) and
+	// persists as a tier every downstream consumer reads as "not T4".
+	if body.WorkspaceTier != nil && !validWorkspaceTier(*body.WorkspaceTier) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"workspaceTier must be T3 or T4",
+			map[string]any{"field": "workspaceTier"})
+		return
+	}
 	if body.ExperimentTargeting != nil {
 		if err := body.ExperimentTargeting.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
@@ -1294,7 +1299,7 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		// storage-classification control code, whose details.reason field
 		// the spec leaves open — with reason tier_downgrade_prohibited.
 		if body.WorkspaceTier != nil &&
-			isWorkspaceTierDowngrade(current.WorkspaceTier, *body.WorkspaceTier) {
+			tenantstore.IsWorkspaceTierDowngrade(current.WorkspaceTier, *body.WorkspaceTier) {
 			writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
 				"workspaceTier may be tightened in place but not lowered; lowering a tenant's "+
 					"storage classification tier would weaken its data-classification controls",

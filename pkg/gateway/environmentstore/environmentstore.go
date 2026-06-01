@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // Identity names a §10.6 environment member: an OIDC group or other
@@ -74,6 +75,14 @@ type Environment struct {
 	TenantID string
 	// Description is the human-facing label.
 	Description string
+	// WorkspaceTier is the §12.9 line 1033 environment-level
+	// data-classification override. Empty inherits the tenant's tier.
+	// A non-empty value must be a §12.9 tenant-settable tier (T3 or T4)
+	// and may only tighten the tenant's tier, never loosen it; the
+	// stricter-only relation is enforced at the admin handler, which has
+	// the parent tenant in scope. Validate rejects only an out-of-enum
+	// value here. spec: §12.9 line 1033.
+	WorkspaceTier string
 	// Members is the §10.6 RBAC member list.
 	Members []Member
 	// RuntimeSelector is the §10.6 tag-based runtime selection.
@@ -117,6 +126,13 @@ func (e Environment) Validate() error {
 	// registry. F-10.6.12.
 	if n := len(e.Description); n > MaxDescriptionLen {
 		v = append(v, fmt.Sprintf("description: %d bytes exceeds the §10.6 cap of %d", n, MaxDescriptionLen))
+	}
+	// spec: §12.9 line 1033 — an environment-level workspaceTier override
+	// must be a tenant-settable §12.9 tier (T3 or T4); empty inherits the
+	// tenant tier. The stricter-only relation against the tenant tier is
+	// enforced at the admin handler, which resolves the parent tenant.
+	if !tenantstore.ValidWorkspaceTier(e.WorkspaceTier) {
+		v = append(v, fmt.Sprintf("workspaceTier %q is not a valid §12.9 tier (T3 or T4)", e.WorkspaceTier))
 	}
 	seen := map[string]bool{}
 	for i, m := range e.Members {

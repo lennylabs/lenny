@@ -61,6 +61,10 @@ type envBody struct {
 	DefaultDelegationPolicy string                              `json:"defaultDelegationPolicy,omitempty"`
 	CrossEnvOutbound        []environmentstore.CrossEnvRule     `json:"crossEnvOutbound,omitempty"`
 	CrossEnvInbound         []environmentstore.CrossEnvRule     `json:"crossEnvInbound,omitempty"`
+	// WorkspaceTier carries the §12.9 line 1033 environment-level tier
+	// override. It is a non-key scalar, so it rides in the body jsonb
+	// alongside DefaultDelegationPolicy rather than in a typed column.
+	WorkspaceTier string `json:"workspaceTier,omitempty"`
 }
 
 // bodyOf flattens the nested fields of e into the jsonb body.
@@ -73,6 +77,7 @@ func bodyOf(e environmentstore.Environment) envBody {
 		DefaultDelegationPolicy: e.DefaultDelegationPolicy,
 		CrossEnvOutbound:        e.CrossEnvOutbound,
 		CrossEnvInbound:         e.CrossEnvInbound,
+		WorkspaceTier:           e.WorkspaceTier,
 	}
 }
 
@@ -85,6 +90,7 @@ func applyBody(e *environmentstore.Environment, b envBody) {
 	e.DefaultDelegationPolicy = b.DefaultDelegationPolicy
 	e.CrossEnvOutbound = b.CrossEnvOutbound
 	e.CrossEnvInbound = b.CrossEnvInbound
+	e.WorkspaceTier = b.WorkspaceTier
 }
 
 // marshalBody serializes the nested fields of e for the body column.

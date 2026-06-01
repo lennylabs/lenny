@@ -226,7 +226,7 @@
           "displayName":         { "type": "string" },
           "complianceProfile":   { "type": "string" },
           "dataResidencyRegion": { "type": "string" },
-          "workspaceTier":       { "type": "string" },
+          "workspaceTier":       { "type": "string", "enum": ["T3","T4"] },
           "createdAt":           { "type": "string", "format": "date-time" },
           "updatedAt":           { "type": "string", "format": "date-time" },
           "deletedAt":           { "type": "string", "format": "date-time" }

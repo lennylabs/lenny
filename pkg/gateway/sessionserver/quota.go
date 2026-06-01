@@ -56,6 +56,45 @@ func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, ten
 	return true
 }
 
+// requireTenantClassification implements the §12.9 line 1048 requirement
+// that the gateway policy engine validate a tenant's data-classification
+// configuration at session creation. A tenant whose workspaceTier is not
+// a recognized §12.9 tier (a stale value left over from a direct database
+// write or a pre-validation bootstrap) rejects the create with 422
+// CLASSIFICATION_CONTROL_VIOLATION rather than admitting a session that
+// would defer the violation to a runtime write the happy path may never
+// reach.
+//
+// An unwired tenant registry or an unknown tenant means there is no
+// classification to validate, so the create proceeds (the §10.2
+// tenant-claim path governs unknown tenants). requireTenantClassification
+// returns true when the create may proceed; when it returns false it has
+// already written the response. spec: §12.9 line 1048; §15.1 line 1078.
+func (s *Server) requireTenantClassification(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if s.tenants == nil {
+		return true
+	}
+	tenant, err := s.tenants.Get(r.Context(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"tenant classification check failed: "+err.Error(), nil)
+		return false
+	}
+	if cerr := policy.ValidateTenantClassification(tenant); cerr != nil {
+		var ce *policy.ClassificationError
+		errors.As(cerr, &ce)
+		s.writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+			"the tenant's workspaceTier is not a recognized §12.9 data-classification tier; "+
+				"session creation is blocked until the classification configuration is corrected",
+			map[string]any{"tenantId": ce.TenantID, "tier": ce.Tier, "reason": ce.Reason})
+		return false
+	}
+	return true
+}
+
 // requireConcurrencyLimits enforces the §11.1 line 8 concurrent-session
 // admission caps for the global, per-user, and per-runtime scopes (the
 // per-tenant scope is enforced by requireSessionQuota against the tenant

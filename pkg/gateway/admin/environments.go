@@ -10,7 +10,53 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
+
+// requireEnvironmentTierOverride enforces the §12.9 line 1033
+// environment-level workspaceTier override: a non-empty override must be
+// a tenant-settable §12.9 tier (T3 or T4) and may only tighten the parent
+// tenant's tier, never loosen it. An empty value inherits the tenant tier
+// and is always admitted. When the parent tenant cannot be resolved the
+// enum-valid override is admitted (the §10.2 tenant path governs unknown
+// tenants). It returns true when the write may proceed; when it returns
+// false it has already written the response. spec: §12.9 line 1033.
+func (r *Router) requireEnvironmentTierOverride(w http.ResponseWriter, req *http.Request, tenant, envTier string) bool {
+	if envTier == "" {
+		return true
+	}
+	if !tenantstore.ValidWorkspaceTier(envTier) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"workspaceTier must be T3 or T4",
+			map[string]any{"field": "workspaceTier"})
+		return false
+	}
+	if r.tenants == nil {
+		return true
+	}
+	row, err := r.tenants.Get(req.Context(), tenant)
+	if err != nil {
+		return true
+	}
+	envRank, _ := tenantstore.WorkspaceTierRank(envTier)
+	tenantRank, _ := tenantstore.WorkspaceTierRank(row.WorkspaceTier)
+	if envRank < tenantRank {
+		tenantTier := row.WorkspaceTier
+		if tenantTier == "" {
+			tenantTier = tenantstore.WorkspaceTierT3
+		}
+		writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+			"environment workspaceTier override may only tighten the tenant tier, never loosen it",
+			map[string]any{
+				"tenantId":   tenant,
+				"tier":       envTier,
+				"tenantTier": tenantTier,
+				"reason":     "tier_override_looser",
+			})
+		return false
+	}
+	return true
+}
 
 // WithEnvironments wires the §10.6 / §15.1 environment admin endpoints
 // onto the Router.
@@ -102,6 +148,7 @@ type EnvironmentPayload struct {
 	Name                       string                    `json:"name"`
 	TenantID                   string                    `json:"tenantId,omitempty"`
 	Description                string                    `json:"description,omitempty"`
+	WorkspaceTier              string                    `json:"workspaceTier,omitempty"`
 	Members                    []MemberPayload           `json:"members,omitempty"`
 	RuntimeSelector            SelectorPayload           `json:"runtimeSelector"`
 	MCPRuntimeFilters          []MCPRuntimeFilterPayload `json:"mcpRuntimeFilters,omitempty"`
@@ -223,6 +270,7 @@ func toEnvironment(p EnvironmentPayload, tenant string) environmentstore.Environ
 		Name:                    p.Name,
 		TenantID:                tenant,
 		Description:             p.Description,
+		WorkspaceTier:           p.WorkspaceTier,
 		Members:                 members,
 		RuntimeSelector:         toSelector(p.RuntimeSelector),
 		MCPRuntimeFilters:       filters,
@@ -254,6 +302,7 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 		Name:                    e.Name,
 		TenantID:                e.TenantID,
 		Description:             e.Description,
+		WorkspaceTier:           e.WorkspaceTier,
 		Members:                 members,
 		RuntimeSelector:         fromSelector(e.RuntimeSelector),
 		MCPRuntimeFilters:       filters,
@@ -299,6 +348,9 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
 			complianceSIEMRequiredMessage(row.ComplianceProfile),
 			map[string]any{"tenantId": tenant, "complianceProfile": row.ComplianceProfile})
+		return
+	}
+	if !r.requireEnvironmentTierOverride(w, req, tenant, body.WorkspaceTier) {
 		return
 	}
 	env := toEnvironment(body, tenant)
@@ -376,6 +428,9 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusBadRequest, "TENANT_ID_MISMATCH",
 			"request body tenantId does not match the authorized tenant",
 			map[string]any{"bodyTenantId": body.TenantID, "authorizedTenantId": tenant})
+		return
+	}
+	if !r.requireEnvironmentTierOverride(w, req, tenant, body.WorkspaceTier) {
 		return
 	}
 	desired := toEnvironment(body, tenant)

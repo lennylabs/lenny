@@ -232,6 +232,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := s.resolveTenant(r)
+	// spec: §12.9 line 1048 — the gateway policy engine validates tenant
+	// data classification before any pool/credential work, so a
+	// misconfigured workspaceTier fails the create up front.
+	if !s.requireTenantClassification(w, r, tenantID) {
+		return
+	}
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return
 	}

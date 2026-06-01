@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -389,6 +390,24 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 	return out
 }
 
+// bootstrapT4KMSProbe runs the §12.5 line 301 admin-time KMS availability
+// probe for a bootstrap tenant entry that requests workspaceTier: T4. It
+// is a no-op for any other tier and when no probe is wired, mirroring the
+// PUT /v1/admin/tenants/{id} promotion path so the bootstrap seed cannot
+// mark a tenant T4 without the per-tenant key being observed usable. The
+// returned error carries the §12.9 CLASSIFICATION_CONTROL_VIOLATION
+// semantics translated into a per-entry seed-validation failure.
+func (r *Router) bootstrapT4KMSProbe(ctx context.Context, tenantID, workspaceTier string) error {
+	if workspaceTier != tenantstore.WorkspaceTierT4 || r.kmsProbe == nil {
+		return nil
+	}
+	if err := r.kmsProbe.ProbeAvailability(ctx, tenantID, tenantstore.WorkspaceTierT4); err != nil {
+		return errors.New("T4 KMS key availability probe failed (CLASSIFICATION_CONTROL_VIOLATION); " +
+			"the per-tenant KMS key must be reachable before the tenant can be marked workspaceTier T4: " + err.Error())
+	}
+	return nil
+}
+
 // bootstrapCacheScope enforces the §4.9 cacheScope contract outside the
 // HTTP response path so the bootstrap loop can record a per-entry error
 // instead of writing a status code. It mirrors validateCacheScope.
@@ -420,8 +439,24 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 			out.add(i, p.ID, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §12.9 line 1048; §15.1 line 816 — the bootstrap seed path
+		// is held to the same closed workspaceTier enum (T3 default or T4)
+		// as the live admin POST/PUT path, so a typo or stale tier name in
+		// a seed file is rejected rather than persisted as "not T4".
+		if !validWorkspaceTier(p.WorkspaceTier) {
+			out.add(i, p.ID, actionError, seedValidationCode, "workspaceTier must be T3 or T4", nil)
+			continue
+		}
 		existing, err := r.tenants.Get(req.Context(), p.ID)
 		if errors.Is(err, tenantstore.ErrNotFound) {
+			// spec: §12.5 line 301 / §12.9 — a seed that creates a T4 tenant
+			// runs the admin-time KMS availability probe before persisting,
+			// so the bootstrap path cannot mark a tenant T4 without the
+			// per-tenant key having been observed usable.
+			if err := r.bootstrapT4KMSProbe(req.Context(), p.ID, p.WorkspaceTier); err != nil {
+				out.add(i, p.ID, actionError, seedValidationCode, err.Error(), nil)
+				continue
+			}
 			if !opts.dryRun {
 				row := tenantstore.Tenant{
 					ID:                  p.ID,
@@ -442,6 +477,25 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 		}
 		if err != nil {
 			out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
+			continue
+		}
+		// spec: §12.9 line 1033; §15.1 line 816 — workspaceTier is ratcheted
+		// stricter-only. A bootstrap re-run that names a looser tier on a
+		// currently-stricter tenant (e.g. T3 over a T4 tenant) is rejected
+		// regardless of --force-update; a silent downgrade would weaken the
+		// tenant's data-classification controls.
+		if p.WorkspaceTier != "" && tenantstore.IsWorkspaceTierDowngrade(existing.WorkspaceTier, p.WorkspaceTier) {
+			out.add(i, p.ID, actionError, seedValidationCode,
+				"workspaceTier may be tightened in place but not lowered; the seed would downgrade tenant "+
+					p.ID+" from "+existing.WorkspaceTier+" to "+p.WorkspaceTier, nil)
+			continue
+		}
+		// spec: §12.5 line 301 — re-running the seed with workspaceTier: T4
+		// (a promotion or an idempotent re-assert) re-runs the admin-time
+		// KMS availability probe, matching the PUT /v1/admin/tenants/{id}
+		// contract.
+		if err := r.bootstrapT4KMSProbe(req.Context(), p.ID, p.WorkspaceTier); err != nil {
+			out.add(i, p.ID, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
 		conflicts := tenantConflicts(existing, p)
