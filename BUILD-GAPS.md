@@ -10178,7 +10178,7 @@ failure.
 stream carrying `child_task_id`, transient/permanent `classification`
 (via `session.ClassifyFailure`), `failure_class`/`failure_reason`, and
 `retries_exhausted`. Non-`failed` terminals and root sessions are
-skipped. Closed by COMMIT_SHA.
+skipped. Closed by a1d8fc1e.
 
 ---
 
@@ -10259,7 +10259,7 @@ parent failure" is not delivered.
 §8.8 result body), then appends still-active children. `await_children`'s
 `collectChildResults` (`pkg/gateway/mcptools/mcptools.go`) sorts the
 `all`/`settled` result set by each child's settle witness with a stable
-childIDs-order tie-break. Closed by COMMIT_SHA.
+childIDs-order tie-break. Closed by a1d8fc1e.
 
 ---
 
