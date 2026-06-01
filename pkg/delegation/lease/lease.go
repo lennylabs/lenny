@@ -64,6 +64,15 @@ type LeaseSlice struct {
 	// accounting axis.
 	MaxTreeSize int
 
+	// MaxTreeMemoryBytes caps the aggregate in-memory footprint of the
+	// delegation tree on the gateway (§8.2 default 2 MB). The gateway
+	// tracks cumulative tree memory via an atomic Redis counter
+	// alongside MaxTreeSize and rejects a delegation that would push
+	// the tree over this cap with BUDGET_EXHAUSTED.
+	//
+	// spec: §8.2 line 127.
+	MaxTreeMemoryBytes int64
+
 	// MaxParallelChildren caps concurrent in-flight children of the
 	// child. Bounded above by the parent's MaxParallelChildren.
 	MaxParallelChildren int

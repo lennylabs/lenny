@@ -213,6 +213,7 @@ import (
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -2425,12 +2426,25 @@ func main() {
 			mcpDelegationAuditor{sink: auditSink},
 		)
 	}
+	// §8.2 lines 57, 127 / §12.4 lines 193, 213: the Redis-backed
+	// per-tree delegation budget counters gate every admission on the
+	// live tree node count, gateway memory footprint, per-parent
+	// concurrent-children / total-descendant counters, and tree token
+	// pool. A Redis outage fails the admission path closed
+	// (DELEGATION_BUDGET_UNAVAILABLE). When Redis is not configured the
+	// reserver stays nil and only the static ValidateChildSlice ceiling
+	// is enforced. F-8.2.18 / F-8.2.12 / F-8.1.1.
+	var treeBudgetReserver delegation.TreeBudgetReserver
+	if redisClient != nil {
+		treeBudgetReserver = treebudget.New(redisClient, 0)
+	}
 	delegationSvc := delegation.NewService(sessions, delegation.Options{
 		Experiments:        experiments,
 		Runtimes:           runtimes,
 		Policies:           delegationPolicies,
 		Clock:              clockinject.Now,
 		ExportMaterializer: exportMaterializer,
+		TreeBudgetReserver: treeBudgetReserver,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
 		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.

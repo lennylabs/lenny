@@ -439,6 +439,9 @@ type DelegationLease struct {
 	MaxChildrenTotal int `json:"maxChildrenTotal,omitempty"`
 	// MaxTreeSize caps this branch's contribution to the tree-wide pod cap.
 	MaxTreeSize int `json:"maxTreeSize,omitempty"`
+	// MaxTreeMemoryBytes caps the delegation tree's aggregate gateway
+	// memory footprint (§8.2 default 2 MB).
+	MaxTreeMemoryBytes int64 `json:"maxTreeMemoryBytes,omitempty"`
 	// MaxParallelChildren caps concurrent in-flight children.
 	MaxParallelChildren int `json:"maxParallelChildren,omitempty"`
 	// PerChildMaxAge is the wall-clock seconds budget per descendant.
@@ -452,7 +455,7 @@ func (l *DelegationLease) IsZero() bool {
 		return true
 	}
 	return l.MaxTokenBudget == 0 && l.MaxChildrenTotal == 0 && l.MaxTreeSize == 0 &&
-		l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0
+		l.MaxTreeMemoryBytes == 0 && l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

@@ -1738,7 +1738,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -1791,6 +1791,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					MaxTokenBudget      int64 `json:"maxTokenBudget"`
 					MaxChildrenTotal    int   `json:"maxChildrenTotal"`
 					MaxTreeSize         int   `json:"maxTreeSize"`
+					MaxTreeMemoryBytes  int64 `json:"maxTreeMemoryBytes"`
 					MaxParallelChildren int   `json:"maxParallelChildren"`
 					PerChildMaxAge      int   `json:"perChildMaxAge"`
 				} `json:"leaseSlice,omitempty"`
@@ -1969,6 +1970,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					MaxTokenBudget:      in.LeaseSlice.MaxTokenBudget,
 					MaxChildrenTotal:    in.LeaseSlice.MaxChildrenTotal,
 					MaxTreeSize:         in.LeaseSlice.MaxTreeSize,
+					MaxTreeMemoryBytes:  in.LeaseSlice.MaxTreeMemoryBytes,
 					MaxParallelChildren: in.LeaseSlice.MaxParallelChildren,
 					PerChildMaxAge:      in.LeaseSlice.PerChildMaxAge,
 				}
@@ -2079,6 +2081,16 @@ func Register(srv *mcp.Server, deps Deps) {
 					return mcp.ToolResult{}, mcp.NewToolError("BUDGET_EXHAUSTED",
 						err.Error(),
 						map[string]any{"violations": budgetErr.Violations})
+				}
+				// spec: §12.4 line 213 — the §12.4 Redis-backed delegation
+				// tree budget counters could not be consulted (outage or
+				// script error). The admission path fails closed: surface
+				// the retryable DELEGATION_BUDGET_UNAVAILABLE so the caller
+				// retries the whole delegate_task once Redis recovers,
+				// rather than admitting an unbudgeted child. F-8.2.18.
+				if errors.Is(err, delegation.ErrBudgetUnavailable) {
+					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_BUDGET_UNAVAILABLE",
+						err.Error(), nil)
 				}
 				// spec: §8.2 line 50 — the service-layer defence-in-depth
 				// type gate that mirrors the §10.6 shim. Surface the

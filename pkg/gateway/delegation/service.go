@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -221,6 +222,21 @@ type ExportScanChainResolver interface {
 	ResolveExportScanChain(ctx context.Context, tenantID, interceptorRef string) (*interceptor.Chain, interceptor.ExportScanContext, error)
 }
 
+// TreeBudgetReserver atomically reserves a delegation's structural
+// budget axes (tree node count, tree memory footprint, per-parent
+// concurrent children, per-parent total descendants, tree token pool)
+// against the resolved lease caps, backed by the §12.4 Redis counters.
+// *treebudget.Reserver implements it. A nil reserver on the Service
+// skips the Redis-backed admission gate, leaving only the static
+// per-call ValidateChildSlice ceiling enforced (used by the in-process
+// minimal gateway and by tests that do not stand up Redis).
+//
+// spec: §8.2 lines 57, 127; §12.4 lines 193, 213.
+type TreeBudgetReserver interface {
+	Reserve(ctx context.Context, r treebudget.Reservation) (treebudget.Totals, error)
+	Return(ctx context.Context, r treebudget.Reservation) error
+}
+
 // Service creates child sessions from a delegation request.
 type Service struct {
 	store            sessionstore.Store
@@ -259,6 +275,11 @@ type Service struct {
 	// chain for the optional per-file export content scan. Nil makes a
 	// `scanExportedFiles: true` policy fail closed. F-8.7.1.
 	exportScanResolver ExportScanChainResolver
+	// treeBudget atomically reserves the §8.2 structural budget axes
+	// against the §12.4 Redis counters on every admission. Nil skips
+	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
+	// F-8.2.12 / F-8.1.1.
+	treeBudget TreeBudgetReserver
 }
 
 // Options configures a Service.
@@ -355,6 +376,14 @@ type Options struct {
 	// export content scan. Nil makes a `scanExportedFiles: true` policy
 	// fail closed with ErrExportScanUnavailable. F-8.7.1.
 	ExportScanChainResolver ExportScanChainResolver
+
+	// TreeBudgetReserver, when set, gates every admission on the §12.4
+	// Redis-backed delegation tree budget counters (maxTreeSize,
+	// maxTreeMemoryBytes, maxParallelChildren, maxChildrenTotal, tree
+	// token pool). Nil skips the Redis gate, leaving only the static
+	// ValidateChildSlice ceiling enforced. F-8.2.18 / F-8.2.12 /
+	// F-8.1.1.
+	TreeBudgetReserver TreeBudgetReserver
 }
 
 // NewService returns a delegation Service.
@@ -398,6 +427,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		interceptorWeakeningCooldown: cooldown,
 		exportMat:                    opts.ExportMaterializer,
 		exportScanResolver:           opts.ExportScanChainResolver,
+		treeBudget:                   opts.TreeBudgetReserver,
 	}
 }
 
@@ -446,6 +476,14 @@ var (
 	// fail-closed posture rejects the export rather than materializing
 	// unscanned files. spec: §8.3 lines 160-181. F-8.7.1.
 	ErrExportScanUnavailable = errors.New("delegation: contentPolicy.scanExportedFiles is true but no export-scan interceptor is configured (§8.3)")
+
+	// ErrBudgetUnavailable — the Redis-backed delegation tree budget
+	// counters could not be consulted (outage or script error). Per
+	// §12.4 line 213 the admission path fails closed: the §8.5 handler
+	// surfaces this as the retryable DELEGATION_BUDGET_UNAVAILABLE
+	// rather than admitting an unbudgeted delegation. spec: §12.4 line
+	// 213. F-8.2.18.
+	ErrBudgetUnavailable = errors.New("delegation: tree budget counters unavailable (§12.4 fail-closed)")
 )
 
 // InterceptorWeakeningCooldownError reports a §8.3 line 181 rejection:
@@ -542,7 +580,19 @@ func (e *TreeVisibilityMessagingScopeError) Error() string {
 //     lineage.
 //  4. §8.2.bis depth check against MaxDepth.
 //  5. atomic child-session INSERT with ParentSessionID set.
-func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (Result, error) {
+func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (result Result, retErr error) {
+	// §8.2 / §12.4: budgetReservation holds the structural budget this
+	// admission reserved from the §12.4 Redis counters once the gate
+	// passes. If any later step fails before the child row is committed
+	// the deferred release returns the reserved slice so a transient
+	// downstream error does not permanently consume tree budget.
+	// F-8.2.18 / F-8.2.12.
+	var budgetReservation *treebudget.Reservation
+	defer func() {
+		if retErr != nil && budgetReservation != nil && s.treeBudget != nil {
+			_ = s.treeBudget.Return(ctx, *budgetReservation)
+		}
+	}()
 	// §8.4: validate the closed enum at the service boundary so a
 	// malformed value is rejected with *lease.InvalidApprovalModeError
 	// before any side effects (parent lookup, audit emission, store
@@ -735,6 +785,60 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		return Result{}, err
 	}
 
+	// spec: §8.9 line 1010 — every node in a delegation tree shares the
+	// same root_session_id (the apex session). The §12.4 budget counters
+	// are keyed by it.
+	rootSessionID := parent.RootSessionID
+	if rootSessionID == "" {
+		rootSessionID = parent.ID
+	}
+	// §8.2 lines 57, 127 / §12.4 line 213: gate the admission on the
+	// Redis-backed per-tree budget counters. Unlike the static
+	// ValidateChildSlice ceiling above (which only proves the child's
+	// declared slice is no wider than the ancestor's), this reserves
+	// against the live accumulated tree state: tree node count, the
+	// ~12 KB-per-node gateway memory footprint, the delegating parent's
+	// concurrent-children and total-descendant counters, and the tree
+	// token pool. A cap breach rejects with *treebudget.BudgetExhaustedError
+	// (mapped to BUDGET_EXHAUSTED); a Redis outage fails closed with
+	// ErrBudgetUnavailable (mapped to the retryable
+	// DELEGATION_BUDGET_UNAVAILABLE per §12.4 line 213). F-8.2.18 /
+	// F-8.2.12 / F-8.1.1.
+	if s.treeBudget != nil {
+		memCap := parentSlice.MaxTreeMemoryBytes
+		if memCap == 0 {
+			// §8.2 line 127: the lease carries a maxTreeMemoryBytes
+			// default of 2 MB even when no explicit value was declared,
+			// so the tree's gateway footprint is always bounded.
+			memCap = treebudget.DefaultMaxTreeMemoryBytes
+		}
+		reservation := treebudget.Reservation{
+			RootSessionID:         rootSessionID,
+			ParentSessionID:       parent.ID,
+			TreeSizeCap:           int64(parentSlice.MaxTreeSize),
+			TreeSizeDelta:         1,
+			TreeMemoryCap:         memCap,
+			TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+			ParallelChildrenCap:   int64(parentSlice.MaxParallelChildren),
+			ParallelChildrenDelta: 1,
+			ChildrenTotalCap:      int64(parentSlice.MaxChildrenTotal),
+			ChildrenTotalDelta:    1,
+			TokenCap:              parentSlice.MaxTokenBudget,
+			TokenDelta:            req.LeaseSlice.MaxTokenBudget,
+		}
+		if _, err := s.treeBudget.Reserve(ctx, reservation); err != nil {
+			var bx *treebudget.BudgetExhaustedError
+			if errors.As(err, &bx) {
+				return Result{}, &lease.BudgetExceededError{Violations: []string{bx.Error()}}
+			}
+			if errors.Is(err, treebudget.ErrBudgetUnavailable) {
+				return Result{}, ErrBudgetUnavailable
+			}
+			return Result{}, err
+		}
+		budgetReservation = &reservation
+	}
+
 	userID := req.UserID
 	if userID == "" {
 		userID = parent.UserID
@@ -757,18 +861,11 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		}
 		childPlan = plan
 	}
-	// spec: §8.9 line 1010 — every node in a delegation tree shares
-	// the same root_session_id (the session at the tree's apex). A
-	// child inherits its parent's RootSessionID rather than minting a
-	// new one; the parent's RootSessionID is its tree root when the
-	// parent itself was delegated, or the parent's own id when the
-	// parent is a standalone session that has not yet been re-keyed by
-	// the store. The §12.5 `idx_sessions_root` index supports the
-	// single-shard tree-scoped query a §8.9 walker uses. F-8.9.8.
-	rootSessionID := parent.RootSessionID
-	if rootSessionID == "" {
-		rootSessionID = parent.ID
-	}
+	// rootSessionID was resolved above (the §12.4 budget counters are
+	// keyed by it). A child inherits its parent's RootSessionID rather
+	// than minting a new one; the §12.5 `idx_sessions_root` index
+	// supports the single-shard tree-scoped query a §8.9 walker uses.
+	// spec: §8.9 line 1010. F-8.9.8.
 	child := sessionstore.Session{
 		ID:               childID,
 		TenantID:         tenantID,
@@ -976,24 +1073,24 @@ func (s *Service) recordCycleAudit(ctx context.Context, tenantID string, req Req
 			return
 		}
 		s.auditor.EmitDelegationEvent(ctx, "delegation.self_recursion_allowed", map[string]any{
-			"parent_session_id":           req.ParentSessionID,
-			"runtime_ref":                 req.RuntimeRef,
-			"pool_ref":                    req.PoolRef,
-			"tenant_id":                   tenantID,
-			"mode":                        string(d.EffectiveSettings.Mode),
-			"platform_allow_self_rec":     d.EffectiveSettings.PlatformAllowSelfRec,
-			"runtime_allow_self_rec":      d.EffectiveSettings.RuntimeAllowSelfRec,
-			"policy_allow_self_rec":       d.EffectiveSettings.PolicyAllowSelfRec,
+			"parent_session_id":       req.ParentSessionID,
+			"runtime_ref":             req.RuntimeRef,
+			"pool_ref":                req.PoolRef,
+			"tenant_id":               tenantID,
+			"mode":                    string(d.EffectiveSettings.Mode),
+			"platform_allow_self_rec": d.EffectiveSettings.PlatformAllowSelfRec,
+			"runtime_allow_self_rec":  d.EffectiveSettings.RuntimeAllowSelfRec,
+			"policy_allow_self_rec":   d.EffectiveSettings.PolicyAllowSelfRec,
 		})
 	case cycle.OutcomeWouldHaveBlocked:
 		s.auditor.EmitDelegationEvent(ctx, "delegation.cycle_warning", map[string]any{
-			"parent_session_id":           req.ParentSessionID,
-			"runtime_ref":                 req.RuntimeRef,
-			"pool_ref":                    req.PoolRef,
-			"tenant_id":                   tenantID,
-			"mode":                        string(d.EffectiveSettings.Mode),
-			"blocked_by":                  string(d.BlockedBy),
-			"would_have_blocked_layers":   layersAsStrings(d.WouldHaveBlockedLayers),
+			"parent_session_id":         req.ParentSessionID,
+			"runtime_ref":               req.RuntimeRef,
+			"pool_ref":                  req.PoolRef,
+			"tenant_id":                 tenantID,
+			"mode":                      string(d.EffectiveSettings.Mode),
+			"blocked_by":                string(d.BlockedBy),
+			"would_have_blocked_layers": layersAsStrings(d.WouldHaveBlockedLayers),
 		})
 	}
 }
@@ -1304,6 +1401,7 @@ func leaseSliceFromStore(l *sessionstore.DelegationLease) lease.LeaseSlice {
 		MaxTokenBudget:      l.MaxTokenBudget,
 		MaxChildrenTotal:    l.MaxChildrenTotal,
 		MaxTreeSize:         l.MaxTreeSize,
+		MaxTreeMemoryBytes:  l.MaxTreeMemoryBytes,
 		MaxParallelChildren: l.MaxParallelChildren,
 		PerChildMaxAge:      l.PerChildMaxAge,
 	}
@@ -1317,6 +1415,7 @@ func storeLeaseFromSlice(s lease.LeaseSlice) *sessionstore.DelegationLease {
 		MaxTokenBudget:      s.MaxTokenBudget,
 		MaxChildrenTotal:    s.MaxChildrenTotal,
 		MaxTreeSize:         s.MaxTreeSize,
+		MaxTreeMemoryBytes:  s.MaxTreeMemoryBytes,
 		MaxParallelChildren: s.MaxParallelChildren,
 		PerChildMaxAge:      s.PerChildMaxAge,
 	}

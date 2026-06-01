@@ -370,6 +370,7 @@ var table = map[string]entry{
 	"CREDENTIAL_RENEWAL_FAILED":       {CategoryTransient, true}, // spec: 15:1025
 	"BUDGET_STATE_UNRECOVERABLE":      {CategoryTransient, true}, // spec: 15:1027
 	"DELEGATION_AUDIT_CONTENTION":     {CategoryTransient, true}, // spec: 15:1037
+	"DELEGATION_BUDGET_UNAVAILABLE":   {CategoryTransient, true}, // spec: 12.4 (Redis budget-counter outage fail-closed, retryable)
 	"POOL_DRAINING":                   {CategoryTransient, true}, // spec: 15:1034 (§15.4 family)
 	"GIT_CLONE_REF_RESOLVE_TRANSIENT": {CategoryTransient, true}, // spec: 15:1066 (§15.4 family)
 	"EXPORT_FILE_SCAN_UNAVAILABLE":    {CategoryTransient, true}, // spec: 15:1073
