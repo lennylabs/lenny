@@ -386,6 +386,61 @@ func TestAdminUnknownResource(t *testing.T) {
 	}
 }
 
+// spec: §24.12 lines 140-144 — erasure-jobs get / retry /
+// clear-restriction CLI group. F-24.12.1.
+func TestAdminErasureJobsGet(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"jobId":"erasure_x","phase":"failed"}`,
+		"admin", "erasure-jobs", "get", "erasure_x")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/erasure-jobs/erasure_x" {
+		t.Errorf("request: %s %s", got.method, got.path)
+	}
+}
+
+func TestAdminErasureJobsRetry(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusAccepted, `{"jobId":"erasure_x","phase":"initiated"}`,
+		"admin", "erasure-jobs", "retry", "erasure_x")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/erasure-jobs/erasure_x/retry" {
+		t.Errorf("request: %s %s", got.method, got.path)
+	}
+}
+
+func TestAdminErasureJobsClearRestriction(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"processingRestricted":false}`,
+		"admin", "erasure-jobs", "clear-restriction", "erasure_x", "--justification", "unrecoverable failure")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost ||
+		got.path != "/v1/admin/erasure-jobs/erasure_x/clear-processing-restriction" {
+		t.Errorf("request: %s %s", got.method, got.path)
+	}
+	if got.body["justification"] != "unrecoverable failure" {
+		t.Errorf("body: %+v, want justification set", got.body)
+	}
+}
+
+func TestAdminErasureJobsClearRestrictionRequiresJustification(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "erasure-jobs", "clear-restriction", "erasure_x"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("clear-restriction without --justification: exit code %d, want 2", code)
+	}
+}
+
+func TestAdminErasureJobsUnknownSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "erasure-jobs", "frobnicate"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("unknown erasure-jobs subcommand: exit code %d, want 2", code)
+	}
+}
+
 // writeSeedFile writes a bootstrap seed file into a temp dir and
 // returns its path.
 func writeSeedFile(t *testing.T, name, content string) string {

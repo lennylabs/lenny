@@ -116,6 +116,11 @@ var exactCatalog = map[string]ClassMapping{
 	"gdpr.erasure_blocked_by_hold":                entityMgmt(ActivityUnknown),
 	"gdpr.legal_hold_overridden":                  entityMgmt(ActivityUpdate),
 	"gdpr.legal_hold_overridden_tenant":           entityMgmt(ActivityUpdate),
+	// §24.12 erasure-job operator recovery actions. A retry re-runs the
+	// DeleteByUser sequence (Delete); clearing the processing restriction
+	// is a state change on the user record (Update). F-24.12.4.
+	"gdpr.erasure_job_retried":            entityMgmt(ActivityDelete),
+	"gdpr.processing_restriction_cleared": entityMgmt(ActivityUpdate),
 
 	// §9.3 connector lifecycle → Entity Management (5001). The
 	// ConnectorDefinition is a managed admin-API resource so its

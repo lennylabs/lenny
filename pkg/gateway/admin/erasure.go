@@ -176,57 +176,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	// the request. On completion the processing restriction is lifted
 	// and the §12.8 erasure receipt is written to the audit trail; a
 	// failed job leaves the restriction set for an operator to retry.
-	go func() {
-		_ = r.erasureRunner.Run(context.Background(), jobID)
-		job, err := r.erasureJobs.Get(context.Background(), jobID)
-		if err != nil || job.Phase != erasurejob.PhaseCompleted {
-			return
-		}
-		_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
-			u.ProcessingRestricted = false
-			u.ErasureJobID = ""
-			return nil
-		})
-		// §12.8 erasure receipt: the gdpr.* audit event is the
-		// authoritative proof that the erasure was carried out. When a
-		// legal-hold override was exercised, the receipt records it.
-		receipt := map[string]any{
-			"tenantId": tenant,
-			"jobId":    jobID,
-			"deleted":  job.Deleted,
-			"total":    job.Total,
-		}
-		// §12.8: the receipt records which billing-erasure policy was
-		// applied and whether billing events were pseudonymized or
-		// exempted. Absent when no BillingEraser ran for this job.
-		if job.Billing.Disposition != "" {
-			receipt["billingErasure"] = map[string]any{
-				"disposition":   job.Billing.Disposition,
-				"pseudonymized": job.Billing.Pseudonymized,
-				"verified":      job.Billing.Verified,
-			}
-		}
-		// spec: §12.8 line 762 — the receipt carries the per-phase timeline
-		// so a compliance auditor can reconstruct the erasure sequence from
-		// a single event.
-		if len(job.PhaseLog) > 0 {
-			phaseLog := make([]map[string]any, 0, len(job.PhaseLog))
-			for _, tr := range job.PhaseLog {
-				phaseLog = append(phaseLog, map[string]any{
-					"phase": string(tr.Phase),
-					"at":    rfc3339Nano(tr.At),
-				})
-			}
-			receipt["phaseLog"] = phaseLog
-		}
-		// spec: §12.8 line 851 — the salt-removal verification outcome is
-		// recorded in the erasure receipt.
-		receipt["verificationOutcome"] = job.Billing.VerificationOutcome()
-		for k, v := range overrideReceipt {
-			receipt[k] = v
-		}
-		r.emit(context.Background(), principal, "gdpr.erasure_completed", subject, receipt)
-	}()
+	go r.runErasureToCompletion(principal, tenant, subject, jobID, overrideReceipt)
 
 	r.emit(req.Context(), principal, "admin.user.erasure_initiated", subject, map[string]any{
 		"tenantId": tenant,
@@ -239,6 +189,204 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		"userId":   subject,
 		"tenantId": tenant,
 		"phase":    string(erasurejob.PhaseInitiated),
+	})
+}
+
+// runErasureToCompletion executes the erasure job and, on success,
+// lifts the §12.8 / GDPR Article 18 processing restriction and writes
+// the erasure receipt to the audit trail. overrideReceipt, when
+// non-nil, merges the legal-hold override fields into the receipt. It
+// runs on a detached context so it outlives the originating request,
+// and is the shared completion path for both initial erasure
+// (handleEraseUser) and operator retry (handleRetryErasureJob). A
+// failed job leaves the restriction set so an operator can retry or
+// clear it explicitly. spec: §12.8 lines 762, 764, 851.
+func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subject, jobID string, overrideReceipt map[string]any) {
+	_ = r.erasureRunner.Run(context.Background(), jobID)
+	job, err := r.erasureJobs.Get(context.Background(), jobID)
+	if err != nil || job.Phase != erasurejob.PhaseCompleted {
+		return
+	}
+	_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
+		u.ProcessingRestricted = false
+		u.ErasureJobID = ""
+		return nil
+	})
+	// §12.8 erasure receipt: the gdpr.* audit event is the
+	// authoritative proof that the erasure was carried out. When a
+	// legal-hold override was exercised, the receipt records it.
+	receipt := map[string]any{
+		"tenantId": tenant,
+		"jobId":    jobID,
+		"deleted":  job.Deleted,
+		"total":    job.Total,
+	}
+	// §12.8: the receipt records which billing-erasure policy was
+	// applied and whether billing events were pseudonymized or
+	// exempted. Absent when no BillingEraser ran for this job.
+	if job.Billing.Disposition != "" {
+		receipt["billingErasure"] = map[string]any{
+			"disposition":   job.Billing.Disposition,
+			"pseudonymized": job.Billing.Pseudonymized,
+			"verified":      job.Billing.Verified,
+		}
+	}
+	// spec: §12.8 line 762 — the receipt carries the per-phase timeline
+	// so a compliance auditor can reconstruct the erasure sequence from
+	// a single event.
+	if len(job.PhaseLog) > 0 {
+		phaseLog := make([]map[string]any, 0, len(job.PhaseLog))
+		for _, tr := range job.PhaseLog {
+			phaseLog = append(phaseLog, map[string]any{
+				"phase": string(tr.Phase),
+				"at":    rfc3339Nano(tr.At),
+			})
+		}
+		receipt["phaseLog"] = phaseLog
+	}
+	// spec: §12.8 line 851 — the salt-removal verification outcome is
+	// recorded in the erasure receipt.
+	receipt["verificationOutcome"] = job.Billing.VerificationOutcome()
+	for k, v := range overrideReceipt {
+		receipt[k] = v
+	}
+	r.emit(context.Background(), principal, "gdpr.erasure_completed", subject, receipt)
+}
+
+// handleRetryErasureJob implements POST
+// /v1/admin/erasure-jobs/{job_id}/retry — the §24.12 / §12.8 line 766
+// operator retry of a failed erasure job. The job must be in the
+// `failed` phase; the handler clears the transient failure fields,
+// resets the job to its first phase, and re-enqueues it on the runner.
+//
+// The runner re-runs the full dependency-ordered DeleteByUser sequence
+// from the start; each step is idempotent (a second DeleteByUser
+// deletes the already-removed rows as a no-op), so resetting to
+// `initiated` is the safe resume point given the runner keeps no
+// mid-phase checkpoint. On success the shared completion path lifts the
+// processing restriction. spec: §12.8 line 766; §24.12 line 143.
+func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request) {
+	jobID := req.PathValue("job_id")
+	job, err := r.erasureJobs.Get(req.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, erasurejob.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// A job belonging to another tenant reads as not-found so its
+	// existence is not leaked across the tenant boundary.
+	if !r.callerMaySeeTenant(req, job.TenantID) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+		return
+	}
+	// spec: §24.12 line 143 — "The job must be in `failed` state."
+	if job.Phase != erasurejob.PhaseFailed {
+		writeError(w, http.StatusConflict, "ERASURE_JOB_NOT_FAILED",
+			"erasure job is in phase "+string(job.Phase)+"; only a failed job can be retried", nil)
+		return
+	}
+	// Clear the transient failure fields and reset to the first phase so
+	// the runner (which short-circuits on a terminal phase) re-executes.
+	if _, err := r.erasureJobs.Update(req.Context(), jobID, func(j *erasurejob.Job) error {
+		j.Phase = erasurejob.PhaseInitiated
+		j.Failure = ""
+		j.CompletedAt = time.Time{}
+		j.PhaseLog = append(j.PhaseLog, erasurejob.PhaseTransition{Phase: erasurejob.PhaseInitiated, At: r.clock()})
+		return nil
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"erasure job could not be reset for retry: "+err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	go r.runErasureToCompletion(principal, job.TenantID, job.UserID, jobID, nil)
+	// spec: §24.12 lines 143-144 — the retry is recorded in the audit
+	// trail with the operator identity for the §11.7 chain.
+	r.emit(req.Context(), principal, "gdpr.erasure_job_retried", job.UserID, map[string]any{
+		"tenantId": job.TenantID,
+		"userId":   job.UserID,
+		"jobId":    jobID,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jobId":    jobID,
+		"userId":   job.UserID,
+		"tenantId": job.TenantID,
+		"phase":    string(erasurejob.PhaseInitiated),
+	})
+}
+
+// clearRestrictionRequest is the POST
+// /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction body.
+type clearRestrictionRequest struct {
+	// Justification is the operator's recorded reason for lifting the
+	// restriction. Required (§24.12 line 144 / §12.8 line 764).
+	Justification string `json:"justification,omitempty"`
+}
+
+// handleClearErasureRestriction implements POST
+// /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction — the
+// §24.12 / §12.8 line 764 manual clear of the GDPR Article 18
+// processing-restriction flag after a failed erasure job. It requires a
+// non-empty justification, records the operator identity and
+// justification in the audit trail, and clears the flag through the
+// privileged store path that bypasses the database-level Article 18
+// trigger. spec: §12.8 line 764; §24.12 line 144.
+func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.Request) {
+	jobID := req.PathValue("job_id")
+	var body clearRestrictionRequest
+	if req.Body != nil {
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+			return
+		}
+	}
+	if body.Justification == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"clear-processing-restriction requires a non-empty justification", nil)
+		return
+	}
+	job, err := r.erasureJobs.Get(req.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, erasurejob.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if !r.callerMaySeeTenant(req, job.TenantID) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+		return
+	}
+	if _, err := r.users.ClearProcessingRestriction(req.Context(), job.TenantID, job.UserID); err != nil {
+		if errors.Is(err, userstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"processing restriction could not be cleared: "+err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	// spec: §12.8 line 764 / §24.12 line 144 — the clear records the
+	// operator identity and justification in the §11.7 audit chain.
+	r.emit(req.Context(), principal, "gdpr.processing_restriction_cleared", job.UserID, map[string]any{
+		"tenantId":      job.TenantID,
+		"userId":        job.UserID,
+		"jobId":         jobID,
+		"justification": body.Justification,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jobId":                jobID,
+		"userId":               job.UserID,
+		"tenantId":             job.TenantID,
+		"processingRestricted": false,
 	})
 }
 

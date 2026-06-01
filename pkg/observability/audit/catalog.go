@@ -266,6 +266,17 @@ const (
 	// pkg/gateway/policy.RecordRejection on every chain REJECT.
 	// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
 	EventInterceptorRejected EventType = "interceptor.rejected"
+
+	// EventGDPRErasureJobRetried is the §24.12 line 143 / §12.8 line 766
+	// audit row for an operator retry of a failed erasure job. Emitted by
+	// pkg/gateway/admin handleRetryErasureJob.
+	EventGDPRErasureJobRetried EventType = "gdpr.erasure_job_retried"
+
+	// EventGDPRProcessingRestrictionCleared is the §24.12 line 144 / §12.8
+	// line 764 audit row for an operator manually clearing a user's GDPR
+	// Article 18 processing-restriction flag. Emitted by
+	// pkg/gateway/admin handleClearErasureRestriction.
+	EventGDPRProcessingRestrictionCleared EventType = "gdpr.processing_restriction_cleared"
 )
 
 // catalog is the §16.7 closed enumeration of §25 audit event types.
@@ -344,6 +355,13 @@ var catalog = []EventType{
 // spec: §11.7 line 331. F-11.7.18.
 var auxKnownEventTypes = []EventType{
 	EventInterceptorRejected,
+	// §24.12 / §12.8 erasure-job operator actions. §16.7 enumerates the
+	// gdpr.* erasure-receipt and legal-hold rows but not these two
+	// operator-recovery events, so they are recognized by IsKnownEventType
+	// (audit-sink validators must not discard them) yet excluded from
+	// Catalog(), which transcribes only the §16.7 enumeration. F-24.12.4.
+	EventGDPRErasureJobRetried,
+	EventGDPRProcessingRestrictionCleared,
 }
 
 // Catalog returns the §16.7 catalog of §25 audit event types. The

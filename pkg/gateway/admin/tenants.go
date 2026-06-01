@@ -457,6 +457,19 @@ func (r *Router) Handler() http.Handler {
 		// §12.8 erasure-job status query.
 		mux.Handle("GET /v1/admin/erasure-jobs/{job_id}",
 			r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
+		// §24.12 line 143 / §12.8 line 766 — operator retry of a failed
+		// erasure job. platform-admin only.
+		if r.erasureRunner != nil && r.users != nil {
+			mux.Handle("POST /v1/admin/erasure-jobs/{job_id}/retry",
+				r.requireAdmin(http.HandlerFunc(r.handleRetryErasureJob)))
+		}
+		// §24.12 line 144 / §12.8 line 764 — manual clear of the GDPR
+		// Article 18 processing restriction after a failed job.
+		// platform-admin only.
+		if r.users != nil {
+			mux.Handle("POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction",
+				r.requireAdmin(http.HandlerFunc(r.handleClearErasureRestriction)))
+		}
 	}
 	if r.sessions != nil {
 		// §12.8 legal hold set / clear.

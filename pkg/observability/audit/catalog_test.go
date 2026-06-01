@@ -216,6 +216,32 @@ func TestInterceptorRejectedIsKnownButNotCatalogued_spec_11_7_331(t *testing.T) 
 	}
 }
 
+// TestErasureRecoveryEventsKnownButNotCatalogued asserts the §24.12
+// erasure-job operator-recovery events (retry, clear-processing-
+// restriction) are recognized by IsKnownEventType so audit-sink
+// validators accept them, while staying out of Catalog() because §16.7
+// does not enumerate them. spec: §24.12 lines 143-144. F-24.12.4.
+func TestErasureRecoveryEventsKnownButNotCatalogued_spec_24_12(t *testing.T) {
+	events := []EventType{EventGDPRErasureJobRetried, EventGDPRProcessingRestrictionCleared}
+	wire := map[EventType]string{
+		EventGDPRErasureJobRetried:            "gdpr.erasure_job_retried",
+		EventGDPRProcessingRestrictionCleared: "gdpr.processing_restriction_cleared",
+	}
+	for _, et := range events {
+		if string(et) != wire[et] {
+			t.Errorf("event wire string = %q, want %q", et, wire[et])
+		}
+		if !IsKnownEventType(et) {
+			t.Errorf("%q is emitted on the §11.7 audit path and must be a known event type", et)
+		}
+		for _, c := range Catalog() {
+			if c == et {
+				t.Errorf("%q is a §24.12 operator event, not a §16.7 addition — it must not appear in Catalog()", et)
+			}
+		}
+	}
+}
+
 // TestEventTypesAreNonEmptyIdentifiers asserts every §16.7 event type
 // is a non-empty lower-case identifier. Almost every §16.7 event is
 // dot-namespaced; quota_failopen_started is the one spec exception,

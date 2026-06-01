@@ -260,6 +260,14 @@ mappings:
     category_name: Discovery
     activity_id: 4
     activity_name: Delete
+  - event_type: gdpr.erasure_job_retried
+    match: exact
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 4
+    activity_name: Delete
   - event_type: gdpr.legal_hold_overridden
     match: exact
     class_uid: 5001
@@ -269,6 +277,14 @@ mappings:
     activity_id: 3
     activity_name: Update
   - event_type: gdpr.legal_hold_overridden_tenant
+    match: exact
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 3
+    activity_name: Update
+  - event_type: gdpr.processing_restriction_cleared
     match: exact
     class_uid: 5001
     class_name: Entity Management

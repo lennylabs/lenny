@@ -143,6 +143,51 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 	return out, nil
 }
 
+// ClearProcessingRestriction clears the §12.8 / GDPR Article 18
+// processing-restriction flag on the user, setting the
+// lenny.clear_processing_restriction session-local first so the
+// migration 0042 BEFORE UPDATE trigger exempts the clear even when an
+// erasure job for the user is still in a non-terminal phase. This is the
+// privileged §24.12 clear-processing-restriction admin path; a plain
+// Update flipping the flag is rejected by the trigger while a job is
+// active. spec: §12.8 line 764 (clear-processing-restriction sets the
+// session-local bypass, analogous to lenny.erasure_mode).
+func (s *Store) ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (userstore.User, error) {
+	var out userstore.User
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		// The session-local bypass mirrors the lenny.erasure_mode guard on
+		// the §11.7 immutability triggers; it is scoped to this transaction.
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.clear_processing_restriction = 'true'"); err != nil {
+			return err
+		}
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM users WHERE tenant_id = $1 AND subject = $2 FOR UPDATE`,
+			tenantID, subject)
+		u, err := scanUser(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return userstore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		u.ProcessingRestricted = false
+		u.ErasureJobID = ""
+		u.UpdatedAt = pgtenant.MonotonicNext(u.UpdatedAt, time.Now())
+		if _, err := tx.Exec(ctx, `UPDATE users SET
+			updated_at = $3, processing_restricted = false, erasure_job_id = ''
+		WHERE tenant_id = $1 AND subject = $2`,
+			tenantID, subject, u.UpdatedAt); err != nil {
+			return err
+		}
+		out = u
+		return nil
+	})
+	if err != nil {
+		return userstore.User{}, err
+	}
+	return out, nil
+}
+
 // List returns the tenant's users subject-ascending. Soft-deleted and
 // disabled rows are dropped unless the filter opts them in.
 func (s *Store) List(ctx context.Context, tenantID string, filter userstore.ListFilter) ([]userstore.User, error) {

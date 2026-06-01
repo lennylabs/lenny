@@ -210,8 +210,11 @@ func (fakeUserLister) Update(context.Context, string, string, func(*userstore.Us
 	return userstore.User{}, userstore.ErrNotFound
 }
 func (fakeUserLister) SoftDelete(context.Context, string, string, time.Time) error { return nil }
-func (fakeUserLister) DeleteByUser(context.Context, string, string) (int, error)   { return 0, nil }
-func (fakeUserLister) DeleteByTenant(context.Context, string) (int, error)         { return 0, nil }
+func (fakeUserLister) ClearProcessingRestriction(context.Context, string, string) (userstore.User, error) {
+	return userstore.User{}, userstore.ErrNotFound
+}
+func (fakeUserLister) DeleteByUser(context.Context, string, string) (int, error) { return 0, nil }
+func (fakeUserLister) DeleteByTenant(context.Context, string) (int, error)       { return 0, nil }
 
 func TestDeleteCustomRoleBlockedByAssignedUser(t *testing.T) {
 	roles := customrolestore.NewMemory()

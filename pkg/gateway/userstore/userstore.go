@@ -87,6 +87,19 @@ type Store interface {
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]User, error)
 	SoftDelete(ctx context.Context, tenantID, subject string, at time.Time) error
 
+	// ClearProcessingRestriction clears the §12.8 / GDPR Article 18
+	// processing-restriction flag (and the associated erasure job id) on
+	// the user. It is the privileged §24.12 clear-processing-restriction
+	// path: it bypasses the migration 0042 database trigger that rejects a
+	// plain Update flipping processing_restricted true→false while an
+	// erasure job is still active (the Postgres backend sets the
+	// lenny.clear_processing_restriction session-local for the write).
+	// Returns ErrNotFound when no such user row exists.
+	//
+	// spec: §12.8 line 764 (POST .../clear-processing-restriction sets the
+	// lenny.clear_processing_restriction session-local bypass).
+	ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (User, error)
+
 	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
 	// Hard-deletes the user row keyed by (tenantID, userID); returns
 	// the number of rows removed (0 if no such row).
@@ -202,6 +215,28 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 	now := time.Now().UTC()
 	if !now.After(prev) {
 		now = prev.Add(time.Nanosecond)
+	}
+	row.UpdatedAt = now
+	m.users[k] = row
+	return row, nil
+}
+
+// ClearProcessingRestriction implements Store. The in-memory store has
+// no Article-18 trigger, so the privileged clear is a direct flag reset.
+// spec: §12.8 line 764.
+func (m *Memory) ClearProcessingRestriction(_ context.Context, tenantID, subject string) (User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, subject)
+	row, ok := m.users[k]
+	if !ok || row.TenantID != tenantID {
+		return User{}, ErrNotFound
+	}
+	row.ProcessingRestricted = false
+	row.ErasureJobID = ""
+	now := time.Now().UTC()
+	if !now.After(row.UpdatedAt) {
+		now = row.UpdatedAt.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
 	m.users[k] = row

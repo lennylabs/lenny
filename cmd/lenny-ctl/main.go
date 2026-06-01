@@ -321,7 +321,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|circuit-breakers)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|circuit-breakers|erasure-jobs)")
 		return 2
 	}
 	switch args[0] {
@@ -333,6 +333,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdPools(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breakers":
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
+	case "erasure-jobs":
+		return cmdErasureJobs(ctx, c, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown admin resource %q\n", args[0])
 		return 2
@@ -385,6 +387,70 @@ func cmdMigrate(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		printJSON(stdout, out)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown migrate subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// cmdErasureJobs implements the §24.12 erasure-job management group:
+// `erasure-jobs get <job-id>` (GET /v1/admin/erasure-jobs/{job_id}),
+// `erasure-jobs retry <job-id>` (POST .../retry), and
+// `erasure-jobs clear-restriction <job-id> --justification <text>`
+// (POST .../clear-processing-restriction). All require platform-admin.
+// spec: §24.12 lines 140-144.
+func cmdErasureJobs(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs requires a subcommand (get|retry|clear-restriction)")
+		return 2
+	}
+	switch args[0] {
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs get requires <job-id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/erasure-jobs/"+args[1], nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "retry":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs retry requires <job-id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/erasure-jobs/"+args[1]+"/retry", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "clear-restriction":
+		fs := flag.NewFlagSet("erasure-jobs clear-restriction", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		justification := fs.String("justification", "", "operator justification recorded in the audit trail (required)")
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs clear-restriction requires <job-id>")
+			return 2
+		}
+		jobID := args[1]
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+		if *justification == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs clear-restriction requires --justification <text>")
+			return 2
+		}
+		body := map[string]any{"justification": *justification}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/erasure-jobs/"+jobID+"/clear-processing-restriction", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown erasure-jobs subcommand %q\n", args[0])
 		return 2
 	}
 	return 0

@@ -132,6 +132,11 @@ var severityCatalog = map[string]int{
 	"deployment.feature_flag_downgrade_acknowledged": severityLow,           // §16.7 line 682 (Notice)
 	"legal_hold.escrow_region_resolved":              severityInformational, // §16.7 line 694 (INFO)
 	"node.drain.forced":                              severityCritical,      // §12 line 291 (critical)
+	// §24.12 erasure-job operator recovery actions. Each is an
+	// operator-reviewable policy action (a retry, or a manual Article 18
+	// restriction clear), Notice severity. F-24.12.4.
+	"gdpr.erasure_job_retried":            severityLow,
+	"gdpr.processing_restriction_cleared": severityLow,
 }
 
 // severityFor returns the OCSF severity_id for an event type. Most
