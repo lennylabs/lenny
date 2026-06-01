@@ -415,7 +415,7 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 		InputWaits:  reg,
 	})
 	seedRunningSession(t, store, "sess_rr")
-	ch, err := reg.Register("sess_rr", "req_alpha")
+	ch, err := reg.Register("sess_rr", "req_alpha", nil)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}

@@ -3,6 +3,7 @@
 package inputwait_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 
 func TestRegisterAndResolve(t *testing.T) {
 	r := inputwait.NewRegistry()
-	ch, err := r.Register("sess-1", "req-1")
+	ch, err := r.Register("sess-1", "req-1", nil)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -37,10 +38,10 @@ func TestRegisterAndResolve(t *testing.T) {
 
 func TestRegisterRejectsDuplicate(t *testing.T) {
 	r := inputwait.NewRegistry()
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("first Register: %v", err)
 	}
-	if _, err := r.Register("sess-1", "req-1"); !errors.Is(err, inputwait.ErrDuplicate) {
+	if _, err := r.Register("sess-1", "req-1", nil); !errors.Is(err, inputwait.ErrDuplicate) {
 		t.Errorf("duplicate Register err = %v, want ErrDuplicate", err)
 	}
 }
@@ -54,7 +55,7 @@ func TestResolveUnknownReturnsNotFound(t *testing.T) {
 
 func TestCancelRemovesPending(t *testing.T) {
 	r := inputwait.NewRegistry()
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	r.Cancel("sess-1", "req-1")
@@ -76,7 +77,7 @@ func TestCancelRemovesPending(t *testing.T) {
 // waiting for the §11.3 maxRequestInputWaitSeconds timeout.
 func TestCancelClosesChannelToUnblockWaiter(t *testing.T) {
 	r := inputwait.NewRegistry()
-	ch, err := r.Register("sess-1", "req-1")
+	ch, err := r.Register("sess-1", "req-1", nil)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestCancelClosesChannelToUnblockWaiter(t *testing.T) {
 // the close of an already-closed channel.
 func TestCancelIsIdempotent(t *testing.T) {
 	r := inputwait.NewRegistry()
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	r.Cancel("sess-1", "req-1")
@@ -106,8 +107,8 @@ func TestCancelIsIdempotent(t *testing.T) {
 func TestRequestsAreKeyedBySessionAndID(t *testing.T) {
 	r := inputwait.NewRegistry()
 	// The same request id in two sessions is two distinct requests.
-	chA, _ := r.Register("sess-a", "req-1")
-	chB, _ := r.Register("sess-b", "req-1")
+	chA, _ := r.Register("sess-a", "req-1", nil)
+	chB, _ := r.Register("sess-b", "req-1", nil)
 
 	if err := r.Resolve("sess-a", "req-1", "for-a"); err != nil {
 		t.Fatalf("Resolve sess-a: %v", err)
@@ -135,9 +136,9 @@ func TestPendingForSessionListsRegistrations(t *testing.T) {
 	if got := r.PendingForSession("sess-empty"); len(got) != 0 {
 		t.Errorf("PendingForSession on empty registry = %v, want nil", got)
 	}
-	_, _ = r.Register("sess-1", "req-a")
-	_, _ = r.Register("sess-1", "req-b")
-	_, _ = r.Register("sess-2", "req-x")
+	_, _ = r.Register("sess-1", "req-a", nil)
+	_, _ = r.Register("sess-1", "req-b", nil)
+	_, _ = r.Register("sess-2", "req-x", nil)
 
 	got := r.PendingForSession("sess-1")
 	if len(got) != 2 {
@@ -165,7 +166,7 @@ func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T)
 	if got := r.Consumed("sess-1"); got != 0 {
 		t.Errorf("Consumed on empty registry = %d, want 0", got)
 	}
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	if got := r.Consumed("sess-1"); got != 1 {
@@ -177,7 +178,7 @@ func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T)
 	if got := r.Consumed("sess-1"); got != 1 {
 		t.Errorf("Consumed after Resolve = %d, want 1 (lifetime counter does not decrement)", got)
 	}
-	if _, err := r.Register("sess-1", "req-2"); err != nil {
+	if _, err := r.Register("sess-1", "req-2", nil); err != nil {
 		t.Fatalf("second Register: %v", err)
 	}
 	if got := r.Consumed("sess-1"); got != 2 {
@@ -194,9 +195,9 @@ func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T)
 // another's count. spec: §8.8 line 869. F-8.8.10.
 func TestConsumedIsPerSession_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
-	_, _ = r.Register("sess-a", "req-1")
-	_, _ = r.Register("sess-a", "req-2")
-	_, _ = r.Register("sess-b", "req-1")
+	_, _ = r.Register("sess-a", "req-1", nil)
+	_, _ = r.Register("sess-a", "req-2", nil)
+	_, _ = r.Register("sess-b", "req-1", nil)
 	if got := r.Consumed("sess-a"); got != 2 {
 		t.Errorf("sess-a Consumed = %d, want 2", got)
 	}
@@ -212,7 +213,7 @@ func TestConsumedIsPerSession_spec_8_8_869(t *testing.T) {
 // gateway calls on terminal transition. spec: §8.8 line 869. F-8.8.10.
 func TestForgetSessionClearsCounter_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
-	_, _ = r.Register("sess-1", "req-1")
+	_, _ = r.Register("sess-1", "req-1", nil)
 	r.ForgetSession("sess-1")
 	if got := r.Consumed("sess-1"); got != 0 {
 		t.Errorf("Consumed after ForgetSession = %d, want 0", got)
@@ -226,10 +227,10 @@ func TestForgetSessionClearsCounter_spec_8_8_869(t *testing.T) {
 // the §8.8 lifetime counter. spec: §8.8 line 869. F-8.8.10.
 func TestRegisterDuplicateDoesNotBumpConsumed_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("first Register: %v", err)
 	}
-	if _, err := r.Register("sess-1", "req-1"); !errors.Is(err, inputwait.ErrDuplicate) {
+	if _, err := r.Register("sess-1", "req-1", nil); !errors.Is(err, inputwait.ErrDuplicate) {
 		t.Fatalf("duplicate Register err = %v, want ErrDuplicate", err)
 	}
 	if got := r.Consumed("sess-1"); got != 1 {
@@ -241,7 +242,7 @@ func TestResolveNeverBlocksWhenWaiterLeft(t *testing.T) {
 	r := inputwait.NewRegistry()
 	// Register but never read the channel — Resolve must not block on
 	// the cap-1 buffer.
-	if _, err := r.Register("sess-1", "req-1"); err != nil {
+	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	done := make(chan error, 1)
@@ -253,5 +254,50 @@ func TestResolveNeverBlocksWhenWaiterLeft(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Resolve blocked when the waiter was not reading")
+	}
+}
+
+// TestPendingDetailsForSession verifies the §8.8 line 951
+// lenny/await_children input_required surface: pending requests are
+// returned with their question parts, sorted by request id, scoped to
+// the session, and pruned on Resolve/Cancel. spec: §8.8 line 951.
+// F-8.8.5.
+func TestPendingDetailsForSession_spec_8_8_951(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if got := r.PendingDetailsForSession("sess-1"); got != nil {
+		t.Fatalf("PendingDetailsForSession on empty registry = %v, want nil", got)
+	}
+	partsB := []json.RawMessage{json.RawMessage(`{"type":"text","text":"q-b"}`)}
+	// Register out of sorted order to prove the deterministic sort.
+	if _, err := r.Register("sess-1", "req-b", partsB); err != nil {
+		t.Fatalf("Register req-b: %v", err)
+	}
+	if _, err := r.Register("sess-1", "req-a", nil); err != nil {
+		t.Fatalf("Register req-a: %v", err)
+	}
+	if _, err := r.Register("sess-2", "req-z", nil); err != nil {
+		t.Fatalf("Register req-z: %v", err)
+	}
+	got := r.PendingDetailsForSession("sess-1")
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (scoped to sess-1)", len(got))
+	}
+	if got[0].RequestID != "req-a" || got[1].RequestID != "req-b" {
+		t.Errorf("order = %q,%q; want req-a,req-b (sorted by request id)", got[0].RequestID, got[1].RequestID)
+	}
+	if len(got[1].Parts) != 1 || string(got[1].Parts[0]) != `{"type":"text","text":"q-b"}` {
+		t.Errorf("req-b parts = %v, want the registered question payload", got[1].Parts)
+	}
+	// Resolve prunes the entry from the partial surface.
+	if err := r.Resolve("sess-1", "req-a", "ans"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := r.PendingDetailsForSession("sess-1"); len(got) != 1 || got[0].RequestID != "req-b" {
+		t.Errorf("after Resolve = %v, want only req-b", got)
+	}
+	// Cancel prunes the remaining entry.
+	r.Cancel("sess-1", "req-b")
+	if got := r.PendingDetailsForSession("sess-1"); got != nil {
+		t.Errorf("after Cancel = %v, want nil", got)
 	}
 }

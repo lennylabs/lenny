@@ -1925,6 +1925,82 @@ func TestAwaitChildrenAny(t *testing.T) {
 	}
 }
 
+// TestAwaitChildrenYieldsInputRequiredPartial_spec_8_8_951 covers the
+// §8.8 lines 951-971 contract: when an awaited child is blocked on a
+// lenny/request_input round, lenny/await_children returns a partial
+// result carrying the child's requestId and question parts instead of
+// blocking until the child settles. F-8.5.5 / F-8.8.5.
+func TestAwaitChildrenYieldsInputRequiredPartial_spec_8_8_951(t *testing.T) {
+	srv, store, reg := newMCPForInput(t, time.Second)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c1", session.StateRunning, "sess_p")
+	mkSession(t, store, "sess_c2", session.StateRunning, "sess_p")
+
+	// sess_c1 is blocked on input; sess_c2 is merely running. The
+	// partial must name sess_c1 with its requestId and question.
+	parts := []json.RawMessage{json.RawMessage(`{"type":"text","text":"which branch?"}`)}
+	if _, err := reg.Register("sess_c1", "req_001", parts); err != nil {
+		t.Fatalf("seed pending input: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c1","sess_c2"],"mode":"all"}`)
+	text := resultText(t, resp)
+
+	var body struct {
+		Partial       bool `json:"partial"`
+		InputRequired []struct {
+			ChildID   string            `json:"childId"`
+			State     string            `json:"state"`
+			RequestID string            `json:"requestId"`
+			Parts     []json.RawMessage `json:"parts"`
+		} `json:"inputRequired"`
+	}
+	if err := json.Unmarshal([]byte(text), &body); err != nil {
+		t.Fatalf("decode partial %q: %v", text, err)
+	}
+	if !body.Partial {
+		t.Fatalf("partial flag = false, want true; body=%q", text)
+	}
+	if len(body.InputRequired) != 1 {
+		t.Fatalf("inputRequired len = %d, want 1; body=%q", len(body.InputRequired), text)
+	}
+	ir := body.InputRequired[0]
+	if ir.ChildID != "sess_c1" || ir.RequestID != "req_001" || ir.State != "input_required" {
+		t.Errorf("partial = %+v, want childId=sess_c1 requestId=req_001 state=input_required", ir)
+	}
+	if len(ir.Parts) != 1 || string(ir.Parts[0]) != `{"type":"text","text":"which branch?"}` {
+		t.Errorf("partial parts = %v, want the registered question", ir.Parts)
+	}
+}
+
+// TestAwaitChildrenResolvedInputDoesNotYieldPartial_spec_8_8_951
+// verifies that once the pending input is resolved (and the children
+// settle), await_children returns the terminal results rather than a
+// stale input_required partial. F-8.8.5.
+func TestAwaitChildrenResolvedInputDoesNotYieldPartial_spec_8_8_951(t *testing.T) {
+	srv, store, reg := newMCPForInput(t, time.Second)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c1", session.StateCompleted, "sess_p")
+	// A pending entry for an already-settled child must not block the
+	// terminal result; resolve it so the registry surface is clean.
+	if _, err := reg.Register("sess_c1", "req_001", nil); err != nil {
+		t.Fatalf("seed pending input: %v", err)
+	}
+	if err := reg.Resolve("sess_c1", "req_001", "ans"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c1"],"mode":"all"}`)
+	text := resultText(t, resp)
+	if strings.Contains(text, "inputRequired") {
+		t.Fatalf("settled await returned an input_required partial: %q", text)
+	}
+	if !strings.Contains(text, "completed") {
+		t.Errorf("await result %q missing the terminal completed state", text)
+	}
+}
+
 // TestAwaitChildrenAnyReturnsFirstChronologicallySettled_spec_8_8_945
 // asserts that `any` mode returns the child that reached terminal first
 // by wall clock, not the first-listed terminal child. Two siblings are

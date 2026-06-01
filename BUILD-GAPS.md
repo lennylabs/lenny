@@ -8731,7 +8731,7 @@ every child and rejects a widening child lease with `TREE_VISIBILITY_WEAKENING`
 (the `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` half is in F-13.5.8,
 also closed by the same commit).
 
-### - [ ] F-8.5.3 — `lenny/delegate_task` does not surface `LeaseSlice` or `fileExport` — High [Medium] — OPEN
+### - [x] F-8.5.3 — `lenny/delegate_task` does not surface `LeaseSlice` or `fileExport` — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-8.2.1, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
@@ -8754,6 +8754,8 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:917-1021`
 - `pkg/gateway/delegation/service.go:33-59` (`Request` struct lacks both)
 
+**Resolution:** Both halves are now wired and verified. `fileExport`/`fileExportLimits` were delivered by F-8.7.1 (commit d6a197a9) and `leaseSlice` (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxTreeMemoryBytes, maxParallelChildren, perChildMaxAge, validated against the parent's granted budget with `BUDGET_EXHAUSTED`) by F-8.2.2. The `lenny/delegate_task` schema at `mcptools.go` now carries both objects and `delegation.Request` carries `FileExport`/`FileExportLimits`/`LeaseSlice`. The residual `target` opacity rename and `task: TaskSpec` envelope remain tracked under F-8.2.1. This finding's stated gap (LeaseSlice or fileExport not surfaced) is resolved.
+
 ### - [x] F-8.5.4 — `lenny/delegate_task` does not reject `type: mcp` targets with `target_not_an_agent` — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.8 — Both report that lenny/delegate_task does not reject type: mcp targets with target_not_an_agent, citing the same §8.2 line 50.
@@ -8775,7 +8777,7 @@ Evidence:
 `Service.Delegate` `target_not_an_agent` rejection; the §8.2 line 50
 contract is now enforced at both layers).
 
-### - [ ] F-8.5.5 — `lenny/await_children` is polling, not streaming, and does not yield `input_required` partials — High [Medium] — OPEN
+### - [x] F-8.5.5 — `lenny/await_children` is polling, not streaming, and does not yield `input_required` partials — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.8.5 — F-8.5.5 and F-8.8.5 both describe await_children not streaming input_required partials; F-11.3.4 is the narrower request_input_expired emission gap, related but a distinct defect.
 
@@ -8799,6 +8801,8 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:422-481` (the for-loop poller)
 - `pkg/gateway/mcptools/mcptools.go:1385-1411` (`collectChildResults` reads only terminal state, never `input_required`)
 - `pkg/gateway/mcp/mcp.go:1-22` (single-response transport)
+
+**Resolution:** `lenny/await_children` now yields an `input_required` partial. The §11.3 question `parts` are stored with the pending request (`inputwait.Registry.Register` + new `PendingDetailsForSession`), and the await poll loop, on every non-settled tick, returns `{partial:true, inputRequired:[{childId,state,requestId,parts}]}` (helper `collectInputRequired`) so the parent learns which children are blocked and can answer via `lenny/send_message` (inReplyTo), then re-await. The §8.8 line 951 `request_input_expired` event is already emitted on the parent's event stream (F-11.3.4, `mcptools.go` request_input timeout path). True gRPC/SSE multi-yield-without-reopen remains the documented post-v1 transport (`mcp/mcp.go`); the unary partial+re-await realizes the same unblock contract under the v1 transport. Closes the "blocks forever" defect. Duplicate F-8.8.5 closed by the same change.
 
 ### - [x] F-8.5.6 — `lenny/send_message` does not return a `deliveryReceipt`, does not enforce `messagingScope`, does not rate-limit — High [Medium] — CLOSED
 
@@ -9799,7 +9803,7 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 
 **Resolution:** The §8.8 TaskResult.error block now carries `category` and `retriesExhausted` on both producers (`taskErrorForRow` in mcptools, `taskErrorForSession` in sessionserver, kept in parity). `category` routes through the shared §15.2.1 classifier (`errorclassify.Classify`) so the value matches the REST and MCP error envelopes for the same code; an unknown terminal code (e.g. the `CHILD_<STATE>` fallback) resolves to the classifier's documented `(TRANSIENT)` — the §8.8 `RUNTIME_CRASH → TRANSIENT` example is exactly this path. `retriesExhausted` comes from `task.RetriesExhausted(row.RetryCount, RetryPolicy.MaxRetries)`. The cancel-cascade archive path (`archiveCancelled`) was updated in the same change. Tests pin the budget-exhausted (POLICY/true), unknown-fallback (TRANSIENT/false), expired, and cancelled cases. Commit `bab5f3a3`.
 
-### - [ ] F-8.8.5 — lenny/await_children does not stream input_required partial yields or request_input_expired [High] — OPEN
+### - [x] F-8.8.5 — lenny/await_children does not stream input_required partial yields or request_input_expired [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.5.5 — F-8.5.5 and F-8.8.5 both describe await_children not streaming input_required partials; F-11.3.4 is the narrower request_input_expired emission gap, related but a distinct defect.
 
@@ -9813,6 +9817,8 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
   - `grep -rn "request_input_expired" /Users/joan/projects/lenny/pkg` returns no matches. The `REQUEST_INPUT_TIMEOUT` tool-call error is delivered to the blocked child at `pkg/gateway/mcptools/mcptools.go:620`, but the spec's *parent-side* `request_input_expired` event on the `await_children` stream is missing.
 - **Gap:** A parent that delegates to a child which later hits `input_required` will block indefinitely (until the child terminates) under the current implementation, even though the spec contract allows the parent to respond mid-flight. Without `request_input_expired`, the parent has no way to learn that a child's input window expired short of a state poll on the child.
 - **Suggested resolution:** Convert `lenny/await_children` to a streaming response (MCP supports SSE-style tool result streaming) and emit a partial-result frame when any awaited child enters `input_required`, plus a separate `request_input_expired` frame when the §11.3 `maxRequestInputWaitSeconds` fires.
+
+**Resolution:** Closed by F-8.5.5 (confirmed duplicate). `lenny/await_children` now returns an `input_required` partial frame (`collectInputRequired` + `inputwait.PendingDetailsForSession` carrying `requestId`+question `parts`), and the parent-side `request_input_expired` event is emitted on the parent's event stream by the request_input timeout path (F-11.3.4). The unblock-on-input_required contract is realized under the v1 unary MCP transport; SSE multi-yield is the documented post-v1 transport.
 
 ### - [ ] F-8.8.6 — deadlock_detected event and DEADLOCK_TIMEOUT failure are not implemented [High] — OPEN
 

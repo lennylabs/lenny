@@ -9,7 +9,9 @@
 package inputwait
 
 import (
+	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 )
 
@@ -37,14 +39,31 @@ var (
 // sufficient for the §8.8 contract. spec: §8.8 line 869. F-8.8.10.
 type Registry struct {
 	mu       sync.Mutex
-	pending  map[string]chan string
+	pending  map[string]*entry
 	consumed map[string]int
+}
+
+// entry is a single pending request: the answer channel plus the §8.8
+// line 951 question `parts` the lenny/await_children partial result
+// carries back to the awaiting parent. spec: §8.8 line 951; F-8.8.5.
+type entry struct {
+	ch    chan string
+	parts []json.RawMessage
+}
+
+// PendingRequest is one session's pending lenny/request_input round as
+// surfaced to lenny/await_children. RequestID is the correlation id the
+// parent answers with `inReplyTo`; Parts is the OutputPart[] question.
+// spec: §8.8 line 951; F-8.8.5.
+type PendingRequest struct {
+	RequestID string
+	Parts     []json.RawMessage
 }
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		pending:  map[string]chan string{},
+		pending:  map[string]*entry{},
 		consumed: map[string]int{},
 	}
 }
@@ -62,7 +81,11 @@ func key(sessionID, requestID string) string {
 // returned when (sessionID, requestID) is already pending. Register
 // also bumps the §8.8 per-session lifetime counter so a Consumed()
 // caller can detect a second request before allocating a channel.
-func (r *Registry) Register(sessionID, requestID string) (<-chan string, error) {
+// The §8.8 line 951 question `parts` are stored alongside the channel
+// so a lenny/await_children call can surface them in the input_required
+// partial result without a second round-trip to the child. A nil parts
+// slice is permitted (the registry does not interpret the payload).
+func (r *Registry) Register(sessionID, requestID string, parts []json.RawMessage) (<-chan string, error) {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -70,7 +93,7 @@ func (r *Registry) Register(sessionID, requestID string) (<-chan string, error) 
 		return nil, ErrDuplicate
 	}
 	ch := make(chan string, 1)
-	r.pending[k] = ch
+	r.pending[k] = &entry{ch: ch, parts: parts}
 	r.consumed[sessionID]++
 	return ch, nil
 }
@@ -102,12 +125,12 @@ func (r *Registry) Resolve(sessionID, requestID, answer string) error {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ch, ok := r.pending[k]
+	e, ok := r.pending[k]
 	if !ok {
 		return ErrNotFound
 	}
 	delete(r.pending, k)
-	ch <- answer // buffered with cap 1, so this never blocks
+	e.ch <- answer // buffered with cap 1, so this never blocks
 	return nil
 }
 
@@ -122,8 +145,8 @@ func (r *Registry) Cancel(sessionID, requestID string) {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ch, ok := r.pending[k]; ok {
-		close(ch)
+	if e, ok := r.pending[k]; ok {
+		close(e.ch)
 		delete(r.pending, k)
 	}
 }
@@ -153,5 +176,24 @@ func (r *Registry) PendingForSession(sessionID string) []string {
 			out = append(out, k[len(prefix):])
 		}
 	}
+	return out
+}
+
+// PendingDetailsForSession returns every pending request for sessionID
+// with its §8.8 line 951 question `parts`, sorted by request id so the
+// lenny/await_children input_required partial result is deterministic
+// across polls. Returns nil when no request is pending. spec: §8.8
+// line 951; F-8.8.5.
+func (r *Registry) PendingDetailsForSession(sessionID string) []PendingRequest {
+	prefix := sessionID + "\x00"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []PendingRequest
+	for k, e := range r.pending {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			out = append(out, PendingRequest{RequestID: k[len(prefix):], Parts: e.parts})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RequestID < out[j].RequestID })
 	return out
 }

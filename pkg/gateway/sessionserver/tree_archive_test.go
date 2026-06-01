@@ -466,7 +466,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 	})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
-	if _, err := reg.Register("sess_child", "req_42"); err != nil {
+	if _, err := reg.Register("sess_child", "req_42", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 

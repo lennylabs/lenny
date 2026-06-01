@@ -897,6 +897,24 @@ func Register(srv *mcp.Server, deps Deps) {
 				}{Results: results})
 				return textResult(string(body)), nil
 			}
+			// spec: §8.8 lines 951-971 — when an awaited child enters the
+			// input_required sub-state (it has a pending lenny/request_input
+			// round), the call yields a partial result carrying that child's
+			// `requestId` and question `parts` instead of blocking until the
+			// child settles, so the parent can answer via lenny/send_message
+			// (inReplyTo) and re-await. The v1 MCP transport is unary (the
+			// gRPC streaming AwaitChildren is post-v1, mcp/mcp.go), so each
+			// call returns the currently-blocked children in one partial
+			// frame and the parent re-invokes after acting. Without this the
+			// parent would block until every child terminates and could never
+			// answer a child's question. F-8.5.5 / F-8.8.5.
+			if partial := collectInputRequired(deps.InputWaits, in.ChildIDs); len(partial) > 0 {
+				body, _ := json.Marshal(struct {
+					Partial       bool                 `json:"partial"`
+					InputRequired []inputRequiredChild `json:"inputRequired"`
+				}{Partial: true, InputRequired: partial})
+				return textResult(string(body)), nil
+			}
 			select {
 			case <-ctx.Done():
 				return mcp.ToolResult{}, ctx.Err()
@@ -1099,7 +1117,11 @@ func Register(srv *mcp.Server, deps Deps) {
 					fmt.Sprintf("one_shot runtime %q has already consumed its single request_input round (§8.8 line 869)", row.RuntimeRef),
 					map[string]any{"sessionId": sessionID, "runtimeRef": row.RuntimeRef, "maxInputRounds": 1})
 			}
-			ch, err := deps.InputWaits.Register(sessionID, requestID)
+			// spec: §8.8 line 951 — store the question `parts` with the
+			// pending registration so a parent's lenny/await_children call
+			// can surface them in the input_required partial result without
+			// re-fetching the child. F-8.8.5.
+			ch, err := deps.InputWaits.Register(sessionID, requestID, in.Parts)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -3052,6 +3074,42 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 		result:    tr,
 		settledAt: node.SettledAt,
 	}, nil
+}
+
+// inputRequiredChild is one awaited child's input_required partial
+// result on the lenny/await_children response: the child id, the fixed
+// `input_required` state tag, the §8.8 `requestId` the parent answers
+// with `inReplyTo`, and the question `parts`. spec: §8.8 line 951;
+// F-8.8.5.
+type inputRequiredChild struct {
+	ChildID   string            `json:"childId"`
+	State     string            `json:"state"`
+	RequestID string            `json:"requestId"`
+	Parts     []json.RawMessage `json:"parts,omitempty"`
+}
+
+// collectInputRequired returns the input_required partial entries for
+// the awaited children that currently have a pending lenny/request_input
+// round. The result is ordered by (childIDs position, requestId) so a
+// repeated poll yields a stable frame. Returns nil when the registry is
+// absent or no awaited child is blocked on input. spec: §8.8 lines
+// 951-971; F-8.5.5 / F-8.8.5.
+func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputRequiredChild {
+	if reg == nil {
+		return nil
+	}
+	var out []inputRequiredChild
+	for _, cid := range childIDs {
+		for _, pr := range reg.PendingDetailsForSession(cid) {
+			out = append(out, inputRequiredChild{
+				ChildID:   cid,
+				State:     string(session.StateInputRequired),
+				RequestID: pr.RequestID,
+				Parts:     pr.Parts,
+			})
+		}
+	}
+	return out
 }
 
 // collectChildResults reads the awaited children and reports whether
