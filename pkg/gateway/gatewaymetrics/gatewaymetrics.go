@@ -285,6 +285,11 @@ type Metrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
+	// sigkillStreams counts the §10.1 line 161 in-flight streams the
+	// kubelet SIGKILLs at the grace deadline because their eviction
+	// checkpoint did not finish in budget. Labels: `pool`,
+	// `service_instance_id`.
+	sigkillStreams *prometheus.CounterVec
 	// gcTombstonesPruned counts the §12.5 ll. 341 hard-prune
 	// removals: catalog rows whose tombstone deadline has elapsed and
 	// were physically removed from the artifact_store table together
@@ -1366,6 +1371,19 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §10.1 line 161 — `lenny_gateway_sigkill_streams_total`
+	// counts in-flight streams forcibly terminated when the kubelet
+	// SIGKILLs the pod at the grace deadline because their eviction
+	// checkpoint did not complete in budget. Labels mirror the cap
+	// selection counter so per-replica / per-pool alert expressions
+	// can correlate the two.
+	sigkillStreams, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_sigkill_streams_total",
+		Help: "In-flight streams forcibly terminated at the SIGKILL deadline (§10.1).",
+	}, []string{"pool", "service_instance_id"})
+	if err != nil {
+		return nil, err
+	}
 	// §12.5 ll. 341 — `lenny_gc_tombstones_pruned_total` counts the
 	// soft-deleted catalog rows physically removed by the hard-prune
 	// sweep once the tombstone retention window has elapsed. No
@@ -1793,7 +1811,7 @@ func New() (*Metrics, error) {
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
 		slotRehydration,
-		checkpointPartialTotal, prestopCapSelection,
+		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
@@ -1947,6 +1965,7 @@ func New() (*Metrics, error) {
 		slotRehydration:                      slotRehydration,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
+		sigkillStreams:                       sigkillStreams,
 		gcTombstonesPruned:                   gcTombstonesPruned,
 		gcRuns:                               gcRuns,
 		gcArtifactsDeleted:                   gcArtifactsDeleted,
@@ -2836,6 +2855,19 @@ func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string)
 		return
 	}
 	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
+}
+
+// IncSigkillStreams increments the §10.1 line 161
+// `lenny_gateway_sigkill_streams_total` counter for one in-flight
+// stream the kubelet SIGKILLs at the grace deadline because its
+// eviction checkpoint did not finish in budget. Called once per
+// deadline-exceeded session during the preStop staged drain.
+// spec: §10.1 line 161 — SIGKILL-deadline stream counter.
+func (m *Metrics) IncSigkillStreams(pool, serviceInstanceID string) {
+	if m == nil {
+		return
+	}
+	m.sigkillStreams.WithLabelValues(pool, serviceInstanceID).Inc()
 }
 
 // SetCheckpointStaleSessions sets the per-pool/level

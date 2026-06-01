@@ -17,6 +17,14 @@ agentNamespaces:
 # election so exactly one replica reconciles at a time.
 controller:
   replicas: 2
+  # rollingUpdate configures the §10.5 / §17.1 Deployment.spec.strategy
+  # block on the controller. The defaults make the Kubernetes rolling
+  # posture explicit and auditable: drain one replica at a time so the
+  # leader-election standby is ready to take the lease while the
+  # replacement comes up.
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 1
   # metricsPort is the port the controller serves Prometheus metrics
   # on (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
@@ -213,6 +221,14 @@ ingress:
 # stateless and runs with 2 replicas (§17.1).
 tokenService:
   replicas: 2
+  # rollingUpdate configures the §10.5 / §17.1 Deployment.spec.strategy
+  # block on the Token Service. maxUnavailable: 0 keeps full
+  # token-minting capacity through a rollout because the Token Service
+  # sits on the gateway auth path: a new Pod becomes Ready before the
+  # old one is removed.
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
   # grpcPort is the mTLS gRPC port the gateway reaches the Token
   # Service on (§13.2 / §4.3). The lenny-token-service Service exposes
   # the gRPC listener on this port; the binary's --grpc-addr flag

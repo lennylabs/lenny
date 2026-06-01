@@ -194,12 +194,20 @@ type SessionEnumerator interface {
 type CheckpointFn func(ctx context.Context, tenantID, sessionID string, budget time.Duration) error
 
 // CapMetricsEmitter is the §10.1 metrics surface the hook bumps the
-// `lenny_prestop_cap_selection_total` counter on. The
+// `lenny_prestop_cap_selection_total` and
+// `lenny_gateway_sigkill_streams_total` counters on. The
 // gatewaymetrics.Metrics satisfies it; tests inject fakes.
 //
-// spec: §10.1 — preStop tier selection source counter.
+// spec: §10.1 line 161 — preStop tier selection source counter and the
+// SIGKILL-deadline stream counter.
 type CapMetricsEmitter interface {
 	IncPreStopCapSelection(pool, serviceInstanceID, source string)
+	// IncSigkillStreams records one in-flight stream whose eviction
+	// checkpoint did not finish within its tier budget before the
+	// grace period elapsed. Kubernetes SIGKILLs the pod at the grace
+	// deadline, forcibly terminating any such stream, so the counter
+	// quantifies the impact of forced disconnections (§10.1 line 161).
+	IncSigkillStreams(pool, serviceInstanceID string)
 }
 
 // Hook is the §4.4 / §10.1 preStop HTTP handler. It is configured
@@ -250,7 +258,12 @@ type Summary struct {
 	CompletedSessions  int      `json:"completed_sessions"`
 	SkippedSessions    int      `json:"skipped_sessions"`
 	FailedSessions     int      `json:"failed_sessions"`
-	AlreadyFired       bool     `json:"already_fired,omitempty"`
+	// SigkilledStreams counts sessions whose checkpoint ran out of
+	// budget before the grace deadline; the kubelet SIGKILLs the pod
+	// at the deadline so each is a forcibly terminated stream
+	// (§10.1 line 161 `lenny_gateway_sigkill_streams_total`).
+	SigkilledStreams int      `json:"sigkilled_streams,omitempty"`
+	AlreadyFired     bool     `json:"already_fired,omitempty"`
 	Errors             []string `json:"errors,omitempty"`
 }
 
@@ -327,6 +340,12 @@ func (h *Hook) run(ctx context.Context) Summary {
 			if err := h.Checkpoint(perCtx, sess.TenantID, sess.SessionID, budget); err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
 					summary.FailedSessions++
+					// The checkpoint ran out of budget; this stream is
+					// still in flight when the grace deadline hits, so
+					// the kubelet SIGKILL forcibly terminates it.
+					// spec: §10.1 line 161.
+					summary.SigkilledStreams++
+					h.emitSigkillStream(sess.Pool)
 					summary.Errors = append(summary.Errors,
 						sess.SessionID+": deadline exceeded")
 				} else {
@@ -365,6 +384,16 @@ func (h *Hook) emitCapSelection(pool string, source CapSelectionSource) {
 		return
 	}
 	h.Metrics.IncPreStopCapSelection(pool, h.ServiceInstanceID, string(source))
+}
+
+// emitSigkillStream bumps the §10.1 line 161
+// `lenny_gateway_sigkill_streams_total` counter for one session whose
+// eviction checkpoint exceeded its budget before the grace deadline.
+func (h *Hook) emitSigkillStream(pool string) {
+	if h.Metrics == nil {
+		return
+	}
+	h.Metrics.IncSigkillStreams(pool, h.ServiceInstanceID)
 }
 
 // gracePeriod returns the per-hook termination grace period. The

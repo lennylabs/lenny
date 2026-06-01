@@ -247,3 +247,37 @@ tests:
           path: spec.template.spec.volumes
       - isNull:
           path: spec.template.spec.containers[0].volumeMounts
+
+  # spec: §10.5 line 544 ("Token Service: Rolling Deployment update") /
+  # §17.1 — the Token Service declares an explicit RollingUpdate
+  # strategy with maxUnavailable 0 so a rollout keeps full token-minting
+  # capacity on the gateway auth path. F-10.5.9.
+  - it: renders the §10.5 / §17.1 RollingUpdate strategy by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+
+  - it: honors a tokenService.rollingUpdate override
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      tokenService.rollingUpdate.maxUnavailable: 1
+      tokenService.rollingUpdate.maxSurge: 50%
+    asserts:
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 50%

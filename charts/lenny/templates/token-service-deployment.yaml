@@ -22,6 +22,18 @@ metadata:
     lenny.dev/component: token-service
 spec:
   replicas: {{ .Values.tokenService.replicas }}
+  # spec: §10.5 line 544 ("Token Service: Rolling Deployment update") /
+  # §17.1. The strategy is declared explicitly so the rolling posture
+  # is auditable and survives chart customization rather than relying
+  # on the Kubernetes 25% default. The Token Service sits on the
+  # gateway auth path, so maxUnavailable: 0 keeps full token-minting
+  # capacity through a rollout: the replacement Pod becomes Ready
+  # before the old one is removed.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.tokenService.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.tokenService.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}

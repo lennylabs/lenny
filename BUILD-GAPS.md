@@ -12164,11 +12164,13 @@ Implementation: the chart presumes the Prometheus Adapter (Tier 1 path) or KEDA 
 
 **Resolution:** Verify-closed per the finding's own framing ("informational" external-dependency gap). The chart explicitly documents the prereq at `charts/lenny/values.yaml:572-586` and gates the autoscaling template behind `autoscaling.enabled` — a Tier 2/3 install without KEDA fails closed at the HPA reconciler with a clear error rather than silently degrading. A preflight check that probes the cluster for KEDA/Prometheus Adapter belongs under the §17.9 preflight surface tracked separately and is not a §10.1 deliverable.
 
-### - [ ] F-10.1.15 — `lenny_gateway_sigkill_streams_total` not emitted. (Medium) [Medium] — OPEN
+### - [x] F-10.1.15 — `lenny_gateway_sigkill_streams_total` not emitted. (Medium) [Medium] — CLOSED
 
 Spec: line 161 ("monitor the `lenny_gateway_sigkill_streams_total` metric (streams terminated by SIGKILL at grace period deadline) to quantify the impact of forced disconnections.").
 
 Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:98`. No emitter exists, which follows from F6 (no preStop hook to drive the metric).
+
+**Resolution:** F6 (the preStop staged drain) has since landed in `pkg/gateway/prestop`. Added the `lenny_gateway_sigkill_streams_total{pool,service_instance_id}` counter to `gatewaymetrics`, extended the prestop `CapMetricsEmitter` interface with `IncSigkillStreams`, and emit it once per session whose eviction checkpoint returns `context.DeadlineExceeded` during the drain — those are the in-flight streams the kubelet SIGKILLs at the grace deadline. The hook `Summary` also reports `sigkilled_streams`. Three tier-1 unit tests cover the deadline-exceeded emission, the non-deadline-failure no-emit path, and the label values.
 
 ### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — DEFERRED
 
@@ -13301,7 +13303,7 @@ Implementation:
 
 This is a Medium because the platform has not landed a Phase 3 migration yet, so the gap has not produced a real failure. The risk is structural: the first DDL author whose Phase 1 column carries `NOT NULL` will hit a rolling-deploy outage with no CI defense.
 
-### - [ ] F-10.5.9 — 09  No `Deployment.spec.strategy` declared on gateway/controller/token-service charts; defaults assumed [Medium] — OPEN
+### - [x] F-10.5.9 — 09  No `Deployment.spec.strategy` declared on gateway/controller/token-service charts; defaults assumed [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.1.2 — Both report the gateway Deployment declares no rolling-update strategy block, falling back to the K8s 25% default; F-10.5.9 covers gateway plus controller/token-service while F-4.1.2 is gateway-only and CLOSED.
 
@@ -13313,6 +13315,8 @@ Implementation:
 - A `PodDisruptionBudget` is referenced by `docs/operator-guide/upgrades.md:37`. `grep -l PodDisruptionBudget charts/lenny/templates/*.yaml` would clarify, but the gateway-deployment file (lines 1–11908) does not declare strategy fields, so the operator-guide-promised rolling behavior depends on cluster defaults rather than chart specification.
 
 Severity is Medium because the K8s defaults do roll. The gap is the absence of an explicit, auditable rolling-update strategy that survives chart customization (a user setting `gateway.deployment.strategy: Recreate` would silently breaks the §10.5 invariant).
+
+**Resolution:** The gateway already carried an explicit `strategy` block (F-4.1.2). Added the matching `spec.strategy.type: RollingUpdate` block to `controller-deployment.yaml` (maxUnavailable 1 / maxSurge 1, leader-election-aware) and `token-service-deployment.yaml` (maxUnavailable 0 / maxSurge 1, zero-downtime on the auth path), each driven by a new operator-tunable `controller.rollingUpdate` / `tokenService.rollingUpdate` values block so the posture is auditable and survives chart customization. Four helm-unittest cases assert the default and override paths.
 
 ### - [x] F-10.5.10 — 10  Down-migration runbook references nonexistent CLI surface [Low] — CLOSED
 

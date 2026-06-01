@@ -84,9 +84,11 @@ func (f *fakeEnumerator) Snapshot(_ context.Context) ([]SessionInfo, error) {
 	return f.sessions, f.err
 }
 
-// fakeMetrics records every IncPreStopCapSelection call.
+// fakeMetrics records every IncPreStopCapSelection and
+// IncSigkillStreams call.
 type fakeMetrics struct {
-	calls []capCall
+	calls    []capCall
+	sigkills []sigkillCall
 }
 
 type capCall struct {
@@ -95,8 +97,17 @@ type capCall struct {
 	source string
 }
 
+type sigkillCall struct {
+	pool string
+	siid string
+}
+
 func (f *fakeMetrics) IncPreStopCapSelection(pool, siid, source string) {
 	f.calls = append(f.calls, capCall{pool, siid, source})
+}
+
+func (f *fakeMetrics) IncSigkillStreams(pool, siid string) {
+	f.sigkills = append(f.sigkills, sigkillCall{pool, siid})
 }
 
 // spec: §10.1 — the hook drains every coordinated session and bumps
@@ -155,6 +166,78 @@ func TestHook_DrainsSessionsAndEmitsCapSelection(t *testing.T) {
 	// Second session: 250 MB workspace -> 60s tier.
 	if !strings.HasPrefix(checkpointed[1], "s2|1m0s") {
 		t.Fatalf("s2 budget: %q", checkpointed[1])
+	}
+}
+
+// spec: §10.1 line 161 — a session whose eviction checkpoint exceeds
+// its budget is still in flight at the grace deadline, so the hook
+// counts it as a SIGKILL'd stream and bumps
+// lenny_gateway_sigkill_streams_total once per such session. A session
+// that checkpoints in time does not.
+func TestHook_DeadlineExceededEmitsSigkillStream_spec_10_1_161(t *testing.T) {
+	enum := &fakeEnumerator{sessions: []SessionInfo{
+		{TenantID: "acme", SessionID: "slow", Pool: "p1", LastCheckpointWorkspaceBytes: 5 * 1024 * 1024},
+		{TenantID: "acme", SessionID: "fast", Pool: "p2", LastCheckpointWorkspaceBytes: 5 * 1024 * 1024},
+	}}
+	metrics := &fakeMetrics{}
+	hook := &Hook{
+		Sessions:          enum,
+		Metrics:           metrics,
+		ServiceInstanceID: "gateway-replica-1",
+		Checkpoint: func(_ context.Context, _, sessionID string, _ time.Duration) error {
+			if sessionID == "slow" {
+				return context.DeadlineExceeded
+			}
+			return nil
+		},
+	}
+	w := httptest.NewRecorder()
+	hook.ServeHTTP(w, httptest.NewRequest("POST", "/internal/prestop", nil))
+
+	var summary Summary
+	if err := json.NewDecoder(w.Result().Body).Decode(&summary); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if summary.SigkilledStreams != 1 {
+		t.Fatalf("sigkilled streams: got %d want 1", summary.SigkilledStreams)
+	}
+	if summary.FailedSessions != 1 || summary.CompletedSessions != 1 {
+		t.Fatalf("failed=%d completed=%d", summary.FailedSessions, summary.CompletedSessions)
+	}
+	if len(metrics.sigkills) != 1 {
+		t.Fatalf("sigkill emissions: got %d want 1", len(metrics.sigkills))
+	}
+	if metrics.sigkills[0].pool != "p1" || metrics.sigkills[0].siid != "gateway-replica-1" {
+		t.Fatalf("sigkill labels: %+v", metrics.sigkills[0])
+	}
+}
+
+// spec: §10.1 line 161 — a non-deadline checkpoint failure is not a
+// SIGKILL'd stream; only the grace-deadline path bumps the counter.
+func TestHook_NonDeadlineFailureNoSigkillStream_spec_10_1_161(t *testing.T) {
+	enum := &fakeEnumerator{sessions: []SessionInfo{
+		{TenantID: "acme", SessionID: "s1", Pool: "p1", LastCheckpointWorkspaceBytes: 5 * 1024 * 1024},
+	}}
+	metrics := &fakeMetrics{}
+	hook := &Hook{
+		Sessions: enum,
+		Metrics:  metrics,
+		Checkpoint: func(_ context.Context, _, _ string, _ time.Duration) error {
+			return errors.New("upload failed")
+		},
+	}
+	w := httptest.NewRecorder()
+	hook.ServeHTTP(w, httptest.NewRequest("POST", "/internal/prestop", nil))
+
+	var summary Summary
+	if err := json.NewDecoder(w.Result().Body).Decode(&summary); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if summary.SigkilledStreams != 0 {
+		t.Fatalf("sigkilled streams: got %d want 0", summary.SigkilledStreams)
+	}
+	if len(metrics.sigkills) != 0 {
+		t.Fatalf("sigkill emissions: got %d want 0", len(metrics.sigkills))
 	}
 }
 

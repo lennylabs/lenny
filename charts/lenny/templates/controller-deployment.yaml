@@ -23,6 +23,17 @@ metadata:
     lenny.dev/component: controller
 spec:
   replicas: {{ .Values.controller.replicas }}
+  # spec: §10.5 line 403 ("Rolling Deployment updates") / §17.1. The
+  # strategy block is declared explicitly so the rolling posture is
+  # auditable and survives chart customization rather than relying on
+  # the Kubernetes 25% default. The controller is leader-elected, so a
+  # rollout that drains one replica at a time keeps a standby ready to
+  # take the lease while the replacement comes up.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.controller.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.controller.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
