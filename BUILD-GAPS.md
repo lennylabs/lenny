@@ -4060,7 +4060,7 @@ Classification: *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Seve
 
 Summary: the pod-warm path is largely implemented (state machine, sidecar/embedded pod spec, security context, two of the three required mount points, one-session-only invariant). The entire SDK-warm / preConnect feature surface — `capabilities.preConnect`, `sdkWarmBlockingPaths`, gateway-side demotion routing, warm-pool SDK pre-connect, SDK watchdog, demotion metrics — is absent or stub-only. Three §6.1 filesystem mounts (`/sessions`, `/artifacts`, `/dev/shm`), the projected service-account token, container resource requests, the `lenny.dev/state` and `lenny.dev/runtime` labels, and the readiness gate are not produced by the pod builder.
 
-### - [ ] F-6.1.1 — SDK-warm path is entirely unimplemented end-to-end [High] — OPEN
+### - [ ] F-6.1.1 — SDK-warm path is entirely unimplemented end-to-end [High] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-6.2.3 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
@@ -4076,6 +4076,8 @@ Implementation does not pre-connect any agent process at warm time.
 - `BUILD-PROGRESS.md:33` (Phase 3) explicitly records: "the … SDK-warm circuit-breaker are documented v2 deferrals."
 
 Consequence: every pod in every pool warms strictly to pod-warm idle. Setting `capabilities.preConnect: true` in a Runtime YAML is impossible (the field does not exist on the CRD); even if it were accepted, no controller would honor it. The latency-saving optional mode promised by §6.1 is unavailable.
+
+- **DEFERRED (this batch):** Several finding claims are stale: `capabilities.preConnect` is now on the CRD (`RuntimeCapabilitiesCRD.PreConnect`) and the gateway registry; `sdkWarmBlockingPaths` is stored, defaulted, and merged in `runtimestore`; the `DemoteSDK`/`ConfigureWorkspace` adapter RPCs are implemented (`pkg/adapter/sdkwarm.go`, real, not stubs); `SDK_DEMOTION_NOT_SUPPORTED` is classified; the circuit-breaker state machine is built (`pkg/controller/poolscaling/circuitbreaker.go`). This batch additionally landed the §6.1 lines 77-78 cross-mode admission guard (`poolstore.ValidatePreConnectExecutionMode`, wired into pool create/update). The remaining end-to-end path is blocked on a live pre-connect-capable runtime backend that v1 does not ship: there is no production producer of the `sdk_connecting` phase (the controller never drives `warming → sdk_connecting`), no adapter pre-connect entry point (`SDKWarmRuntime` exposes `ConfigureWorkspace`/`DemoteSDK` but no "start the SDK at warm time" method), no gateway SDK-warm consumption path (the binder calls `StartSession` only), and no §26 reference runtime that declares `preConnect`. Wiring the controller driver, the §6.1-line-36 request-time matcher, and the §6.1-line-40 registration warning without that backend would be inert scaffolding. Revisit once a `preConnect`-capable reference runtime + the adapter pre-connect entry point land.
 
 ### - [x] F-6.1.2 — `/sessions`, `/artifacts`, and `/dev/shm` mounts are not in the pod spec [High] — CLOSED
 
@@ -4127,7 +4129,7 @@ Consequence: the agent pod has no audience-bound JWT to authenticate to the gate
 
 - **Resolution:** Closed by `b04e6923`. `podspec.injectSATokenVolume` adds a projected `ServiceAccountToken` volume (audience = the §10.3 deployment-specific `global.saTokenAudience`, `expirationSeconds: 900`, path `token`) mounted read-only on the gateway-facing container (adapter in the sidecar model, runtime in the embedded model); `basePod` sets `AutomountServiceAccountToken: false` so the kubelet's default cluster-audience token is never mounted, and stamps the zero-RBAC `ServiceAccountName` when configured. The audience and SA name thread from new `cmd/lenny-controller` flags (`--sa-token-audience`, `--agent-service-account`) through `sandbox.Reconciler`. An unset audience omits the projected volume rather than mounting a wrong-audience token.
 
-### - [ ] F-6.1.5 — No `lenny_warmpool_sdk_demotions_total` / `lenny_warmpool_sdk_connect_timeout_total` emitters [High] — OPEN
+### - [ ] F-6.1.5 — No `lenny_warmpool_sdk_demotions_total` / `lenny_warmpool_sdk_connect_timeout_total` emitters [High] — DEFERRED
 
 Spec §6.1 line 34: "The metric `lenny_warmpool_sdk_demotions_total` (counter, labeled by pool) tracks demotion frequency for observability." Spec §6.1 line 69: "the WarmPoolController transitions the pod to `failed` and increments `lenny_warmpool_sdk_connect_timeout_total`".
 
@@ -4141,7 +4143,9 @@ Greps for production-code (non-test, non-catalog, non-alerting-rules) emitters o
 
 Consequence: the circuit-breaker decision input (§6.1 "Demoters per claim ratio") cannot be measured. The `PoolScalingController`'s `DemotionRate` formula receives zero from `lenny_warmpool_sdk_demotions_total` no matter what happens. The §6.1 "demotion rate threshold and circuit-breaker" cannot fire from real telemetry; only synthetic test-injection of `DemotionRate` (visible in `pkg/controller/poolscaling/circuitbreaker_test.go`) ever causes the breaker to trip.
 
-### - [ ] F-6.1.6 — `sdk_connecting` watchdog is unimplemented [High] — OPEN
+- **DEFERRED:** Both counters increment only from the SDK-warm path that is itself unbuilt end-to-end (F-6.1.1): `lenny_warmpool_sdk_demotions_total` from a gateway demotion (the unbuilt SDK-warm consumption path — the binder calls `StartSession` only and no pod is ever SDK-warm), and `lenny_warmpool_sdk_connect_timeout_total` from the `sdk_connecting` watchdog (F-6.1.6, which needs the controller driver). The catalog declarations and the `SDKConnectTimeout` alert already exist for when the path lands. Blocked on F-6.1.1; emitting from a no-op site would be inert.
+
+### - [ ] F-6.1.6 — `sdk_connecting` watchdog is unimplemented [High] — DEFERRED
 
 Spec §6.1 lines 67–69: "The WarmPoolController applies a per-pod timeout: `sdkConnectTimeoutSeconds` (default: 60s, configurable per pool in the `scalingPolicy` block). If the SDK does not complete its connection and transition to `idle` within this timeout, the WarmPoolController transitions the pod to `failed` and increments `lenny_warmpool_sdk_connect_timeout_total`".
 
@@ -4150,7 +4154,9 @@ Spec §6.1 lines 67–69: "The WarmPoolController applies a per-pod timeout: `sd
 
 Consequence: a real-world SDK-warm pod hanging in `sdk_connecting` would leak warm-pool capacity (and the alert's predicate cannot fire because the counter has no emitter — see H-5). This is moot today because nothing enters `sdk_connecting` at all (H-1), but the gap is on the critical path for enabling SDK-warm later.
 
-### - [ ] F-6.1.7 — SDK-warm adapter SIGTERM behavior is unimplemented [High] — OPEN
+- **DEFERRED:** The `sdkConnectTimeoutSeconds` ScalePolicy field and the per-pod timer have no pod to time out — nothing drives a pod into `sdk_connecting` (the WarmPoolController never transitions `warming → sdk_connecting`; see F-6.1.1). Adding the field plus a watchdog timer without that producer is scaffolding-without-behavior. Blocked on the F-6.1.1 controller driver; revisit alongside it.
+
+### - [ ] F-6.1.7 — SDK-warm adapter SIGTERM behavior is unimplemented [High] — DEFERRED
 
 Spec §6.1 line 67 (paragraph "Adapter SIGTERM behavior during `sdk_connecting`"): SIGTERM during `sdk_connecting` must (1) call `DemoteSDK` internally with `LENNY_DEMOTE_TIMEOUT_SECONDS` (default 5s); (2) on timeout, force-terminate the SDK process; (3) exit. Pod transitions to `terminated`. `terminationGracePeriodSeconds` must be ≥ `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`.
 
@@ -4159,6 +4165,8 @@ Spec §6.1 line 67 (paragraph "Adapter SIGTERM behavior during `sdk_connecting`"
 - `pkg/controller/sandbox/podspec/podspec.go:62` hard-codes `terminationGraceSeconds int64 = 30` for every pod, regardless of mode or SDK-warm enablement. The "≥ LENNY_DEMOTE_TIMEOUT_SECONDS + 5s" guard is not enforced.
 
 Consequence: a future SDK-warm path would leak the SDK process or its credentials on SIGTERM. Moot today because of H-1; flagged because the eviction path needs to land alongside SDK-warm enablement.
+
+- **DEFERRED:** SIGTERM-during-`sdk_connecting` teardown (DemoteSDK with `LENNY_DEMOTE_TIMEOUT_SECONDS`, then `terminationGracePeriodSeconds ≥ LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`) requires an adapter pre-connect entry point that starts the SDK at warm time and a pod that actually reaches `sdk_connecting`; neither exists (see F-6.1.1). The adapter SIGTERM/preStop handler has no SDK-warm session to tear down because no SDK is ever pre-connected. Blocked on F-6.1.1; the per-mode `terminationGracePeriodSeconds` bump lands with the SDK-warm pod-spec path.
 
 ### - [x] F-6.1.8 — Pod has no `lenny.dev/state` or `lenny.dev/runtime` labels [Medium] — CLOSED
 
@@ -4462,18 +4470,20 @@ Implementation tree audited:
 - **Effect:** The Sandbox state machine collapses to four observable phases in practice (`warming → idle → claimed → draining → terminated`). Everything described in §6.2 lines 105–254 for the session lifetime is invisible at the CRD/status level, defeating the spec's stated single-source-of-truth contract.
 - **Resolution (f6cb9e88):** The session-termination half is fixed: `Binder.Release` records the terminal disposition on the Sandbox (`attached → completed/failed/cancelled`, the §6.2 lines 105-117 edges) before draining the exclusive pod, threaded from the session's terminal state through the new `executor.SessionReleaser` seam (`recordSessionCompleted` → `dispositionForState` → `PodExecutor.Release`). New `ValidTransitions` edges `{completed,failed,cancelled,expired} → draining` reclaim the pod (documented §6.2 cleanup-model extensions, distinct from the session terminality `Terminal()`/`IsTerminal` report). Verified by `TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2` (full `completed → draining` sequence) and `TestSessionTerminalDrainEdges_spec_6_2`. The `attached → suspended`/`resume_pending` and the `suspended → …`/`resuming → …` recovery sub-loop are produced by the interrupt path (F-6.2.13) and the resume watchdog (F-6.2.14, F-6.2.3 SDK-warm), which remain OPEN as the dedicated owners of those edges; this finding closes the `attached → terminal` defect and the missing-writer premise.
 
-### - [ ] F-6.2.3 — 2-03 SDK-warm path (`warming → sdk_connecting → idle`) entirely unimplemented [High] — OPEN
+### - [ ] F-6.2.3 — 2-03 SDK-warm path (`warming → sdk_connecting → idle`) entirely unimplemented [High] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-6.1.1 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
 - **Spec:** §6.1 lines 30–70 require all pods in a `preConnect: true` pool to warm to SDK-warm; §6.2 lines 89–93 list `warming → sdk_connecting → idle` and `sdk_connecting → {failed, terminated}` as live edges; §6.2 line 67 mandates SIGTERM handling during `sdk_connecting`; §6.2 line 69 mandates a `sdkConnectTimeoutSeconds` watchdog (default 60s) emitting `lenny_warmpool_sdk_connect_timeout_total`.
 - **Impl:** Neither the WarmPoolController (`pkg/controller/warmpool/controller.go`) nor the sandbox reconciler (`pkg/controller/sandbox/lifecycle/lifecycle.go:71-105`) ever transitions a pod to `sdk_connecting`. `lifecycle.Decide` only handles `warming → idle/failed` (lines 73–83). The planner counts `SDKConnecting` as warm (`pkg/controller/warmpool/plan/plan.go:87`) but nothing ever produces that phase. The pod-warm adapter explicitly returns `Unimplemented` for `DemoteSDK` (`pkg/adapter/lifecycle.go:99–102`). No `sdkConnectTimeoutSeconds` watchdog and no `lenny_warmpool_sdk_connect_timeout_total` increments exist in code (only declared in `pkg/observability/metrics/catalog.go:292`).
 - **Effect:** Setting `capabilities.preConnect: true` on a Runtime has no behavioural effect; the pod will warm to `idle` directly. The SDK-warm path documented across §6.1, §6.2, and §6.3's SLO discussion does not exist. Operators cannot rely on `preConnect` and the demotion/circuit-breaker observability (`lenny_warmpool_sdk_demotions_total`) cannot be exercised because no SDK-warm pods exist to demote.
+- **DEFERRED:** Duplicate of F-6.1.1 (the controller `warming → sdk_connecting → idle` driver). Same blocker: no production producer of `sdk_connecting`, no adapter pre-connect entry point, no §26 `preConnect` runtime backend. Deferred in lockstep with F-6.1.1; the §6.1 lines 77-78 cross-mode admission guard landed this batch (`poolstore.ValidatePreConnectExecutionMode`).
 
-### - [ ] F-6.2.4 — 2-04 `DemoteSDK` invocation, `requiresDemotion`, and `sdkWarmBlockingPaths` enforcement absent [High] — OPEN
+### - [ ] F-6.2.4 — 2-04 `DemoteSDK` invocation, `requiresDemotion`, and `sdkWarmBlockingPaths` enforcement absent [High] — DEFERRED
 - **Spec:** §6.1 lines 34–40 require the gateway to set `requiresDemotion: true` on `ClaimOpts` when the workspace plan matches `sdkWarmBlockingPaths`, and the adapter to call `DemoteSDK`; §6.1 lines 36–40 describe the case-sensitive `**`-aware matcher, the mandatory `SDK_DEMOTION_NOT_SUPPORTED` error class, and the demotion rate threshold; §6.2 lines 154–155 require the `task_cleanup → sdk_connecting` re-warm to re-run the path on each task.
 - **Impl:** No gateway code path calls `Adapter.DemoteSDK` (a grep over `pkg/gateway/**` returns zero hits). `sdkWarmBlockingPaths` matching is not implemented; the `WorkspacePlan` is never checked against any pattern list before `Bind`. `requiresDemotion` is not modeled in `ClaimOpts` (`pkg/podregistry/`).
 - **Effect:** If a runtime ever did declare `preConnect: true`, the spec's safety machinery for blocking-path demotion would silently no-op. Sessions whose workspace plans include `CLAUDE.md` / `.claude/*` would be served by a pre-connected SDK that the spec says must be torn down first.
+- **DEFERRED:** `requiresDemotion` is already modeled on `ClaimOpts` (stale claim). The gateway `DemoteSDK` invocation and the §6.1-line-36 request-time `sdkWarmBlockingPaths` matcher are blocked on the SDK-warm consumption path: the binder calls `StartSession` only, so a pod is never SDK-warm; calling `DemoteSDK` on a pod-warm pod would spuriously fail with `SDK_DEMOTION_NOT_SUPPORTED`, and computing `requiresDemotion` from a matcher would feed a flag no consumer reads. Both land only with the F-6.1.1 controller driver + adapter pre-connect entry point. The backend-independent slice of the §6.1 compatibility matrix — the lines 77-78 cross-mode validation that rejects `preConnect` + concurrent at pool admission — landed this batch (`poolstore.ValidatePreConnectExecutionMode`). Blocked on F-6.1.1.
 
 ### - [x] F-6.2.5 — 2-05 `Sandbox.spec.tenantId` write at claim time silently bypasses the §4.6.3 ownership boundary [High] — CLOSED
 - **Spec:** §6.2 line 305 + §4.6.3 (via `pkg/admission/ownership/ownership.go:113–117`) record `Sandbox.spec.*` and `Sandbox.status.*` as exclusively owned by `WarmPoolController`. §5.2 tenant pinning is the gateway-owned exception, narrowly carved out for `status.tenantId` and `status.activeSlots` (handled by SSA with `ForceOwnership` in `pkg/gateway/podclaim/slotclaimer.go:43–58`).

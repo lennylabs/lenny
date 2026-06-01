@@ -432,6 +432,35 @@ func ValidateCrossTenantReuseTier(p Pool, runtimeTier runtimestore.WorkspaceTier
 	return nil
 }
 
+// ValidatePreConnectExecutionMode enforces the §6.1 lines 77-78
+// preConnect/execution-mode compatibility matrix. A runtime that declares
+// capabilities.preConnect: true pre-connects a single agent SDK process
+// waiting for a single first prompt; concurrent-workspace mode multiplexes
+// independent per-slot workspaces onto one pod and concurrent-stateless mode
+// has no Lenny-managed agent lifecycle, so neither can host an SDK-warm
+// runtime. The check runs at pool admission with the effective post-update
+// executionMode and concurrencyStyle; preConnect reports the referenced
+// runtime's resolved capabilities.preConnect. An empty concurrencyStyle on a
+// concurrent pool resolves to the §5.2 default (workspace).
+// spec: §6.1 lines 77-78.
+func ValidatePreConnectExecutionMode(preConnect bool, mode runtimestore.ExecutionMode, style ConcurrencyStyle) error {
+	if !preConnect || mode != runtimestore.ExecutionModeConcurrent {
+		return nil
+	}
+	if style == ConcurrencyStyleStateless {
+		return errors.New("preConnect: true is not supported with executionMode: concurrent, " +
+			"concurrencyStyle: stateless; stateless mode has no Lenny-managed agent lifecycle")
+	}
+	return errors.New("preConnect: true is not supported with executionMode: concurrent, " +
+		"concurrencyStyle: workspace; concurrent-workspace mode requires independent per-slot agent initialization")
+}
+
+// RuntimePreConnect reports whether rt declares the §5.1 / §6.1
+// capabilities.preConnect SDK-warm flag.
+func RuntimePreConnect(rt runtimestore.Runtime) bool {
+	return rt.Capabilities != nil && rt.Capabilities.PreConnect
+}
+
 // Store is the §5.2 pool registry contract.
 type Store interface {
 	Create(ctx context.Context, p Pool) error

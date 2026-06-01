@@ -309,6 +309,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// creation. Capture the runtime's §12.9 workspace tier for the §5.2
 	// line 396 T4 cross-tenant-reuse check below.
 	var runtimeTier runtimestore.WorkspaceTier
+	var runtimePreConnect bool
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -318,6 +319,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		runtimeTier = rt.WorkspaceTier
+		runtimePreConnect = poolstore.RuntimePreConnect(rt)
 	}
 
 	pl := poolstore.Pool{
@@ -359,6 +361,15 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 	if pl.ExecutionMode == "" {
 		pl.ExecutionMode = runtimestore.ExecutionModeSession
+	}
+	// spec: §6.1 lines 77-78 — reject an SDK-warm runtime (preConnect: true)
+	// bound to a concurrent-mode pool before storage; SDK-warm assumes a
+	// single pre-connected agent process, which both concurrency styles
+	// violate.
+	if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.ConcurrencyStyle); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef})
+		return
 	}
 	// spec: §5.2 line 396 — reject cross-tenant reuse on a pool whose
 	// runtime is T4 before storage, so a misconfigured pool never enters
@@ -758,6 +769,40 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 					map[string]any{"runtimeRef": effRef, "workspaceTier": string(tier)})
 				return
+			}
+		}
+		// spec: §6.1 lines 77-78 — reject a PUT that would leave the pool in
+		// concurrent mode bound to a preConnect runtime. The effective
+		// post-update executionMode, concurrencyStyle, and runtimeRef are
+		// resolved from the body (when set) or the stored pool, so newly
+		// setting either field is caught. The runtime is resolved only when
+		// the effective mode is concurrent.
+		effMode := current.ExecutionMode
+		if body.ExecutionMode != nil {
+			effMode = runtimestore.ExecutionMode(*body.ExecutionMode)
+		}
+		if effMode == runtimestore.ExecutionModeConcurrent {
+			effRef := current.RuntimeRef
+			if body.RuntimeRef != nil {
+				effRef = *body.RuntimeRef
+			}
+			effStyle := current.ConcurrencyStyle
+			if body.ConcurrencyStyle != nil {
+				effStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
+			}
+			if effRef != "" {
+				rt, rerr := r.runtimes.Get(req.Context(), effRef)
+				if rerr != nil {
+					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+						"runtimeRef does not resolve to a registered runtime", nil)
+					return
+				}
+				if err := poolstore.ValidatePreConnectExecutionMode(
+					poolstore.RuntimePreConnect(rt), effMode, effStyle); err != nil {
+					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+						map[string]any{"runtimeRef": effRef})
+					return
+				}
 			}
 		}
 	}
