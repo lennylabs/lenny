@@ -16980,7 +16980,7 @@ Each was traced through `/Users/joan/projects/lenny/pkg/audit/`,
 
 ### Findings
 
-### - [ ] F-11.7.1 — 01  OCSF translator, SIEM forwarder, and audit hash-chain verifier are not wired into the gateway binary [High] — OPEN
+### - [x] F-11.7.1 — 01  OCSF translator, SIEM forwarder, and audit hash-chain verifier are not wired into the gateway binary [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-16.7.7 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
@@ -17039,6 +17039,8 @@ described across items 1–4. Postgres-only retention is the explicit
 spec-described compliance gap that SIEM addresses (§11.7 lines
 461–470); without the forwarder wired, every install runs in the
 "Postgres-only deployments" failure mode regardless of configuration.
+
+**Resolution (`8e31f8b1`):** `cmd/lenny-gateway` now imports `pkg/audit/ocsf` and `pkg/audit/siem`. When `--audit-siem-endpoint` is set the gateway builds a `siem.Forwarder` over the reference `HTTPSink` (with an optional `--audit-siem-secret` HMAC), runs `forwarder.ValidateConnectivity` at startup, and treats a non-nil result as fatal — the test event must be acknowledged or the gateway refuses to start (item 4). The `ocsf.Translator` is constructed over the durable auditstore (it implements `ocsf.TranslationStore`) with the forwarder as its `ocsf.Sink`, and `translator.Run` drives the egress state machine under `watchdogCtx`. Item 3's periodic chain-continuity sampling was already wired by F-11.7.3 (`integrity.PeriodicCheck` → `CheckChainContinuityRecent`, reporting `chainIntegrity` on `lenny_audit_chain_integrity_total`). Item 4's runtime SIEM delivery health check lands as the §25.3 `siem` health probe (see F-11.7.16); the translator's failure metric (`lenny_audit_ocsf_translation_failed_total`) is now emitted via `gwMetrics.IncAuditOCSFTranslationFailed`. The audit hash-chain construction defect remains tracked separately under F-11.7.4 (canonical-tuple input columns); this finding closes the wiring half. Helm `audit.siem.secret`/`failureThresholdPercent` and `audit.ocsf.*` values render the flags.
 
 ### - [x] F-11.7.2 — 02  `COMPLIANCE_SIEM_REQUIRED` enforcement gate is absent [High] — CLOSED
 
@@ -17428,7 +17430,7 @@ never fires because the metric is never populated.
 
 **Severity:** High — regulated-profile compliance requirement.
 
-### - [ ] F-11.7.11 — 11  OCSF translator state machine is implemented but never advanced; rows ship-stuck in `pending` [Medium] — OPEN
+### - [x] F-11.7.11 — 11  OCSF translator state machine is implemented but never advanced; rows ship-stuck in `pending` [Medium] — CLOSED
 
 **Spec:** §11.7 lines 422–426 — the translator MUST advance
 `ocsf_translation_state` `pending → retry_pending → succeeded |
@@ -17452,6 +17454,8 @@ them.
 **Severity:** Medium — the package exists; only the wiring is missing.
 Downgraded relative to F-11.7-01 because this finding is the
 state-machine sub-symptom and F-11.7-01 captures the root absence.
+
+**Resolution (`8e31f8b1`):** Closed alongside F-11.7.1. `cmd/lenny-gateway` now constructs `ocsf.NewTranslator(...)` over the auditstore and runs `translator.Run(watchdogCtx)`, so every audit row advances `pending → succeeded | dead_lettered` on the `--audit-ocsf-retry-interval-seconds` cadence (default 30s) up to `--audit-ocsf-max-attempts` (default 10). The translator runs whenever a durable Postgres audit chain exists: with a SIEM endpoint configured the forwarder is the sink, and without one the translator still advances rows (delivery is a no-op) so they do not pin in `pending`. The state-machine package logic was already correct; only the gateway wiring was missing.
 
 ### - [x] F-11.7.12 — 12  No `GET /v1/admin/audit-events/{id}?format=raw-canonical` or `POST /v1/admin/audit-events/{id}/retranslate` endpoint; no `?ocsf_translation_state=dead_lettered` filter [Medium] — CLOSED
 
@@ -17585,7 +17589,7 @@ observability on the audit pipeline.
 
 **Severity:** Medium — observability gap; alerts are silently broken.
 
-### - [ ] F-11.7.16 — 16  No SIEM probe contributing to `/healthz` degraded status [Medium] — OPEN
+### - [x] F-11.7.16 — 16  No SIEM probe contributing to `/healthz` degraded status [Medium] — CLOSED
 
 **Spec:** §11.7 item 4 lines 372 — "a health check monitors SIEM
 delivery success rate; if the failure rate exceeds the configured
@@ -17605,6 +17609,8 @@ failures; the audit-integrity signal is invisible to Kubernetes
 liveness/readiness gates.
 
 **Severity:** Medium — operability gap downstream of F-11.7-01.
+
+**Resolution (`8e31f8b1`):** Added `backends.SIEM`, a §25.3 health.Checker that reports the `siem` component degraded when the forwarder's delivery failure rate exceeds `audit.siem.failureThresholdPercent` (default 5%) or the most recent batch delivery failed; it stamps `Issue: AUDIT_SIEM_DELIVERY_DEGRADED` with a runbook ref. The probe is registered with the gateway's health aggregator only when a SIEM endpoint is configured, so the §25.3 health API (and the §16.5 alert path) surface the degraded verdict. The status is `degraded` rather than `unhealthy` because audit rows stay durable in Postgres during a SIEM outage. The gateway deliberately does NOT gate its liveness (`/healthz`) or readiness (`/readyz`) probe on this component: the SIEM is shared across replicas, so failing readiness would remove every replica from the Service and convert an audit-integrity degradation into a full outage — the degraded signal rides the §25.3 health verdict (the gateway's component-degraded surface after the F-10.1.6 liveness/readiness split) instead.
 
 ### - [ ] F-11.7.17 — 17  No audit retention pruner; `audit.retentionDays` and the `RetentionPreset` enum are inert [Medium] — OPEN
 
@@ -28430,7 +28436,7 @@ Evidence:
 - `auditstore.Append` signature (no `OperationID` or `CallerKind` parameter).
 - `pkg/audit/ocsf/ocsf.go:345`: `var mappedPayloadKeys = map[string]bool{... "caller_kind": true, "operation_id": true, ...}` — these are declared as mapped keys but no producer ever sets them.
 
-### - [ ] F-16.7.7 — The OCSF translator and SIEM forwarder are not wired into any deployed binary. [High] — OPEN
+### - [x] F-16.7.7 — The OCSF translator and SIEM forwarder are not wired into any deployed binary. [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-11.7.1 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
@@ -28446,6 +28452,8 @@ This means even the 5 currently-emitted §16.7 events do not reach SIEM in OCSF 
 Evidence:
 - `cmd/lenny-gateway/main.go:169` imports `pkg/gateway/translator` (the LLM translator) but no `pkg/audit/ocsf` or `pkg/audit/siem`.
 - `pkg/audit/siem/siem.go` is referenced only from `tests/tier4_integration/audit_pipeline_test.go:34`.
+
+**Resolution:** Closed by F-11.7.1 (commit `8e31f8b1`). Confirmed duplicate — the core claim (the OCSF translator and SIEM forwarder are imported by no deployed binary) is the same defect. `cmd/lenny-gateway/main.go` now imports both `pkg/audit/ocsf` and `pkg/audit/siem`, constructs the forwarder + translator, validates SIEM connectivity at startup, and runs the translator's egress loop. The async-outbox/CDC lag forwarder and its `lenny_audit_siem_delivery_lag_seconds` / `audit.siem.maxDeliveryLagSeconds` surface remain a distinct defect tracked under F-12.3.6 / F-12.3.17.
 
 ### - [ ] F-16.7.8 — `pkg/ops/opsserver/backup.go:handleConfirmLegalHoldLedger` documents an audit-hook contract that does not exist. [High] — OPEN
 
