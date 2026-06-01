@@ -15552,7 +15552,7 @@ The implementation derives the next sequence with `MAX(sequence_number) + 1` und
 
 This is a normative deviation from the cited "sequencing authority" mechanism.
 
-### - [ ] F-11.2.11 — Operator-initiated billing-correction approvals persist only in memory [Medium] — OPEN
+### - [x] F-11.2.11 — Operator-initiated billing-correction approvals persist only in memory [Medium] — CLOSED
 
 Spec §11.2.1 "Category 2 — Operator-initiated manual corrections" mandates dual-control approval with a `billing_correction_pending` state, expiry sweep, and per-record `approval_request_id`. The audit trail must record submission, approval, rejection, and expiry as immutable audit events.
 
@@ -15563,6 +15563,8 @@ adminRouter = adminRouter.WithBillingCorrections(
 )
 ```
 The pending-correction store is `correctionstore.NewMemory()` in production. The package `/Users/joan/projects/lenny/pkg/gateway/correctionstore/` contains only `correctionstore.go` and `_test.go` — no `pgstore/` subdirectory, no `billing_correction_pending` migration, no row-level RLS or `lenny_tenant_guard` integration. A gateway restart loses every pending correction, including those awaiting dual-control approval; the four-eyes audit trail is restart-fragile in a way the spec explicitly rules out for financial controls.
+
+**Resolution:** Added `pkg/gateway/correctionstore/pgstore` (a durable `correctionstore.Store` over the new `billing_correction_pending` table, migration `0104`) and wired it in `cmd/lenny-gateway` whenever Postgres is configured, so pending dual-control requests and their four-eyes audit trail survive a gateway restart. `Transition` runs under `SELECT … FOR UPDATE` + a `WHERE state = 'pending'` UPDATE guard so a concurrent double-decision is rejected with `ErrNotPending`. The registry is platform-operational (the §11.2.1 approve/reject workflow spans tenants by opaque `approval_request_id`), so the table is deliberately not tenant-isolated — `tenant_id` is a data column and the four-state `CHECK` constraint backstops the enum; the committed correction still lands in the RLS-protected, append-only `billing_events` ledger. The existing expiry sweep and dual-control logic in `pkg/gateway/admin/billing_corrections.go` already drive the `Store` interface unchanged. (commit pending)
 
 ### - [ ] F-11.2.12 — Billing event schema is missing seven of the spec's conditional fields and the metering API wire shape omits all of them [Medium] — OPEN
 

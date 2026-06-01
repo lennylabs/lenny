@@ -111,6 +111,7 @@ import (
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
+	correctionpg "github.com/lennylabs/lenny/pkg/gateway/correctionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
@@ -3292,11 +3293,18 @@ func main() {
 		},
 	)
 	// §11.2.1 operator-initiated billing-correction workflow. The
-	// correction endpoints write through the failover billing pipeline
-	// and hold pending dual-control requests in the in-memory
-	// correction registry.
+	// correction endpoints write through the failover billing pipeline.
+	// Pending dual-control requests are held in the durable Postgres
+	// registry when Postgres is wired, so a gateway restart does not lose
+	// a pending request or its four-eyes audit trail (the spec rules out
+	// restart-fragility for financial controls); the in-memory registry
+	// backs the Postgres-less minimal gateway. F-11.2.11.
+	var corrections correctionstore.Store = correctionstore.NewMemory()
+	if pgPool != nil {
+		corrections = correctionpg.New(pgPool)
+	}
 	adminRouter = adminRouter.WithBillingCorrections(
-		billing, correctionstore.NewMemory(), *billingDualControlThreshold,
+		billing, corrections, *billingDualControlThreshold,
 	)
 
 	// ----- Compose the mux -----
