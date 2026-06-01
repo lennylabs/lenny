@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -70,13 +71,17 @@ func TLSServerOption(certFile, keyFile, clientCAFile string, mods ...TLSConfigMo
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	// spec: §10.3 line 338 — serve the leaf via a filesystem-watching
+	// GetCertificate callback so a cert-manager renewal of the projected
+	// volume is picked up without restarting the pod or dropping the
+	// gRPC connection.
+	reloader, err := certreload.New(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load adapter TLS keypair: %w", err)
 	}
 	cfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: reloader.GetCertificate,
+		MinVersion:     tls.VersionTLS12,
 	}
 	if clientCAFile != "" {
 		caPEM, err := os.ReadFile(clientCAFile)
@@ -113,11 +118,14 @@ func TLSClientOption(certFile, keyFile, caFile string, mods ...TLSConfigMod) (gr
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if certFile != "" || keyFile != "" {
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		// spec: §10.3 line 338 — present the client leaf via a
+		// filesystem-watching GetClientCertificate callback so a renewed
+		// adapter certificate is used on the next dial without a restart.
+		reloader, err := certreload.New(certFile, keyFile)
 		if err != nil {
 			return nil, fmt.Errorf("load adapter client TLS keypair: %w", err)
 		}
-		cfg.Certificates = []tls.Certificate{cert}
+		cfg.GetClientCertificate = reloader.GetClientCertificate
 	}
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)

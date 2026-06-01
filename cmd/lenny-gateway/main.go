@@ -110,12 +110,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
@@ -225,6 +225,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
+	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
@@ -5901,7 +5902,11 @@ func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn,
 	case certPath == "" || keyPath == "" || caPath == "":
 		return nil, fmt.Errorf("token service mTLS requires --token-service-tls-cert, --token-service-tls-key, and --token-service-ca to all be set")
 	default:
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		// spec: §10.3 line 338 — present the gateway leaf via a
+		// filesystem-watching GetClientCertificate callback so a
+		// cert-manager renewal is picked up on the next dial without a
+		// gateway restart.
+		reloader, err := certreload.New(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("load token-service client cert: %w", err)
 		}
@@ -5914,9 +5919,9 @@ func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn,
 			return nil, fmt.Errorf("token-service CA bundle %q parsed no certificates", caPath)
 		}
 		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			Certificates: []tls.Certificate{cert},
-			RootCAs:      pool,
-			MinVersion:   tls.VersionTLS13,
+			GetClientCertificate: reloader.GetClientCertificate,
+			RootCAs:              pool,
+			MinVersion:           tls.VersionTLS13,
 		}))
 	}
 	return grpc.NewClient(addr, transport)
@@ -5939,7 +5944,11 @@ func dialInterceptor(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, 
 	case certPath == "" || keyPath == "" || caPath == "":
 		return nil, fmt.Errorf("external interceptor mTLS requires --external-interceptor-tls-cert, --external-interceptor-tls-key, and --external-interceptor-ca to all be set")
 	default:
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		// spec: §10.3 line 338 — present the gateway leaf via a
+		// filesystem-watching GetClientCertificate callback so a
+		// cert-manager renewal is picked up on the next dial without a
+		// gateway restart.
+		reloader, err := certreload.New(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("load external-interceptor client cert: %w", err)
 		}
@@ -5952,9 +5961,9 @@ func dialInterceptor(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, 
 			return nil, fmt.Errorf("external-interceptor CA bundle %q parsed no certificates", caPath)
 		}
 		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			Certificates: []tls.Certificate{cert},
-			RootCAs:      pool,
-			MinVersion:   tls.VersionTLS13,
+			GetClientCertificate: reloader.GetClientCertificate,
+			RootCAs:              pool,
+			MinVersion:           tls.VersionTLS13,
 		}))
 	}
 	return grpc.NewClient(addr, transport)

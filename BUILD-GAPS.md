@@ -12549,7 +12549,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution (commit `02369575`):** The §10.3 `spiffe.AgentPeerVerifier` (see F-10.3.1) now consults the deny list on every inbound GatewayControl handshake. `*mtlsdenylist.DenyList` satisfies the verifier's `spiffe.DenyChecker` interface (`Contains(uri) bool`), and `newGatewayControlServer` passes the same `mtlsDeny` set the propagator (`mtlsDenyProp`) writes to. A peer whose parsed SPIFFE URI is on the deny list is rejected at the TLS handshake (`ReasonRevoked`) with no gRPC frame, closing the write-only-set gap so an operator revocation takes effect at the rejection path. Covered by `TestAgentPeerVerifierRejectsRevokedCertificate_spec_10_3_352`.
 
-### - [ ] F-10.3.8 — 10.3-G8. Filesystem-watching TLS reload (`GetCertificate` / `GetClientCertificate`) absent [High] — OPEN
+### - [x] F-10.3.8 — 10.3-G8. Filesystem-watching TLS reload (`GetCertificate` / `GetClientCertificate`) absent [High] — CLOSED
 
 **Spec lines:** 338 ("Both the gateway and the runtime adapter **must** use filesystem-watching TLS configuration (`tls.Config` with `GetCertificate`/`GetClientCertificate` callbacks that re-read from the cert-manager-managed projected volume) so that renewed certificates are picked up transparently without restarting the pod or dropping the gRPC connection").
 **Evidence:**
@@ -12559,7 +12559,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** When cert-manager renews a leaf certificate at 2/3 of its 24h or 4h TTL, every in-flight TLS conn keeps using the old key material; new dials succeed only after a pod restart. The decoupling of `maxSessionAge` from certificate lifetime that the spec promises is unrealised.
 
-### - [ ] F-10.3.9 — 10.3-G9. Agent pod SPIFFE certificates never issued or projected into pods [High] — OPEN
+**Resolution:** New `pkg/mtls/certreload.Reloader` serves the leaf via `GetCertificate`/`GetClientCertificate` callbacks that re-read the keypair from disk when either file's modtime advances (stat-cached hot path; last-good kept on a mid-write parse failure). Wired into `adapter.TLSServerOption` (`GetCertificate`), `adapter.TLSClientOption` (`GetClientCertificate`), and the gateway's `dialTokenService` / `dialInterceptor` client configs, so a cert-manager renewal of the projected volume is picked up on the next handshake/dial without a pod restart. The embedded loopback-only tls-proxy is dev-mode and out of the §10.3 cluster-mTLS scope. F-10.3.8.
 
 **Spec lines:** 311 ("Agent pods | 4h | SPIFFE URI: ..."), 316, 338, plus the §10.3 lifecycle row's "cert-manager auto-renewal; pod restart if renewal fails".
 **Evidence:**
