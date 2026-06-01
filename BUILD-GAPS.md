@@ -17096,7 +17096,7 @@ the more painful the cutover.
 **Severity:** High — the hash chain is the spec's tamper-evidence
 substrate and the input doesn't match what §11.7 names.
 
-### - [ ] F-11.7.5 — 05  Audit write path has no statement_timeout, no retry loop, and no `AUDIT_CONCURRENCY_TIMEOUT` surfacing [High] — OPEN
+### - [x] F-11.7.5 — 05  Audit write path has no statement_timeout, no retry loop, and no `AUDIT_CONCURRENCY_TIMEOUT` surfacing [High] — CLOSED
 
 **Spec:** §11.7 item 3 lines 368 "Lock acquisition SLO and retry":
 `audit.lock.acquireTimeoutMs` (default 5000) set as `statement_timeout`
@@ -17131,6 +17131,28 @@ sustained Postgres I/O saturation as described in §11.7 is absent.
 **Severity:** High — spec-named normative control on the audit
 write-time hot path with both safety (timeout) and correctness
 (typed error code) dimensions.
+
+**Resolution (`ee0a8478`):** New `pkg/gateway/auditstore/lock.go`
+implements the §11.7 item 3 lock SLO: `acquireAuditLock` sets `SET LOCAL
+statement_timeout = audit.lock.acquireTimeoutMs` (default 5000) on the
+`pg_advisory_xact_lock` call, observes the acquisition latency on the
+`lenny_audit_lock_acquire_seconds` histogram, and on a 57014/57P01/
+context-deadline failure increments `lenny_audit_concurrency_timeout_total`
+and returns a typed `*ConcurrencyTimeoutError` (`Code() ==
+AUDIT_CONCURRENCY_TIMEOUT`); the budget is lifted (`statement_timeout = 0`)
+once the lock is held so the seal+insert is unbounded. `Store.Append` now
+retries on the same replica up to `audit.lock.maxRetries` (default 3) with
+exponential backoff (`audit.lock.retryBaseMs` default 20ms, doubling,
+jittered ±20%), abandons on context cancel, and returns
+`*AuditUnavailableError` (`HTTPStatus() == 503`, `Code() ==
+audit_unavailable`) after the budget is spent. `AUDIT_CONCURRENCY_TIMEOUT`
+added to `errorclassify` as TRANSIENT/retryable. The three knobs are
+operator-tunable via `--audit-lock-acquire-timeout-ms` /
+`--audit-lock-max-retries` / `--audit-lock-retry-base-ms` (and the
+`LENNY_AUDIT_LOCK_*` env vars), and `cmd/lenny-gateway` registers the lock
+metrics on the shared registry so the `AuditLockContention` alert reads a
+live series. This closes the two §11.7 lock metrics named in F-11.7.15;
+the remaining nine in that finding stay OPEN.
 
 ### - [x] F-11.7.6 — 06  Write-time tenant validation (`AUDIT_TENANT_SCOPE_MISMATCH`) is not implemented [High] — CLOSED
 
@@ -17183,7 +17205,7 @@ writers with no principal on ctx pass unchanged (not the forged-tenant
 vector). Wired in `cmd/lenny-gateway` over both the admin audit sink and
 the §4.8 policy-rejection sink. F-11.7.6.
 
-### - [ ] F-11.7.7 — 07  `lenny_erasure` role is created but lacks the spec-mandated grant restrictions [High] — OPEN
+### - [x] F-11.7.7 — 07  `lenny_erasure` role is created but lacks the spec-mandated grant restrictions [High] — CLOSED
 
 **Spec:** §11.7 item 7 lines 384–386 — `lenny_erasure` MUST have:
 - `UPDATE` on billing tables scoped to `user_id` and free-text PII
@@ -17224,7 +17246,18 @@ sessions` slips in unnoticed.
 
 **Severity:** High — incomplete role isolation per the spec mandate.
 
-### - [ ] F-11.7.8 — 08  No `audit_log_deferred_writes` table, no reconciliation pass, no `ChainRechainedPostOutage` writer [High] — OPEN
+**Resolution (`eab59397`):** New `integrity.VerifyErasureRoleScope`
+codifies the §11.7 item 7 "no grants on non-erasure tables" clause as a
+positive startup assertion: it queries `information_schema.role_table_-
+grants` for `lenny_erasure` and rejects any grant on a table outside the
+closed erasure set (`billing_events`, `audit_log`, `erasure_jobs`,
+`users`), wired into `integrity.Verify` so the gateway refuses to start
+when a future migration widens the role (e.g. `GRANT UPDATE ON sessions
+TO lenny_erasure`). The existing column-scoped UPDATE / restricted INSERT
+grants the finding describes are expected and pass. The free-text-PII-
+column sub-clause is a no-op today (the finding itself notes no such
+column is defined yet; tracked under F-11.7-19) so no migration change is
+needed.
 
 **Spec:** §11.7 item 6 lines 381 — during a Postgres outage, audit
 events from `lenny-ops` MUST be buffered in memory, then in
