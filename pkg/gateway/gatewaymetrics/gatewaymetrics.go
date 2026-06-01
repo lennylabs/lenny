@@ -242,6 +242,15 @@ type Metrics struct {
 	// each issued credential lease from assignment to release. Labels:
 	// `provider`, `pool`.
 	credentialLeaseDuration *prometheus.HistogramVec
+	// credentialRotation counts §4.9 fault-driven credential rotations
+	// by error type (lenny_credential_rotation_total). Incremented by
+	// the LLM-proxy Fallback Flow when a faulted lease is rotated to the
+	// chain's next pool. spec: §16.1 line 118.
+	credentialRotation *prometheus.CounterVec
+	// credentialFallbackExhausted counts §4.9 fallback-chain exhaustions
+	// (lenny_gateway_credential_fallback_exhausted_total), labeled by
+	// pool, provider, and error type. spec: §4.9 line 1395.
+	credentialFallbackExhausted *prometheus.CounterVec
 	// credentialPoolUtilization is the §16.1 ratio of in-use credentials
 	// to total pool credentials, in [0,1]. Labeled by `pool`; the
 	// CredentialPoolLow alert fires above 0.80.
@@ -1250,6 +1259,28 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 118 — `lenny_credential_rotation_total` counts
+	// fault-driven credential rotations by error type. The §4.9 Fallback
+	// Flow increments it when a faulted lease is rotated to the chain's
+	// next pool.
+	credentialRotation, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_credential_rotation_total",
+		Help: "Credential rotations by error type (§16.1).",
+	}, []string{"error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.9 line 1395 — `lenny_gateway_credential_fallback_exhausted_total`
+	// counts fallback-chain exhaustions, labeled by pool, provider, and
+	// error type. The CredentialFallbackExhausted condition is terminal
+	// for the session.
+	credentialFallbackExhausted, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_credential_fallback_exhausted_total",
+		Help: "Credential fallback-chain exhaustions by pool, provider, and error type (§4.9).",
+	}, []string{"pool", "provider", "error_type"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 line 53 — `lenny_credential_pool_utilization` is the ratio of
 	// in-use credentials to total pool credentials, in [0,1]. The
 	// CredentialPoolLow alert fires above 0.80.
@@ -1905,6 +1936,8 @@ func New() (*Metrics, error) {
 		slotAssignmentConflict:               slotAssignmentConflict,
 		credentialPreclaimMismatch:           credentialPreclaimMismatch,
 		credentialLeaseAssignments:           credentialLeaseAssignments,
+		credentialRotation:                   credentialRotation,
+		credentialFallbackExhausted:          credentialFallbackExhausted,
 		credentialLeaseDuration:              credentialLeaseDuration,
 		credentialPoolUtilization:            credentialPoolUtilization,
 		llmProxyActiveConnections:            llmProxyConns,
@@ -2658,6 +2691,31 @@ func (m *Metrics) IncCredentialLeaseAssignment(provider, pool, source string) {
 		return
 	}
 	m.credentialLeaseAssignments.WithLabelValues(provider, pool, source).Inc()
+}
+
+// IncCredentialRotation increments the §16.1
+// `lenny_credential_rotation_total` counter for errorType. Called by the
+// §4.9 LLM-proxy Fallback Flow each time a faulted lease is rotated to
+// the chain's next pool.
+// spec: §16.1 line 118.
+func (m *Metrics) IncCredentialRotation(errorType string) {
+	if m == nil {
+		return
+	}
+	m.credentialRotation.WithLabelValues(errorType).Inc()
+}
+
+// IncCredentialFallbackExhausted increments the §4.9
+// `lenny_gateway_credential_fallback_exhausted_total` counter for the
+// (pool, provider, errorType) tuple. Called when the fallback chain is
+// exhausted and the session is terminated with
+// CREDENTIAL_FALLBACK_EXHAUSTED.
+// spec: §4.9 line 1395.
+func (m *Metrics) IncCredentialFallbackExhausted(pool, provider, errorType string) {
+	if m == nil {
+		return
+	}
+	m.credentialFallbackExhausted.WithLabelValues(pool, provider, errorType).Inc()
 }
 
 // ObserveCredentialLeaseDuration records the §16.1

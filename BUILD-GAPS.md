@@ -2938,7 +2938,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.9 — `credentialPolicy.fallback`, `cooldownOnRateLimit`, `maxRotationsPerSession`, fallback-chain selection and counter unwired [Medium] — OPEN
+### - [x] F-4.9.9 — `credentialPolicy.fallback`, `cooldownOnRateLimit`, `maxRotationsPerSession`, fallback-chain selection and counter unwired [Medium] — CLOSED
 
 **Severity:** Medium (per-provider fallback chain selection is the spec mechanism for "rotation on provider failure"; without it a session with a single failed pool has no recovery path).
 
@@ -2949,6 +2949,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 - No `rotationCount` field on the session model (`pkg/gateway/sessionstore`).
 - No `CREDENTIAL_FALLBACK_EXHAUSTED` error path or `credential.fallback_exhausted` audit event emission.
 - `pkg/credential/credential.go:149-155` (`IsFaultTriggered`) and `CountsAgainstRotationBudget` (line 173) define the rotation-budget rule, but there is no caller that increments/decrements a counter.
+
+**Resolution:** New `credfallback.Controller` is the §4.9 Fallback Flow orchestrator: per session it holds the rotation budget shared across providers and a `Chain` per provider, evaluating each upstream credential fault into a Decision (rotate to the chain's next pool, or terminate with CREDENTIAL_FALLBACK_EXHAUSTED). The LLM proxy (`llmproxy.Handler.driveFallback`, hooked at the `writeTranslationError` choke point) drives it on an upstream credential fault (`auth_failed`→AUTH_EXPIRED/RATE_LIMITED, `upstream_5xx`→PROVIDER_UNAVAILABLE): cooldown is recorded, the budget consumed via `RotationTrigger.CountsAgainstRotationBudget`, and on exhaustion the terminal `CREDENTIAL_FALLBACK_EXHAUSTED` (403) is returned, the §4.9.2 `credential.fallback_exhausted` audit event (`session_id`, `rotation_count`, `last_failure_reason`, `fallback_chain_attempted`) is emitted, and `lenny_gateway_credential_fallback_exhausted_total` increments; a non-exhausted fault mints a replacement from the next pool (`proxyFallbackRotator`, reusing `credassign.Assigner` + the warm-pod registry's `RotateCredentials` push) and increments `lenny_credential_rotation_total`. The budget and cooldown are operator-tunable via `--credential-fallback-max-rotations` (default 3) and `--credential-fallback-cooldown-seconds` (default 60), the §4.9 credentialPolicy defaults. The tenant `credentialPolicy.providerPools.{provider}.fallback.order` auto-registration at session start (`Controller.RegisterChain`) awaits the still-unwired tenant-policy loader; until then the Controller lazily seeds a single-pool chain per provider, so a no-fallback deployment exhausts once its only pool faults. Closed by commit {COMMIT}.
 
 ---
 

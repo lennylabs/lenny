@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 )
@@ -152,6 +153,31 @@ type Handler struct {
 	// Metrics receives the §16.1 LLM-proxy telemetry. A nil Metrics
 	// disables emission.
 	Metrics Metrics
+	// Fallback drives the §4.9 credentialPolicy Fallback Flow when an
+	// upstream credential fault (RATE_LIMITED / AUTH_EXPIRED /
+	// PROVIDER_UNAVAILABLE) is observed for a lease. A nil Fallback
+	// leaves the proxy on its pre-fallback behavior: the upstream error
+	// is surfaced to the pod with no rotation.
+	//
+	// spec: §4.9 lines 1383-1411 (Fallback Flow).
+	Fallback *credfallback.Controller
+	// FallbackRotator mints a replacement lease from the chain's next
+	// pool and pushes it to the session's pod via RotateCredentials
+	// (Fallback Flow steps 5-7). A nil rotator records the cooldown and
+	// budget but performs no replacement push.
+	FallbackRotator FallbackRotator
+	// FallbackAudit emits the §4.9.2 credential.fallback_exhausted audit
+	// event when the chain is exhausted. A nil sink skips emission.
+	FallbackAudit FallbackAuditSink
+	// FallbackTerminator terminates a session whose fallback chain is
+	// exhausted (Fallback Flow step 3). A nil terminator returns the
+	// terminal error to the pod without an out-of-band termination.
+	FallbackTerminator FallbackTerminator
+	// FallbackMetrics receives the §16.1 fallback counters
+	// (lenny_credential_rotation_total,
+	// lenny_gateway_credential_fallback_exhausted_total). A nil sink
+	// disables emission.
+	FallbackMetrics FallbackMetrics
 }
 
 // ServeHTTP implements the §4.9 proxy request path for one Anthropic
@@ -526,6 +552,15 @@ func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.
 	}
 	if h.Metrics != nil {
 		h.Metrics.IncLLMTranslationError(lease.PoolID, string(lease.Provider), string(te.Type))
+	}
+	// spec: §4.9 lines 1383-1411 — an upstream credential fault drives
+	// the Fallback Flow before the pod-facing error is written. When the
+	// chain is exhausted the terminal CREDENTIAL_FALLBACK_EXHAUSTED error
+	// is written here and no further mapping runs.
+	if trig, ok := faultTrigger(te.Type); ok {
+		if h.driveFallback(w, lease, trig, string(te.Type)) {
+			return
+		}
 	}
 	switch te.Type {
 	case ErrUnsupportedField, ErrSchemaMismatch, ErrUpstream4xx:

@@ -110,6 +110,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
@@ -502,6 +503,10 @@ func main() {
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	llmSemanticCache := flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
 		"§4.9 enable the in-process semantic cache on the LLM proxy path. Caching stays disabled by default and is opt-in per pool via the pool's cachePolicy; this flag provisions the in-memory backend the per-pool policy draws on. The Redis-backed backend is wired separately.")
+	credentialFallbackMaxRotations := flag.Int("credential-fallback-max-rotations", envInt("LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS", 3),
+		"§4.9 credentialPolicy fallback.maxRotationsPerSession: the rotation budget shared across all providers in a session before the fallback chain is exhausted and the session terminates with CREDENTIAL_FALLBACK_EXHAUSTED. The spec default is 3; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS.")
+	credentialFallbackCooldownSeconds := flag.Int("credential-fallback-cooldown-seconds", envInt("LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS", 60),
+		"§4.9 credentialPolicy fallback.cooldownOnRateLimit: seconds a faulted credential pool is held on cooldown before the fallback chain selects it again. The spec default is 60s; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS.")
 	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
 		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
 	// §4.9 lines 1525-1526: the proxy dispatches each lease to the
@@ -3475,7 +3480,20 @@ func main() {
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
 	llmProxyUsage := newProxyUsageRecorder(usage, sessions)
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics, llmProxyUsage)
+	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
+	// The Controller holds each session's rotation budget and per-provider
+	// fallback chain; the rotator mints a replacement from the chain's
+	// next pool and pushes it via the §4.7 RotateCredentials RPC, and the
+	// audit sink emits credential.fallback_exhausted on exhaustion.
+	llmFallback := credfallback.NewController(*credentialFallbackMaxRotations,
+		time.Duration(*credentialFallbackCooldownSeconds)*time.Second)
+	llmFallbackDeps := llmFallbackWiring{
+		controller: llmFallback,
+		rotator:    proxyFallbackRotator{assign: credAssign, registry: podRegistry},
+		audit:      proxyFallbackAudit{sink: auditSink},
+		metrics:    gwMetrics,
+	}
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics, llmProxyUsage, llmFallbackDeps)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -4408,7 +4426,17 @@ func (l sessionRetryLookup) LookupRetryState(ctx context.Context, tenantID, sess
 	return policy.RetryState{RetryCount: sess.RetryCount}, true, nil
 }
 
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder) *http.Server {
+// llmFallbackWiring bundles the §4.9 Fallback Flow dependencies the LLM
+// proxy handler drives on an upstream credential fault. A zero value (or
+// nil controller) leaves the proxy on its pre-fallback behavior.
+type llmFallbackWiring struct {
+	controller *credfallback.Controller
+	rotator    llmproxy.FallbackRotator
+	audit      llmproxy.FallbackAuditSink
+	metrics    llmproxy.FallbackMetrics
+}
+
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, fallback llmFallbackWiring) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -4427,6 +4455,11 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		// §16.1 lines 97, 99, 100: active connections, translation
 		// duration, and translation errors on the gateway registry.
 		Metrics: gwMetrics,
+		// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
+		Fallback:        fallback.controller,
+		FallbackRotator: fallback.rotator,
+		FallbackAudit:   fallback.audit,
+		FallbackMetrics: fallback.metrics,
 	})
 	return &http.Server{
 		Addr:              addr,
