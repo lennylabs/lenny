@@ -122,3 +122,23 @@ func TestVerifyErasureGuardDetectsStrippedGuard(t *testing.T) {
 		t.Fatalf("VerifyErasureGuard should report the stripped guard, got %v", err)
 	}
 }
+
+// spec: 11.7 item 7
+// diagnosis: integrity.VerifyErasureRoleScope did not detect a grant on
+// a non-erasure table. §11.7 item 7 mandates that lenny_erasure hold no
+// grants outside the erasure table set; a future migration that grants
+// lenny_erasure write access on, say, sessions must fail startup.
+func TestVerifyErasureRoleScopeDetectsNonErasureGrant(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	ctx := context.Background()
+	if err := integrity.VerifyErasureRoleScope(ctx, pg.Pool); err != nil {
+		t.Fatalf("VerifyErasureRoleScope on the migrated schema: %v", err)
+	}
+	// A migration widens the erasure role onto a non-erasure table.
+	mustExec(t, pg, `GRANT UPDATE ON sessions TO lenny_erasure`)
+	err := integrity.VerifyErasureRoleScope(ctx, pg.Pool)
+	if err == nil || !strings.Contains(err.Error(), "sessions") {
+		t.Fatalf("VerifyErasureRoleScope should report the non-erasure grant, got %v", err)
+	}
+}

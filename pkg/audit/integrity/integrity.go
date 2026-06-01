@@ -38,6 +38,23 @@ import (
 // appRole is the gateway's least-privilege database role.
 const appRole = "lenny_app"
 
+// erasureRole is the §11.7 item 7 GDPR-erasure database role. Only the
+// erasure background job connects as this role.
+const erasureRole = "lenny_erasure"
+
+// erasureTables is the closed set of tables on which lenny_erasure may
+// legitimately hold a grant per §11.7 item 7: the billing/audit ledgers
+// it pseudonymizes/deletes, the erasure_jobs queue it drives, and the
+// users table it marks processing-restricted. The spec mandates "no
+// grants on non-erasure tables"; any grant on a table outside this set
+// is drift that the startup verifier rejects.
+var erasureTables = map[string]bool{
+	"billing_events": true,
+	"audit_log":      true,
+	"erasure_jobs":   true,
+	"users":          true,
+}
+
 // ledgerTables are the §11.7 append-only ledgers: lenny_app may
 // INSERT into them but never UPDATE or DELETE.
 var ledgerTables = []string{"audit_log", "billing_events"}
@@ -265,6 +282,49 @@ func VerifyErasureGuard(ctx context.Context, db Querier) error {
 	return nil
 }
 
+// VerifyErasureRoleScope reports an error when the lenny_erasure role
+// holds a table grant outside the closed erasure table set. §11.7 item 7
+// mandates that lenny_erasure have "no grants on non-erasure tables";
+// codifying it as a positive startup assertion catches a future
+// migration that, say, grants lenny_erasure UPDATE on sessions before it
+// silently widens the erasure role's blast radius.
+//
+// The grants the role legitimately holds (column-scoped UPDATE on
+// billing_events, DELETE/INSERT/SELECT on audit_log, the erasure_jobs
+// and users grants the erasure path needs) are expected and ignored;
+// only a grant on a table absent from erasureTables is reported.
+func VerifyErasureRoleScope(ctx context.Context, db Querier) error {
+	rows, err := db.Query(ctx, `
+		SELECT DISTINCT table_name, privilege_type
+		FROM information_schema.role_table_grants
+		WHERE grantee = $1
+		ORDER BY table_name, privilege_type`, erasureRole)
+	if err != nil {
+		return fmt.Errorf("integrity: query erasure-role grants: %w", err)
+	}
+	defer rows.Close()
+	var offending []string
+	for rows.Next() {
+		var table, priv string
+		if err := rows.Scan(&table, &priv); err != nil {
+			return fmt.Errorf("integrity: scan erasure grant row: %w", err)
+		}
+		if !erasureTables[table] {
+			offending = append(offending, fmt.Sprintf("%s on %s", priv, table))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("integrity: iterate erasure grant rows: %w", err)
+	}
+	if len(offending) > 0 {
+		sort.Strings(offending)
+		return fmt.Errorf("integrity: role %s holds grants on non-erasure tables: %s "+
+			"(§11.7 item 7 mandates no grants outside the erasure table set)",
+			erasureRole, strings.Join(offending, ", "))
+	}
+	return nil
+}
+
 // Verify runs every §11.7 integrity check and joins the failures, so
 // a caller sees all of them rather than just the first.
 func Verify(ctx context.Context, db Querier) error {
@@ -272,5 +332,6 @@ func Verify(ctx context.Context, db Querier) error {
 		VerifyGrants(ctx, db),
 		VerifyTriggersEnabled(ctx, db),
 		VerifyErasureGuard(ctx, db),
+		VerifyErasureRoleScope(ctx, db),
 	)
 }
