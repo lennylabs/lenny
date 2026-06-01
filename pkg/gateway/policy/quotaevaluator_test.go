@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
@@ -31,21 +33,44 @@ func (f fakeLimits) LookupLimits(_ context.Context, tenantID string) (TenantLimi
 	return l, nil
 }
 
-// fakeUsage is a UsageReader test double.
+// fakeUsage is a UsageReader test double. It models the three §11.2
+// scope windows independently so a test can drive a reject at any single
+// scope. Scope keys: "u/"+tenant+"/"+user (per-user), "t/"+tenant
+// (per-tenant rollup), and "g" (global rollup). A scope absent from the
+// map reads as 0.
 type fakeUsage struct {
-	used map[string]int64
-	err  error
+	scoped map[string]int64
+	err    error
+	// sliding records that the rolling-window read path was taken, so a
+	// test can assert the ResetRolling branch runs.
+	sliding bool
 }
 
-func (f fakeUsage) Usage(_ context.Context, tenantID, userID string, _ quota.ResetPeriod, _ time.Time) (int64, error) {
-	if f.err != nil {
-		return 0, f.err
+func (f *fakeUsage) scopedUsage(tenantID, userID string) quotastore.Scoped {
+	return quotastore.Scoped{
+		User:   f.scoped["u/"+tenantID+"/"+userID],
+		Tenant: f.scoped["t/"+tenantID],
+		Global: f.scoped["g"],
 	}
-	return f.used[tenantID+"/"+userID], nil
+}
+
+func (f *fakeUsage) UsageHierarchical(_ context.Context, tenantID, userID string, _ quota.ResetPeriod, _ time.Time) (quotastore.Scoped, error) {
+	if f.err != nil {
+		return quotastore.Scoped{}, f.err
+	}
+	return f.scopedUsage(tenantID, userID), nil
+}
+
+func (f *fakeUsage) SlidingUsageHierarchical(_ context.Context, tenantID, userID string, _, _ time.Duration, _ time.Time) (quotastore.Scoped, error) {
+	f.sliding = true
+	if f.err != nil {
+		return quotastore.Scoped{}, f.err
+	}
+	return f.scopedUsage(tenantID, userID), nil
 }
 
 func TestQuotaEvaluator_ContractFields(t *testing.T) {
-	e := NewQuotaEvaluator(fakeLimits{}, fakeUsage{}, nil)
+	e := NewQuotaEvaluator(fakeLimits{}, &fakeUsage{}, nil)
 	if e.Name() != QuotaEvaluatorName {
 		t.Errorf("Name() = %q, want %q", e.Name(), QuotaEvaluatorName)
 	}
@@ -63,7 +88,7 @@ func TestQuotaEvaluator_ContractFields(t *testing.T) {
 func TestQuotaEvaluator_AdmitsUnderLimit(t *testing.T) {
 	e := NewQuotaEvaluator(
 		fakeLimits{limits: map[string]TenantLimits{"acme": {Tenant: 1000, Period: quota.ResetHourly}}},
-		fakeUsage{used: map[string]int64{"acme/alice": 100}},
+		&fakeUsage{scoped: map[string]int64{"u/acme/alice": 100, "t/acme": 100}},
 		nil,
 	)
 	res, err := e.Intercept(context.Background(), interceptor.Request{
@@ -81,7 +106,7 @@ func TestQuotaEvaluator_AdmitsUnderLimit(t *testing.T) {
 func TestQuotaEvaluator_RejectsHardExceeded(t *testing.T) {
 	e := NewQuotaEvaluator(
 		fakeLimits{limits: map[string]TenantLimits{"acme": {Tenant: 1000, Period: quota.ResetHourly}}},
-		fakeUsage{used: map[string]int64{"acme/alice": 1000}},
+		&fakeUsage{scoped: map[string]int64{"t/acme": 1000}},
 		nil,
 	)
 	res, err := e.Intercept(context.Background(), interceptor.Request{
@@ -107,7 +132,7 @@ func TestQuotaEvaluator_FailsClosedOnLookupError(t *testing.T) {
 	// fail-closed handling then rejects the request.
 	e := NewQuotaEvaluator(
 		fakeLimits{err: errors.New("registry down")},
-		fakeUsage{},
+		&fakeUsage{},
 		nil,
 	)
 	_, err := e.Intercept(context.Background(), interceptor.Request{
@@ -119,7 +144,7 @@ func TestQuotaEvaluator_FailsClosedOnLookupError(t *testing.T) {
 }
 
 func TestQuotaEvaluator_RejectsUnknownTenant(t *testing.T) {
-	e := NewQuotaEvaluator(fakeLimits{limits: map[string]TenantLimits{}}, fakeUsage{}, nil)
+	e := NewQuotaEvaluator(fakeLimits{limits: map[string]TenantLimits{}}, &fakeUsage{}, nil)
 	res, err := e.Intercept(context.Background(), interceptor.Request{
 		Metadata: map[string]string{MetadataTenantID: "ghost"},
 	})
@@ -132,7 +157,7 @@ func TestQuotaEvaluator_RejectsUnknownTenant(t *testing.T) {
 }
 
 func TestQuotaEvaluator_RejectsMissingTenant(t *testing.T) {
-	e := NewQuotaEvaluator(fakeLimits{}, fakeUsage{}, nil)
+	e := NewQuotaEvaluator(fakeLimits{}, &fakeUsage{}, nil)
 	res, err := e.Intercept(context.Background(), interceptor.Request{
 		Metadata: map[string]string{},
 	})
@@ -149,7 +174,7 @@ func TestQuotaEvaluator_NoLimitAdmitsWithoutCounterRead(t *testing.T) {
 	// touching the usage counter.
 	e := NewQuotaEvaluator(
 		fakeLimits{limits: map[string]TenantLimits{"acme": {}}},
-		fakeUsage{err: errors.New("counter must not be read")},
+		&fakeUsage{err: errors.New("counter must not be read")},
 		nil,
 	)
 	res, err := e.Intercept(context.Background(), interceptor.Request{
@@ -168,7 +193,7 @@ func TestQuotaEvaluator_InChain(t *testing.T) {
 	// hard-exceeded window short-circuits the chain with REJECT.
 	e := NewQuotaEvaluator(
 		fakeLimits{limits: map[string]TenantLimits{"acme": {Tenant: 500, Period: quota.ResetHourly}}},
-		fakeUsage{used: map[string]int64{"acme/alice": 600}},
+		&fakeUsage{scoped: map[string]int64{"t/acme": 600}},
 		nil,
 	)
 	chain := interceptor.NewChain()
@@ -181,6 +206,94 @@ func TestQuotaEvaluator_InChain(t *testing.T) {
 	})
 	if res.Action != interceptor.ActionReject {
 		t.Errorf("chain Action = %v, want REJECT", res.Action)
+	}
+}
+
+// TestQuotaEvaluator_GlobalScopeBindsIndependently proves F-11.2.7: the
+// global scope rejects on its own rollup counter even when the per-user
+// and per-tenant windows are well under their limits. Before the fix the
+// three scopes collapsed to the per-user counter and the global check
+// could never fire.
+func TestQuotaEvaluator_GlobalScopeBindsIndependently(t *testing.T) {
+	e := NewQuotaEvaluator(
+		fakeLimits{limits: map[string]TenantLimits{"acme": {
+			Global: 10_000, Tenant: 5_000, User: 1_000, Period: quota.ResetHourly,
+		}}},
+		&fakeUsage{scoped: map[string]int64{
+			"u/acme/alice": 100,    // user well under 1_000
+			"t/acme":       200,    // tenant well under 5_000
+			"g":            10_000, // global at its limit
+		}},
+		nil,
+	)
+	res, err := e.Intercept(context.Background(), interceptor.Request{
+		Phase:    interceptor.PhasePostAuth,
+		Metadata: map[string]string{MetadataTenantID: "acme", MetadataUserID: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Intercept: %v", err)
+	}
+	if res.Action != interceptor.ActionReject {
+		t.Fatalf("Action = %v, want REJECT on the global scope", res.Action)
+	}
+	if !strings.Contains(res.Reason, "global") {
+		t.Errorf("reject reason %q must name the bound global scope", res.Reason)
+	}
+}
+
+// TestQuotaEvaluator_TenantScopeBindsIndependently proves the tenant
+// rollup binds even when the per-user window is far under its limit.
+func TestQuotaEvaluator_TenantScopeBindsIndependently(t *testing.T) {
+	e := NewQuotaEvaluator(
+		fakeLimits{limits: map[string]TenantLimits{"acme": {
+			Tenant: 5_000, User: 1_000, Period: quota.ResetHourly,
+		}}},
+		&fakeUsage{scoped: map[string]int64{
+			"u/acme/alice": 100,   // user well under 1_000
+			"t/acme":       5_000, // tenant at its limit
+		}},
+		nil,
+	)
+	res, err := e.Intercept(context.Background(), interceptor.Request{
+		Phase:    interceptor.PhasePostAuth,
+		Metadata: map[string]string{MetadataTenantID: "acme", MetadataUserID: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Intercept: %v", err)
+	}
+	if res.Action != interceptor.ActionReject {
+		t.Fatalf("Action = %v, want REJECT on the tenant scope", res.Action)
+	}
+	if !strings.Contains(res.Reason, "tenant") {
+		t.Errorf("reject reason %q must name the bound tenant scope", res.Reason)
+	}
+}
+
+// TestQuotaEvaluator_RollingWindowUsesSlidingRead proves F-11.2.3: a
+// tenant configured with the rolling reset period is read via the
+// sliding-window counter, not the fixed-window store (which errors for
+// ResetRolling). The window is admitted when under the limit.
+func TestQuotaEvaluator_RollingWindowUsesSlidingRead(t *testing.T) {
+	usage := &fakeUsage{scoped: map[string]int64{"u/acme/alice": 100, "t/acme": 100}}
+	e := NewQuotaEvaluator(
+		fakeLimits{limits: map[string]TenantLimits{"acme": {
+			Tenant: 1_000, Period: quota.ResetRolling, RollingWindow: time.Hour,
+		}}},
+		usage,
+		nil,
+	)
+	res, err := e.Intercept(context.Background(), interceptor.Request{
+		Phase:    interceptor.PhasePostAuth,
+		Metadata: map[string]string{MetadataTenantID: "acme", MetadataUserID: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Intercept: %v", err)
+	}
+	if res.Action != interceptor.ActionAllow {
+		t.Errorf("Action = %v, want ALLOW", res.Action)
+	}
+	if !usage.sliding {
+		t.Error("a rolling reset period must read through the sliding-window counter")
 	}
 }
 

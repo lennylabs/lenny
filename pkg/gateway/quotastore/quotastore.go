@@ -214,6 +214,119 @@ func (c *Counter) SlidingUsage(ctx context.Context, tenantID, userID string, win
 	return total, nil
 }
 
+// Scope-rollup slots. The §11.2 token budget is hierarchical
+// (global ⊇ tenant ⊇ user), so HierarchicalCheck needs three
+// independent window totals. A per-user window already exists; the
+// per-tenant and global windows accumulate under reserved synthetic ids
+// addressed by these constants. A real tenant id or OIDC subject never
+// contains a NUL byte, so the synthetic slots never collide with a
+// per-user window and a §12.8 DeleteByUser cannot zero a tenant rollup.
+//
+// The per-tenant rollup lives under the tenant's own key prefix, so a
+// §12.8 DeleteByTenant SCAN (t:{tenant}:quota:tokens:*) erases it along
+// with every per-user window. The global rollup lives under a synthetic
+// tenant slot, so no individual tenant's erasure can zero the
+// platform-wide window. spec: §11.2 (hierarchical token budget).
+const (
+	tenantRollupUser   = "\x00tenant-rollup"
+	globalRollupTenant = "\x00global-rollup"
+	globalRollupUser   = "\x00global-rollup"
+)
+
+// Scoped carries the §11.2 token usage at each scope of the
+// hierarchy — the per-user window, the per-tenant rollup, and the
+// platform-wide global rollup — so a single call returns every total
+// quota.HierarchicalCheck needs.
+type Scoped struct {
+	User   int64
+	Tenant int64
+	Global int64
+}
+
+// AddHierarchical records tokens against the per-user, per-tenant, and
+// global §11.2 windows of period containing at, and returns the three
+// resulting window totals. Every token increment advances all three
+// scopes so a later read sees an independent total per scope; this is
+// the §11.2 write path the proxy-mode usage recorder drives on each
+// upstream response. spec: §11.2 (global ⊇ tenant ⊇ user; "writes them
+// to Redis immediately").
+func (c *Counter) AddHierarchical(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time, tokens int64) (Scoped, error) {
+	user, err := c.Add(ctx, tenantID, userID, period, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	tenant, err := c.Add(ctx, tenantID, tenantRollupUser, period, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	global, err := c.Add(ctx, globalRollupTenant, globalRollupUser, period, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	return Scoped{User: user, Tenant: tenant, Global: global}, nil
+}
+
+// UsageHierarchical returns the §11.2 recorded token totals at the
+// user, tenant, and global scopes for the window of period containing
+// at. A scope with no recorded usage reads as 0. spec: §11.2
+// (HierarchicalCheck reads one window per scope).
+func (c *Counter) UsageHierarchical(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time) (Scoped, error) {
+	user, err := c.Usage(ctx, tenantID, userID, period, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	tenant, err := c.Usage(ctx, tenantID, tenantRollupUser, period, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	global, err := c.Usage(ctx, globalRollupTenant, globalRollupUser, period, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	return Scoped{User: user, Tenant: tenant, Global: global}, nil
+}
+
+// SlidingAddHierarchical is the rolling-window counterpart of
+// AddHierarchical: it records tokens into the bucket containing at at
+// the user, tenant, and global scopes and returns the resulting totals
+// over the rolling window ending at at. spec: §11.2 ("rolling window"
+// reset period).
+func (c *Counter) SlidingAddHierarchical(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time, tokens int64) (Scoped, error) {
+	user, err := c.SlidingAdd(ctx, tenantID, userID, window, resolution, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	tenant, err := c.SlidingAdd(ctx, tenantID, tenantRollupUser, window, resolution, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	global, err := c.SlidingAdd(ctx, globalRollupTenant, globalRollupUser, window, resolution, at, tokens)
+	if err != nil {
+		return Scoped{}, err
+	}
+	return Scoped{User: user, Tenant: tenant, Global: global}, nil
+}
+
+// SlidingUsageHierarchical is the rolling-window counterpart of
+// UsageHierarchical: it returns the user-, tenant-, and global-scope
+// token totals over the rolling window of length window ending at at.
+// spec: §11.2 ("rolling window" reset period).
+func (c *Counter) SlidingUsageHierarchical(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time) (Scoped, error) {
+	user, err := c.SlidingUsage(ctx, tenantID, userID, window, resolution, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	tenant, err := c.SlidingUsage(ctx, tenantID, tenantRollupUser, window, resolution, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	global, err := c.SlidingUsage(ctx, globalRollupTenant, globalRollupUser, window, resolution, at)
+	if err != nil {
+		return Scoped{}, err
+	}
+	return Scoped{User: user, Tenant: tenant, Global: global}, nil
+}
+
 // slidingBucketKey returns the §12.4 Redis key for the bucket of
 // resolution that contains at. The label is the bucket start
 // truncated to resolution so two writes inside the same bucket

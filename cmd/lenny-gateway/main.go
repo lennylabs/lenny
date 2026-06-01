@@ -394,6 +394,9 @@ func main() {
 		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
 	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
 		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
+	quotaRollingWindowSeconds := flag.Int("quota-rolling-window-seconds",
+		envInt("LENNY_QUOTA_ROLLING_WINDOW_SECONDS", int(policy.DefaultRollingWindow.Seconds())),
+		"§11.2 rolling-window length (seconds) applied when a tenant configures the `rolling` reset period. Default 3600 (1h). Override via LENNY_QUOTA_ROLLING_WINDOW_SECONDS.")
 	quotaSyncIntervalSeconds := flag.Int("quota-sync-interval-seconds",
 		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
 		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
@@ -2111,11 +2114,18 @@ func main() {
 	}
 	log.Printf("lenny-gateway: §4.8 AuthEvaluator (PreAuth), DelegationPolicyEvaluator (PreDelegation, maxInputSize=%d), and RetryPolicyEvaluator (PostRoute, maxRetries=%d) registered", *delegationMaxInputSize, *retryMaxRetries)
 	var policyAuditSink *policy.AuditSink
+	// quotaCounter / tenantLimits are hoisted out of the redis-only block
+	// so the §4.9 proxy usage recorder (built later) can advance the same
+	// §11.2 hierarchical token counter QuotaEvaluator reads. Both stay nil
+	// when --redis-url is unset, which leaves quota recording disabled.
+	var quotaCounter *quotastore.Counter
+	var tenantLimits *policy.TenantStoreLimits
 	if redisClient != nil {
-		quotaCounter := quotastore.New(redisClient)
-		tenantLimits := policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
+		quotaCounter = quotastore.New(redisClient)
+		tenantLimits = policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
 			GlobalTokenQuotaPerWindow: *globalTokenQuota,
 			UserTokenQuotaPerWindow:   *userTokenQuota,
+			RollingWindow:             time.Duration(*quotaRollingWindowSeconds) * time.Second,
 		})
 		quotaEval := policy.NewQuotaEvaluator(tenantLimits, quotaCounter, nil)
 		if err := policyChain.Register(interceptor.PhasePostAuth, quotaEval); err != nil {
@@ -3577,7 +3587,7 @@ func main() {
 	// proxy-extracted (authoritative) counts are persisted as the
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
-	llmProxyUsage := newProxyUsageRecorder(usage, sessions)
+	llmProxyUsage := newProxyUsageRecorder(usage, sessions, quotaCounter, tenantLimits)
 	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's

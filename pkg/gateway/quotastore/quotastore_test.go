@@ -120,3 +120,94 @@ func TestDeleteByTenantScopedAndIdempotent_spec_12_8_phase4(t *testing.T) {
 		t.Errorf("second DeleteByTenant = (%d, %v), want (0, nil)", n2, err)
 	}
 }
+
+// TestAddHierarchicalScopesAreIndependent proves the §11.2 per-user,
+// per-tenant, and global windows accumulate independently: a second
+// user's tokens lift the tenant and global rollups but never the first
+// user's per-user window. spec: §11.2 (global ⊇ tenant ⊇ user).
+func TestAddHierarchicalScopesAreIndependent(t *testing.T) {
+	t.Parallel()
+	c := newCounter(t)
+	ctx := context.Background()
+	at := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if _, err := c.AddHierarchical(ctx, "acme", "alice", quota.ResetHourly, at, 100); err != nil {
+		t.Fatalf("AddHierarchical alice: %v", err)
+	}
+	if _, err := c.AddHierarchical(ctx, "acme", "bob", quota.ResetHourly, at, 20); err != nil {
+		t.Fatalf("AddHierarchical bob: %v", err)
+	}
+	// A different tenant lifts only the global rollup.
+	if _, err := c.AddHierarchical(ctx, "globex", "carol", quota.ResetHourly, at, 7); err != nil {
+		t.Fatalf("AddHierarchical carol: %v", err)
+	}
+
+	alice, err := c.UsageHierarchical(ctx, "acme", "alice", quota.ResetHourly, at)
+	if err != nil {
+		t.Fatalf("UsageHierarchical alice: %v", err)
+	}
+	if alice.User != 100 {
+		t.Errorf("alice.User = %d, want 100", alice.User)
+	}
+	if alice.Tenant != 120 {
+		t.Errorf("acme tenant rollup = %d, want 120 (alice+bob)", alice.Tenant)
+	}
+	if alice.Global != 127 {
+		t.Errorf("global rollup = %d, want 127 (alice+bob+carol)", alice.Global)
+	}
+
+	bob, _ := c.UsageHierarchical(ctx, "acme", "bob", quota.ResetHourly, at)
+	if bob.User != 20 {
+		t.Errorf("bob.User = %d, want 20 (independent of alice)", bob.User)
+	}
+}
+
+// TestSlidingAddHierarchicalScopesAreIndependent mirrors the fixed-window
+// case for the §11.2 rolling reset period.
+func TestSlidingAddHierarchicalScopesAreIndependent(t *testing.T) {
+	t.Parallel()
+	c := newCounter(t)
+	ctx := context.Background()
+	at := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if _, err := c.SlidingAddHierarchical(ctx, "acme", "alice", time.Hour, quotastore.DefaultBucketResolution, at, 40); err != nil {
+		t.Fatalf("SlidingAddHierarchical alice: %v", err)
+	}
+	if _, err := c.SlidingAddHierarchical(ctx, "acme", "bob", time.Hour, quotastore.DefaultBucketResolution, at, 10); err != nil {
+		t.Fatalf("SlidingAddHierarchical bob: %v", err)
+	}
+	got, err := c.SlidingUsageHierarchical(ctx, "acme", "alice", time.Hour, quotastore.DefaultBucketResolution, at)
+	if err != nil {
+		t.Fatalf("SlidingUsageHierarchical: %v", err)
+	}
+	if got.User != 40 {
+		t.Errorf("alice rolling user window = %d, want 40", got.User)
+	}
+	if got.Tenant != 50 || got.Global != 50 {
+		t.Errorf("rolling tenant/global rollups = (%d,%d), want 50 each", got.Tenant, got.Global)
+	}
+}
+
+// TestDeleteByTenantErasesTenantRollup confirms a §12.8 tenant erasure
+// clears the per-tenant rollup window along with the per-user windows,
+// while the global rollup (under a synthetic tenant slot) survives.
+func TestDeleteByTenantErasesTenantRollup(t *testing.T) {
+	t.Parallel()
+	c := newCounter(t)
+	ctx := context.Background()
+	at := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if _, err := c.AddHierarchical(ctx, "acme", "alice", quota.ResetHourly, at, 100); err != nil {
+		t.Fatalf("AddHierarchical: %v", err)
+	}
+	if _, err := c.DeleteByTenant(ctx, "acme"); err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	got, _ := c.UsageHierarchical(ctx, "acme", "alice", quota.ResetHourly, at)
+	if got.User != 0 || got.Tenant != 0 {
+		t.Errorf("after tenant erase user/tenant = (%d,%d), want 0", got.User, got.Tenant)
+	}
+	if got.Global != 100 {
+		t.Errorf("global rollup = %d, want 100 (a single tenant's erasure must not zero the platform window)", got.Global)
+	}
+}

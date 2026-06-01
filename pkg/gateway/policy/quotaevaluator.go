@@ -68,6 +68,12 @@ type TenantLimits struct {
 	// Period is the §11.2 reset period the limits and the usage
 	// counter share. The zero value is treated as quota.ResetHourly.
 	Period quota.ResetPeriod
+
+	// RollingWindow is the rolling-window length applied when Period is
+	// quota.ResetRolling. A non-positive value selects
+	// DefaultRollingWindow. It is ignored for the fixed-interval
+	// periods. spec: §11.2 ("rolling window").
+	RollingWindow time.Duration
 }
 
 // TenantLimitLookup resolves the §11.2 hierarchical token budget for a
@@ -84,14 +90,25 @@ type TenantLimitLookup interface {
 // fail-closed QuotaEvaluator rejects a request for an unknown tenant.
 var ErrTenantNotFound = errors.New("policy: tenant not found")
 
-// UsageReader reads the §11.2 recorded token usage for a (tenant,
-// user) window. The gateway backs it with the Redis-backed
-// quotastore.Counter.
+// UsageReader reads the §11.2 recorded token usage at every scope of
+// the hierarchy (global ⊇ tenant ⊇ user) for a (tenant, user) window.
+// The gateway backs it with the Redis-backed quotastore.Counter.
 type UsageReader interface {
-	// Usage returns the recorded token total for the window of period
-	// containing at. A window with no recorded usage reads as 0.
-	Usage(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time) (int64, error)
+	// UsageHierarchical returns the recorded token totals at the user,
+	// tenant, and global scopes for the fixed-interval window of period
+	// containing at. A scope with no recorded usage reads as 0.
+	UsageHierarchical(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time) (quotastore.Scoped, error)
+	// SlidingUsageHierarchical is the rolling-window counterpart, summing
+	// resolution-sized buckets across the rolling window ending at at.
+	SlidingUsageHierarchical(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time) (quotastore.Scoped, error)
 }
+
+// DefaultRollingWindow is the §11.2 rolling-window length applied when a
+// tenant configures the `rolling` reset period but no explicit window
+// length is resolved. One hour matches the hourly fixed window so a
+// tenant switching to `rolling` keeps a comparable budget horizon. The
+// value is operator-tunable (--quota-rolling-window-seconds).
+const DefaultRollingWindow = time.Hour
 
 // Compile-time assertion that the Redis counter satisfies UsageReader.
 var _ UsageReader = (*quotastore.Counter)(nil)
@@ -111,10 +128,10 @@ var _ UsageReader = (*quotastore.Counter)(nil)
 // QuotaEvaluator is token-budget-only. The §8.3 contentPolicy.maxInputSize
 // byte cap on TaskSpec.input is owned by DelegationPolicyEvaluator at
 // PreDelegation (the phase whose payload is the delegation input);
-// QuotaEvaluator does not measure input size. The §11.2 tenant-scope
-// and global-scope usage are read from the same per-(tenant, user)
-// counter window until a dedicated per-tenant rollup counter lands; that
-// collapse is a documented limitation, not a bypass.
+// QuotaEvaluator does not measure input size. The §11.2 user, tenant,
+// and global scopes are read from three independent counter windows
+// (UsageReader.UsageHierarchical), so each scope threshold fires on its
+// own measurement.
 type QuotaEvaluator struct {
 	limits TenantLimitLookup
 	usage  UsageReader
@@ -210,23 +227,30 @@ func (e *QuotaEvaluator) Intercept(ctx context.Context, req interceptor.Request)
 	}
 
 	now := e.clock()
-	// The §12.4 token counter is keyed per (tenant, user, window). The
-	// tenant-window usage is the same counter summed across the tenant;
-	// with a single counter store the tenant and global usage are read
-	// from the tenant's user-keyed window. The per-user window is the
-	// user's own counter.
-	userUsed, err := e.usage.Usage(ctx, tenantID, userID, period, now)
+	// spec: §11.2 — read one independent window total per scope. The
+	// §12.4 counter keys the per-user window per (tenant, user); the
+	// per-tenant rollup and the platform-wide global rollup accumulate
+	// in their own windows (quotastore reserved scope slots), so the
+	// global → tenant → user check tests three distinct measurements.
+	// The recorder advances all three on each upstream response.
+	var used quotastore.Scoped
+	if period == quota.ResetRolling {
+		// spec: §11.2 ("rolling window") — the rolling reset period is a
+		// sliding-window sum, not a fixed bucket; read it via the
+		// sliding-window counter at the resolved window length.
+		window := limits.RollingWindow
+		if window <= 0 {
+			window = DefaultRollingWindow
+		}
+		used, err = e.usage.SlidingUsageHierarchical(ctx, tenantID, userID, window, quotastore.DefaultBucketResolution, now)
+	} else {
+		used, err = e.usage.UsageHierarchical(ctx, tenantID, userID, period, now)
+	}
 	if err != nil {
 		return interceptor.Result{}, fmt.Errorf("quota usage read for tenant %q user %q: %w", tenantID, userID, err)
 	}
-	// The tenant-scope and global-scope usage are tracked against the
-	// same per-tenant counter window. A dedicated per-tenant rollup
-	// counter is a later-phase addition; until then the tenant window
-	// is the binding tenant-scope measurement.
-	tenantUsed := userUsed
-	globalUsed := userUsed
 
-	res := quota.HierarchicalCheck(globalUsed, tenantUsed, userUsed, h)
+	res := quota.HierarchicalCheck(used.Global, used.Tenant, used.User, h)
 	if res.State == quota.StateHardExceeded {
 		return interceptor.Result{
 			Action: interceptor.ActionReject,

@@ -5,6 +5,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/quota"
@@ -33,6 +34,11 @@ type TenantStoreLimits struct {
 	// period is the §11.2 reset period the limits and the usage
 	// counter share.
 	period quota.ResetPeriod
+
+	// rollingWindow is the §11.2 rolling-window length applied when the
+	// resolved period is quota.ResetRolling. A non-positive value lets
+	// QuotaEvaluator fall back to DefaultRollingWindow.
+	rollingWindow time.Duration
 }
 
 // TenantStoreLimitsOptions configures NewTenantStoreLimits.
@@ -48,6 +54,11 @@ type TenantStoreLimitsOptions struct {
 	// Period is the §11.2 reset period. The zero value selects
 	// quota.ResetHourly.
 	Period quota.ResetPeriod
+
+	// RollingWindow is the §11.2 rolling-window length applied when the
+	// resolved period is quota.ResetRolling. A non-positive value lets
+	// QuotaEvaluator fall back to DefaultRollingWindow.
+	RollingWindow time.Duration
 }
 
 // NewTenantStoreLimits returns a TenantLimitLookup backed by the
@@ -58,10 +69,11 @@ func NewTenantStoreLimits(tenants tenantstore.Store, opts TenantStoreLimitsOptio
 		period = quota.ResetHourly
 	}
 	return &TenantStoreLimits{
-		tenants:     tenants,
-		globalLimit: opts.GlobalTokenQuotaPerWindow,
-		userLimit:   opts.UserTokenQuotaPerWindow,
-		period:      period,
+		tenants:       tenants,
+		globalLimit:   opts.GlobalTokenQuotaPerWindow,
+		userLimit:     opts.UserTokenQuotaPerWindow,
+		period:        period,
+		rollingWindow: opts.RollingWindow,
 	}
 }
 
@@ -95,10 +107,11 @@ func (l *TenantStoreLimits) LookupLimits(ctx context.Context, tenantID string) (
 		period = p
 	}
 	return TenantLimits{
-		Global: l.globalLimit,
-		Tenant: tenant.TokenQuotaPerWindow,
-		User:   userLimit,
-		Period: period,
+		Global:        l.globalLimit,
+		Tenant:        tenant.TokenQuotaPerWindow,
+		User:          userLimit,
+		Period:        period,
+		RollingWindow: l.rollingWindow,
 	}, nil
 }
 

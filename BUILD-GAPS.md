@@ -15425,7 +15425,7 @@ Specifically missing from the billing stream:
 - `token_usage.checkpoint` — no emission anywhere (grep returned no matches).
 - `credential.leased`, `credential.revoked` — emitted to audit (OCSF mapping at `/Users/joan/projects/lenny/pkg/audit/ocsf/mapping.go:55`) but not to billing.
 
-### - [ ] F-11.2.2 — LLM token usage is never recorded against any quota counter [High] — OPEN
+### - [x] F-11.2.2 — LLM token usage is never recorded against any quota counter [High] — CLOSED
 
 Spec §11.2 "Quota Update Timing": in proxy mode the gateway extracts `input_tokens`/`output_tokens` directly from upstream responses and writes them to Redis "immediately". In direct mode the runtime adapter reports them via `ReportUsage`.
 
@@ -15437,13 +15437,17 @@ Neither path increments the §11.2 token counter in production code:
 
 Consequence: `QuotaEvaluator.Intercept` (`/Users/joan/projects/lenny/pkg/gateway/policy/quotaevaluator.go:210`) always reads `userUsed = 0` against the configured limits, so the §11.2 token quota never trips — every session create is admitted regardless of consumption. This is a complete bypass of the per-tenant / per-user token budget that §11.2 names as the binding cost control.
 
-### - [ ] F-11.2.3 — Sliding "rolling window" reset period is implemented but unwired; only fixed buckets are used at admission [High] — OPEN
+**Resolution:** The proxy-mode usage recorder now advances the §11.2 `quotastore.Counter` on every upstream response (the spec's "extracts input_tokens/output_tokens … writes them to Redis immediately" path), not just the §15.1 metering `usagestore`. `quotastore` gained `AddHierarchical` / `SlidingAddHierarchical`, which increment the per-user, per-tenant-rollup, and global-rollup windows in one call; `proxyUsageRecorder.recordQuota` resolves the session's `UserID` (lease attribution) and the tenant's reset period (via the shared `TenantLimitLookup`) and records `input+output` at all three scopes. `cmd/lenny-gateway` hoists the `quotaCounter` + `tenantLimits` it already built for QuotaEvaluator and passes them into `newProxyUsageRecorder`, so the evaluator's reads are now non-zero (the budget actually trips). Best-effort write: a transient Redis fault never fails the proxied call. The direct-mode `ReportUsage` recording remains a follow-on (the §4.9 line 1468 rule makes only proxy-extracted counts authoritative, which is the path wired here). Closed alongside F-11.2.3 / F-11.2.7.
+
+### - [x] F-11.2.3 — Sliding "rolling window" reset period is implemented but unwired; only fixed buckets are used at admission [High] — CLOSED
 
 Spec §11.2: "Quota reset periods are configurable per quota type: hourly, daily, monthly, or rolling window." The reset enum includes `rolling` (`/Users/joan/projects/lenny/pkg/quota/quota.go:24`).
 
 The Redis-backed `quotastore.Counter` exposes both fixed-window `Add`/`Usage` and sliding-window `SlidingAdd`/`SlidingUsage` (`/Users/joan/projects/lenny/pkg/gateway/quotastore/quotastore.go:132-191`). `QuotaEvaluator.Intercept` only calls `e.usage.Usage(...)` (line 210), and `quotastore.windowKey` returns an explicit error for `ResetRolling` (line 109): `"the rolling reset period needs a sliding-window counter, not the fixed-window store"`. So configuring `Period = ResetRolling` at admission produces a `quota usage read … rolling reset period needs a sliding-window counter` error and fails the request closed via the §4.8 chain. There is no caller for `SlidingAdd`/`SlidingUsage` outside the dedicated test (`tests/tier2_component/quota/quotastore_sliding_test.go`).
 
 The rolling-window quota the spec table lists ("Token limits (LLM tokens) … per-user/window, per-tenant/window … rolling window") is unreachable in production.
+
+**Resolution:** `QuotaEvaluator.Intercept` now branches on the resolved reset period: `quota.ResetRolling` reads through `quotastore.Counter.SlidingUsageHierarchical` at the tenant's rolling-window length (`TenantLimits.RollingWindow`, defaulting to `policy.DefaultRollingWindow` = 1h, operator-tunable via `--quota-rolling-window-seconds` / `LENNY_QUOTA_ROLLING_WINDOW_SECONDS`), while the fixed-interval periods keep the bucketed read. The proxy usage recorder mirrors the branch on the write side (`SlidingAddHierarchical`), so a tenant configured with `QuotaResetPeriod="rolling"` accumulates and enforces against the sliding window instead of erroring closed on `windowKey`. Closed alongside F-11.2.2 / F-11.2.7.
 
 ### - [ ] F-11.2.4 — Postgres reconciliation / checkpoint of token counters is absent [High] — OPEN
 
@@ -15481,13 +15485,15 @@ Implementation:
 
 Net effect: there is no fail-open quota enforcement at all. A Redis outage takes the entire quota check fail-closed, which the spec explicitly forbids ("During Redis unavailability (fail-open window), the gateway tracks usage in-memory per session and enforces the per-session budget locally").
 
-### - [ ] F-11.2.7 — Token quota enforcement path can never reject because `userUsed/tenantUsed/globalUsed` collapse to one counter [High] — OPEN
+### - [x] F-11.2.7 — Token quota enforcement path can never reject because `userUsed/tenantUsed/globalUsed` collapse to one counter [High] — CLOSED
 
 Spec §11.2 makes the hierarchy global ⊇ tenant ⊇ user, each tracked in its own scope-specific counter window.
 
 `quotaevaluator.go:210-221` reads only the **user-scoped** Redis counter and then assigns `tenantUsed := userUsed; globalUsed := userUsed`. The comment is candid: "A dedicated per-tenant rollup counter is a later-phase addition; until then the tenant window is the binding tenant-scope measurement." The global-scope check therefore tests the same number — a user with no recorded usage trivially passes every scope.
 
 Even if H2 were fixed and per-user counts were written, the tenant and global thresholds can never fire as designed because no per-tenant rollup counter is incremented anywhere. The spec's `HierarchicalCheck` semantics are subverted at the read boundary.
+
+**Resolution:** `quotastore` now keeps three independent §11.2 windows: the per-user window plus a per-tenant rollup and a platform-wide global rollup (reserved scope slots addressed by NUL-prefixed synthetic ids that cannot collide with a real tenant id or OIDC subject). `Counter.AddHierarchical` increments all three on each token event and `UsageHierarchical` / `SlidingUsageHierarchical` read them back. The `UsageReader` interface and `QuotaEvaluator.Intercept` were changed to read the three scopes via `UsageHierarchical` (rolling via the sliding variant) and feed `quota.HierarchicalCheck(used.Global, used.Tenant, used.User, h)`, removing the `tenantUsed := userUsed; globalUsed := userUsed` collapse. A §12.8 `DeleteByTenant` erases the per-tenant rollup with the per-user windows; the global rollup (under a synthetic tenant slot) survives a single tenant's erasure. Tier-1 tests prove a global-only or tenant-only over-limit now rejects while the user window is under. Closed alongside F-11.2.2 / F-11.2.3.
 
 ### - [ ] F-11.2.8 — Tier 1 Redis-stream billing failover is published-only; the consumer-group flusher is never started [High] — OPEN
 
