@@ -180,3 +180,13 @@ func TestClassifyDropsNonSpecInvalidRequest_spec_15_1(t *testing.T) {
 		t.Errorf("INVALID_REQUEST classify = (%q, %v), want transient fallback (%q, true)", cat, retr, CategoryTransient)
 	}
 }
+
+// spec: §11.7 item 3 line 368 — an audit advisory-lock acquisition
+// timeout is TRANSIENT and retryable; the gateway retries on the same
+// replica before surfacing 503 audit_unavailable.
+func TestClassifyAuditConcurrencyTimeout_spec_11_7(t *testing.T) {
+	cat, retr := Classify("AUDIT_CONCURRENCY_TIMEOUT")
+	if cat != CategoryTransient || !retr {
+		t.Errorf("AUDIT_CONCURRENCY_TIMEOUT classify = (%q, %v), want (%q, true)", cat, retr, CategoryTransient)
+	}
+}

@@ -367,11 +367,17 @@ var table = map[string]entry{
 	"DELEGATION_DENIED": {CategoryPolicy, false},
 
 	// TRANSIENT — a retry is expected to clear the condition.
-	"POD_CRASH":                       {CategoryTransient, true}, // spec: 15:995
-	"DEADLOCK_TIMEOUT":                {CategoryTransient, true}, // spec: 15:1021
-	"CREDENTIAL_RENEWAL_FAILED":       {CategoryTransient, true}, // spec: 15:1025
-	"BUDGET_STATE_UNRECOVERABLE":      {CategoryTransient, true}, // spec: 15:1027
-	"DELEGATION_AUDIT_CONTENTION":     {CategoryTransient, true}, // spec: 15:1037
+	"POD_CRASH":                   {CategoryTransient, true}, // spec: 15:995
+	"DEADLOCK_TIMEOUT":            {CategoryTransient, true}, // spec: 15:1021
+	"CREDENTIAL_RENEWAL_FAILED":   {CategoryTransient, true}, // spec: 15:1025
+	"BUDGET_STATE_UNRECOVERABLE":  {CategoryTransient, true}, // spec: 15:1027
+	"DELEGATION_AUDIT_CONTENTION": {CategoryTransient, true}, // spec: 15:1037
+	// spec: §11.7 item 3 line 368 — the audit-write advisory lock could
+	// not be acquired within audit.lock.acquireTimeoutMs. TRANSIENT and
+	// retryable: the gateway retries on the same replica up to
+	// audit.lock.maxRetries; sustained failure surfaces as 503
+	// audit_unavailable (mapped via SERVICE_UNAVAILABLE).
+	"AUDIT_CONCURRENCY_TIMEOUT":       {CategoryTransient, true},
 	"DELEGATION_BUDGET_UNAVAILABLE":   {CategoryTransient, true}, // spec: 12.4 (Redis budget-counter outage fail-closed, retryable)
 	"POOL_DRAINING":                   {CategoryTransient, true}, // spec: 15:1034 (§15.4 family)
 	"GIT_CLONE_REF_RESOLVE_TRANSIENT": {CategoryTransient, true}, // spec: 15:1066 (§15.4 family)

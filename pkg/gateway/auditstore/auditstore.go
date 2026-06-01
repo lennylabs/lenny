@@ -38,12 +38,33 @@ var ErrNotFound = errors.New("auditstore: audit row not found")
 
 // Store is the Postgres-backed audit chain. Construct with New.
 type Store struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	lockCfg LockConfig
+	metrics *LockMetrics
 }
 
+// Option configures a Store at construction time.
+type Option func(*Store)
+
+// WithLockConfig overrides the §11.7 lock acquisition SLO / retry
+// tunables. An unset Store uses DefaultLockConfig.
+func WithLockConfig(cfg LockConfig) Option { return func(s *Store) { s.lockCfg = cfg } }
+
+// WithLockMetrics wires the §11.7 lock-acquisition Prometheus metrics.
+// Without it the Store still enforces the timeout and retries but emits
+// no samples.
+func WithLockMetrics(m *LockMetrics) Option { return func(s *Store) { s.metrics = m } }
+
 // New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// database that has the migrations/ schema applied. Lock acquisition
+// uses the §11.7 spec defaults unless WithLockConfig overrides them.
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
+	s := &Store{pool: pool, lockCfg: DefaultLockConfig()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
 
@@ -51,20 +72,45 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
 // sealed row. The append runs under a per-tenant transaction advisory
 // lock so the tail read, the prev_hash computation, and the insert
 // are atomic with respect to other writers (§11.7 item 3).
+//
+// Lock acquisition is bounded by the configured statement_timeout. A
+// timeout returns AUDIT_CONCURRENCY_TIMEOUT internally and the append is
+// retried on the same replica up to MaxRetries with jittered
+// exponential backoff; exhausting the budget returns an
+// *AuditUnavailableError (HTTP 503 audit_unavailable). A non-lock
+// failure is returned immediately without consuming a retry.
+// spec: §11.7 item 3 line 368.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	var committed audit.Row
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		row, err := AppendInTx(ctx, tx, tenantID, eventType, payload, at)
-		if err != nil {
-			return err
+	cfg := s.lockCfg.withDefaults()
+	var lastErr error
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		if attempt > 0 {
+			if err := sleepBackoff(ctx, cfg, attempt); err != nil {
+				return audit.Row{}, err
+			}
 		}
-		committed = row
-		return nil
-	})
-	if err != nil {
-		return audit.Row{}, err
+		var committed audit.Row
+		err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+			if err := acquireAuditLock(ctx, tx, tenantID, cfg, s.metrics); err != nil {
+				return err
+			}
+			row, err := sealAndInsert(ctx, tx, tenantID, eventType, payload, at)
+			if err != nil {
+				return err
+			}
+			committed = row
+			return nil
+		})
+		if err == nil {
+			return committed, nil
+		}
+		var cte *ConcurrencyTimeoutError
+		if !errors.As(err, &cte) {
+			return audit.Row{}, err
+		}
+		lastErr = err
 	}
-	return committed, nil
+	return audit.Row{}, &AuditUnavailableError{TenantID: tenantID, Attempts: cfg.MaxRetries + 1, Err: lastErr}
 }
 
 // Rows returns the tenant's audit rows in sequence order.
@@ -140,14 +186,21 @@ func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row
 // spec: §11.7 (per-tenant advisory lock) and §13.3 line 589 (write-
 // before-issue single Postgres transaction).
 func AppendInTx(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	if err := acquireAuditLock(ctx, tx, tenantID, DefaultLockConfig(), nil); err != nil {
+		return audit.Row{}, err
+	}
+	return sealAndInsert(ctx, tx, tenantID, eventType, payload, at)
+}
+
+// sealAndInsert reads the chain tail, seals the new row with its
+// prev_hash + content hash, and INSERTs the audit_log row. The caller
+// must already hold the §11.7 per-tenant advisory lock (acquireAuditLock)
+// so the tail read and the insert are serialized against other writers.
+func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	if at.IsZero() {
 		at = time.Now()
 	}
 	at = at.UTC()
-	if _, err := tx.Exec(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext($1))`, "audit:"+tenantID); err != nil {
-		return audit.Row{}, err
-	}
 	tail, hasTail, err := scanTail(ctx, tx, tenantID)
 	if err != nil {
 		return audit.Row{}, err

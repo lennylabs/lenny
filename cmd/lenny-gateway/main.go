@@ -370,6 +370,15 @@ func main() {
 	rlFailOpenMaxSeconds := flag.Int("rate-limit-failopen-max-seconds",
 		envInt("LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS", int(ratelimitmw.DefaultFailOpenMaxSeconds/time.Second)),
 		"§11.3 line 222 rateLimitFailOpenMaxSeconds: cap on a single fail-open episode in the §11.1 admission middleware. Negative disables the cap. Default 60s. Override via LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS.")
+	auditLockAcquireTimeoutMs := flag.Int("audit-lock-acquire-timeout-ms",
+		envInt("LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS", auditstore.DefaultLockConfig().AcquireTimeoutMs),
+		"§11.7 item 3 audit.lock.acquireTimeoutMs: statement_timeout on the per-tenant audit advisory-lock acquisition. Default 5000ms. Override via LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS.")
+	auditLockMaxRetries := flag.Int("audit-lock-max-retries",
+		envInt("LENNY_AUDIT_LOCK_MAX_RETRIES", auditstore.DefaultLockConfig().MaxRetries),
+		"§11.7 item 3 audit.lock.maxRetries: same-replica retries after an audit lock timeout before returning 503 audit_unavailable. Default 3. Override via LENNY_AUDIT_LOCK_MAX_RETRIES.")
+	auditLockRetryBaseMs := flag.Int("audit-lock-retry-base-ms",
+		envInt("LENNY_AUDIT_LOCK_RETRY_BASE_MS", auditstore.DefaultLockConfig().RetryBaseMs),
+		"§11.7 item 3 audit.lock.retryBaseMs: exponential-backoff base for audit lock retries, doubling per attempt and jittered ±20%. Default 20ms. Override via LENNY_AUDIT_LOCK_RETRY_BASE_MS.")
 	globalTokenQuota := flag.Int64("global-token-quota-per-window", 0,
 		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
 	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
@@ -1912,7 +1921,22 @@ func main() {
 		auditValidator *auditscope.Validator
 	)
 	if pgPool != nil {
-		pgAudit := auditstore.New(pgPool)
+		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
+		// advisory-lock acquisition with the operator-tunable
+		// statement_timeout + jittered retry budget, and emit the
+		// lenny_audit_lock_acquire_seconds / _concurrency_timeout_total
+		// series the AuditLockContention alert reads.
+		auditLockMetrics, err := auditstore.NewLockMetrics(gwMetrics.Registerer())
+		if err != nil {
+			log.Fatalf("lenny-gateway: audit lock metrics: %v", err)
+		}
+		pgAudit := auditstore.New(pgPool,
+			auditstore.WithLockConfig(auditstore.LockConfig{
+				AcquireTimeoutMs: *auditLockAcquireTimeoutMs,
+				MaxRetries:       *auditLockMaxRetries,
+				RetryBaseMs:      *auditLockRetryBaseMs,
+			}),
+			auditstore.WithLockMetrics(auditLockMetrics))
 		// spec: §11.7 line 428 — guard the caller-driven audit-write
 		// boundaries (the admin sink and the §4.8 policy-rejection sink)
 		// with the write-time tenant-scope validator so a forged-tenant
