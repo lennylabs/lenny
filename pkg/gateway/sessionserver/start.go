@@ -1554,10 +1554,57 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 	if err != nil {
 		return
 	}
-	children := make([]reattachedChild, 0)
-	anyActive := false
+	// Collect this parent's direct children and locate the parent row so
+	// the §8.10 archive can be replayed under the tree root.
+	childRows := make([]sessionstore.Session, 0)
+	var parent sessionstore.Session
+	parentFound := false
 	for _, row := range all {
-		if row.ParentSessionID != parentID {
+		if row.ID == parentID {
+			parent = row
+			parentFound = true
+		}
+		if row.ParentSessionID == parentID {
+			childRows = append(childRows, row)
+		}
+	}
+
+	// spec: §8.10 line 1062 — the resumed parent sees already-settled
+	// children "in original-settlement order". The archive's Replay
+	// returns nodes sorted by (settled_at, completion_seq), so a settled
+	// child's position in the reattach payload reflects when it actually
+	// reached a terminal state, not the store's row order. F-8.10.4.
+	children := make([]reattachedChild, 0, len(childRows))
+	emitted := make(map[string]bool, len(childRows))
+	if s.treeArchive != nil && parentFound {
+		root := s.treeRoot(ctx, parent)
+		if nodes, rerr := s.treeArchive.Replay(ctx, tenantID, root); rerr == nil {
+			for _, n := range nodes {
+				if n.ParentSessionID != parentID || emitted[n.NodeSessionID] {
+					continue
+				}
+				emitted[n.NodeSessionID] = true
+				children = append(children, reattachedChild{
+					SessionID: n.NodeSessionID,
+					State:     n.State,
+					// spec: §8.8 lines 885-940 — replay the same §8.8
+					// TaskResult body the archive captured at settle time so
+					// the reattach payload matches the archived result. F-8.8.2.
+					Result:            json.RawMessage(n.Result),
+					DelegationLeaseID: n.NodeSessionID,
+				})
+			}
+		}
+	}
+
+	// Append children the archive did not carry, in a deterministic
+	// (session-id) order: terminal children when archiving is disabled or
+	// a node was not yet written, then the still-active children that the
+	// resumed parent re-awaits via lenny/await_children.
+	sort.Slice(childRows, func(i, j int) bool { return childRows[i].ID < childRows[j].ID })
+	anyActive := false
+	for _, row := range childRows {
+		if emitted[row.ID] {
 			continue
 		}
 		child := reattachedChild{
@@ -1568,20 +1615,15 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 			DelegationLeaseID: row.ID,
 		}
 		if session.IsTerminal(row.State) {
-			// spec: §8.8 lines 885-940 — replay the same §8.8 TaskResult
-			// body the §8.10 archive holds for this terminal child so a
-			// resumed parent's reattach payload matches the archived result.
-			// F-8.8.2.
 			child.Result, _ = json.Marshal(s.materializeTaskResult(ctx, row, 0))
 		} else {
 			anyActive = true
 			// spec: §7.2 line 153 — populate the pending_request_id when
 			// the child has an outstanding request directed at the
-			// parent. lenny/request_input wins over the
-			// interaction-store entries because it carries a structured
-			// reply contract; an interaction (tool-use / elicitation)
-			// is the fallback when the child raised an approval.
-			// F-7.2.16.
+			// parent. lenny/request_input wins over the interaction-store
+			// entries because it carries a structured reply contract; an
+			// interaction (tool-use / elicitation) is the fallback when
+			// the child raised an approval. F-7.2.16.
 			child.PendingRequestID = s.lookupPendingRequest(ctx, tenantID, row.ID)
 		}
 		children = append(children, child)

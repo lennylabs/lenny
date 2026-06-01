@@ -10137,7 +10137,7 @@ terminal-failure transition for unrecovered nodes.
 
 ---
 
-### - [ ] F-8.10.2 — 2 — `child_failed` event never injected [High] — OPEN
+### - [x] F-8.10.2 — 2 — `child_failed` event never injected [High] — CLOSED
 
 **Severity:** High (MUST gap. The spec normatively states "the gateway
 injects a `child_failed` event into the parent's session stream".)
@@ -10171,6 +10171,14 @@ between `child_state` transitions. The spec's stated decision options
 ("re-spawn, continue with partial results, propagate upward") are not
 exposed; orchestrators must poll or call `await_children` to discover a
 failure.
+
+**Resolution:** `recordSessionCompleted` now calls `emitChildFailed`
+(`pkg/gateway/sessionserver/usage.go`): a delegated child reaching
+`failed` publishes a `child_failed` event onto the parent's session
+stream carrying `child_task_id`, transient/permanent `classification`
+(via `session.ClassifyFailure`), `failure_class`/`failure_reason`, and
+`retries_exhausted`. Non-`failed` terminals and root sessions are
+skipped. Closed by COMMIT_SHA.
 
 ---
 
@@ -10208,7 +10216,7 @@ error, no warning.
 
 ---
 
-### - [ ] F-8.10.4 — 4 — Children-reattached event is not in original-settlement order, does not stream archive [High] — OPEN
+### - [x] F-8.10.4 — 4 — Children-reattached event is not in original-settlement order, does not stream archive [High] — CLOSED
 
 **Severity:** High (MUST gap; the spec specifies the order explicitly.)
 
@@ -10244,6 +10252,14 @@ error, no warning.
 in a non-deterministic order. The spec's "consistent, ordered view of
 all child outcomes regardless of which settled before or after the
 parent failure" is not delivered.
+
+**Resolution:** `emitChildrenReattached`
+(`pkg/gateway/sessionserver/start.go`) now streams settled children from
+`treeArchive.Replay(root)` in `SettledAt` order (carrying the archived
+§8.8 result body), then appends still-active children. `await_children`'s
+`collectChildResults` (`pkg/gateway/mcptools/mcptools.go`) sorts the
+`all`/`settled` result set by each child's settle witness with a stable
+childIDs-order tie-break. Closed by COMMIT_SHA.
 
 ---
 

@@ -3168,6 +3168,20 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 		return []task.Result{first.result}, true, nil
 	}
 	if allTerminal {
+		// spec: §8.10 line 1062 — the re-await protocol streams settled
+		// child results "in original-settlement order". Sort by the
+		// per-child settle witness (the archive's SettledAt once migrated,
+		// the live row's UpdatedAt until then), with a stable tie-break on
+		// childIDs position when two children share a settle instant. This
+		// gives a parent that re-awaits after a pod loss the same ordered
+		// view regardless of which child settled before or after the
+		// failure. F-8.10.4.
+		sort.SliceStable(terminal, func(i, j int) bool {
+			if terminal[i].at.Equal(terminal[j].at) {
+				return terminal[i].idx < terminal[j].idx
+			}
+			return terminal[i].at.Before(terminal[j].at)
+		})
 		out := make([]task.Result, len(terminal))
 		for i, t := range terminal {
 			out[i] = t.result

@@ -273,6 +273,11 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.
 	s.archiveSettledChild(ctx, sess)
+	// §8.10 lines 1080-1089: a delegated child reaching `failed` injects
+	// a `child_failed` event into the parent's session stream so the
+	// parent agent can re-spawn, continue with partial results, or
+	// propagate the failure upward without polling. F-8.10.2.
+	s.emitChildFailed(ctx, sess)
 	// §8.3 line 379: when the tree root settles, the delegation tree is
 	// completing — observe the recorded parallel-children high-watermark
 	// onto the §16.1 histogram. F-8.9.6.
@@ -410,6 +415,55 @@ func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore
 		return
 	}
 	s.hwmObserver.ObserveDelegationParallelChildrenHighWatermark(sess.PoolRef, sess.TenantID, value)
+}
+
+// emitChildFailed injects the §8.10 `child_failed` event into the
+// parent's session stream when a delegated child reaches the `failed`
+// terminal state. The payload carries the child task id, the
+// transient/permanent failure classification, the coded error details
+// (failure class and reason), and whether the gateway's retry budget for
+// the child was exhausted — the four fields the spec enumerates — so the
+// parent agent can decide to re-spawn a replacement, continue with
+// partial results, or propagate the failure upward without polling or
+// re-issuing await_children.
+//
+// A child reaching `failed` after a transient (retryable) cause means
+// its per-child retry budget was exhausted; a permanent
+// (non-retryable / unknown / unclassified) cause short-circuits to
+// `failed` without consuming retries, so retries_exhausted is false in
+// that case. Only the `failed` terminal state injects the event — a
+// `cancelled` or `expired` child is a cascade / deadline outcome, not a
+// child failure the parent decides on. Best-effort: a nil event sink or
+// marshal error never fails the transition that triggered it.
+//
+// spec: §8.10 lines 1080-1089 (child_failed notification);
+// §7.3 lines 285-326 (transient/permanent classification). F-8.10.2.
+func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session) {
+	if s.events == nil || sess.ParentSessionID == "" || sess.State != session.StateFailed {
+		return
+	}
+	transient := session.ClassifyFailure(sess.FailureReason, sess.RetryPolicy) == session.FailureRetryable
+	classification := "permanent"
+	if transient {
+		classification = "transient"
+	}
+	data, err := json.Marshal(struct {
+		ChildTaskID      string `json:"child_task_id"`
+		Classification   string `json:"classification"`
+		FailureClass     string `json:"failure_class,omitempty"`
+		FailureReason    string `json:"failure_reason,omitempty"`
+		RetriesExhausted bool   `json:"retries_exhausted"`
+	}{
+		ChildTaskID:      sess.ID,
+		Classification:   classification,
+		FailureClass:     string(sess.FailureClass),
+		FailureReason:    sess.FailureReason,
+		RetriesExhausted: transient,
+	})
+	if err != nil {
+		return
+	}
+	s.events.PublishForTenant(sess.TenantID, sess.ParentSessionID, "child_failed", string(data), s.clock())
 }
 
 // cascadeToChildren applies the §8.10 cascadeOnFailure policy when
