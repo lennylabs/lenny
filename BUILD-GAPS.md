@@ -34786,7 +34786,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### Findings
 
-### - [ ] F-24.3.1 — (High) — None of the three §24.3 commands exist in the CLI [Medium] — OPEN
+### - [x] F-24.3.1 — (High) — None of the three §24.3 commands exist in the CLI [Medium] — CLOSED
 
 **Spec (R1, R2, R3):** §24.3 lists `lenny-ctl admin runtimes grant-access`, `list-access`, and `revoke-access` as the three commands for runtime tenant-access management.
 
@@ -34798,9 +34798,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Operators cannot manage runtime tenant access through the documented CLI surface. The §24.3 table is entirely non-functional through `lenny-ctl`; an operator would have to invoke the underlying REST endpoints directly via `curl`/`httpie` (`pkg/embedded/stack/runtimes.go:58` is the only in-tree caller and is internal to `lenny up`). This violates the §24 preamble guarantee that every operator workflow has a `lenny-ctl` entry point and breaks the chain of runbooks that reference `lenny-ctl admin runtimes grant-access` for multi-tenant onboarding.
 
+**Resolution:** Added `cmdRuntimesAccess` to `cmd/lenny-ctl/main.go`, dispatched from `cmdRuntimes` for `grant-access`, `list-access`, and `revoke-access`. The three parse `--runtime` (+`--tenant` for grant/revoke) and map to the §15.1:778-780 endpoints (`POST`/`GET` `/v1/admin/runtimes/{name}/tenant-access`, `DELETE .../{tenantId}`); the usage banner lists all three. Missing-flag and unknown-flag cases exit 2 before any request. Tier-1 tests `TestRuntimesGrantAccess_spec_24_3`, `TestRuntimesListAccess_spec_24_3`, `TestRuntimesRevokeAccess_spec_24_3`, and `TestRuntimesGrantAccessRequiresFlags_spec_24_3` cover the routing and validation.
+
 ---
 
-### - [ ] F-24.3.2 — (High) — Defense-in-depth Postgres trigger on `runtime_tenant_access` is unimplemented [Medium] — OPEN
+### - [x] F-24.3.2 — (High) — Defense-in-depth Postgres trigger on `runtime_tenant_access` is unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.2.3 — Both report the missing lenny.admin_mode defense-in-depth trigger on runtime_tenant_access and pool_tenant_access plus its integration test.
 
@@ -34814,9 +34816,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** The §4.2 defense-in-depth promise — that a SQL-injection vulnerability or a missing application-layer check cannot escalate to cross-tenant runtime visibility — does not hold. Any code path that obtains a `lenny_app` connection (including any tenant-admin RPC that bypasses the application gate) can issue `INSERT INTO runtime_tenant_access` with arbitrary tenant IDs. This is the primary multi-tenant isolation barrier for platform-global resources.
 
+**Resolution:** Closed by F-4.2.3. Verified the implementation is present in the current tree: migration `0052_admin_mode_guard.up.sql` defines `lenny_admin_mode_required()` and attaches the `BEFORE INSERT/UPDATE/DELETE` trigger to both `runtime_tenant_access` and `pool_tenant_access`; `pgtenant.InAdminMode` sets `SET LOCAL lenny.admin_mode = 'true'`; `pkg/gateway/tenantaccessstore/pgstore` wraps `Grant`/`Revoke` in `InAdminMode`. The tenant-admin-rejection integration test required by §4.2 line 177 lives in `tests/tier2_component/rls/admin_mode_test.go`.
+
 ---
 
-### - [ ] F-24.3.3 — (Medium) — Admin tool catalog omits `*_runtime_tenant_access` operations [Medium] — OPEN
+### - [x] F-24.3.3 — (Medium) — Admin tool catalog omits `*_runtime_tenant_access` operations [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.4.4, F-24.5.5 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
 
@@ -34828,9 +34832,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Agent-operability discovery is incomplete: an AI DevOps agent enumerating `authorized-tools` cannot find the runtime-grant operation it must invoke to onboard a tenant. The catalog drifts from the actual HTTP routes mounted at `tenants.go:460-465`. Risk surface is documentation/discovery rather than security, but the §25.14 contract relies on this catalog being authoritative.
 
+**Resolution:** Added `admin.grant_runtime_tenant_access`, `admin.list_runtime_tenant_access`, `admin.revoke_runtime_tenant_access` (and the pool siblings `admin.grant_pool_tenant_access`, `admin.list_pool_tenant_access`, `admin.revoke_pool_tenant_access`) to `adminToolCatalog()` in `pkg/gateway/admin/me.go`, each `MinRole: platform-admin` with the `admin.runtimes.{read,write}` / `admin.pools.{read,write}` scopes matching the `requireAdmin`-gated routes. Tier-1 test `TestAuthorizedToolsIncludeTenantAccess_spec_24_3` asserts all six surface for a platform-admin caller.
+
 ---
 
-### - [ ] F-24.3.4 — (Medium) — `lenny up` reference-runtime grants hard-fail without surfacing per-runtime error detail [Medium] — OPEN
+### - [x] F-24.3.4 — (Medium) — `lenny up` reference-runtime grants hard-fail without surfacing per-runtime error detail [Medium] — CLOSED
 
 **Spec context:** §24.3 commands underpin runtime grants; `pkg/embedded/stack/runtimes.go:52-69` is the only in-tree call site today.
 
@@ -34841,9 +34847,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Embedded-Mode bring-up failures on the grant step are diagnosable only by re-running with stdout capture; the structured return value does not name the failing runtime. Recovery is friction-loaded by F1.
 
+**Resolution:** `installReferenceRuntimes` (`pkg/embedded/stack/runtimes.go`) now collects each failed grant as `fmt.Errorf("%s: %w", rt.Name, err)` and returns `errors.Join(failures...)` wrapped with the count, so the returned `error` value names every failing runtime and preserves the underlying API error. Tier-1 tests `TestInstallReferenceRuntimesGrantFailureNamesRuntimes_spec_24_3` (asserts each failing runtime name appears in the returned error) and `TestInstallReferenceRuntimesAllGrantsSucceed_spec_24_3` (happy path) cover it. The §24.3 CLI retry path now exists (F-24.3.1), so an operator hitting this can re-run `lenny-ctl admin runtimes grant-access` per named runtime.
+
 ---
 
-### - [ ] F-24.3.5 — (Medium) — No `--output json` / `--quiet` plumbing in the CLI [Medium] — OPEN
+### - [x] F-24.3.5 — (Medium) — No `--output json` / `--quiet` plumbing in the CLI [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
@@ -34855,6 +34863,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - Even if §24.3 commands existed (F1), they would inherit the same gap.
 
 **Impact:** Cross-command scripting agents that pass `--quiet --output json` (per §24.16) get an unknown-flag silent ignore. The contract that every CLI command honors these two flags is unmet.
+
+**Resolution:** Closed by the root-cause fix tracked under F-24.16.3 (same batch): `parseGlobalFlags` now recognizes `--output`, `--quiet`, `--timeout`, and `--insecure-skip-verify`. `--output` accepts `json` (the only supported format; other values exit 2) and `--quiet` suppresses informational progress messages (wired through `cmdBootstrap`). Tier-1 tests in `cmd/lenny-ctl/tenant_access_test.go` cover parsing, the unsupported-format rejection, and the quiet suppression.
 
 ---
 
@@ -35079,7 +35089,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.4.5 — (Medium) — `--output json` / `--quiet` flags from §24.16 are not parsed [Medium] — OPEN
+### - [x] F-24.4.5 — (Medium) — `--output json` / `--quiet` flags from §24.16 are not parsed [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.3.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
@@ -35091,6 +35101,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - Even if F1's §24.4 commands existed they would inherit the same gap.
 
 **Impact:** Scripted operator workflows that follow the §24.16 contract get an unknown-flag silent fall-through on `--quiet --output json`, and the spec-mandated `--token` is exposed only under the historical `--bearer` name. This regresses cross-command scripting and is consistent with the §24.3 audit's F5.
+
+**Resolution:** Closed by F-24.16.3. `parseGlobalFlags` now parses `--output`/`--quiet`/`--timeout`/`--insecure-skip-verify`; `--token` was already wired. The §24.4 pool commands inherit the global parser, so any future pool command honors these flags automatically.
 
 ---
 
@@ -35367,7 +35379,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.6 — (Medium) — `--output json` / `--quiet` global flags are not parsed [Medium] — OPEN
+### - [x] F-24.5.6 — (Medium) — `--output json` / `--quiet` global flags are not parsed [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.3.5, F-24.4.5 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
@@ -35379,6 +35391,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The gap applies to every CLI subcommand, not just §24.5, but the spec calls it out as a global cross-section requirement that any §24.5 command (once F1 is fixed) would also need.
 
 **Impact:** Operators / agents scripting against `lenny-ctl admin credential-pools …` cannot pass the `--output json` / `--quiet` contract flags from §24.16. If the §24.5 commands existed, the cross-section CLI contract would still be violated. This is duplicated from the §24.3 audit (F5 there); kept for completeness because the §24.5 commands inherit the same global-flag gap and any future implementation must satisfy both rules at once.
+
+**Resolution:** Closed by F-24.16.3. The global flags now parse in `parseGlobalFlags`; any §24.5 credential-pool command inherits `--output`/`--quiet`/`--timeout`/`--insecure-skip-verify` from the shared parser.
 
 ---
 
@@ -36611,11 +36625,13 @@ Spec (§24.16, lines 197 and 199) requires that the `--ops-server` flag has an e
 ### - [ ] F-24.16.2 — Routing rule 3 (gateway-host fallback) is not implemented; auto-discovery errors out instead [High] — OPEN
 Spec (§24.16 line 201) requires that when auto-discovery fails (gateway unreachable or `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host on the assumption that gateway-hosted §25.3 operability endpoints still serve the request, and surfaces a warning for any ops-exclusive command. `cmd/lenny-ctl/ops.go:52–63` returns an error in both failure paths and `withOps` (lines 26–30) exits 2 without invoking the command. The test `TestOpsAutoDiscoveryMissingURLErrors` (`cmd/lenny-ctl/ops_test.go:281–296`) asserts the error-and-exit-2 behavior, which is the opposite of the spec's fallback rule. No code path attempts to route ops calls to the gateway host when `opsServiceURL` is missing.
 
-### - [ ] F-24.16.3 — Documented global flags `--token`, `--timeout`, `--insecure-skip-verify`, `--output`, `--quiet` are absent [Medium] — OPEN
+### - [x] F-24.16.3 — Documented global flags `--token`, `--timeout`, `--insecure-skip-verify`, `--output`, `--quiet` are absent [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.15.14, F-24.20.8, F-24.3.5, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
 Spec (§24.16 line 205) lists `--api-url`, `--ops-server`, `--token`, `--timeout`, and `--insecure-skip-verify` as global flags and states "All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages." `cmd/lenny-ctl/main.go:181–231` (`parseGlobalFlags`) implements `--api-url`, `--ops-server`, `--bearer`, `--bearer-file`, `--dev-tenant`, `--dev-roles`. The auth flag is named `--bearer` rather than the spec's `--token`; `--timeout` is hard-coded to `30 * time.Second` (`cmd/lenny-ctl/main.go:69` and `ops.go:42`); `--insecure-skip-verify` has no representation in the parser, the `ctl.Options` struct, or the HTTP client. `--output` and `--quiet` are absent; output is always JSON via `printJSON` with no formatting alternatives or silencing flag, so the spec's "machine-readable" framing happens to match default behavior but is not selectable. Scripts written against the documented flag names will fail at parse time.
+
+**Resolution:** `parseGlobalFlags` (`cmd/lenny-ctl/main.go`) now recognizes all five §24.16 line-205 flags. `--token` was already an alias for `--bearer` (prior batch). New: `--timeout <secs>` threads into `ctl.Options.Timeout` (gateway + ops clients); `--insecure-skip-verify` (valueless) backs a new `ctl.Options.InsecureSkipVerify` that clones the default transport and relaxes `TLSClientConfig.InsecureSkipVerify`; `--output <format>` defaults to `json` and `run()` exits 2 on any other value; `--quiet` (valueless) suppresses informational messages (the bootstrap readiness-wait line). Tier-1 tests: `TestParseGlobalFlagsSection2416`, `TestParseGlobalFlagsDefaultsSection2416`, `TestRunRejectsUnsupportedOutput_spec_24_16`, `TestBootstrapQuietSuppressesWaiting_spec_24_16` (`cmd/lenny-ctl`), and `TestInsecureSkipVerifyAcceptsSelfSignedTLS` (`pkg/ctl`). Closes the §24-cluster duplicates F-24.3.5, F-24.4.5, and F-24.5.6 in the same batch.
 
 ### - [ ] F-24.16.4 — §24.15 command groups `audit`, `backup`, `restore`, `logs`, `upgrade`, `mcp-management` are not wired [Medium] — OPEN
 Spec §24.15 (the table at lines 185–193, immediately preceding §24.16 and reachable only through the routing rules §24.16 defines) enumerates `lenny-ctl upgrade`, `audit`, `backup`, `restore`, `logs`, and `mcp-management` command groups. `cmd/lenny-ctl/main.go:73–122` (`run`) dispatches `health`, `version`, `bootstrap`, `install`, `runtime`, `admin`, `runbooks`, `locks`, `escalations`, `diagnose`, `drift`, and the help variants. None of the six listed groups have a dispatch case; `default:` returns `unknown command`. This is adjacent to §24.16 because §24.16's routing applies to "every Section 25 ops-hosted endpoint" — the routing surface exists, but most of the commands that would use it are not built.

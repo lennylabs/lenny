@@ -13,6 +13,7 @@ package ctl
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +51,11 @@ type Options struct {
 
 	// Timeout bounds each request. Zero defaults to 30 s.
 	Timeout time.Duration
+
+	// InsecureSkipVerify disables TLS certificate verification. It
+	// backs the §24.16 `--insecure-skip-verify` dev-only global flag
+	// and must never be set in a production deployment.
+	InsecureSkipVerify bool
 }
 
 // New returns a configured Client.
@@ -58,9 +64,18 @@ func New(opts Options) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	httpClient := &http.Client{Timeout: timeout}
+	if opts.InsecureSkipVerify {
+		// spec: §24.16 line 205 — `--insecure-skip-verify` (dev only).
+		// Clone the default transport so connection-pool defaults are
+		// preserved and only TLS verification is relaxed.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		httpClient.Transport = tr
+	}
 	return &Client{
 		baseURL:   strings.TrimRight(opts.BaseURL, "/"),
-		http:      &http.Client{Timeout: timeout},
+		http:      httpClient,
 		bearer:    opts.Bearer,
 		devTenant: opts.DevTenant,
 		devRoles:  opts.DevRoles,

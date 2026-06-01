@@ -75,6 +75,10 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.get_runtime", Scope: "admin.runtimes.read", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Get a runtime"},
 		{Tool: "admin.update_runtime", Scope: "admin.runtimes.write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Update a runtime"},
 		{Tool: "admin.soft_delete_runtime", Scope: "admin.runtimes.write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Soft-delete a runtime"},
+		// spec: §24.3 / §15.1:778-780 — runtime tenant-access management.
+		{Tool: "admin.grant_runtime_tenant_access", Scope: "admin.runtimes.write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Grant a tenant access to a runtime"},
+		{Tool: "admin.list_runtime_tenant_access", Scope: "admin.runtimes.read", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants with access to a runtime"},
+		{Tool: "admin.revoke_runtime_tenant_access", Scope: "admin.runtimes.write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a runtime"},
 		{Tool: "admin.create_user", Scope: "admin.users.write", Category: "user-management", MinRole: auth.RoleTenantAdmin, Description: "Create a user"},
 		{Tool: "admin.list_users", Scope: "admin.users.read", Category: "user-management", MinRole: auth.RoleTenantAdmin, Description: "List users"},
 		{Tool: "admin.get_user", Scope: "admin.users.read", Category: "user-management", MinRole: auth.RoleTenantAdmin, Description: "Get a user"},
@@ -85,6 +89,11 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.get_pool", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Get a pool"},
 		{Tool: "admin.update_pool", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Update a pool"},
 		{Tool: "admin.soft_delete_pool", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Soft-delete a pool"},
+		// spec: §15.1:802 — pool tenant-access management (the §24.3
+		// runtime commands have a pool sibling on the same join table).
+		{Tool: "admin.grant_pool_tenant_access", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Grant a tenant access to a pool"},
+		{Tool: "admin.list_pool_tenant_access", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants with access to a pool"},
+		{Tool: "admin.revoke_pool_tenant_access", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a pool"},
 		{Tool: "admin.bootstrap", Scope: "admin.bootstrap.write", Category: "platform-management", MinRole: auth.RolePlatformAdmin, Description: "Apply seed configuration (upsert)"},
 	}
 }

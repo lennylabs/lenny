@@ -86,6 +86,39 @@ func TestAuthorizedToolsForTenantAdminScopedToTenant(t *testing.T) {
 	}
 }
 
+// TestAuthorizedToolsIncludeTenantAccess_spec_24_3 asserts the runtime
+// and pool tenant-access operations are discoverable in the
+// authorized-tools catalog so a §25.14 agent enumerating its tools
+// finds the §24.3 grant/list/revoke operations. F-24.3.3.
+func TestAuthorizedToolsIncludeTenantAccess_spec_24_3(t *testing.T) {
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp admin.AuthorizedToolsPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	got := map[string]bool{}
+	for _, tool := range resp.Tools {
+		got[tool.Tool] = true
+	}
+	want := []string{
+		"admin.grant_runtime_tenant_access",
+		"admin.list_runtime_tenant_access",
+		"admin.revoke_runtime_tenant_access",
+		"admin.grant_pool_tenant_access",
+		"admin.list_pool_tenant_access",
+		"admin.revoke_pool_tenant_access",
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("missing tenant-access tool %q in authorized-tools: %+v", w, resp.Tools)
+		}
+	}
+}
+
 func contains(roles []pkgauth.Role, r pkgauth.Role) bool {
 	for _, q := range roles {
 		if q == r {

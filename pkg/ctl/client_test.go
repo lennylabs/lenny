@@ -112,3 +112,30 @@ func TestDoSendsJSONBody(t *testing.T) {
 		t.Errorf("body not sent: %+v", gotBody)
 	}
 }
+
+// TestInsecureSkipVerifyAcceptsSelfSignedTLS asserts the §24.16
+// `--insecure-skip-verify` option lets the client talk to a TLS server
+// with an untrusted (self-signed httptest) certificate, while a client
+// without the option fails the handshake.
+func TestInsecureSkipVerifyAcceptsSelfSignedTLS(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "yes"})
+	}))
+	defer ts.Close()
+
+	// Without the flag, the self-signed cert fails verification.
+	secure := ctl.New(ctl.Options{BaseURL: ts.URL})
+	if err := secure.Do(context.Background(), http.MethodGet, "/healthz", nil, nil); err == nil {
+		t.Fatal("expected TLS verification error without InsecureSkipVerify")
+	}
+
+	// With the flag, the request succeeds.
+	insecure := ctl.New(ctl.Options{BaseURL: ts.URL, InsecureSkipVerify: true})
+	var out map[string]string
+	if err := insecure.Do(context.Background(), http.MethodGet, "/healthz", nil, &out); err != nil {
+		t.Fatalf("Do with InsecureSkipVerify: %v", err)
+	}
+	if out["ok"] != "yes" {
+		t.Errorf("response not decoded: %+v", out)
+	}
+}

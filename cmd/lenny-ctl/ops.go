@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 )
@@ -35,11 +34,12 @@ func withOps(ctx context.Context, flags globalFlags, gateway *ctl.Client, stderr
 		return 2
 	}
 	ops := ctl.New(ctl.Options{
-		BaseURL:   opsURL,
-		Bearer:    flags.bearer,
-		DevTenant: flags.devTenant,
-		DevRoles:  flags.devRoles,
-		Timeout:   30 * time.Second,
+		BaseURL:            opsURL,
+		Bearer:             flags.bearer,
+		DevTenant:          flags.devTenant,
+		DevRoles:           flags.devRoles,
+		Timeout:            flags.timeout,
+		InsecureSkipVerify: flags.insecure,
 	})
 	return fn(ops)
 }

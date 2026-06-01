@@ -4,6 +4,7 @@ package stack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -52,12 +53,19 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Wri
 	// Grant the default tenant access to each reference runtime.
 	// §26.1: lenny up auto-grants the default tenant access to every
 	// reference runtime it installs. The grant endpoint is idempotent.
-	var granted, failed int
+	//
+	// Each failure is collected with the runtime name and the
+	// underlying error so the returned error names the failing
+	// runtimes — an operator hitting this path has no §24.3 CLI retry
+	// loop, so the structured value, not just the stdout log, must
+	// carry enough detail to act on. F-24.3.4.
+	var granted int
+	var failures []error
 	for _, rt := range referenceRuntimes {
 		body := map[string]string{"tenantId": defaultTenant}
 		err := client.Do(ctx, "POST", "/v1/admin/runtimes/"+rt.Name+"/tenant-access", body, nil)
 		if err != nil {
-			failed++
+			failures = append(failures, fmt.Errorf("%s: %w", rt.Name, err))
 			fmt.Fprintf(out, "  runtime %-20s tenant-access grant failed: %v\n", rt.Name, err)
 			continue
 		}
@@ -65,8 +73,9 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Wri
 	}
 	fmt.Fprintf(out, "  installed %d reference runtimes; granted default-tenant access to %d\n",
 		len(referenceRuntimes), granted)
-	if failed > 0 {
-		return fmt.Errorf("%d reference-runtime access grants failed", failed)
+	if len(failures) > 0 {
+		return fmt.Errorf("%d reference-runtime access grant(s) failed: %w",
+			len(failures), errors.Join(failures...))
 	}
 	return nil
 }

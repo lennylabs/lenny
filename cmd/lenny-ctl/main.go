@@ -85,12 +85,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
+	// §24.16 line 205: only the "json" output format is supported.
+	if flags.output != "" && flags.output != "json" {
+		fmt.Fprintf(stderr, "lenny-ctl: unsupported --output %q (only \"json\" is supported)\n", flags.output)
+		return 2
+	}
 	client := ctl.New(ctl.Options{
-		BaseURL:   flags.apiURL,
-		Bearer:    flags.bearer,
-		DevTenant: flags.devTenant,
-		DevRoles:  flags.devRoles,
-		Timeout:   30 * time.Second,
+		BaseURL:            flags.apiURL,
+		Bearer:             flags.bearer,
+		DevTenant:          flags.devTenant,
+		DevRoles:           flags.devRoles,
+		Timeout:            flags.timeout,
+		InsecureSkipVerify: flags.insecure,
 	})
 	ctx := context.Background()
 
@@ -105,7 +111,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// spec: §24.0 line 23, §17.6 line 360.
 		return cmdVersion(stdout)
 	case "bootstrap":
-		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr)
+		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr, flags.quiet)
 	case "install":
 		// install runs no gateway calls during values composition; it
 		// shells out to helm. It is dispatched here so it shares the
@@ -163,6 +169,10 @@ Global flags (env fallbacks in parentheses):
   --token <token>      Operator bearer token (LENNY_API_TOKEN); --bearer is an alias
   --dev-tenant <id>    Dev-header tenant (Embedded Mode)
   --dev-roles <roles>  Dev-header roles, comma-separated (Embedded Mode)
+  --timeout <secs>     Per-request timeout in seconds (default 30)
+  --insecure-skip-verify  Skip TLS certificate verification (dev only)
+  --output <format>    Output format; only "json" is supported (default json)
+  --quiet              Suppress informational (non-result) messages
 
 Gateway commands:
   health                                Print the platform health report
@@ -179,6 +189,9 @@ Gateway commands:
   admin runtimes list                   List runtimes
   admin runtimes get <name>             Get a runtime
   admin runtimes register --manifest <f>  Register a runtime from a runtime.yaml
+  admin runtimes grant-access --runtime <name> --tenant <id>   Grant a tenant access to a runtime
+  admin runtimes list-access --runtime <name>   List tenants with access to a runtime
+  admin runtimes revoke-access --runtime <name> --tenant <id>  Revoke a tenant's access to a runtime
   admin pools list                      List pool configurations
   admin pools get <name>                Get a pool configuration
   admin pools create --from-file <f>    Create a pool from a JSON file
@@ -217,6 +230,12 @@ type globalFlags struct {
 	bearer    string
 	devTenant string
 	devRoles  string
+
+	// §24.16 line 205 cross-command flags.
+	timeout  time.Duration // --timeout <secs>; default 30s.
+	insecure bool          // --insecure-skip-verify (dev only).
+	output   string        // --output <format>; only "json" is supported.
+	quiet    bool          // --quiet suppresses informational messages.
 }
 
 // envOr returns the trimmed value of environment variable key, or def
@@ -241,10 +260,38 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 		apiURL:    envOr("LENNY_API_URL", "http://localhost:8080"),
 		opsServer: envOr("LENNY_OPS_URL", ""),
 		bearer:    envOr("LENNY_API_TOKEN", ""),
+		timeout:   30 * time.Second,
+		output:    "json",
 	}
 	i := 0
 	for i < len(args) {
 		switch args[i] {
+		case "--timeout":
+			// §24.16 line 205: per-request timeout in seconds.
+			if i+1 < len(args) {
+				if secs, err := strconv.Atoi(args[i+1]); err == nil && secs > 0 {
+					f.timeout = time.Duration(secs) * time.Second
+				}
+				i += 2
+				continue
+			}
+		case "--insecure-skip-verify":
+			// §24.16 line 205: dev-only TLS-verification bypass. Valueless.
+			f.insecure = true
+			i++
+			continue
+		case "--output":
+			// §24.16 line 205: machine-readable output selector.
+			if i+1 < len(args) {
+				f.output = args[i+1]
+				i += 2
+				continue
+			}
+		case "--quiet":
+			// §24.16 line 205: suppress informational messages. Valueless.
+			f.quiet = true
+			i++
+			continue
 		case "--api-url":
 			if i+1 < len(args) {
 				f.apiURL = args[i+1]
@@ -531,9 +578,76 @@ func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 		// (POST /v1/admin/runtimes). `lenny runtime publish` wraps the
 		// same path, adding a docker push (§24.18).
 		return cmdRuntimesRegister(ctx, c, args[1:], stdout, stderr)
+	case "grant-access", "list-access", "revoke-access":
+		// spec: §24.3 — runtime tenant-access management. grant-access
+		// and revoke-access take --runtime + --tenant; list-access takes
+		// --runtime only. They map to the §15.1:778-780 tenant-access
+		// endpoints under /v1/admin/runtimes/{name}/tenant-access.
+		return cmdRuntimesAccess(ctx, c, args[0], args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown runtimes subcommand %q\n", args[0])
 		return 2
+	}
+	return 0
+}
+
+// cmdRuntimesAccess implements the three §24.3 runtime tenant-access
+// subcommands: grant-access, list-access, and revoke-access. The verb
+// is passed in so the three share one flag parser. spec: §24.3 table.
+func cmdRuntimesAccess(ctx context.Context, c *ctl.Client, verb string, args []string, stdout, stderr io.Writer) int {
+	var runtime, tenant string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--runtime":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --runtime requires a value")
+				return 2
+			}
+			runtime, i = args[i+1], i+1
+		case "--tenant":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --tenant requires a value")
+				return 2
+			}
+			tenant, i = args[i+1], i+1
+		default:
+			fmt.Fprintf(stderr, "lenny-ctl: unknown flag %q for runtimes %s\n", args[i], verb)
+			return 2
+		}
+	}
+	if runtime == "" {
+		fmt.Fprintf(stderr, "lenny-ctl: runtimes %s requires --runtime <name>\n", verb)
+		return 2
+	}
+	base := "/v1/admin/runtimes/" + url.PathEscape(runtime) + "/tenant-access"
+	switch verb {
+	case "grant-access":
+		if tenant == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: runtimes grant-access requires --tenant <id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", base, map[string]string{"tenantId": tenant}, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "list-access":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", base, nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "revoke-access":
+		if tenant == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: runtimes revoke-access requires --tenant <id>")
+			return 2
+		}
+		if err := c.Do(ctx, "DELETE", base+"/"+url.PathEscape(tenant), nil, nil); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	return 0
 }
@@ -807,7 +921,7 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 	return map[string]any{"reason": reason, "limit_tier": limitTier, "scope": scope}, nil
 }
 
-func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	var fromValues string
 	// spec: §17.6 line 421 — --wait-timeout (default 120s) for the
 	// bootstrap readiness poll.
@@ -844,7 +958,12 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	// Deployment.
 	if waitSeconds > 0 {
 		deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
-		fmt.Fprintf(stderr, "lenny-ctl: waiting up to %ds for the gateway\n", waitSeconds)
+		// §24.16 line 205: --quiet suppresses informational progress
+		// messages; the readiness-failure line below is an error, not
+		// informational, so it always prints.
+		if !quiet {
+			fmt.Fprintf(stderr, "lenny-ctl: waiting up to %ds for the gateway\n", waitSeconds)
+		}
 		for {
 			// /healthz is the unauthenticated liveness endpoint; a 2xx
 			// means the gateway is serving. The richer /v1/admin/health
