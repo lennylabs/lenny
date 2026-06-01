@@ -19202,13 +19202,15 @@ Spec §12.4 "In-memory quota budgets with Postgres reconciliation": "deployers e
 
 There is no `QuotaEnforcementMode` enum or `quotaEnforcementMode` Helm value (`grep -rn 'quotaEnforcementMode\|in_memory_reconciled'` returns no results). The optional in-memory budget-slice path is unimplemented; the spec's escape hatch for high-value limits is not available.
 
-### - [ ] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — OPEN
+### - [x] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — CLOSED
 
 Spec §12.4 lists the billing stream and per-tenant counters as keys that must not silently evict (the alerting rule `BillingStreamEvictionPolicyDrift` is catalogued at `pkg/alerting/rules/rules.go` for the cloud path). The cloud Terraform sets `maxmemory_policy = noeviction` for AWS / Azure / GCP managed Redis (`deploy/terraform/cloud/aws/managed-services.tf:235`, `azure/managed-services.tf:177`, `gcp/managed-services.tf:177`).
 
 The compose Redis (`compose/default.yml:73`) starts with `["redis-server", "--appendonly", "no", "--save", "", "--replica-announce-ip", "redis"]` — no `--maxmemory` and no `--maxmemory-policy` flag, so the default eviction policy is `noeviction` only by Redis 7 default, not by an explicit invariant the operator can see. The Helm chart does not deploy Redis (acknowledged as bring-your-own at `values.yaml:136-141`) and therefore cannot enforce the policy on the self-managed profile; there is no preflight check that scans the operator's BYO Redis for the correct policy.
 
 The §16.5 `BillingStreamEvictionPolicyDrift` alert at `pkg/alerting/rules/rules.go` covers detection of drift on a cloud topology where `INFO memory` is reachable; on the self-managed profile the alert has no signal to fire from.
+
+**Resolution (`0be260b4`):** The compose Redis master and replica now pass `--maxmemory-policy noeviction` explicitly, with a §12.4 comment making the invariant operator-visible. New `preflight.CheckRedisMaxmemoryPolicy` reads the live policy (`CONFIG GET maxmemory-policy`) from a bring-your-own Redis and fails the install closed when it is anything other than `noeviction` (drift, empty, or unreachable). It is wired through `lenny-preflight --redis-url` (RedisConfigProber built over `redisconn.NewClient`) and an opt-in `preflight.checkRedisMaxmemoryPolicy` chart value that passes `redis.url` to the preflight Job; the cloud profile leaves it off because the Terraform sets the policy natively.
 
 ### - [ ] F-12.4.16 — Logical separation of Redis concerns is interface-only [Medium] — OPEN
 
@@ -19893,7 +19895,7 @@ because the adapter ignores the Postgres-supplied object set. At Tier 4
 fleet sizes (millions of artifacts per tenant) this dominates GC duration and
 contradicts the catalog-driven, bounded-set guarantee §12.5 line 320 implies.
 
-### - [ ] F-12.5.24 — `artifact_store.id` referenced by the GC concurrency model does not exist (§12.5 lines 333, 335) [Medium] — OPEN
+### - [x] F-12.5.24 — `artifact_store.id` referenced by the GC concurrency model does not exist (§12.5 lines 333, 335) [Medium] — CLOSED
 
 Lines 333 and 335 specify the GC mutation as `WHERE id = $1 AND deleted_at IS NULL`.
 The migration has no `id` column — the PK is `uri`.
@@ -19912,7 +19914,9 @@ on a single PK column. The behavioural guard converges to the same monotonic
 invariant when filtered by `state = 'live'`, but a reviewer reading the spec
 and tracing through the code will hit two different schemas.
 
-### - [ ] F-12.5.25 — catalog state machine deviates from the spec's `deleted_at IS NULL` binary predicate (§12.5 lines 318, 333, 335, 341) [Medium] — OPEN
+**Resolution (`0be260b4`):** Documentation-and-verify close. The spec is internally inconsistent (`WHERE id = $1` references a column the migration never defines), so the code cannot mirror it literally. `catalog.go` now carries `// spec:` comments on `SoftDelete` and `HardPruneExpired` mapping the catalog's `uri` primary key to the spec's `id` and `state = 'live'` / `state <> 'live'` to `deleted_at IS NULL` / `deleted_at IS NOT NULL`. The monotonic single-writer guard the spec mandates (`RowsAffected == 0` on the losing writer) is preserved by the `uri`-keyed predicate. Standardisation on `uri` is intentional.
+
+### - [x] F-12.5.25 — catalog state machine deviates from the spec's `deleted_at IS NULL` binary predicate (§12.5 lines 318, 333, 335, 341) [Medium] — CLOSED
 
 The §12.5 GC concurrency model is written for a binary `deleted_at IS NULL`
 soft-delete column. The catalog implements a tri-state machine
@@ -19934,6 +19938,8 @@ two extra mutations expose new race windows (a second writer that wins
 `deleted_at IS NULL` — a row that has moved past `live` cannot be
 re-`soft_deleted`, but the binary spec predicate would treat the soft-delete
 attempt as a safe no-op.
+
+**Resolution (`0be260b4`):** `HardPruneExpired` now deletes every non-live row past its deadline (`state <> 'live' AND tombstone_deadline <= $1 AND legal_hold = false`), matching the spec's binary `deleted_at IS NOT NULL` predicate; the partial GC index changed to `WHERE state <> 'live'` to stay index-supported. This also fixes a latent accumulation bug: the production retention sweep (`cataloging.SoftDeleteSession` → `cmd/lenny-gateway` hard-prune ticker) only ever moves rows to `soft_deleted` and never ran the optional `Tombstone` transition, so the prior `state = 'tombstoned'`-only predicate never matched them and every retention-swept catalog row leaked. The `tombstoned` state and `Tombstone()` method survive as the §12.8 erasure fast-path's intermediate, but hard-prune no longer depends on the transition, so the race window the finding describes is benign (a row is pruned whether it is `soft_deleted` or `tombstoned`). Tier-2 regression tests assert a `soft_deleted` row is pruned without an intervening `Tombstone` and that a future-deadline row survives.
 
 ### - [x] F-12.5.26 — `mc ilm add` post-install Job mandated by §12.5 line 280 is absent (§12.5 line 280) [Medium] — CLOSED
 - **Resolution:** Closed by F-4.5.16/F-12.5.5 (commit `2d97f85`). `charts/lenny/templates/minio-bucket-lifecycle-job.yaml` is a post-install/post-upgrade Helm hook that runs `mc mb`, `mc anonymous set none`, `mc version enable`, and `mc ilm add --expired-object-delete-marker --noncurrentversion-expiration-days {{ noncurrentExpirationDays }}` with no prefix filter (bucket-wide scope, per §12.5 line 280). The finding's evidence (zero `mc ilm` hits) is stale. Re-verified during the F-12.5.19 batch. (commit `e20de488`)
