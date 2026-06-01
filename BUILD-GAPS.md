@@ -19397,7 +19397,7 @@ KMS probe via `kmsProvider.CurrentKEKVersion` on a sample T4 alias logs
 warnings without failing startup. Unit tests in
 `cmd/lenny-gateway/main_test.go` cover all four resolver branches.
 
-### - [ ] F-12.5.3 — admin-time T4 KMS availability probe is unwired (§12.5 line 301) [High] — OPEN
+### - [x] F-12.5.3 — admin-time T4 KMS availability probe is unwired (§12.5 line 301) [High] — CLOSED
 
 §12.5 line 301 mandates that `PUT /v1/admin/tenants/{id}` "performs an online
 KMS availability probe (a zero-byte encrypt/decrypt round-trip against the
@@ -19425,7 +19425,9 @@ usable from the gateway's credentials" guarantee (line 301) does not hold. The
 just-in-time runtime failure the spec was redesigned to eliminate remains the
 only failure mode.
 
-### - [ ] F-12.5.4 — continuous T4 KMS probe (STO-021) is unwired and missing rate-limit (§12.5 line 307) [High] — OPEN
+- **Resolution:** Added `tenantkms.ProviderProbeManager` / `NewProviderProbeLifecycle`, a probe-only `KeyManager` over the resolved §4 `kms.Provider` (zero-byte WrapDEK/UnwrapDEK round-trip; unknown KEK → `ErrKeyNotFound`, mismatch → `ErrKeyUnavailable`, any backend error fails closed). The gateway constructs one `kmsProbeLifecycle` and wires it via `.WithKMSProbe(kmsProbeLifecycle)`, so `PUT /v1/admin/tenants/{id}` now runs the admin-time probe before persisting a `workspaceTier: T4` transition and rejects with `CLASSIFICATION_CONTROL_VIOLATION` on failure. The same Lifecycle backs the continuous prober (F-12.5.4) so the admin GET `t4KmsLastProbeSuccessAt` and the gauge share one last-success time. (commit `46396efb`)
+
+### - [x] F-12.5.4 — continuous T4 KMS probe (STO-021) is unwired and missing rate-limit (§12.5 line 307) [High] — CLOSED
 
 §12.5 line 307 mandates a leader-elected continuous probe that re-runs the
 encrypt/decrypt round-trip against every T4 tenant on `storage.t4KmsProbeInterval`
@@ -19455,6 +19457,8 @@ Consequence: the `T4KmsKeyUnusable` alert
 `lenny_t4_kms_probe_last_success_timestamp` but no live emitter writes that
 gauge for any tenant. The alert is silent; the "silent post-provisioning
 lifecycle drift" line 307 names is the actual operating posture.
+
+- **Resolution:** The gateway now instantiates `tenantkms.Prober` and runs it as a leader-elected background goroutine under `watchdogCtx` (co-located with the §12.5 GC sweeps, same gateway lease model), enumerating active `workspaceTier: T4` tenants via the new `t4TenantSource`. Added the `storage.t4KmsProbeRateLimit` token bucket (`Prober.RateLimit`, default 10 probes/sec via `golang.org/x/time/rate`) and the 60s cadence floor: `MinProbeInterval` clamp in `Prober.Start` plus a Helm-validate `fail` guard on `storage.t4KmsProbeInterval`. New Helm values `storage.t4KmsProbeInterval` (300) / `storage.t4KmsProbeRateLimit` (10) render to `LENNY_T4_KMS_PROBE_INTERVAL_SECONDS` / `_RATE_LIMIT`; `lenny_t4_kms_probe_*` metrics register on the gateway `/metrics` registry, so the `T4KmsKeyUnusable` alert now reads a live gauge. (commit `46396efb`)
 
 ### - [x] F-12.5.5 — MinIO bucket versioning + delete-marker / noncurrent lifecycle is unconfigured (§12.5 lines 277, 280) [High] — CLOSED
 - **Resolution:** Closed by the F-4.5.16 fix (same root cause, same fix). The new `charts/lenny/templates/minio-bucket-lifecycle-job.yaml` runs `mc version enable` + `mc ilm add --expired-object-delete-marker --noncurrentversion-expiration-days 1` as a post-install/post-upgrade Helm hook. (commit `2d97f85`)
