@@ -18303,7 +18303,7 @@ The spec's `spec/12_storage-architecture.md` has no `### 12.2.1` (or any other �
 
 **Resolution:** Closed by F-12.1.6 — same root cause. All 35 `§12.2.1` citations across `pkg/` and `cmd/` renumbered: `§12.1` for mandatory-erasure references, `§12.2` for storage-role table references. Verified `grep -rn "§12\.2\.1" pkg/ cmd/` returns zero matches.
 
-### - [ ] F-12.2.13 — 13 — `StoreRouter` (R-03) never wired into billing or audit write paths (High) [Medium] — OPEN
+### - [x] F-12.2.13 — 13 — `StoreRouter` (R-03) never wired into billing or audit write paths (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.3.4, F-12.6.1, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
 
@@ -18315,6 +18315,8 @@ Spec: §12.3 R-03 ("All billing event inserts and audit log inserts MUST be rout
 - The R-03 integration test `TestBillingAuditRoutedThroughStoreRouter` does not exist in the tree.
 
 The §12.3 invariant that R-03 is meant to preserve (no direct pool handle in billing/audit paths so a Tier 3 split is configuration-only) is currently violated by every production write.
+
+**Resolution (commit `f312c5fc`):** Closed with F-12.3.4 / F-12.6.1 / F-12.6.2 / F-12.7.1 (same root cause and fix). `billingstore/pgstore` and `auditstore` now hold a narrow `Router` interface (`BillingShard` / `AuditShard`, plus `AllAuditShards` for the audit cross-tenant worker scatter) and resolve the Postgres pool per write through it; neither store holds a raw `*pgxpool.Pool`. `*storerouter.SingleShardRouter` satisfies both. `cmd/lenny-gateway` builds one `SingleShardRouter` and passes it to both billing and audit; `NewSingleShardRouter` gained a Postgres-only mode (nil Redis) because the billing/audit paths route only Postgres shards. The R-03-mandated `TestBillingAuditRoutedThroughStoreRouter` now exists (F-12.6.2).
 
 ### - [x] F-12.2.14 — 14 — Cloud-managed-pooler `__unset__` guard and `TestRLSTenantGuardMissingSetLocal` absent (High) [Medium] — CLOSED
 
@@ -18558,7 +18560,7 @@ check verifies coverage from the live catalog rather than from the Helm flag.
 correctly excluded by that check's `relrowsecurity` predicate, so it is not a
 coverage gap.
 
-### - [ ] F-12.3.4 — Billing/audit write paths bypass `StoreRouter` (§12.3 lines 144 R-03) [High] — OPEN
+### - [x] F-12.3.4 — Billing/audit write paths bypass `StoreRouter` (§12.3 lines 144 R-03) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.13, F-12.6.1, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
 
@@ -18586,6 +18588,16 @@ Evidence:
 
 Adding a future second shard would require a sweep of every billing and
 audit call site — exactly the discipline R-03 forbids.
+
+**Resolution (commit `f312c5fc`):** `cmd/lenny-gateway/main.go` builds a
+`storerouter.SingleShardRouter` once the Postgres pool and (optional)
+Redis client are resolved, then constructs the billing ledger
+(`billingpg.New(router)`) and audit chain (`auditstore.New(router, …)`)
+through it. The Token Service audit chain routes the same way
+(Postgres-only mode). The store constructors take a narrow `Router`
+interface and call `BillingShard` / `AuditShard` per write, so a future
+shard split is a router swap. `TestBillingAuditRoutedThroughStoreRouter`
+is the R-03-mandated contract test (F-12.6.2).
 
 ### - [ ] F-12.3.5 — `LENNY_PG_BILLING_AUDIT_DSN` (separate billing/audit Postgres instance) not wired (§12.3 lines 103, 112) [High] — OPEN
 
@@ -20175,7 +20187,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ### Findings
 
-### - [ ] F-12.6.1 — production code bypasses `StoreRouter` (R-03 violation) [High] — OPEN
+### - [x] F-12.6.1 — production code bypasses `StoreRouter` (R-03 violation) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.13, F-12.3.4, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
 
@@ -20187,9 +20199,11 @@ plus a Helm chart MinIO-side configuration pass.
 
 **Fix.** Wire `SingleShardRouter` in `main.go`, change `auditstore.New` and `billingstore/pgstore.New` to accept `storerouter.StoreRouter` plus the resolved tenant (or to call the router internally per write), and add the named `TestBillingAuditRoutedThroughStoreRouter` integration test.
 
+**Resolution (commit `f312c5fc`):** Done as described. `auditstore.New` and `billingstore/pgstore.New` now take a narrow `Router` interface and call `AuditShard` / `BillingShard` per write (the audit store also calls `AllAuditShards` for the OCSF-translation / EventBus-retranscribe cross-tenant scatter). `cmd/lenny-gateway/main.go` wires one `SingleShardRouter` into both; `storerouter.` is now imported by production code. `TestBillingAuditRoutedThroughStoreRouter` exists (F-12.6.2).
+
 ---
 
-### - [ ] F-12.6.2 — `TestBillingAuditRoutedThroughStoreRouter` integration test is missing [High] — OPEN
+### - [x] F-12.6.2 — `TestBillingAuditRoutedThroughStoreRouter` integration test is missing [High] — CLOSED
 
 **Spec.** §12.3 R-03 (line 144): "An integration test (`TestBillingAuditRoutedThroughStoreRouter`) MUST verify that billing event inserts and audit log inserts call `StoreRouter` methods rather than accessing a Postgres pool directly."
 
@@ -20198,6 +20212,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** The R-03 discipline is unmonitored; a regression that adds a raw `*pgxpool.Pool` write to billing or audit will not fail CI.
 
 **Fix.** Add the named test that inspects billing- and audit-write paths to confirm they obtain their pool via `StoreRouter.BillingShard`/`AuditShard` rather than via a direct pool handle.
+
+**Resolution (commit `f312c5fc`):** Added `tests/tier2_component/stores/storerouter_routing_test.go::TestBillingAuditRoutedThroughStoreRouter`. It is a dependency-free tier-1 test: a recording router returns a sentinel from `BillingShard` / `AuditShard`, so each store's `Append` short-circuits before any SQL, and the test asserts the billing write resolved its pool through `BillingShard` (recording tenant `acme`) and the audit write through `AuditShard`, with neither crossing into the other. A compile-time assertion confirms `*storerouter.SingleShardRouter` satisfies both `billingpg.Router` and `auditstore.Router`, so the gateway wiring is checked against the same contract.
 
 ---
 
@@ -20657,7 +20673,7 @@ Likewise, §12.6 defines `type EventBus interface { Publish, Subscribe }` and §
 
 ### Findings
 
-### - [ ] F-12.7.1 — 1 — StoreRouter is not wired into gateway production paths [Medium] — OPEN
+### - [x] F-12.7.1 — 1 — StoreRouter is not wired into gateway production paths [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.13, F-12.3.4, F-12.6.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
 
@@ -20670,6 +20686,8 @@ This is a Medium because §12.7 is a policy section and the interface exists —
 Files:
 - `pkg/storerouter/storerouter.go:77` (interface), `:131` (SingleShardRouter).
 - `cmd/lenny-gateway/main.go:367-413` (direct pool passing in store construction).
+
+**Resolution (commit `f312c5fc`):** Closed by the R-03 fix (F-12.3.4 / F-12.6.1 / F-12.2.13). `cmd/lenny-gateway/main.go` now imports `storerouter` and builds a `SingleShardRouter` whenever a Postgres pool is wired, routing the billing ledger and audit chain (the §12.3 R-03-mandated paths) through it. The §12.7 extensibility promise this finding tracks is now enforced for the billing/audit surface: a Tier-3 shard split is a router-implementation swap with no billing/audit call-site changes. The remaining session/tenant/runtime stores continue to take the pool directly, which §12.3 R-03 permits (only billing and audit writes are mandated through the router); routing those is a forward extensibility step, not an R-03 violation.
 
 ### - [x] F-12.7.2 — 2 — Cloud KMS adapters compiled but unreachable at the wiring boundary [Medium] — CLOSED
 
