@@ -23572,7 +23572,7 @@ enforcement landed via F-13.5.1 (commit 840b51c4); this ref-resolution work
 should land together with the named-interceptor-ref → Chain registry in a
 dedicated batch.
 
-### - [ ] F-13.5.3 — `messagingScope` is not enforced [High] — OPEN
+### - [x] F-13.5.3 — `messagingScope` is not enforced [High] — CLOSED
 
 §13.5 mitigation 6: "`messagingScope` restricts which sessions can message
 each other. Default `direct` limits to parent/children only."
@@ -23594,7 +23594,17 @@ Any session in the same tenant can send to any other session in the same
 tenant, regardless of tree position. The "default `direct`" claim in §13.5
 is structurally false at runtime.
 
-### - [ ] F-13.5.4 — `messagingRateLimit` is not enforced [High] — OPEN
+**Resolution:** Verify-closed; resolved by F-7.2.6 (`d3abba68` / `1b5431c7`)
+and F-7.2.22 (`8b194930`). `session.MessagingScope` is a first-class API
+type; the `lenny/send_message` handler resolves the sender via
+`callerSessionID` (the authenticated principal's SessionID claim, else the
+`fromSessionId` transport fallback) and enforces topology with
+`withinMessagingScope(sender, target, msgScope)` — a sibling target under the
+default `direct` scope is rejected `SCOPE_DENIED`, admitted only when the
+deployment-resolved effective scope is `siblings`
+(`ResolveEffectiveMessagingScope`). The §13.5 mitigation-6 boundary is live.
+
+### - [x] F-13.5.4 — `messagingRateLimit` is not enforced [High] — CLOSED
 
 §13.5 mitigation 5: "`messagingRateLimit` on the delegation lease caps
 `lenny/send_message` volume per session (`maxPerMinute` outbound,
@@ -23613,6 +23623,15 @@ message rates.
 Consequence: a compromised parent can drive `send_message` at line rate,
 and N compromised siblings can fan-in on a victim at N times the sender
 limit — the exact storm the spec documents.
+
+**Resolution:** Verify-closed; resolved by F-7.2.6 (`d3abba68` / `1b5431c7`).
+`mcptools.MessagingRateLimit` carries `maxPerMinute`, `maxPerSession`, and
+`maxInboundPerMinute` (default 60); `newMessagingLimiter` enforces all three
+on the `send_message` path — `allow(tenant, sender, target, now)` checks the
+per-sender outbound fixed-window burst, the per-sender lifetime cap, and the
+per-target inbound aggregate (`n > MaxInboundPerMinute`) so N compromised
+siblings cannot exceed the target's inbound brake. An exceeded limit returns
+a `RATE_LIMITED` delivery receipt rather than a tool error (§7.2 line 371).
 
 ### - [ ] F-13.5.5 — `scanExportedFiles` path: helper built, never called [High] — OPEN
 
@@ -23650,7 +23669,7 @@ Additionally, the metrics catalog defines
 records neither — search for `RecordExportFileScan` or `ExportFileScan` as
 a metric-recorder method returns zero hits.
 
-### - [ ] F-13.5.6 — PreDelegation/PreMessageDelivery REJECTs are not audited [High] — OPEN
+### - [x] F-13.5.6 — PreDelegation/PreMessageDelivery REJECTs are not audited [High] — CLOSED
 
 §13.5 implies content rejections should be observable. §11.7 specifies the
 `interceptor.rejected` audit row for chain rejections; §8.3 requires
@@ -23673,6 +23692,19 @@ does the same. Neither path:
 
 Operators have no audit trail for delegation/message content rejections, only
 for quota rejections at session create.
+
+**Resolution:** Verify-closed; resolved by F-15.2.12 (`ca4b3180` / `1c9a2259`).
+Both REJECT branches now call `recordChainRejection(ctx, deps, tenant,
+sessionID, phase, res)` before returning: the `PhasePreDelegation` branch in
+the `lenny/delegate_task` handler and the `PhasePreMessageDelivery` branch in
+`lenny/send_message`. `recordChainRejection` writes the §11.7 / §16.7
+`interceptor.rejected` audit row via `deps.PolicyAudit.RecordRejection`
+(stamping the rejecting interceptor from `Result.RejectedBy`), the canonical
+mechanism §11.7 specifies — the finding's suggested bespoke
+`delegation.predelegation_rejected` / `messaging.predelivery_rejected` events
+are not in the §16.7 catalog and `interceptor.rejected` is the audit of
+record. (`PhasePreToolResult` and `PhasePostAgentOutput` rejections audit
+through the same helper.)
 
 ### - [x] F-13.5.7 — `INTERCEPTOR_WEAKENING_COOLDOWN` runtime gate not enforced [Medium] — CLOSED
 
@@ -23750,7 +23782,7 @@ onto the session at create time remains the separate §7.2 messaging-config
 concern (the `EffectiveMessagingScope` input is already plumbed through the
 delegation Request for it).
 
-### - [ ] F-13.5.9 — `maxTreeSize` and `maxTokenBudget` not enforced on `delegate_task` [Medium] — OPEN
+### - [x] F-13.5.9 — `maxTreeSize` and `maxTokenBudget` not enforced on `delegate_task` [Medium] — CLOSED
 
 §13.5 mitigation 7: "delegation leases enforce `maxDepth`, `maxTreeSize`,
 and `maxTokenBudget`, bounding the blast radius of any compromised
@@ -23775,7 +23807,21 @@ Consequence: a compromised parent can delegate without tree-size or
 token-budget bound provided each individual hop stays under `maxDepth`. The
 "blast radius" claim in §13.5 collapses to `maxDepth` alone.
 
-### - [ ] F-13.5.10 — `contentPolicy` inheritance and child-lease monotonicity are unenforced [Medium] — OPEN
+**Resolution:** Verify-closed; the finding text is stale. `delegation.Service.
+Delegate` (service.go:847-853) now calls `lease.ValidateChildSlice(parentSlice,
+req.LeaseSlice, parentSlice.MaxTokenBudget, parentSlice.MaxChildrenTotal,
+parentSlice.MaxTreeSize)` so a child slice that widens any axis past the
+parent's granted slice is rejected with `*lease.BudgetExceededError`
+(BUDGET_EXHAUSTED) — the static subtree ceiling (F-8.2.2, `ab8275e2`).
+Beyond the static check, `service.go:896-929` reserves against the live §12.4
+Redis tree counters via `treebudget.Reserver.Reserve` (TreeSizeCap, TokenCap,
+ChildrenTotalCap, ParallelChildrenCap, TreeMemoryCap), failing closed with
+DELEGATION_BUDGET_UNAVAILABLE on a Redis outage (F-8.2.18 / F-8.2.12 /
+F-8.1.1, `432ef50b` / `6b86cac9`). `maxDepth` is enforced separately by
+`lease.CheckDepth`. The "blast radius" is bounded on every axis, not just
+depth.
+
+### - [ ] F-13.5.10 — `contentPolicy` inheritance and child-lease monotonicity are unenforced [Medium] — DEFERRED
 
 §8.3 line 157 specifies: "`contentPolicy` is inherited by child leases and
 can only be made stricter (smaller `maxInputSize`, same or more restrictive
@@ -23791,7 +23837,26 @@ error codes named in §8.3 lines 183–188 are absent from the code (zero
 matches across the repo). The monotonicity rules cannot fire because the
 delegation path never compares parent and child policies.
 
-### - [ ] F-13.5.11 — Per-message `from` field is not gateway-set [Medium] — OPEN
+**DEFERRED (needs a design decision, not a mechanical fix):** The §8.3
+monotonicity rules are precise (maxInputSize smaller, identity-based
+interceptorRef rule per lines 183-188, scanExportedFiles `false → true` only,
+maxExportedFileSize same-or-smaller), but v1 does not express contentPolicy as
+a child-declared lease field the way it does `treeVisibility` (the F-13.5.8
+precedent). contentPolicy is resolved per-hop from the *target runtime's*
+`DelegationPolicy.ContentPolicy`, and the session lease stamps only
+`ContentPolicyRef` (the interceptorRef string) — not the full effective
+contentPolicy (maxInputSize / scanExportedFiles / maxExportedFileSize). §8.3
+line 240 further requires the *effective transitively-narrowest* parent policy
+for inheritance, which is not available without stamping it. Enforcing the
+four-axis monotonicity therefore needs either (a) stamping the full effective
+contentPolicy onto `sessionstore.DelegationLease` at create time, or (b) a
+defined live-resolution model for the parent's effective policy; both change
+delegation admission for every cross-runtime hop and warrant a focused batch
+with the two new error codes (`CONTENT_POLICY_WEAKENING`,
+`CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`) and their reject tests. Not
+self-contained; deferred to avoid a blind partial implementation.
+
+### - [x] F-13.5.11 — Per-message `from` field is not gateway-set [Medium] — CLOSED
 
 §13.5 mitigation 6 depends on the spec invariant ("`from` is always set by
 the gateway from the calling session's authenticated identity, and
@@ -23805,6 +23870,17 @@ field on the outbound message: the executor receives `[]executor.Message{
 `from` attribution. A target session cannot tell which sibling sent a
 message, and the gateway cannot scope or rate-limit by sender because it
 never identifies the sender.
+
+**Resolution (`5817876e`):** The scope/rate-limit-by-sender half was already
+closed by F-7.2.6 (`callerSessionID` resolves the authenticated sender). This
+batch closes the remaining `from`-attribution half: `executor.Message` gained
+a `From` (`executor.MessageFrom{Kind, ID}`) carrying the §15.4.1 from-object,
+and the pod + subprocess executors stamp it via `resolveFromBlock` (defaulting
+to `{client, client_gateway}` for top-level client turns, which is what they
+hardcoded before). `lenny/send_message` sets `from{kind:agent, id:<sending
+session>}` from the authenticated `senderID` (`senderFrom`); an unattributed
+send leaves it zero. The runtime now receives the gateway-set sender identity
+and cannot forge it. spec: §15.4.1 lines 1696-1707; §13.5 mitigation 6.
 
 ### - [x] F-13.5.12 — `PreExportMaterialization` `fail-open` audit event not emitted [Low] — CLOSED
 
