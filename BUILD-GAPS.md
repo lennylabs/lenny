@@ -19816,7 +19816,7 @@ row, emitting `table="partial_manifest"`. This also lands the §12.5
 periodic backstop hard-prune worker that F-12.5.13 deferred to the
 retention/gc track. Tests: `gatewaymetrics` labeled-counter assertion for both
 tables; `hardPrunePartialManifests` unit test (active/not-yet-expired rows
-survive, expired rows pruned, boundary cutoff no-op). Commit `<pending>`.
+survive, expired rows pruned, boundary cutoff no-op). Commit `71ac44e4`.
 
 ### - [ ] F-12.5.12 — checkpoint "latest 2 per session / per-slot" rotation rule is not implemented (§12.5 lines 313, 326) [High] — OPEN
 
