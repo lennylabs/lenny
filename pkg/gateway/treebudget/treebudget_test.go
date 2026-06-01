@@ -240,3 +240,90 @@ func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
 		}
 	}
 }
+
+// spec: §8.3 line 379 — the reserve script tracks the per-tree
+// parallel-children high-watermark, and ObserveHighWatermark reads it
+// once at tree completion and clears the key (GETDEL) so a re-settle
+// cannot double-count. F-8.9.6.
+func TestHighWatermarkTracksMaxParallelChildren_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	mk := func(parent string) treebudget.Reservation {
+		return treebudget.Reservation{
+			RootSessionID: "rootW", ParentSessionID: parent,
+			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+		}
+	}
+	// Parent pA reaches 3 concurrent children; pB reaches 1. The tree
+	// high-watermark is the max single-parent in-flight count, 3.
+	for i := 0; i < 3; i++ {
+		if _, err := r.Reserve(ctx, mk("pA")); err != nil {
+			t.Fatalf("pA reserve %d: %v", i, err)
+		}
+	}
+	if _, err := r.Reserve(ctx, mk("pB")); err != nil {
+		t.Fatalf("pB reserve: %v", err)
+	}
+	value, found, err := r.ObserveHighWatermark(ctx, "rootW")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark: %v", err)
+	}
+	if !found || value != 3 {
+		t.Fatalf("high-watermark = (%d, %v), want (3, true)", value, found)
+	}
+	// The read cleared the key, so a re-observe finds nothing.
+	_, found2, err := r.ObserveHighWatermark(ctx, "rootW")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark second: %v", err)
+	}
+	if found2 {
+		t.Fatalf("high-watermark key not cleared after read")
+	}
+}
+
+// spec: §8.3 line 379 — a tree that admitted no delegation has no
+// recorded watermark, so ObserveHighWatermark returns found=false and
+// the caller skips the histogram observation. F-8.9.6.
+func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	value, found, err := r.ObserveHighWatermark(context.Background(), "noTree")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark: %v", err)
+	}
+	if found || value != 0 {
+		t.Fatalf("got (%d, %v), want (0, false)", value, found)
+	}
+}
+
+// spec: §8.3 line 379 — the watermark does not regress when a later
+// reservation observes a lower per-parent in-flight count (e.g. a
+// different parent's first child). F-8.9.6.
+func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, err := r.Reserve(ctx, treebudget.Reservation{
+			RootSessionID: "rootR", ParentSessionID: "pA",
+			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+		}); err != nil {
+			t.Fatalf("pA reserve %d: %v", i, err)
+		}
+	}
+	// pC's first child is in-flight count 1 < the existing watermark 2.
+	if _, err := r.Reserve(ctx, treebudget.Reservation{
+		RootSessionID: "rootR", ParentSessionID: "pC",
+		ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+	}); err != nil {
+		t.Fatalf("pC reserve: %v", err)
+	}
+	value, found, err := r.ObserveHighWatermark(ctx, "rootR")
+	if err != nil || !found {
+		t.Fatalf("ObserveHighWatermark: (%v, found=%v)", err, found)
+	}
+	if value != 2 {
+		t.Fatalf("high-watermark = %d, want 2 (no regression)", value)
+	}
+}

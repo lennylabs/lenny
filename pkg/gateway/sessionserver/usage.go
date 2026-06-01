@@ -273,6 +273,10 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.
 	s.archiveSettledChild(ctx, sess)
+	// §8.3 line 379: when the tree root settles, the delegation tree is
+	// completing — observe the recorded parallel-children high-watermark
+	// onto the §16.1 histogram. F-8.9.6.
+	s.observeTreeHighWatermark(ctx, sess)
 	// §8.10: apply the cascadeOnFailure policy to this session's
 	// children now that it has reached a terminal state.
 	s.cascadeToChildren(ctx, sess)
@@ -376,6 +380,36 @@ func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session
 		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
 		ParallelChildrenDelta: 1,
 	})
+}
+
+// observeTreeHighWatermark records the §8.3 line 379 per-tree
+// parallel-children high-watermark onto the §16.1 histogram when the
+// tree root settles. It fires only for a true tree root — a session
+// whose RootSessionID is empty or equal to its own id and which has no
+// parent — so the observation is sampled once per tree at completion
+// rather than per settling child. Reading the counter clears it
+// (GETDEL), so a re-settle of the same root never double-counts. A tree
+// that admitted no delegation has no recorded watermark and is skipped.
+// Best-effort: a Redis or read failure never fails the transition that
+// triggered it. spec: §8.3 line 379; §16.1 line 73. F-8.9.6.
+func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore.Session) {
+	if s.hwmReader == nil || s.hwmObserver == nil {
+		return
+	}
+	// A tree root is a parentless session that is its own root. A
+	// delegated child (or a session whose RootSessionID points elsewhere)
+	// is not the tree apex, so its settle does not signal tree completion.
+	if sess.ParentSessionID != "" {
+		return
+	}
+	if sess.RootSessionID != "" && sess.RootSessionID != sess.ID {
+		return
+	}
+	value, found, err := s.hwmReader.ObserveHighWatermark(ctx, sess.ID)
+	if err != nil || !found {
+		return
+	}
+	s.hwmObserver.ObserveDelegationParallelChildrenHighWatermark(sess.PoolRef, sess.TenantID, value)
 }
 
 // cascadeToChildren applies the §8.10 cascadeOnFailure policy when

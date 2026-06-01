@@ -334,6 +334,12 @@ type Metrics struct {
 	// pre-delegation cycle detector — typically a §8.10 recovery write
 	// that re-parented a node. spec: §8.9 line 1003; F-8.9.10.
 	delegationTreeCycleDetected *prometheus.CounterVec
+	// delegationParallelChildrenHWM observes the §8.3 line 379 maximum
+	// simultaneous in-flight children per delegation tree, sampled once
+	// when the tree root reaches a terminal state. Labels `pool` and
+	// `tenant_id` per §16.1; `root_session_id` is deliberately not a
+	// label (unbounded cardinality). F-8.9.6.
+	delegationParallelChildrenHWM *prometheus.HistogramVec
 	// rateLimitRejected counts §11.1 line 7 admission rejections by
 	// the ratelimit middleware. Labelled by `scope` (`global` | `user`)
 	// so operators can attribute rejection volume to the scope that
@@ -1444,6 +1450,19 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §8.3 line 379 — `lenny_delegation_parallel_children_high_watermark`
+	// records the maximum simultaneous in-flight children observed for
+	// each delegation tree at tree completion, labelled by `pool` and
+	// `tenant_id`. Buckets cover the typical maxParallelChildren range
+	// (the §8.2 default is 4) with head-room above it. F-8.9.6.
+	delegationParallelChildrenHWM, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_delegation_parallel_children_high_watermark",
+		Help:    "Maximum simultaneous in-flight children per delegation tree at completion (§8.3).",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64},
+	}, []string{"pool", "tenant_id"})
+	if err != nil {
+		return nil, err
+	}
 	// §11.1 line 7 — `lenny_rate_limit_rejected_total` counts ratelimit
 	// middleware 429 rejections, labelled by `scope` (`global` | `user`)
 	// so operators can attribute rejection volume per enforcement axis.
@@ -1749,6 +1768,7 @@ func New() (*Metrics, error) {
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
+		delegationParallelChildrenHWM,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
@@ -1905,6 +1925,7 @@ func New() (*Metrics, error) {
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
 		delegationTreeCycleDetected:          delegationTreeCycleDetected,
+		delegationParallelChildrenHWM:        delegationParallelChildrenHWM,
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
 		rateLimitCounterFailure:              rateLimitCounterFailure,
@@ -2555,6 +2576,19 @@ func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 		return
 	}
 	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
+}
+
+// ObserveDelegationParallelChildrenHighWatermark records the §8.3 line
+// 379 maximum simultaneous in-flight children for one delegation tree
+// onto the `lenny_delegation_parallel_children_high_watermark`
+// histogram, sampled once when the tree root settles. `pool` is the
+// root session's assigned pool (empty when unresolved) and `tenant_id`
+// scopes the observation. spec: §8.3 line 379; §16.1 line 73. F-8.9.6.
+func (m *Metrics) ObserveDelegationParallelChildrenHighWatermark(pool, tenantID string, value int64) {
+	if m == nil {
+		return
+	}
+	m.delegationParallelChildrenHWM.WithLabelValues(pool, tenantID).Observe(float64(value))
 }
 
 // IncCheckpointEvictionFallback increments the §4.4 line 263

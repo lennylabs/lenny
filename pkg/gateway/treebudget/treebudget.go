@@ -173,6 +173,17 @@ for i = 1, 5 do
   end
   out[i+1] = v
 end
+-- §8.3 line 379: track the per-tree parallel-children high-watermark so
+-- the gateway can observe the maximum simultaneous in-flight children
+-- onto lenny_delegation_parallel_children_high_watermark at tree
+-- completion. out[4] is the parallel_children counter post-increment for
+-- the delegating parent; KEYS[6] holds the running tree-wide max.
+local pc = out[4]
+local hwm = tonumber(redis.call('GET', KEYS[6]) or '0')
+if pc > hwm then
+  redis.call('SET', KEYS[6], pc)
+  redis.call('EXPIRE', KEYS[6], ttl)
+end
 return out
 `)
 
@@ -207,6 +218,23 @@ func (r Reservation) keys() []string {
 	}
 }
 
+// hwmKey returns the §8.3 line 379 tree-wide parallel-children
+// high-watermark key for r's root. It shares the `{root_session_id}`
+// hash tag so it co-locates on the same Redis Cluster slot as the
+// per-tree counters and can be updated atomically inside the reserve
+// script.
+func hwmKey(rootSessionID string) string {
+	return "{" + rootSessionID + "}:dlg:parallel_children_hwm"
+}
+
+// reserveKeys returns the five counter keys followed by the
+// high-watermark key (KEYS[6]) the reserve script updates. Return does
+// not touch the high-watermark, so returnScript keeps the five-key
+// form.
+func (r Reservation) reserveKeys() []string {
+	return append(r.keys(), hwmKey(r.RootSessionID))
+}
+
 // Reserve atomically admits one delegation against the tree budget. On
 // success it returns the post-reservation Totals. It returns
 // *BudgetExhaustedError when an axis cap would be breached (no counter
@@ -226,7 +254,7 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (Totals, error) {
 		r.TokenCap, r.TokenDelta,
 		int64(s.ttl.Seconds()),
 	}
-	res, err := reserveScript.Run(ctx, s.client, r.keys(), argv...).Int64Slice()
+	res, err := reserveScript.Run(ctx, s.client, r.reserveKeys(), argv...).Int64Slice()
 	if err != nil {
 		// Fail closed: a Redis outage or script error must not admit an
 		// unbudgeted delegation (§12.4 line 213).
@@ -306,4 +334,30 @@ func axisDelta(r Reservation, idx int) int64 {
 	default:
 		return 0
 	}
+}
+
+// ObserveHighWatermark reads and clears the §8.3 line 379 per-tree
+// parallel-children high-watermark for rootSessionID, returning the
+// maximum simultaneous in-flight children the reserve script recorded
+// over the tree's lifetime. The gateway calls it once when the tree
+// root reaches a terminal state and feeds the value to the
+// lenny_delegation_parallel_children_high_watermark histogram. The key
+// is deleted in the same round trip (GETDEL) so a re-settle of the same
+// root cannot double-count and the slot is reclaimed immediately rather
+// than waiting for the TTL. A tree that admitted no delegation has no
+// key and returns 0 with found=false, which the caller skips.
+//
+// spec: §8.3 line 379; §16.1.
+func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error) {
+	if rootSessionID == "" {
+		return 0, false, fmt.Errorf("treebudget: empty root session id")
+	}
+	v, err := s.client.GetDel(ctx, hwmKey(rootSessionID)).Int64()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("treebudget: read high-watermark: %w", err)
+	}
+	return v, true, nil
 }

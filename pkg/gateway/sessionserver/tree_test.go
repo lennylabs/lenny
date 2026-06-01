@@ -95,6 +95,56 @@ func TestTreeWithChildren(t *testing.T) {
 	}
 }
 
+// TestTreeNodeAttributes_spec_8_9_1010 verifies that the §8.9 line 1010
+// per-node tracking attributes (generation, pod, lease, failure
+// history) are projected onto each REST tree node so an operator can
+// inspect a child's recovery generation, pod assignment, granted lease,
+// and failure history from GET /v1/sessions/{id}/tree. F-8.9.1.
+func TestTreeNodeAttributes_spec_8_9_1010(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root", "")
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid", TenantID: "acme", State: session.StateFailed,
+		ParentSessionID: "sess_root", RuntimeRef: "echo",
+		RecoveryGeneration: 3, PodAssignment: "pod-7",
+		DelegationLease: &sessionstore.DelegationLease{MaxParallelChildren: 4},
+		RetryCount:      2, FailureClass: session.FailureClass("infrastructure"),
+		FailureReason: "READY_TIMEOUT",
+		CreatedAt:     now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed kid: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if len(resp.Root.Children) != 1 {
+		t.Fatalf("root children: %+v", resp.Root.Children)
+	}
+	kid := resp.Root.Children[0]
+	if kid.Attributes.Generation != 3 {
+		t.Errorf("generation = %d, want 3", kid.Attributes.Generation)
+	}
+	if kid.Attributes.Pod != "pod-7" {
+		t.Errorf("pod = %q, want pod-7", kid.Attributes.Pod)
+	}
+	if kid.Attributes.Lease == nil || kid.Attributes.Lease.MaxParallelChildren != 4 {
+		t.Errorf("lease = %+v, want MaxParallelChildren 4", kid.Attributes.Lease)
+	}
+	if kid.Attributes.FailureHistory == nil ||
+		kid.Attributes.FailureHistory.RetryCount != 2 ||
+		kid.Attributes.FailureHistory.FailureReason != "READY_TIMEOUT" {
+		t.Errorf("failure history = %+v, want retryCount 2 / READY_TIMEOUT", kid.Attributes.FailureHistory)
+	}
+	// A clean node carries no failure history object.
+	if resp.Root.Attributes.FailureHistory != nil {
+		t.Errorf("root failure history = %+v, want nil for a clean node", resp.Root.Attributes.FailureHistory)
+	}
+}
+
 // seedTreeSessionVis seeds a session with an explicit §8.5
 // treeVisibility so the visibility-scoping tests can exercise the three
 // enum values. spec: §8.5 line 540.

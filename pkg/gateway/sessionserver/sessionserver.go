@@ -210,6 +210,8 @@ type Server struct {
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
 	treeBudgetReturner    TreeBudgetReturner
+	hwmObserver           DelegationHighWatermarkObserver
+	hwmReader             DelegationHighWatermarkReader
 	maxOrphanTasks        int
 	evals                 evalstore.Store
 	memory                memorystore.Store
@@ -486,6 +488,24 @@ type PartialManifestLookup interface {
 // implements it. A nil returner on the Server disables the decrement.
 type TreeBudgetReturner interface {
 	Return(ctx context.Context, r treebudget.Reservation) error
+}
+
+// DelegationHighWatermarkReader reads and clears the §8.3 line 379
+// per-tree parallel-children high-watermark when a delegation tree
+// completes. *treebudget.Reserver implements it. Nil on the Server
+// disables the §16.1 high-watermark observation (the in-process
+// minimal path with no Redis-backed budget). F-8.9.6.
+type DelegationHighWatermarkReader interface {
+	ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error)
+}
+
+// DelegationHighWatermarkObserver records the §8.3 line 379 per-tree
+// parallel-children high-watermark onto the
+// `lenny_delegation_parallel_children_high_watermark` histogram.
+// *gatewaymetrics.Metrics implements it. Nil drops the observation.
+// F-8.9.6.
+type DelegationHighWatermarkObserver interface {
+	ObserveDelegationParallelChildrenHighWatermark(pool, tenantID string, value int64)
 }
 
 // SessionLogHook is the §4.4 line 226 close-hook the gateway invokes
@@ -855,6 +875,15 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
+	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 line
+	// 379 per-tree parallel-children high-watermark observation: when a
+	// delegation tree's root session settles, the gateway reads the
+	// recorded maximum simultaneous in-flight children and observes it
+	// onto the §16.1 histogram. Both nil disables the observation.
+	// F-8.9.6.
+	HighWatermarkReader   DelegationHighWatermarkReader
+	HighWatermarkObserver DelegationHighWatermarkObserver
+
 	// MaxOrphanTasksPerTenant caps a tenant's active orphan tasks per
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
@@ -1091,6 +1120,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		partialManifestLookup:    opts.PartialManifestLookup,
 		treeArchive:              opts.TreeArchive,
 		treeBudgetReturner:       opts.TreeBudgetReturner,
+		hwmReader:                opts.HighWatermarkReader,
+		hwmObserver:              opts.HighWatermarkObserver,
 		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,
 		runtimes:                 opts.Runtimes,
 		environments:             opts.Environments,

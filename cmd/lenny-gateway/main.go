@@ -1578,8 +1578,17 @@ func main() {
 	// is not configured the reserver stays nil and only the static
 	// ValidateChildSlice ceiling is enforced. F-8.2.18 / F-8.2.12 / F-8.2.13.
 	var treeBudgetReserver delegation.TreeBudgetReserver
+	// hwmReader is the concrete *treebudget.Reserver kept alongside the
+	// interface so the §8.3 line 379 high-watermark read (not part of the
+	// narrow Reserve/Return interfaces) is reachable from the
+	// sessionserver. Nil when Redis is not configured, which leaves the
+	// nil interface genuinely nil so the typed-nil-in-interface trap is
+	// avoided. F-8.9.6.
+	var hwmReader sessionserver.DelegationHighWatermarkReader
 	if redisClient != nil {
-		treeBudgetReserver = treebudget.New(redisClient, 0)
+		r := treebudget.New(redisClient, 0)
+		treeBudgetReserver = r
+		hwmReader = r
 	}
 	// One §9.2 interaction store shared by the sessionserver (which
 	// serves the respond/dismiss endpoints) and the platform MCP tools
@@ -2219,9 +2228,11 @@ func main() {
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
 		SessionLogHook:     &sessionlogstore.CloseHook{Store: sessionLogs},
-		TreeArchive:        treeArchive,
-		TreeBudgetReturner: treeBudgetReserver,
-		Interceptors:       policyChain,
+		TreeArchive:           treeArchive,
+		TreeBudgetReturner:    treeBudgetReserver,
+		HighWatermarkReader:   hwmReader,
+		HighWatermarkObserver: gwMetrics,
+		Interceptors:          policyChain,
 		PolicyAuditSink: policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.

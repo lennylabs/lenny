@@ -61,11 +61,17 @@ type TreeCycleEvent struct {
 // (§4.2 line 157) means TaskID is the session row's id; the REST and
 // MCP projections of `lenny/get_task_tree` use the same field name per
 // the §15.2.1 REST↔MCP semantic-equivalence rule. F-8.9.5.
+//
+// Attributes carries the §8.9 line 1010 per-node tracking projection
+// (generation, pod, lease, failure history) so an operator can inspect
+// a child's recovery generation, pod assignment, granted lease, and
+// failure history from the tree. F-8.9.1.
 type TreeNode struct {
-	TaskID     string     `json:"taskId"`
-	State      string     `json:"state"`
-	RuntimeRef string     `json:"runtimeRef,omitempty"`
-	Children   []TreeNode `json:"children"`
+	TaskID     string                      `json:"taskId"`
+	State      string                      `json:"state"`
+	RuntimeRef string                      `json:"runtimeRef,omitempty"`
+	Attributes sessionstore.NodeAttributes `json:"attributes"`
+	Children   []TreeNode                  `json:"children"`
 }
 
 // TreeResponse is the §15.1 GET /v1/sessions/{id}/tree envelope.
@@ -169,6 +175,7 @@ func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByPa
 		TaskID:     sess.ID,
 		State:      string(sess.State),
 		RuntimeRef: sess.RuntimeRef,
+		Attributes: sessionstore.ProjectNodeAttributes(sess),
 		Children:   []TreeNode{},
 	}
 	if seen[sess.ID] {

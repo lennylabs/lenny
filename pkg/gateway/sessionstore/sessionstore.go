@@ -458,6 +458,73 @@ func (l *DelegationLease) IsZero() bool {
 		l.MaxTreeMemoryBytes == 0 && l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0
 }
 
+// NodeAttributes is the §8.9 line 1010 per-node tracking projection.
+// The spec states each task-tree node tracks "session_id, generation,
+// pod, state, lease, budget consumed, failure history". session_id and
+// state ride on the enclosing tree node (TaskID / State); this struct
+// carries the remaining row-persisted attributes so a parent agent or
+// an operator can inspect a child's recovery generation, pod
+// assignment, granted resource lease, and failure history directly
+// from `lenny/get_task_tree` and `GET /v1/sessions/{id}/tree` without a
+// second per-node lookup. Live budget-consumption accounting against
+// the lease is the §8.3 Redis counter surfaced through the §8.8 usage
+// rollup and the §16 billing surface, not this static projection; the
+// Lease field carries the granted ceiling the consumption is measured
+// against. spec: §8.9 line 1010. F-8.9.1.
+type NodeAttributes struct {
+	// Generation is the §4.2 recovery counter (RecoveryGeneration),
+	// incremented on each pod recovery. spec: §8.9 line 1010 ("generation").
+	Generation int64 `json:"generation"`
+	// Pod is the §4.2 pod-to-session binding (PodAssignment); empty when
+	// the node is not currently bound to a pod. spec: §8.9 line 1010 ("pod").
+	Pod string `json:"pod,omitempty"`
+	// Lease is the §8.2 granted resource ceiling for the node's subtree,
+	// nil for a root/standalone node or one admitted with no slice.
+	// spec: §8.9 line 1010 ("lease").
+	Lease *DelegationLease `json:"lease,omitempty"`
+	// FailureHistory carries the node's §4.2 retry counter and the §7.1
+	// terminal failure cause, nil while the node has neither retried nor
+	// failed. spec: §8.9 line 1010 ("failure history").
+	FailureHistory *FailureHistory `json:"failureHistory,omitempty"`
+}
+
+// FailureHistory is the §8.9 line 1010 per-node failure projection. The
+// v1 session row tracks the retry counter plus the most recent terminal
+// failure class and coded reason rather than a chronological list; a
+// future iteration that records a per-attempt audit replaces this with
+// the full list behind the same field. spec: §8.9 line 1010; §4.2 line
+// 158; §7.1. F-8.9.1.
+type FailureHistory struct {
+	// RetryCount is the §4.2 line 158 monotonic retry counter.
+	RetryCount int64 `json:"retryCount"`
+	// FailureClass is the §7.1 coarse audit bucket, empty unless the node
+	// reached `failed`.
+	FailureClass string `json:"failureClass,omitempty"`
+	// FailureReason is the §7.1 specific coded cause, empty unless the
+	// node reached `failed`.
+	FailureReason string `json:"failureReason,omitempty"`
+}
+
+// ProjectNodeAttributes builds the §8.9 line 1010 per-node attribute
+// projection from a session row. FailureHistory is omitted when the
+// node has neither retried nor recorded a terminal failure, so a clean
+// node serializes without an empty history object. F-8.9.1.
+func ProjectNodeAttributes(s Session) NodeAttributes {
+	attrs := NodeAttributes{
+		Generation: s.RecoveryGeneration,
+		Pod:        s.PodAssignment,
+		Lease:      s.DelegationLease,
+	}
+	if s.RetryCount > 0 || s.FailureClass != "" || s.FailureReason != "" {
+		attrs.FailureHistory = &FailureHistory{
+			RetryCount:    s.RetryCount,
+			FailureClass:  string(s.FailureClass),
+			FailureReason: s.FailureReason,
+		}
+	}
+	return attrs
+}
+
 // ExperimentContext is the §10.7 experiment enrollment recorded on a
 // session: the experiment and variant the ExperimentRouter assigned,
 // and whether the enrollment was inherited from a delegating parent.

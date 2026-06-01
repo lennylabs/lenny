@@ -2566,12 +2566,17 @@ type memoryResult struct {
 // 871-883 supplementary table annotations — `suspended: true` for the
 // `suspended` session state and `resuming: true` for `resume_pending`
 // / `resuming`. The map is omitted when no annotation applies. F-8.8.9.
+// Attributes carries the §8.9 line 1010 per-node tracking projection
+// (generation, pod, lease, failure history), matching the REST
+// /v1/sessions/{id}/tree surface per the §15.2.1 REST↔MCP
+// semantic-equivalence rule. F-8.9.1.
 type treeNode struct {
-	TaskID     string         `json:"taskId"`
-	State      string         `json:"state"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	RuntimeRef string         `json:"runtimeRef,omitempty"`
-	Children   []treeNode     `json:"children"`
+	TaskID     string                      `json:"taskId"`
+	State      string                      `json:"state"`
+	Metadata   map[string]any              `json:"metadata,omitempty"`
+	RuntimeRef string                      `json:"runtimeRef,omitempty"`
+	Attributes sessionstore.NodeAttributes `json:"attributes"`
+	Children   []treeNode                  `json:"children"`
 }
 
 // mcpEndpointFor returns the §9.1 discovery pointer for runtime
@@ -3211,6 +3216,7 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 		State:      protoState,
 		Metadata:   meta,
 		RuntimeRef: s.RuntimeRef,
+		Attributes: sessionstore.ProjectNodeAttributes(s),
 		Children:   []treeNode{},
 	}
 	if seen[s.ID] {

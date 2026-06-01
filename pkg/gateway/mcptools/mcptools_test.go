@@ -980,6 +980,40 @@ func TestGetTaskTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 	}
 }
 
+// TestGetTaskTreeSurfacesNodeAttributes_spec_8_9_1010 verifies that the
+// §8.9 line 1010 per-node tracking attributes (generation, pod, lease,
+// failure history) ride on each MCP tree node so a parent agent can
+// inspect a child's recovery generation, pod assignment, granted lease,
+// and failure history. F-8.9.1.
+func TestGetTaskTreeSurfacesNodeAttributes_spec_8_9_1010(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_root_attr", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "claude", CreatedAt: now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid_attr", TenantID: "acme", State: session.StateFailed,
+		RuntimeRef: "gemini", ParentSessionID: "sess_root_attr",
+		RecoveryGeneration: 2, PodAssignment: "pod-xyz",
+		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 5000},
+		RetryCount:      1, FailureClass: session.FailureClass("infrastructure"),
+		FailureReason: "READY_TIMEOUT",
+		CreatedAt:     now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_root_attr"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{
+		`"attributes":`, `"generation":2`, `"pod":"pod-xyz"`,
+		`"maxTokenBudget":5000`, `"retryCount":1`,
+		`"failureClass":"infrastructure"`, `"failureReason":"READY_TIMEOUT"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("tree node missing %s: %q", want, text)
+		}
+	}
+}
+
 func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
