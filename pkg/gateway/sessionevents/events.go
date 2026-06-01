@@ -284,6 +284,47 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 	return ev
 }
 
+// Broadcast publishes a platform-level event to every session that
+// currently has at least one live SSE subscriber. Each delivery goes
+// through the normal publish path, so the event is assigned the
+// session's next monotonic Seq, retained in history for a
+// reconnect-with-cursor, and fanned out to that session's live
+// subscribers (and the cross-replica relay when wired). It returns the
+// number of sessions the event reached.
+//
+// The §10.1 dual-store degraded mode uses Broadcast to push a
+// PLATFORM_DEGRADED event to all active client streams within 1 second
+// of declaring both stores unreachable. The event publishes under each
+// session's frozen tenant so the §7.2 isolation invariant holds.
+//
+// spec: §10.1 line 45 — "all active client SSE streams receive a
+// PLATFORM_DEGRADED server-sent event ... within 1 second".
+func (b *Bus) Broadcast(eventType, data string, now time.Time) int {
+	b.mu.Lock()
+	// Collect (session, tenant) pairs for sessions with a live
+	// subscriber. Snapshot under the lock, then publish outside it so a
+	// slow relay on one session does not stall the rest.
+	type target struct{ sessionID, tenant string }
+	targets := make([]target, 0, len(b.subs))
+	for sid, subs := range b.subs {
+		live := false
+		for _, sub := range subs {
+			if !sub.closed {
+				live = true
+				break
+			}
+		}
+		if live {
+			targets = append(targets, target{sessionID: sid, tenant: b.tenant[sid]})
+		}
+	}
+	b.mu.Unlock()
+	for _, t := range targets {
+		b.publish(t.tenant, t.sessionID, eventType, data, now)
+	}
+	return len(targets)
+}
+
 // Subscription is the caller-facing handle returned by Subscribe.
 type Subscription struct {
 	bus       *Bus

@@ -28,6 +28,58 @@ func TestPublishAssignsMonotonicSeq(t *testing.T) {
 	}
 }
 
+// spec: §10.1 line 45 — Broadcast pushes a platform-level event to every
+// session that has a live subscriber, assigning each its own per-session
+// Seq, and returns the number of sessions reached. Sessions with no live
+// subscriber are skipped.
+func TestBroadcastReachesActiveSessions_spec_10_1(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	// Two sessions with live subscribers; a third has only history.
+	subA, err := b.SubscribeForTenant("acme", "sess_a", 0, 8)
+	if err != nil {
+		t.Fatalf("subscribe a: %v", err)
+	}
+	defer subA.Close()
+	subB, err := b.SubscribeForTenant("acme", "sess_b", 0, 8)
+	if err != nil {
+		t.Fatalf("subscribe b: %v", err)
+	}
+	defer subB.Close()
+	// sess_c has an event in history but no live subscriber.
+	b.PublishForTenant("acme", "sess_c", "message", `{}`, ts())
+
+	reached := b.Broadcast("PLATFORM_DEGRADED", `{"reason":"dual_store_unavailable","retry_after":10}`, ts())
+	if reached != 2 {
+		t.Fatalf("Broadcast reached %d sessions, want 2 (only those with live subscribers)", reached)
+	}
+	for _, tc := range []struct {
+		name string
+		sub  *sessionevents.Subscription
+	}{{"sess_a", subA}, {"sess_b", subB}} {
+		select {
+		case ev := <-tc.sub.Events():
+			if ev.Type != "PLATFORM_DEGRADED" {
+				t.Errorf("%s: type=%q, want PLATFORM_DEGRADED", tc.name, ev.Type)
+			}
+			if ev.Seq != 1 {
+				t.Errorf("%s: seq=%d, want 1", tc.name, ev.Seq)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s: did not receive PLATFORM_DEGRADED broadcast", tc.name)
+		}
+	}
+}
+
+// spec: §10.1 — Broadcast on a bus with no live subscribers is a no-op
+// that reaches zero sessions.
+func TestBroadcastNoSubscribersReachesZero_spec_10_1(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.PublishForTenant("acme", "sess_a", "message", `{}`, ts())
+	if reached := b.Broadcast("PLATFORM_DEGRADED", `{}`, ts()); reached != 0 {
+		t.Fatalf("Broadcast reached %d, want 0 with no live subscribers", reached)
+	}
+}
+
 func TestSubscribeReceivesLiveEvents(t *testing.T) {
 	b := sessionevents.NewBus(0)
 	sub := b.Subscribe("sess_1", 0, 8)

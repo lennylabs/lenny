@@ -1435,6 +1435,16 @@ gateway:
   # LENNY_TERMINATION_GRACE_SECONDS so the hook honors the
   # chart-set deadline.
   terminationGracePeriodSeconds: 240
+  # dualStoreUnavailableMaxSeconds is the §10.1 item-4 per-replica
+  # countdown: when Postgres and Redis are simultaneously unreachable for
+  # longer than this, sessions with no successful store interaction become
+  # eligible for graceful termination once a store recovers. The default
+  # (60s) tracks the managed-Postgres RTO. The dual-store monitor runs
+  # only when both stores are wired; it also gates session.create with
+  # 503 + Retry-After: 10 and broadcasts PLATFORM_DEGRADED to active SSE
+  # streams while the outage holds. Rendered into
+  # LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS.
+  dualStoreUnavailableMaxSeconds: 60
   # topologySpread opt-in (§4.1 / §17.1). When enabled the chart emits
   # spec.template.spec.topologySpreadConstraints on the gateway
   # Deployment so the scheduler distributes replicas across failure

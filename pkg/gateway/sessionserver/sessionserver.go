@@ -123,6 +123,9 @@ type Server struct {
 	// array then materializes empty. spec: §8.8 lines 888-896. F-8.8.2.
 	artifacts artifactcatalog.Store
 	events    *sessionevents.Bus
+	// dualStore is the §10.1 dual-store degraded-mode gate consulted at
+	// session.create. Nil leaves the gate open. spec: §10.1 item 2.
+	dualStore DualStoreGate
 	// messaging is the §7.2 session-inbox + DLQ coordinator. It drives
 	// the inbox-to-DLQ migration on resume_pending and the inbox+DLQ
 	// drain on terminal transition. Nil when messaging durability is not
@@ -655,6 +658,14 @@ type Options struct {
 	// event publication.
 	Events *sessionevents.Bus
 
+	// DualStore is the §10.1 dual-store degraded-mode gate. When it
+	// reports Unavailable (Postgres and Redis simultaneously
+	// unreachable), `session.create` is rejected with 503 +
+	// `Retry-After: 10` because the create requires a Postgres INSERT.
+	// Nil leaves the gate open (the in-memory / single-store posture
+	// never enters dual-store degraded mode). spec: §10.1 item 2.
+	DualStore DualStoreGate
+
 	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
 	// the gateway migrates a session's in-memory inbox to the DLQ on
 	// resume_pending and drains the inbox+DLQ (emitting
@@ -1121,6 +1132,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		pools:                    opts.Pools,
 		experimentReporter:       opts.ExperimentRejections,
 		events:                   opts.Events,
+		dualStore:                opts.DualStore,
 		messaging:                opts.Messaging,
 		interactions:             opts.Interactions,
 		usage:                    opts.Usage,
@@ -1548,12 +1560,31 @@ func (s *Server) decodeCreateRequest(w http.ResponseWriter, r *http.Request) (Cr
 	return req, true
 }
 
+// DualStoreGate reports whether this replica currently observes the
+// §10.1 dual-store degraded mode (Postgres and Redis both unreachable).
+// dualstore.Monitor satisfies it.
+type DualStoreGate interface {
+	Unavailable() bool
+}
+
 // createSession runs the §15.1 session-creation flow over an
 // already-decoded request: the active-user and quota gates, the
 // runtime, isolation-profile, and workspace-plan validation, the
 // session-row persist, the §7.1 uploadToken mint, and the
 // CreateSessionResponse.
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req CreateSessionRequest) {
+	// spec: §10.1 item 2 — while both Postgres and Redis are unreachable
+	// a new session.create cannot complete its Postgres INSERT, so reject
+	// it with 503 + Retry-After: 10 before consuming any quota, rate, or
+	// token budget. In-progress sessions are unaffected (they continue on
+	// cached coordination state); only creation is suspended. F-10.1.3.
+	if s.dualStore != nil && s.dualStore.Unavailable() {
+		w.Header().Set("Retry-After", "10")
+		s.writeError(w, http.StatusServiceUnavailable, "PLATFORM_DEGRADED",
+			"session creation is suspended: the platform's coordination stores are temporarily unavailable",
+			map[string]any{"reason": "dual_store_unavailable", "retryAfter": 10})
+		return
+	}
 	if !s.requireActiveUser(w, r) {
 		return
 	}

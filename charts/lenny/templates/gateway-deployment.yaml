@@ -533,6 +533,13 @@ spec:
             # gateway honors the same deadline Kubernetes enforces.
             - name: LENNY_TERMINATION_GRACE_SECONDS
               value: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 | quote }}
+            # §10.1 item 4 — dualStoreUnavailableMaxSeconds: the
+            # per-replica window after which sessions with no successful
+            # store interaction become eligible for graceful termination
+            # once a store recovers. The dual-store monitor is active only
+            # when both Postgres and Redis are wired.
+            - name: LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS
+              value: {{ .Values.gateway.dualStoreUnavailableMaxSeconds | default 60 | quote }}
             # §11.3 line 215 — credentials.expiryWarningLeadSeconds. The
             # renewal worker emits a structured warning log when a tracked
             # lease enters this window of its ExpiresAt. 0 disables.

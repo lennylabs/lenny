@@ -79,6 +79,12 @@ var table = map[string]entry{
 	"UNSUPPORTED_MEDIA_TYPE":      {CategoryPermanent, false},
 	"INTERNAL_ERROR":              {CategoryTransient, true},
 	"SERVICE_UNAVAILABLE":         {CategoryTransient, true},
+	// spec: §10.1 item 2/5 — `session.create` is rejected with this code
+	// while both coordination stores are unreachable. TRANSIENT +
+	// retryable: the §10.1 degraded mode is bounded by the Postgres RTO
+	// and the reply carries Retry-After: 10 so the client backs off and
+	// retries. F-10.1.3.
+	"PLATFORM_DEGRADED":           {CategoryTransient, true},
 	"TIMEOUT":                     {CategoryTransient, true},
 	"CIRCUIT_BREAKER_OPEN":        {CategoryPolicy, false},
 	"DELEGATION_CYCLE_DETECTED":   {CategoryPermanent, false},

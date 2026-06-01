@@ -377,6 +377,12 @@ type Metrics struct {
 	// errors but stays under the alert's persistence window.
 	// spec: §11.1 line 7 fail-open observability.
 	rateLimitCounterFailure prometheus.Counter
+	// dualStoreUnavailable is the §10.1 line 45 DualStoreUnavailable
+	// alert's source gauge: 1 while this replica observes Postgres and
+	// Redis simultaneously unreachable, 0 otherwise. The §16.5 alert
+	// reads `lenny_dual_store_unavailable == 1`.
+	// spec: §10.1 line 45.
+	dualStoreUnavailable prometheus.Gauge
 
 	// billingFlushPressure counts §12.3 line 76 billing_flush_pressure
 	// events: each Append that finds the failover Tier 2 write-ahead
@@ -1546,6 +1552,17 @@ func New() (*Metrics, error) {
 	// at fail-open entry and on each subsequent error in the outage
 	// window so the operator sees a rate even when the gauge is
 	// pinned to 1.
+	// §10.1 line 45 DualStoreUnavailable — `lenny_dual_store_unavailable`
+	// is the per-replica gauge the §10.1 dual-store monitor pins to 1
+	// while both Postgres and Redis are unreachable and clears to 0 on
+	// recovery. The §16.5 DualStoreUnavailable alert reads `== 1`.
+	dualStoreUnavailable, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_dual_store_unavailable",
+		Help: "§10.1 dual-store degraded mode: 1 while Postgres and Redis are both unreachable, 0 when at least one recovers.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	rateLimitCounterFailure := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_rate_limit_counter_failure_total",
 		Help: "§11.1 ratelimit counter errors observed by the middleware.",
@@ -1834,6 +1851,7 @@ func New() (*Metrics, error) {
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
 		delegationParallelChildrenHWM,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
+		dualStoreUnavailable,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
 		auditChainIntegrity, auditGrantDrift,
@@ -1996,6 +2014,7 @@ func New() (*Metrics, error) {
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
 		rateLimitCounterFailure:              rateLimitCounterFailure,
+		dualStoreUnavailable:                 dualStoreUnavailable.WithLabelValues(),
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
 		billingFlushPressure:                 billingFlushPressure.WithLabelValues(),
@@ -2580,6 +2599,22 @@ func (m *Metrics) IncRateLimitCounterFailure() {
 		return
 	}
 	m.rateLimitCounterFailure.Inc()
+}
+
+// SetDualStoreUnavailable flips the §10.1 line 45 DualStoreUnavailable
+// source gauge. The dual-store monitor sets 1 the moment it declares
+// both Postgres and Redis unreachable and clears to 0 once at least one
+// store recovers, so the §16.5 alert reflects the live degraded state.
+// spec: §10.1 line 45.
+func (m *Metrics) SetDualStoreUnavailable(unavailable bool) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if unavailable {
+		v = 1
+	}
+	m.dualStoreUnavailable.Set(v)
 }
 
 // IncIdempotencyCacheWriteFailure increments

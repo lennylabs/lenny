@@ -133,6 +133,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
+	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -333,6 +334,9 @@ func main() {
 		"§10.3 line 359 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
+	dualStoreMaxSeconds := flag.Int("dual-store-unavailable-max-seconds",
+		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
+		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -1878,6 +1882,34 @@ func main() {
 		off, _ := clockinject.Offset()
 		return off
 	}, gwMetrics)
+	// spec: §10.1 — dual-store degraded-mode monitor. It is active only
+	// when both coordination stores are wired; an in-memory / single-store
+	// dev posture has no "both down" condition to detect. The monitor
+	// probes Postgres and Redis on a short cadence and, on detecting both
+	// unreachable, pins lenny_dual_store_unavailable=1, broadcasts a
+	// PLATFORM_DEGRADED SSE event to every active client stream, and gates
+	// session.create with 503 + Retry-After: 10 (via DualStore on the
+	// session-server Options). The per-replica dualStoreUnavailableMaxSeconds
+	// countdown is anchored at detection. F-10.1.3.
+	var dsMonitor *dualstore.Monitor
+	if pgPool != nil && redisClient != nil {
+		pgPoolRef := pgPool
+		redisRef := redisClient
+		dsMonitor = &dualstore.Monitor{
+			PostgresProbe: func(ctx context.Context) bool {
+				pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+				return pgPoolRef.Ping(pctx) == nil
+			},
+			RedisProbe: func(context.Context) bool {
+				return redisconn.PingWithTimeout(redisRef, 2*time.Second) == nil
+			},
+			Gauge:          gwMetrics,
+			Streams:        eventBus,
+			MaxUnavailable: time.Duration(*dualStoreMaxSeconds) * time.Second,
+			Logf:           func(format string, args ...any) { log.Printf(format, args...) },
+		}
+	}
 	// §4.6.1: record fallback-claim skips on the gateway metrics registry.
 	// Wired after gatewaymetrics.New() because the binder is constructed
 	// earlier in the agent-namespace block.
@@ -2421,6 +2453,10 @@ func main() {
 		// F-8.8.2.
 		Artifacts:                  artifactCatalog,
 		Events:                     eventBus,
+		// spec: §10.1 item 2 — gate session.create with 503 + Retry-After
+		// while both coordination stores are unreachable. Nil monitor
+		// (single-store / in-memory posture) leaves the gate open. F-10.1.3.
+		DualStore:                  dsMonitor,
 		Messaging:                  messagingCoord,
 		Interactions:               interactions,
 		Evals:                      evals,
@@ -4037,6 +4073,16 @@ func main() {
 				terminated)
 		}
 	})
+
+	// ----- §10.1 dual-store degraded-mode monitor -----
+	// Probes Postgres + Redis on a short cadence; on detecting both
+	// unreachable it pins lenny_dual_store_unavailable=1, broadcasts
+	// PLATFORM_DEGRADED to active SSE streams, and gates session.create
+	// (via DualStore on the session-server). Active only when both stores
+	// are wired. F-10.1.3.
+	if dsMonitor != nil {
+		go dsMonitor.Run(watchdogCtx)
+	}
 
 	// ----- §7.1 artifact-retention GC -----
 	// Collects the workspace snapshot, transcript, and blobs of every

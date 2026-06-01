@@ -635,6 +635,71 @@ func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testin
 	}
 }
 
+// stubDualStore is a §10.1 DualStoreGate test double.
+type stubDualStore struct{ unavailable bool }
+
+func (s stubDualStore) Unavailable() bool { return s.unavailable }
+
+// spec: §10.1 item 2 — while both coordination stores are unreachable
+// `session.create` is rejected with 503 + Retry-After: 10 and the
+// PLATFORM_DEGRADED code, before any quota / persistence work runs.
+func TestCreateReturnsPlatformDegradedWhenDualStoreDown_spec_10_1(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:    func() string { return "sess_should_not_persist" },
+		DualStore: stubDualStore{unavailable: true},
+	})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	})
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if ra := rr.Header().Get("Retry-After"); ra != "10" {
+		t.Errorf("Retry-After = %q, want 10", ra)
+	}
+	var env struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Retryable bool           `json:"retryable"`
+			Details   map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "PLATFORM_DEGRADED" {
+		t.Errorf("code = %q, want PLATFORM_DEGRADED", env.Error.Code)
+	}
+	if !env.Error.Retryable {
+		t.Error("a dual-store 503 must classify as retryable")
+	}
+	if env.Error.Details["reason"] != "dual_store_unavailable" {
+		t.Errorf("details.reason = %v, want dual_store_unavailable", env.Error.Details["reason"])
+	}
+	// The gate runs before persistence: no row was created.
+	if _, err := store.Get(context.Background(), "acme", "sess_should_not_persist"); err == nil {
+		t.Error("no session row may be persisted while the dual-store gate is closed")
+	}
+}
+
+// spec: §10.1 item 1 — when the gate reports available the create flow
+// proceeds normally (the gate does not block healthy creates).
+func TestCreateProceedsWhenDualStoreAvailable_spec_10_1(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		Clock:     clock,
+		IDFunc:    func() string { return "sess_ok" },
+		DualStore: stubDualStore{unavailable: false},
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // spec: §7.1 line 28 — when the upload-token mint itself fails, the
 // row was never built (no IDFunc was even called for persistence).
 // The handler returns SESSION_CREATION_FAILED with reason
