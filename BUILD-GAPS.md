@@ -17024,7 +17024,7 @@ spec-described compliance gap that SIEM addresses (§11.7 lines
 461–470); without the forwarder wired, every install runs in the
 "Postgres-only deployments" failure mode regardless of configuration.
 
-### - [ ] F-11.7.2 — 02  `COMPLIANCE_SIEM_REQUIRED` enforcement gate is absent [High] — OPEN
+### - [x] F-11.7.2 — 02  `COMPLIANCE_SIEM_REQUIRED` enforcement gate is absent [High] — CLOSED
 
 **Spec:** §11.7 lines 445–451 "Compliance profile enforcement gate":
 
@@ -17062,6 +17062,8 @@ condition that should fire it never fires.
 **Severity:** High — this is a compliance-control bypass directly
 named by the spec as the difference between a compliance-grade and a
 non-compliance-grade deployment (§11.7 lines 461–466).
+
+**Resolution:** The admin `Router` gained `WithSIEMConfigured` (production passes `audit.siem.endpoint != ""`) and `requireSIEMForProfile`. `handleCreateTenant` and `handleUpdateTenant` reject a regulated `complianceProfile` (soc2/fedramp/hipaa) without a configured SIEM with HTTP 422 `COMPLIANCE_SIEM_REQUIRED` carrying the verbatim §11.7 line-448 message; the update gate runs after the downgrade ratchet so a regulated→lower transition still routes through `COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED`. `handleCreateEnvironment` re-reads the parent tenant and applies the same gate per §11.7 line 449. `admin.ValidateSIEMForRegulatedTenants` is the §11.7 line-450 startup gate — fatal in production (`LENNY_ENV=production`) with the verbatim `SIEMStartupFatalMessage` pointing at the decommission endpoint, warning otherwise. Wired the `--audit-siem-endpoint` flag / `LENNY_AUDIT_SIEM_ENDPOINT` env and the `audit.siem.endpoint` Helm value (rendered only when non-empty). Commit `8c65adcc`.
 
 ### - [x] F-11.7.3 — 03  No periodic background integrity check; `audit.grantCheckInterval` and `audit.hardFailOnDrift` are inert [High] — CLOSED
 
