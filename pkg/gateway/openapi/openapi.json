@@ -1811,6 +1811,33 @@
         "responses": { "200": { "description": "Closed" } }
       }
     },
+    "/v1/admin/schema/migrations/status": {
+      "get": {
+        "summary": "Return the expand-contract phase of each active schema migration",
+        "x-lenny-mcp-tool": "admin.migration_status",
+        "x-lenny-scope": "admin.schema.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Per-migration phase and gate-check status" } }
+      }
+    },
+    "/v1/admin/schema/migrations/{version}/down": {
+      "post": {
+        "summary": "Launch the down-migration for a version as a last-resort recovery",
+        "x-lenny-mcp-tool": "admin.migration_down",
+        "x-lenny-scope": "admin.schema.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "version", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Rolled back" },
+          "409": { "description": "Version is not the most recently applied migration" },
+          "422": { "description": "Confirmation required" }
+        }
+      }
+    },
     "/v1/admin/audit-events": {
       "get": {
         "summary": "List audit events",

@@ -170,6 +170,10 @@ type Router struct {
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
 
+	// migrations backs the §15.1 / §24.13 schema-migration management
+	// endpoints. Nil leaves them unregistered.
+	migrations MigrationManager
+
 	// leaseDenials clears the §8.6 extension-denied flag, backing the
 	// §15.1 line 868 DELETE …/extension-denial admin endpoint. Nil leaves
 	// the endpoint unregistered.
@@ -372,6 +376,15 @@ func (r *Router) Handler() http.Handler {
 	if r.recommendations != nil {
 		mux.Handle("GET /v1/admin/recommendations",
 			r.requireAdmin(http.HandlerFunc(r.handleRecommendations)))
+	}
+	if r.migrations != nil {
+		// §15.1 lines 891-892 / §24.13 lines 150-151: schema-migration
+		// status read and last-resort down-migration. Both require
+		// platform-admin.
+		mux.Handle("GET /v1/admin/schema/migrations/status",
+			r.requireAdmin(http.HandlerFunc(r.handleMigrationStatus)))
+		mux.Handle("POST /v1/admin/schema/migrations/{version}/down",
+			r.requireAdmin(http.HandlerFunc(r.handleMigrationDown)))
 	}
 	if r.eventBuffer != nil {
 		mux.Handle("GET /v1/admin/events/buffer",

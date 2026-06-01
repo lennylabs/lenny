@@ -237,6 +237,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/schemamigrate"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -2227,13 +2228,13 @@ func main() {
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
-		SessionLogHook:     &sessionlogstore.CloseHook{Store: sessionLogs},
+		SessionLogHook:        &sessionlogstore.CloseHook{Store: sessionLogs},
 		TreeArchive:           treeArchive,
 		TreeBudgetReturner:    treeBudgetReserver,
 		HighWatermarkReader:   hwmReader,
 		HighWatermarkObserver: gwMetrics,
 		Interceptors:          policyChain,
-		PolicyAuditSink: policyAuditSink,
+		PolicyAuditSink:       policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
@@ -2738,6 +2739,16 @@ func main() {
 	// handlers reject a runtime whose setupPolicy.timeoutSeconds exceeds
 	// gateway.maxFinalizingTimeoutSeconds.
 	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(*maxFinalizingTimeoutSeconds)
+	// §15.1 lines 891-892 / §24.13 lines 150-151: wire the
+	// schema-migration management endpoints when a Postgres DSN is set
+	// (the migrations the runner applies live in the same database).
+	if *postgresDSN != "" {
+		if mig, err := schemamigrate.New(*postgresDSN); err != nil {
+			log.Printf("lenny-gateway: schema-migration manager disabled: %v", err)
+		} else {
+			adminRouter = adminRouter.WithMigrationManager(mig)
+		}
+	}
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

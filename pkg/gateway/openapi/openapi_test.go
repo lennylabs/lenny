@@ -155,6 +155,8 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/circuit-breakers/{name}",
 		"/v1/admin/circuit-breakers/{name}/open",
 		"/v1/admin/circuit-breakers/{name}/close",
+		"/v1/admin/schema/migrations/status",
+		"/v1/admin/schema/migrations/{version}/down",
 		"/v1/admin/audit-events",
 		"/v1/admin/audit-events/{seq}",
 		"/v1/admin/audit-events/verify",

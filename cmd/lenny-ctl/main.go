@@ -40,6 +40,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -117,6 +118,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdRuntime(ctx, client, rest[1:], stdout, stderr)
 	case "admin":
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
+	case "migrate":
+		return cmdMigrate(ctx, client, rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
 	// the gateway. opsClient resolves the ops URL (the --ops-server flag
 	// or auto-discovery) on first use.
@@ -187,6 +190,9 @@ Gateway commands:
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
+  migrate status                        Show the expand-contract phase of every active schema migration (§24.13)
+  migrate down --version <N> --confirm [--reason <text>]
+                                        Roll back the most recently applied migration at version N (§24.13)
 
 Operability commands (§25.14, target lenny-ops):
   runbooks list [--alert <name>]        List runbooks (optionally by alert)
@@ -331,6 +337,57 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		fmt.Fprintf(stderr, "lenny-ctl: unknown admin resource %q\n", args[0])
 		return 2
 	}
+}
+
+// cmdMigrate implements the §24.13 migration-management group:
+// `migrate status` (GET /v1/admin/schema/migrations/status) and
+// `migrate down --version <N> --confirm` (POST
+// /v1/admin/schema/migrations/{version}/down). spec: §24.13 lines 150-151.
+func cmdMigrate(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: migrate requires a subcommand (status|down)")
+		return 2
+	}
+	switch args[0] {
+	case "status":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/schema/migrations/status", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "down":
+		fs := flag.NewFlagSet("migrate down", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		version := fs.String("version", "", "migration version to roll back (required)")
+		confirm := fs.Bool("confirm", false, "confirm the destructive rollback (required)")
+		reason := fs.String("reason", "", "free-text rollback reason recorded in the audit trail")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *version == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: migrate down requires --version <N>")
+			return 2
+		}
+		if !*confirm {
+			fmt.Fprintln(stderr, "lenny-ctl: migrate down requires --confirm (the operation is destructive)")
+			return 2
+		}
+		body := map[string]any{"confirm": true}
+		if *reason != "" {
+			body["reason"] = *reason
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/schema/migrations/"+*version+"/down", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown migrate subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
 }
 
 func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
