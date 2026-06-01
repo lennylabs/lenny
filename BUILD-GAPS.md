@@ -10182,7 +10182,7 @@ skipped. Closed by a1d8fc1e.
 
 ---
 
-### - [ ] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — OPEN
+### - [ ] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — DEFERRED
 
 **Severity:** High (cascade behavior conflated with `detach`; spec
 distinguishes them.)
@@ -10213,6 +10213,19 @@ gets the `detach` runtime behavior. Children continue running; their
 results land in `session_tree_archive` but no synthesized
 "parent-collected" boundary is produced. The behavior is silent — no
 error, no warning.
+
+**Deferred:** The only observable distinction between `await_completion`
+and `detach` once the parent is terminal is the spec's "collect results"
+step — synthesizing a parent-collected boundary that aggregates the
+settled children's results (and `treeUsage`) into the parent's archived
+TaskResult. Both policies already let children run to
+`cascadeTimeoutSeconds` (orphan cleanup bounds both), and both archive
+each child individually; `get_task_tree` reads either. The
+result-aggregation source this collection requires is the same per-node
+usage/result rollup that F-8.9.4 deferred ("no truthful per-node usage
+source to sum; archive stores only State/Result"). Deferred pending
+F-8.9.4 per-node collection capture. The lower-risk pieces — cascade
+fallback audit (F-8.10.8) and orphan-cap behavior — are already closed.
 
 ---
 
@@ -10263,7 +10276,7 @@ childIDs-order tie-break. Closed by a1d8fc1e.
 
 ---
 
-### - [ ] F-8.10.5 — 5 — Delegation lease record not persisted; no-re-evaluation guarantee unverifiable [High] — OPEN
+### - [x] F-8.10.5 — 5 — Delegation lease record not persisted; no-re-evaluation guarantee unverifiable [High] — CLOSED
 
 **Severity:** High (the §8.10 "Policy enforcement during recovery"
 clause is the section's central security invariant and depends on
@@ -10302,6 +10315,22 @@ re-evaluate against the live (narrower) policy — violating the
 guarantee — or fail in undefined ways depending on which paths read
 the runtime registry. The spec's "lease is a capability that survives
 the pod loss" promise has no implementation backing.
+
+**Resolution:** `sessionstore.DelegationLease` now carries the §8.10
+lines 1044-1049 lease-scoped policy record — `DelegationPolicyRef`,
+`MaxDelegationPolicy` (the resolved effective policy name),
+`ContentPolicyRef`, and `SnapshottedPoolIDs` — alongside the resource
+slice, riding the existing `delegation_lease` JSONB column (no migration
+needed). The §8.2 delegation `Service.Delegate` captures these from the
+resolved runtime `delegationPolicyRef` and effective `DelegationPolicy`
+at original approval time via the new `stampLeasePolicy` helper, so a
+later tree recovery resumes the node against the persisted record rather
+than re-evaluating the live runtime registry. The lease-scoped
+`minIsolationProfile` rides the session's first-class `IsolationProfile`
+column and is not duplicated. v1 does not implement
+`snapshotPolicyAtLease`, so `snapshotted_pool_ids` stays empty (live pool
+labels) exactly as a pre-failure call would evaluate. Closed by commit
+HEAD (see below).
 
 ---
 

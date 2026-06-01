@@ -740,12 +740,17 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	var policyCeiling int
 	var effectivePolicy delegationpolicystore.DelegationPolicy
 	var haveEffectivePolicy bool
+	// §8.10 lines 1044-1049 — the lease-scoped policy reference captured
+	// at approval time so tree recovery resumes the node against the
+	// persisted lease rather than re-evaluating live policy. F-8.10.5.
+	var delegationPolicyRef string
 	if s.runtimes != nil {
 		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
 			if rt.Type == runtimestore.TypeMCP {
 				return Result{}, ErrTargetNotAgent
 			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
+			delegationPolicyRef = rt.DelegationPolicyRef
 			if s.policies != nil && rt.DelegationPolicyRef != "" {
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
 					effectivePolicy = pol
@@ -949,8 +954,16 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		// §8.2 lines 38-48: stamp the granted lease_slice onto the child
 		// so the child's own descendants validate against this ceiling.
 		// Nil when the lease declared no slice (no budget binding at this
-		// scope). F-8.2.2.
-		DelegationLease: storeLeaseFromSlice(req.LeaseSlice),
+		// scope). §8.10 lines 1044-1049: the resolved lease-scoped policy
+		// reference (delegationPolicyRef, effective maxDelegationPolicy,
+		// contentPolicy interceptor) is captured here so a later tree
+		// recovery resumes the node against the persisted lease record
+		// instead of re-evaluating live policy. The resolved min
+		// isolation profile rides the IsolationProfile column above.
+		// F-8.2.2 / F-8.10.5.
+		DelegationLease: stampLeasePolicy(
+			storeLeaseFromSlice(req.LeaseSlice),
+			delegationPolicyRef, effectivePolicy, haveEffectivePolicy),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the
@@ -1492,6 +1505,37 @@ func storeLeaseFromSlice(s lease.LeaseSlice) *sessionstore.DelegationLease {
 		MaxTreeMemoryBytes:  s.MaxTreeMemoryBytes,
 		MaxParallelChildren: s.MaxParallelChildren,
 		PerChildMaxAge:      s.PerChildMaxAge,
+	}
+	if dl.IsZero() {
+		return nil
+	}
+	return dl
+}
+
+// stampLeasePolicy records the §8.10 lines 1044-1049 lease-scoped policy
+// reference onto the granted lease so tree recovery can bring the node
+// back up against the persisted record instead of re-evaluating the live
+// policy state. It captures the resolved `delegationPolicyRef`, the
+// effective `maxDelegationPolicy` (the resolved DelegationPolicy name),
+// and the `contentPolicy.interceptorRef`. When the resource slice was
+// nil but a policy reference exists, it allocates a lease record so the
+// policy fields persist. The lease-scoped min isolation profile rides
+// the session's first-class IsolationProfile column, so it is not
+// duplicated here. v1 does not implement `snapshotPolicyAtLease`, so
+// `snapshotted_pool_ids` stays empty and post-recovery delegations
+// evaluate live pool labels exactly as a pre-failure call would.
+// F-8.10.5.
+func stampLeasePolicy(dl *sessionstore.DelegationLease, delegationPolicyRef string, pol delegationpolicystore.DelegationPolicy, havePolicy bool) *sessionstore.DelegationLease {
+	if delegationPolicyRef == "" && !havePolicy {
+		return dl
+	}
+	if dl == nil {
+		dl = &sessionstore.DelegationLease{}
+	}
+	dl.DelegationPolicyRef = delegationPolicyRef
+	if havePolicy {
+		dl.MaxDelegationPolicy = pol.Name
+		dl.ContentPolicyRef = pol.ContentPolicy.InterceptorRef
 	}
 	if dl.IsZero() {
 		return nil

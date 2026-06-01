@@ -446,16 +446,51 @@ type DelegationLease struct {
 	MaxParallelChildren int `json:"maxParallelChildren,omitempty"`
 	// PerChildMaxAge is the wall-clock seconds budget per descendant.
 	PerChildMaxAge int `json:"perChildMaxAge,omitempty"`
+
+	// The fields below are the §8.10 lines 1044-1049 lease-scoped policy
+	// record the gateway captures at original `delegate_task` approval
+	// time and persists alongside the resource slice. Tree recovery MUST
+	// bring a node back up against these snapshotted values rather than
+	// re-evaluating the live policy state, so policy narrowing applied
+	// between original approval and recovery cannot retroactively
+	// invalidate a node's lease. They ride the same `delegation_lease`
+	// JSONB column as the resource axes above. spec: §8.10 lines 1044-1049.
+	// F-8.10.5.
+
+	// DelegationPolicyRef is the §5.1 runtime `delegationPolicyRef` that
+	// scoped this node's delegation at approval time. Empty when the
+	// target runtime named no policy.
+	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
+	// MaxDelegationPolicy is the node's effective `maxDelegationPolicy`
+	// after §8.3 inheritance resolution — in v1 the resolved
+	// DelegationPolicy name the gateway evaluated this delegation against.
+	MaxDelegationPolicy string `json:"maxDelegationPolicy,omitempty"`
+	// ContentPolicyRef is the §8.3 `contentPolicy.interceptorRef` in
+	// effect at approval. Empty when the policy declared no interceptor.
+	// The lease-scoped `minIsolationProfile` the spec also names is
+	// already persisted as the session's first-class IsolationProfile
+	// column, so it is not duplicated here; recovery reads it from the
+	// session row directly.
+	ContentPolicyRef string `json:"contentPolicyRef,omitempty"`
+	// SnapshottedPoolIDs is the §8.3 line 208 `snapshotted_pool_ids` set,
+	// populated only when the root lease was issued with
+	// `snapshotPolicyAtLease: true`. Empty under the v1 default (live pool
+	// labels), so recovery falls through to live evaluation for new
+	// post-recovery delegations exactly as a pre-failure call would.
+	SnapshottedPoolIDs []string `json:"snapshottedPoolIds,omitempty"`
 }
 
 // IsZero reports whether every axis is unset, in which case the lease
-// imposes no budget binding and the store omits the persisted column.
+// imposes no budget binding and carries no §8.10 policy record, so the
+// store omits the persisted column.
 func (l *DelegationLease) IsZero() bool {
 	if l == nil {
 		return true
 	}
 	return l.MaxTokenBudget == 0 && l.MaxChildrenTotal == 0 && l.MaxTreeSize == 0 &&
-		l.MaxTreeMemoryBytes == 0 && l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0
+		l.MaxTreeMemoryBytes == 0 && l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0 &&
+		l.DelegationPolicyRef == "" && l.MaxDelegationPolicy == "" &&
+		l.ContentPolicyRef == "" && len(l.SnapshottedPoolIDs) == 0
 }
 
 // NodeAttributes is the §8.9 line 1010 per-node tracking projection.
