@@ -435,6 +435,186 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	return int(deleted), nil
 }
 
+// PruneOptions parameterizes a §16.4 audit-retention sweep.
+type PruneOptions struct {
+	// GeneralCutoff is the §16.4 line 378 retention boundary: rows
+	// whose event_type does not match the gdpr.* erasure-receipt
+	// prefix and whose created_at predates this instant are eligible
+	// for deletion. Derived from audit.retentionDays.
+	GeneralCutoff time.Time
+
+	// GDPRCutoff is the separate §16.4 line 380 / §12.8 line 839
+	// retention boundary for gdpr.* erasure-receipt rows, which are
+	// exempt from the general window and held under the longer
+	// audit.gdprRetentionDays floor (>= 2190 days for regulated
+	// profiles). A zero value holds every gdpr.* row indefinitely.
+	GDPRCutoff time.Time
+
+	// SIEMConfigured reports whether audit.siem.endpoint is set. When
+	// true and Force is false, the §16.4 line 378 SIEM delivery guard
+	// holds any row whose sequence_number exceeds the SIEM forwarder's
+	// last acknowledged high-water mark (siem_delivery_state), so a
+	// stalled forwarder cannot lose undelivered events to retention.
+	SIEMConfigured bool
+
+	// Force bypasses the SIEM delivery guard. The §16.4
+	// line 378 operator override path
+	// (POST /v1/admin/audit-partitions/{partition}/drop) sets it after
+	// an explicit data-loss acknowledgement.
+	Force bool
+}
+
+// PruneRetention deletes the tenant's audit rows that have aged past
+// the §16.4 retention window and returns the count deleted. gdpr.*
+// erasure-receipt rows are held under the separate opts.GDPRCutoff
+// window (§16.4 line 380); every other row is eligible once it predates
+// opts.GeneralCutoff. When opts.SIEMConfigured is true and opts.Force is
+// false, the SIEM delivery guard withholds any row whose
+// sequence_number is above the forwarder's last acknowledged high-water
+// mark in siem_delivery_state, so a stalled SIEM forwarder never loses
+// an undelivered event to retention (§16.4 line 378).
+//
+// The DELETE runs under SET LOCAL lenny.erasure_mode = 'true' so the
+// lenny_audit_immutability trigger admits it, exactly as DeleteByTenant
+// does; the connection must run as the lenny_erasure role. An empty
+// tenant id is rejected so a misconfigured sweep cannot drop another
+// tenant's chain.
+//
+// spec: §16.4 lines 378-382 (audit-retention partition GC, gdpr.*
+// carve-out, SIEM delivery guard); §11.7 line 456 (regulated retention
+// floor); §12.8 line 839 (gdprRetentionDays floor).
+func (s *Store) PruneRetention(ctx context.Context, tenantID string, opts PruneOptions) (int, error) {
+	if tenantID == "" {
+		return 0, ErrEmptyScope
+	}
+	if opts.GeneralCutoff.IsZero() {
+		return 0, fmt.Errorf("auditstore: PruneRetention requires a non-zero GeneralCutoff")
+	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	var deleted int64
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		// gdpr.* rows are exempt from the general window and only drop
+		// once they clear the longer GDPRCutoff. A zero GDPRCutoff means
+		// "hold all gdpr.* rows", so the gdpr branch matches nothing.
+		// The SIEM guard, when active, caps the highest deletable
+		// sequence at the forwarder's acknowledged high-water mark
+		// (0 when the forwarder has acked nothing, holding everything).
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM audit_log
+			WHERE tenant_id = $1
+			  AND (
+			        (event_type NOT LIKE 'gdpr.%' AND created_at < $2)
+			     OR (event_type LIKE 'gdpr.%' AND $3::timestamptz IS NOT NULL AND created_at < $3)
+			      )
+			  AND (
+			        $4
+			     OR sequence_number <= COALESCE(
+			          (SELECT last_acked_sequence FROM siem_delivery_state WHERE tenant_id = $1), 0)
+			      )`,
+			tenantID,
+			opts.GeneralCutoff.UTC(),
+			nullableTime(opts.GDPRCutoff),
+			opts.Force || !opts.SIEMConfigured,
+		)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
+// nullableTime renders a zero time as a SQL NULL so the gdpr.* branch
+// of PruneRetention matches no rows when no GDPR cutoff is supplied.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
+// RetentionWindow summarizes the non-gdpr.* audit rows a §16.4
+// force-drop would delete for a tenant up to cutoff. It populates the
+// §16.7 audit.partition_drop_forced event payload (oldest/newest event
+// timestamps, the lost-row count, and the SIEM high-water mark at drop
+// time).
+type RetentionWindow struct {
+	OldestEvent     time.Time
+	NewestEvent     time.Time
+	Count           int
+	SIEMHighWater   uint64
+	SIEMStateExists bool
+}
+
+// RetentionWindowStats summarizes the tenant rows older than cutoff
+// (excluding gdpr.* erasure receipts, which are held under the separate
+// gdprRetentionDays floor) and reads the tenant's SIEM delivery
+// high-water mark, so the §16.4 force-drop override can record the
+// §16.7 audit.partition_drop_forced payload before it deletes the rows.
+//
+// spec: §16.4 line 378 (force-drop override); §16.7 line 687
+// (audit.partition_drop_forced payload).
+func (s *Store) RetentionWindowStats(ctx context.Context, tenantID string, cutoff time.Time) (RetentionWindow, error) {
+	if tenantID == "" {
+		return RetentionWindow{}, ErrEmptyScope
+	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return RetentionWindow{}, err
+	}
+	var (
+		win    RetentionWindow
+		oldest *time.Time
+		newest *time.Time
+		count  int64
+	)
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			SELECT MIN(created_at), MAX(created_at), COUNT(*)
+			FROM audit_log
+			WHERE tenant_id = $1 AND event_type NOT LIKE 'gdpr.%' AND created_at < $2`,
+			tenantID, cutoff.UTC()).Scan(&oldest, &newest, &count); err != nil {
+			return err
+		}
+		var hw int64
+		err := tx.QueryRow(ctx,
+			`SELECT last_acked_sequence FROM siem_delivery_state WHERE tenant_id = $1`,
+			tenantID).Scan(&hw)
+		switch {
+		case err == nil:
+			win.SIEMHighWater = uint64(hw)
+			win.SIEMStateExists = true
+		case errors.Is(err, pgx.ErrNoRows):
+			// No SIEM checkpoint row: the forwarder has acked nothing.
+		default:
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return RetentionWindow{}, err
+	}
+	if oldest != nil {
+		win.OldestEvent = oldest.UTC()
+	}
+	if newest != nil {
+		win.NewestEvent = newest.UTC()
+	}
+	win.Count = int(count)
+	return win, nil
+}
+
 // scanTail reads the highest-sequence row for the tenant. hasTail is
 // false when the chain is empty.
 func scanTail(ctx context.Context, tx pgx.Tx, tenantID string) (audit.Row, bool, error) {

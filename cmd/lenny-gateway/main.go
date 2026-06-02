@@ -90,6 +90,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
@@ -819,6 +820,8 @@ func main() {
 		"§16.4 audit.retentionPreset: the compliance-aware retention bundle for non-gdpr audit rows (soc2, fedramp-high, hipaa, nis2-dora, custom). A named preset fixes the retention window (soc2 365, fedramp-high 1095, hipaa 2190, nis2-dora 1825); custom uses --audit-retention-days. The gateway warns at startup when the preset is incompatible with an active tenant's complianceProfile. Override via LENNY_AUDIT_RETENTION_PRESET.")
 	auditRetentionDays := flag.Int("audit-retention-days", envInt("LENNY_AUDIT_RETENTION_DAYS", audit.PresetSOC2.PresetDays()),
 		"§16.4 audit.retentionDays: the general (non-gdpr) Postgres audit-log retention window in days, used when --audit-retention-preset is custom. Emitted at startup on the lenny_audit_retention_days gauge so the §16.5 AuditRetentionLow alert can evaluate. Override via LENNY_AUDIT_RETENTION_DAYS.")
+	auditRetentionPruneIntervalSeconds := flag.Int("audit-retention-prune-interval-seconds", envInt("LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS", 3600),
+		"§16.4 line 378 audit-retention sweep cadence in seconds: how often the leader-elected pruner deletes audit rows past audit.retentionDays (gdpr.* rows held under audit.gdprRetentionDays, undelivered rows held by the SIEM delivery guard). Clamped up to a 60s floor. Override via LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -2421,6 +2424,7 @@ func main() {
 		ocsfTranslationStore ocsf.TranslationStore
 		siemDeliveryStore    siem.DeliveryStore
 		auditBatchBuffer     *auditbatch.Buffer
+		auditPruner          *auditretention.Pruner
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2475,6 +2479,26 @@ func main() {
 		// high-water mark in siem_delivery_state and checkpoints each
 		// SIEM-acknowledged row. F-12.3.6.
 		siemDeliveryStore = pgAudit
+		// §16.4 lines 378-382 audit-retention pruner: a leader-elected
+		// sweep deletes audit rows past audit.retentionDays, holding
+		// gdpr.* erasure receipts under the longer audit.gdprRetentionDays
+		// floor and any SIEM-undelivered row behind the delivery guard.
+		// The forced-drop override records audit.partition_drop_forced on
+		// the platform chain through pgAudit.Append. F-11.7.17.
+		auditPruner = auditretention.New(
+			pgAudit,
+			auditPruneTenants{tenants},
+			func(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) error {
+				_, err := pgAudit.Append(ctx, tenantID, eventType, payload, at)
+				return err
+			},
+			auditretention.Options{
+				RetentionDays:     effectiveAuditRetentionDays,
+				GDPRRetentionDays: *gdprRetentionDays,
+				SIEMConfigured:    *auditSIEMEndpoint != "",
+				Interval:          time.Duration(*auditRetentionPruneIntervalSeconds) * time.Second,
+				Clock:             clockinject.Now,
+			})
 	} else {
 		auditChains := audit.NewChainSet()
 		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
@@ -3505,6 +3529,10 @@ func main() {
 		}
 	}
 	adminRouter = wireAudit(adminRouter)
+	if auditPruner != nil {
+		// §16.4 line 378 force-drop override surface. F-11.7.17.
+		adminRouter = adminRouter.WithAuditPruner(auditPruner)
+	}
 	// §12.5 line 317: the erasure-completion → tenant-scoped GC sweep
 	// trigger. The erasure runner is built here but the retention-GC
 	// collector is constructed later, so the runner closes over this
@@ -4706,6 +4734,24 @@ func main() {
 					collected)
 			}
 		})
+
+		// §16.4 lines 378-382 audit-retention pruner: only constructed
+		// when a durable Postgres audit chain exists (the in-memory
+		// gateway has nothing to prune). Production runs it under the
+		// §10.1 leader lease alongside the artifact GC above. F-11.7.17.
+		if auditPruner != nil {
+			log.Printf("lenny-gateway: §16.4 audit-retention sweep cadence %s (retention %d days, gdpr.* %d days)",
+				time.Duration(*auditRetentionPruneIntervalSeconds)*time.Second, effectiveAuditRetentionDays, *gdprRetentionDays)
+			go auditPruner.Run(watchdogCtx, func(pruned int, err error) {
+				if err != nil {
+					log.Printf("lenny-gateway: §16.4 audit-retention sweep error: %v", err)
+					return
+				}
+				if pruned > 0 {
+					log.Printf("lenny-gateway: §16.4 audit-retention sweep pruned %d audit rows past their retention window", pruned)
+				}
+			})
+		}
 
 		// §12.5 ll. 341 hard-prune sweep: every gc.cycleIntervalSeconds
 		// the catalog removes rows whose tombstone deadline has elapsed
@@ -6468,6 +6514,28 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 	}
 	out := make([]string, 0, len(rows)+1)
 	out = append(out, "default")
+	for _, row := range rows {
+		out = append(out, row.ID)
+	}
+	return out, nil
+}
+
+// auditPruneTenants enumerates the audit chains the §16.4 retention
+// sweep covers: every registered tenant plus the "platform"
+// pseudo-tenant, which carries platform-admin audit rows (e.g.
+// compliance.profile_decommissioned) that are not keyed to a registered
+// tenant row but still age past the retention window. F-11.7.17.
+type auditPruneTenants struct {
+	store tenantstore.Store
+}
+
+func (a auditPruneTenants) ListTenants(ctx context.Context) ([]string, error) {
+	rows, err := a.store.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, "platform")
 	for _, row := range rows {
 		out = append(out, row.ID)
 	}

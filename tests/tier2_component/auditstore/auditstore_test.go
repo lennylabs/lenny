@@ -158,3 +158,155 @@ func TestAuditStoreContract(t *testing.T) {
 		}
 	})
 }
+
+// spec: §16.4 lines 378-382 — the retention pruner deletes rows past
+// audit.retentionDays, holds gdpr.* erasure receipts (separate window),
+// and honors the SIEM delivery guard (no row past the forwarder's
+// high-water mark is dropped unless forced). F-11.7.17.
+func TestPruneRetentionWindowsAndSIEMGuard(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "retain")
+
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)    // ~400 days before cutoff
+	recent := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC) // inside the window
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// seq 1,2: old non-gdpr; seq 3: old gdpr.* receipt; seq 4: recent.
+	mustAppend(t, ctx, store, "retain", "session.created", old)
+	mustAppend(t, ctx, store, "retain", "session.created", old)
+	mustAppend(t, ctx, store, "retain", "gdpr.erasure_completed", old)
+	mustAppend(t, ctx, store, "retain", "session.created", recent)
+
+	// SIEM forwarder has acknowledged only up to sequence 1.
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO siem_delivery_state (tenant_id, last_acked_sequence) VALUES ('retain', 1)`); err != nil {
+		t.Fatalf("seed siem_delivery_state: %v", err)
+	}
+
+	// With the SIEM guard active and no force, only seq 1 (at or below
+	// the high-water mark) is eligible; seq 2 is held even though it is
+	// past the window, seq 3 is gdpr-exempt, seq 4 is recent.
+	n, err := store.PruneRetention(ctx, "retain", auditstore.PruneOptions{
+		GeneralCutoff:  cutoff,
+		SIEMConfigured: true,
+	})
+	if err != nil {
+		t.Fatalf("PruneRetention (guarded): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("guarded prune deleted %d rows, want 1 (SIEM guard holds seq 2)", n)
+	}
+	if seqs := remainingSeqs(t, ctx, store, "retain"); !equalSeqs(seqs, []uint64{2, 3, 4}) {
+		t.Fatalf("after guarded prune remaining seqs = %v, want [2 3 4]", seqs)
+	}
+
+	// Forcing past the guard deletes seq 2; the gdpr.* receipt (seq 3)
+	// and the recent row (seq 4) survive.
+	n, err = store.PruneRetention(ctx, "retain", auditstore.PruneOptions{
+		GeneralCutoff:  cutoff,
+		SIEMConfigured: true,
+		Force:          true,
+	})
+	if err != nil {
+		t.Fatalf("PruneRetention (forced): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("forced prune deleted %d rows, want 1 (seq 2)", n)
+	}
+	if seqs := remainingSeqs(t, ctx, store, "retain"); !equalSeqs(seqs, []uint64{3, 4}) {
+		t.Fatalf("after forced prune remaining seqs = %v, want [3 4]", seqs)
+	}
+
+	// A GDPR cutoff past the receipt's age drops it too.
+	n, err = store.PruneRetention(ctx, "retain", auditstore.PruneOptions{
+		GeneralCutoff: cutoff,
+		GDPRCutoff:    cutoff,
+		Force:         true,
+	})
+	if err != nil {
+		t.Fatalf("PruneRetention (gdpr): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("gdpr prune deleted %d rows, want 1 (seq 3)", n)
+	}
+	if seqs := remainingSeqs(t, ctx, store, "retain"); !equalSeqs(seqs, []uint64{4}) {
+		t.Fatalf("after gdpr prune remaining seqs = %v, want [4]", seqs)
+	}
+}
+
+// spec: §16.7 line 687 — RetentionWindowStats summarizes the
+// non-gdpr.* rows older than the cutoff and reads the SIEM high-water
+// mark for the audit.partition_drop_forced payload. F-11.7.17.
+func TestRetentionWindowStats(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "stats")
+
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	older := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	mustAppend(t, ctx, store, "stats", "session.created", older)
+	mustAppend(t, ctx, store, "stats", "session.created", old)
+	mustAppend(t, ctx, store, "stats", "gdpr.erasure_completed", old) // excluded from stats
+	mustAppend(t, ctx, store, "stats", "session.created", recent)     // inside window, excluded
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO siem_delivery_state (tenant_id, last_acked_sequence) VALUES ('stats', 7)`); err != nil {
+		t.Fatalf("seed siem_delivery_state: %v", err)
+	}
+
+	win, err := store.RetentionWindowStats(ctx, "stats", cutoff)
+	if err != nil {
+		t.Fatalf("RetentionWindowStats: %v", err)
+	}
+	if win.Count != 2 {
+		t.Errorf("Count = %d, want 2 (two old non-gdpr rows)", win.Count)
+	}
+	if !win.OldestEvent.Equal(older) {
+		t.Errorf("OldestEvent = %v, want %v", win.OldestEvent, older)
+	}
+	if !win.NewestEvent.Equal(old) {
+		t.Errorf("NewestEvent = %v, want %v", win.NewestEvent, old)
+	}
+	if !win.SIEMStateExists || win.SIEMHighWater != 7 {
+		t.Errorf("SIEM high-water = %d (exists=%v), want 7/true", win.SIEMHighWater, win.SIEMStateExists)
+	}
+}
+
+func mustAppend(t *testing.T, ctx context.Context, store *auditstore.Store, tenant, et string, at time.Time) {
+	t.Helper()
+	if _, err := store.Append(ctx, tenant, et, json.RawMessage(`{"x":1}`), at); err != nil {
+		t.Fatalf("Append %s: %v", et, err)
+	}
+}
+
+func remainingSeqs(t *testing.T, ctx context.Context, store *auditstore.Store, tenant string) []uint64 {
+	t.Helper()
+	rows, err := store.Rows(ctx, tenant)
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	out := make([]uint64, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Seq)
+	}
+	return out
+}
+
+func equalSeqs(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

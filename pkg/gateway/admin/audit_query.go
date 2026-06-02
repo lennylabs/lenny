@@ -11,10 +11,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	auditcat "github.com/lennylabs/lenny/pkg/observability/audit"
@@ -184,6 +186,81 @@ func (r *Router) WithAuditChains(chains *audit.ChainSet) *Router {
 func (r *Router) WithAuditLog(auditLog AuditLog) *Router {
 	r.auditLog = auditLog
 	return r
+}
+
+// AuditPartitionDropper force-drops audit rows the SIEM delivery guard
+// is holding past their §16.4 retention TTL, after the operator
+// acknowledges the resulting data loss. *auditretention.Pruner
+// satisfies it.
+//
+// spec: §16.4 line 378 (force-drop override); §25.9 (the backing
+// POST /v1/admin/audit-partitions/{partition}/drop endpoint).
+type AuditPartitionDropper interface {
+	ForceDrop(ctx context.Context, tenantID, requesterSub string, now time.Time) (auditretention.ForceDropResult, error)
+}
+
+// WithAuditPruner wires the §16.4 force-drop override onto the Router.
+// When set, POST /v1/admin/audit-partitions/{partition}/drop is
+// registered; the in-memory gateway leaves it nil and the route is
+// absent.
+func (r *Router) WithAuditPruner(p AuditPartitionDropper) *Router {
+	r.auditPruner = p
+	return r
+}
+
+// forceDropRequest is the §25.9 force-drop body. The data-loss
+// acknowledgement is mandatory (the lenny-ctl backing is
+// `audit drop-partition <partition> --force --acknowledge-data-loss`).
+type forceDropRequest struct {
+	AcknowledgeDataLoss bool `json:"acknowledgeDataLoss"`
+}
+
+// handleForceDropAuditPartition implements
+// POST /v1/admin/audit-partitions/{partition}/drop. It force-deletes the
+// partition's audit rows that have aged past the §16.4 retention window
+// regardless of the SIEM delivery guard, after the operator
+// acknowledges the data loss, and records the §16.7
+// audit.partition_drop_forced event. The {partition} path segment is the
+// tenant chain identifier (v1 keys the audit table by tenant; native
+// range partitioning is a separate concern).
+//
+// spec: §16.4 line 378 (force-drop override + data-loss
+// acknowledgement); §16.7 line 687 (audit.partition_drop_forced).
+func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.Request) {
+	if r.auditPruner == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED",
+			"audit force-drop requires a durable audit store", nil)
+		return
+	}
+	partition := strings.TrimSpace(req.PathValue("partition"))
+	if partition == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "partition is required", nil)
+		return
+	}
+	var body forceDropRequest
+	if req.Body != nil {
+		raw, _ := io.ReadAll(io.LimitReader(req.Body, 1<<16))
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid JSON body", nil)
+				return
+			}
+		}
+	}
+	if !body.AcknowledgeDataLoss {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"acknowledgeDataLoss must be true to force-drop audit rows the SIEM forwarder has not delivered", nil)
+		return
+	}
+	p, _ := authmw.FromContext(req.Context())
+	res, err := r.auditPruner.ForceDrop(req.Context(), partition, p.Subject, r.clock())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit force-drop failed: "+err.Error(), nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // auditTenant resolves the tenant whose chain a caller may read.

@@ -153,6 +153,7 @@ type Router struct {
 	customRoles             customrolestore.Store
 	tenantAccess            tenantaccessstore.Store
 	auditLog                AuditLog
+	auditPruner             AuditPartitionDropper
 	tokenRevoker            IssuedTokenRevoker
 	revocationCache         RevocationCache
 	userPods                UserPodTerminator
@@ -728,6 +729,14 @@ func (r *Router) Handler() http.Handler {
 		// audit:retranslate inside the handler.
 		mux.Handle("POST /v1/admin/audit-events/{seq}/retranslate",
 			r.requireAuditReader(http.HandlerFunc(r.handleRetranslateAuditEvent)))
+		// §16.4 line 378 / §25.9 — operator force-drop of audit rows the
+		// SIEM delivery guard is holding past their retention TTL, after
+		// an explicit data-loss acknowledgement. Platform-admin gated;
+		// only registered when a durable pruner is wired.
+		if r.auditPruner != nil {
+			mux.Handle("POST /v1/admin/audit-partitions/{partition}/drop",
+				r.requireAdmin(http.HandlerFunc(r.handleForceDropAuditPartition)))
+		}
 	}
 	if r.platformWired {
 		// §25.3 platform introspection. Version + config are

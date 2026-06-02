@@ -17843,7 +17843,7 @@ liveness/readiness gates.
 
 **Resolution (`8e31f8b1`):** Added `backends.SIEM`, a §25.3 health.Checker that reports the `siem` component degraded when the forwarder's delivery failure rate exceeds `audit.siem.failureThresholdPercent` (default 5%) or the most recent batch delivery failed; it stamps `Issue: AUDIT_SIEM_DELIVERY_DEGRADED` with a runbook ref. The probe is registered with the gateway's health aggregator only when a SIEM endpoint is configured, so the §25.3 health API (and the §16.5 alert path) surface the degraded verdict. The status is `degraded` rather than `unhealthy` because audit rows stay durable in Postgres during a SIEM outage. The gateway deliberately does NOT gate its liveness (`/healthz`) or readiness (`/readyz`) probe on this component: the SIEM is shared across replicas, so failing readiness would remove every replica from the Service and convert an audit-integrity degradation into a full outage — the degraded signal rides the §25.3 health verdict (the gateway's component-degraded surface after the F-10.1.6 liveness/readiness split) instead.
 
-### - [ ] F-11.7.17 — 17  No audit retention pruner; `audit.retentionDays` and the `RetentionPreset` enum are inert [Medium] — OPEN
+### - [x] F-11.7.17 — 17  No audit retention pruner; `audit.retentionDays` and the `RetentionPreset` enum are inert [Medium] — CLOSED
 
 **Spec:** §11.7 (interacting with §16.4) — the `audit.retentionDays`
 control governs the audit-log retention window. §11.7 line 456 notes
@@ -17870,6 +17870,8 @@ event has no producer.
 **Severity:** Medium — retention is a compliance requirement; this is
 a missing component, but it does not actively misclassify or expose
 PII, so calibrated below the High-severity write-time controls.
+
+**Resolution:** New `pkg/gateway/auditretention.Pruner` runs a leader-gated periodic sweep (`--audit-retention-prune-interval-seconds`, default 3600, 60s floor) that deletes audit rows past the resolved `audit.retentionDays` window via the new `auditstore.Store.PruneRetention`. The DELETE runs under `SET LOCAL lenny.erasure_mode = 'true'` (same mechanism as `DeleteByTenant`) and respects the three §16.4 carve-outs: gdpr.* erasure receipts are held under the separate `audit.gdprRetentionDays` window (>= 2190-day floor enforced at startup), and when `audit.siem.endpoint` is set the SIEM delivery guard withholds any row whose `sequence_number` exceeds the forwarder's `siem_delivery_state.last_acked_sequence`. The §16.7 `audit.partition_drop_forced` event now has a producer: `Pruner.ForceDrop` records it (with `RetentionWindowStats` populating `oldest_event_ts`/`newest_event_ts`/`siem_high_water_mark_at_drop`/`events_lost_count`) before bypassing the guard, surfaced through the new platform-admin `POST /v1/admin/audit-partitions/{partition}/drop` endpoint (data-loss acknowledgement required). Wired in `cmd/lenny-gateway` only when a durable Postgres audit chain exists. Commit `__C1__`.
 
 ### - [x] F-11.7.18 — 18  No `interceptor.rejected` registration in §16.7 catalog despite production emission [Medium] — CLOSED
 
