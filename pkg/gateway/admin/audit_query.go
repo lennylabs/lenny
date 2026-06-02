@@ -31,10 +31,18 @@ import (
 // true when the JWT carries no scope claim, so the surrounding
 // requireAuditReader role gate still applies in that case.
 //
-// spec: §25.9 line 3653, line 3662; §15.2 scope taxonomy.
+// spec: §25.9 line 3653, line 3662, line 3663, line 3664; §15.2 scope
+// taxonomy.
 const (
 	scopeRawCanonical = "tools:audit:raw_canonical_read"
 	scopeRetranslate  = "tools:audit:retranslate"
+	// scopeRepublish gates POST /v1/admin/audit-events/{seq}/republish
+	// (spec shorthand `audit:republish`, §25.9 line 3663).
+	scopeRepublish = "tools:audit:republish"
+	// scopeDropPartition gates
+	// POST /v1/admin/audit-partitions/{partition}/drop (spec shorthand
+	// `audit:partition:drop`, §25.9 line 3664).
+	scopeDropPartition = "tools:audit:partition_drop"
 )
 
 // auditTranslationLog is the optional §25.9 OCSF-translation-state
@@ -208,11 +216,15 @@ func (r *Router) WithAuditPruner(p AuditPartitionDropper) *Router {
 	return r
 }
 
-// forceDropRequest is the §25.9 force-drop body. The data-loss
-// acknowledgement is mandatory (the lenny-ctl backing is
-// `audit drop-partition <partition> --force --acknowledge-data-loss`).
+// forceDropRequest is the §25.9 line 3664 force-drop body
+// `{"acknowledgeDataLoss": true, "partition": "<partition-name>"}`. The
+// data-loss acknowledgement is mandatory (the lenny-ctl backing is
+// `audit drop-partition <partition> --force --acknowledge-data-loss`) and
+// the partition field is an anti-footgun cross-check that must match the
+// path segment.
 type forceDropRequest struct {
-	AcknowledgeDataLoss bool `json:"acknowledgeDataLoss"`
+	AcknowledgeDataLoss bool   `json:"acknowledgeDataLoss"`
+	Partition           string `json:"partition"`
 }
 
 // handleForceDropAuditPartition implements
@@ -224,17 +236,37 @@ type forceDropRequest struct {
 // tenant chain identifier (v1 keys the audit table by tenant; native
 // range partitioning is a separate concern).
 //
+// The §25.9 line 3664 wire contract requires the `?force=true` query
+// parameter, the `audit:partition:drop` scope, and a request body whose
+// `partition` field matches the path segment (anti-footgun cross-check).
+//
 // spec: §16.4 line 378 (force-drop override + data-loss
-// acknowledgement); §16.7 line 687 (audit.partition_drop_forced).
+// acknowledgement); §16.7 line 687 (audit.partition_drop_forced); §25.9
+// line 3664 (force query param, scope, partition cross-check).
 func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.Request) {
 	if r.auditPruner == nil {
 		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED",
 			"audit force-drop requires a durable audit store", nil)
 		return
 	}
+	// §25.9 line 3664 — the destructive drop is gated on a dedicated
+	// scope. An absent scope claim defers to the requireAdmin role
+	// ceiling (HasScope returns true).
+	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeDropPartition) {
+		writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"force-drop requires the audit:partition:drop scope", nil)
+		return
+	}
 	partition := strings.TrimSpace(req.PathValue("partition"))
 	if partition == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "partition is required", nil)
+		return
+	}
+	// §25.9 line 3664 — the ?force=true query parameter is mandatory so an
+	// unqualified POST can never drop a partition.
+	if req.URL.Query().Get("force") != "true" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"the ?force=true query parameter is required to drop an audit partition", nil)
 		return
 	}
 	var body forceDropRequest
@@ -250,6 +282,17 @@ func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.
 	if !body.AcknowledgeDataLoss {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"acknowledgeDataLoss must be true to force-drop audit rows the SIEM forwarder has not delivered", nil)
+		return
+	}
+	// §25.9 line 3664 — the body partition must match the path so a
+	// fat-fingered path or copy-pasted body cannot drop the wrong
+	// partition.
+	if body.Partition != partition {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"the body partition must match the path partition", map[string]any{
+				"pathPartition": partition,
+				"bodyPartition": body.Partition,
+			})
 		return
 	}
 	p, _ := authmw.FromContext(req.Context())
@@ -930,5 +973,130 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 		Seq:                  seq,
 		OCSFTranslationState: string(audit.OCSFPending),
 		TranslatorVersion:    version,
+	})
+}
+
+// auditPublishStateStore is the optional §25.9 line 3663
+// eventbus_publish_state read+write surface backing the republish
+// endpoint. The Postgres-backed auditstore implements it; the in-memory
+// chain does not, because it drives no §12.6 outbound publish queue, so
+// its rows are always reported `published` and never eligible for
+// republication. spec: §12.3.7 eventbus_publish_state; §25.9 line 3663.
+type auditPublishStateStore interface {
+	PublishState(ctx context.Context, tenantID string, seq uint64) (eventbus.PublishState, int, error)
+	SetPublishState(ctx context.Context, tenantID string, seq uint64, state eventbus.PublishState, retryCount int) error
+}
+
+// republishResponse echoes the reset row state per §25.9 line 3663.
+type republishResponse struct {
+	Seq                  uint64 `json:"seq"`
+	EventbusPublishState string `json:"eventbusPublishState"`
+	PriorState           string `json:"priorState"`
+	PriorRetryCount      int    `json:"priorRetryCount"`
+}
+
+// handleRepublishAuditEvent implements
+// POST /v1/admin/audit-events/{seq}/republish. It re-queues a single
+// audit row for §12.6 CloudEvents re-publication after the EventBus
+// retranscribe worker has terminally abandoned it (state `failed`,
+// retry_count ≥ eventBus.maxRetryAttempts). The endpoint resets
+// retry_count = 0 and eventbus_publish_state = 'pending' so the next
+// retranscribe sweep picks the row up. Only rows in `failed` are
+// eligible; rows in `published`, `pending`, or `retry_pending` return
+// 409 ALREADY_PUBLISHED carrying details.currentState so an operator can
+// distinguish in-flight from completed. A missing seq returns 404
+// NOT_FOUND. Scope-gated on audit:republish. On success it records the
+// §16.7 eventbus.republish_requested event. The {seq} path segment is the
+// audit row identifier (v1 keys the audit table by tenant + sequence
+// number); the spec names it {id}.
+//
+// spec: §25.9 line 3663; §16.7 (eventbus.republish_requested).
+func (r *Router) handleRepublishAuditEvent(w http.ResponseWriter, req *http.Request) {
+	tenant, ok := r.auditTenant(w, req)
+	if !ok {
+		return
+	}
+	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRepublish) {
+		writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"republish requires the audit:republish scope", nil)
+		return
+	}
+	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
+		return
+	}
+	rows, ok := r.auditRows(w, req, tenant)
+	if !ok {
+		return
+	}
+	var found *audit.Row
+	for i := range rows {
+		if rows[i].Seq == seq {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		// spec: §25.9 line 3663 — a missing id returns 404 NOT_FOUND.
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "audit event not found", nil)
+		return
+	}
+
+	// Resolve the publish state. A backend without publish-state tracking
+	// drives no outbound queue, so its rows report `published` and are
+	// never eligible.
+	state := eventbus.PublishPublished
+	retryCount := 0
+	store, hasStore := r.auditLog.(auditPublishStateStore)
+	if hasStore {
+		var serr error
+		state, retryCount, serr = store.PublishState(req.Context(), tenant, seq)
+		if serr != nil {
+			writeError(w, http.StatusServiceUnavailable, "AUDIT_STORE_UNAVAILABLE",
+				"audit publish-state lookup failed: "+serr.Error(), nil)
+			return
+		}
+	}
+	if state != eventbus.PublishFailed {
+		// spec: §25.9 line 3663 — published rows and in-flight rows
+		// (pending / retry_pending) are not re-queued; the discriminator
+		// is details.currentState.
+		writeError(w, http.StatusConflict, "ALREADY_PUBLISHED",
+			"audit row is not in the failed publish state (current state "+string(state)+")",
+			map[string]any{"currentState": string(state)})
+		return
+	}
+
+	// Reset to pending and clear the retry counter so the next
+	// retranscribe sweep re-publishes the row.
+	if err := store.SetPublishState(req.Context(), tenant, seq, eventbus.PublishPending, 0); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AUDIT_STORE_UNAVAILABLE",
+			"audit publish-state update failed: "+err.Error(), nil)
+		return
+	}
+
+	eventID := found.ID
+	if eventID == "" {
+		eventID = tenant + ":" + strconv.FormatUint(seq, 10)
+	}
+	if p, pok := authmw.FromContext(req.Context()); pok {
+		r.emit(req.Context(), p, auditcat.EventEventBusRepublishRequested.String(),
+			"audit-event/"+strconv.FormatUint(seq, 10), map[string]any{
+				"event_id":          eventID,
+				"prior_state":       string(eventbus.PublishFailed),
+				"prior_retry_count": retryCount,
+				"requester_sub":     p.Subject,
+				"tenant_id":         tenant,
+				"topic":             string(eventbus.TopicSessionLifecycle),
+			})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(republishResponse{
+		Seq:                  seq,
+		EventbusPublishState: string(eventbus.PublishPending),
+		PriorState:           string(eventbus.PublishFailed),
+		PriorRetryCount:      retryCount,
 	})
 }

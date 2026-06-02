@@ -39400,17 +39400,21 @@ where `AuditEventPayload` (lines 15-25) carries `seq`, `tenantId`, `eventType`, 
 
 No route exists. `grep -rn "retranslate" pkg/` finds the constant `EventAuditOcsfRetranslateRequested` in `pkg/observability/audit/catalog.go:129` and several mentions inside `pkg/gateway/auditstore/retranscribe.go` (which is the background OCSF retranscribe worker, not the admin endpoint). The admin Router's mux in `pkg/gateway/admin/tenants.go:484-486` registers only the three GET routes. The `audit:retranslate` scope string is absent from the source tree. Operators cannot recover dead-lettered translations after a translator-version bump.
 
-### - [ ] F-25.9.5 — `republish` endpoint not implemented [High] — OPEN
+### - [x] F-25.9.5 — `republish` endpoint not implemented [High] — CLOSED
 
 `§25.9` line 3663 specifies `POST /v1/admin/audit-events/{id}/republish`, including a 409 `ALREADY_PUBLISHED` discrimination via `details.currentState`, `404 NOT_FOUND` on missing `id`, the `audit:republish` scope (aka `tools:audit:republish`), and the `eventbus.republish_requested` audit event with a payload of `{event_id, prior_state, prior_retry_count, requester_sub, tenant_id, topic}`.
 
 The auditstore exposes `PendingRepublish`/`SetPublishState` (`pkg/gateway/auditstore/retranscribe.go:29-100`, `pkg/gateway/auditstore/translation.go:159-183`) for the background sweep, but no admin HTTP route invokes them. The catalog declares `EventEventBusRepublishRequested` (`pkg/observability/audit/catalog.go:131`) but no code path emits it. Operators cannot re-queue audit rows whose CloudEvents publication terminally failed.
 
-### - [ ] F-25.9.6 — `/v1/admin/audit-partitions/{partition}/drop` not implemented [High] — OPEN
+**Resolution:** `handleRepublishAuditEvent` (`pkg/gateway/admin/audit_query.go`) implements `POST /v1/admin/audit-events/{seq}/republish` (the `{seq}` identifier is the v1 audit-row key the spec names `{id}`), registered in the §25.9 audit-recovery route block. It is scope-gated on `tools:audit:republish` (403 without), resolves the row's `eventbus_publish_state` through the new `auditPublishStateStore` seam (the Postgres `auditstore.Store` satisfies it), resets only a `failed` row to `pending`/retry_count 0 via `SetPublishState`, returns `409 ALREADY_PUBLISHED` with `details.currentState` for `published`/`pending`/`retry_pending`, `404 NOT_FOUND` for a missing seq, and emits `eventbus.republish_requested` with the `{event_id, prior_state, prior_retry_count, requester_sub, tenant_id, topic}` payload. The in-memory chain (no outbound queue) reports `published` so its rows are never eligible.
+
+### - [x] F-25.9.6 — `/v1/admin/audit-partitions/{partition}/drop` not implemented [High] — CLOSED
 
 `§25.9` line 3664 specifies `POST /v1/admin/audit-partitions/{partition}/drop`, requiring `?force=true`, a body `{acknowledgeDataLoss, partition}` anti-footgun cross-check, `audit:partition:drop` scope, and a `audit.partition_drop_forced` audit event including the SIEM high-water mark and (oldest, newest) event timestamps.
 
 No matching route is registered (`grep -rn "audit-partitions" pkg/` returns no matches outside the spec). The `AuditPartitionDropBlocked` alert is wired (`pkg/alerting/rules/rules.go:1228`) and the catalog declares `EventAuditPartitionDropForced` (`pkg/observability/audit/catalog.go:130`), but the only `acknowledgeDataLoss` consumer is the §25.11 backup orchestrator (`pkg/ops/backup/service.go:228`). Without this endpoint the alert is permanent until the SIEM forwarder catches up, blocking partition GC.
+
+**Resolution:** The route + `handleForceDropAuditPartition` landed in F-11.7.17 (commit da4f7ed9) with the `acknowledgeDataLoss` gate and the §16.7 `audit.partition_drop_forced` event (the pruner's `ForceDrop` already emits the SIEM high-water mark and (oldest, newest) timestamps). This batch completes the §25.9 wire contract: the handler now requires the `?force=true` query parameter, gates on the `tools:audit:partition_drop` scope (`audit:partition:drop`), and cross-checks the body `partition` field against the path segment (400 on mismatch), all per §25.9 line 3664.
 
 ### - [x] F-25.9.7 — summary endpoint not implemented [High] — CLOSED
 

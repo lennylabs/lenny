@@ -730,6 +730,11 @@ func (r *Router) Handler() http.Handler {
 		// audit:retranslate inside the handler.
 		mux.Handle("POST /v1/admin/audit-events/{seq}/retranslate",
 			r.requireAuditReader(http.HandlerFunc(r.handleRetranslateAuditEvent)))
+		// §25.9 line 3663 audit-recovery: re-queue a terminally-failed
+		// audit row for §12.6 CloudEvents re-publication. Scope-gated on
+		// audit:republish inside the handler.
+		mux.Handle("POST /v1/admin/audit-events/{seq}/republish",
+			r.requireAuditReader(http.HandlerFunc(r.handleRepublishAuditEvent)))
 		// §16.4 line 378 / §25.9 — operator force-drop of audit rows the
 		// SIEM delivery guard is holding past their retention TTL, after
 		// an explicit data-loss acknowledgement. Platform-admin gated;

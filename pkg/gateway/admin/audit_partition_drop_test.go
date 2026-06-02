@@ -51,8 +51,8 @@ func TestForceDropAuditPartition_acknowledged(t *testing.T) {
 	router := newForceDropRouter(d)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop",
-			strings.NewReader(`{"acknowledgeDataLoss":true}`))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`))))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -79,13 +79,67 @@ func TestForceDropAuditPartition_requiresAcknowledgement(t *testing.T) {
 	router := newForceDropRouter(d)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop",
-			strings.NewReader(`{"acknowledgeDataLoss":false}`))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
+			strings.NewReader(`{"acknowledgeDataLoss":false,"partition":"acme"}`))))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
 	}
 	if d.gotTenant != "" {
 		t.Errorf("ForceDrop must not run without acknowledgement (got tenant %q)", d.gotTenant)
+	}
+}
+
+// spec: §25.9 line 3664 — the destructive drop requires the ?force=true
+// query parameter; without it the request is rejected before the pruner
+// is touched.
+func TestForceDropAuditPartition_requiresForceQueryParam(t *testing.T) {
+	d := &fakeDropper{}
+	router := newForceDropRouter(d)
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop",
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`))))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+	if d.gotTenant != "" {
+		t.Errorf("ForceDrop must not run without ?force=true (got tenant %q)", d.gotTenant)
+	}
+}
+
+// spec: §25.9 line 3664 — the body partition is an anti-footgun
+// cross-check; a body partition that does not match the path is rejected
+// so a copy-paste error cannot drop the wrong partition.
+func TestForceDropAuditPartition_partitionMismatch(t *testing.T) {
+	d := &fakeDropper{}
+	router := newForceDropRouter(d)
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"globex"}`))))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+	if d.gotTenant != "" {
+		t.Errorf("ForceDrop must not run on a partition mismatch (got tenant %q)", d.gotTenant)
+	}
+}
+
+// spec: §25.9 line 3664 — a token carrying a scope claim that lacks
+// audit:partition:drop is rejected with 403 before the pruner runs.
+func TestForceDropAuditPartition_forbiddenWithoutScope(t *testing.T) {
+	d := &fakeDropper{}
+	router := newForceDropRouter(d)
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAuditScopePrincipal(t,
+		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`)),
+		"tools:audit:read"))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status: %d, want 403, body=%s", rr.Code, rr.Body.String())
+	}
+	if d.gotTenant != "" {
+		t.Errorf("ForceDrop must not run without the audit:partition:drop scope (got tenant %q)", d.gotTenant)
 	}
 }
 
