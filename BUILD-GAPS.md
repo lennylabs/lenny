@@ -13298,7 +13298,7 @@ EventPlatformRegistryUpdated, EventPlatformSchemaMigrationRolledBack
 
 `grep -rn "EventPlatformUpgrade\|platform\.upgrade_" --include="*.go" pkg/ cmd/ | grep -v _test.go | grep -v catalog.go` returns **no matches** — no production code path emits any of these events. The `cmd/lenny-migrate/main.go` runner does not import `pkg/observability/audit` at all (`grep -n "audit" cmd/lenny-migrate/` returns nothing). A schema migration runs, fails, or rolls back without leaving an audit trail. The §24.13 line 151 promise that `lenny-ctl migrate down` is "Audited as `platform.schema_migration_rolled_back`" is unbacked.
 
-### - [ ] F-10.5.6 — 06  CRDs have no served/storage version conversion strategy; `lenny-crd-conversion` webhook is referenced but not packaged [Medium] — OPEN
+### - [x] F-10.5.6 — 06  CRDs have no served/storage version conversion strategy; `lenny-crd-conversion` webhook is referenced but not packaged [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.5.2 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
 
@@ -13311,6 +13311,8 @@ Implementation:
 - `pkg/preflight/webhooks.go:9` comment claims "the fifth Phase 3.5 baseline entry, lenny-crd-conversion, is a CRD conversion endpoint rather than a ValidatingWebhookConfiguration and is verified separately." `grep -rn "lenny-crd-conversion" pkg/preflight/` returns only this comment; the "verified separately" check is absent.
 
 The single-version state is acceptable in v1 (no migrations across CRD versions), but the §15.5 line 2435 graduation procedure that ships the webhook ahead of adding a second served version has no manifest, no Service, no Deployment, and no preflight check to land on.
+
+**Resolution (c3e76f69):** Closed by F-15.5.2 / F-17.2.4 (chart-packaging half) and F-15.5.3 (preflight half). `charts/lenny/templates/admission-policies/conversion-webhook.yaml` renders the `lenny-crd-conversion` Deployment/Service/PDB/Certificate unconditionally (Phase 3.5 baseline) and the new `conversion-webhook-availability` preflight check verifies it. The CRD `spec.conversion.strategy: Webhook` wiring and `x-kubernetes-preserve-unknown-fields` remain part of the §15.5 line 2436 graduation step (deferred until a second served CRD version exists; the static `charts/lenny/crds/` files cannot carry a templated caBundle/namespace), so the v1 single-version posture is unchanged.
 
 ### - [ ] F-10.5.7 — 07  §25.8 platform-upgrade phase state machine has no orchestrator consumer [Medium] — OPEN
 
@@ -25818,7 +25820,7 @@ Same five files mirrored under `pkg/embedded/crds/`.
 
 Either the spec must be reworked to permit a direct-to-`v1` initial publish (with the graduation criteria deleted) or the implementation must roll the CRDs back to `v1alpha1` and add the served-version graduation path. As shipped, the implementation contradicts §15.5 item 4.
 
-### - [ ] F-15.5.2 — Conversion-webhook deployment procedure has no chart template, no Service, no CRD `spec.conversion.webhook` wiring [High] — OPEN
+### - [x] F-15.5.2 — Conversion-webhook deployment procedure has no chart template, no Service, no CRD `spec.conversion.webhook` wiring [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.5.6 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
 
@@ -25831,13 +25833,17 @@ Either the spec must be reworked to permit a direct-to-`v1` initial publish (wit
 
 The chart-side wiring is absent because CRDs are single-version (H-1); promoting CRDs to multi-version per the spec's graduation path immediately exposes this gap.
 
-### - [ ] F-15.5.3 — `lenny-preflight` does not verify CRD conversion webhook availability [High] — OPEN
+**Resolution (c3e76f69):** Added `charts/lenny/templates/admission-policies/conversion-webhook.yaml`, which renders the `lenny-crd-conversion` Deployment (replicas:2, the existing `/crd-conversion`-serving lenny-webhook image), Service, PDB (minAvailable:1), and cert-manager Certificate unconditionally as the §17.2 line 53 Phase 3.5 baseline via the shared `lenny.admissionWebhookWorkload` helper. The CRD `spec.conversion.webhook` wiring stays a §15.5 line 2436 graduation-step concern (the static `charts/lenny/crds/` files cannot carry a templated namespace/caBundle, and single-version CRDs invoke no conversion), so it is left for the second-version promotion. Verified by `charts/lenny/tests/conversion-webhook_test.yaml`.
+
+### - [x] F-15.5.3 — `lenny-preflight` does not verify CRD conversion webhook availability [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.2.4 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
 
 `spec/15_external-api-surface.md:2438` requires: "The `lenny-preflight` Job validates conversion webhook availability as a preflight check and will fail the upgrade if the webhook Service is absent or not ready."
 
 `pkg/preflight/webhooks.go:9-11` includes a comment that `lenny-crd-conversion` "is a CRD conversion endpoint rather than a ValidatingWebhookConfiguration and is verified separately." No separate verification exists in the `pkg/preflight` package (`grep -rn conversion pkg/preflight/` returns only the comment). The `lenny-preflight` Job template (`charts/lenny/templates/preflight-job.yaml`) has no conversion-webhook check either. As shipped, an operator can run an upgrade with the conversion webhook missing and `lenny-preflight` will report PASS — exactly the failure mode §15.5 calls out: "a missing webhook causes all CRD operations to fail."
+
+**Resolution (c3e76f69):** Added the `conversion-webhook-availability` preflight check (`pkg/preflight/conversionwebhook.go`): `gatherConversionWebhook` reads the `lenny-crd-conversion` Service and Deployment in the release namespace and `CheckConversionWebhook` fails the upgrade fail-closed when the Service is absent or the Deployment has no ready replicas (§15.5 line 2438). A not-yet-deployed workload passes, matching the install-time semantics of the existing admission-webhook-inventory check. The preflight ClusterRole gains `services` list and `customresourcedefinitions` get/list. The webhooks.go "verified separately" comment now names this check. Tests: `pkg/preflight/conversionwebhook_test.go`.
 
 ### - [ ] F-15.5.4 — MCP gateway exposes a single protocol version; two-version concurrency, version negotiation, and the deprecation header are absent [High] — OPEN
 
@@ -29722,7 +29728,7 @@ Cross-checked against:
 
 ---
 
-### - [ ] F-17.2.4 — 2-4  lenny-crd-conversion baseline webhook not rendered [High] — OPEN
+### - [x] F-17.2.4 — 2-4  lenny-crd-conversion baseline webhook not rendered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.5.3 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
 
@@ -29734,6 +29740,8 @@ Cross-checked against:
 - `/Users/joan/projects/lenny/pkg/preflight/webhooks.go` lines 7–21 explicitly excludes `lenny-crd-conversion` from `baselineValidatingWebhooks` with the comment "verified separately"; nothing else in the preflight verifies it.
 
 **Impact:** The CRD conversion webhook the spec catalogues at item 12 and embeds in upgrade flows ([§10.5], [§15]) is undeployed. Multi-version CRD reads/writes that depend on conversion will fail at the API server. Spec-promised `CrdConversionWebhookUnavailable` alert (registered in `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go` lines 877–884) will never fire because there is nothing for `up{job="lenny-crd-conversion"}` to scrape.
+
+**Resolution (c3e76f69):** Closed by F-15.5.2 / F-15.5.3. `conversion-webhook.yaml` renders the `lenny-crd-conversion` Deployment/Service/PDB/Certificate unconditionally (the §17.2 baseline, no feature-flag gate), so the workload the `CrdConversionWebhookUnavailable` alert scrapes now exists. The fail-closed preflight verification lives in the dedicated `conversion-webhook-availability` check (because the webhook is a CRD conversion endpoint, not a `ValidatingWebhookConfiguration`, it is verified there rather than in the admission-webhook inventory). The CRD `spec.conversion.webhook` reference remains a §15.5 graduation-step concern until a second served version exists.
 
 ---
 
@@ -31765,7 +31773,7 @@ authenticating the bootstrap Job itself (lines 415–474).
 
 ---
 
-### - [ ] F-17.6.4 — CRD upgrade safety machinery (schema-version annotation, `lenny-crd-validate` Job, recovery procedure) is absent [High] — OPEN
+### - [x] F-17.6.4 — CRD upgrade safety machinery (schema-version annotation, `lenny-crd-validate` Job, recovery procedure) is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.5.4 — Both report the CRD upgrade-safety machinery (schema-version annotation, preflight check, upgrade/validate jobs) is absent.
 
@@ -31807,6 +31815,8 @@ controller crash-loops or runtime field-stripping behavior.
 - `/Users/joan/projects/lenny/charts/lenny/crds/lenny.dev_sandboxclaims.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/crds/lenny.dev_runtimes.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/templates/` (no `crd-validate` Job)
+
+**Resolution (c3e76f69):** The schema-version annotation (`lenny.dev/schema-version: "1"` on every CRD), the controller startup self-check (`assertCRDSchemaVersion` in `cmd/lenny-controller`), and the preflight CRD-currency check (`CRDSchemaVersionCheck`) all already landed under F-15.5.12; this finding's "no annotation / no controller check" evidence was stale. The remaining gap — the `lenny-crd-validate` post-upgrade Job — is added in `charts/lenny/templates/crd-validate-job.yaml` (`helm.sh/hook: post-upgrade`, weight `-5`, with its own read-only CRD ClusterRole at `-10`). It runs `lenny-preflight --crd-validate`, a new mode that runs only the CRD schema-version check in PostUpgrade form and emits the §17.6 verbatim recovery message (`Post-upgrade CRD validation failed: ... Run: kubectl apply -f charts/lenny/crds/ && kubectl rollout restart ...`). The Job renders even when `preflight.enabled: false`, so the catch-net is independent of preflight. Tests: `charts/lenny/tests/crd-validate-job_test.yaml`, `pkg/preflight/crdschema_test.go` PostUpgrade cases.
 
 ---
 
