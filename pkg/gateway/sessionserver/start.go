@@ -364,6 +364,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// row reaching `running` carries the same per-session resume window
 	// as the two-step `POST /v1/sessions` + `POST /start` path.
 	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
+	// spec: §27.3 line 63 / §27.6 lines 200-203 — apply the playground idle /
+	// duration caps + origin=playground label for a /playground/*-originated
+	// create-and-start, on parity with the two-step create path. F-27.3.3 /
+	// F-27.6.1 / F-27.6.2 / F-27.6.8.
+	s.applyPlaygroundCaps(r.Context(), runtimeRef, &row)
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than

@@ -44,6 +44,7 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 		CredentialPolicyOverride: &sessionstore.CredentialPolicyOverride{PreferredSource: "pool"},
 		DelegationLeaseRequest:   &sessionstore.DelegationLeaseRequest{MaxDepth: &depth, MaxChildrenTotal: &kids, DelegationPolicyRef: "default-policy"},
 		RuntimeOptions:           json.RawMessage(`{"streamingMode":true}`),
+		Origin:                   "playground",
 	}
 	arg, ok := requestEnvelopeArg(in).(string)
 	if !ok {
@@ -67,6 +68,27 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 	}
 	if string(out.RuntimeOptions) != string(in.RuntimeOptions) {
 		t.Errorf("RuntimeOptions: got %s, want %s", out.RuntimeOptions, in.RuntimeOptions)
+	}
+	// spec: §27.6 line 203 — the origin=playground label survives the bundle
+	// round trip so a replica that reloads the row keeps the audit label.
+	// F-27.6.8.
+	if out.Origin != in.Origin {
+		t.Errorf("Origin: got %q, want %q", out.Origin, in.Origin)
+	}
+}
+
+// spec: §27.6 line 203 — a session carrying only the origin=playground label
+// (no §14 envelope fields) still serializes the bundle so the label is durable.
+// F-27.6.8.
+func TestRequestEnvelopeOriginOnly_spec_27_6(t *testing.T) {
+	arg, ok := requestEnvelopeArg(sessionstore.Session{Origin: "playground"}).(string)
+	if !ok {
+		t.Fatalf("requestEnvelopeArg(origin-only) = %T, want non-nil string", requestEnvelopeArg(sessionstore.Session{Origin: "playground"}))
+	}
+	var out sessionstore.Session
+	applyStoredEnvelope(&out, []byte(arg))
+	if out.Origin != "playground" {
+		t.Errorf("Origin: got %q, want playground", out.Origin)
 	}
 }
 

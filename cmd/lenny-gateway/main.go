@@ -2833,7 +2833,7 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		StickyCache: sessionStickyCache,
+		StickyCache:    sessionStickyCache,
 		Usage:          usage,
 		Users:          users,
 		Billing:        billing,
@@ -3882,6 +3882,14 @@ func main() {
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
 		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
+		// spec: §27.6 lines 200-201 — wire the playground idle/duration caps
+		// into the session-creation path so an origin=playground session is
+		// bounded by min(runtime, playground) on both axes, and record the
+		// §27.8 lenny_playground_sessions_created_total counter once the claim
+		// is read. pg.Config() is the §27.2-normalized config (defaults
+		// applied), so its EffectiveIdleSeconds / EffectiveSessionMinutes carry
+		// the resolved caps. F-27.3.3 / F-27.6.1 / F-27.6.2 / F-27.6.11.
+		sessionSrv.SetPlaygroundCaps(pg.Config(), pgMetrics.SessionCreated)
 		// §27.6 line 204 — expose the per-request revocation check to the
 		// auth middleware so an origin=playground bearer is rejected on
 		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.

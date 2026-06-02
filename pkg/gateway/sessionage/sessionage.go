@@ -61,6 +61,15 @@ func (r *Resolver) EffectiveMaxSessionAgeSeconds(ctx context.Context, sess sessi
 			cap = minPositive(cap, p.MaxSessionAgeSeconds)
 		}
 	}
+	// spec: §14 line 154 — a §14 per-session maxSessionAge override (also the
+	// carrier for the §27.6 playground duration cap the create path stamps,
+	// F-27.6.2) tightens the runtime/pool cap. Admission already bounds it by
+	// the runtime's limits.maxSessionAge, so it only ever narrows; minPositive
+	// ignores the unset (zero) case so a session that requested no override is
+	// unaffected.
+	if sess.Timeouts != nil && sess.Timeouts.MaxSessionAgeSeconds > 0 {
+		cap = minPositive(cap, int(sess.Timeouts.MaxSessionAgeSeconds))
+	}
 	return cap
 }
 

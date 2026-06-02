@@ -128,6 +128,47 @@ func TestNoCapAndMissingRefsYieldZero_spec_11_3_198(t *testing.T) {
 	}
 }
 
+// spec: §14 line 154 / §27.6 line 200 — a per-session timeout override (also
+// the carrier for the playground duration cap) tightens the runtime/pool cap,
+// and an unset (zero) override leaves the resolved cap unchanged. F-27.6.2.
+func TestPerSessionTimeoutTightensCap_spec_27_6(t *testing.T) {
+	rts := runtimestore.NewMemory()
+	if err := rts.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, Image: "lenny/rt@sha256:abc",
+		Limits: &runtimestore.Limits{MaxSessionAgeSeconds: 3600},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := sessionage.New(rts, poolstore.NewMemory())
+
+	// A playground-stamped 1800s session timeout tightens the 3600s runtime cap.
+	got := r.EffectiveMaxSessionAgeSeconds(context.Background(), sessionstore.Session{
+		RuntimeRef: "rt",
+		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 1800},
+	})
+	if got != 1800 {
+		t.Errorf("with timeout override: got %d, want 1800 (session timeout tighter)", got)
+	}
+
+	// A zero override never loosens or tightens the runtime cap.
+	got = r.EffectiveMaxSessionAgeSeconds(context.Background(), sessionstore.Session{
+		RuntimeRef: "rt",
+		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 0, MaxIdleSeconds: 120},
+	})
+	if got != 3600 {
+		t.Errorf("with zero override: got %d, want 3600 (runtime cap unchanged)", got)
+	}
+
+	// A timeout looser than the runtime cap cannot loosen it (most-restrictive wins).
+	got = r.EffectiveMaxSessionAgeSeconds(context.Background(), sessionstore.Session{
+		RuntimeRef: "rt",
+		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 99999},
+	})
+	if got != 3600 {
+		t.Errorf("with looser override: got %d, want 3600 (runtime cap still binds)", got)
+	}
+}
+
 // A resolver constructed with nil stores never panics and returns 0.
 func TestNilStoresYieldZero(t *testing.T) {
 	r := sessionage.New(nil, nil)

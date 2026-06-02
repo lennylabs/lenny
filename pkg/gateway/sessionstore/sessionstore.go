@@ -353,7 +353,22 @@ type Session struct {
 	// against the runtime's limits.maxSessionAge at admission (a session
 	// override cannot exceed the runtime cap). Nil when the client
 	// supplied none. spec: §14 line 154. F-14.1.14.
+	//
+	// A §27.3 origin=playground session also lands its §27.6 idle and
+	// duration caps here: the create path stamps
+	// min(existing, playground cap) onto MaxIdleSeconds /
+	// MaxSessionAgeSeconds so the watchdog's maxSessionAge sweep (via the
+	// sessionage resolver) enforces the playground duration cap. F-27.6.1
+	// / F-27.6.2.
 	Timeouts *SessionTimeouts
+
+	// Origin is the §27.3 token-origin label copied from the session
+	// bearer's `origin` JWT claim at create time. It is "playground" for
+	// every /playground/*-originated session (all three playground auth
+	// modes) and empty otherwise. §27.6 line 203 requires the label on
+	// every playground session record for the §25.9 audit-query slice and
+	// the §27.8 origin=playground dashboards. F-27.6.8.
+	Origin string
 
 	// CredentialPolicyOverride is the §14 per-session credentialPolicy
 	// hint. A per-session override can only restrict, never expand, the

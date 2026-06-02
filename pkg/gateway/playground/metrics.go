@@ -132,6 +132,14 @@ func (m *Metrics) sessionCreated(runtime string) {
 	m.sessionsCreated.WithLabelValues(runtime).Inc()
 }
 
+// SessionCreated is the exported §27.8 hook the gateway session server
+// drives (via the sessionserver IncPlaygroundSessionCreated callback)
+// once the §27.3 origin=playground claim is read on the create path, so
+// lenny_playground_sessions_created_total{runtime} counts every
+// playground-originated session the gateway admits. Nil-safe.
+// spec: §27.8; F-27.6.11.
+func (m *Metrics) SessionCreated(runtime string) { m.sessionCreated(runtime) }
+
 // wsConnectOutcome increments lenny_playground_ws_connect_total for
 // the supplied outcome (success or failure).
 func (m *Metrics) wsConnectOutcome(outcome string) {

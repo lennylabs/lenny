@@ -153,6 +153,17 @@ type Server struct {
 	podBinder      *podsession.Binder
 	podRegistry    *podsession.Registry
 	agentNamespace string
+	// playgroundCaps resolves the §27.6 idle/duration caps for a
+	// §27.3 origin=playground session. Wired post-construction via
+	// SetPlaygroundCaps (the playground bootstrap runs after the session
+	// server is built). Nil leaves a playground session bounded only by
+	// the runtime/platform caps. spec: §27.6 lines 200-201. F-27.6.1 /
+	// F-27.6.2.
+	playgroundCaps PlaygroundCapResolver
+	// incPlaygroundSessionCreated records the §27.8
+	// lenny_playground_sessions_created_total metric once the origin claim
+	// is read on the create path. Nil disables the metric. F-27.6.11.
+	incPlaygroundSessionCreated func(runtime string)
 	// admissionRL is the §11.1 line 7 per-minute counter used for the
 	// per-runtime and per-pool admission scopes enforced at session
 	// creation (the global/per-user/per-tenant scopes run in the §11.1
@@ -1568,6 +1579,12 @@ type SessionResponse struct {
 	// when the request named no pool. spec: §14.1 line 311. F-14.1.14.
 	Pool string `json:"pool,omitempty"`
 
+	// Origin echoes the §27.3 origin label recorded on the session row.
+	// It is "playground" for a /playground/*-originated session and
+	// omitted otherwise, so a §25.9 audit-log query and the §27.8
+	// dashboards can slice on origin. spec: §27.6 line 203. F-27.6.8.
+	Origin string `json:"origin,omitempty"`
+
 	// Timeouts echoes the §14 per-session timeout overrides. Omitted when
 	// the client supplied none. spec: §14 line 154. F-14.1.14.
 	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
@@ -1875,6 +1892,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	if !ok {
 		return
 	}
+
+	// spec: §27.3 line 63 / §27.6 lines 200-203 — when the caller's session
+	// bearer carries the origin=playground claim, stamp the §27.6 idle and
+	// duration caps (min-wins over any §14 timeout the client requested) and
+	// the origin=playground audit label onto the row before persist. Reads
+	// the §14 timeouts validateRequestEnvelope copied above so a tighter
+	// client value is preserved. F-27.3.3 / F-27.6.1 / F-27.6.2 / F-27.6.8.
+	s.applyPlaygroundCaps(r.Context(), req.RuntimeRef, &row)
 
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
@@ -2506,6 +2531,10 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		out.Env = cloneMetadata(row.Env)
 	}
 	out.Pool = row.Pool
+	// spec: §27.6 line 203 — surface the origin=playground label on every
+	// read so §25.9 audit queries and §27.8 dashboards can slice on it.
+	// F-27.6.8.
+	out.Origin = row.Origin
 	if row.Timeouts != nil {
 		t := *row.Timeouts
 		out.Timeouts = &t

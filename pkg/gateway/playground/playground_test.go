@@ -172,18 +172,18 @@ func TestEffectiveLabelsReturnsACopy_spec_27_2_41(t *testing.T) {
 func TestEffectiveIdleAndDurationCaps(t *testing.T) {
 	cfg := Config{MaxIdleTimeSeconds: 300, MaxSessionMinutes: 30}
 	// The override tightens a looser runtime limit.
-	if got := cfg.effectiveIdleSeconds(600); got != 300 {
-		t.Fatalf("effectiveIdleSeconds(600) = %d, want 300", got)
+	if got := cfg.EffectiveIdleSeconds(600); got != 300 {
+		t.Fatalf("EffectiveIdleSeconds(600) = %d, want 300", got)
 	}
 	// The override never relaxes a stricter runtime limit.
-	if got := cfg.effectiveIdleSeconds(120); got != 120 {
-		t.Fatalf("effectiveIdleSeconds(120) = %d, want 120", got)
+	if got := cfg.EffectiveIdleSeconds(120); got != 120 {
+		t.Fatalf("EffectiveIdleSeconds(120) = %d, want 120", got)
 	}
-	if got := cfg.effectiveSessionMinutes(15); got != 15 {
-		t.Fatalf("effectiveSessionMinutes(15) = %d, want 15", got)
+	if got := cfg.EffectiveSessionMinutes(15); got != 15 {
+		t.Fatalf("EffectiveSessionMinutes(15) = %d, want 15", got)
 	}
-	if got := cfg.effectiveSessionMinutes(60); got != 30 {
-		t.Fatalf("effectiveSessionMinutes(60) = %d, want 30", got)
+	if got := cfg.EffectiveSessionMinutes(60); got != 30 {
+		t.Fatalf("EffectiveSessionMinutes(60) = %d, want 30", got)
 	}
 }
 

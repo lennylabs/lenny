@@ -219,13 +219,16 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// effectiveIdleSeconds returns the §27.6 effective idle cap for a
+// EffectiveIdleSeconds returns the §27.6 effective idle cap for a
 // playground session running against a runtime whose own
 // maxIdleTimeSeconds is runtimeIdleSeconds. The override never
 // relaxes a stricter runtime limit; it only tightens a looser one.
 // A zero runtimeIdleSeconds (runtime did not declare a limit) yields
-// the configured playground cap unchanged.
-func (c Config) effectiveIdleSeconds(runtimeIdleSeconds int) int {
+// the configured playground cap unchanged. The gateway session server
+// invokes this through its PlaygroundCapResolver seam to stamp the cap
+// onto a §27.3 origin=playground session at create time (F-27.6.1).
+// spec: §27.6 line 201.
+func (c Config) EffectiveIdleSeconds(runtimeIdleSeconds int) int {
 	pg := c.MaxIdleTimeSeconds
 	if runtimeIdleSeconds > 0 && runtimeIdleSeconds < pg {
 		return runtimeIdleSeconds
@@ -233,11 +236,14 @@ func (c Config) effectiveIdleSeconds(runtimeIdleSeconds int) int {
 	return pg
 }
 
-// effectiveSessionMinutes returns the §27.6 hard duration cap for a
+// EffectiveSessionMinutes returns the §27.6 hard duration cap for a
 // playground session running against a runtime whose own
 // maxSessionMinutes is runtimeMinutes. The cap is the min of the two;
-// a zero runtimeMinutes yields the configured playground cap.
-func (c Config) effectiveSessionMinutes(runtimeMinutes int) int {
+// a zero runtimeMinutes yields the configured playground cap. The
+// gateway session server invokes this through its PlaygroundCapResolver
+// seam to stamp the cap onto a §27.3 origin=playground session at create
+// time (F-27.6.2). spec: §27.6 line 200.
+func (c Config) EffectiveSessionMinutes(runtimeMinutes int) int {
 	pg := c.MaxSessionMinutes
 	if runtimeMinutes > 0 && runtimeMinutes < pg {
 		return runtimeMinutes

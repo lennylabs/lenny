@@ -468,3 +468,55 @@ func TestDevHeadersPropagatesGroupsOnlyWhenAllowDevRolesIsSet(t *testing.T) {
 		}
 	}
 }
+
+// TestBearerCarriesOriginClaim_spec_27_3 — the §27.3 origin claim minted on a
+// playground session-capability JWT must reach handlers as Principal.Origin so
+// the session-creation path can detect a /playground/*-originated session and
+// apply the §27.6 caps + origin=playground label. A token without the claim
+// resolves to an empty Origin. F-27.3.3.
+func TestBearerCarriesOriginClaim_spec_27_3(t *testing.T) {
+	secret := []byte("secret")
+	signer := jwt.NewHMACSigner("test", secret)
+
+	playgroundTok, err := signer.Sign(jwt.Claims{
+		TenantID: "acme",
+		Subject:  "alice@acme.com",
+		Typ:      pkgauth.TokenUserBearer,
+		Origin:   "playground",
+		Expiry:   time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign playground token: %v", err)
+	}
+	plainTok, err := signer.Sign(jwt.Claims{
+		TenantID: "acme",
+		Subject:  "alice@acme.com",
+		Typ:      pkgauth.TokenUserBearer,
+		Expiry:   time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign plain token: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		token      string
+		wantOrigin string
+	}{
+		{"playground origin", playgroundTok, "playground"},
+		{"no origin claim", plainTok, ""},
+	} {
+		inner, got := captureHandler()
+		h := Wrap(inner, Options{Verifier: signer, MultiTenant: true, Registry: permissiveRegistry{}})
+		req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+		req.Header.Set("Authorization", "Bearer "+tc.token)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("%s: status = %d, want 204; body=%s", tc.name, rr.Code, rr.Body.String())
+		}
+		if got.Origin != tc.wantOrigin {
+			t.Errorf("%s: Principal.Origin = %q, want %q", tc.name, got.Origin, tc.wantOrigin)
+		}
+	}
+}

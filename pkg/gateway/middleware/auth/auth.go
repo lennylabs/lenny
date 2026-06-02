@@ -69,6 +69,17 @@ type Principal struct {
 	// handler forwards this onto the delegation ParentToken. Empty under
 	// the dev-headers path (no JWT). F-8.1.2 / F-8.2.7.
 	JTI string
+
+	// Origin is the §27.3 token-origin claim copied verbatim from the
+	// JWT `origin` field. It is "playground" on every session-capability
+	// JWT minted for a /playground/* request (all three playground auth
+	// modes), empty otherwise. Downstream consumers — the §27.6 session
+	// idle/duration caps the session server stamps at create time, the
+	// §27.8 origin=playground dashboard slice, and §11 policy rules —
+	// key on this value, which is why it must reach handlers as part of
+	// the resolved principal. Empty under the dev-headers path (no JWT).
+	// spec: §27.3 line 63. F-27.3.3.
+	Origin string
 }
 
 // HasRole reports whether p holds r. Endpoints that gate behaviour on
@@ -444,6 +455,11 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Groups:     append([]string(nil), claims.Groups...),
 		Scopes:     scopeSet,
 		JTI:        claims.JWTID,
+		// spec: §27.3 line 63 — carry the mode-agnostic origin claim onto
+		// the principal so the session-creation path can detect a
+		// /playground/*-originated session and apply the §27.6 caps +
+		// origin=playground label. F-27.3.3.
+		Origin: claims.Origin,
 	}
 	// spec: §10.2 line 294 — the platform-managed user→role mapping
 	// takes precedence over OIDC-derived roles. When the resolver

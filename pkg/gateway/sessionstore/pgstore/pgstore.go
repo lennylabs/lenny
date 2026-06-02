@@ -985,6 +985,12 @@ type storedEnvelope struct {
 	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
 	DelegationLease  *sessionstore.DelegationLeaseRequest   `json:"delegationLease,omitempty"`
 	RuntimeOptions   json.RawMessage                        `json:"runtimeOptions,omitempty"`
+	// Origin carries the §27.3 origin=playground session label. It rides
+	// the envelope bundle rather than a dedicated column because v1 has no
+	// §25.9 column-filtered audit query yet (F-25.9.2); persisting it here
+	// keeps the label durable across replicas without a migration.
+	// F-27.6.8.
+	Origin string `json:"origin,omitempty"`
 }
 
 // requestEnvelopeArg renders the §14.1 request-envelope bundle for a
@@ -998,9 +1004,10 @@ func requestEnvelopeArg(sess sessionstore.Session) any {
 		CredentialPolicy: sess.CredentialPolicyOverride,
 		DelegationLease:  sess.DelegationLeaseRequest,
 		RuntimeOptions:   sess.RuntimeOptions,
+		Origin:           sess.Origin,
 	}
 	if env.Pool == "" && env.Timeouts == nil && env.CredentialPolicy == nil &&
-		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 {
+		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 && env.Origin == "" {
 		return nil
 	}
 	b, err := json.Marshal(env)
@@ -1026,6 +1033,7 @@ func applyStoredEnvelope(s *sessionstore.Session, raw []byte) {
 	if len(env.RuntimeOptions) > 0 {
 		s.RuntimeOptions = env.RuntimeOptions
 	}
+	s.Origin = env.Origin
 }
 
 // decodeMetadata parses the JSONB payload back into a string→string
