@@ -19400,13 +19400,15 @@ Spec §12.4 "Failure behavior" row: "Circuit breakers … Fail closed (last-know
 - There is no explicit assertion that a closed-on-Redis breaker cannot be observed as closed by the in-process cache while Redis is down — the cache simply continues to serve the last successful snapshot. If the last successful snapshot showed the breaker as closed and an operator then opened the breaker against the (failed) Redis, the local cache will continue to report closed. This is the correct fail-closed behavior for the operator's intent (open ⇒ block), but the converse (an operator closes during the outage) is not addressed by the code or the test surface.
 - The 5-second staleness budget the spec cites is enforced as a `DefaultRefreshInterval` of 2 seconds (`cachingstore.go:35`), which gives an effective bound under 5s; the `LastRefresh` method (line 130) exists but no observability surface compares it to the 5s budget at request time.
 
-### - [ ] F-12.4.13 — Redis Cluster client mode is absent; the Tier-3 migration pre-plan is unimplementable [Medium] — OPEN
+### - [x] F-12.4.13 — Redis Cluster client mode is absent; the Tier-3 migration pre-plan is unimplementable [Medium] — CLOSED
 
 Spec §12.4 "Redis Cluster migration pre-plan (Tier 2→3 transition)" step 3: "The `QuotaStore` and rate limiter implementations must use `CLUSTER KEYSLOT`-aware client libraries (e.g., `go-redis/v9` with cluster mode) — verify this before migration."
 
 `pkg/redisconn/redisconn.go` only constructs `redis.NewClient` (direct) or `redis.NewFailoverClient` (Sentinel). There is no `redis.NewClusterClient` path. An operator following the Tier 2→3 migration procedure cannot point the gateway at a Redis Cluster topology without rotating the constructor. The `redis.UniversalClient` interface that the stores accept does include `ClusterClient`, but no caller can produce one through `redisconn`.
 
 The `storerouter.RedisConcern` constants (`pkg/storerouter/storerouter.go:48-54`) define the per-concern split the spec calls out as a deployment-time configuration change, but the `SingleShardRouter` returns the same client for every concern and there is no multi-instance router yet (the comment at line 11 acknowledges it as v1 only).
+
+**Resolution (41f86bf5):** `redisconn.NewUniversalClient` now builds a `redis.NewClusterClient` (the §12.4 line 264 CLUSTER KEYSLOT-aware go-redis client) when `Config.ClusterAddrs` is set, enforcing the same §12.4 line 197 AUTH/TLS invariant as the direct and Sentinel paths; `PingWithTimeout` was widened to `redis.UniversalClient`. The gateway exposes it via `--redis-cluster-addrs` (env `LENNY_REDIS_CLUSTER_ADDRS`, chart `redis.cluster.addrs`); the base Redis client is now `redis.UniversalClient`, so every store (`QuotaStore`, rate limiter, and the rest) runs cluster-aware when the operator points the gateway at a cluster topology, making the Tier 2→3 pre-plan implementable. The per-tenant cutover feature flag (`redis.quotaStoreBackend: sentinel|cluster` settable per-tenant, step 4b) is a separate larger migration mechanism left to the §12.4 migration-runner work; the absent constructor this finding flagged is closed.
 
 ### - [ ] F-12.4.14 — `quotaEnforcementMode: in_memory_reconciled` is absent [Medium] — OPEN
 
@@ -19424,11 +19426,13 @@ The §16.5 `BillingStreamEvictionPolicyDrift` alert at `pkg/alerting/rules/rules
 
 **Resolution (`0be260b4`):** The compose Redis master and replica now pass `--maxmemory-policy noeviction` explicitly, with a §12.4 comment making the invariant operator-visible. New `preflight.CheckRedisMaxmemoryPolicy` reads the live policy (`CONFIG GET maxmemory-policy`) from a bring-your-own Redis and fails the install closed when it is anything other than `noeviction` (drift, empty, or unreachable). It is wired through `lenny-preflight --redis-url` (RedisConfigProber built over `redisconn.NewClient`) and an opt-in `preflight.checkRedisMaxmemoryPolicy` chart value that passes `redis.url` to the preflight Job; the cloud profile leaves it off because the Terraform sets the policy natively.
 
-### - [ ] F-12.4.16 — Logical separation of Redis concerns is interface-only [Medium] — OPEN
+### - [x] F-12.4.16 — Logical separation of Redis concerns is interface-only [Medium] — CLOSED
 
 Spec §12.4 ("Logical separation of Redis concerns"): "When the signals above indicate the single topology is insufficient … separate Redis into independent instances by concern … At Tiers 1 and 2, all concerns run on a single Sentinel instance. The separation is a deployment-time configuration change (separate connection strings per store role) — no code changes are required because each store role already has its own interface."
 
 The store interfaces are present (`leasestore.Store`, `quotastore.Counter`, `breakerstore.Store`, etc.), and `storerouter.RedisConcern` enumerates the three split groups (`coordination`, `quota`, `cache_pubsub`) the spec calls out — but the router constructor (`NewSingleShardRouter`, `pkg/storerouter/storerouter.go:162-179`) accepts only one `redis.UniversalClient`. There is no multi-client router and no command-line / Helm surface for supplying per-concern Redis URLs (`grep` for `LENNY_REDIS_QUOTA_URL` / `LENNY_REDIS_COORDINATION_URL` finds nothing). The deployment-time concern split the spec promises is therefore not actually a deployment-time change today — adding it requires (a) extending `cmd/lenny-gateway/main.go` flags, (b) constructing N clients, and (c) writing a multi-client router implementation.
+
+**Resolution (41f86bf5):** All three. (a) `cmd/lenny-gateway` gains `--redis-coordination-url` / `--redis-quota-url` / `--redis-cache-pubsub-url` / `--redis-session-data-url` / `--redis-delegation-url` (env `LENNY_REDIS_*_URL`, chart `redis.concerns.*` rendered into the datastore Secret). (b) the new `pkg/gateway/redistopology.Build` constructs one client per distinct URL (dedup by URL, base fallback for any unsplit concern). (c) `storerouter.Config.RedisByConcern` + `PlatformRedisClient` route each `RedisConcern` to its dedicated client, installing the §12.4 line 195 Guard hook once per distinct client. Every Redis store is wired through `concernRedis.For(concern)`, so an operator splits concerns onto separate instances by supplying connection strings with no further code change — the §12.4 line 245 promise now holds. With no per-concern URLs set, every concern resolves to the single base client (Tier 1/2 topology unchanged).
 
 ### - [x] F-12.4.17 — Dual-store degraded mode (PLATFORM_DEGRADED emission) is unimplemented at the gateway [Medium] — CLOSED
 
@@ -19442,9 +19446,11 @@ The proto carries `ERROR_CODE_PLATFORM_DEGRADED` (`pkg/proto/adapter/v1/lenny-ad
 
 `tests/tier8_chaos/store_failure_test.go:198` `TestDualStoreUnavailable` exercises the outage at the cluster level and asserts only that the gateway process stays alive and `/v1/admin/health` flags components unhealthy; it does not check that new-session requests receive 503 or that active streams receive `PLATFORM_DEGRADED`, both of which the spec mandates.
 
-### - [ ] F-12.4.18 — `RedisConcernDelegation` is enumerated but no concern owner exists [Medium] — OPEN
+### - [x] F-12.4.18 — `RedisConcernDelegation` is enumerated but no concern owner exists [Medium] — CLOSED
 
 `pkg/storerouter/storerouter.go:52` defines `RedisConcernDelegation = "delegation"` with the comment `budget keys ({root_session_id}:dlg:*)`. No caller invokes `RedisShard(ctx, tenantID, RedisConcernDelegation)` because there are no delegation budget Redis writes (see H8). The enum value is therefore dead; until the delegation budget Lua path lands, this constant is a forward declaration without a backing implementation.
+
+**Resolution (41f86bf5):** The finding's premise was stale — `pkg/gateway/treebudget` already writes the §12.4 `{root_session_id}:dlg:*` budget keys (tokens / tree_size / tree_memory / parallel_children) via Lua reserve/return scripts and is wired in `cmd/lenny-gateway`; the gap was that it took the base Redis client directly rather than the delegation concern. With the F-12.4.16 per-concern split, `treebudget.New` now receives `concernRedis.For(RedisConcernDelegation)`, giving the enum a live owner that an operator can route to a dedicated instance. (The broader delegation-budget defects — fail-closed `DELEGATION_BUDGET_UNAVAILABLE`, the recovery reconstruction metric — remain the separate F-12.4.8.)
 
 ### - [x] F-12.4.19 — Slot-counter post-recovery rehydration is unbuilt and the rehydration sentinel keys are unused [Medium] — CLOSED
 
