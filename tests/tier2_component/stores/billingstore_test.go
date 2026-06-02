@@ -160,4 +160,59 @@ func TestBillingStoreContract(t *testing.T) {
 			t.Errorf("append without an event type: got %v, want ErrInvalidEvent", err)
 		}
 	})
+
+	// spec: §11.2.1 — Event schema (all events): the event-type-specific
+	// conditional fields round-trip through the conditional_fields JSONB
+	// column, and an event that carries none reads back nil (the
+	// null/absent contract). F-11.2.12.
+	t.Run("conditional_fields round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		old := false
+		neu := true
+		want := billingstore.Event{
+			TenantID:  tenant,
+			SessionID: newUUID(t),
+			EventType: billingstore.EventType("delegation_policy.export_scan_strengthened"),
+			Conditional: &billingstore.Conditional{
+				PolicyName:           "export-policy",
+				TransitionTS:         "2026-06-02T00:00:00Z",
+				OldScanExportedFiles: &old,
+				NewScanExportedFiles: &neu,
+				AffectedPolicyNames:  []string{"p1", "p2"},
+			},
+		}
+		if _, err := store.Append(ctx, want); err != nil {
+			t.Fatalf("Append with conditional: %v", err)
+		}
+		// A second event with no conditional block coexists with the first.
+		if _, err := store.Append(ctx, billingstore.Event{
+			TenantID: tenant, EventType: billingstore.EventSessionCreated,
+		}); err != nil {
+			t.Fatalf("Append plain: %v", err)
+		}
+		got, err := store.Since(ctx, tenant, 0, 0)
+		if err != nil {
+			t.Fatalf("Since: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("Since: got %d events, want 2", len(got))
+		}
+		c := got[0].Conditional
+		if c == nil {
+			t.Fatal("conditional_fields dropped on round-trip")
+		}
+		if c.PolicyName != "export-policy" || c.TransitionTS != "2026-06-02T00:00:00Z" {
+			t.Errorf("conditional scalar mismatch: %+v", c)
+		}
+		if c.OldScanExportedFiles == nil || *c.OldScanExportedFiles != false ||
+			c.NewScanExportedFiles == nil || *c.NewScanExportedFiles != true {
+			t.Errorf("conditional boolean transitions mismatch: %+v", c)
+		}
+		if len(c.AffectedPolicyNames) != 2 {
+			t.Errorf("affectedPolicyNames mismatch: %+v", c.AffectedPolicyNames)
+		}
+		if got[1].Conditional != nil {
+			t.Errorf("plain event must read back nil Conditional, got %+v", got[1].Conditional)
+		}
+	})
 }

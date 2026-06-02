@@ -15,6 +15,7 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -60,7 +61,7 @@ var _ billingstore.Store = (*Store)(nil)
 const selectList = `sequence_number, schema_version, user_id, session_id,
 	experiment_id, variant_id, event_type, tokens_input, tokens_output,
 	pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-	environment_id, created_at`
+	environment_id, conditional_fields, created_at`
 
 // Append commits a billing event to the tenant's ledger and returns
 // the sealed event. The per-tenant advisory lock makes the tail read
@@ -90,17 +91,21 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 			return err
 		}
 		e.SequenceNumber = uint64(tail) + 1
+		conditional, err := conditionalValue(e)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO billing_events (
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-			environment_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+			environment_id, conditional_fields, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
 			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
-			e.CorrectionDetail, e.EnvironmentID, e.CreatedAt); err != nil {
+			e.CorrectionDetail, e.EnvironmentID, conditional, e.CreatedAt); err != nil {
 			return err
 		}
 		committed = e
@@ -152,22 +157,30 @@ func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit 
 // scanEvent reads one row in selectList order into an Event.
 func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	var (
-		e          billingstore.Event
-		seq        int64
-		schemaVer  int32
-		sessionID  *string
-		eventType  string
-		tokensIn   int64
-		tokensOut  int64
-		correctsTo *int64
-		reasonCode string
-		detail     string
+		e           billingstore.Event
+		seq         int64
+		schemaVer   int32
+		sessionID   *string
+		eventType   string
+		tokensIn    int64
+		tokensOut   int64
+		correctsTo  *int64
+		reasonCode  string
+		detail      string
+		conditional []byte
 	)
 	if err := row.Scan(&seq, &schemaVer, &e.UserID, &sessionID,
 		&e.ExperimentID, &e.VariantID, &eventType, &tokensIn, &tokensOut,
 		&e.PodMinutes, &correctsTo, &reasonCode, &detail, &e.EnvironmentID,
-		&e.CreatedAt); err != nil {
+		&conditional, &e.CreatedAt); err != nil {
 		return billingstore.Event{}, err
+	}
+	if len(conditional) > 0 {
+		var c billingstore.Conditional
+		if err := json.Unmarshal(conditional, &c); err != nil {
+			return billingstore.Event{}, err
+		}
+		e.Conditional = &c
 	}
 	e.TenantID = tenantID
 	e.SequenceNumber = uint64(seq)
@@ -185,6 +198,21 @@ func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	e.CorrectionDetail = detail
 	e.CreatedAt = e.CreatedAt.UTC()
 	return e, nil
+}
+
+// conditionalValue maps an event's §11.2.1 event-type-specific fields to
+// the nullable conditional_fields JSONB column value: nil (SQL NULL) when
+// the event carries no Conditional block, the JSON encoding otherwise.
+// spec: §11.2.1 — Event schema (all events). F-11.2.12.
+func conditionalValue(e billingstore.Event) (any, error) {
+	if e.Conditional == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(e.Conditional)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // correctsSequence maps a billing event's CorrectsSequence to the
@@ -230,20 +258,24 @@ func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, stre
 			return err
 		}
 		e.SequenceNumber = uint64(tail) + 1
+		conditional, err := conditionalValue(e)
+		if err != nil {
+			return err
+		}
 		// §11.2.1: ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING
 		// makes a redelivered stream entry idempotent.
-		_, err := tx.Exec(ctx, `INSERT INTO billing_events (
+		_, err = tx.Exec(ctx, `INSERT INTO billing_events (
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-			environment_id, stream_entry_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			environment_id, conditional_fields, stream_entry_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
 			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
-			e.CorrectionDetail, e.EnvironmentID, streamEntryID, e.CreatedAt)
+			e.CorrectionDetail, e.EnvironmentID, conditional, streamEntryID, e.CreatedAt)
 		return err
 	})
 }

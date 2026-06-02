@@ -143,6 +143,82 @@ type Event struct {
 	// CorrectionDetail is the optional free-text detail supplementing the
 	// structured reason code on a billing_correction event.
 	CorrectionDetail string
+
+	// Conditional carries the §11.2.1 event-type-specific fields (the
+	// "(for X events only)" columns of the §11.2.1 event schema). It is
+	// nil for events that carry no event-type-specific data
+	// (session.created, session.completed, token_usage.checkpoint,
+	// billing_correction). The durable store persists it as the
+	// nullable conditional_fields JSONB column; the §15.1 metering wire
+	// promotes its fields to the top level of the event payload, honoring
+	// the null/absent field contract (a nil Conditional omits the block
+	// entirely). spec: §11.2.1 — Event schema (all events). F-11.2.12.
+	Conditional *Conditional
+}
+
+// Conditional holds the §11.2.1 event-type-specific billing-event
+// fields. Per the §11.2.1 null/absent field contract, each field appears
+// only on the event types it applies to (event_type is the
+// discriminant), so every field is omitempty; a pointer is used where
+// the zero value is itself a meaningful value the consumer must not read
+// as "absent" (the export-scan boolean transitions). A field left at its
+// zero value is omitted from the JSON payload.
+//
+// spec: §11.2.1 — Event schema (all events); null/absent field contract.
+// F-11.2.12.
+type Conditional struct {
+	// credential.leased
+	CredentialPoolID string `json:"credentialPoolId,omitempty"`
+	CredentialID     string `json:"credentialId,omitempty"`
+	DeliveryMode     string `json:"deliveryMode,omitempty"`
+
+	// credential.revoked
+	RevokedBy        string `json:"revokedBy,omitempty"`
+	RevocationReason string `json:"revocationReason,omitempty"`
+	LeasesTerminated uint32 `json:"leasesTerminated,omitempty"`
+
+	// delegation.isolation_violation
+	ParentIsolation string `json:"parentIsolation,omitempty"`
+	TargetIsolation string `json:"targetIsolation,omitempty"`
+	// matched_policy_rule is shared with pool.isolation_warning.
+	MatchedPolicyRule string `json:"matchedPolicyRule,omitempty"`
+
+	// pool.isolation_warning
+	PoolName             string `json:"poolName,omitempty"`
+	PoolIsolation        string `json:"poolIsolation,omitempty"`
+	ConflictingPoolName  string `json:"conflictingPoolName,omitempty"`
+	ConflictingIsolation string `json:"conflictingIsolation,omitempty"`
+
+	// derive.isolation_downgrade
+	SourceSessionID        string `json:"sourceSessionId,omitempty"`
+	SourceIsolationProfile string `json:"sourceIsolationProfile,omitempty"`
+	TargetPool             string `json:"targetPool,omitempty"`
+	TargetIsolationProfile string `json:"targetIsolationProfile,omitempty"`
+	AuthorizingUserSub     string `json:"authorizingUserSub,omitempty"`
+	TicketID               string `json:"ticketId,omitempty"`
+
+	// interceptor.fail_policy_weakened / _strengthened / weakening_cooldown_active
+	InterceptorRef      string   `json:"interceptorRef,omitempty"`
+	OldFailPolicy       string   `json:"oldFailPolicy,omitempty"`
+	NewFailPolicy       string   `json:"newFailPolicy,omitempty"`
+	AffectedPolicyCount uint32   `json:"affectedPolicyCount,omitempty"`
+	AffectedPolicyNames []string `json:"affectedPolicyNames,omitempty"`
+
+	// interceptor.weakening_cooldown_active +
+	// delegation_policy.export_scan_weakened / _strengthened
+	TransitionTS    string `json:"transitionTs,omitempty"`
+	CooldownSeconds uint32 `json:"cooldownSeconds,omitempty"`
+
+	// delegation.export_file_scan_rejected / export_scan_failed_open +
+	// delegation_policy.export_scan_weakened / _strengthened
+	PolicyName string `json:"policyName,omitempty"`
+	FilePath   string `json:"filePath,omitempty"`
+	FileSize   uint64 `json:"fileSize,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+
+	// delegation_policy.export_scan_weakened / _strengthened
+	OldScanExportedFiles *bool `json:"oldScanExportedFiles,omitempty"`
+	NewScanExportedFiles *bool `json:"newScanExportedFiles,omitempty"`
 }
 
 // IsCorrection reports whether e is a §11.2.1 billing_correction event.

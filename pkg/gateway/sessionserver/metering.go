@@ -27,19 +27,31 @@ var meteringDefaultSort = pagination.Sort{Field: meteringSortField, Direction: p
 
 // meteringEvent is the §11.2.1 billing event wire shape. Conditional
 // fields are omitted when zero so a consumer sees "not applicable"
-// rather than a misleading zero.
+// rather than a misleading zero. The §11.2.1 correction and cost
+// dimensions (pod_minutes, corrects_sequence, correction_reason_code,
+// correction_detail) and the event-type-specific conditional block are
+// surfaced so a consumer following the §11.2.1 "Correction semantics"
+// can reconstruct the accurate ledger; the embedded *billingstore.Conditional
+// promotes its fields to the top level (and is omitted entirely when the
+// event carries no event-type-specific data), honoring the §11.2.1
+// null/absent field contract. F-11.2.12.
 type meteringEvent struct {
-	SchemaVersion  uint32 `json:"schemaVersion"`
-	SequenceNumber uint64 `json:"sequenceNumber"`
-	TenantID       string `json:"tenantId"`
-	UserID         string `json:"userId,omitempty"`
-	SessionID      string `json:"sessionId,omitempty"`
-	ExperimentID   string `json:"experimentId,omitempty"`
-	VariantID      string `json:"variantId,omitempty"`
-	EventType      string `json:"eventType"`
-	TokensInput    uint64 `json:"tokensInput,omitempty"`
-	TokensOutput   uint64 `json:"tokensOutput,omitempty"`
-	Timestamp      string `json:"timestamp"`
+	SchemaVersion        uint32  `json:"schemaVersion"`
+	SequenceNumber       uint64  `json:"sequenceNumber"`
+	TenantID             string  `json:"tenantId"`
+	UserID               string  `json:"userId,omitempty"`
+	SessionID            string  `json:"sessionId,omitempty"`
+	ExperimentID         string  `json:"experimentId,omitempty"`
+	VariantID            string  `json:"variantId,omitempty"`
+	EventType            string  `json:"eventType"`
+	TokensInput          uint64  `json:"tokensInput,omitempty"`
+	TokensOutput         uint64  `json:"tokensOutput,omitempty"`
+	PodMinutes           float64 `json:"podMinutes,omitempty"`
+	CorrectsSequence     uint64  `json:"correctsSequence,omitempty"`
+	CorrectionReasonCode string  `json:"correctionReasonCode,omitempty"`
+	CorrectionDetail     string  `json:"correctionDetail,omitempty"`
+	Timestamp            string  `json:"timestamp"`
+	*billingstore.Conditional
 }
 
 // handleMeteringEvents implements GET /v1/metering/events per §15.1 —
@@ -111,17 +123,22 @@ func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 // toMeteringEvent maps a stored billing event to its wire shape.
 func toMeteringEvent(e billingstore.Event) meteringEvent {
 	return meteringEvent{
-		SchemaVersion:  e.SchemaVersion,
-		SequenceNumber: e.SequenceNumber,
-		TenantID:       e.TenantID,
-		UserID:         e.UserID,
-		SessionID:      e.SessionID,
-		ExperimentID:   e.ExperimentID,
-		VariantID:      e.VariantID,
-		EventType:      string(e.EventType),
-		TokensInput:    e.TokensInput,
-		TokensOutput:   e.TokensOutput,
-		Timestamp:      e.CreatedAt.UTC().Format(time.RFC3339Nano),
+		SchemaVersion:        e.SchemaVersion,
+		SequenceNumber:       e.SequenceNumber,
+		TenantID:             e.TenantID,
+		UserID:               e.UserID,
+		SessionID:            e.SessionID,
+		ExperimentID:         e.ExperimentID,
+		VariantID:            e.VariantID,
+		EventType:            string(e.EventType),
+		TokensInput:          e.TokensInput,
+		TokensOutput:         e.TokensOutput,
+		PodMinutes:           e.PodMinutes,
+		CorrectsSequence:     e.CorrectsSequence,
+		CorrectionReasonCode: string(e.CorrectionReasonCode),
+		CorrectionDetail:     e.CorrectionDetail,
+		Timestamp:            e.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Conditional:          e.Conditional,
 	}
 }
 

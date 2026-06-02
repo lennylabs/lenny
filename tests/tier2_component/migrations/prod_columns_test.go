@@ -157,6 +157,10 @@ var prodMigrationSchema = []struct {
 	// tokenPolicy, capabilities taxonomy, mcpAnnotationMapping overrides)
 	// as the rbac_config jsonb column on tenants.
 	{migration: "0097", table: "tenants", columns: []string{"rbac_config"}},
+	// 0113 adds the §11.2.1 event-type-specific ("for X events only")
+	// conditional fields to billing_events as a single nullable JSONB
+	// blob, completing the §11.2.1 event schema (F-11.2.12).
+	{migration: "0113", table: "billing_events", columns: []string{"conditional_fields"}},
 }
 
 // spec: 12.2, 18.5

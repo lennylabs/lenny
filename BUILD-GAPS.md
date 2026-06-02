@@ -15481,7 +15481,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — OPEN
+### - [ ] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — DEFERRED
 
 Spec §11.2.1 enumerates the closed set of event types the platform "emits": `session.created`, `session.completed`, `delegation.spawned`, `delegation.isolation_violation`, `pool.isolation_warning`, `derive.isolation_downgrade`, `interceptor.fail_policy_weakened`, `interceptor.fail_policy_strengthened`, `interceptor.weakening_cooldown_active`, `delegation.export_file_scan_rejected`, `delegation.export_scan_failed_open`, `delegation_policy.export_scan_weakened`, `delegation_policy.export_scan_strengthened`, `token_usage.checkpoint`, `credential.leased`, `credential.revoked`, plus `billing_correction`.
 
@@ -15506,6 +15506,8 @@ Specifically missing from the billing stream:
 - `delegation_policy.export_scan_weakened/_strengthened` — emitted to audit only.
 - `token_usage.checkpoint` — no emission anywhere (grep returned no matches).
 - `credential.leased`, `credential.revoked` — emitted to audit (OCSF mapping at `/Users/joan/projects/lenny/pkg/audit/ocsf/mapping.go:55`) but not to billing.
+
+**Deferred (this batch):** Fully closing this finding requires every type in the §11.2.1 closed set to reach the billing stream, but two have no v1 producer: `interceptor.fail_policy_weakened` / `_strengthened` / `weakening_cooldown_active` (no runtime interceptor-`failPolicy` mutation path emits them — grep returns zero emission sites) and `token_usage.checkpoint` (the periodic token-usage checkpoint loop is the separate, also-open F-11.2.4). Routing only the reachable subset (`delegation.spawned`, `delegation.isolation_violation`, `pool.isolation_warning`, `derive.isolation_downgrade`, the export-scan events, `credential.leased` / `credential.revoked`) would half-meet the finding's "complete §11.2.1 cost-attribution stream" invariant while leaving the source-less types unaddressed. The schema and §15.1 wire surface those emissions land on is now built (F-11.2.12, this batch via `billingstore.Conditional`); the emission wiring is gated on F-11.2.4 plus a runtime interceptor-failPolicy-mutation path.
 
 ### - [x] F-11.2.2 — LLM token usage is never recorded against any quota counter [High] — CLOSED
 
@@ -15601,7 +15603,7 @@ Also missing per §11.2: "On Redis restart, the gateway rehydrates per-tenant st
 
 **Resolution (2599ada3):** The §12.5 cataloging decorator now issues the §11 line 37 storage-quota decrement: on `SoftDeleteSession` (the §7.1 retention-GC path), `DeleteBySession` (the §12.8 erasure path), and single-object `SoftDelete`, it sums the `artifact_size_bytes` of the rows it transitions `live → soft_deleted` and calls `QuotaReleaser.Adjust(ctx, tenant, -bytes)` **after** the catalog rows commit with `deleted_at` set, honoring the spec's double-decrement ordering requirement. The decrement is keyed to the catalog's single-writer `live` guard, so a replayed sweep does not double-release. For Redis-restart recovery, new `storagequota.Counter.Set` (absolute write, clamped at zero) + `storagequota.Rehydrate` reconstruct each tenant's counter from `artifactcatalog.SumLiveBytes` (the `SUM(artifact_size_bytes) WHERE state='live'` total); `lenny-gateway` installs the releaser via `SetQuotaReleaser` and runs the rehydration sweep at startup before the listener accepts traffic. The `QuotaReleaser` seam keeps the blobstore layer free of a gateway import. Tier-1 tests cover GC/erasure/single-object decrements, idempotency, the no-releaser path, `Set` clamping, and per-tenant rehydration with error collection.
 
-### - [ ] F-11.2.10 — Postgres `billing_seq_{tenant_id}` sequence object is not used; provisional renumber-at-flush relies on table-MAX [High] — OPEN
+### - [ ] F-11.2.10 — Postgres `billing_seq_{tenant_id}` sequence object is not used; provisional renumber-at-flush relies on table-MAX [High] — DEFERRED
 
 Spec §11.2.1 "Sequencing authority": "The `sequence_number` is assigned by a Postgres sequence (`billing_seq_{tenant_id}`) — a dedicated per-tenant sequence object. Gateway replicas call `nextval('billing_seq_{tenant_id}')` inside the EventStore INSERT transaction; this guarantees monotonicity across replicas."
 
@@ -15618,6 +15620,8 @@ The implementation derives the next sequence with `MAX(sequence_number) + 1` und
 
 This is a normative deviation from the cited "sequencing authority" mechanism.
 
+**Deferred (this batch):** Literal per-tenant `billing_seq_{tenant_id}` sequence objects are infeasible across the §10.2 tenant-id space and carry a least-privilege cost that the current mechanism avoids: (1) §10.2 tenant ids match `^[a-zA-Z0-9_-]{1,128}$` (up to 128 bytes), while Postgres silently truncates identifiers to 63 bytes (NAMEDATALEN−1), so `billing_seq_`+tenant_id collides for any two tenant ids sharing a 51-char prefix — a real cross-tenant sequence-corruption hazard; (2) per-tenant sequence creation is runtime DDL by the connecting role, which would require granting `CREATE ON SCHEMA` to the least-privilege `lenny_app` role. The current advisory-lock + `MAX(sequence_number)+1` already delivers the spec's observable contract (cross-replica monotonic per-tenant sequence with gap detection driving replay), and the two cited divergences are theoretical in v1: `billing_events` is append-only with no `TRUNCATE` path and no partition rotation implemented, so the MAX-collision scenario cannot arise. Per rule B, this reports the spec/identifier-limit tension rather than introducing a silently-colliding named primitive; revisiting requires either a §10.2 tenant-id length cap that keeps the literal name ≤ 63 bytes or a spec amendment permitting a safe-derived per-tenant sequence name.
+
 ### - [x] F-11.2.11 — Operator-initiated billing-correction approvals persist only in memory [Medium] — CLOSED
 
 Spec §11.2.1 "Category 2 — Operator-initiated manual corrections" mandates dual-control approval with a `billing_correction_pending` state, expiry sweep, and per-record `approval_request_id`. The audit trail must record submission, approval, rejection, and expiry as immutable audit events.
@@ -15632,13 +15636,15 @@ The pending-correction store is `correctionstore.NewMemory()` in production. The
 
 **Resolution:** Added `pkg/gateway/correctionstore/pgstore` (a durable `correctionstore.Store` over the new `billing_correction_pending` table, migration `0104`) and wired it in `cmd/lenny-gateway` whenever Postgres is configured, so pending dual-control requests and their four-eyes audit trail survive a gateway restart. `Transition` runs under `SELECT … FOR UPDATE` + a `WHERE state = 'pending'` UPDATE guard so a concurrent double-decision is rejected with `ErrNotPending`. The registry is platform-operational (the §11.2.1 approve/reject workflow spans tenants by opaque `approval_request_id`), so the table is deliberately not tenant-isolated — `tenant_id` is a data column and the four-state `CHECK` constraint backstops the enum; the committed correction still lands in the RLS-protected, append-only `billing_events` ledger. The existing expiry sweep and dual-control logic in `pkg/gateway/admin/billing_corrections.go` already drive the `Store` interface unchanged. (commit `069e37b8`)
 
-### - [ ] F-11.2.12 — Billing event schema is missing seven of the spec's conditional fields and the metering API wire shape omits all of them [Medium] — OPEN
+### - [x] F-11.2.12 — Billing event schema is missing seven of the spec's conditional fields and the metering API wire shape omits all of them [Medium] — CLOSED
 
 Spec §11.2.1 "Event schema (all events)" lists fields including `corrects_sequence`, `correction_reason_code`, `correction_detail`, `parent_isolation`, `target_isolation`, `matched_policy_rule`, `pool_name`, `pool_isolation`, `conflicting_pool_name`, `conflicting_isolation`, `source_session_id`, `source_isolation_profile`, `target_pool`, `target_isolation_profile`, `authorizing_user_sub`, `ticket_id`, `interceptor_ref`, `old_fail_policy`, `new_fail_policy`, `affected_policy_count`, `affected_policy_names`, `transition_ts`, `cooldown_seconds`, `policy_name`, `file_path`, `file_size`, `reason`, `old_scanExportedFiles`, `new_scanExportedFiles`, `delivery_mode`, `revoked_by`, `revocation_reason`, `leases_terminated`, plus `pod_minutes`.
 
 `billingstore.Event` (`/Users/joan/projects/lenny/pkg/gateway/billingstore/billingstore.go:112-139`) carries: `TenantID`, `SequenceNumber`, `SchemaVersion`, `UserID`, `SessionID`, `ExperimentID`, `VariantID`, `EventType`, `TokensInput`, `TokensOutput`, `PodMinutes`, `CreatedAt`, `CorrectsSequence`, `CorrectionReasonCode`, `CorrectionDetail`. Everything else (≥20 conditional fields) is absent. Since the matching event types (H1) are not emitted either, the missing fields are below the surface; once §11.2.1 events get wired the schema must absorb them.
 
 The metering wire shape `meteringEvent` (`/Users/joan/projects/lenny/pkg/gateway/sessionserver/metering.go:24-36`) is even narrower — `PodMinutes`, `CorrectsSequence`, `CorrectionReasonCode`, `CorrectionDetail` are dropped during JSON serialization. The `toMeteringEvent` mapping function (line 102) omits them. A consumer following the §11.2.1 "Correction semantics" section reconstructs the ledger from `tokens_input`, `tokens_output`, `pod_minutes`, and the corrects-reference; the wire shape lets none of the correction fields out. The spec's "consumers reconstruct the accurate billing ledger by processing events in `sequence_number` order and applying each correction to the referenced original" is unworkable against this endpoint.
+
+**Resolution (this batch):** Added the typed `billingstore.Conditional` carrier holding the §11.2.1 event-type-specific fields (`credential_pool_id`/`credential_id`/`delivery_mode`, the isolation-violation / pool-warning / derive-downgrade / interceptor-fail-policy / export-scan fields, `revoked_by`/`revocation_reason`/`leases_terminated`, etc.), with every field `omitempty` and the export-scan boolean transitions as `*bool` so a meaningful `false` is not elided (the §11.2.1 null/absent field contract). It persists as a single nullable `conditional_fields` JSONB column (migration 0113) rather than ~30 sparse columns — matching the spec's "Parquet optional columns" guidance — round-tripped by `billingstore.Memory` and `pgstore` (Append + InsertFromStream + scanEvent). The §15.1 metering wire shape now exposes the previously dropped `podMinutes`/`correctsSequence`/`correctionReasonCode`/`correctionDetail` and promotes the `Conditional` block to the top level via an embedded `*billingstore.Conditional` (nil → the whole block is absent), so a consumer can reconstruct the accurate ledger. Populating the conditional fields on emit rides with F-11.2.1 (event-type emission); this finding delivers the schema and wire surface they land on.
 
 ### - [x] F-11.2.13 — Billing events are not auto-populated with the session's experiment / variant id [Medium] — CLOSED
 
@@ -15702,11 +15708,13 @@ with a `Retry-After` header. The fixed-vs-sliding-window distinction is the
 platform-wide F-11.2.3 concern; the eval limiter shares the platform's
 counter so it inherits that refinement when it lands.
 
-### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — OPEN
+### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — DEFERRED
 
 Spec §11.2 direct-mode residual-risk control: "Deployers should monitor `lenny_gateway_token_usage_anomaly_total` (counter, labeled by `session_id` and `tenant_id`) — the gateway emits this metric when a session's `ReportUsage` delta is zero or implausibly small relative to LLM call frequency."
 
 Grep across `pkg/observability/`, `pkg/gateway/` for the metric name returned no hits. Without it the direct-mode integrity claim is unverifiable.
+
+**Deferred (this batch):** The anomaly counter is a direct-mode signal: §11.2 defines its firing condition as "more than 3 `ReportUsage` calls within a session with zero tokens reported while LLM proxy activity is absent." `ReportUsage` is a gateway→pod PULL RPC (`adapterclient.Client.ReportUsage`), and no gateway code drives it — there is no per-session direct-mode usage poller that would observe the deltas the metric measures (the F-11.2.2 resolution names direct-mode usage recording as a follow-on; the proxy path it wired extracts authoritative counts and so has no anomaly to detect). Emitting this metric requires that direct-mode `ReportUsage` ingestion vertical first; gated on it.
 
 ### - [ ] F-11.2.21 — Mid-session budget enforcement (gateway terminates over-budget session) is not implemented [Medium] — OPEN
 
