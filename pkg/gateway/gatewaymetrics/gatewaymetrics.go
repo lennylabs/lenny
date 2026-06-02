@@ -513,6 +513,22 @@ type Metrics struct {
 	auditChainRechainedPostOutage prometheus.Counter
 	auditRateLimited              *prometheus.CounterVec
 	auditScatterGatherShards      prometheus.Histogram
+	// minioReplicationResidencyViolation is the §25.11 ArtifactStore
+	// cross-region replication residency-violation counter, labeled by
+	// source region. The replication Controller's residency preflight
+	// increments it (via Metrics.ResidencyViolation) when a destination
+	// bucket's jurisdiction tag does not match the source region's
+	// dataResidencyRegion, the destination tag is missing, or the
+	// destination resolves outside the allowed CIDRs. spec: §25.11;
+	// §16.5 residency-violation alert. F-12.5.20 / F-16.7.2.
+	minioReplicationResidencyViolation *prometheus.CounterVec
+	// dataResidencyViolation is the shared §16.1
+	// lenny_data_residency_violation_total counter, labeled by the
+	// operation that observed the violation (e.g. "artifact_replication").
+	// The replication residency preflight bumps it alongside the
+	// region-scoped counter above so the cross-operation §16.5 view has a
+	// single series. F-12.5.20 / F-16.7.2.
+	dataResidencyViolation *prometheus.CounterVec
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -1929,6 +1945,23 @@ func New() (*Metrics, error) {
 		Help:    "§25.9 shard count per scatter-gather audit query.",
 		Buckets: []float64{1, 2, 4, 8, 16, 32},
 	})
+	// §25.11 ArtifactStore cross-region replication residency-violation
+	// surface — the replication Controller's residency preflight wires
+	// these via Metrics.ResidencyViolation. F-12.5.20 / F-16.7.2.
+	minioReplicationResidencyViolation, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_minio_replication_residency_violation_total",
+		Help: "§25.11 ArtifactStore replication residency violations by region.",
+	}, []string{"region"})
+	if err != nil {
+		return nil, err
+	}
+	dataResidencyViolation, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_data_residency_violation_total",
+		Help: "§16.1 data residency violations by operation.",
+	}, []string{"operation"})
+	if err != nil {
+		return nil, err
+	}
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -2155,6 +2188,7 @@ func New() (*Metrics, error) {
 		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
 		auditQueryDuration, auditChainVerificationBroken, auditChainRechainedPostOutage,
 		auditRateLimited, auditScatterGatherShards,
+		minioReplicationResidencyViolation, dataResidencyViolation,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -2366,6 +2400,8 @@ func New() (*Metrics, error) {
 		auditChainRechainedPostOutage:        auditChainRechainedPostOutage,
 		auditRateLimited:                     auditRateLimited,
 		auditScatterGatherShards:             auditScatterGatherShards,
+		minioReplicationResidencyViolation:   minioReplicationResidencyViolation,
+		dataResidencyViolation:               dataResidencyViolation,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -4008,6 +4044,32 @@ func (m *Metrics) IncAuditRateLimited(eventType, serviceAccount string) {
 		return
 	}
 	m.auditRateLimited.WithLabelValues(eventType, serviceAccount).Inc()
+}
+
+// IncMinioReplicationResidencyViolation records one §25.11 ArtifactStore
+// cross-region replication residency violation for region. It advances
+// both the region-scoped lenny_minio_replication_residency_violation_total
+// and the shared lenny_data_residency_violation_total (operation
+// "artifact_replication"), matching the replication Controller's
+// Metrics.ResidencyViolation contract. F-12.5.20 / F-16.7.2.
+func (m *Metrics) IncMinioReplicationResidencyViolation(region string) {
+	if m == nil {
+		return
+	}
+	m.minioReplicationResidencyViolation.WithLabelValues(region).Inc()
+	m.dataResidencyViolation.WithLabelValues("artifact_replication").Inc()
+}
+
+// IncDataResidencyViolation records one §16.1 data-residency violation
+// for the named operation. It is the general entry point for the shared
+// lenny_data_residency_violation_total series; the replication preflight
+// uses IncMinioReplicationResidencyViolation, which calls through to this
+// series with operation "artifact_replication". F-12.5.20.
+func (m *Metrics) IncDataResidencyViolation(operation string) {
+	if m == nil {
+		return
+	}
+	m.dataResidencyViolation.WithLabelValues(operation).Inc()
 }
 
 // ObserveAuditScatterGatherShards records the §25.9 shard fan-out width

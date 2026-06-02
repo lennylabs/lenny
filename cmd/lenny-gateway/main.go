@@ -79,6 +79,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
@@ -710,6 +711,10 @@ func main() {
 	// render when tls.enabled is false on any non-embedded backend.
 	minioUseSSL := flag.Bool("minio-use-ssl", envFlagDefault("LENNY_MINIO_USE_SSL", true),
 		"connect to MinIO over HTTPS. Defaults to true per §12.5 line 279; only §17.4 Embedded Mode disables it. Override via LENNY_MINIO_USE_SSL.")
+	artifactReplicationConfig := flag.String("artifact-replication-config", os.Getenv("LENNY_ARTIFACT_REPLICATION_CONFIG"),
+		"§25.11 minio.artifactBackup configuration as JSON (enabled, regions[].{region,sourceBucket,dataResidencyRegion,target{endpoint,bucket,accessCredentialSecret}}). When set and enabled, the gateway runs the §12.5 line 278 ArtifactStore cross-region replication residency preflight. Empty (the default) disables it. Override via LENNY_ARTIFACT_REPLICATION_CONFIG.")
+	artifactReplicationRoleARN := flag.String("artifact-replication-role-arn", os.Getenv("LENNY_ARTIFACT_REPLICATION_ROLE_ARN"),
+		"§25.11 replication Role ARN the source MinIO cluster requires on a replication rule (arn:minio:replication or arn:aws:iam form). Optional. Override via LENNY_ARTIFACT_REPLICATION_ROLE_ARN.")
 	checkpointInterval := flag.Duration("checkpoint-interval", 10*time.Minute,
 		"§4.4 line 256 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
 	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
@@ -4823,6 +4828,48 @@ func main() {
 		log.Printf("lenny-gateway: §11.2 delegation tree budget checkpoint cadence %s (node footprint %d bytes)",
 			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second, *delegationNodeMemoryFootprintBytes)
 		go delegationBudgetReconciler.Run(watchdogCtx)
+	}
+
+	// ----- §25.11 ArtifactStore cross-region replication -----
+	// The §12.5 line 278 / §25.11 ArtifactStore replication controller
+	// configures continuous MinIO bucket replication to the off-cluster
+	// target and runs the runtime residency preflight, suspending
+	// replication fail-closed on a jurisdiction mismatch. It is hosted in
+	// the gateway because the gateway holds the source ArtifactStore
+	// MinIO client, the §16.7 audit pipeline, and the Prometheus metric
+	// surface the controller's audit events and residency-violation
+	// counters need; it is co-located with the §12.5 leader-elected MinIO
+	// maintenance sweeps below. CONFIG_INVALID aborts startup. The
+	// subsystem is off until an operator supplies
+	// --artifact-replication-config with enabled:true. F-12.5.20 /
+	// F-16.7.2 / F-17.3.7 / F-25.11.1.
+	if replCfg, err := parseReplicationConfig(*artifactReplicationConfig); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	} else if replCfg.Enabled {
+		if *minioEndpoint == "" {
+			log.Fatalf("lenny-gateway: §25.11 artifact replication requires --minio-endpoint (the source ArtifactStore cluster)")
+		}
+		driver, err := newReplicationDriver(replicationSource{
+			endpoint:  *minioEndpoint,
+			accessKey: *minioAccessKey,
+			secretKey: *minioSecretKey,
+			useSSL:    *minioUseSSL,
+		}, clusterClient, *agentNamespace, *artifactReplicationRoleARN)
+		if err != nil {
+			log.Fatalf("lenny-gateway: §25.11 artifact replication: %v", err)
+		}
+		replCtrl, err := replication.NewController(replication.ControllerConfig{
+			Config:  replCfg,
+			Driver:  driver,
+			Audit:   replicationAuditSink{appender: auditAppender}.emit,
+			Metrics: replicationMetricsAdapter{m: gwMetrics},
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: §25.11 artifact replication: %v", err)
+		}
+		log.Printf("lenny-gateway: §25.11 ArtifactStore replication enabled (%d region(s), residency tick %s)",
+			len(replCfg.Regions), replCtrl.ResidencyTickInterval())
+		go runReplicationController(watchdogCtx, replCtrl, log.Printf)
 	}
 
 	// ----- §7.1 artifact-retention GC -----
