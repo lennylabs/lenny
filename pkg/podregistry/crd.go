@@ -389,6 +389,11 @@ func (r *CRDPodRegistry) watchLoop(ctx context.Context, poolID PoolID, out chan<
 			return
 		case <-ticker.C():
 		}
+		// cycleStart bounds the §12.6 line 484 watch lag for this poll:
+		// the CRD records carry no updated_at, so the lag reported is the
+		// time from the poll observing the change to its delivery, which
+		// captures list latency and channel backpressure.
+		cycleStart := time.Now()
 		records, err := r.ListPodsByPool(ctx, poolID, PodFilter{})
 		if err != nil {
 			continue
@@ -417,6 +422,10 @@ func (r *CRDPodRegistry) watchLoop(ctx context.Context, poolID PoolID, out chan<
 			}
 			if !trySend(out, ev) {
 				pendingResync = true
+				continue
+			}
+			if r.metrics != nil {
+				r.metrics.observeWatchLag(string(poolID), implCRD, time.Since(cycleStart).Seconds())
 			}
 		}
 		for podID, rec := range known {
