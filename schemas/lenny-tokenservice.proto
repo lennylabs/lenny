@@ -83,6 +83,15 @@ message RotateCredentialsRequest {
   string tenant_id = 1;
   // lease_id identifies the lease to rotate.
   string lease_id = 2;
+  // rotation_trigger is the §4.9 rotationTrigger that drove this
+  // rotation (proactive_renewal, fault_rate_limited, fault_auth_expired,
+  // fault_provider_unavailable, emergency_revocation,
+  // user_credential_rotated, user_credential_revoked). The Token Service
+  // records it on the §4.9.2 audit event and the §16.1 rotationTrigger
+  // metric label, and it governs whether the §4.7 in-flight gate ceiling
+  // applies. Empty is treated as a fault trigger (ceiling applies) for
+  // fail-closed safety.
+  string rotation_trigger = 3;
 }
 
 message RotateCredentialsResponse {

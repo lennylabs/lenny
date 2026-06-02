@@ -53,11 +53,12 @@ func (r *recordingAuditor) snapshot() []recordedAudit {
 
 // recordingMetrics counts metric emissions for assertion.
 type recordingMetrics struct {
-	mu                  sync.Mutex
-	requestDurations    []string
-	errors              []string
-	rateLimited         []string
-	rateLimitedSampled  []string
+	mu                 sync.Mutex
+	requestDurations   []string
+	errors             []string
+	rateLimited        []string
+	rateLimitedSampled []string
+	fivexx             []string
 }
 
 func (m *recordingMetrics) RecordRequestDuration(op string, _ time.Duration) {
@@ -79,6 +80,11 @@ func (m *recordingMetrics) IncRateLimitedSampled(tier string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rateLimitedSampled = append(m.rateLimitedSampled, tier)
+}
+func (m *recordingMetrics) Inc5xx(errorType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fivexx = append(m.fivexx, errorType)
 }
 
 // recordingIssuedTokenStore records what was stored. Implements
@@ -113,6 +119,9 @@ type txStore struct {
 	records []issuedtokenstore.IssuedToken
 	audits  []recordedAudit
 	failAt  string
+	// failErr, when set, is returned verbatim from RecordWithAudit so a
+	// test can inject a typed Postgres-unavailability error. F-13.3.4.
+	failErr error
 }
 
 func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) error {
@@ -126,6 +135,9 @@ func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.Issued
 	eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.failErr != nil {
+		return audit.Row{}, t.failErr
+	}
 	if t.failAt == "audit" {
 		return audit.Row{}, &txStoreErr{"audit insert failed"}
 	}

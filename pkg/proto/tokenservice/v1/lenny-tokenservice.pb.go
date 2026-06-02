@@ -233,9 +233,18 @@ type RotateCredentialsRequest struct {
 	// tenant_id is the tenant that owns the lease.
 	TenantId string `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	// lease_id identifies the lease to rotate.
-	LeaseId       string `protobuf:"bytes,2,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	LeaseId string `protobuf:"bytes,2,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// rotation_trigger is the §4.9 rotationTrigger that drove this
+	// rotation (proactive_renewal, fault_rate_limited, fault_auth_expired,
+	// fault_provider_unavailable, emergency_revocation,
+	// user_credential_rotated, user_credential_revoked). The Token Service
+	// records it on the §4.9.2 audit event and the §16.1 rotationTrigger
+	// metric label, and it governs whether the §4.7 in-flight gate ceiling
+	// applies. Empty is treated as a fault trigger (ceiling applies) for
+	// fail-closed safety.
+	RotationTrigger string `protobuf:"bytes,3,opt,name=rotation_trigger,json=rotationTrigger,proto3" json:"rotation_trigger,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RotateCredentialsRequest) Reset() {
@@ -278,6 +287,13 @@ func (x *RotateCredentialsRequest) GetTenantId() string {
 func (x *RotateCredentialsRequest) GetLeaseId() string {
 	if x != nil {
 		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *RotateCredentialsRequest) GetRotationTrigger() string {
+	if x != nil {
+		return x.RotationTrigger
 	}
 	return ""
 }
@@ -795,10 +811,11 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\x06leases\x18\x01 \x03(\v2<.lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntryR\x06leases\x1aa\n" +
 	"\vLeasesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12<\n" +
-	"\x05value\x18\x02 \x01(\v2&.lenny.tokenservice.v1.CredentialLeaseR\x05value:\x028\x01\"R\n" +
+	"\x05value\x18\x02 \x01(\v2&.lenny.tokenservice.v1.CredentialLeaseR\x05value:\x028\x01\"}\n" +
 	"\x18RotateCredentialsRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
-	"\blease_id\x18\x02 \x01(\tR\aleaseId\"Y\n" +
+	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12)\n" +
+	"\x10rotation_trigger\x18\x03 \x01(\tR\x0frotationTrigger\"Y\n" +
 	"\x19RotateCredentialsResponse\x12<\n" +
 	"\x05lease\x18\x01 \x01(\v2&.lenny.tokenservice.v1.CredentialLeaseR\x05lease\"j\n" +
 	"\x18RevokeCredentialsRequest\x12\x1b\n" +

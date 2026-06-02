@@ -38,7 +38,7 @@ type proxyFallbackRotator struct {
 // Rotate issues a replacement lease for the faulted lease's provider
 // from nextPool and pushes it to the session's pod (Fallback Flow steps
 // 5-7). spec: spec/04_system-components.md lines 1405-1411.
-func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, _ credential.RotationTrigger) {
+func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
 	if r.assign == nil {
 		return
 	}
@@ -67,8 +67,14 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	wire.Provider = provider
 	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
 	defer cancel()
+	// §4.9 line 1413 / §4.7 line 822: the fault trigger that drove this
+	// fallback rides the RPC so the adapter applies the 300s in-flight
+	// gate ceiling rather than the unbounded proactive_renewal wait — the
+	// faulted credential is no longer trustworthy. An empty trigger
+	// (which AllRotationTriggers excludes) is treated as a fault by the
+	// adapter for fail-closed safety. F-13.3.10.
 	if err := bind.Adapter.RotateCredentials(ctx, faulted.SessionID,
-		map[string]*adapterv1.CredentialLease{provider: wire}); err != nil {
+		map[string]*adapterv1.CredentialLease{provider: wire}, trigger); err != nil {
 		log.Printf("lenny-gateway: §4.9 fallback: RotateCredentials push to session %s pod failed: %v",
 			faulted.SessionID, err)
 	}

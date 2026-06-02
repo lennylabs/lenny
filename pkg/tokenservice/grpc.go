@@ -126,6 +126,19 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 	if req.LeaseId == "" {
 		return nil, status.Error(codes.InvalidArgument, "lease_id is required")
 	}
+	// §4.9 line 1413: every RotateCredentials carries a rotationTrigger
+	// identifying the cause. An empty value is treated as a fault trigger
+	// (fail-closed: the §4.7 ceiling applies and the old credential is
+	// assumed untrustworthy); a non-empty value that is not one of the
+	// seven §4.9 triggers is rejected so a typo cannot silently disable
+	// the ceiling discipline. F-13.3.10.
+	trigger := credential.RotationTrigger(req.RotationTrigger)
+	if req.RotationTrigger == "" {
+		trigger = credential.TriggerFaultProviderUnavailable
+	} else if !trigger.IsValid() {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"rotation_trigger %q is not a §4.9 trigger", req.RotationTrigger)
+	}
 	old, ok := s.leases.GetByID(req.LeaseId)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
@@ -136,8 +149,11 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 	}
 	s.assign.Release(req.LeaseId)
 	// §13.3 line 597: rotation revokes the previous lease's lease
-	// token. Emit token.revoked so SIEM has a revocation receipt.
-	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, "rotation")
+	// token. Emit token.revoked so SIEM has a revocation receipt; the
+	// §4.9 rotationTrigger is recorded as the revocation reason so the
+	// audit trail distinguishes a proactive renewal from a fault- or
+	// operator-driven rotation. F-13.3.10.
+	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, "rotation:"+string(trigger))
 	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI, old.TenantID)
 	if rerr != nil {
 		if errors.Is(rerr, credassign.ErrPoolNotFound) {

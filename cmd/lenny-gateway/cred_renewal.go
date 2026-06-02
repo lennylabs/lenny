@@ -204,11 +204,13 @@ func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
 	defer cancel()
-	// §4.9 rotationTrigger: proactive_renewal. The trigger is internal
-	// gateway rotation context; the §4.7 wire contract carries only the
-	// session id and the rotated lease map.
+	// §4.9 rotationTrigger: proactive_renewal. The trigger rides the RPC
+	// so the adapter keeps the unbounded §4.7 in-flight wait (the old
+	// credential is still valid) instead of applying the fault ceiling.
+	// spec: §4.9 line 1413 / §4.7 line 822. F-13.3.10.
 	if err := bind.Adapter.RotateCredentials(ctx, renewed.SessionID,
-		map[string]*adapterv1.CredentialLease{provider: wire}); err != nil {
+		map[string]*adapterv1.CredentialLease{provider: wire},
+		credential.TriggerProactiveRenewal); err != nil {
 		log.Printf("lenny-gateway: §4.9 proactive renewal: RotateCredentials push to session %s pod failed: %v",
 			renewed.SessionID, err)
 	}

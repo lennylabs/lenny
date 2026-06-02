@@ -25,6 +25,9 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 	emitter.IncRateLimited("caller_per_second")
 	emitter.IncRateLimitedSampled("caller_per_second")
 	emitter.IncSecretReload("success")
+	// §16.1 / §16.5 — the 5xx counter feeds the TokenStoreUnavailable
+	// alert. F-13.3.4.
+	emitter.Inc5xx("token_store_unavailable")
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -40,6 +43,7 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 		"lenny_token_service_secret_reloads_total",
 		"lenny_oauth_token_rate_limited_total",
 		"lenny_oauth_token_rate_limited_sampled_total",
+		`lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(bodyStr, want) {

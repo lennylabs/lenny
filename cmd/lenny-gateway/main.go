@@ -182,6 +182,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
+	"github.com/lennylabs/lenny/pkg/gateway/pgnotify"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
@@ -3111,10 +3112,23 @@ func main() {
 	// revocation path route through it so a revoked credential lease
 	// stops reaching the provider on every replica, and no replica
 	// proactively renews a credential that is no longer trustworthy.
+	// §4.9 line 1647: the credential deny-list revocation propagates via
+	// Redis pub/sub with Postgres LISTEN/NOTIFY as fallback. The Postgres
+	// half is wired only when Postgres is configured (the option is
+	// omitted otherwise so a no-Postgres dev gateway keeps a true-nil
+	// fallback); it carries a revocation when Redis is down or disabled
+	// and feeds the LISTEN subscribe loop so a peer's revocation still
+	// converges. F-13.3.8.
+	credDenyPropOpts := []credrenewalprop.Option{
+		credrenewalprop.WithErrorHandler(func(err error) {
+			log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
+		}),
+	}
+	if pgPool != nil {
+		credDenyPropOpts = append(credDenyPropOpts, credrenewalprop.WithFallback(pgnotify.New(pgPool)))
+	}
 	var credRenewalWorker *credrenewal.Worker
-	credRenewalProp := credrenewalprop.New(credDeny, nil, securityBus, credrenewalprop.WithErrorHandler(func(err error) {
-		log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
-	}))
+	credRenewalProp := credrenewalprop.New(credDeny, nil, securityBus, credDenyPropOpts...)
 	if credRenewal != nil {
 		// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds.
 		// 0 disables warnings; -1 keeps the package default; any other
@@ -3144,10 +3158,7 @@ func main() {
 		// Rebuild the propagator over the live worker so a peer replica's
 		// credential-lease revocation also drops this replica's tracked
 		// leases for the credential, not just its deny-list entry.
-		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, securityBus,
-			credrenewalprop.WithErrorHandler(func(err error) {
-				log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
-			}))
+		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, securityBus, credDenyPropOpts...)
 	}
 
 	// ----- Admin API -----
@@ -3936,6 +3947,16 @@ func main() {
 		// returns the user's stored Roles when the row exists; missing
 		// rows fall through to the JWT claim. F-10.2.3.
 		PlatformRoles: userstorePlatformRoles{store: users},
+	}
+	// §13.3 line 601 — fail-closed token validation. Only when Postgres
+	// backs the revocation rehydration (below) is the staleness gate
+	// meaningful: a replica that cannot reach Postgres for longer than the
+	// freshness window refuses to validate (503 token_validation_unavailable)
+	// rather than honor a possibly-revoked token from its stale cache. The
+	// in-memory dev path leaves it nil so a no-Postgres deployment does not
+	// fail closed. F-13.3.4.
+	if pgPool != nil {
+		authOpts.RevocationFreshness = revCache
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the

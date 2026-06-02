@@ -11,6 +11,7 @@ package revocation
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 )
@@ -26,16 +27,58 @@ type TenantLister interface {
 	ListTenants(ctx context.Context) ([]string, error)
 }
 
+// defaultMaxStaleness bounds how long a replica trusts its in-memory
+// revocation set after the last successful rehydration. The rehydration
+// loop runs every 30s; three missed cycles (90s) means the replica
+// cannot reach Postgres, at which point §13.3 line 601 requires it to
+// refuse validation rather than honor a possibly-revoked token from a
+// stale cache.
+const defaultMaxStaleness = 90 * time.Second
+
 // Cache holds the set of revoked token JTIs. The zero value is not
 // usable; construct with NewCache.
 type Cache struct {
 	mu      sync.RWMutex
 	revoked map[string]struct{}
+
+	// lastSuccess is the instant the most recent Rehydrate completed
+	// against Postgres. The §13.3 fail-closed validation gate keys on its
+	// age. A zero value means no rehydration has ever succeeded.
+	lastSuccess  time.Time
+	maxStaleness time.Duration
+	clock        func() time.Time
+}
+
+// Option configures a Cache at construction.
+type Option func(*Cache)
+
+// WithClock overrides the wall clock the staleness gate reads. Tests
+// inject a controllable clock; production leaves it at time.Now.
+func WithClock(fn func() time.Time) Option {
+	return func(c *Cache) { c.clock = fn }
+}
+
+// WithMaxStaleness overrides the freshness window the §13.3 validation
+// gate enforces. A non-positive value restores the default.
+func WithMaxStaleness(d time.Duration) Option {
+	return func(c *Cache) {
+		if d > 0 {
+			c.maxStaleness = d
+		}
+	}
 }
 
 // NewCache returns an empty revocation cache.
-func NewCache() *Cache {
-	return &Cache{revoked: map[string]struct{}{}}
+func NewCache(opts ...Option) *Cache {
+	c := &Cache{
+		revoked:      map[string]struct{}{},
+		maxStaleness: defaultMaxStaleness,
+		clock:        time.Now,
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }
 
 // IsRevoked reports whether the token identified by jti has been
@@ -98,5 +141,24 @@ func (c *Cache) Rehydrate(ctx context.Context, tenants TenantLister, src Source)
 		fresh[jti] = struct{}{}
 	}
 	c.revoked = fresh
+	// Record the successful read so the §13.3 line 601 validation gate
+	// knows the in-memory set reflects Postgres as of this instant.
+	c.lastSuccess = c.clock()
 	return nil
+}
+
+// Stale reports whether the in-memory revocation set is too old to
+// trust because the replica cannot reach Postgres. §13.3 line 601: a
+// gateway replica that cannot reach Postgres refuses to validate tokens
+// and returns 503 token_validation_unavailable rather than honoring a
+// possibly-revoked token from a stale cache. The set is stale when no
+// rehydration has ever succeeded, or when the most recent success is
+// older than the freshness window. spec: §13.3 line 601. F-13.3.4.
+func (c *Cache) Stale() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.lastSuccess.IsZero() {
+		return true
+	}
+	return c.clock().Sub(c.lastSuccess) > c.maxStaleness
 }

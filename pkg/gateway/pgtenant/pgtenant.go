@@ -11,10 +11,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -184,6 +187,61 @@ func InAdminMode(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error)
 		return fmt.Errorf("pgtenant: commit: %w", err)
 	}
 	return nil
+}
+
+// IsUnavailable reports whether err signals that Postgres is
+// unreachable or unable to serve — the primary is down, in failover,
+// refusing connections, shutting down, or out of connection slots.
+// It is the connectivity classifier the fail-closed paths use to
+// distinguish a Postgres outage (which the spec maps to a 503
+// token_store_unavailable / token_validation_unavailable response)
+// from a genuine internal error or a constraint violation (which stays
+// a 500). A nil error is never unavailable.
+//
+// The classifier matches:
+//   - context.DeadlineExceeded — the bounded write deadline elapsed
+//     before the durable write committed, so the platform cannot prove
+//     the token was recorded with audit coverage and must fail closed.
+//   - *pgconn.ConnectError — pgx could not establish the connection
+//     (dial refused, TLS handshake failed, auth rejected at connect).
+//   - *pgconn.PgError in SQLSTATE class 08 (connection exception) or
+//     the operator-initiated shutdown / cannot-connect-now / too-many-
+//     connections codes the server returns during a failover.
+//   - *net.OpError — a raw transport failure surfaced before pgx
+//     wrapped it.
+//
+// spec: §13.3 line 591 (issuance) / line 601 (validation).
+func IsUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var connErr *pgconn.ConnectError
+	if errors.As(err, &connErr) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch {
+		case strings.HasPrefix(pgErr.Code, "08"):
+			// Class 08 — connection exception (08000, 08003, 08006, 08001,
+			// 08004, 08007, 08P01).
+			return true
+		case pgErr.Code == "57P01", pgErr.Code == "57P02", pgErr.Code == "57P03":
+			// admin_shutdown, crash_shutdown, cannot_connect_now — the
+			// backend is terminating or not yet accepting connections, both
+			// of which a failover produces.
+			return true
+		case pgErr.Code == "53300":
+			// too_many_connections — the primary is up but cannot serve this
+			// caller; fail closed rather than issue without a durable write.
+			return true
+		}
+	}
+	var netErr *net.OpError
+	return errors.As(err, &netErr)
 }
 
 // NullTime maps a zero time.Time to a SQL NULL, so a nullable

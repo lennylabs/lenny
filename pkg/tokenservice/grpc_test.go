@@ -182,6 +182,69 @@ func TestGRPCRotateCredentialsReissuesFromSamePool(t *testing.T) {
 	}
 }
 
+// spec: §4.9 line 1413 — an invalid rotation_trigger is rejected so a
+// typo cannot silently disable the §4.7 ceiling discipline. F-13.3.10.
+func TestGRPCRotateCredentialsRejectsInvalidTrigger_F13310(t *testing.T) {
+	_, leases, srv := proxyPool(t, "claude-prod")
+	resp, err := srv.AssignCredentials(context.Background(), &tokensv1.AssignCredentialsRequest{
+		TenantId: "acme", SessionId: "s_1", PoolIds: []string{"claude-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	old := resp.Leases["anthropic_direct"]
+	_, err = srv.RotateCredentials(context.Background(), &tokensv1.RotateCredentialsRequest{
+		TenantId: "acme", LeaseId: old.LeaseId, RotationTrigger: "not_a_trigger",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("err = %v, want InvalidArgument for an unknown trigger", err)
+	}
+	// The lease must not have been released by a rejected rotation.
+	if _, found := leases.GetByID(old.LeaseId); !found {
+		t.Errorf("lease %q was released despite a rejected rotation", old.LeaseId)
+	}
+}
+
+// spec: §4.9 line 1413 / §13.3 line 597 — a valid trigger is accepted and
+// recorded as the revocation reason; an empty trigger defaults to a fault
+// trigger (fail-closed) and still rotates. F-13.3.10.
+func TestGRPCRotateCredentialsRecordsTrigger_F13310(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		trigger    string
+		wantReason string
+	}{
+		{"proactive", "proactive_renewal", "rotation:proactive_renewal"},
+		{"fault", "fault_auth_expired", "rotation:fault_auth_expired"},
+		{"empty defaults to fault", "", "rotation:fault_provider_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, srv := proxyPool(t, "claude-prod")
+			auditor := &recordingAuditor{}
+			srv.SetAuditor(auditor)
+			resp, err := srv.AssignCredentials(context.Background(), &tokensv1.AssignCredentialsRequest{
+				TenantId: "acme", SessionId: "s_1", PoolIds: []string{"claude-prod"},
+			})
+			if err != nil {
+				t.Fatalf("Assign: %v", err)
+			}
+			old := resp.Leases["anthropic_direct"]
+			if _, err := srv.RotateCredentials(context.Background(), &tokensv1.RotateCredentialsRequest{
+				TenantId: "acme", LeaseId: old.LeaseId, RotationTrigger: tc.trigger,
+			}); err != nil {
+				t.Fatalf("RotateCredentials: %v", err)
+			}
+			rows := auditor.snapshot()
+			if len(rows) != 1 {
+				t.Fatalf("audit rows = %d, want 1 token.revoked row", len(rows))
+			}
+			if !strings.Contains(string(rows[0].Payload), tc.wantReason) {
+				t.Errorf("token.revoked payload = %s, want reason %q", rows[0].Payload, tc.wantReason)
+			}
+		})
+	}
+}
+
 // spec: 4.3
 // diagnosis: rotating an unknown lease is NotFound.
 func TestGRPCRotateCredentialsUnknownLease(t *testing.T) {

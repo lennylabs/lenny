@@ -37,6 +37,14 @@ type Metrics interface {
 	// IncRateLimitedSampled records the per-(tenant, sub, tier) per
 	// 10-second sampled rejection used to emit the §13.3 audit row.
 	IncRateLimitedSampled(limitTier string)
+
+	// Inc5xx records one 5xx response on the /v1/oauth/token endpoint by
+	// error type, populating the §16.1 lenny_oauth_token_5xx_total
+	// counter the §16.5 TokenStoreUnavailable alert reads. errorType is
+	// the RFC 8693 / §13.3 error code carried in the body
+	// (token_store_unavailable, server_error, kms_signing_unavailable,
+	// token_validation_unavailable). spec: §13.3 line 591 / §16.1.
+	Inc5xx(errorType string)
 }
 
 // NoMetrics is a no-op Metrics. It is the default when Options.Metrics
@@ -54,6 +62,9 @@ func (NoMetrics) IncRateLimited(string) {}
 
 // IncRateLimitedSampled implements Metrics.
 func (NoMetrics) IncRateLimitedSampled(string) {}
+
+// Inc5xx implements Metrics.
+func (NoMetrics) Inc5xx(string) {}
 
 // Ensure NoMetrics satisfies Metrics at compile time.
 var _ Metrics = NoMetrics{}

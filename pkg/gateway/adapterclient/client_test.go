@@ -937,7 +937,7 @@ func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
 				`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-new"}}`),
 		},
 	}
-	if err := cl.RotateCredentials(context.Background(), "sess-rot", leases); err != nil {
+	if err := cl.RotateCredentials(context.Background(), "sess-rot", leases, credential.TriggerProactiveRenewal); err != nil {
 		t.Fatalf("RotateCredentials: %v", err)
 	}
 	if rec.gotRotate == nil {
@@ -945,6 +945,10 @@ func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
 	}
 	if got := rec.gotRotate.GetSessionId().GetValue(); got != "sess-rot" {
 		t.Errorf("RotateCredentials session id = %q, want sess-rot", got)
+	}
+	// spec: §4.9 line 1413 — the rotationTrigger rides the RPC. F-13.3.10.
+	if got := rec.gotRotate.GetRotationTrigger(); got != "proactive_renewal" {
+		t.Errorf("RotateCredentials rotation_trigger = %q, want proactive_renewal", got)
 	}
 	got, ok := rec.gotRotate.GetLeases()["anthropic_direct"]
 	if !ok {
@@ -955,12 +959,30 @@ func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
 	}
 }
 
+// spec: §4.9 line 1413 / §4.7 line 822 — a fault trigger rides the RPC so
+// the adapter applies the 300s in-flight gate ceiling. F-13.3.10.
+func TestRotateCredentialsForwardsFaultTrigger(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	if err := cl.RotateCredentials(context.Background(), "sess-rot", nil,
+		credential.TriggerFaultRateLimited); err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+	if rec.gotRotate == nil {
+		t.Fatal("the adapter received no RotateCredentials request")
+	}
+	if got := rec.gotRotate.GetRotationTrigger(); got != "fault_rate_limited" {
+		t.Errorf("RotateCredentials rotation_trigger = %q, want fault_rate_limited", got)
+	}
+}
+
 func TestRotateCredentialsEmptyMapIsAccepted(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
 	// A nil lease map rotates nothing; the call still round-trips.
-	if err := cl.RotateCredentials(context.Background(), "sess-rot", nil); err != nil {
+	if err := cl.RotateCredentials(context.Background(), "sess-rot", nil, credential.TriggerProactiveRenewal); err != nil {
 		t.Fatalf("RotateCredentials with no leases: %v", err)
 	}
 	if rec.gotRotate == nil || len(rec.gotRotate.GetLeases()) != 0 {
@@ -972,7 +994,7 @@ func TestRotateCredentialsPropagatesAdapterError(t *testing.T) {
 	rec := &recordingAdapter{rotateErr: status.Error(codes.FailedPrecondition, "no session")}
 	cl := dialRecordingAdapter(t, rec)
 
-	err := cl.RotateCredentials(context.Background(), "sess-rot", nil)
+	err := cl.RotateCredentials(context.Background(), "sess-rot", nil, credential.TriggerFaultProviderUnavailable)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RotateCredentials error = %v, want the adapter's FailedPrecondition", err)
 	}
@@ -984,7 +1006,7 @@ func TestRotateCredentialsRejectsEmptySessionID(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	// The adapter's RotateCredentials requires a session id.
-	err := cl.RotateCredentials(context.Background(), "", nil)
+	err := cl.RotateCredentials(context.Background(), "", nil, credential.TriggerProactiveRenewal)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("RotateCredentials with no session id = %v, want InvalidArgument", err)
 	}
@@ -1017,7 +1039,7 @@ func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 				Payload: []byte(`{"deliveryMode":"proxy",` +
 					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-2"}}`),
 			},
-		}); err != nil {
+		}, credential.TriggerProactiveRenewal); err != nil {
 		t.Fatalf("RotateCredentials: %v", err)
 	}
 

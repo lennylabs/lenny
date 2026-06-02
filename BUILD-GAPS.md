@@ -22865,7 +22865,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.4 — CFL-004 — Postgres unavailability does not return `503 token_store_unavailable` / `503 token_validation_unavailable` [Medium] — OPEN
+### - [x] F-13.3.4 — CFL-004 — Postgres unavailability does not return `503 token_store_unavailable` / `503 token_validation_unavailable` [Medium] — CLOSED
 
 **Normative requirement (§13.3 lines 591 and 601).** "During a Postgres outage (primary unreachable or in failover), token issuance is unavailable by design — callers receive `503 token_store_unavailable` and the alert `TokenStoreUnavailable` fires; the platform does not fall back to issuing tokens without audit coverage." (Issuance side.) "A gateway replica that cannot reach Postgres refuses to validate tokens — it returns `503 token_validation_unavailable` rather than accepting potentially-revoked tokens from its stale in-memory cache." (Validation side.)
 
@@ -22877,6 +22877,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** A Postgres failover during token issuance returns `500 server_error` to clients; SREs cannot distinguish a transient Postgres outage from a genuine internal error, and the alert (which probably keys on the 503 code) does not fire. On the validate side, a stale in-memory revocation cache during a Postgres outage continues to validate revoked tokens — the spec calls this "fail-closed when we cannot prove safety, we refuse to serve."
 
 **Severity rationale.** Medium because the failure window is bounded (the in-memory cache stays warm), but the spec's fail-closed posture is breached and the operator alert/diagnosis path is broken.
+
+**Resolution (this batch):** New `pgtenant.IsUnavailable` connectivity classifier (SQLSTATE class 08 / 57P0x / 53300, `*pgconn.ConnectError`, `context.DeadlineExceeded`, `*net.OpError`) distinguishes a Postgres outage from a constraint violation or logic bug. Issuance side: the Token Service write-before-issue path (`writeIssueStoreError`) now maps an unavailability error to `503 token_store_unavailable` with `Retry-After`, leaving a genuine internal error at `500 server_error`; both increment the new §16.1 `lenny_oauth_token_5xx_total{error_type}` counter (emitted from `tokenservice/promemit`) so the §16.5 `TokenStoreUnavailable` SLI can fire. Validation side: `revocation.Cache` tracks the last successful rehydration and reports `Stale()` once a configurable freshness window (default 90s = 3× the 30s rehydration tick) elapses with no success; the auth middleware gains a `RevocationFreshness` gate that returns `503 token_validation_unavailable` for every Bearer when the set is stale, wired only when Postgres backs the rehydration (the dev path stays nil so a no-Postgres deployment does not fail closed). spec: §13.3 line 591 / line 601.
 
 ---
 
@@ -22938,7 +22940,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.8 — CFL-008 — Credential deny list lacks Postgres `LISTEN/NOTIFY` fallback and startup rebuild [Medium] — OPEN
+### - [x] F-13.3.8 — CFL-008 — Credential deny list lacks Postgres `LISTEN/NOTIFY` fallback and startup rebuild [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.9.7 — Both report the §4.9 startup deny-list rebuild union query is not implemented (only doc comments reference it); F-13.3.8 additionally folds in the LISTEN/NOTIFY fallback but shares the core gap.
 
@@ -22954,7 +22956,9 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 **Severity rationale.** Medium because (a) the deny list is correctly keyed (source-aware tagged union, CFL-009), (b) the at-most-once caveat is documented in the implementation, but (c) the spec promises stronger durability via `LISTEN/NOTIFY` + startup rebuild that is unimplemented, leaving the window CFL-007 already opens unbounded.
 
-**Partial progress (13fc529e):** The startup-rebuild half of this finding — the core gap shared with F-4.9.7 — is resolved: `cmd/lenny-gateway/main.go` now seeds `credDeny` from `credentialpoolstore.Store.RevokedCredentials` via `DenyList.Reset` at startup, so a restarted replica no longer silently accepts a credential revoked while it was down. **Remaining scope (stays OPEN):** the Postgres `LISTEN/NOTIFY` fallback for the live propagation window when Redis is unavailable, and the spec-named `TestUserCredentialRevocationDenyListProxy` integration test (which exercises a user-backed lease and so is blocked on user-backed lease minting at session creation, F-4.9.15).
+**Partial progress (13fc529e):** The startup-rebuild half of this finding — the core gap shared with F-4.9.7 — is resolved: `cmd/lenny-gateway/main.go` now seeds `credDeny` from `credentialpoolstore.Store.RevokedCredentials` via `DenyList.Reset` at startup, so a restarted replica no longer silently accepts a credential revoked while it was down.
+
+**Resolution (this batch):** The remaining `LISTEN/NOTIFY` fallback is implemented. New `pkg/gateway/pgnotify.Bus` raises revocations via `pg_notify` and consumes them on a dedicated reconnecting `LISTEN` connection (validated end-to-end by a tier-4 round-trip against embedded Postgres). The production credential-deny-list propagator (`credrenewal/propagator`, which fans out over the shared `denylistprop.Channel`) and the sibling `denylist/propagator` gain a `WithFallback` option: `Revoke` publishes on the Postgres fallback when the Redis publish fails or no Redis bus is wired, and `Run` subscribes on both the Redis channel and the `PGChannel` concurrently (apply is idempotent). `cmd/lenny-gateway` wires the fallback when Postgres is configured, so a revocation still converges fleet-wide during a Redis outage. The spec-named `TestUserCredentialRevocationDenyListProxy` integration test remains tracked under F-4.9.15 — it exercises a user-backed lease, which v1 does not mint (no user-source lease producer); the pool-backed propagation it would also assert is covered here by the `pgnotify` round-trip and the propagator fallback unit tests.
 
 ---
 
@@ -22974,7 +22978,7 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 
 ---
 
-### - [ ] F-13.3.10 — CFL-010 — Token-service `RotateCredentials` proto lacks `rotation_trigger` field [Medium] — OPEN
+### - [x] F-13.3.10 — CFL-010 — Token-service `RotateCredentials` proto lacks `rotation_trigger` field [Medium] — CLOSED
 
 **Normative requirement (§4.9 line 1413).** "Every `RotateCredentials` RPC carries a `rotationTrigger` value identifying the cause of the rotation. The value is recorded in the internal rotation context, surfaced in audit events ([§4.9.2]) and metric labels ([§16.1]), and governs whether the in-flight gate ceiling at [§4.7] applies." The enum is `proactive_renewal | fault_rate_limited | fault_auth_expired | fault_provider_unavailable | emergency_revocation | user_credential_rotated | user_credential_revoked`.
 
@@ -22988,6 +22992,8 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 **Impact.** §4.7's "Revocation-triggered rotation ceiling" (the 300-second in-flight gate ceiling fired only for non-proactive triggers) cannot be enforced because the adapter receives no trigger value to switch on. The `credential.rotation_ceiling_hit` audit event payload (§4.9.2) requires a `rotation_trigger` field that does not exist on the wire. Operators cannot distinguish a fault-driven from a proactive rotation in the metric labels (the `rotationTrigger` label vocabulary at §16.1 is unfilled).
 
 **Severity rationale.** Medium because (a) the underlying Go enum is correct, (b) the §4.7 ceiling logic is decision-ready in `IsCeilingApplicable()`, but (c) the protobuf field that conveys the trigger to the receiver and the audit/metric paths is missing, so the spec's ceiling discipline cannot be enforced today.
+
+**Resolution (this batch):** The adapter proto already carries `rotation_trigger` (the cited adapter evidence was stale), but the gateway adapter client dropped it and the Token Service proto lacked it. `schemas/lenny-tokenservice.proto` now declares `rotation_trigger` on `RotateCredentialsRequest` (bindings regenerated). The gateway adapter client `RotateCredentials` takes a `credential.RotationTrigger` and stamps it on the wire; the proactive-renewal caller passes `proactive_renewal` (unbounded §4.7 wait) and the fallback caller threads the fault trigger that drove the rotation (300s ceiling), so the adapter's existing `req.GetRotationTrigger()` ceiling switch now receives a real value. The Token Service gRPC `RotateCredentials` handler validates the trigger (an empty value defaults to a fault trigger fail-closed; an unknown value is rejected `InvalidArgument`) and records it as the `token.revoked` reason. spec: §4.9 line 1413 / §4.7 line 822.
 
 ---
 

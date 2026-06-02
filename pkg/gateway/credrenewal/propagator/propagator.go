@@ -40,6 +40,7 @@ package propagator
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
@@ -53,6 +54,11 @@ import (
 // revocation are the same fleet-wide event, so they share one channel
 // and one subscriber keyspace rather than a second pub/sub mechanism.
 const Channel = denylistprop.Channel
+
+// PGChannel is the §4.9 Postgres LISTEN/NOTIFY fallback channel, shared
+// with the credential-deny-list propagator so both transports carry the
+// same fleet-wide revocation event. spec: §4.9 line 1647.
+const PGChannel = denylistprop.PGChannel
 
 // CredentialRevoker is the subset of credrenewal.Worker the propagator
 // drives: marking a pool credential revoked so the renewal worker drops
@@ -71,6 +77,9 @@ type Propagator struct {
 	denyList *denylist.DenyList
 	worker   CredentialRevoker
 	bus      *pubsub.Bus
+	// fallback carries the §4.9 Postgres LISTEN/NOTIFY transport used when
+	// Redis publish fails or no Redis bus is wired. Nil disables it.
+	fallback denylistprop.Fallback
 	// onError observes a publish failure. Nil means failures are
 	// swallowed; the gateway passes a logging callback.
 	onError func(error)
@@ -85,6 +94,15 @@ type Option func(*Propagator)
 // propagation.
 func WithErrorHandler(fn func(error)) Option {
 	return func(p *Propagator) { p.onError = fn }
+}
+
+// WithFallback wires the §4.9 Postgres LISTEN/NOTIFY fallback. A Revoke
+// publishes on it when the Redis publish fails (or when no Redis bus is
+// wired), and Run additionally subscribes on it so a peer replica's
+// revocation reaches this replica over Postgres even while Redis is
+// down. spec: §4.9 line 1647. F-13.3.8.
+func WithFallback(fb denylistprop.Fallback) Option {
+	return func(p *Propagator) { p.fallback = fb }
 }
 
 // New returns a Propagator that revokes credentials on denyList and
@@ -118,8 +136,24 @@ func (p *Propagator) Revoke(key credential.CredentialKey) {
 		}
 		return
 	}
-	if err := p.bus.Publish(context.Background(), Channel, payload); err != nil && p.onError != nil {
-		p.onError(err)
+	// §4.9 line 1647: Redis pub/sub is primary with Postgres
+	// LISTEN/NOTIFY as fallback. The Postgres path carries the revocation
+	// when the Redis publish fails (Redis down) or when no Redis bus is
+	// configured. F-13.3.8.
+	redisOK := false
+	if p.bus != nil {
+		if perr := p.bus.Publish(context.Background(), Channel, payload); perr != nil {
+			if p.onError != nil {
+				p.onError(perr)
+			}
+		} else {
+			redisOK = true
+		}
+	}
+	if !redisOK && p.fallback != nil {
+		if perr := p.fallback.Publish(context.Background(), PGChannel, payload); perr != nil && p.onError != nil {
+			p.onError(perr)
+		}
 	}
 }
 
@@ -146,7 +180,24 @@ func (p *Propagator) IsCrossReplicaPropagator() {}
 // with a nil Bus has Run block until ctx is cancelled and apply
 // nothing.
 func (p *Propagator) Run(ctx context.Context) {
-	p.bus.Subscribe(ctx, Channel, p.apply)
+	if p.fallback == nil {
+		p.bus.Subscribe(ctx, Channel, p.apply)
+		return
+	}
+	// §4.9 line 1647: subscribe on both transports so a revocation reaches
+	// this replica over whichever is live. apply is idempotent, so a key
+	// received on both channels is harmless. F-13.3.8.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		p.bus.Subscribe(ctx, Channel, p.apply)
+	}()
+	go func() {
+		defer wg.Done()
+		p.fallback.Subscribe(ctx, PGChannel, p.apply)
+	}()
+	wg.Wait()
 }
 
 // apply decodes one pub/sub payload and revokes the credential locally.

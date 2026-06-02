@@ -166,6 +166,16 @@ type Options struct {
 	// signature and expiry are still valid (§13.3 token revocation).
 	Revocations RevocationChecker
 
+	// RevocationFreshness, when set, reports whether the in-memory
+	// revocation set is too stale to trust because the replica cannot
+	// reach Postgres. §13.3 line 601 requires a replica that cannot reach
+	// Postgres to refuse validation (503 token_validation_unavailable)
+	// rather than honor a possibly-revoked token from a stale cache. It is
+	// wired only when Postgres backs the revocation rehydration; the dev
+	// path leaves it nil so an in-memory deployment does not fail closed.
+	// spec: §13.3 line 601. F-13.3.4.
+	RevocationFreshness RevocationFreshness
+
 	// PlaygroundRevocations, when set, is the §27.6 authoritative
 	// per-request revocation check for playground-origin bearers. It is
 	// consulted on the auth hot path for every verified Bearer whose
@@ -227,6 +237,17 @@ type PlatformRoleResolver interface {
 // RevocationChecker reports whether a token's jti has been revoked.
 type RevocationChecker interface {
 	IsRevoked(jti string) bool
+}
+
+// RevocationFreshness reports whether the local revocation set is too
+// stale to trust. The auth middleware consults it before honoring any
+// Bearer token: a stale set (the replica cannot reach Postgres to
+// confirm the token has not been revoked) fails closed with 503
+// token_validation_unavailable per §13.3 line 601.
+type RevocationFreshness interface {
+	// Stale reports that the in-memory revocation set is older than the
+	// freshness window because Postgres is unreachable.
+	Stale() bool
 }
 
 // playgroundOriginClaim is the §27.3 `origin` claim value stamped on
@@ -339,6 +360,18 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID", err.Error(), nil)
+		return
+	}
+	// §13.3 line 601 fail-closed validation: a replica that cannot reach
+	// Postgres refuses to validate tokens rather than honor one from a
+	// stale revocation cache that may be missing a revocation recorded
+	// during the outage. The freshness check fires for every Bearer
+	// before the in-memory revocation lookup so a token absent from the
+	// stale set is not accepted. F-13.3.4.
+	if m.opts.RevocationFreshness != nil && m.opts.RevocationFreshness.Stale() {
+		writeError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
+			"the revocation store is unreachable; the token cannot be validated",
+			map[string]any{"retryable": true})
 		return
 	}
 	// §13.3 revocation: a signature- and expiry-valid token is still

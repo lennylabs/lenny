@@ -136,16 +136,20 @@ func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases
 // Fallback Flow steps 5–7, Emergency Credential Revocation step 5
 // (direct-delivery mode), and the Proactive Lease Renewal loop's
 // replacement-lease push. The §4.9 rotationTrigger that distinguishes
-// those causes is internal gateway rotation context; the adapter wire
-// contract carries only the session id and the rotated lease map.
+// those causes rides the request so the adapter applies the §4.7
+// in-flight gate ceiling for fault-driven rotations and the unbounded
+// wait for proactive_renewal. An empty trigger is treated by the adapter
+// as a fault trigger (ceiling applies) for fail-closed safety.
 //
 // The request carries credential material; per §4.7 item 6 the call
 // site must keep it out of access logs and telemetry. A nil or empty
 // map rotates nothing.
-func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease) error {
+// spec: §4.9 line 1413 / §4.7 line 822. F-13.3.10.
+func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease, trigger credential.RotationTrigger) error {
 	_, err := c.rpc.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		Leases:    leases,
+		SessionId:       &adapterv1.SessionId{Value: sessionID},
+		Leases:          leases,
+		RotationTrigger: string(trigger),
 	})
 	return err
 }
@@ -275,7 +279,7 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []b
 type InterruptStatus int32
 
 const (
-	InterruptStatusUnspecified InterruptStatus = 0
+	InterruptStatusUnspecified  InterruptStatus = 0
 	InterruptStatusAcknowledged InterruptStatus = 1
 	InterruptStatusTimeout      InterruptStatus = 2
 	InterruptStatusBusy         InterruptStatus = 3

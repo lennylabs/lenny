@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
 )
@@ -230,6 +231,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordRequestDuration(op, s.clockNow().Sub(start))
 		if errClass != "" {
 			s.metrics.IncErrors(op, errClass)
+			// §16.1 lenny_oauth_token_5xx_total feeds the §16.5
+			// TokenStoreUnavailable alert; record every 5xx error class so a
+			// Postgres outage is distinguishable from a client error. The
+			// 4xx classes (invalid_*, rate_limited) are excluded. F-13.3.4.
+			if is5xxErrorClass(errClass) {
+				s.metrics.Inc5xx(errClass)
+			}
 		}
 	}
 
@@ -477,9 +485,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// INSERT and the audit_log INSERT under the §11.7 lock.
 		if _, err := as.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
 			auditPayload.JSON(), now); err != nil {
-			writeOAuthError(w, http.StatusInternalServerError, "server_error",
-				"§13.3 write-before-issue failed: "+err.Error())
-			finish("server_error")
+			writeIssueStoreError(w, finish, err)
 			return
 		}
 	} else if s.issuedTokens != nil {
@@ -488,9 +494,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// state. We still write the issued record first so the
 		// audit row references a durable jti.
 		if err := s.issuedTokens.Record(r.Context(), rec); err != nil {
-			writeOAuthError(w, http.StatusInternalServerError, "server_error",
-				"issued-token record failed: "+err.Error())
-			finish("server_error")
+			writeIssueStoreError(w, finish, err)
 			return
 		}
 		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
@@ -683,6 +687,40 @@ func writeOAuthError(w http.ResponseWriter, status int, code, description string
 	})
 }
 
+// is5xxErrorClass reports whether the RFC 8693 / §13.3 error class maps
+// to a 5xx response, so the §16.1 lenny_oauth_token_5xx_total counter is
+// incremented for it. The 4xx classes (invalid_client, invalid_grant,
+// invalid_request, unsupported_grant_type, invalid_scope) and the 429
+// rate_limited class are excluded. spec: §16.1. F-13.3.4.
+func is5xxErrorClass(c string) bool {
+	switch c {
+	case "server_error", "token_store_unavailable",
+		"token_validation_unavailable", "kms_signing_unavailable":
+		return true
+	}
+	return false
+}
+
+// writeIssueStoreError maps a write-before-issue store failure to the
+// §13.3 response. A Postgres outage (primary unreachable or in failover)
+// is unavailability: the caller receives `503 token_store_unavailable`
+// and the §16.5 TokenStoreUnavailable alert fires; the platform does not
+// fall back to issuing tokens without audit coverage. Any other failure
+// (a constraint violation, a logic bug) stays `500 server_error`.
+// spec: §13.3 line 591. F-13.3.4.
+func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error) {
+	if pgtenant.IsUnavailable(err) {
+		w.Header().Set("Retry-After", "5")
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_store_unavailable",
+			"§13.3 token issuance is unavailable during a Postgres outage: "+err.Error())
+		finish("token_store_unavailable")
+		return
+	}
+	writeOAuthError(w, http.StatusInternalServerError, "server_error",
+		"§13.3 write-before-issue failed: "+err.Error())
+	finish("server_error")
+}
+
 // writeKMSUnavailable writes the §10.2 line 225 / §15.1 line 1102
 // KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` so
 // the client retries the mint after the circuit-breaker cooldown
@@ -729,4 +767,3 @@ func newJTI() (string, error) {
 	}
 	return "jti_" + hex.EncodeToString(b[:]), nil
 }
-

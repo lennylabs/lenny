@@ -32,6 +32,7 @@ type Emitter struct {
 	secretReloads      *prometheus.CounterVec
 	rateLimited        *prometheus.CounterVec
 	rateLimitedSampled *prometheus.CounterVec
+	fivexx             *prometheus.CounterVec
 	timeDrift          prometheus.Gauge
 }
 
@@ -76,6 +77,18 @@ func New() (*Emitter, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 — token-endpoint 5xx responses by error type. The §16.5
+	// TokenStoreUnavailable alert keys on
+	// lenny_oauth_token_5xx_total{error_type="token_store_unavailable"};
+	// the counter must therefore exist and carry that label value when a
+	// Postgres outage gates issuance. F-13.3.4.
+	fivexx, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_oauth_token_5xx_total",
+		Help: "§16.1 /v1/oauth/token 5xx responses by error type.",
+	}, []string{"error_type"})
+	if err != nil {
+		return nil, err
+	}
 	// §13.3 line 595 / §16.1 — NTP drift self-monitor gauge populated
 	// by pkg/driftmonitor on its periodic sample. The §16.5
 	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
@@ -88,7 +101,7 @@ func New() (*Emitter, error) {
 		return nil, err
 	}
 
-	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, timeDriftGauge)
+	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, fivexx, timeDriftGauge)
 	return &Emitter{
 		reg:                reg,
 		requestDuration:    requestDuration,
@@ -96,6 +109,7 @@ func New() (*Emitter, error) {
 		secretReloads:      secretReloads,
 		rateLimited:        rateLimited,
 		rateLimitedSampled: rateLimitedSampled,
+		fivexx:             fivexx,
 		timeDrift:          timeDriftGauge.WithLabelValues(),
 	}, nil
 }
@@ -118,6 +132,11 @@ func (e *Emitter) IncRateLimited(limitTier string) {
 // IncRateLimitedSampled implements tokenservice.Metrics.
 func (e *Emitter) IncRateLimitedSampled(limitTier string) {
 	e.rateLimitedSampled.WithLabelValues(limitTier).Inc()
+}
+
+// Inc5xx implements tokenservice.Metrics.
+func (e *Emitter) Inc5xx(errorType string) {
+	e.fivexx.WithLabelValues(errorType).Inc()
 }
 
 // IncSecretReload records one signing-secret reload outcome. The
