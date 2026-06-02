@@ -28,42 +28,44 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/rediskeys"
+	"github.com/lennylabs/lenny/pkg/platform/store"
 )
 
-// TenantID is the platform-issued tenant identifier.
-type TenantID string
+// The shared ID types and the RedisConcern / StoreType enums live in
+// pkg/platform/store (§12.6 shared type definitions block). They are
+// aliased here so existing storerouter.TenantID / RedisConcern* call
+// sites keep working while there is a single canonical definition.
+type (
+	// TenantID is the platform-issued tenant identifier.
+	TenantID = store.TenantID
+	// SessionID is the §12.6 UUIDv8 session identifier.
+	SessionID = store.SessionID
+	// RedisConcern selects which Redis instance StoreRouter returns.
+	RedisConcern = store.RedisConcern
+	// StoreType identifies a Postgres store category for ShardCount.
+	StoreType = store.StoreType
+)
 
-// SessionID is the §12.6 UUIDv8 session identifier.
-type SessionID string
+const (
+	RedisConcernCoordination = store.RedisConcernCoordination // session leases, generation counters
+	RedisConcernQuota        = store.RedisConcernQuota        // token/rate counters, sliding windows, billing stream
+	RedisConcernCachePubSub  = store.RedisConcernCachePubSub  // routing cache, EventBus channels, semantic cache
+	RedisConcernDelegation   = store.RedisConcernDelegation   // budget keys ({root_session_id}:dlg:*)
+	RedisConcernSessionData  = store.RedisConcernSessionData  // DLQ, durable inbox
+)
+
+const (
+	StoreTypeSession = store.StoreTypeSession // sessions, session_messages, session_tree_archive
+	StoreTypeTenant  = store.StoreTypeTenant  // tenants, environments, runtime_definitions, credential_pools, delegation_policies
+	StoreTypeBilling = store.StoreTypeBilling // billing_events (R-03)
+	StoreTypeAudit   = store.StoreTypeAudit   // audit_log (R-03)
+)
 
 // ShardID names one Postgres shard returned by AllSessionShards or
 // AllAuditShards. v1 routers expose a single shard identified as
-// "default".
+// "default". It is storerouter-local — the §12.6 shared block models a
+// shard via ShardHandle, not a bare id.
 type ShardID string
-
-// RedisConcern selects which Redis instance StoreRouter returns. In
-// v1 every concern maps to the same Redis instance; the names are
-// load-bearing only when an operator splits concerns onto separate
-// instances at tier 3+.
-type RedisConcern string
-
-const (
-	RedisConcernCoordination RedisConcern = "coordination" // session leases, generation counters
-	RedisConcernQuota        RedisConcern = "quota"        // token/rate counters, sliding windows, billing stream
-	RedisConcernCachePubSub  RedisConcern = "cache_pubsub" // routing cache, EventBus channels, semantic cache
-	RedisConcernDelegation   RedisConcern = "delegation"   // budget keys ({root_session_id}:dlg:*)
-	RedisConcernSessionData  RedisConcern = "session_data" // DLQ, durable inbox
-)
-
-// StoreType identifies a Postgres store category for ShardCount.
-type StoreType string
-
-const (
-	StoreTypeSession StoreType = "session" // sessions, session_messages, session_tree_archive
-	StoreTypeTenant  StoreType = "tenant"  // tenants, environments, runtime_definitions, credential_pools, delegation_policies
-	StoreTypeBilling StoreType = "billing" // billing_events (R-03)
-	StoreTypeAudit   StoreType = "audit"   // audit_log (R-03)
-)
 
 // ShardHandle is one Postgres shard plus its connection pool. The
 // scatter-gather scan methods (AllSessionShards, AllAuditShards)

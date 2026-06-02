@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -287,9 +288,17 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	sb.Spec.PoolRef = string(poolID)
 	// spec: §12.6 line 422 — CreatePod stamps the per-pod PodSpec fields
 	// onto the Sandbox so they round-trip through toPodRecord rather than
-	// silently falling back to pool-template defaults.
+	// silently falling back to pool-template defaults. RuntimeRef is a
+	// required CRD field; stamping it from the PodSpec is what lets the
+	// gateway-created-pod path (Tier 4+) express a runtime other than the
+	// pool template's.
+	sb.Spec.RuntimeRef = spec.RuntimeDefinitionRef
 	sb.Spec.IsolationProfile = spec.IsolationProfile
 	sb.Spec.ExecutionMode = spec.ExecutionMode
+	sb.Spec.ResourceClass = spec.ResourceClass
+	if len(spec.WorkspacePlan) > 0 {
+		sb.Spec.WorkspacePlan = &apiextensionsv1.JSON{Raw: append([]byte(nil), spec.WorkspacePlan...)}
+	}
 	if err = r.Client.Create(ctx, sb); err != nil {
 		err = fmt.Errorf("podregistry: create sandbox: %w", err)
 		return nil, err

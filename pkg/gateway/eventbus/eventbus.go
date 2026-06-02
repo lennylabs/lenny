@@ -10,19 +10,18 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/platform/store"
 )
 
 // TenantID is the §12.6 typed tenant identifier. EventBus.Publish and
 // Subscribe take it so a tenant id cannot be transposed with a pool,
 // session, or arbitrary string at a call site; the spec frames tenant
 // isolation as enforced at the interface boundary, not by caller
-// convention. The §12.6 shared platform/store package is the eventual
-// single home for this and the sibling ID types; until that lands the
-// type is defined here so the EventBus surface carries the spec's typed
-// contract.
+// convention. It aliases the §12.6 shared platform/store definition so
+// a cloudevents.Event tenant id minted elsewhere is the same type.
 //
 // spec: §12.6 lines 369-373, 658-662, 705.
-type TenantID string
+type TenantID = store.TenantID
 
 // PublishState is the §12.3.7 audit_log.eventbus_publish_state enum. It
 // records, per audit-bearing row, whether the gateway's EventBus
@@ -75,17 +74,16 @@ const (
 	ErrTimeout PublishErrorType = "timeout"
 )
 
-// Subscription is the handle EventBus.Subscribe returns. Unsubscribe
-// detaches the subscriber and waits for its consume loop to exit. It is
-// safe to call more than once and always returns nil for the v1
-// RedisEventBus; the error is in the signature so a future at-least-once
-// backend (NATS, Kafka) can surface an unsubscribe failure without a
-// caller-side rewrite.
+// Subscription is the handle EventBus.Subscribe returns. It aliases the
+// §12.6 shared platform/store definition. Unsubscribe detaches the
+// subscriber and waits for its consume loop to exit; it is safe to call
+// more than once and always returns nil for the v1 RedisEventBus. The
+// error is in the signature so a future at-least-once backend (NATS,
+// Kafka) can surface an unsubscribe failure without a caller-side
+// rewrite.
 //
 // spec: §12.6 lines 411-414.
-type Subscription interface {
-	Unsubscribe() error
-}
+type Subscription = store.Subscription
 
 // subscription is the v1 RedisEventBus Subscription. Unsubscribe cancels
 // the consume-loop context and waits for the loop to drain.

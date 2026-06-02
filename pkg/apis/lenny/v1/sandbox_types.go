@@ -4,6 +4,7 @@ package v1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -49,6 +50,31 @@ type SandboxSpec struct {
 	// +kubebuilder:validation:Enum=proxy;direct
 	// +optional
 	DeliveryMode string `json:"deliveryMode,omitempty"`
+
+	// ResourceClass is the §5.1/§5.2 resource class (small, medium,
+	// large, or a deployer-defined class) the pod's CPU/memory limits
+	// resolve from. spec: §12.6 line 422 — the PodRegistry PodSpec
+	// carries the per-pod resource limits, which this codebase models as
+	// a named resource class rather than raw quantities. A warm pod
+	// created by the WarmPoolController resolves its class from the
+	// SandboxTemplate at pod-build time and leaves this empty; the §12.6
+	// CreatePod path (a gateway-created pod for a non-prewarmed session
+	// at Tier 4+) stamps the resolved class here so it round-trips
+	// through the registry.
+	// +optional
+	ResourceClass string `json:"resourceClass,omitempty"`
+
+	// WorkspacePlan is the §14 WorkspacePlan a §12.6 CreatePod pod was
+	// created with. spec: §12.6 line 422 — the PodSpec carries the
+	// WorkspacePlan. It is empty for a warm pod (the WarmPoolController
+	// creates pods without a session, so the plan is materialized at
+	// session claim); the gateway-created-pod path (Tier 4+) stamps the
+	// resolved plan so the pod expresses the workspace it was created
+	// for. The schema is preserved as-is rather than re-declared here so
+	// a §14 schema revision does not require a CRD change.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	WorkspacePlan *apiextensionsv1.JSON `json:"workspacePlan,omitempty"`
 
 	// TopologySpreadConstraints distribute the pod across zones and
 	// nodes. spec: §5.2 lines 631-636 — the WarmPoolController copies the

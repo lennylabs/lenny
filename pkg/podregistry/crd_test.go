@@ -4,7 +4,9 @@ package podregistry_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -427,5 +429,93 @@ func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 	got, _ := r.GetPod(context.Background(), rec.PodID)
 	if got.ExecutionMode != "concurrent" || got.IsolationProfile != "microvm" {
 		t.Errorf("persisted exec/iso = %q/%q, want concurrent/microvm", got.ExecutionMode, got.IsolationProfile)
+	}
+}
+
+// spec: §12.6 line 422 — PodSpec carries RuntimeDefinitionRef,
+// WorkspacePlan, and resource limits (ResourceClass), and CreatePod
+// stamps them onto the Sandbox spec so a gateway-created pod expresses
+// the runtime, workspace, and resource class it was created for rather
+// than silently inheriting the pool template's defaults. RuntimeRef is
+// a required CRD field, so a CreatePod that does not stamp it produces
+// an invalid Sandbox.
+func TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422(t *testing.T) {
+	scheme := newScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&lennyv1.Sandbox{}).
+		Build()
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	plan := []byte(`{"schemaVersion":1,"sources":[{"type":"gitClone","gitClone":{"url":"https://github.com/acme/repo"}}]}`)
+	spec := podregistry.PodSpec{
+		PoolID:               "claude-pool",
+		RuntimeDefinitionRef: "claude-code",
+		IsolationProfile:     "sandboxed",
+		ExecutionMode:        "session",
+		ResourceClass:        "large",
+		WorkspacePlan:        plan,
+	}
+	rec, err := r.CreatePod(context.Background(), "claude-pool", spec)
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	var sb lennyv1.Sandbox
+	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: string(rec.PodID)}, &sb); err != nil {
+		t.Fatalf("get created sandbox: %v", err)
+	}
+	if sb.Spec.RuntimeRef != "claude-code" {
+		t.Errorf("RuntimeRef = %q, want claude-code", sb.Spec.RuntimeRef)
+	}
+	if sb.Spec.ResourceClass != "large" {
+		t.Errorf("ResourceClass = %q, want large", sb.Spec.ResourceClass)
+	}
+	if sb.Spec.WorkspacePlan == nil {
+		t.Fatal("WorkspacePlan was not stamped onto the Sandbox spec")
+	}
+	// The API server round-trips the preserved JSON and may reorder
+	// object keys, so compare the decoded structure rather than the
+	// byte string.
+	var gotPlan, wantPlan map[string]any
+	if err := json.Unmarshal(sb.Spec.WorkspacePlan.Raw, &gotPlan); err != nil {
+		t.Fatalf("decode stamped WorkspacePlan: %v", err)
+	}
+	if err := json.Unmarshal(plan, &wantPlan); err != nil {
+		t.Fatalf("decode want WorkspacePlan: %v", err)
+	}
+	if !reflect.DeepEqual(gotPlan, wantPlan) {
+		t.Errorf("WorkspacePlan = %v, want %v", gotPlan, wantPlan)
+	}
+}
+
+// spec: §12.6 line 422 — an empty WorkspacePlan (a warm pod, whose
+// workspace is materialized at session claim) leaves the Sandbox spec
+// field nil rather than writing an empty JSON blob the API server would
+// reject.
+func TestCreatePodLeavesWorkspacePlanNilWhenEmpty_spec_12_6_422(t *testing.T) {
+	scheme := newScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&lennyv1.Sandbox{}).
+		Build()
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	rec, err := r.CreatePod(context.Background(), "echo-pool", podregistry.PodSpec{
+		PoolID:               "echo-pool",
+		RuntimeDefinitionRef: "echo",
+	})
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	var sb lennyv1.Sandbox
+	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: string(rec.PodID)}, &sb); err != nil {
+		t.Fatalf("get created sandbox: %v", err)
+	}
+	if sb.Spec.WorkspacePlan != nil {
+		t.Errorf("WorkspacePlan = %v, want nil for a warm pod", sb.Spec.WorkspacePlan)
 	}
 }

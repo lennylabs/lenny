@@ -11,22 +11,31 @@ package podregistry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+
+	"github.com/lennylabs/lenny/pkg/platform/store"
 )
 
-// PodID identifies an agent pod. The CRD-backed implementation maps
-// this to the Sandbox metadata.name; the Postgres-backed
-// implementation maps it to agent_pod_state.pod_id.
-type PodID string
+// The shared ID types live in pkg/platform/store (§12.6 shared type
+// definitions block). They are aliased here so the §4.6.1 callers keep
+// the podregistry.PodID / PoolID / ClusterID spelling while there is a
+// single canonical definition shared with storerouter and eventbus.
+type (
+	// PodID identifies an agent pod. The CRD-backed implementation maps
+	// this to the Sandbox metadata.name; the Postgres-backed
+	// implementation maps it to agent_pod_state.pod_id.
+	PodID = store.PodID
 
-// PoolID identifies the warm pool a pod belongs to.
-type PoolID string
+	// PoolID identifies the warm pool a pod belongs to.
+	PoolID = store.PoolID
 
-// ClusterID identifies a Kubernetes cluster in a multi-cluster
-// topology. spec: §12.6 line 373. It is always nil on ClaimOpts in
-// v1 (single cluster); the §12.6 LocalClusterRegistry populates it
-// when routing a claim to a remote cluster.
-type ClusterID string
+	// ClusterID identifies a Kubernetes cluster in a multi-cluster
+	// topology. spec: §12.6 line 373. It is always nil on ClaimOpts in
+	// v1 (single cluster); the §12.6 ClusterRegistry populates it when
+	// routing a claim to a remote cluster.
+	ClusterID = store.ClusterID
+)
 
 // PodRecord is the §12.6 view of one agent pod's authoritative
 // state. The fields mirror the §6.2 Sandbox.status subresource and
@@ -107,11 +116,33 @@ type StateCounts map[string]int
 
 // PodSpec is the input to CreatePod: the pool the new pod belongs
 // to and the per-pod fields the §4.6.1 lifecycle manager sets on
-// the new Sandbox.
+// the new Sandbox. spec: §12.6 line 422 — the key fields are
+// RuntimeDefinitionRef, WorkspacePlan, IsolationProfile, ExecutionMode,
+// and resource limits (modeled here as ResourceClass, per §5.1/§5.2).
 type PodSpec struct {
-	PoolID           PoolID
+	PoolID PoolID
+
+	// RuntimeDefinitionRef names the lenny.dev/v1 Runtime the new pod
+	// runs. CreatePod stamps it onto Sandbox.spec.runtimeRef, which is a
+	// required field — a pod created without it fails CRD validation.
+	RuntimeDefinitionRef string
+
 	IsolationProfile string
 	ExecutionMode    string
+
+	// ResourceClass is the §5.1/§5.2 resource class the pod's CPU/memory
+	// limits resolve from (the §12.6 "resource limits" PodSpec field,
+	// modeled as a named class in this codebase). Empty selects the
+	// pool/runtime default.
+	ResourceClass string
+
+	// WorkspacePlan is the serialized §14 WorkspacePlan the pod is
+	// created for (the §12.6 PodSpec WorkspacePlan field). It is empty
+	// for a warm pod, whose workspace is materialized at session claim;
+	// the Tier-4+ gateway-creates-a-pod path passes the resolved plan
+	// here so CreatePod records it on the Sandbox. The registry treats
+	// the bytes as opaque.
+	WorkspacePlan json.RawMessage
 }
 
 // PodEvent is one frame of the WatchPods stream.
