@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
+	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
@@ -464,24 +465,129 @@ type driftServiceConfig struct {
 }
 
 // buildDriftService constructs the §25.10 configuration-drift service.
-// The Postgres-backed bootstrap_seed_snapshot store and the
-// gateway-client running-state reader are documented seams: until they
-// land the service runs the in-memory snapshot store and an empty
-// running-state reader, so the §25.10 drift endpoints serve and an
-// agent can exercise the validate and snapshot-refresh paths in a
-// single-process degraded mode.
+// When a Postgres pool is available the desired-state snapshots persist
+// to the bootstrap_seed_snapshot table (migration 0117) so the live and
+// target rows survive a lenny-ops restart; without it the service falls
+// back to the in-memory snapshot store (single-process degraded mode /
+// dev). The gateway-client running-state reader and the reconcile
+// resource applier remain documented seams (F-25.10.4): until the
+// gateway admin client lands the service reads an empty running state
+// and a confirmed reconcile fails closed with DRIFT_RECONCILE_UNAVAILABLE.
 //
-// The §25.10 line 3822 running-state cache is wired here over the
-// in-memory MemRunningStateCache. A non-positive TTL disables caching,
-// matching the §25.10 line 3824 "0 disables" posture. F-25.10.7, F-25.10.9.
-func buildDriftService(cfg driftServiceConfig) *driftservice.Service {
-	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), emptyRunningState{})
+// The §25.10 drift metrics, audit events, and operation_progressed
+// emission are wired here: the two §25.10 line 3858-3859 counters, the
+// audit sink (logged until the lenny-ops audit-store client lands,
+// matching the backup/escalation posture), and the operation_progressed
+// emitter over the shared §4.0 EventEmitter.
+//
+// The §25.10 line 3822 running-state cache is wired over the in-memory
+// MemRunningStateCache. A non-positive TTL disables caching, matching
+// the §25.10 line 3824 "0 disables" posture. F-25.10.2, F-25.10.3,
+// F-25.10.5, F-25.10.7, F-25.10.9.
+func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, emitter events.EventEmitter) *driftservice.Service {
+	var store driftservice.SnapshotStore = driftservice.NewMemSnapshotStore()
+	if pgPool != nil {
+		store = driftpgstore.New(pgPool)
+	}
+	svc := driftservice.NewService(store, emptyRunningState{})
 	svc.StaleWarningDays = cfg.StaleWarningDays
 	if cfg.RunningStateCacheTTLSec > 0 {
 		svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(
 			time.Duration(cfg.RunningStateCacheTTLSec) * time.Second))
 	}
+	svc.SetMetrics(driftPromMetrics{})
+	svc.SetAuditSink(driftAuditSink{})
+	if emitter != nil {
+		svc.SetProgressEmitter(driftProgressEmitter{emitter: emitter})
+	}
 	return svc
+}
+
+// driftDetectedTotal and driftReconciledTotal are the §25.10 lines
+// 3858-3859 drift counters. They are registered on the default registry
+// so the service increments real series; the lenny-ops /metrics
+// exposition that scrapes them is the same documented gap F-16.8.1
+// tracks (mirroring lenny_backup_last_successful_timestamp). F-25.10.3.
+var driftDetectedTotal = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_drift_detected_total",
+		Help: "§25.10 configuration-drift detections by resource type and severity.",
+	}, []string{"resource_type", "severity"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+var driftReconciledTotal = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_drift_reconciled_total",
+		Help: "§25.10 configuration-drift reconciliation outcomes by resource type.",
+	}, []string{"resource_type", "outcome"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+// driftPromMetrics adapts the §25.10 driftservice.Metrics seam onto the
+// two Prometheus counters. F-25.10.3.
+type driftPromMetrics struct{}
+
+func (driftPromMetrics) DriftDetected(resourceType, severity string) {
+	if driftDetectedTotal != nil {
+		driftDetectedTotal.WithLabelValues(resourceType, severity).Inc()
+	}
+}
+
+func (driftPromMetrics) Reconciled(resourceType, outcome string) {
+	if driftReconciledTotal != nil {
+		driftReconciledTotal.WithLabelValues(resourceType, outcome).Inc()
+	}
+}
+
+// driftAuditSink is the §25.10 line 3871 drift audit sink. lenny-ops has
+// no audit-store client in this single-process mode, so the event is
+// logged until that path lands, matching the backup logAuditSink and the
+// diagnostics-audit posture. A future commit that wires the audit-append
+// client swaps this for one that writes the §16.7 append-only row.
+// F-25.10.2.
+type driftAuditSink struct{}
+
+func (driftAuditSink) Emit(ev driftservice.AuditEvent) {
+	log.Printf("lenny-ops: audit %s actor=%s details=%v — "+
+		"audit-append destination pending the audit-store wiring",
+		ev.Type, ev.Actor, ev.Details)
+}
+
+// driftProgressEmitter emits the §25.10 line 3844 operation_progressed
+// event onto the shared §4.0 EventEmitter so the §25.4 watchdog and any
+// webhook subscriber observe a reconcile advancing resource-by-resource.
+// F-25.10.1.
+type driftProgressEmitter struct {
+	emitter events.EventEmitter
+}
+
+func (e driftProgressEmitter) Progressed(ctx context.Context, info driftservice.ProgressInfo) {
+	payload, err := json.Marshal(map[string]any{
+		"operationId":    info.OperationID,
+		"kind":           info.Kind,
+		"totalSteps":     info.TotalSteps,
+		"completedSteps": info.CompletedSteps,
+		"currentStep":    info.CurrentStep,
+		"startedBy":      info.StartedBy,
+	})
+	if err != nil {
+		return
+	}
+	_ = e.emitter.Emit(ctx, events.OperationalEvent{
+		Type:            events.EventOperationProgressed.CloudEventsType(),
+		Subject:         "operation/" + info.OperationID,
+		DataContentType: "application/json",
+		Data:            payload,
+	})
 }
 
 // emptyRunningState is the §25.10 RunningStateReader used until the

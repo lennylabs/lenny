@@ -122,6 +122,8 @@ var spec161Metrics = []string{
 	"lenny_token_revocation_propagation_seconds", "lenny_token_validation_postgres_fallback_total",
 	"lenny_time_drift_seconds", "lenny_postgres_replication_lag_seconds",
 	"lenny_backup_last_successful_timestamp", "lenny_restore_test_success",
+	// §25.10 configuration-drift detection/reconciliation counters.
+	"lenny_drift_detected_total", "lenny_drift_reconciled_total",
 	"lenny_restore_test_duration_seconds", "lenny_minio_replication_lag_seconds",
 	"lenny_minio_replication_failed_total", "lenny_minio_replication_residency_violation_total",
 	"lenny_legal_hold_escrow_region_unresolvable_total", "lenny_platform_audit_region_unresolvable_total",

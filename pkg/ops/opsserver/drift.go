@@ -17,10 +17,11 @@ var driftErrorMap = map[string]struct {
 	status   int
 	category conventions.ErrorCategory
 }{
-	driftservice.ErrCodeDesiredStateMissing: {http.StatusServiceUnavailable, conventions.CategoryTransient},
-	driftservice.ErrCodeNoTargetSnapshot:    {http.StatusNotFound, conventions.CategoryPermanent},
-	driftservice.ErrCodeReconcilePartial:    {http.StatusMultiStatus, conventions.CategoryTransient},
-	driftservice.ErrCodeInvalid:             {http.StatusBadRequest, conventions.CategoryPermanent},
+	driftservice.ErrCodeDesiredStateMissing:  {http.StatusServiceUnavailable, conventions.CategoryTransient},
+	driftservice.ErrCodeNoTargetSnapshot:     {http.StatusNotFound, conventions.CategoryPermanent},
+	driftservice.ErrCodeReconcilePartial:     {http.StatusMultiStatus, conventions.CategoryTransient},
+	driftservice.ErrCodeReconcileUnavailable: {http.StatusServiceUnavailable, conventions.CategoryTransient},
+	driftservice.ErrCodeInvalid:              {http.StatusBadRequest, conventions.CategoryPermanent},
 }
 
 // writeDriftError maps a §25.10 drift service error to the §25.2
@@ -54,6 +55,7 @@ func (s *Server) registerDriftRoutes() {
 	s.mux.HandleFunc("GET /v1/admin/drift", s.handleDriftReport)
 	s.mux.HandleFunc("POST /v1/admin/drift/validate", s.handleDriftValidate)
 	s.mux.HandleFunc("POST /v1/admin/drift/snapshot/refresh", s.handleDriftSnapshotRefresh)
+	s.mux.HandleFunc("POST /v1/admin/drift/reconcile", s.handleDriftReconcile)
 }
 
 // driftUnavailable reports the §25.10 drift surface as unconfigured.
@@ -81,6 +83,21 @@ func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 		if parsed, err := strconv.ParseBool(v); err == nil {
 			fresh = parsed
 		}
+	}
+	// §25.10 line 3791: ?against=both returns the live and target diffs in
+	// one response. It routes through a distinct service method because
+	// the response carries two reports rather than one. F-25.10.6.
+	if q.Get("against") == "both" {
+		both, err := s.drift.ReportBoth(r.Context(), driftservice.ReportParams{
+			Scope: q.Get("scope"),
+			Fresh: fresh,
+		})
+		if err != nil {
+			writeDriftError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, both)
+		return
 	}
 	report, err := s.drift.Report(r.Context(), driftservice.ReportParams{
 		Scope:   q.Get("scope"),
@@ -175,4 +192,51 @@ func (s *Server) handleDriftSnapshotRefresh(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleDriftReconcile serves POST /v1/admin/drift/reconcile: the §25.10
+// reconciliation of drifted resources through the gateway admin API.
+// It follows the §25.2 dry-run/confirm pattern — without confirm:true a
+// preview of the resources that would reconcile is returned and no
+// state is changed.
+//
+// A confirmed reconcile that applies every resource returns 200. A
+// reconcile where some resources could not be applied returns the
+// §25.10 line 3852 / line 3865 partial result: HTTP 207 with the result
+// body carrying the per-resource outcomes and errorCode
+// DRIFT_RECONCILE_PARTIAL. F-25.10.1.
+func (s *Server) handleDriftReconcile(w http.ResponseWriter, r *http.Request) {
+	if s.drift == nil {
+		s.driftUnavailable(w)
+		return
+	}
+	var body struct {
+		Scope     string         `json:"scope"`
+		Resources []string       `json:"resources"`
+		Confirm   bool           `json:"confirm"`
+		Desired   map[string]any `json:"desired,omitempty"`
+	}
+	if err := readJSONBody(r, &body); err != nil {
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			conventions.CategoryPermanent, "malformed request body")
+		return
+	}
+	result, err := s.drift.Reconcile(r.Context(), driftservice.ReconcileParams{
+		Scope:     body.Scope,
+		Resources: body.Resources,
+		Confirm:   body.Confirm,
+		Desired:   body.Desired,
+		StartedBy: callerIdentity(r),
+	})
+	if err != nil {
+		writeDriftError(w, err)
+		return
+	}
+	// §25.10 line 3852: a partial reconcile (some resources failed)
+	// surfaces as HTTP 207 with the per-resource outcomes in the body.
+	status := http.StatusOK
+	if result.ErrorCode == driftservice.ErrCodeReconcilePartial {
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, result)
 }

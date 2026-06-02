@@ -404,7 +404,7 @@ func main() {
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
-	})
+	}, pgPool, opsEmitter)
 	diagnosticSvc := buildDiagnosticService()
 
 	// The §25.8 release-channel manifest publisher. Loaded from the

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -288,7 +289,7 @@ const staleWarningText = "The bootstrap_seed_snapshot is %d days old. " +
 	"to reconcile, then re-run drift detection."
 
 // Service is the §25.10 configuration drift detection service. It is
-// the report/validate/refresh surface the HTTP handler calls.
+// the report/validate/refresh/reconcile surface the HTTP handler calls.
 type Service struct {
 	snapshots SnapshotStore
 	running   RunningStateReader
@@ -299,6 +300,27 @@ type Service struct {
 	// a value of zero disables the staleness warning.
 	StaleWarningDays int
 	now              func() time.Time
+
+	// metrics is the §25.10 line 3858-3859 drift-metric sink. A nil sink
+	// is the no-op default; deps wires a Prometheus-backed one. F-25.10.3.
+	metrics Metrics
+	// audit is the §25.10 line 3871 drift audit-event sink. A nil sink is
+	// the no-op default; deps wires a sink that emits the §16.7 chain
+	// rows (logged until the lenny-ops audit-store client lands).
+	// F-25.10.2.
+	audit AuditSink
+	// applier applies a single drifted resource through the gateway admin
+	// API during reconciliation (§25.10 line 3842). A nil applier leaves
+	// reconcile able to dry-run but not confirm. F-25.10.1.
+	applier ResourceApplier
+	// progress emits the §25.10 line 3844 operation_progressed event on
+	// each resource reconciliation. A nil emitter skips emission.
+	// F-25.10.1.
+	progress ProgressEmitter
+	// reconciles tracks in-flight §25.10 reconciliations so they surface
+	// in the §25.4 Operations Inventory with kind drift_reconciliation.
+	// F-25.10.1.
+	reconciles *ReconcileTracker
 }
 
 // DefaultStaleWarningDays is the §25.10 ops.drift.snapshotStaleWarningDays
@@ -318,6 +340,9 @@ func NewService(snapshots SnapshotStore, running RunningStateReader) *Service {
 		running:          running,
 		StaleWarningDays: DefaultStaleWarningDays,
 		now:              func() time.Time { return time.Now().UTC() },
+		metrics:          noopMetrics{},
+		audit:            noopAuditSink{},
+		reconciles:       NewReconcileTracker(),
 	}
 }
 
@@ -329,6 +354,40 @@ func (s *Service) SetRunningStateCache(c RunningStateCache) { s.runningCache = c
 // SetClock overrides the service clock; tests use it for deterministic
 // staleness computation.
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
+
+// SetMetrics installs the §25.10 drift-metric sink (lenny_drift_-
+// detected_total / lenny_drift_reconciled_total). A nil sink restores
+// the no-op default. F-25.10.3.
+func (s *Service) SetMetrics(m Metrics) {
+	if m == nil {
+		m = noopMetrics{}
+	}
+	s.metrics = m
+}
+
+// SetAuditSink installs the §25.10 line 3871 drift audit-event sink. A
+// nil sink restores the no-op default. F-25.10.2.
+func (s *Service) SetAuditSink(a AuditSink) {
+	if a == nil {
+		a = noopAuditSink{}
+	}
+	s.audit = a
+}
+
+// SetApplier installs the §25.10 line 3842 gateway-side resource
+// applier reconciliation calls through. A nil applier leaves reconcile
+// able to dry-run but rejects a confirm. F-25.10.1.
+func (s *Service) SetApplier(a ResourceApplier) { s.applier = a }
+
+// SetProgressEmitter installs the §25.10 line 3844 operation_progressed
+// emitter. A nil emitter skips emission. F-25.10.1.
+func (s *Service) SetProgressEmitter(p ProgressEmitter) { s.progress = p }
+
+// ReconcileSource returns the §25.4 Operations Inventory source that
+// projects in-flight drift reconciliations onto the canonical Operation
+// envelope (kind drift_reconciliation). The host registers it with the
+// unified Operations Inventory. F-25.10.1.
+func (s *Service) ReconcileSource() *ReconcileTracker { return s.reconciles }
 
 // ReportParams is the §25.10 GET /v1/admin/drift query.
 type ReportParams struct {
@@ -424,9 +483,26 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 	}
 
 	for _, c := range drift.Diff(desired, running) {
-		report.Drift = append(report.Drift, toDriftEntry(c))
+		entry := toDriftEntry(c)
+		report.Drift = append(report.Drift, entry)
+		// §25.10 line 3858: lenny_drift_detected_total{resource_type,
+		// severity}. The resource_type label is the top path segment
+		// (pools, runtimes, tenants, credential-pools, ...). F-25.10.3.
+		s.metrics.DriftDetected(resourceTypeOf(entry.Path), entry.Severity)
 	}
 	report.DriftCount = len(report.Drift)
+	// §25.10 line 3871: drift.report_generated carries the scope, the
+	// row compared against, and the drift count so the audit trail
+	// records every drift read. F-25.10.2.
+	s.audit.Emit(AuditEvent{
+		Type: EventReportGenerated,
+		Details: map[string]any{
+			"scope":              report.Scope,
+			"against":            report.Against,
+			"driftCount":         report.DriftCount,
+			"desiredStateSource": report.DesiredStateSource,
+		},
+	})
 	return report, nil
 }
 
@@ -444,6 +520,61 @@ func (s *Service) applyStaleness(report *DriftReport, snap Snapshot) {
 		report.SnapshotStale = true
 		report.SnapshotStaleWarning = formatStaleWarning(age)
 	}
+}
+
+// BothReport is the §25.10 line 3791 GET /v1/admin/drift?against=both
+// response: the running state diffed against both the live snapshot
+// (pre-upgrade drift) and the in-flight target snapshot (what the
+// upgrade will change), in a single response. F-25.10.6.
+type BothReport struct {
+	Scope       string       `json:"scope"`
+	Against     string       `json:"against"` // always "both"
+	Live        *DriftReport `json:"live"`
+	Target      *DriftReport `json:"target"`
+	GeneratedAt time.Time    `json:"generatedAt"`
+}
+
+// ReportBoth computes the §25.10 against=both report. It collects the
+// running state once and diffs it against both the live and the target
+// snapshot. A caller-supplied desired body is rejected — both mode is
+// defined only over the two stored snapshots (§25.10 line 3791,
+// "during an active upgrade"). A missing target row fails
+// DRIFT_NO_TARGET_SNAPSHOT, matching the against=target contract.
+// F-25.10.6.
+func (s *Service) ReportBoth(ctx context.Context, p ReportParams) (*BothReport, error) {
+	if p.Desired != nil {
+		return nil, &Error{Code: ErrCodeInvalid, Message: "against=both compares the stored live and target snapshots; a caller-supplied desired body is not allowed"}
+	}
+	scope := p.Scope
+	if scope == "" {
+		scope = "all"
+	}
+	// §25.10 line 3791: both mode is meaningful only when a target row
+	// exists. Fail closed before the expensive running-state read so a
+	// non-upgrade call gets the documented DRIFT_NO_TARGET_SNAPSHOT.
+	if _, ok, err := s.snapshots.Get(ctx, SnapshotTarget); err != nil {
+		return nil, &Error{Code: ErrCodeDesiredStateMissing, Message: "snapshot store unavailable: " + err.Error()}
+	} else if !ok {
+		return nil, &Error{Code: ErrCodeNoTargetSnapshot, Message: "no target snapshot — no upgrade is in flight"}
+	}
+	live, err := s.Report(ctx, ReportParams{Scope: scope, Against: SnapshotLive, Fresh: p.Fresh})
+	if err != nil {
+		return nil, err
+	}
+	// §25.10 line 3824: the live report already populated the cache (when
+	// configured), so the target read reuses it rather than re-scattering
+	// over the gateway.
+	target, err := s.Report(ctx, ReportParams{Scope: scope, Against: SnapshotTarget, Fresh: false})
+	if err != nil {
+		return nil, err
+	}
+	return &BothReport{
+		Scope:       scope,
+		Against:     "both",
+		Live:        live,
+		Target:      target,
+		GeneratedAt: s.now(),
+	}, nil
 }
 
 // ValidateParams is the §25.10 POST /v1/admin/drift/validate request
@@ -576,6 +707,18 @@ func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*Ref
 	}
 	res.Replaced = true
 	res.NewWrittenAt = now
+	// §25.10 line 3871: drift.snapshot_refreshed carries the previous and
+	// new provenance plus the JSON byteSize of the new desired state.
+	// F-25.10.2 / F-25.10.8.
+	details := map[string]any{
+		"new_source": res.NewSource,
+		"byteSize":   res.ByteSize,
+	}
+	if res.PreviousWrittenAt != nil {
+		details["previous_written_at"] = res.PreviousWrittenAt.UTC().Format(time.RFC3339)
+		details["previous_source"] = res.PreviousSource
+	}
+	s.audit.Emit(AuditEvent{Type: EventSnapshotRefreshed, Actor: req.WrittenBy, Details: details})
 	return res, nil
 }
 
@@ -620,6 +763,18 @@ func toDriftEntry(c drift.Change) DriftEntry {
 		Actual:   c.Actual,
 		Severity: string(c.Severity),
 	}
+}
+
+// resourceTypeOf returns the §25.10 resource_type metric label for a
+// drifted field path: the top dotted segment (pools, runtimes, tenants,
+// credential-pools, ...). A path with no dot is its own resource type;
+// an empty path reports "unknown" so the metric label is never empty.
+func resourceTypeOf(path string) string {
+	if path == "" {
+		return "unknown"
+	}
+	top, _, _ := strings.Cut(path, ".")
+	return top
 }
 
 // formatStaleWarning renders the §25.10 staleness warning for an age in
