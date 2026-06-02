@@ -178,6 +178,14 @@ func main() {
 
 	namespace := flag.String("namespace", "lenny-system",
 		"release namespace holding the phase-stamp ConfigMap")
+	// §17.6 "Helm post-upgrade CRD validation hook" — the lenny-crd-validate
+	// Job (helm.sh/hook: post-upgrade) runs the binary with this flag so
+	// only the CRD schema-version check runs after helm upgrade completes,
+	// surfacing a stale CRD with the recovery command even when preflight
+	// was skipped (preflight.enabled: false). F-17.6.4.
+	crdValidate := flag.Bool("crd-validate", false,
+		"post-upgrade mode: run only the CRD schema-version check and exit non-zero "+
+			"with the §17.6 recovery message on a stale CRD")
 	agentNamespaces := flag.String("agent-namespaces", "",
 		"comma-separated §17.2 agent namespaces (agentNamespaces[].name) the §13.1 "+
 			"host-sharing and credential-fsGroup audits cover in addition to the release "+
@@ -275,6 +283,23 @@ func main() {
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("lenny-preflight: build cluster client: %v", err)
+	}
+
+	// §17.6 post-upgrade CRD validation hook (F-17.6.4). In this mode the
+	// binary runs only the CRD schema-version check and exits, so the
+	// lenny-crd-validate Job does not re-run the full admission-plane
+	// inventory after the chart has already rolled.
+	if *crdValidate {
+		decision := preflight.CRDSchemaVersionCheck{
+			Expected:    preflight.CurrentCRDSchemaVersion,
+			PostUpgrade: true,
+			Namespace:   *namespace,
+		}.Decide(context.Background(), cl)
+		if !decision.Passed {
+			log.Fatalf("lenny-crd-validate: %s", decision.Reason)
+		}
+		log.Printf("lenny-crd-validate: %s", decision.Reason)
+		return
 	}
 
 	report := preflight.Run(context.Background(), cl, preflight.Config{

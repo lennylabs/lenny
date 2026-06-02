@@ -351,6 +351,25 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		}.Decide(ctx, reader),
 	})
 
+	// spec: §15.5 line 2438 / §17.2 line 58 — the lenny-crd-conversion
+	// webhook is a Phase 3.5 baseline. The admission-webhook-inventory
+	// check excludes it (it is a CRD conversion endpoint, not a
+	// ValidatingWebhookConfiguration), so verify its Service presence and
+	// Deployment readiness here. A missing or unready webhook aborts the
+	// upgrade because it makes every multi-version CRD operation fail.
+	// F-15.5.3 / F-17.2.4 / F-10.5.6.
+	if state, err := gatherConversionWebhook(ctx, reader, cfg.Namespace); err != nil {
+		report = append(report, CheckResult{
+			Name:     "conversion-webhook-availability",
+			Decision: Decision{Reason: "read lenny-crd-conversion workload: " + err.Error()},
+		})
+	} else {
+		report = append(report, CheckResult{
+			Name:     "conversion-webhook-availability",
+			Decision: CheckConversionWebhook(state),
+		})
+	}
+
 	// spec: §12.4 — the billing stream and per-tenant counters must not
 	// silently evict. Runs only when a BYO Redis URL was supplied; the
 	// cloud Terraform sets maxmemory-policy=noeviction natively, but the

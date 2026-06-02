@@ -1,0 +1,107 @@
+{{- /*
+lenny-crd-validate post-upgrade CRD validation Job (§17.6 "Helm
+post-upgrade CRD validation hook").
+
+Helm does not update CRDs on `helm upgrade` (a known limitation that
+strips new CRD fields if the operator forgets the separate
+`kubectl apply -f charts/lenny/crds/` step). As a defense-in-depth
+catch-net this Job runs after `helm upgrade` completes and verifies every
+Lenny CRD carries the expected `lenny.dev/schema-version` annotation for
+this chart release. A stale CRD fails the Job with the §17.6 recovery
+message rather than letting the mismatch manifest later as silent
+field-stripping. The Job runs even when preflight.enabled is false, so a
+skipped preflight still surfaces a stale CRD.
+
+It is a post-upgrade hook (no-op on install, where CRDs are applied
+fresh), at weight -5 so its ServiceAccount/RBAC (weight -10) exist first.
+Its RBAC is read-only: get/list CustomResourceDefinitions cluster-wide.
+F-17.6.4.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-crd-validate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-crd-validate
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  # §17.6 — the post-upgrade hook reads each installed Lenny CRD's
+  # lenny.dev/schema-version annotation. Read-only, cluster-scoped.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-crd-validate
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-crd-validate
+subjects:
+  - kind: ServiceAccount
+    name: lenny-crd-validate
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-crd-validate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ int (.Values.preflight.timeoutSeconds | default 120) }}
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: lenny-crd-validate
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: crd-validate
+          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
+          args:
+            - --crd-validate
+            - --namespace={{ .Release.Namespace }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.preflight.resources | nindent 12 }}

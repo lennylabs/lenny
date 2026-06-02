@@ -5,10 +5,12 @@ package preflight
 import "fmt"
 
 // baselineValidatingWebhooks are the ValidatingWebhookConfigurations
-// always expected from Phase 3.5 onward (§17.2). The fifth Phase 3.5
-// baseline entry, lenny-crd-conversion, is a CRD conversion endpoint
-// rather than a ValidatingWebhookConfiguration and is verified
-// separately.
+// always expected from Phase 3.5 onward (§17.2). The Phase 3.5 baseline
+// entry lenny-crd-conversion is a CRD conversion endpoint rather than a
+// ValidatingWebhookConfiguration; it is verified by the separate
+// conversion-webhook-availability check (CheckConversionWebhook) which
+// confirms the Service is present and the Deployment is ready per §15.5
+// line 2438. F-15.5.3 / F-17.2.4.
 //
 // lenny-pod-security is a §13.1 pod-security baseline control: it
 // renders unconditionally and so belongs in the baseline set.

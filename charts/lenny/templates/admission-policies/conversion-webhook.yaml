@@ -1,0 +1,23 @@
+{{- /*
+lenny-crd-conversion CRD conversion webhook (§17.2 item 12, §15.5
+conversion-webhook deployment procedure, §10.5 upgrade procedure).
+
+Unlike the ValidatingAdmissionWebhooks in this directory, lenny-crd-conversion
+is a CustomResourceDefinition.spec.conversion.webhook endpoint. It serves
+the /crd-conversion path on the same lenny-webhook image and is the
+Phase 3.5 baseline conversion webhook every multi-version CRD read/write
+routes through during a rolling upgrade. It renders unconditionally
+(baseline, no feature-flag gate) with the same replicas: 2 +
+PodDisruptionBudget minAvailable: 1 HA posture as the validating webhooks
+(§17.2 line 56) and is CA-injected by the shared lenny-webhook-selfsign
+Issuer.
+
+The CRDs ship a single served version (v1alpha1) today, so no CRD carries
+spec.conversion.strategy: Webhook yet — the §15.5 line 2436 graduation
+procedure wires the CRDs to this Service before adding a second served
+version. The webhook Service and Deployment are deployed ahead of that
+step so the graduation has a running endpoint to point at, and so the
+§15.5 line 2438 / §17.9 conversion-webhook-availability preflight check
+has a Service to verify. F-15.5.2 / F-17.2.4 / F-10.5.6.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-crd-conversion") }}

@@ -148,3 +148,60 @@ func TestCurrentCRDSchemaVersionConstant_spec_10_437(t *testing.T) {
 		t.Fatal("CurrentCRDSchemaVersion must not be empty")
 	}
 }
+
+// spec: §17.6 "Helm post-upgrade CRD validation hook" — the
+// lenny-crd-validate Job runs in PostUpgrade mode and a stale CRD must
+// surface the verbatim "Post-upgrade CRD validation failed: ..." message
+// the runbook greps for, carrying the namespace-interpolated recovery
+// command. F-17.6.4.
+func TestCRDSchemaVersionCheckPostUpgradeMessage_spec_17_6(t *testing.T) {
+	var objs []client.Object
+	for _, name := range preflight.LennyCRDNames {
+		if name == "runtimes.lenny.dev" {
+			objs = append(objs, crdWithSchemaVersion(name, "0"))
+			continue
+		}
+		objs = append(objs, crdWithSchemaVersion(name, preflight.CurrentCRDSchemaVersion))
+	}
+	c := fake.NewClientBuilder().WithScheme(crdSchemaScheme(t)).WithObjects(objs...).Build()
+
+	d := preflight.CRDSchemaVersionCheck{PostUpgrade: true, Namespace: "lenny-prod"}.Decide(context.Background(), c)
+	if d.Passed {
+		t.Fatal("expected failure on schema-version mismatch in post-upgrade mode")
+	}
+	if !strings.Contains(d.Reason, "Post-upgrade CRD validation failed") {
+		t.Errorf("reason should carry the §17.6 runbook-grep prefix; got %q", d.Reason)
+	}
+	if !strings.Contains(d.Reason, `has schema version "0", expected "1"`) {
+		t.Errorf("reason should carry the post-upgrade mismatch phrase; got %q", d.Reason)
+	}
+	if !strings.Contains(d.Reason, "-n lenny-prod") {
+		t.Errorf("reason should interpolate the release namespace into the recovery command; got %q", d.Reason)
+	}
+	if !strings.Contains(d.Reason, "docs/runbooks/crd-upgrade.md") {
+		t.Errorf("reason should point at the runbook; got %q", d.Reason)
+	}
+}
+
+// spec: §17.6 — with no Namespace set the recovery command renders the
+// literal "<namespace>" placeholder rather than an empty -n flag.
+// F-17.6.4.
+func TestCRDSchemaVersionCheckPostUpgradeNamespacePlaceholder_spec_17_6(t *testing.T) {
+	var objs []client.Object
+	for _, name := range preflight.LennyCRDNames {
+		if name == "sandboxes.lenny.dev" {
+			objs = append(objs, crdWithoutAnnotation(name))
+			continue
+		}
+		objs = append(objs, crdWithSchemaVersion(name, preflight.CurrentCRDSchemaVersion))
+	}
+	c := fake.NewClientBuilder().WithScheme(crdSchemaScheme(t)).WithObjects(objs...).Build()
+
+	d := preflight.CRDSchemaVersionCheck{PostUpgrade: true}.Decide(context.Background(), c)
+	if d.Passed {
+		t.Fatal("expected failure on missing annotation in post-upgrade mode")
+	}
+	if !strings.Contains(d.Reason, "-n <namespace>") {
+		t.Errorf("empty namespace should render the placeholder; got %q", d.Reason)
+	}
+}

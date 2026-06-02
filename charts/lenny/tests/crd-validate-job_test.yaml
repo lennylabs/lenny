@@ -1,0 +1,61 @@
+suite: lenny-crd-validate post-upgrade Job (§17.6)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - crd-validate-job.yaml
+tests:
+  # spec: §17.6 "Helm post-upgrade CRD validation hook" — a
+  # ServiceAccount, ClusterRole, ClusterRoleBinding, and Job render as
+  # post-upgrade hooks. F-17.6.4.
+  - it: renders the SA, RBAC, and Job
+    asserts:
+      - hasDocuments:
+          count: 4
+
+  # The Job is a post-upgrade hook at weight -5 so it runs after the
+  # chart resources roll, with its RBAC (weight -10) created first.
+  - it: registers the Job as a post-upgrade hook at weight -5
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-crd-validate
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "-5"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --crd-validate
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --namespace=lenny-system
+
+  - it: binds a read-only CRD ClusterRole to the Job ServiceAccount
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: apiextensions.k8s.io
+      - equal:
+          path: rules[0].resources[0]
+          value: customresourcedefinitions
+      - contains:
+          path: rules[0].verbs
+          content: get
+
+  # spec: §17.6 — the hook runs even when preflight is disabled, so the
+  # catch-net is independent of preflight.enabled.
+  - it: renders even when preflight is disabled
+    set:
+      preflight.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 4

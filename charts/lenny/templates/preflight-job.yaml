@@ -57,6 +57,18 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list"]
+  # §15.5 line 2438 / §17.9 conversion-webhook-availability check reads
+  # the lenny-crd-conversion Service to confirm the CRD conversion webhook
+  # is reachable; the matching Deployment is covered by the apps/list rule
+  # above. F-15.5.3 / F-17.2.4.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list"]
+  # §10 line 443 crd-schema-version check reads each installed Lenny CRD's
+  # lenny.dev/schema-version annotation. F-15.5.12.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
   # §5.3 line 676 RuntimeClass presence check (cluster-scoped objects).
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]

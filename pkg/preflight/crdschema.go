@@ -62,6 +62,16 @@ type CRDSchemaVersionCheck struct {
 	// chart-shipped LennyCRDNames so the lenny-preflight Job does not
 	// need to pass them.
 	Names []string
+	// PostUpgrade selects the §17.6 "Helm post-upgrade CRD validation"
+	// phrasing instead of the pre-upgrade preflight message. The
+	// lenny-crd-validate Job (helm.sh/hook: post-upgrade) sets it so a
+	// stale CRD surfaces the recovery command the operator runs, even
+	// when preflight was skipped. F-17.6.4.
+	PostUpgrade bool
+	// Namespace is the release namespace interpolated into the
+	// PostUpgrade recovery command. Empty renders the literal
+	// "<namespace>" placeholder.
+	Namespace string
 }
 
 // Decide reads the named CRDs through reader and reports the
@@ -86,7 +96,7 @@ func (c CRDSchemaVersionCheck) Decide(ctx context.Context, reader client.Reader)
 		var crd apiextensionsv1.CustomResourceDefinition
 		if err := reader.Get(ctx, client.ObjectKey{Name: name}, &crd); err != nil {
 			if apierrors.IsNotFound(err) {
-				reasons = append(reasons, fmt.Sprintf("CRD %q is missing — apply updated CRDs before running helm upgrade", name))
+				reasons = append(reasons, c.message(name, "", expected, "missing"))
 				continue
 			}
 			reasons = append(reasons, fmt.Sprintf("get CRD %q: %v", name, err))
@@ -94,17 +104,11 @@ func (c CRDSchemaVersionCheck) Decide(ctx context.Context, reader client.Reader)
 		}
 		got := strings.TrimSpace(crd.Annotations[CRDSchemaVersionAnnotation])
 		if got == "" {
-			reasons = append(reasons, fmt.Sprintf(
-				"CRD %q is missing the %s annotation — apply updated CRDs before running helm upgrade",
-				name, CRDSchemaVersionAnnotation))
+			reasons = append(reasons, c.message(name, "", expected, "no-annotation"))
 			continue
 		}
 		if got != expected {
-			// spec: §10 line 443 message verbatim — operator runbooks
-			// grep for this exact text.
-			reasons = append(reasons, fmt.Sprintf(
-				"CRD %q schema version is %q; expected %q. Apply updated CRDs before running helm upgrade.",
-				name, got, expected))
+			reasons = append(reasons, c.message(name, got, expected, "mismatch"))
 		}
 	}
 	if len(reasons) == 0 {
@@ -112,4 +116,43 @@ func (c CRDSchemaVersionCheck) Decide(ctx context.Context, reader client.Reader)
 			"all %d Lenny CRDs match schema version %q", len(sorted), expected)}
 	}
 	return Decision{Reason: strings.Join(reasons, "; ")}
+}
+
+// message renders the per-CRD failure reason. The pre-upgrade form is the
+// §10 line 443 verbatim text operator runbooks grep for; the PostUpgrade
+// form is the §17.6 "Helm post-upgrade CRD validation hook" message that
+// names the recovery command. kind is one of "missing", "no-annotation",
+// or "mismatch". F-15.5.12 / F-17.6.4.
+func (c CRDSchemaVersionCheck) message(name, got, expected, kind string) string {
+	if c.PostUpgrade {
+		ns := strings.TrimSpace(c.Namespace)
+		if ns == "" {
+			ns = "<namespace>"
+		}
+		recover := fmt.Sprintf(
+			"Run: kubectl apply -f charts/lenny/crds/ && kubectl rollout restart deployment -l app.kubernetes.io/part-of=lenny -n %s. See docs/runbooks/crd-upgrade.md.",
+			ns)
+		switch kind {
+		case "missing":
+			return fmt.Sprintf("Post-upgrade CRD validation failed: CRD %q is missing. %s", name, recover)
+		case "no-annotation":
+			return fmt.Sprintf("Post-upgrade CRD validation failed: CRD %q is missing the %s annotation, expected %q. %s",
+				name, CRDSchemaVersionAnnotation, expected, recover)
+		default:
+			// spec: §17.6 message verbatim — operator runbooks grep for it.
+			return fmt.Sprintf("Post-upgrade CRD validation failed: CRD %q has schema version %q, expected %q. %s",
+				name, got, expected, recover)
+		}
+	}
+	switch kind {
+	case "missing":
+		return fmt.Sprintf("CRD %q is missing — apply updated CRDs before running helm upgrade", name)
+	case "no-annotation":
+		return fmt.Sprintf("CRD %q is missing the %s annotation — apply updated CRDs before running helm upgrade",
+			name, CRDSchemaVersionAnnotation)
+	default:
+		// spec: §10 line 443 message verbatim — operator runbooks grep for it.
+		return fmt.Sprintf("CRD %q schema version is %q; expected %q. Apply updated CRDs before running helm upgrade.",
+			name, got, expected)
+	}
 }
