@@ -14,6 +14,13 @@
 #      tests cover the migration). The check is conservative: it looks for
 #      the bare migration number as a substring; if your fixture lives
 #      under tests/testdata/migrations/ keep the same numbering.
+#   4. No .up.sql adds a column with a bare NOT NULL constraint and no
+#      DEFAULT. The §10.5 expand-contract rule requires every Phase 1
+#      column to be NULLable or carry a server-side DEFAULT until Phase 3
+#      drops the old column: during a rolling deploy an old-version replica
+#      that does not know the new column issues INSERTs that omit it, and a
+#      NOT NULL constraint without a default makes those INSERTs fail.
+#      spec: §10.5 line 415.
 #
 # Exit code:
 #   0  success
@@ -75,10 +82,43 @@ if [[ -d "${TEST_DIR}" ]]; then
     done < <(find "${MIGRATIONS_DIR}" -type f -name '*.up.sql' | sort)
 fi
 
+# Pass 4: §10.5 expand-contract — no `ADD COLUMN ... NOT NULL` without a
+# DEFAULT. Each up-migration is normalized (line comments stripped, lines
+# joined, statements split on `;`) and every `ADD COLUMN` clause is isolated
+# up to the next comma so a NOT NULL column that carries no DEFAULT is
+# reported. A DEFAULT keyword precedes its literal in the clause, so a value
+# that itself contains a comma (e.g. '{"a":1}'::jsonb) does not cause a false
+# positive. CREATE TABLE columns are exempt — a brand-new table has no
+# old-version replica writing NULL-omitting INSERTs against it.
+while IFS= read -r up; do
+    if awk '
+        { line = $0; sub(/--.*/, "", line); buf = buf " " line }
+        END {
+            n = split(buf, stmts, ";")
+            for (i = 1; i <= n; i++) {
+                s = tolower(stmts[i])
+                m = split(s, parts, /add column/)
+                for (j = 2; j <= m; j++) {   # parts[1] precedes the first ADD COLUMN
+                    seg = parts[j]
+                    c = index(seg, ",")
+                    if (c > 0) seg = substr(seg, 1, c - 1)
+                    if (seg ~ /not null/ && seg !~ /default/) {
+                        exit 1
+                    }
+                }
+            }
+        }
+    ' "${up}"; then
+        : # no violation
+    else
+        report "§10.5 expand-contract: ${up} adds a NOT NULL column with no DEFAULT (old-version replicas omitting the column on INSERT will fail). Make it NULLable or give it a server-side DEFAULT; add the NOT NULL constraint in a Phase 3 migration."
+    fi
+done < <(find "${MIGRATIONS_DIR}" -type f -name '*.up.sql' | sort)
+
 if (( violations > 0 )); then
     echo "lint-migrations: ${violations} violation(s)" >&2
     exit "${violations}"
 fi
 
-echo "lint-migrations: all migrations have rollback + test coverage"
+echo "lint-migrations: all migrations have rollback + test coverage and satisfy the §10.5 expand-contract nullability rule"
 exit 0

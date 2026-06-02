@@ -28,6 +28,7 @@ type Runner struct {
 	billing         *BillingEraser
 	memoryPreflight func(context.Context) error
 	onFailure       func(tenantID, failurePhase string)
+	onComplete      func(ctx context.Context, tenantID, userID string)
 	clock           func() time.Time
 }
 
@@ -85,6 +86,20 @@ func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Run
 // observer disables emission. Returns the Runner for call chaining.
 func (r *Runner) WithFailureObserver(obs func(tenantID, failurePhase string)) *Runner {
 	r.onFailure = obs
+	return r
+}
+
+// WithCompletionHook attaches the §12.5 line 317 erasure-completion hook,
+// invoked with the job's tenant and user id once the job reaches
+// PhaseCompleted. The gateway wires it to the `gcPriority: high`
+// immediate-sweep trigger: a high-priority tenant's expired artifacts are
+// collected as soon as one of its erasure jobs completes, independent of
+// the global GC cycle. The hook runs after the completion is durably
+// recorded so a hook panic or slow sweep never rolls back the completed
+// job; it is best-effort and a nil hook disables it. Returns the Runner
+// for call chaining. spec: §12.5 line 317.
+func (r *Runner) WithCompletionHook(hook func(ctx context.Context, tenantID, userID string)) *Runner {
+	r.onComplete = hook
 	return r
 }
 
@@ -246,6 +261,14 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		return nil
 	}); err != nil {
 		return err
+	}
+	// §12.5 line 317: fire the erasure-completion hook after the
+	// completion is durable. The gateway uses it to trigger a
+	// tenant-scoped GC sweep for a `gcPriority: high` tenant. It is
+	// best-effort — a hook error must not retroactively fail the
+	// already-completed erasure job.
+	if r.onComplete != nil {
+		r.onComplete(ctx, job.TenantID, job.UserID)
 	}
 	return nil
 }

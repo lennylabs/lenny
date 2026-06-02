@@ -74,6 +74,10 @@ type Token struct {
 	Scope           []string
 	Audience        []string
 	Typ             TokenType
+	// AuthorizedTools is the §13.3 narrowed operability-tool allowlist.
+	// An exchange may preserve or further narrow it; broadening (a
+	// requested tool not present on the subject) is rejected.
+	AuthorizedTools []string
 	Exp             time.Time
 }
 
@@ -133,6 +137,12 @@ type Issued struct {
 	Scope           []string
 	Audience        []string
 	Typ             TokenType
+	// AuthorizedTools is the §13.3 operability-tool allowlist carried onto
+	// the issued token: the subject's list when the request narrows
+	// nothing, or the requested subset when it does. For a child-minting
+	// exchange (actor_token present) it is intersected with the issued
+	// scope per §13.3 enforcement rule (e).
+	AuthorizedTools []string
 	Exp             time.Time
 }
 
@@ -189,6 +199,25 @@ func Validate(r Request) (Issued, error) {
 		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "audience_broadened"}
 	}
 
+	// §13.3 authorized_tools (table row + enforcement rule (e)):
+	// "preserving or narrowing ... broadening is rejected". A requested
+	// allowlist that names a tool the subject did not hold is a broadening
+	// attempt and is rejected; an empty requested allowlist preserves the
+	// subject's. For a child-minting exchange (actor_token present) the
+	// resulting allowlist is intersected with the issued scope, so a child
+	// whose scope dropped an operability tool cannot retain authorization
+	// for it.
+	if !isSubset(r.Requested.AuthorizedTools, r.Subject.AuthorizedTools) {
+		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "authorized_tools_broadened"}
+	}
+	authorizedTools := r.Subject.AuthorizedTools
+	if len(r.Requested.AuthorizedTools) > 0 {
+		authorizedTools = r.Requested.AuthorizedTools
+	}
+	if r.Actor != nil && len(authorizedTools) > 0 {
+		authorizedTools = intersect(authorizedTools, r.Requested.Scope)
+	}
+
 	// §13.3 caller_type: cannot elevate.
 	if r.Requested.CallerType != "" {
 		if callerRank(r.Requested.CallerType) > callerRank(r.Subject.CallerType) {
@@ -243,6 +272,7 @@ func Validate(r Request) (Issued, error) {
 		DelegationDepth: depth,
 		Scope:           r.Requested.Scope,
 		Audience:        r.Requested.Audience,
+		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
 		Exp:             exp,
 	}, nil
@@ -273,6 +303,26 @@ func isSubset(candidate, universe []string) bool {
 		}
 	}
 	return true
+}
+
+// intersect returns the entries of a that also appear in b, preserving a's
+// order. It backs the §13.3 child-minting authorized_tools narrowing
+// (allowlist ∩ issued scope).
+func intersect(a, b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(b))
+	for _, s := range b {
+		set[s] = struct{}{}
+	}
+	var out []string
+	for _, s := range a {
+		if _, ok := set[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func defaultString[T ~string](a, b T) T {

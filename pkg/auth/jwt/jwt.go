@@ -72,6 +72,12 @@ type Claims struct {
 	// claim, the group claim is admission-time only.
 	Groups []string `json:"groups,omitempty"`
 
+	// AuthorizedTools carries the §13.3 line 580 narrowed tool allowlist
+	// for operability-scope tokens (§25.1). A token exchange preserves or
+	// further narrows it (broadening is rejected by the §13.3 validator),
+	// so the claim survives the exchange path rather than being dropped.
+	AuthorizedTools []string `json:"authorized_tools,omitempty"`
+
 	// Origin carries the §27.3 token-origin claim. It is set to
 	// "playground" on every session-capability JWT minted for a
 	// /playground/* request, in all three playground auth modes. The

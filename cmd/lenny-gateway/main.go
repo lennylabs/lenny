@@ -3175,6 +3175,13 @@ func main() {
 		}
 	}
 	adminRouter = wireAudit(adminRouter)
+	// §12.5 line 317: the erasure-completion → tenant-scoped GC sweep
+	// trigger. The erasure runner is built here but the retention-GC
+	// collector is constructed later, so the runner closes over this
+	// indirection and the GC block below assigns the real sweep once the
+	// collector exists. Nil during the startup window before the GC block
+	// runs (no erasure job can complete that early).
+	var immediateGCSweep func(ctx context.Context, tenantID string)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
 	// Session-scoped stores (transcripts, artifacts) are erased per
@@ -3219,7 +3226,14 @@ func main() {
 		})
 		erasureJobs := erasurejob.NewMemory()
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
-			WithFailureObserver(gwMetrics.IncErasureJobFailed)
+			WithFailureObserver(gwMetrics.IncErasureJobFailed).
+			// §12.5 line 317: on completion, trigger an immediate
+			// tenant-scoped GC sweep for a `gcPriority: high` tenant.
+			WithCompletionHook(func(ctx context.Context, tenantID, _ string) {
+				if immediateGCSweep != nil {
+					immediateGCSweep(ctx, tenantID)
+				}
+			})
 		// spec: §12.8 lines 743-758 (layer 3) — re-run the MemoryStore
 		// erasure preflight at the start of every job so a backend that
 		// regressed after the startup check (e.g. a rolling upgrade of an
@@ -4251,6 +4265,28 @@ func main() {
 		})
 		log.Printf("lenny-gateway: §12.5 GC sweep cadence %s (gc.cycleIntervalSeconds=%d); tombstone retention %s (gc.tombstoneRetentionSeconds=%d)",
 			gcInterval, int(gcInterval/time.Second), gcTombstoneRetention, int(gcTombstoneRetention/time.Second))
+		// §12.5 line 317: bind the erasure-completion → immediate-sweep
+		// trigger now that the collector exists. A `gcPriority: high`
+		// tenant's expired artifacts are reclaimed the moment one of its
+		// erasure jobs completes, independent of the global cycle. A normal
+		// tenant takes no extra sweep. Best-effort: a lookup or sweep error
+		// is logged but never propagated back into the completed job.
+		immediateGCSweep = func(ctx context.Context, tenantID string) {
+			t, err := tenants.Get(ctx, tenantID)
+			if err != nil {
+				log.Printf("lenny-gateway: §12.5 gcPriority lookup for tenant %q failed: %v", tenantID, err)
+				return
+			}
+			if !t.TriggersImmediateGC() {
+				return
+			}
+			collected, err := retGC.SweepTenant(ctx, tenantID, clockinject.Now())
+			if err != nil {
+				log.Printf("lenny-gateway: §12.5 gcPriority=high immediate sweep for tenant %q failed: %v", tenantID, err)
+				return
+			}
+			log.Printf("lenny-gateway: §12.5 gcPriority=high immediate sweep for tenant %q collected %d session(s)", tenantID, collected)
+		}
 		go retGC.Run(watchdogCtx, func(collected int, err error) {
 			if err != nil {
 				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)

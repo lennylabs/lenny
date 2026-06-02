@@ -75,6 +75,14 @@ type Tenant struct {
 	// independently of other tenants.
 	QuotaResetPeriod string
 
+	// GCPriority is the §12.5 line 317 per-tenant garbage-collection
+	// priority: `normal` (the default) or `high`. A `high` tenant,
+	// intended for T4 erasure-SLA compliance, triggers an immediate
+	// tenant-scoped incremental GC sweep whenever an erasure job for the
+	// tenant completes, independent of the global cycle interval. Empty
+	// is read as `normal`.
+	GCPriority string
+
 	// ElicitationContentIntegrity is the §9.2 tenant-stored elicitation
 	// content-integrity mode (`off`, `detect-only`, or `enforce`). The
 	// gateway clamps it against the platform floor at use time. Empty
@@ -202,6 +210,27 @@ func ValidTenantState(s string) bool {
 	}
 	return false
 }
+
+// §12.5 GCPriority values a tenant may carry. spec: §12.5 line 317.
+const (
+	// GCPriorityNormal collects the tenant's expired artifacts only on the
+	// global GC cycle. The empty string is read as normal.
+	GCPriorityNormal = "normal"
+	// GCPriorityHigh triggers an immediate tenant-scoped incremental sweep
+	// on every completed erasure job, for T4 erasure-SLA compliance.
+	GCPriorityHigh = "high"
+)
+
+// ValidGCPriority reports whether s is a §12.5 GCPriority value: the empty
+// string (read as `normal`), `normal`, or `high`. spec: §12.5 line 317.
+func ValidGCPriority(s string) bool {
+	return s == "" || s == GCPriorityNormal || s == GCPriorityHigh
+}
+
+// TriggersImmediateGC reports whether the tenant's §12.5 GCPriority is
+// `high`, the state that fires a tenant-scoped sweep on erasure-job
+// completion. spec: §12.5 line 317.
+func (t Tenant) TriggersImmediateGC() bool { return t.GCPriority == GCPriorityHigh }
 
 // §12.9 data-classification tier values a tenant (or a stricter
 // environment override) may carry. T1/T2 classify other data categories

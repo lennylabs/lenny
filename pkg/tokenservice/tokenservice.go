@@ -416,6 +416,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		CallerType:      string(issued.CallerType),
 		DelegationDepth: issued.DelegationDepth,
 		Scope:           strings.Join(issued.Scope, " "),
+		// §13.3 line 580: stamp the preserved/narrowed operability-tool
+		// allowlist onto the issued token so an operability-scope surface
+		// has the claim to enforce against. F-13.3.11.
+		AuthorizedTools: issued.AuthorizedTools,
 		Typ:             auth.TokenType(issued.Typ),
 	}
 	signed, err := s.signer.Sign(out)
@@ -633,6 +637,10 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		DelegationDepth: c.DelegationDepth,
 		Scope:           splitScope(c.Scope),
 		Audience:        append([]string{}, c.Audience...),
+		// §13.3 line 583(e): the subject's narrowed operability-tool
+		// allowlist is carried into the exchange so Validate can preserve
+		// or further narrow it rather than dropping it.
+		AuthorizedTools: append([]string{}, c.AuthorizedTools...),
 		Typ:             tokenexchange.TokenType(c.Typ),
 		Exp:             c.ExpiryTime(),
 	}

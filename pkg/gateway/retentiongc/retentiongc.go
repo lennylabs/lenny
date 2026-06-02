@@ -191,6 +191,44 @@ func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
 	return collected, nil
 }
 
+// SweepTenant runs one incremental retention sweep scoped to a single
+// tenant at now and returns the count of sessions whose artifacts it
+// collected. It is the §12.5 line 317 `gcPriority: high` immediate-sweep
+// hook: the erasure-completion handler calls it for a high-priority tenant
+// whenever an erasure job for that tenant completes, so the tenant's
+// expired artifacts are reclaimed without waiting for the global cycle.
+//
+// Like Tick it emits the §12.5 ll. 321 retention-GC observability signals
+// when a MetricsSink is configured (duration, run outcome, per-store
+// artifacts/errors), so an out-of-cycle sweep is as observable as a
+// scheduled one. An empty tenant id is rejected so a caller cannot
+// accidentally sweep the whole store.
+//
+// spec: §12.5 line 317.
+func (c *Collector) SweepTenant(ctx context.Context, tenant string, now time.Time) (int, error) {
+	start := c.clock()
+	defer func() {
+		if c.metrics != nil {
+			c.metrics.ObserveGCDuration(c.clock().Sub(start).Seconds())
+		}
+	}()
+	if tenant == "" {
+		if c.metrics != nil {
+			c.metrics.IncGCRun("error")
+		}
+		return 0, fmt.Errorf("retentiongc: SweepTenant requires a non-empty tenant id")
+	}
+	n, err := c.sweepTenant(ctx, tenant, now)
+	if c.metrics != nil {
+		if err != nil {
+			c.metrics.IncGCRun("error")
+		} else {
+			c.metrics.IncGCRun("success")
+		}
+	}
+	return n, err
+}
+
 func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Time) (int, error) {
 	rows, err := c.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {

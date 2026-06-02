@@ -49,7 +49,7 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	created_at, updated_at, deleted_at, min_isolation_profile,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 	experiment_targeting, credential_policy, rbac_config,
-	token_quota_per_window, quota_reset_period, state`
+	token_quota_per_window, quota_reset_period, state, gc_priority`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -71,6 +71,17 @@ func marshalCredentialPolicy(c credential.CredentialPolicy) ([]byte, error) {
 		return nil, fmt.Errorf("tenantstore: encode credentialPolicy: %w", err)
 	}
 	return b, nil
+}
+
+// gcPriorityOrDefault maps an empty §12.5 GCPriority to the `normal`
+// default so a write never sends the empty string the gc_priority CHECK
+// constraint (the column is NOT NULL DEFAULT 'normal') would reject.
+// spec: §12.5 line 317.
+func gcPriorityOrDefault(s string) string {
+	if s == "" {
+		return tenantstore.GCPriorityNormal
+	}
+	return s
 }
 
 // updateState maps an empty §12.8 TenantState to the `active` default
@@ -137,14 +148,14 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 		experiment_targeting, credential_policy, rbac_config,
-		token_quota_per_window, quota_reset_period, state
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		token_quota_per_window, quota_reset_period, state, gc_priority
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state)
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -211,13 +222,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		no_environment_policy = $13, experiment_targeting = $14,
 		credential_policy = $15, rbac_config = $16,
 		token_quota_per_window = $17, quota_reset_period = $18,
-		state = $19 WHERE id = $1`,
+		state = $19, gc_priority = $20 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State)); err != nil {
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State),
+		gcPriorityOrDefault(t.GCPriority)); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -309,7 +321,7 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
-		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State,
+		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State, &t.GCPriority,
 	); err != nil {
 		return tenantstore.Tenant{}, err
 	}

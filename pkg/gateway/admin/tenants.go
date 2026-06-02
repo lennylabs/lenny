@@ -805,6 +805,7 @@ type TenantPayload struct {
 	StorageQuotaBytes       int64                        `json:"storageQuotaBytes,omitempty"`
 	TokenQuotaPerWindow     int64                        `json:"tokenQuotaPerWindow,omitempty"`
 	QuotaResetPeriod        string                       `json:"quotaResetPeriod,omitempty"`
+	GCPriority              string                       `json:"gcPriority,omitempty"`
 	MinIsolationProfile     string                       `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy    string                       `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting     *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
@@ -844,6 +845,7 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 		StorageQuotaBytes:     t.StorageQuotaBytes,
 		TokenQuotaPerWindow:   t.TokenQuotaPerWindow,
 		QuotaResetPeriod:      t.QuotaResetPeriod,
+		GCPriority:            gcPriorityOrNormal(t.GCPriority),
 		MinIsolationProfile:   t.MinIsolationProfile,
 		BillingErasurePolicy:  t.BillingErasurePolicy,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
@@ -880,6 +882,16 @@ func validBillingErasurePolicy(s string) bool {
 // hourly, daily, monthly, or rolling.
 func validQuotaResetPeriod(s string) bool {
 	return s == "" || quota.ResetPeriod(s).IsValid()
+}
+
+// gcPriorityOrNormal maps the empty §12.5 GCPriority to the `normal`
+// default so the admin response always carries a concrete value.
+// spec: §12.5 line 317.
+func gcPriorityOrNormal(s string) string {
+	if s == "" {
+		return tenantstore.GCPriorityNormal
+	}
+	return s
 }
 
 // regulatedComplianceProfiles are the §12.8 compliance profiles for
@@ -1056,6 +1068,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "quotaResetPeriod"})
 		return
 	}
+	if !tenantstore.ValidGCPriority(body.GCPriority) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"gcPriority must be normal or high",
+			map[string]any{"field": "gcPriority"})
+		return
+	}
 	if body.MinIsolationProfile != "" && !isolation.IsValid(isolation.Profile(body.MinIsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"minIsolationProfile must be standard, sandboxed, or microvm",
@@ -1114,6 +1132,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		StorageQuotaBytes:     body.StorageQuotaBytes,
 		TokenQuotaPerWindow:   body.TokenQuotaPerWindow,
 		QuotaResetPeriod:      body.QuotaResetPeriod,
+		GCPriority:            body.GCPriority,
 		MinIsolationProfile:   body.MinIsolationProfile,
 		BillingErasurePolicy:  body.BillingErasurePolicy,
 		CreatedAt:             r.clock(),
@@ -1214,6 +1233,7 @@ type UpdateTenantRequest struct {
 	StorageQuotaBytes     *int64                       `json:"storageQuotaBytes,omitempty"`
 	TokenQuotaPerWindow   *int64                       `json:"tokenQuotaPerWindow,omitempty"`
 	QuotaResetPeriod      *string                      `json:"quotaResetPeriod,omitempty"`
+	GCPriority            *string                      `json:"gcPriority,omitempty"`
 	MinIsolationProfile   *string                      `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy  *string                      `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting   *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
@@ -1250,6 +1270,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"quotaResetPeriod must be hourly, daily, monthly, or rolling",
 			map[string]any{"field": "quotaResetPeriod"})
+		return
+	}
+	if body.GCPriority != nil && !tenantstore.ValidGCPriority(*body.GCPriority) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"gcPriority must be normal or high",
+			map[string]any{"field": "gcPriority"})
 		return
 	}
 	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
@@ -1391,6 +1417,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		if body.QuotaResetPeriod != nil {
 			t.QuotaResetPeriod = *body.QuotaResetPeriod
 		}
+		if body.GCPriority != nil {
+			t.GCPriority = *body.GCPriority
+		}
 		if body.MinIsolationProfile != nil {
 			t.MinIsolationProfile = *body.MinIsolationProfile
 		}
@@ -1451,6 +1480,9 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.StorageQuotaBytes != nil {
 		out = append(out, "storageQuotaBytes")
+	}
+	if b.GCPriority != nil {
+		out = append(out, "gcPriority")
 	}
 	if b.MinIsolationProfile != nil {
 		out = append(out, "minIsolationProfile")
