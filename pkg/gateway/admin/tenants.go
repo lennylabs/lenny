@@ -800,6 +800,7 @@ type TenantPayload struct {
 	ComplianceProfile       string                       `json:"complianceProfile,omitempty"`
 	DataResidencyRegion     string                       `json:"dataResidencyRegion,omitempty"`
 	WorkspaceTier           string                       `json:"workspaceTier,omitempty"`
+	State                   string                       `json:"state,omitempty"`
 	MaxConcurrentSessions   int                          `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes       int64                        `json:"storageQuotaBytes,omitempty"`
 	TokenQuotaPerWindow     int64                        `json:"tokenQuotaPerWindow,omitempty"`
@@ -821,6 +822,16 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 	return fromTenantWithProbe(t, nil)
 }
 
+// tenantStateOrActive reports the §12.8 TenantState for the admin API,
+// mapping the empty pre-lifecycle value to `active` so the response
+// always carries a concrete state. spec: §12.8 line 865.
+func tenantStateOrActive(state string) string {
+	if state == "" {
+		return tenantstore.TenantStateActive
+	}
+	return state
+}
+
 func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 	p := TenantPayload{
 		ID:                    t.ID,
@@ -828,6 +839,7 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 		ComplianceProfile:     t.ComplianceProfile,
 		DataResidencyRegion:   t.DataResidencyRegion,
 		WorkspaceTier:         t.WorkspaceTier,
+		State:                 tenantStateOrActive(t.State),
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
 		StorageQuotaBytes:     t.StorageQuotaBytes,
 		TokenQuotaPerWindow:   t.TokenQuotaPerWindow,
@@ -1173,6 +1185,17 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §12.8 line 873 — a `deleted`-state tenant is a tombstone
+	// retained to prevent id reuse; GET returns 410 Gone with the
+	// deletion timestamp rather than the (nulled) row. Tenants in
+	// `disabling`/`deleting` are still resolvable (200) so an operator
+	// can poll the in-progress lifecycle state.
+	if !row.IsActive() {
+		writeError(w, http.StatusGone, "TENANT_DELETED",
+			"tenant has been deleted and its id is retained as a tombstone",
+			map[string]any{"tenantId": id, "state": tenantStateOrActive(row.State), "deletedAt": rfc3339Nano(row.DeletedAt)})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

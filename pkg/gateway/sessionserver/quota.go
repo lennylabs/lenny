@@ -95,6 +95,40 @@ func (s *Server) requireTenantClassification(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
+// requireTenantState implements the §12.8 phase-table requirement that
+// the gateway reject new session creation once a tenant leaves the
+// `active` TenantState. A tenant in `disabling`, `deleting`, or
+// `deleted` state rejects the create with 403 TENANT_NOT_ACTIVE; the
+// deletion controller advances the state, so the gate is dormant until
+// a tenant deletion is in flight. An unwired registry or an unknown
+// tenant means there is no state to consult, so the create proceeds (the
+// §10.2 tenant-claim path governs unknown tenants); a soft-deleted
+// tenant is already rejected upstream as TENANT_NOT_FOUND.
+// requireTenantState returns true when the create may proceed; when it
+// returns false it has already written the response. spec: §12.8 lines
+// 865-873.
+func (s *Server) requireTenantState(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if s.tenants == nil {
+		return true
+	}
+	tenant, err := s.tenants.Get(r.Context(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"tenant state check failed: "+err.Error(), nil)
+		return false
+	}
+	if !tenant.AcceptsNewWork() {
+		s.writeError(w, http.StatusForbidden, "TENANT_NOT_ACTIVE",
+			"the tenant is being disabled or deleted and is not accepting new sessions",
+			map[string]any{"tenantId": tenantID, "state": tenant.State})
+		return false
+	}
+	return true
+}
+
 // requireConcurrencyLimits enforces the §11.1 line 8 concurrent-session
 // admission caps for the global, per-user, and per-runtime scopes (the
 // per-tenant scope is enforced by requireSessionQuota against the tenant

@@ -49,7 +49,7 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	created_at, updated_at, deleted_at, min_isolation_profile,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 	experiment_targeting, credential_policy, rbac_config,
-	token_quota_per_window, quota_reset_period`
+	token_quota_per_window, quota_reset_period, state`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -71,6 +71,18 @@ func marshalCredentialPolicy(c credential.CredentialPolicy) ([]byte, error) {
 		return nil, fmt.Errorf("tenantstore: encode credentialPolicy: %w", err)
 	}
 	return b, nil
+}
+
+// updateState maps an empty §12.8 TenantState to the `active` default
+// so an Update never writes the empty string the state CHECK constraint
+// rejects. A row read through scanTenant always carries a non-empty
+// state (the column is NOT NULL DEFAULT 'active'), so this only guards
+// a caller that zeroed the field.
+func updateState(s string) string {
+	if s == "" {
+		return tenantstore.TenantStateActive
+	}
+	return s
 }
 
 // marshalRBACConfig encodes a tenant's §10.6 RBACConfig for the jsonb
@@ -113,20 +125,26 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	if err != nil {
 		return err
 	}
+	// §12.8: a new tenant is born `active`; the deletion controller
+	// advances the state from there.
+	state := t.State
+	if state == "" {
+		state = tenantstore.TenantStateActive
+	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO tenants (
 		id, display_name, compliance_profile, data_residency_region,
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 		experiment_targeting, credential_policy, rbac_config,
-		token_quota_per_window, quota_reset_period
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+		token_quota_per_window, quota_reset_period, state
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod)
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -192,13 +210,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		elicitation_content_integrity = $11, billing_erasure_policy = $12,
 		no_environment_policy = $13, experiment_targeting = $14,
 		credential_policy = $15, rbac_config = $16,
-		token_quota_per_window = $17, quota_reset_period = $18 WHERE id = $1`,
+		token_quota_per_window = $17, quota_reset_period = $18,
+		state = $19 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod); err != nil {
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State)); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -235,8 +254,10 @@ func (s *Store) List(ctx context.Context, filter tenantstore.ListFilter) ([]tena
 // SoftDelete sets deleted_at on the row per §12.8. It is idempotent:
 // soft-deleting an already-deleted tenant is a no-op success.
 func (s *Store) SoftDelete(ctx context.Context, id string, at time.Time) error {
+	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
+	// TenantState advances to `deleted` alongside the deleted_at marker.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE tenants SET deleted_at = $2, updated_at = $2
+		`UPDATE tenants SET deleted_at = $2, updated_at = $2, state = 'deleted'
 		 WHERE id = $1 AND deleted_at IS NULL`, id, at)
 	if err != nil {
 		return err
@@ -288,7 +309,7 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
-		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod,
+		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State,
 	); err != nil {
 		return tenantstore.Tenant{}, err
 	}

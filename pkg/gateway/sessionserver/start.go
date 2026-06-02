@@ -232,6 +232,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := s.resolveTenant(r)
+	// spec: §12.8 lines 865-873 — a tenant that has left the `active`
+	// TenantState (disabling/deleting/deleted) rejects new session
+	// creation before any other admission work.
+	if !s.requireTenantState(w, r, tenantID) {
+		return
+	}
 	// spec: §12.9 line 1048 — the gateway policy engine validates tenant
 	// data classification before any pool/credential work, so a
 	// misconfigured workspaceTier fails the create up front.

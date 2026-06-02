@@ -143,10 +143,65 @@ type Tenant struct {
 	// DeletedAt is the UTC instant the tenant was soft-deleted per
 	// §12.8 tenant lifecycle. Nil when active.
 	DeletedAt time.Time
+
+	// State is the §12.8 TenantState lifecycle value
+	// (`active`, `disabling`, `deleting`, `deleted`). The §12.8
+	// tenant-deletion controller advances it; the gateway rejects new
+	// session creation once it leaves `active`, and a `deleted`
+	// tombstone backs the 410 Gone response on GET. An empty value
+	// (a row written before the lifecycle column existed) is read as
+	// `active`. spec: §12.8 line 865.
+	State string
 }
 
 // IsActive reports whether the tenant has not been soft-deleted.
 func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
+
+// AcceptsNewWork reports whether the tenant's §12.8 TenantState permits
+// new session creation. Only `active` (and the empty pre-lifecycle
+// value, read as active) accepts work; `disabling`, `deleting`, and
+// `deleted` reject it per the §12.8 phase table. spec: §12.8 lines
+// 865-873.
+func (t Tenant) AcceptsNewWork() bool {
+	return t.State == "" || t.State == TenantStateActive
+}
+
+// §12.8 TenantState lifecycle values. spec: §12.8 line 865.
+const (
+	// TenantStateActive is a normally operating tenant; the empty value
+	// is treated as active for rows written before the column existed.
+	TenantStateActive = "active"
+	// TenantStateDisabling is §12.8 Phases 1-2: new work is rejected and
+	// existing sessions drain.
+	TenantStateDisabling = "disabling"
+	// TenantStateDeleting is §12.8 Phases 3-5: credentials revoked and
+	// data erased.
+	TenantStateDeleting = "deleting"
+	// TenantStateDeleted is the §12.8 Phase 6 tombstone: the row is
+	// retained with mutable fields nulled to prevent id reuse.
+	TenantStateDeleted = "deleted"
+)
+
+// AllTenantStates returns the closed §12.8 TenantState enum in lifecycle
+// order. spec: §12.8 line 865.
+func AllTenantStates() []string {
+	return []string{TenantStateActive, TenantStateDisabling, TenantStateDeleting, TenantStateDeleted}
+}
+
+// ValidTenantState reports whether s is one of the §12.8 TenantState
+// values. The empty string is valid and read as `active`. spec: §12.8
+// line 865.
+func ValidTenantState(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range AllTenantStates() {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
 
 // §12.9 data-classification tier values a tenant (or a stricter
 // environment override) may carry. T1/T2 classify other data categories
@@ -355,6 +410,9 @@ func (m *Memory) Create(_ context.Context, t Tenant) error {
 	if t.UpdatedAt.IsZero() {
 		t.UpdatedAt = t.CreatedAt
 	}
+	if t.State == "" {
+		t.State = TenantStateActive
+	}
 	m.tenants[t.ID] = cloneTenant(t)
 	return nil
 }
@@ -436,6 +494,9 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
+	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
+	// TenantState is `deleted`.
+	row.State = TenantStateDeleted
 	m.tenants[id] = row
 	return nil
 }

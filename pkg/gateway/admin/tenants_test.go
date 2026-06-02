@@ -169,6 +169,57 @@ func TestCreateTenantHappyPath(t *testing.T) {
 	}
 }
 
+// spec: §12.8 line 865 — the admin API exposes the TenantState enum. A
+// freshly created tenant reports state=active in the create response and
+// on a subsequent GET; a soft-deleted tenant's GET reports the `deleted`
+// tombstone state. F-12.8.12.
+func TestTenantStateExposedInAdminAPI_spec_12_8_865(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", DisplayName: "Acme Corp"})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.State != "active" {
+		t.Errorf("create response state = %q, want active", created.State)
+	}
+
+	greq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/tenants/acme", nil))
+	grr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(grr, greq)
+	if grr.Code != http.StatusOK {
+		t.Fatalf("get status %d, want 200; body=%s", grr.Code, grr.Body.String())
+	}
+	var got admin.TenantPayload
+	_ = json.Unmarshal(grr.Body.Bytes(), &got)
+	if got.State != "active" {
+		t.Errorf("get response state = %q, want active", got.State)
+	}
+
+	// A soft-deleted tenant becomes a deleted-state tombstone, and GET
+	// returns 410 Gone (spec §12.8 line 873) rather than the row.
+	if err := store.SoftDelete(greq.Context(), "acme", time.Now().UTC()); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	row, err := store.Get(greq.Context(), "acme")
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if row.State != "deleted" {
+		t.Errorf("tombstone state = %q, want deleted", row.State)
+	}
+	treq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/tenants/acme", nil))
+	trr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(trr, treq)
+	if trr.Code != http.StatusGone {
+		t.Fatalf("tombstone GET status %d, want 410; body=%s", trr.Code, trr.Body.String())
+	}
+}
+
 func TestCreateTenantWithExperimentTargeting(t *testing.T) {
 	router, store := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{
