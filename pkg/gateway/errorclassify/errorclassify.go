@@ -339,6 +339,9 @@ var table = map[string]entry{
 	// (no §15.4 catalog row); a malformed lease field fails identically
 	// until corrected, mirroring VALIDATION_ERROR.
 	"INVALID_LEASE_FIELD": {CategoryPermanent, false},
+	// spec: §25.9 line 3732 — AUDIT_EVENT_NOT_FOUND is PERMANENT (404):
+	// the audit event id does not exist and will not on retry.
+	"AUDIT_EVENT_NOT_FOUND": {CategoryPermanent, false},
 
 	// POLICY — a deliberate policy decision rejected a well-formed request.
 	"PERMISSION_DENIED":                       {CategoryPolicy, false}, // spec: 15:1028
@@ -372,6 +375,10 @@ var table = map[string]entry{
 	// Code-internal §8.5 delegate_task policy denial (no §15.4 catalog
 	// row); a delegation rejected by policy fails identically on retry.
 	"DELEGATION_DENIED": {CategoryPolicy, false},
+	// spec: §25.9 line 3733 — AUDIT_QUERY_TOO_BROAD is POLICY (400): the
+	// query would scan too many rows or spans more than 90 days without a
+	// narrowing filter; it fails identically until the caller narrows it.
+	"AUDIT_QUERY_TOO_BROAD": {CategoryPolicy, false},
 
 	// TRANSIENT — a retry is expected to clear the condition.
 	"POD_CRASH":                   {CategoryTransient, true}, // spec: 15:995
@@ -385,6 +392,13 @@ var table = map[string]entry{
 	// audit.lock.maxRetries; sustained failure surfaces as 503
 	// audit_unavailable (mapped via SERVICE_UNAVAILABLE).
 	"AUDIT_CONCURRENCY_TIMEOUT":       {CategoryTransient, true},
+	// spec: §25.9 lines 3734-3735 — the audit read path has no cache, so
+	// a Postgres outage surfaces as AUDIT_STORE_UNAVAILABLE (503,
+	// retryable once the store recovers); a partial-shard outage surfaces
+	// as AUDIT_PARTIAL_RESULTS (207, retryable when the missing shards
+	// return).
+	"AUDIT_STORE_UNAVAILABLE": {CategoryTransient, true},
+	"AUDIT_PARTIAL_RESULTS":   {CategoryTransient, true},
 	"DELEGATION_BUDGET_UNAVAILABLE":   {CategoryTransient, true}, // spec: 12.4 (Redis budget-counter outage fail-closed, retryable)
 	"POOL_DRAINING":                   {CategoryTransient, true}, // spec: 15:1034 (§15.4 family)
 	"GIT_CLONE_REF_RESOLVE_TRANSIENT": {CategoryTransient, true}, // spec: 15:1066 (§15.4 family)

@@ -9,6 +9,27 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 )
 
+// TestSeverityName_spec_25_9_3659 confirms the OCSF severity_id → name
+// map the §25.9 ?severity= filter matches against. spec: §25.9 line
+// 3659; OCSF v1.1.0 severity_id dictionary.
+func TestSeverityName_spec_25_9_3659(t *testing.T) {
+	cases := map[int]string{
+		severityInformational: "informational",
+		severityLow:           "low",
+		severityMedium:        "medium",
+		4:                     "high",
+		severityCritical:      "critical",
+		6:                     "fatal",
+		0:                     "unknown",
+		99:                    "unknown",
+	}
+	for id, want := range cases {
+		if got := SeverityName(id); got != want {
+			t.Errorf("SeverityName(%d) = %q, want %q", id, got, want)
+		}
+	}
+}
+
 // TestLookupClassArtifactReplication_spec_16_7_690 pins the OCSF class
 // for the two §16.7 ArtifactStore cross-region replication audit
 // events. Before F-16.7.3 neither resolved, so both dead-lettered at

@@ -373,6 +373,95 @@ func (c *Chain) Verify() VerifyResult {
 	return VerifyResult{Integrity: ChainVerified}
 }
 
+// VerifyRows walks the chain and returns the §11.7 ChainIntegrity of
+// each row keyed by its sequence number. Unlike Verify, which collapses
+// the chain to a single overall verdict and stops at the first break,
+// this labels every row independently so the §25.9 query API can carry
+// a per-event `chainIntegrity` field and tally the envelope
+// `chainIntegrityReport`.
+//
+// Per-row classification:
+//   - verified              — content hash matches and the row links to
+//     its predecessor (or, for the genesis row, to the sentinel).
+//   - redacted_gdpr         — content-hash break on a §12.8-redacted row
+//     carrying a valid signed receipt; the discontinuity is lawful.
+//   - gap_suspected         — the sequence number jumps relative to the
+//     preceding row (e.g. #1000 then #1150), the §25.9 temporal-gap
+//     signal for a degraded-mode write window.
+//   - broken                — content-hash mismatch with no receipt, a
+//     link mismatch with no sequence jump, or a cross-tenant row.
+//
+// The walk passes nil receipts when invoked on a chain built via
+// ChainFromRows, matching Store.Verify; a redacted row without an
+// in-memory receipt is therefore reported `broken`, which is the
+// spec-correct verdict for an unauthenticated discontinuity.
+//
+// spec: §25.9 lines 3670-3679 (per-row chainIntegrity enum and temporal
+// gap detection).
+func (c *Chain) VerifyRows() map[uint64]ChainIntegrity {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	out := make(map[uint64]ChainIntegrity, len(c.rows))
+	for i, row := range c.rows {
+		out[row.Seq] = c.classifyRow(i, row)
+	}
+	return out
+}
+
+// classifyRow returns the §11.7 ChainIntegrity for the row at index i.
+// The caller holds c.mu.
+func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
+	if row.TenantID != c.tenantID {
+		return ChainBroken
+	}
+	// Content-hash check. A redacted row legitimately fails the
+	// recomputation (its payload was rewritten in place while Hash was
+	// preserved); a valid signed receipt reclassifies the break as lawful.
+	thisRedacted := false
+	if computeHash(row) != row.Hash {
+		if row.Redacted {
+			rcpt, ok := c.receipts[row.Seq]
+			if ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != "" {
+				thisRedacted = true
+			} else {
+				return ChainBroken
+			}
+		} else {
+			return ChainBroken
+		}
+	}
+	// Sequence-gap detection precedes the link check: a jump in the
+	// sequence number is the §25.9 temporal-gap signal, distinct from a
+	// tamper-broken link.
+	if i > 0 && row.Seq != c.rows[i-1].Seq+1 {
+		return ChainGapSuspected
+	}
+	// Link check. The genesis row links to the sentinel; a row whose
+	// predecessor was lawfully redacted carries a stale prev_hash (the
+	// redaction rewrote the predecessor's canonical bytes), tolerated as
+	// the lawful downstream consequence of the erasure.
+	if i == 0 {
+		if row.PrevHash != GenesisPrevHash {
+			return ChainBroken
+		}
+	} else {
+		prev := c.rows[i-1]
+		prevRedacted := false
+		if prev.Redacted {
+			rcpt, ok := c.receipts[prev.Seq]
+			prevRedacted = ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != ""
+		}
+		if !prevRedacted && row.PrevHash != linkHash(prev) {
+			return ChainBroken
+		}
+	}
+	if thisRedacted {
+		return ChainRedactedGDPR
+	}
+	return ChainVerified
+}
+
 // ChainSet is a goroutine-safe collection of per-tenant chains. It
 // is the production AuditSink substrate: every tenant gets its own
 // independent §11.7 chain so one tenant's redaction cannot break

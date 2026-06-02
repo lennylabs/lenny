@@ -715,9 +715,12 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handleRevokeToken)))
 	}
 	if r.auditLog != nil {
-		// §25.9 Audit Log Query API. The verify route is registered
-		// before the {seq} route so "verify" is not parsed as a seq.
+		// §25.9 Audit Log Query API. The verify and summary routes are
+		// registered before the {seq} route so the literal path segments
+		// are not parsed as a sequence number.
 		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))
+		// §25.9 line 3661 aggregate counts by type/actor/resource.
+		mux.Handle("GET /v1/admin/audit-events/summary", r.requireAuditReader(http.HandlerFunc(r.handleAuditSummary)))
 		mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))
 		mux.Handle("GET /v1/admin/audit-events/{seq}", r.requireAuditReader(http.HandlerFunc(r.handleGetAuditEvent)))
 		// §25.9 line 3662 audit-recovery: re-queue a row for OCSF

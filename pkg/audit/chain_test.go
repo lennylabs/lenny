@@ -152,6 +152,82 @@ func TestRedactOutOfRange(t *testing.T) {
 	}
 }
 
+// TestVerifyRowsHealthyChain — every row in a healthy chain is verified.
+//
+// spec: §25.9 lines 3670-3679 (per-row chainIntegrity).
+func TestVerifyRowsHealthyChain(t *testing.T) {
+	t.Parallel()
+	c := NewChain("acme")
+	r1 := c.Append("e1", json.RawMessage(`{"n":1}`), ts())
+	r2 := c.Append("e2", json.RawMessage(`{"n":2}`), ts())
+	got := c.VerifyRows()
+	if got[r1.Seq] != ChainVerified || got[r2.Seq] != ChainVerified {
+		t.Errorf("healthy chain per-row = %v, want all verified", got)
+	}
+}
+
+// TestVerifyRowsMarksTamperedRowBroken — a content-hash tamper on one
+// row marks only that row broken; the downstream row whose prev_hash
+// still links to the (unchanged) stored hash stays verified.
+//
+// spec: §25.9 lines 3670-3672.
+func TestVerifyRowsMarksTamperedRowBroken(t *testing.T) {
+	t.Parallel()
+	c := NewChain("acme")
+	c.Append("e1", json.RawMessage(`{"n":1}`), ts())
+	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
+	c.Append("e3", json.RawMessage(`{"n":3}`), ts())
+	c.rows[1].Payload = json.RawMessage(`{"n":999}`) // tamper row 2's content
+
+	got := c.VerifyRows()
+	if got[2] != ChainBroken {
+		t.Errorf("row 2 = %q, want broken", got[2])
+	}
+	if got[1] != ChainVerified || got[3] != ChainVerified {
+		t.Errorf("rows 1,3 = %q,%q, want verified", got[1], got[3])
+	}
+}
+
+// TestVerifyRowsDetectsSequenceGap — a sequence-number jump marks the
+// row after the gap gap_suspected, the §25.9 temporal-gap signal.
+//
+// spec: §25.9 lines 3676-3679.
+func TestVerifyRowsDetectsSequenceGap(t *testing.T) {
+	t.Parallel()
+	r1 := Row{Seq: 1, TenantID: "acme", EventType: "e1", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash}
+	r1.Hash = ComputeHash(r1)
+	r5 := Row{Seq: 5, TenantID: "acme", EventType: "e5", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: LinkHash(r1)}
+	r5.Hash = ComputeHash(r5)
+
+	got := ChainFromRows("acme", []Row{r1, r5}, nil).VerifyRows()
+	if got[1] != ChainVerified {
+		t.Errorf("row 1 = %q, want verified", got[1])
+	}
+	if got[5] != ChainGapSuspected {
+		t.Errorf("row 5 = %q, want gap_suspected", got[5])
+	}
+}
+
+// TestVerifyRowsLawfulRedaction — a redacted row carrying a valid
+// receipt is classified redacted_gdpr, not broken.
+//
+// spec: §25.9 line 3674.
+func TestVerifyRowsLawfulRedaction(t *testing.T) {
+	t.Parallel()
+	c := NewChain("acme")
+	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
+	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
+	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), RedactionReceipt{Signature: "kms-sig"}); err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	got := c.VerifyRows()
+	if got[1] != ChainRedactedGDPR {
+		t.Errorf("redacted row = %q, want redacted_gdpr", got[1])
+	}
+}
+
 func TestChainSetTenants(t *testing.T) {
 	t.Parallel()
 	set := NewChainSet()

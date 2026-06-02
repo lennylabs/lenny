@@ -161,6 +161,29 @@ func severityFor(eventType string, payload map[string]any) int {
 	return severityInformational
 }
 
+// SeverityName maps an OCSF v1.1.0 severity_id to its canonical name.
+// It lets the §25.9 audit query API match a `?severity=` filter against
+// a translated record's severity_id by word (case-insensitive) or by
+// the numeric id directly. spec: OCSF v1.1.0 severity_id dictionary.
+func SeverityName(id int) string {
+	switch id {
+	case severityInformational:
+		return "informational"
+	case severityLow:
+		return "low"
+	case severityMedium:
+		return "medium"
+	case 4:
+		return "high"
+	case severityCritical:
+		return "critical"
+	case 6:
+		return "fatal"
+	default:
+		return "unknown"
+	}
+}
+
 // actor.user.type_id values: §11.7 maps caller_kind human → User (1),
 // service → System (3), agent → Other (99).
 const (
