@@ -56,6 +56,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
@@ -144,6 +145,15 @@ func main() {
 		"§25.16 BYO Prometheus HTTP API base URL (e.g. http://prometheus.monitoring.svc:9090). "+
 			"When empty the §25.4 cross-replica health aggregator falls back to per-replica fan-out. "+
 			"Override via LENNY_PROMETHEUS_URL.")
+	// spec: §25.9 line 3700. ops.audit.diagnosticsRatePerMinute caps the
+	// distinct diagnostic audit events a service account may emit per
+	// minute before excess is dropped; repeated calls for one resource
+	// coalesce into a single event. Default 60. F-25.9.15.
+	diagnosticsAuditRate := flag.Int("diagnostics-audit-rate-per-minute",
+		envInt("LENNY_OPS_DIAGNOSTICS_AUDIT_RATE_PER_MINUTE", auditrate.DefaultRatePerMinute),
+		"§25.9 ops.audit.diagnosticsRatePerMinute — per-service-account cap on distinct "+
+			"diagnostic audit events per minute. Default 60. Override via "+
+			"LENNY_OPS_DIAGNOSTICS_AUDIT_RATE_PER_MINUTE.")
 	// spec: §25.10 line 3809. ops.drift.snapshotStaleWarningDays sets the
 	// threshold at which a stored desired-state snapshot is flagged stale
 	// in the GET /v1/admin/drift report. Default 7 days; 0 disables the
@@ -496,25 +506,44 @@ func main() {
 	// self-health, remediation-lock, and escalation endpoints, the
 	// §25.10 drift endpoints, the §25.11 backup endpoints, and the
 	// §25.12 MCP management server.
+	opsHandler := opsserver.New(opsserver.Options{
+		Probes:           probes,
+		Runbooks:         runbookSource,
+		SelfHealth:       svc.Monitor(),
+		Leader:           svc,
+		Backups:          backupSvc,
+		Diagnostics:      diagnosticSvc,
+		Drift:            driftSvc,
+		Locks:            lockStore,
+		Escalations:      escalationSvc,
+		EventStream:      eventStream,
+		ReleaseChannel:   releaseChannelPub,
+		Production:       *production,
+		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
+		Auth:             authCfg,
+	})
 	srv := &http.Server{
-		Addr: *addr,
-		Handler: opsserver.New(opsserver.Options{
-			Probes:         probes,
-			Runbooks:       runbookSource,
-			SelfHealth:     svc.Monitor(),
-			Leader:         svc,
-			Backups:        backupSvc,
-			Diagnostics:    diagnosticSvc,
-			Drift:          driftSvc,
-			Locks:          lockStore,
-			Escalations:    escalationSvc,
-			EventStream:    eventStream,
-			ReleaseChannel: releaseChannelPub,
-			Production:     *production,
-			Auth:           authCfg,
-		}),
+		Addr:              *addr,
+		Handler:           opsHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	// spec: §25.9 lines 3699-3700 — flush closed diagnostics-audit
+	// coalescing windows on a periodic tick so a window emits even during
+	// an idle period, and drain every open window on shutdown.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				opsHandler.FlushDiagnosticsAudit()
+				return
+			case t := <-ticker.C:
+				opsHandler.SweepDiagnosticsAudit(t)
+			}
+		}
+	}()
 
 	// §4.4 line 232: when --pgaudit-log-file is set, start the pgaudit
 	// shipper. The shipper tails the file, parses each AUDIT line,

@@ -61,11 +61,15 @@ func (s *Server) handleDiagnoseSession(w http.ResponseWriter, r *http.Request) {
 		s.diagnosticsUnavailable(w)
 		return
 	}
-	diag, err := s.diagnostics.DiagnoseSession(r.Context(), r.PathValue("id"))
+	id := r.PathValue("id")
+	diag, err := s.diagnostics.DiagnoseSession(r.Context(), id)
 	if err != nil {
 		writeDiagnosticsError(w, err)
 		return
 	}
+	// spec: §25.9 line 3699 — record the diagnostic access, coalesced
+	// per session within a 60s window. F-25.9.15.
+	s.recordDiagnosticAudit(r, eventSessionDiagnosed, "session", id)
 	writeJSON(w, http.StatusOK, diag)
 }
 
@@ -78,11 +82,14 @@ func (s *Server) handleDiagnosePool(w http.ResponseWriter, r *http.Request) {
 		s.diagnosticsUnavailable(w)
 		return
 	}
-	diag, err := s.diagnostics.DiagnosePool(r.Context(), r.PathValue("name"))
+	name := r.PathValue("name")
+	diag, err := s.diagnostics.DiagnosePool(r.Context(), name)
 	if err != nil {
 		writeDiagnosticsError(w, err)
 		return
 	}
+	// spec: §25.9 line 3699 — coalesced per pool within a 60s window.
+	s.recordDiagnosticAudit(r, eventPoolDiagnosed, "pool", name)
 	writeJSON(w, http.StatusOK, diag)
 }
 
@@ -95,10 +102,13 @@ func (s *Server) handleDiagnoseCredentialPool(w http.ResponseWriter, r *http.Req
 		s.diagnosticsUnavailable(w)
 		return
 	}
-	diag, err := s.diagnostics.DiagnoseCredentialPool(r.Context(), r.PathValue("name"))
+	name := r.PathValue("name")
+	diag, err := s.diagnostics.DiagnoseCredentialPool(r.Context(), name)
 	if err != nil {
 		writeDiagnosticsError(w, err)
 		return
 	}
+	// spec: §25.9 line 3699 — coalesced per credential pool within a 60s window.
+	s.recordDiagnosticAudit(r, eventCredentialPoolDiagnosed, "credential-pool", name)
 	writeJSON(w, http.StatusOK, diag)
 }

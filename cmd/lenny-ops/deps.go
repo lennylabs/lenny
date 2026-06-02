@@ -14,14 +14,18 @@ import (
 	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/observability/metrics"
+	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
@@ -242,6 +246,44 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		},
 	}
 	return svc, jobs
+}
+
+// diagnosticsAuditRateLimited is the §25.9 lenny_audit_rate_limited_total
+// counter (event_type, service_account). It is registered on the default
+// registry so the rate-limit seam increments a real counter; lenny-ops
+// gains its own /metrics exposition in a later commit (the same
+// documented exposition gap the pgaudit shipper notes).
+var diagnosticsAuditRateLimited = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_rate_limited_total",
+		Help: "§25.9 diagnostic audit events dropped by rate limiting.",
+	}, []string{"event_type", "service_account"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+// buildDiagnosticsAudit constructs the §25.9 diagnostics-audit config: a
+// coalesced diagnostic audit event is logged (the audit-append stub,
+// mirroring logAuditSink until the audit-store client lands) and a
+// dropped event bumps lenny_audit_rate_limited_total so operators can
+// detect rate-limited diagnostics. F-25.9.15.
+func buildDiagnosticsAudit(ratePerMinute int) *opsserver.DiagnosticsAuditConfig {
+	return &opsserver.DiagnosticsAuditConfig{
+		RatePerMinute: ratePerMinute,
+		Emit: func(ev auditrate.Event) {
+			log.Printf("lenny-ops: audit %s resource=%s/%s invocationCount=%d service_account=%s operation_id=%s — "+
+				"audit-append destination pending the audit-store wiring",
+				ev.EventType, ev.ResourceType, ev.ResourceID, ev.InvocationCount, ev.ServiceAccount, ev.OperationID)
+		},
+		RateLimited: func(eventType, serviceAccount string) {
+			if diagnosticsAuditRateLimited != nil {
+				diagnosticsAuditRateLimited.WithLabelValues(eventType, serviceAccount).Inc()
+			}
+		},
+	}
 }
 
 // logAuditSink is the §25.11 backup/restore AuditSink used until the

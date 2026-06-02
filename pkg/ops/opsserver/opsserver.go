@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
@@ -74,6 +75,11 @@ type Server struct {
 	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
 	production         bool
+
+	// diagAudit applies the §25.9 diagnostics-audit rate limiting +
+	// coalescing when DiagnosticsAudit is configured; nil disables it.
+	diagAudit    *auditrate.Limiter
+	diagAuditCfg *DiagnosticsAuditConfig
 }
 
 // Options configures a lenny-ops Server.
@@ -132,6 +138,11 @@ type Options struct {
 	// Production reports whether this deployment is production, which
 	// gates the §25.11 confirm requirement for a full backup.
 	Production bool
+	// DiagnosticsAudit, when non-nil, enables §25.9 diagnostics-audit
+	// emission with per-resource coalescing and a per-service-account
+	// rate cap on the §25.6 diagnostic endpoints. A nil value leaves the
+	// diagnostic endpoints emitting no audit event (they still serve).
+	DiagnosticsAudit *DiagnosticsAuditConfig
 	// Auth, when non-nil, wraps every operability route (all paths except
 	// the Kubernetes probes /healthz and /readyz) in the §25.4 lines
 	// 1562-1564 OIDC authentication + platform-admin/tenant-admin role
@@ -163,6 +174,13 @@ func New(opts Options) *Server {
 		eventSubscriptions: opts.EventSubscriptions,
 		releaseChannel:     opts.ReleaseChannel,
 		production:         opts.Production,
+		diagAuditCfg:       opts.DiagnosticsAudit,
+	}
+	// §25.9 diagnostics-audit rate limiting: when configured, the §25.6
+	// diagnostic endpoints record each access through the coalescing
+	// limiter, emitting one audit event per resource per 60s window.
+	if opts.DiagnosticsAudit != nil {
+		s.diagAudit = auditrate.New(opts.DiagnosticsAudit.RatePerMinute).WithFlush(opts.DiagnosticsAudit.Emit)
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -318,10 +336,14 @@ func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
 			writeDiagnosticsError(w, err)
 			return
 		}
+		// spec: §25.9 line 3697 — connectivity is a platform-wide check,
+		// so its coalescing window keys on a fixed resource.
+		s.recordDiagnosticAudit(r, eventConnectivityChecked, "connectivity", "platform")
 		writeJSON(w, http.StatusOK, report)
 		return
 	}
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
+	s.recordDiagnosticAudit(r, eventConnectivityChecked, "connectivity", "platform")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"dependencies": dependencyReport(results),
 		"healthy":      probe.AllOK(results),
