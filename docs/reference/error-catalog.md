@@ -149,6 +149,7 @@ Errors caused by temporary infrastructure conditions. Clients should retry with 
 | `REGION_UNAVAILABLE` | 503 | The storage region required by the session's data residency constraint is temporarily unavailable. `details.region` is included. | Retry when the region recovers. |
 | `TARGET_NOT_READY` | 409 | Inter-session message rejected because the target session is in a pre-running state (`created`, `ready`, `starting`, `finalizing`). | Retry after the target session transitions to `running`. |
 | `DEADLOCK_TIMEOUT` | 504 | A delegated subtree deadlock was not resolved within `maxDeadlockWaitSeconds`. The deepest blocked tasks have been failed. | The root task may retry after the deadlock is broken. |
+| `STORAGE_UNAVAILABLE` | 503 | An upload was rejected because the storage-quota counter and its durable Postgres fallback are both unreachable (dual-store outage). The gateway fails closed so the quota cannot be bypassed; no blob is written. `details.retryAfterSeconds` is included. | Retry after the suggested delay. The 503 self-heals once Redis or Postgres recovers. |
 
 ---
 

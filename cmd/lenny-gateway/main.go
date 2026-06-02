@@ -1254,6 +1254,11 @@ func main() {
 		coordinator    *coordination.Sweeper
 		storageCounter storagequota.Counter = storagequota.NewMemory()
 		rateLimiter    ratelimit.Counter    = ratelimit.NewMemory()
+
+		// storageRecoveryReconciler drives the §12.4 line 210 write-back of
+		// storage-quota counters to Redis on a Redis-recovery edge. Set only
+		// when both Redis and the Postgres artifact catalog are wired.
+		storageRecoveryReconciler *storagequota.RecoveryReconciler
 	)
 	if *redisURL != "" || *redisSentinelAddrs != "" || *redisClusterAddrs != "" {
 		if *redisURL != "" && *redisSentinelAddrs != "" {
@@ -1329,7 +1334,28 @@ func main() {
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
 		// lives in Redis so the quota holds across replicas; its reserve
 		// is Lua-atomic.
-		storageCounter = storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
+		storageRedis := storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
+		storageCounter = storageRedis
+		// §12.4 line 210: when the durable artifact catalog is wired,
+		// front the Redis counter with the Postgres-fallback failover so a
+		// Redis outage degrades upload pre-checks to the authoritative
+		// SUM(artifact_size_bytes) instead of breaking uploads, and a
+		// simultaneous Postgres outage fails closed (ErrUnavailable → 503).
+		// On Redis recovery the reconciler below writes the sum back so the
+		// Lua fast path resumes. Without a catalog (dev/in-memory) the bare
+		// Redis store keeps the prior fail-on-Redis-error behavior.
+		if artifactCatalog != nil {
+			storageCounter = storagequota.NewFailover(storageRedis, artifactCatalog.SumLiveBytes, nil)
+			storageRecoveryReconciler = &storagequota.RecoveryReconciler{
+				Probe: func(ctx context.Context) bool {
+					return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
+				},
+				Primary: storageRedis,
+				Tenants: (tenantsLister{tenants}).ListTenants,
+				SizeOf:  artifactCatalog.SumLiveBytes,
+				Logf:    log.Printf,
+			}
+		}
 		// §12.4 Quota/Rate Limiting concern: the §11.1 rate-limit counter
 		// is Redis-backed so requests-per-minute limits hold across replicas.
 		rateLimiter = ratelimitredis.New(concernRedis.For(storerouter.RedisConcernQuota))
@@ -4526,6 +4552,17 @@ func main() {
 	// are wired. F-10.1.3.
 	if dsMonitor != nil {
 		go dsMonitor.Run(watchdogCtx)
+	}
+
+	// ----- §12.4 line 210 storage-quota recovery reconciler -----
+	// Probes Redis reachability; on a recovery edge it writes each
+	// tenant's storage_bytes_used counter back to Redis from the
+	// authoritative SUM(artifact_size_bytes) in Postgres so the Lua fast
+	// path resumes enforcing against the correct value rather than a
+	// stale-zero counter left by a Redis restart. Active only when both
+	// Redis and the Postgres artifact catalog are wired. F-12.4.11.
+	if storageRecoveryReconciler != nil {
+		go storageRecoveryReconciler.Run(watchdogCtx)
 	}
 
 	// ----- §7.1 artifact-retention GC -----

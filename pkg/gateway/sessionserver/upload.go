@@ -622,6 +622,17 @@ func (s *Server) reserveStorageQuota(w http.ResponseWriter, r *http.Request, ten
 			map[string]any{"currentBytes": priorUsed, "limitBytes": tenant.StorageQuotaBytes})
 		return nil, false
 	}
+	if errors.Is(err, storagequota.ErrUnavailable) {
+		// §12.4 line 210 dual-store outage: the Redis counter is down and
+		// the Postgres artifact_store fallback is also unreachable. Fail
+		// closed — reject with 503 and write nothing to the blob store so
+		// the storage quota can never be bypassed by infrastructure
+		// degradation. spec: §12.4 line 210.
+		s.writeError(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE",
+			"storage quota cannot be verified while both the quota counter and its durable fallback are unavailable; retry shortly",
+			map[string]any{"retryAfterSeconds": 10})
+		return nil, false
+	}
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"storage-quota reservation failed: "+err.Error(), nil)

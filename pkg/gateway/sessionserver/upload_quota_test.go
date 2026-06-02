@@ -140,6 +140,55 @@ func TestUploadWithoutContentLengthRejectedUnderQuota(t *testing.T) {
 	}
 }
 
+// unavailableCounter is a storagequota.Counter whose Reserve reports the
+// §12.4 line 210 dual-store outage (Redis down AND the Postgres fallback
+// down). Used to assert the upload handler fails closed with 503.
+type unavailableCounter struct{}
+
+func (unavailableCounter) Reserve(context.Context, string, int64, int64) (int64, error) {
+	return 0, storagequota.ErrUnavailable
+}
+func (unavailableCounter) Adjust(context.Context, string, int64) error { return nil }
+func (unavailableCounter) Used(context.Context, string) (int64, error) {
+	return 0, storagequota.ErrUnavailable
+}
+func (unavailableCounter) Set(context.Context, string, int64) error { return nil }
+
+// spec: §12.4 line 210 — when the quota counter and its Postgres fallback
+// are both unreachable the upload is rejected with 503 (fail closed); no
+// blob is written so the quota can never be bypassed by infrastructure
+// degradation.
+func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
+	store := memstore.New()
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
+	issuer := uploadtoken.NewIssuer(ring, clock)
+	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", StorageQuotaBytes: 1000}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:               clock,
+		IDFunc:              func() string { return "sess_upload" },
+		UploadTokenIssuer:   issuer,
+		UploadTokenVerifier: verifier,
+		Blobs:               blobstore.NewMemoryStore(nil),
+		Tenants:             tenants,
+		StorageQuota:        unavailableCounter{},
+	})
+	seedCreatedSession(t, store, "sess_upload", "acme")
+	tok, _ := issuer.Issue("sess_upload", 0)
+
+	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("dual outage: status %d, want 503; body %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "STORAGE_UNAVAILABLE") {
+		t.Errorf("503 should carry STORAGE_UNAVAILABLE: %s", rr.Body.String())
+	}
+}
+
 func TestUploadNoStorageQuotaSkipsEnforcement(t *testing.T) {
 	// Tenant quota of zero means unlimited: the upload proceeds and the
 	// counter is left untouched.

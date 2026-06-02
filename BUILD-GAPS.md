@@ -19465,7 +19465,7 @@ The six specifically required coverage points are all absent:
 
 **Resolution:** `tests/tier4_integration/redis_tenant_isolation_test.go` adds `TestRedisTenantKeyIsolation` (build tag `integration`), one subtest per mandated coverage point against the real stores over a miniredis-backed client with the §12.4 Guard installed: (a) tenant-B `DLQ.DrainAll` of tenant-A's key is rejected with `ErrCrossTenant`; (b) tenant-B `DLQ.SweepExpired` on its own key returns zero of A's messages; (c) tenant-B `RedisInbox.Drain` of A's key is rejected and B's own inbox length is zero; (d) a tenant-B `semanticcache` Get for the identical query misses and a B-scoped Get of A's key is rejected; (e) the delegation-budget ownership gate rejects a B-scoped `{root-A}:dlg:tokens` (budget_reserve target) and `{root-A}:dlg:tree_memory` (budget_return target) and admits the owning scope — full `budget_reserve.lua`/`budget_return.lua` script coverage tracks F-12.4.8, which has not yet shipped the scripts; (f) a tenant-B `EventBus.Publish` on tenant-A's channel is rejected at the `PUBLISH` command. Depends on F-12.4.3 (the Guard wrapper). F-12.4.4.
 
-### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — OPEN
+### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — DEFERRED
 
 The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores must use. The implementation diverges in two directions:
 
@@ -19495,6 +19495,8 @@ The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores mus
 - `cb:events` — the cachingstore pub/sub channel (`pkg/gateway/breakerstore/cachingstore/cachingstore.go:31`) is a platform-scoped channel name not listed in §12.4 (§11.6 implies a propagation mechanism but the channel name is undocumented in §12.4).
 
 The cumulative effect is that the §12.4 table is no longer the authoritative key namespace; an operator reading §12.4 cannot enumerate what Redis keys the gateway actually writes.
+
+**Deferred:** the implementation half of this finding is now fully resolved — every spec-listed prefix that this finding flagged as missing has a backing implementation: the DLQ and durable inbox (`pkg/gateway/sessioninbox`, F-12.4.6/F-7.2.4), the experiment sticky cache (`pkg/gateway/experimentsticky`, F-12.4.7), the slot-counter `rehydrated`/`rehydrating` sentinels (`pkg/gateway/slotcounter`, F-12.4.19/F-5.2.4), and the `{root_session_id}:dlg:*` budget keys (`pkg/gateway/treebudget`, F-12.4.18). The residual half — implementation prefixes not declared in the §12.4 table (`rl:`, `sq:`, `pg:`, `cb:events`), and the observation that `rl:`/`sq:` do not lead with `t:{tenant_id}:` — splits into (a) a §12.4 spec-table documentation addition, which is outside the editable code surface (the spec is the source of truth; consistent with the verify-close of F-12.4.25's undocumented `cb:events` channel), and (b) a key-naming migration that would need a tenant-isolation review and is not clearly mandated against the current spec table. Deferred pending a spec-table reconciliation; the High-severity missing-implementation concern is no longer present.
 
 ### - [x] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — CLOSED
 
@@ -19578,13 +19580,15 @@ Consequence: a Redis outage immediately breaks session-coordination lease acquis
 
 **Resolution (commit `b2ef47d0`):** Built `pkg/gateway/leasestore/pgstore` as the §12.4 line 206 fallback: a lease is a `session_leases` row (holder + `expires_at` TTL, migration 0111 with the standard tenant-guard + RLS + grants), and each Acquire/Renew/Release takes a per-(tenant, session) `pg_advisory_xact_lock` inside `pgtenant.InTx` so the read-then-write compare-and-set is atomic across replicas (the role the Redis Lua scripts play on the fast path); a lapsed `expires_at` is treated as absent, mirroring Redis PX expiry. `leasestore.Failover` wraps the Redis primary and routes only infrastructure failures (any non-domain error — connection refused, closed client, timeout) to the Postgres fallback, forwarding lease-domain sentinels (ErrHeld/ErrNotHeld/ErrNotFound) unchanged. `coordination.Sweeper` now holds the `leasestore.LeaseStore` interface, and `cmd/lenny-gateway` wires the failover whenever both Redis and Postgres are configured, so a Redis outage degrades coordination to higher-latency Postgres instead of breaking lease acquisition. Tier-1 routing tests (`failover_test.go`) and tier-4 advisory-lock CAS / TTL-expiry / concurrent-serialization / erasure tests (`tests/tier4_integration/lease_failover_test.go`) pass. Closes duplicate F-12.2.8 (advisory-lock half).
 
-### - [ ] F-12.4.11 — Storage-quota Postgres rehydration on Redis outage is absent [High] — OPEN
+### - [x] F-12.4.11 — Storage-quota Postgres rehydration on Redis outage is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.14 — Both report the absent Postgres rehydration path for the storage-quota counter on Redis outage.
 
 Spec §12.4 "Failure behavior" row: "Storage quota counter (`storage_bytes_used`) … Postgres fallback, then fail closed — on Redis unavailability, the gateway rehydrates each tenant's `storage_bytes_used` counter from the sum of `artifact_size_bytes` across active artifacts in Postgres … If Postgres is also unavailable (dual-store outage), storage uploads are rejected with `503` (fail closed)."
 
 `pkg/gateway/storagequota/redisstore/redisstore.go` performs the atomic reserve via Lua but has no rehydration path. On a Redis outage the counter returns the Redis client error to callers; there is no Postgres aggregator that reconstructs `storage_bytes_used` from `SUM(artifact_size_bytes)`. The fail-closed 503 fallback on dual outage is also not wired; the upload handler simply propagates the Redis error.
+
+**Resolution (commit `<pending>`):** The §11 line 37 startup rehydration (`Rehydrate`/`Set`/`SumLiveBytes`) already landed; the residual §12.4 line 210 runtime obligations are now built. New `storagequota.Failover` (`pkg/gateway/storagequota/failover.go`, modeled on `leasestore.Failover`) fronts the Redis counter with a Postgres-derived fallback: a Redis infra error on `Reserve`/`Used` routes to the authoritative `SUM(artifact_size_bytes)` (`artifactCatalog.SumLiveBytes`) so upload pre-checks keep enforcing during the outage window, `ErrQuotaExceeded` is forwarded as a domain outcome, and a simultaneous Postgres outage returns the new `storagequota.ErrUnavailable` sentinel. `Adjust` swallows an infra error best-effort (no reachable counter; the Postgres sum already excludes the uncommitted bytes). The upload handler maps `ErrUnavailable` to `503 STORAGE_UNAVAILABLE` (fail closed, no blob written; documented in the error catalog). New `storagequota.RecoveryReconciler` (`recovery.go`) probes Redis reachability and, on a down-to-up edge, writes each tenant's counter back to Redis via `Rehydrate` so the Lua fast path resumes against the correct value rather than a stale-zero counter left by a Redis restart. Both are wired in `cmd/lenny-gateway` only when Redis and the Postgres artifact catalog are present (dev/in-memory keeps the bare Redis store). Closes duplicate F-12.5.14.
 
 ### - [x] F-12.4.12 — Circuit-breaker "fail closed (last-known state persists)" on Redis outage is partial [High] — CLOSED
 
@@ -19607,11 +19611,13 @@ The `storerouter.RedisConcern` constants (`pkg/storerouter/storerouter.go:48-54`
 
 **Resolution (41f86bf5):** `redisconn.NewUniversalClient` now builds a `redis.NewClusterClient` (the §12.4 line 264 CLUSTER KEYSLOT-aware go-redis client) when `Config.ClusterAddrs` is set, enforcing the same §12.4 line 197 AUTH/TLS invariant as the direct and Sentinel paths; `PingWithTimeout` was widened to `redis.UniversalClient`. The gateway exposes it via `--redis-cluster-addrs` (env `LENNY_REDIS_CLUSTER_ADDRS`, chart `redis.cluster.addrs`); the base Redis client is now `redis.UniversalClient`, so every store (`QuotaStore`, rate limiter, and the rest) runs cluster-aware when the operator points the gateway at a cluster topology, making the Tier 2→3 pre-plan implementable. The per-tenant cutover feature flag (`redis.quotaStoreBackend: sentinel|cluster` settable per-tenant, step 4b) is a separate larger migration mechanism left to the §12.4 migration-runner work; the absent constructor this finding flagged is closed.
 
-### - [ ] F-12.4.14 — `quotaEnforcementMode: in_memory_reconciled` is absent [Medium] — OPEN
+### - [ ] F-12.4.14 — `quotaEnforcementMode: in_memory_reconciled` is absent [Medium] — DEFERRED
 
 Spec §12.4 "In-memory quota budgets with Postgres reconciliation": "deployers enable it via `quotaEnforcementMode: in_memory_reconciled` when Redis-based quota drift during outages is unacceptable."
 
 There is no `QuotaEnforcementMode` enum or `quotaEnforcementMode` Helm value (`grep -rn 'quotaEnforcementMode\|in_memory_reconciled'` returns no results). The optional in-memory budget-slice path is unimplemented; the spec's escape hatch for high-value limits is not available.
+
+**Deferred:** the spec mechanism draws a per-replica budget slice *from Postgres* on startup, decrements locally, and reconciles every 30s. There is no Postgres token-budget source to draw from — the token-usage checkpoint table (F-11.2.4, OPEN) and `delegation_tree_budget` table (F-11.2.5, OPEN) are both absent, and no request-time token-budget enforcement runtime exists to host the in-memory slice. Adding only the `QuotaEnforcementMode` enum + Helm value would be a hollow config knob that does not satisfy the spec mechanism. Gated on F-11.2.4/F-11.2.5 (the Postgres token-budget storage) landing first.
 
 ### - [x] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — CLOSED
 
@@ -19661,11 +19667,13 @@ The Lua script in `pkg/gateway/slotcounter/slotcounter.go:58-64` reads `KEYS[1]`
 
 - **Resolution:** Closed by F-5.2.4. `reserveScript` now consults the `lenny:pod:{pod}:rehydrated` flag (`REHYDRATE_REQUIRED` sentinel on absence), the `:rehydrating` `SET NX` lock serializes the seed across replicas, `SessionStore.GetActiveSlotsByPod` supplies the count, and `cmd/lenny-gateway` wires the source into the Counter. Both sentinel keys are now load-bearing. Commit 8412834a.
 
-### - [ ] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — OPEN
+### - [ ] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — DEFERRED
 
 Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers, the gateway reconciles quota counters using a two-source MAX rule: for each active session and tenant counter, the gateway reads (1) the last Postgres checkpoint value and (2) the in-memory counter accumulated during the fail-open window on the recovering replica, then writes `MAX(postgres_checkpoint, in_memory_counter)` as the authoritative Redis value."
 
 `quota.ReconcileMax` (`pkg/quota/quota.go:223`) is a pure function. The only invocations are in `tests/tier4_integration/quota_test.go:149`. No gateway component watches Redis recovery transitions and runs the MAX-rule reconciliation across active sessions; the gateway has no recovery state machine for Redis at all (`grep -rn 'redis.*recovery\|onRedisRecovery'` returns nothing). The promise that "Reconciliation runs automatically when Redis becomes available" is unfulfilled.
+
+**Deferred:** the MAX rule reconciles two sources — (1) the last Postgres checkpoint and (2) the in-memory counter accumulated during the fail-open window. Neither exists for token/session quota counters: the in-memory fail-open accumulator is F-12.4.9 (OPEN — the rate-limit middleware fails closed with no time-bounded fail-open window or per-replica counter) and the Postgres token-usage checkpoint is F-11.2.4 (OPEN). A recovery reconciler wired now would have nothing to MAX. (The storage-quota recovery write-back — a distinct counter with an authoritative Postgres `SUM(artifact_size_bytes)` source — *is* now built as `storagequota.RecoveryReconciler` under F-12.4.11.) Gated on F-12.4.9 + F-11.2.4.
 
 ### - [x] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — CLOSED
 
@@ -20120,9 +20128,11 @@ backstop sweep then queries that table.
 
 Resolution: Migration `0062_session_partial_checkpoint_manifest.up.sql` lands the table with `tenant_id`, `session_id`, `generation`, `partial_object_key_prefix`, `chunk_encoding`, `created_at`, `deleted_at`. The §4.4 line 236 / §12.5 backstop predicate (`deleted_at IS NULL` for active rows, `deleted_at IS NOT NULL AND deleted_at < cutoff` for hard-prune candidates) is supported by two partial indexes (`idx_session_partial_checkpoint_manifest_active`, `idx_session_partial_checkpoint_manifest_deleted_at`). `pkg/gateway/partialmanifeststore` exposes `LatestActive`, `ListSoftDeletedBefore`, `HardDelete`, and the standard §12.8 erasure surface; `pkg/gateway/checkpointer/partialcleanup.go` implements `CleanupPartialManifest` (resume-path cleanup) and `PartialCleaner` (the sessionserver adapter). The catalog-only `lenny_partial_manifest_cleanup_total{outcome}` and `lenny_checkpoint_partial_manifests_superseded_total{pool}` counters now have real emitters in `gatewaymetrics.IncPartialManifestCleanup` and `IncCheckpointPartialManifestsSuperseded`. The §10.1 supersede-on-write transaction and the §12.5 periodic backstop sweep worker remain as focused follow-on tasks under the §10.1 horizontal-scaling and §12.5 retention/gc phases respectively; reopening under a new finding when those phases begin is preferred over revisiting this finding's now-mooted "no schema, no cleanup, no emitter" claim.
 
-### - [ ] F-12.5.14 — storage quota counter has no rehydration-from-Postgres path (§12.5 line 309) [High] — OPEN
+### - [x] F-12.5.14 — storage quota counter has no rehydration-from-Postgres path (§12.5 line 309) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.4.11 — Both report the absent Postgres rehydration path for the storage-quota counter on Redis outage.
+
+**Resolution:** Closed by F-12.4.11 (same batch). Confirmed duplicate. The §12.5 line 309 "rehydrate counters on Redis restart" obligation is met by `storagequota.RecoveryReconciler`, which reconstructs each tenant's counter from `SUM(artifact_size_bytes)` (`artifactCatalog.SumLiveBytes`) and writes it back to Redis on a Redis-recovery edge; `storagequota.Failover` serves the same Postgres-derived value for upload pre-checks during the outage window and fails closed (`ErrUnavailable` → 503) on a dual-store outage. Both are wired in `cmd/lenny-gateway`. See F-12.4.11 for the full resolution.
 
 §12.5 line 309 (cross-referenced from §12.4 line 210 storage table) mandates:
 "the GC job uses [artifact_size_bytes] to decrement the Redis counter on
