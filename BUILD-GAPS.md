@@ -27841,7 +27841,7 @@ without first installing the per-method redaction filter, the
 credential payloads will leak — the H8 redaction seam is missing from
 the codebase by design.
 
-### - [ ] F-16.4.9 — The SIEM forwarder, the `audit.siem.endpoint` config knob, and the SIEM-configured alert suppression are not wired [Medium] — OPEN
+### - [x] F-16.4.9 — The SIEM forwarder, the `audit.siem.endpoint` config knob, and the SIEM-configured alert suppression are not wired [Medium] — CLOSED
 
 **Medium.** `pkg/audit/siem/siem.go` implements an HTTPSink and a Sink
 abstraction, and tests in `pkg/audit/siem/siem_test.go` exercise the
@@ -27878,7 +27878,29 @@ the audit stream, and no metric to drive the suppression of the
 `AuditRetentionLow` warning. The recurring `AuditSIEMDeliveryLag`
 alert is similarly inactive.
 
-### - [ ] F-16.4.10 — The compliance-aware retention-preset wiring stops at the enum [Medium] — OPEN
+**Resolution (6ced53c0):** The forwarder, the `audit.siem.endpoint`
+config knob (`--audit-siem-endpoint` + `LENNY_AUDIT_SIEM_ENDPOINT`
+rendered from `audit.siem.endpoint`), and startup connectivity
+validation were wired under F-11.7.1; the residual was the
+SIEM-configured alert-suppression metric. The gateway now emits three
+startup scalar gauges via `gatewaymetrics`: `lenny_audit_siem_configured`
+(1 when `audit.siem.endpoint` is set, the suppression term),
+`lenny_audit_retention_days` (the resolved §16.4 window), and
+`lenny_env_production` (1 when `LENNY_ENV=production`). The
+`AuditSIEMNotConfigured` (`== 0 and lenny_env_production == 1`) and
+`AuditRetentionLow` (`< 365 and ... == 0 and lenny_env_production == 1`)
+alert expressions now evaluate to finite values. The gauges
+pre-materialize fail-safe defaults (SIEM unconfigured, 365-day window,
+non-production) so a scrape before the main wires configuration still
+yields a non-NaN reading, and the production gate keeps both alerts
+inert in dev/staging. Following the established alert-scalar precedent
+(`lenny_gateway_min_replicas`, `lenny_billing_correction_rate_threshold`),
+these gauges are not added to the §16.1 catalog. Tests: tier-1
+`TestSetAuditAlertScalars_spec_16_4_9` (round-trip + re-arm), tier-2
+helm-unittest for the env vars. The `AuditSIEMDeliveryLag` async-outbox
+lag surface remains a distinct defect under F-12.3.6 / F-12.3.17.
+
+### - [x] F-16.4.10 — The compliance-aware retention-preset wiring stops at the enum [Medium] — CLOSED
 
 **Medium.** `pkg/audit/audit.go:121-204` declares the §16.4 retention
 presets (`PresetSOC2` = 365, `PresetFedRAMPHigh` = 1095, `PresetHIPAA`
@@ -27900,7 +27922,27 @@ their values overlay, and assumes 6-year retention is in effect will
 in fact get the same unbounded `audit_log` growth every other tenant
 sees.
 
-### - [ ] F-16.4.11 — The §16.4 audit `gdprRetentionDays` window is not implemented [Medium] — OPEN
+**Resolution (6ced53c0):** The §16.4 retention-preset enum now has a
+production caller. The gateway reads `audit.retentionPreset`
+(`--audit-retention-preset` + `LENNY_AUDIT_RETENTION_PRESET`, rendered
+from the new `audit.retentionPreset` Helm value, default `soc2`),
+fails closed on a preset outside the closed enum, resolves the
+retention window via the new `audit.ResolveRetentionDays(preset,
+customDays)` (a named preset fixes the window; `custom` uses
+`--audit-retention-days`), and runs the §16.4 preset × compliance-profile
+pairing matrix — `audit.ValidatePairing` against every active regulated
+profile — warning per mismatch and naming the compatible presets. The
+resolved window is emitted on `lenny_audit_retention_days`. The pairing
+check is diagnostic rather than fatal: a stricter preset only lengthens
+retention (the compliance minimum still holds) and a single global preset
+cannot satisfy a deployment mixing incompatible regulated profiles. Tests:
+tier-1 `TestResolveRetentionDays_spec_16_4`, tier-2 helm-unittest. The
+actual GC that deletes rows past the resolved window depends on the audit
+partition GC, which remains the separately-tracked **F-16.4.6** (still
+OPEN); with no GC, `audit_log` rows persist beyond the configured window,
+which over-satisfies the compliance minimum rather than violating it.
+
+### - [x] F-16.4.11 — The §16.4 audit `gdprRetentionDays` window is not implemented [Medium] — CLOSED
 
 **Medium.** §16.4 line 380 states: "GDPR erasure receipt rows
 (`event_type LIKE 'gdpr.%'`) are exempt from the standard partition
@@ -27918,6 +27960,22 @@ Days" pkg/ charts/ cmd/` returns zero hits. The compliance posture
 the spec mandates for GDPR erasure receipt durability is not
 materialized — the rows persist by accident of H6 rather than by
 policy.
+
+**Resolution (verify-closed; evidence stale):** The `gdprRetentionDays`
+window config and its compliance floor landed under F-12.8.16 — the
+grep the evidence cites now returns matches. `pkg/audit/audit.go`
+defines `GDPRRetentionDefaultDays` (2555), `GDPRRetentionComplianceFloorDays`
+(2190), and `ValidateGDPRRetentionDays`; `cmd/lenny-gateway/main.go`
+declares `--audit-gdpr-retention-days` (`LENNY_AUDIT_GDPR_RETENTION_DAYS`,
+rendered from `audit.gdprRetentionDays`) and fail-closes at startup when
+the configured window is below the floor under any regulated
+complianceProfile. The §16.4 "hard minimum floor: the GC will not delete
+gdpr.* rows until they exceed this window" guarantee is satisfied: the
+floor is enforced at config time, and the actual deletion is the audit
+partition GC tracked under **F-16.4.6** (still OPEN), so with no GC the
+gdpr.* rows are never deleted early — over-satisfying the minimum-floor
+guarantee rather than violating it. When F-16.4.6 lands the GC it
+consumes the already-wired `gdprRetentionDays` value.
 
 ### - [ ] F-16.4.12 — The error-code taxonomy is wired into envelopes, not into log lines [Medium] — OPEN
 
