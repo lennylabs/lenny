@@ -28,6 +28,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -321,12 +322,38 @@ func main() {
 		elector = le
 	}
 
-	// The §25.5 webhook delivery worker. Its event and subscription
-	// sources are wired from Redis and Postgres as those subsystems are
-	// built; until then it runs against empty sources and delivers
-	// nothing, which is the correct cold-start behavior.
+	// The §25.5 operational-event stream service and emitter. lenny-ops
+	// emits the events it originates (ops_health_status_changed,
+	// escalation_*, remediation_lock_*, drift_detected,
+	// platform_upgrade_*, operation_progressed) into this service;
+	// subsystems take it as the §4.0 EventEmitter dependency. When Redis
+	// is wired every emit also writes to the platform-scoped
+	// ops:events:stream alongside the gateway-emitted events; without
+	// Redis the local opsstream.Service in-memory buffer is the only
+	// delivery surface (per §25.5 cold-start). Built before the webhook
+	// worker so OnSelfHealthChange can emit through it and the worker can
+	// consume the same Redis stream.
+	eventStream := opsstream.New(opsstream.Options{})
+	var opsEmitter events.EventEmitter = eventStream
+	if redisClient != nil {
+		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID)
+		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+	}
+
+	// The §25.5 webhook delivery worker. The §25.5 EventSource is the
+	// Redis ops:events:stream consumer when Redis is wired (so the worker
+	// fans out events emitted by every replica — gateway, controllers,
+	// peer lenny-ops); without Redis it runs against an empty source and
+	// delivers nothing, the correct cold-start behavior. The
+	// subscription source is wired from ops_event_subscriptions as that
+	// seam lands.
+	var eventSource opsservice.EventSource = emptyEventSource{}
+	if redisClient != nil {
+		eventSource = opsservice.NewRedisEventSource(redisClient, events.DefaultStreamKey)
+		log.Printf("lenny-ops: §25.5 webhook worker consuming Redis stream %s", events.DefaultStreamKey)
+	}
 	webhook := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
-		Events:        emptyEventSource{},
+		Events:        eventSource,
 		Subscriptions: emptySubscriptionSource{},
 		HTTPTimeout:   10 * time.Second,
 	})
@@ -392,34 +419,34 @@ func main() {
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
 		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {
-			// §25.4: emit ops_health_status_changed. Event emission is
-			// wired with the §25.5 event stream; until then the
-			// transition is logged so operators see it.
+			// §25.5 line 2590: lenny-ops emits ops_health_status_changed
+			// — one of the signals it originates itself — onto the same
+			// ops:events:stream the gateway writes to, so subscribers,
+			// pollers, and SSE clients on any replica observe the
+			// transition. The local opsstream.Service buffer always
+			// receives it; the Redis write is best-effort (logged on
+			// failure) per the §25.5 buffer-fallback model.
 			log.Printf("lenny-ops: self-health %s -> %s (replica %s)",
 				prev.StatusText, next.StatusText, replicaID)
+			payload, _ := json.Marshal(map[string]any{
+				"replicaId":  replicaID,
+				"previous":   prev.StatusText,
+				"current":    next.StatusText,
+				"transition": prev.StatusText + " -> " + next.StatusText,
+			})
+			if err := opsEmitter.Emit(ctx, events.OperationalEvent{
+				Type:            events.EventOpsHealthStatusChanged.CloudEventsType(),
+				Subject:         "ops/" + replicaID,
+				Severity:        selfHealthEventSeverity(next.StatusText),
+				DataContentType: "application/json",
+				Data:            payload,
+			}); err != nil {
+				log.Printf("lenny-ops: emit ops_health_status_changed: %v", err)
+			}
 		},
 	})
 	if err != nil {
 		log.Fatalf("lenny-ops: build service: %v", err)
-	}
-
-	// The §25.5 operational-event stream service. lenny-ops emits the
-	// events it originates (ops_health_status_changed, escalation_*,
-	// remediation_lock_*, drift_detected, platform_upgrade_*,
-	// operation_progressed) into this service; subsystems take it as
-	// the §4.0 EventEmitter dependency. When Redis is wired the events
-	// also land on the platform-scoped ops:events:stream alongside the
-	// gateway-emitted events; until then the opsstream.Service in-memory
-	// buffer is the only delivery surface (per §25.5 cold-start).
-	eventStream := opsstream.New(opsstream.Options{})
-
-	// §4.0 EventEmitter for lenny-ops subsystems. With Redis configured
-	// every emit also writes to the §25.5 platform-scoped Redis stream;
-	// without Redis the local opsstream.Service is the only destination.
-	var opsEmitter events.EventEmitter = eventStream
-	if redisClient != nil {
-		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID)
-		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
 
 	// §4.0 / §25.13: the in-process alert tracker. lenny-ops has no

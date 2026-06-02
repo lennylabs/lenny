@@ -115,6 +115,21 @@ func (emptySubscriptionSource) Subscriptions() []opsservice.WebhookSubscription 
 	return nil
 }
 
+// selfHealthEventSeverity maps a §25.4 self-health status text to the
+// §25.3 CloudEvents severity extension attribute carried on the
+// ops_health_status_changed event. A degraded replica is a warning; an
+// unhealthy replica is critical; recovery to healthy is informational.
+func selfHealthEventSeverity(statusText string) string {
+	switch statusText {
+	case "unhealthy":
+		return "critical"
+	case "degraded":
+		return "warning"
+	default:
+		return "info"
+	}
+}
+
 // buildBackupService constructs the §25.11 BackupService and the
 // scheduled-backup cron jobs the §25.4 cron evaluator runs.
 //

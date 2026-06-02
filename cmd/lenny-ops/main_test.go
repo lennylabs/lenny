@@ -120,6 +120,78 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	}
 }
 
+// TestStreamProducerConsumerRoundTrip_spec_25_5 is the §25.5 contract
+// test for the operational-event pipeline: the gateway-side
+// StreamEmitter XADDs an event onto ops:events:stream and the lenny-ops
+// RedisEventSource (the webhook-worker EventSource) reads it back with
+// the CloudEvents id, type, and body intact. This is the producer and
+// consumer halves the cluster F-25.2.1 / F-25.3.18 / F-25.5.1 / F-25.5.5
+// describe, exercised end to end over a real Redis stream.
+func TestStreamProducerConsumerRoundTrip_spec_25_5(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	source := opsservice.NewRedisEventSource(client, events.DefaultStreamKey)
+	// First Poll primes the cursor to the (empty) tail and yields nothing.
+	if got, err := source.Poll(context.Background()); err != nil || len(got) != 0 {
+		t.Fatalf("prime Poll = %v, %v; want no events, nil", got, err)
+	}
+
+	// Producer side: a gateway/controller StreamEmitter writes the event.
+	emitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+		Client:    client,
+		Buffer:    events.NewEventBuffer(0),
+		Source:    "//lenny.dev/gateway/replica-1",
+		ReplicaID: "replica-1",
+	})
+	if err := emitter.Emit(context.Background(), events.OperationalEvent{
+		Type:     events.EventOpsHealthStatusChanged.CloudEventsType(),
+		Severity: "warning",
+	}); err != nil {
+		t.Fatalf("producer Emit: %v", err)
+	}
+
+	// Consumer side: the webhook-worker EventSource reads the new event.
+	got, err := source.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("consumer Poll: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("consumer Poll returned %d events, want 1", len(got))
+	}
+	if got[0].Type != "dev.lenny.ops_health_status_changed" {
+		t.Errorf("event type = %q, want dev.lenny.ops_health_status_changed", got[0].Type)
+	}
+	if got[0].ID == "" {
+		t.Error("event id (eventKey) must round-trip from the stream")
+	}
+	var ce events.OperationalEvent
+	if err := json.Unmarshal(got[0].Body, &ce); err != nil {
+		t.Fatalf("event body is not a CloudEvents record: %v", err)
+	}
+	if ce.Severity != "warning" {
+		t.Errorf("event severity = %q, want warning", ce.Severity)
+	}
+}
+
+// TestSelfHealthEventSeverity_spec_25_4 covers the §25.4 self-health
+// status to §25.3 CloudEvents severity mapping carried on the
+// ops_health_status_changed event lenny-ops now emits.
+func TestSelfHealthEventSeverity_spec_25_4(t *testing.T) {
+	cases := map[string]string{
+		"unhealthy": "critical",
+		"degraded":  "warning",
+		"healthy":   "info",
+		"unknown":   "info",
+	}
+	for status, want := range cases {
+		if got := selfHealthEventSeverity(status); got != want {
+			t.Errorf("selfHealthEventSeverity(%q) = %q, want %q", status, got, want)
+		}
+	}
+}
+
 // TestEnvHelpers covers the flag-default helpers.
 func TestEnvHelpers(t *testing.T) {
 	t.Setenv("LENNY_OPS_TEST_STR", "value")
