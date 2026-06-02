@@ -13328,7 +13328,7 @@ Implementation:
 
 The state-machine library and the audit event names ship; no caller drives them. Consequence: the §25.8 agent-initiated upgrade workflow (the operator-facing benefit cited in §25.8) cannot run end-to-end.
 
-### - [ ] F-10.5.8 — 08  Mixed-version replica coexistence: no dual-writer harness, no DDL nullability lint [Medium] — OPEN
+### - [x] F-10.5.8 — 08  Mixed-version replica coexistence: no dual-writer harness, no DDL nullability lint [Medium] — CLOSED
 
 §10.5 line 415 mandates that every Phase 1 column be `NULL`-able (or have a server-side `DEFAULT`) until Phase 3 drops the old column, and that "old-version replicas that do not know about the new column will issue `INSERT` statements that omit it — a `NOT NULL` constraint without a default causes those inserts to fail."
 
@@ -13338,6 +13338,8 @@ Implementation:
 - `tests/tier2_component/migrations/migrations_test.go` exercises the framework (idempotency, re-run); no test asserts that an N and N+1 binary can coexist over a Phase 1 schema.
 
 This is a Medium because the platform has not landed a Phase 3 migration yet, so the gap has not produced a real failure. The risk is structural: the first DDL author whose Phase 1 column carries `NOT NULL` will hit a rolling-deploy outage with no CI defense.
+
+**Resolution (`3ac09b90`):** `scripts/lint-migrations.sh` gained a Pass-4 that normalizes each `.up.sql` (strips line comments, joins lines, splits on `;`) and isolates every `ADD COLUMN` clause up to the next comma, reporting any clause carrying a bare `NOT NULL` with no `DEFAULT` — the §10.5 line 415 expand-contract invariant now has a shell CI gate. A build-tag-free Go scanner test (`tests/tier2_component/migrations/nullable_columns_test.go`) reimplements the same rule as a tier-1 `go test` defense (it runs without the Postgres container the rest of that suite needs) and scans every production migration plus boundary cases (bare NOT NULL flagged, NOT NULL+DEFAULT allowed, comma-in-default literal allowed, multi-column-one-bad flagged, CREATE TABLE exempt, comment-hidden text ignored). The current tree is clean (every existing `ADD COLUMN ... NOT NULL` already carries a DEFAULT). The dual-writer "library substrate" framing is a design preference, not a §10.5 normative requirement; the load-bearing CI defense the finding flags as missing (the nullability lint) is now present on both the shell and Go sides.
 
 ### - [x] F-10.5.9 — 09  No `Deployment.spec.strategy` declared on gateway/controller/token-service charts; defaults assumed [Medium] — CLOSED
 
@@ -19966,7 +19968,7 @@ unavailable. The `ArtifactGCBacklog` alert is silent. There is no per-cycle
 duration histogram and no error counter to drive the SLO Tier-comparison
 guidance in §17.8.
 
-### - [ ] F-12.5.18 — `gcPriority: high` per-tenant immediate-sweep hook is unimplemented (§12.5 line 317) [Medium] — OPEN
+### - [x] F-12.5.18 — `gcPriority: high` per-tenant immediate-sweep hook is unimplemented (§12.5 line 317) [Medium] — CLOSED
 
 Line 317: "Tenants with `gcPriority: high` (configurable per tenant via the
 admin API, intended for T4 erasure SLA compliance) trigger an immediate
@@ -19982,6 +19984,21 @@ Evidence:
   column.
 - The §12.8 erasure controller (`pkg/controller/tenantdeletion/controller.go`)
   contains no hook that triggers a tenant-scoped GC sweep on completion.
+
+**Resolution (`3ac09b90`):** Added `tenantstore.Tenant.GCPriority` (closed
+`normal`/`high` enum, empty read as normal) with `ValidGCPriority` and the
+`TriggersImmediateGC` predicate; migration `0106` adds the
+`gc_priority TEXT NOT NULL DEFAULT 'normal'` CHECK column and the pgstore
+round-trips it (INSERT/UPDATE/SELECT). The admin API exposes it on tenant
+create/update/response with enum validation. `retentiongc.Collector` gained
+an exported `SweepTenant(ctx, tenantID, now)` that runs a single-tenant
+incremental sweep and emits the same §12.5 ll. 321 metrics as the scheduled
+`Tick` (rejecting an empty tenant id). `erasurejob.Runner.WithCompletionHook`
+fires after a job durably reaches `PhaseCompleted` (never on failure), and
+`cmd/lenny-gateway` binds it through an indirection set when the GC collector
+is built: on completion the hook looks up the tenant's gcPriority and, when
+`high`, calls `SweepTenant` so a T4 erasure-SLA tenant's expired artifacts
+are reclaimed immediately, independent of the global cycle.
 
 ### - [x] F-12.5.19 — `gc.cycleIntervalSeconds` and `gc.tombstoneRetentionSeconds` Helm values are absent (§12.5 lines 317, 341) [Medium] — CLOSED
 - **Resolution:** Added the `gc:` chart section (`cycleIntervalSeconds: 900`, `tombstoneRetentionSeconds: 86400`) rendered as `LENNY_GC_CYCLE_INTERVAL_SECONDS` / `LENNY_GC_TOMBSTONE_RETENTION_SECONDS`, plus `--gc-cycle-interval-seconds` / `--gc-tombstone-retention-seconds` gateway flags. The cadence now drives both the §7.1 retention sweep and the §12.5 line 341 hard-prune ticker (previously hard-coded to `DefaultSweepInterval`), and `retentiongc.ClampSweepInterval` enforces the 60s floor. The tombstone-retention window passed to `SoftDeleteSession` was corrected from the §7.1 7-day `DerivedSnapshotTTL` to the §12.5 line 341 24h default. New `MinSweepInterval` / `DefaultTombstoneRetention` constants. (commit `e20de488`)
@@ -22908,7 +22925,7 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 
 ---
 
-### - [ ] F-13.3.11 — CFL-011 — `authorized_tools` JWT claim not preserved/narrowed by Token Service [Medium] — OPEN
+### - [x] F-13.3.11 — CFL-011 — `authorized_tools` JWT claim not preserved/narrowed by Token Service [Medium] — CLOSED
 
 **Normative requirement (§13.3 lines 580, 583).** The `authorized_tools` claim is one of the Lenny extensions to RFC 9068 claims: "Narrowed tool allowlist for operability-scope tokens. Exchange may further narrow; broadening is rejected." Scope-narrowing enforcement (e) explicitly covers it: "preserving or narrowing `authorized_tools` (a child-minting exchange whose `scope` includes operability tools copies the parent's `authorized_tools`, intersected with the exchange's `scope`)."
 
@@ -22921,6 +22938,8 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 **Impact.** A token exchange that should preserve or narrow the parent's `authorized_tools` does neither: the claim is simply dropped. An operability-scope token minted via the exchange path carries no `authorized_tools` (so the operability surface has nothing to enforce against), and a malicious caller cannot widen the allowlist because the claim never makes it onto the issued token in the first place. The end-to-end §25 operability scoping that depends on this claim is silently disabled.
 
 **Severity rationale.** Medium because (a) §13.3 lists the claim as a §10.2-required JWT field, (b) §25 enforcement depends on it but degrades gracefully (no token has any tools authorized), and (c) the failure mode is fail-closed for operability tools — no exploitation path is opened, but the feature is non-functional.
+
+**Resolution (`3ac09b90`):** `tokenexchange.Token`/`Issued` carry an `AuthorizedTools` field and `Validate` enforces §13.3 rule (e): a requested allowlist that names a tool the subject did not hold is rejected (`invalid_request`/`authorized_tools_broadened`), an empty request preserves the subject's allowlist, and a child-minting exchange (actor_token present) intersects the result with the issued scope so a child that dropped an operability tool from its scope cannot retain authorization for it. `jwt.Claims` now declares the `authorized_tools` claim, `toExchangeToken` carries it into the exchange, and the Token Service stamps `issued.AuthorizedTools` onto the minted token — so the claim survives the exchange instead of being dropped. The in-process delegation child-mint path runs the same validator (it passes an empty parent allowlist today; sourcing the parent's `authorized_tools` into `ChildTokenParams` is a separate delegation concern and not part of this finding's evidence). Tier-1 tests cover preserve/narrow/reject-broaden, the child-minting scope intersection, and the `toExchangeToken` claim carry.
 
 ---
 
