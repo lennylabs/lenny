@@ -30179,7 +30179,7 @@ multi-zone topology is not enforced by the chart.
 (`gateway.podAntiAffinity`, preferred/required forms keyed on
 `kubernetes.io/hostname`). All five §17.1-row-7 blocks render. F-17.1.7 (verified at c625edae).
 
-### - [ ] F-17.1.8 — 08 — Optional per-pool PDB on warm (idle) pods is not implemented [Medium] — OPEN
+### - [x] F-17.1.8 — 08 — Optional per-pool PDB on warm (idle) pods is not implemented [Medium] — CLOSED
 
 Spec row 11: "optional PDB per pool on warm (idle) pods to enforce
 `minWarm` during voluntary disruption." The controller emits no PDB
@@ -30188,6 +30188,19 @@ objects per pool (no PDB write RBAC, no controller code under
 /Users/joan/projects/lenny/pkg/controller/` returns no matches. The
 SandboxWarmPool spec does not surface the field needed to opt in. The
 feature is optional, but its absence should be tracked.
+
+**Resolution:** Verify-closed; the finding is stale. The warm-pool
+controller authors a per-pool PDB in `pkg/controller/warmpool/pdb.go`
+(`reconcilePDB`, wired at `controller.go:324`): a pool with
+`Spec.MinWarm > 0` owns a PDB with `maxUnavailable: 1` selecting that
+pool's `lenny.dev/state=idle` pods, torn down when the pool scales to
+zero. §4.6.1 mandates `maxUnavailable: 1` over `minAvailable: minWarm`
+(which deadlocks node drains at steady state), so the implementation is
+spec-correct. PDB write RBAC is granted in
+`charts/lenny/templates/controller-rbac.yaml` (policy/poddisruptionbudgets
+get/list/watch/create/update/delete) and `MinWarm > 0` is the opt-in.
+Covered by `pdb_test.go` (create + delete-at-zero). Closed by commit
+a4529eae (F-4.6.4/5/13/15).
 
 ### - [x] F-17.1.9 — 09 — Optional `lenny-ops-tls` Secret and cert-manager `Certificate` for `ops.tls.internalEnabled` are not rendered [Medium] — CLOSED
 
@@ -31110,7 +31123,7 @@ fields stay 0 with no warning. Closes the dup F-25.11.14. (this batch)
 
 ---
 
-### - [ ] F-17.3.13 — 3.3 — `BackupOverdue` alert exists but `lenny_backup_last_successful_timestamp` is never emitted [Medium] — OPEN
+### - [x] F-17.3.13 — 3.3 — `BackupOverdue` alert exists but `lenny_backup_last_successful_timestamp` is never emitted [Medium] — CLOSED
 
 Spec — §25.11 Alerting Rules table:
 > `BackupOverdue`: `lenny_backup_last_successful_timestamp{type="full"}`
@@ -31126,6 +31139,20 @@ the canonical metrics catalog.
 
 Effect: the `BackupOverdue` alert would never fire — both because
 the metric isn't emitted and because the value is undefined.
+
+**Resolution:** Added `lenny_backup_last_successful_timestamp` (gauge,
+labeled `type`) to the §16.1 catalog (`pkg/observability/metrics/-
+catalog.go`), a new `backup.Service.LastSuccessfulBackupTimes` that
+returns the most recent completion time per type from completed/verified
+rows (absent for a type with no success, so the gauge is left unset
+rather than reporting a 1970 epoch), and a leader-gated lenny-ops
+`backup-metrics` cron sampler that publishes the gauge each minute. The
+metric is registered on the default registry, matching the established
+`diagnosticsAuditRateLimited` posture; the lenny-ops `/metrics`
+exposition that Prometheus scrapes is the same documented gap tracked by
+F-16.8.1. Tests: tier-1 `LastSuccessfulBackupTimes` matrix (empty /
+per-type / max / ignores non-success) + `sampleBackupMetrics`
+gauge-publish assertions. (commit f41f14c0)
 
 ---
 
@@ -31218,7 +31245,7 @@ it in place of the "PT15M" constant. (this batch)
 
 ---
 
-### - [ ] F-17.3.17 — 3.7 — Backup encryption / content-policy Helm values are unimplemented [Medium] — OPEN
+### - [x] F-17.3.17 — 3.7 — Backup encryption / content-policy Helm values are unimplemented [Medium] — CLOSED
 
 Spec — §25.11 "Sensitive Content Policy" table and "Backup
 Execution" step 5 require `backups.contentPolicy.*`,
@@ -31243,9 +31270,23 @@ chart. Tenant crypto-shredding via `perTenantWrapKeys: true`
 (§25.11 line 4001) and its symmetry with ArtifactStore SSE-KMS
 keys (line 4096) is unreachable.
 
+**Resolution:** Added the §25.11 `backups.encryption.*` (atRest,
+minioServerSide, clientSide, kmsKeyId, perTenantWrapKeys),
+`backups.contentPolicy.*` (includeSensitiveTables, excludeTables,
+redactColumns), `backups.access.minioObjectACL`, and `backups.regions`
+Helm values to `charts/lenny/values.yaml`. The on-demand backup Job now
+forwards the policy the binary supports: `--include-sensitive-tables`
+when `contentPolicy.includeSensitiveTables`, one `--exclude-table=<t>`
+per `contentPolicy.excludeTables`, and `--kms-key-id` (via a new
+`LENNY_BACKUP_KMS_KEY_ID` env) when `encryption.kmsKeyId` is set, so the
+SSE-KMS / content-policy posture is chart-driven. The `perTenantWrapKeys`
+and per-region values are surfaced for the lenny-ops Job factory that
+drives the client-side per-tenant data keys. Tests: helm-unittest
+`backup-job_test.yaml` asserts each flag/env wiring. (commit f41f14c0)
+
 ---
 
-### - [ ] F-17.3.18 — 3.8 — No `MinIOBucketPolicy` rendering for the backup bucket [Medium] — OPEN
+### - [x] F-17.3.18 — 3.8 — No `MinIOBucketPolicy` rendering for the backup bucket [Medium] — CLOSED
 
 Spec — §25.11 "MinIO Bucket Policy" requires the Helm chart to
 render a bucket policy granting `s3:PutObject`/`GetObject`/
@@ -31260,6 +31301,19 @@ the backup bucket either.
 Effect: a real-MinIO deployment would have an over-privileged
 bucket (any principal can write or list) because the chart does
 not lock it down at install time.
+
+**Resolution:** New `charts/lenny/templates/backup-bucket-policy.yaml`
+renders a suggested S3/MinIO bucket policy into the
+`lenny-backup-bucket-policy` ConfigMap (MinIO bucket policies are not
+Kubernetes resources, so the chart renders the document for an operator
+or the lifecycle Job to apply with `mc`). The policy grants the
+lenny-backup principal `s3:PutObject`/`GetObject`/`DeleteObject` plus
+`ListBucket`, the lenny-ops principal `GetObject`/`ListBucket`, denies
+all non-TLS access via the `aws:SecureTransport` condition, and — when
+`backups.encryption.kmsKeyId` is set — denies PutObject whose SSE-KMS
+key id does not match. It renders only when `backups.bucket` is set and
+`backups.bucketPolicy.enabled` (default true). Tests: helm-unittest
+`backup-bucket-policy_test.yaml`. (commit f41f14c0)
 
 ---
 
