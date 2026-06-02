@@ -305,6 +305,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_token_validation_postgres_fallback_total", TypeCounter, "Token validations that fell back to a Postgres check"},
 	{"lenny_time_drift_seconds", TypeGauge, "Gateway wall-clock signed offset from the NTP reference"},
 	{"lenny_postgres_replication_lag_seconds", TypeGauge, "Seconds the Postgres replica lags the primary"},
+	{"lenny_backup_last_successful_timestamp", TypeGauge, "Unix timestamp of last successful backup by type"},
 	{"lenny_restore_test_success", TypeGauge, "Latest automated restore test pass/fail flag"},
 	{"lenny_restore_test_duration_seconds", TypeGauge, "Elapsed time of the latest automated restore test"},
 	{"lenny_minio_replication_lag_seconds", TypeGauge, "ArtifactStore off-cluster replication lag by region"},

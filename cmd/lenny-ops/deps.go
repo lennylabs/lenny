@@ -247,8 +247,60 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 				return nil
 			},
 		},
+		{
+			// spec: §25.11 line 4309 — publish the
+			// lenny_backup_last_successful_timestamp{type} gauge so the
+			// BackupOverdue alert (line 4317) has a source. Leader-gated
+			// like the other cron jobs; the /metrics exposition that
+			// scrapes the gauge is tracked by F-16.8.1.
+			Name:       "backup-metrics",
+			Expression: "* * * * *",
+			Run: func(ctx context.Context) error {
+				return sampleBackupMetrics(ctx, svc)
+			},
+		},
 	}
 	return svc, jobs
+}
+
+// backupLastSuccessfulTimestamp is the §25.11 line 4309
+// lenny_backup_last_successful_timestamp{type} gauge: the Unix time of
+// the last successful backup per type, evaluated by the §25.11
+// BackupOverdue alert (line 4317: a full backup older than 48h). It is
+// registered on the default registry so the sampler publishes a real
+// gauge; the lenny-ops /metrics exposition that scrapes it is the same
+// documented gap F-16.8.1 tracks (mirroring diagnosticsAuditRateLimited).
+var backupLastSuccessfulTimestamp = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_backup_last_successful_timestamp",
+		Help: "§25.11 Unix timestamp of the last successful backup by type.",
+	}, []string{"type"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// sampleBackupMetrics reads the last successful backup time per type
+// from svc and publishes it on lenny_backup_last_successful_timestamp.
+// A type with no successful backup leaves its series unset rather than
+// reporting a 1970 epoch that would read as a stale backup and trip
+// BackupOverdue spuriously before the first backup completes.
+//
+// spec: §25.11 line 4309.
+func sampleBackupMetrics(ctx context.Context, svc *backup.Service) error {
+	if backupLastSuccessfulTimestamp == nil {
+		return nil
+	}
+	times, err := svc.LastSuccessfulBackupTimes(ctx)
+	if err != nil {
+		return err
+	}
+	for typ, at := range times {
+		backupLastSuccessfulTimestamp.WithLabelValues(typ).Set(float64(at.Unix()))
+	}
+	return nil
 }
 
 // diagnosticsAuditRateLimited is the §25.9 lenny_audit_rate_limited_total

@@ -2800,6 +2800,76 @@ backups:
     # preRestoreRetainDays is the §25.11 shorter retention window for
     # the pre-restore safety backups restore/execute creates.
     preRestoreRetainDays: 7
+  # encryption is the §25.11 "Backup Execution" step 5 / "Sensitive
+  # Content Policy" encryption posture. The on-demand Job forwards
+  # kmsKeyId to lenny-backup's --kms-key-id (selecting SSE-KMS over the
+  # default SSE-S3 on the MinIO upload); lenny-ops is the production Job
+  # factory that drives perTenantWrapKeys and client-side encryption with
+  # the per-tenant data keys. spec: §25.11 lines 4001, 4017-4019.
+  encryption:
+    # atRest selects server-side encryption on the MinIO PutObject. The
+    # spec requires true for production.
+    atRest: true
+    # minioServerSide selects the MinIO server-side mode: "SSE-S3" (the
+    # default, MinIO-managed keys) or "SSE-KMS" (KMS-wrapped via kmsKeyId).
+    minioServerSide: "SSE-S3"
+    # clientSide enables AES-256-GCM client-side encryption in the Job
+    # before upload (a KMS-wrapped data key); it requires kmsKeyId and a
+    # data-key Secret provisioned by the lenny-ops Job factory.
+    clientSide: false
+    # kmsKeyId is the AWS KMS key ARN (or equivalent) for SSE-KMS and
+    # client-side key wrapping. Required when minioServerSide is
+    # "SSE-KMS" in single-region mode; overridden per-region under
+    # regions.<region>.kmsKeyId.
+    kmsKeyId: ""
+    # perTenantWrapKeys enables per-tenant crypto-shredding: each
+    # tenant's dump segment is encrypted under a tenant-scoped wrap key
+    # that DeleteByTenant destroys (§12.8 Backups in erasure scope).
+    perTenantWrapKeys: false
+  # contentPolicy is the §25.11 "Sensitive Content Policy". By default
+  # the §25.11 defaultExcludedTables (platform_secrets, tenant_secrets,
+  # credential_pool_raw_secrets, and %_secret% / %_token% matches) are
+  # excluded from the dump. spec: §25.11 lines 4008-4022.
+  contentPolicy:
+    # includeSensitiveTables forwards lenny-backup's
+    # --include-sensitive-tables so the defaultExcludedTables are dumped
+    # (not recommended unless the encryption story is airtight).
+    includeSensitiveTables: false
+    # excludeTables lists additional tables excluded beyond the
+    # defaults; each becomes a lenny-backup --exclude-table flag.
+    excludeTables: []
+    # redactColumns lists additional column names redacted in the dump
+    # (matched verbatim); consumed by the lenny-ops Job factory.
+    redactColumns: []
+  # access is the §25.11 line 4020 object-ACL posture on uploaded
+  # backup objects.
+  access:
+    minioObjectACL: "private"
+  # regions carries the §25.11 per-region backup endpoints, REQUIRED
+  # when any tenant has dataResidencyRegion set; it mirrors
+  # storage.regions and is consumed by the lenny-ops per-region dispatch
+  # (§12.8 Backup pipeline residency). Each entry carries minioEndpoint,
+  # kmsKeyId, and accessCredentialSecret. spec: §25.11 lines 3997, 4071.
+  # Example:
+  #   eu-west-1:
+  #     minioEndpoint: "https://minio.eu-west-1.internal:9000"
+  #     kmsKeyId: "arn:aws:kms:eu-west-1:...:key/..."
+  #     accessCredentialSecret: "lenny-backup-minio-eu-west-1"
+  regions: {}
+  # bucket names the §25.11 backup bucket the MinIO bucket policy locks
+  # down; the bucket-policy ConfigMap renders only when it is set.
+  bucket: ""
+  # bucketPolicy gates the §25.11 "MinIO Bucket Policy" ConfigMap: a
+  # suggested S3 bucket policy granting the lenny-backup principal full
+  # object CRUD and lenny-ops read-only, requiring TLS, with an SSE-KMS
+  # condition when encryption.kmsKeyId is set.
+  bucketPolicy:
+    enabled: true
+    # backupPrincipal and opsPrincipal are the MinIO/S3 principals the
+    # policy grants to. They default to the access keys the lenny-backup
+    # and lenny-ops credentials authenticate as.
+    backupPrincipal: "lenny-backup"
+    opsPrincipal: "lenny-ops"
   # onDemand gates the opt-in chart-rendered lenny-backup Job (§17.1 row
   # 17; §25.11 "Job Pod Specification"). lenny-ops is the production Job
   # factory for scheduled runs against ops_backup_schedule; this Job is

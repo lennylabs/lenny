@@ -144,12 +144,30 @@ spec:
             {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") }}
             - --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
             {{- end }}
+            {{- /* §25.11 Sensitive Content Policy — forward the
+                   content-policy and encryption selections from
+                   backups.contentPolicy / backups.encryption so the
+                   on-demand Job honors the same policy the lenny-ops Job
+                   factory applies. */ -}}
+            {{- if $.Values.backups.contentPolicy.includeSensitiveTables }}
+            - --include-sensitive-tables
+            {{- end }}
+            {{- range $.Values.backups.contentPolicy.excludeTables }}
+            - --exclude-table={{ . }}
+            {{- end }}
+            {{- if $.Values.backups.encryption.kmsKeyId }}
+            - --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+            {{- end }}
             {{- range .extraArgs }}
             - {{ . | quote }}
             {{- end }}
           env:
             - name: LENNY_BACKUP_ID
               value: {{ .backupID | default "ondemand" | quote }}
+            {{- if $.Values.backups.encryption.kmsKeyId }}
+            - name: LENNY_BACKUP_KMS_KEY_ID
+              value: {{ $.Values.backups.encryption.kmsKeyId | quote }}
+            {{- end }}
             - name: LENNY_BACKUP_MINIO_ENDPOINT
               value: {{ .minioEndpoint | quote }}
             - name: LENNY_BACKUP_MINIO_BUCKET

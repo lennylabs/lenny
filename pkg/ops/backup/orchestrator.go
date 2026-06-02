@@ -247,6 +247,37 @@ func (s *Service) GetBackup(ctx context.Context, id string) (*Backup, error) {
 	return &b, nil
 }
 
+// LastSuccessfulBackupTimes returns, per backup type, the most recent
+// completion time of a successful backup. A backup counts as successful
+// when its status is completed or verified and it carries a non-nil
+// completed_at. The result feeds the §25.11 metrics-table
+// lenny_backup_last_successful_timestamp{type} gauge, which the
+// BackupOverdue alert evaluates (§25.11 line 4317: full backup older
+// than 48h). A type with no successful backup is absent from the map so
+// the caller can leave its gauge series unset rather than reporting a
+// zero (epoch) timestamp that would read as a 1970 backup.
+//
+// spec: §25.11 line 4309.
+func (s *Service) LastSuccessfulBackupTimes(ctx context.Context) (map[string]time.Time, error) {
+	backups, err := s.store.ListBackups(ctx, BackupFilter{})
+	if err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "list backups: %v", err)
+	}
+	latest := make(map[string]time.Time)
+	for _, b := range backups {
+		if b.Status != StatusCompleted && b.Status != StatusVerified {
+			continue
+		}
+		if b.CompletedAt == nil {
+			continue
+		}
+		if cur, ok := latest[b.Type]; !ok || b.CompletedAt.After(cur) {
+			latest[b.Type] = *b.CompletedAt
+		}
+	}
+	return latest, nil
+}
+
 // VerifyBackup creates a §25.11 verification Job for a backup:
 // download the archive, validate the SHA-256 checksum, and run
 // pg_restore --list. The backup row moves to status:verifying while the

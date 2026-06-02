@@ -117,3 +117,55 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.name
           value: lenny-backup-minio
+
+  # §25.11 Sensitive Content Policy — F-17.3.17.
+  - it: forwards no content-policy or encryption flags by default
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --include-sensitive-tables
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: LENNY_BACKUP_MINIO_ENDPOINT
+
+  - it: forwards --include-sensitive-tables when contentPolicy.includeSensitiveTables is set
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.includeSensitiveTables: true
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --include-sensitive-tables
+
+  - it: forwards one --exclude-table flag per contentPolicy.excludeTables entry
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.excludeTables: [audit_events, billing_events]
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --exclude-table=audit_events
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --exclude-table=billing_events
+
+  - it: forwards the SSE-KMS key id as a flag and env when encryption.kmsKeyId is set
+    set:
+      backups.onDemand.enabled: true
+      backups.encryption.kmsKeyId: arn:aws:kms:us-east-1:111:key/abc
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: LENNY_BACKUP_KMS_KEY_ID
+      - equal:
+          path: spec.template.spec.containers[0].env[1].value
+          value: arn:aws:kms:us-east-1:111:key/abc
