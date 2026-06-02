@@ -539,6 +539,12 @@ func main() {
 	auditSIEMFailureThresholdPercent := flag.Float64("audit-siem-failure-threshold-percent",
 		envFloat("LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT", 5),
 		"§11.7 item 4 audit.siem.failureThresholdPercent: when the SIEM delivery failure rate exceeds this percentage, the §25.3 health API reports the siem component degraded (default 5%). Override via LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT. F-11.7.16.")
+	auditSIEMMaxDeliveryLagSeconds := flag.Int("audit-siem-max-delivery-lag-seconds",
+		envInt("LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS", 30),
+		"§12.3 line 97 audit.siem.maxDeliveryLagSeconds: the threshold above which the §16.5 AuditSIEMDeliveryLag alert fires. Emitted on lenny_audit_siem_max_delivery_lag_seconds so the alert compares against an operator-tunable scalar. Default 30s. Override via LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS. F-12.3.17.")
+	auditSIEMPollIntervalSeconds := flag.Int("audit-siem-poll-interval-seconds",
+		envInt("LENNY_AUDIT_SIEM_POLL_INTERVAL_SECONDS", 10),
+		"§12.3 line 97 SIEM outbox forwarder poll interval: how often the forwarder tails the committed audit_log rows for newly committed events. Must stay well under audit.siem.maxDeliveryLagSeconds. Default 10s. Override via LENNY_AUDIT_SIEM_POLL_INTERVAL_SECONDS. F-12.3.6.")
 	auditOCSFRetryIntervalSeconds := flag.Int("audit-ocsf-retry-interval-seconds",
 		envInt("LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS", 30),
 		"§11.7 audit.ocsf.retryInterval: cadence at which the OCSF translator re-drives pending / retry_pending audit rows toward succeeded | dead_lettered. Default 30s. Override via LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS. F-11.7.11.")
@@ -2310,6 +2316,7 @@ func main() {
 		auditAppender        policy.AuditAppender
 		auditValidator       *auditscope.Validator
 		ocsfTranslationStore ocsf.TranslationStore
+		siemDeliveryStore    siem.DeliveryStore
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2344,6 +2351,11 @@ func main() {
 		// (ocsf_translation_state). Hoisted so the OCSF translator wired
 		// below reads pending rows from the durable chain. F-11.7.1.
 		ocsfTranslationStore = pgAudit
+		// The same durable chain backs the §12.3 SIEM outbox forwarder:
+		// it tails committed audit_log rows past the per-tenant delivery
+		// high-water mark in siem_delivery_state and checkpoints each
+		// SIEM-acknowledged row. F-12.3.6.
+		siemDeliveryStore = pgAudit
 	} else {
 		auditChains := audit.NewChainSet()
 		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
@@ -2373,6 +2385,7 @@ func main() {
 	// not pin in `pending`. F-11.7.1 / F-11.7.11 / F-11.7.16.
 	var (
 		ocsfTranslator    *ocsf.Translator
+		ocsfOutbox        *siem.Outbox
 		siemHealthChecker health.Checker
 	)
 	ocsfCfg := ocsf.TranslationConfig{
@@ -2380,6 +2393,10 @@ func main() {
 		MaxAttempts:   *auditOCSFMaxAttempts,
 		BatchSize:     *auditOCSFBatchSize,
 	}
+	// §12.3 line 97: emit the configured SIEM delivery-lag threshold so
+	// AuditSIEMDeliveryLag compares lenny_audit_siem_delivery_lag_seconds
+	// against an operator-tunable scalar rather than a literal. F-12.3.17.
+	gwMetrics.SetSIEMMaxDeliveryLagSeconds(float64(*auditSIEMMaxDeliveryLagSeconds))
 	if *auditSIEMEndpoint != "" {
 		siemMetrics := siem.NewCountingMetrics()
 		forwarder := siem.NewForwarder(
@@ -2396,9 +2413,29 @@ func main() {
 			log.Fatalf("lenny-gateway: §11.7 SIEM startup connectivity validation failed (the gateway refuses to start until the SIEM endpoint acknowledges a test event): %v", err)
 		}
 		cancelValidate()
-		log.Printf("lenny-gateway: §11.7 SIEM forwarder validated connectivity to %s; OCSF audit egress active", *auditSIEMEndpoint)
 		siemHealthChecker = backends.SIEM(forwarder, siemMetrics, *auditSIEMFailureThresholdPercent, "siem")
-		if ocsfTranslationStore != nil {
+		if siemDeliveryStore != nil {
+			// §12.3 line 97: durable Postgres chain → the SIEM egress is
+			// the outbox / CDC forwarder. It tails committed audit_log
+			// rows past the siem_delivery_state high-water mark and
+			// advances the mark only after the SIEM acknowledges each
+			// record, so a crash after a Postgres commit but before SIEM
+			// delivery replays the row instead of losing it. The OCSF
+			// translator no longer pushes to the SIEM (sink = nil) — it
+			// only advances ocsf_translation_state — so the two paths do
+			// not double-deliver. F-12.3.6.
+			ocsfOutbox = siem.NewOutbox(siemDeliveryStore, forwarder,
+				siem.OutboxConfig{PollInterval: time.Duration(*auditSIEMPollIntervalSeconds) * time.Second},
+				gwMetrics)
+			log.Printf("lenny-gateway: §12.3 SIEM outbox forwarder validated connectivity to %s; tailing committed audit rows (poll %ds)", *auditSIEMEndpoint, *auditSIEMPollIntervalSeconds)
+			if ocsfTranslationStore != nil {
+				ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, nil, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
+			}
+		} else if ocsfTranslationStore != nil {
+			// No durable chain (in-memory, minimal gateway): there is no
+			// audit_log table to tail, so fall back to the push-based
+			// translator → SIEM forwarder path. F-11.7.1.
+			log.Printf("lenny-gateway: §11.7 SIEM forwarder validated connectivity to %s; OCSF audit egress active (push mode, no durable chain)", *auditSIEMEndpoint)
 			ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, forwarder, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
 		}
 	} else if ocsfTranslationStore != nil {
@@ -5024,6 +5061,17 @@ func main() {
 		log.Printf("lenny-gateway: §11.7 OCSF translator active (siem=%v retryInterval=%ds maxAttempts=%d batchSize=%d)",
 			*auditSIEMEndpoint != "", *auditOCSFRetryIntervalSeconds, *auditOCSFMaxAttempts, *auditOCSFBatchSize)
 		go ocsfTranslator.Run(watchdogCtx)
+	}
+
+	// spec: §12.3 line 97 — start the SIEM outbox forwarder's background
+	// loop. It tails committed audit_log rows, delivers each to the SIEM
+	// after Postgres commits it, checkpoints the per-tenant delivery
+	// high-water mark in siem_delivery_state, and emits
+	// lenny_audit_siem_delivery_lag_seconds. F-12.3.6 / F-12.3.17.
+	if ocsfOutbox != nil {
+		log.Printf("lenny-gateway: §12.3 SIEM outbox forwarder active (pollInterval=%ds maxDeliveryLag=%ds)",
+			*auditSIEMPollIntervalSeconds, *auditSIEMMaxDeliveryLagSeconds)
+		go ocsfOutbox.Run(watchdogCtx)
 	}
 
 	go func() {

@@ -590,10 +590,12 @@ tests:
       # + LENNY_SCATTER_MAX_CONCURRENCY / _PER_SHARD_TIMEOUT_SECONDS /
       #   _AGGREGATE_TIMEOUT_SECONDS (§12.6 lines 556-558, F-12.6.18)
       # + LENNY_AUDIT_RETENTION_PRESET / LENNY_AUDIT_RETENTION_DAYS
-      #   (§16.4, F-16.4.9 / F-16.4.10) = 55.
+      #   (§16.4, F-16.4.9 / F-16.4.10)
+      # + LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS (§12.3 line 97,
+      #   F-12.3.17) = 56.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 55
+          count: 56
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1366,6 +1368,13 @@ tests:
           content:
             name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
             value: "5"
+      # spec: §12.3 line 97 — the SIEM outbox forwarder delivery-lag
+      # threshold renders from the chart default. F-12.3.17.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS
+            value: "30"
       - contains:
           path: spec.template.spec.containers[0].env
           content:

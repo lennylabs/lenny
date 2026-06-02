@@ -139,6 +139,12 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 	}
 	m.SetPostgresWriteIops(123)
 	m.SetPostgresWriteCeilingIops(600)
+	// §12.3 line 97 / §16.1 line 228 — the SIEM outbox forwarder sets the
+	// delivery-lag gauge; the configured threshold is emitted at startup
+	// so AuditSIEMDeliveryLag compares against an operator-tunable scalar.
+	// F-12.3.6 / F-12.3.17.
+	m.SetSIEMDeliveryLagSeconds(42)
+	m.SetSIEMMaxDeliveryLagSeconds(45)
 	m.IncBillingFlushPressure()
 	m.IncBillingFlushPressure()
 	m.IncAuditChainIntegrity("verified")
@@ -157,6 +163,8 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 	for _, want := range []string{
 		`lenny_postgres_write_iops 123`,
 		`lenny_postgres_write_ceiling_iops 600`,
+		`lenny_audit_siem_delivery_lag_seconds 42`,
+		`lenny_audit_siem_max_delivery_lag_seconds 45`,
 		`lenny_billing_flush_pressure_total 2`,
 		`lenny_audit_chain_integrity_total{state="verified"} 1`,
 		`lenny_audit_chain_integrity_total{state="broken"} 1`,

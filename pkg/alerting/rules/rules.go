@@ -1321,7 +1321,7 @@ func warningAlerts() []Rule {
 		},
 		{
 			Name:        "AuditSIEMDeliveryLag",
-			Expr:        `lenny_audit_siem_delivery_lag_seconds > 30`,
+			Expr:        `lenny_audit_siem_delivery_lag_seconds > scalar(lenny_audit_siem_max_delivery_lag_seconds)`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit SIEM delivery lag high",
 			Description: "The lag between the latest committed audit event in Postgres and the latest SIEM-acknowledged event exceeds audit.siem.maxDeliveryLagSeconds. Events are at risk of being unacknowledged if the outbox forwarder crashes.",

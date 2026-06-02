@@ -982,6 +982,17 @@ audit:
     # delivery failure rate exceeds this percentage, the §25.3 health API
     # reports the `siem` component degraded (default 5). F-11.7.16.
     failureThresholdPercent: 5
+    # §12.3 line 97 audit.siem.maxDeliveryLagSeconds: the threshold (in
+    # seconds, default 30) above which the §16.5 AuditSIEMDeliveryLag
+    # alert fires. The §12.3 outbox forwarder tails the committed
+    # audit_log rows, delivers each to the SIEM after Postgres commits
+    # it, checkpoints its position in siem_delivery_state, and emits
+    # lenny_audit_siem_delivery_lag_seconds (the gap between the latest
+    # committed and the latest acknowledged audit event). The gateway
+    # emits this value on lenny_audit_siem_max_delivery_lag_seconds so
+    # the alert compares against an operator-tunable threshold rather
+    # than a literal. F-12.3.6 / F-12.3.17.
+    maxDeliveryLagSeconds: 30
   # §11.7 OCSF translator: the background state machine that serializes
   # each audit row to the canonical OCSF v1.1.0 wire form and multicasts
   # it to the SIEM forwarder, advancing ocsf_translation_state. F-11.7.1

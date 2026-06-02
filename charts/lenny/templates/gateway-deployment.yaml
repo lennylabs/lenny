@@ -825,6 +825,14 @@ spec:
             - name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
               value: {{ .Values.audit.siem.failureThresholdPercent | quote }}
             {{- end }}
+            # §12.3 line 97 audit.siem.maxDeliveryLagSeconds — the
+            # AuditSIEMDeliveryLag threshold the §12.3 outbox forwarder
+            # emits on lenny_audit_siem_max_delivery_lag_seconds.
+            # F-12.3.17.
+            {{- if and .Values.audit .Values.audit.siem (hasKey .Values.audit.siem "maxDeliveryLagSeconds") }}
+            - name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS
+              value: {{ .Values.audit.siem.maxDeliveryLagSeconds | quote }}
+            {{- end }}
             # §11.7 OCSF translator retry cadence / attempt budget / batch
             # size. The translator advances ocsf_translation_state and
             # multicasts each row to the SIEM forwarder. F-11.7.1 / F-11.7.11.

@@ -18712,7 +18712,7 @@ configured). The chart adds `postgres.billingAuditDSN`, rendering it into the
 `lenny-datastore-conn` Secret as `billing-audit-postgres-dsn` and the gateway
 env `LENNY_PG_BILLING_AUDIT_DSN`.
 
-### - [ ] F-12.3.6 — SIEM outbox / forwarder pattern is not implemented (§12.3 lines 93–97) [High] — OPEN
+### - [x] F-12.3.6 — SIEM outbox / forwarder pattern is not implemented (§12.3 lines 93–97) [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-12.3.17 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
@@ -18744,6 +18744,23 @@ Consequence: a gateway crash between the in-process SIEM Deliver and the
 Sink response loses the record even when Postgres committed it, because no
 forwarder re-reads Postgres-committed rows. The spec's HIPAA AU-9 / FedRAMP
 AU-10 / SOC2 CC7.2 completeness guarantee is not met.
+
+**Resolution (commit pending):** Implemented the §12.3 outbox / CDC
+forwarder. Migration `0107_siem_delivery_state` adds the durable
+per-tenant delivery high-water-mark table. `pkg/audit/siem/outbox.go`
+(`Outbox`) tails committed audit rows through a `DeliveryStore`,
+delivers each via the retrying `Forwarder`, and advances the mark only
+after SIEM acknowledgement; a crash after a Postgres commit but before
+delivery replays the row instead of losing it (the completeness
+guarantee). `pkg/gateway/auditstore/outbox.go` is the Postgres
+`DeliveryStore` (`PendingForward` past the `siem_delivery_state` mark,
+monotonic `Checkpoint` upsert, `DeliveryLag`). `cmd/lenny-gateway` wires
+the outbox as the SIEM egress when a durable chain is present and sets
+the OCSF translator's SIEM sink to nil so the two paths do not
+double-deliver (the in-memory minimal gateway keeps the push path).
+Untranslatable rows deliver a dead-letter receipt so they do not
+head-of-line block. Closes the duplicate **F-12.3.17** in the same
+change.
 
 ### - [ ] F-12.3.7 — Per-tier Postgres write IOPS metric (`lenny_postgres_write_iops`) is never emitted (§12.3 lines 115–125) [High] — CLOSED
 
@@ -19000,7 +19017,7 @@ Spec wording is "should," so this is a SHOULD-class capability gap. The
 finding records that the read/write split is not wired and the gateway has
 no second DSN.
 
-### - [ ] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — OPEN
+### - [x] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-12.3.6 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
@@ -19018,6 +19035,18 @@ Evidence:
   --include="*.tpl"` returns no results.
 
 Tied to the High finding on the SIEM outbox above.
+
+**Resolution (commit pending):** Closed by **F-12.3.6**. The §12.3 outbox
+forwarder now emits `lenny_audit_siem_delivery_lag_seconds` after each
+delivery checkpoint (`gatewaymetrics.SetSIEMDeliveryLagSeconds`,
+satisfying `siem.LagGauge`); the `siem_delivery_state` outbox table is
+migration 0107; and `audit.siem.maxDeliveryLagSeconds` (default 30) is a
+chart value rendered to `LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS` and
+emitted on the `lenny_audit_siem_max_delivery_lag_seconds` scalar gauge.
+Following the `lenny_postgres_write_ceiling_iops` precedent, the
+`AuditSIEMDeliveryLag` alert now reads
+`lenny_audit_siem_delivery_lag_seconds > scalar(lenny_audit_siem_max_delivery_lag_seconds)`
+so the threshold is operator-tunable rather than a literal.
 
 ### - [x] F-12.3.18 — `pg_stat_user_functions` operator-observable for trigger overhead is undocumented in tooling (§12.3 line 58) [Low] — CLOSED
 

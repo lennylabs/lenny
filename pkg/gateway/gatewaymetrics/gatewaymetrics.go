@@ -426,6 +426,21 @@ type Metrics struct {
 	// scalar(lenny_postgres_write_ceiling_iops) to an operator-tunable
 	// value rather than a literal. Not in the §16.1 catalog. F-12.3.8.
 	postgresWriteCeilingIops prometheus.Gauge
+	// siemDeliveryLag is the §16.1 line 228
+	// lenny_audit_siem_delivery_lag_seconds gauge. The §12.3 outbox
+	// forwarder sets it after each delivery checkpoint to the seconds
+	// between the latest committed audit event in Postgres and the
+	// latest SIEM-acknowledged event; the §16.5 AuditSIEMDeliveryLag
+	// alert reads it against the configured max-lag scalar. F-12.3.6 /
+	// F-12.3.17.
+	siemDeliveryLag prometheus.Gauge
+	// siemMaxDeliveryLag is the §12.3 line 97
+	// audit.siem.maxDeliveryLagSeconds configured threshold (default
+	// 30s), emitted unlabelled at startup so AuditSIEMDeliveryLag
+	// resolves scalar(lenny_audit_siem_max_delivery_lag_seconds) to an
+	// operator-tunable threshold rather than a literal. Not in the §16.1
+	// catalog. F-12.3.17.
+	siemMaxDeliveryLag prometheus.Gauge
 	// auditChainIntegrity is the §16.1 lenny_audit_chain_integrity_total
 	// counter classified by `state` (the §11.7 ChainIntegrity enum). The
 	// §12.3 line 101 startup chain-continuity check increments it once
@@ -1683,6 +1698,25 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 228 lenny_audit_siem_delivery_lag_seconds — the §12.3
+	// outbox forwarder sets it after each delivery checkpoint. F-12.3.6.
+	siemDeliveryLag, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_audit_siem_delivery_lag_seconds",
+		Help: "§16.1 seconds between the latest committed audit event in Postgres and the latest SIEM-acknowledged event, set by the §12.3 outbox forwarder.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §12.3 line 97 audit.siem.maxDeliveryLagSeconds — emitted at
+	// startup so AuditSIEMDeliveryLag reads an operator-tunable
+	// scalar() threshold. F-12.3.17.
+	siemMaxDeliveryLag, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_audit_siem_max_delivery_lag_seconds",
+		Help: "§12.3 line 97 configured SIEM delivery-lag threshold (audit.siem.maxDeliveryLagSeconds).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 lenny_audit_chain_integrity_total — the §12.3 line 101
 	// startup chain-continuity check classifies each tenant's chain by
 	// §11.7 state; the §16.5 AuditChainGap alert reads state="broken".
@@ -1931,6 +1965,7 @@ func New() (*Metrics, error) {
 		dualStoreUnavailable,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
+		siemDeliveryLag, siemMaxDeliveryLag,
 		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
@@ -1975,6 +2010,13 @@ func New() (*Metrics, error) {
 	gatewayLatencyThresholdSecondsChild.Set(3.0)
 	credentialPoolLowThresholdChild := credentialPoolLowThreshold.WithLabelValues()
 	credentialPoolLowThresholdChild.Set(0.80)
+	// §12.3 line 97: pre-materialize the SIEM delivery-lag threshold
+	// scalar with the default 30s so AuditSIEMDeliveryLag resolves
+	// scalar(lenny_audit_siem_max_delivery_lag_seconds) to a finite
+	// denominator before the gateway main has called the Set helper.
+	// F-12.3.17.
+	siemMaxDeliveryLagChild := siemMaxDeliveryLag.WithLabelValues()
+	siemMaxDeliveryLagChild.Set(30)
 	// §16.4 / §16.5: pre-materialize the audit alert-support gauges with
 	// their fail-safe defaults — SIEM unconfigured (0), the §16.4 default
 	// retention window (365 days), and non-production (0) — so the
@@ -2113,6 +2155,8 @@ func New() (*Metrics, error) {
 		billingFlushPressure:                 billingFlushPressure.WithLabelValues(),
 		postgresWriteIops:                    postgresWriteIops.WithLabelValues(),
 		postgresWriteCeilingIops:             postgresWriteCeilingIops.WithLabelValues(),
+		siemDeliveryLag:                      siemDeliveryLag.WithLabelValues(),
+		siemMaxDeliveryLag:                   siemMaxDeliveryLagChild,
 		auditChainIntegrity:                  auditChainIntegrity,
 		auditGrantDrift:                      auditGrantDrift,
 		auditOCSFTranslationFailed:           auditOCSFTranslationFailed,
@@ -3557,6 +3601,30 @@ func (m *Metrics) SetPostgresWriteCeilingIops(iops float64) {
 		return
 	}
 	m.postgresWriteCeilingIops.Set(iops)
+}
+
+// SetSIEMDeliveryLagSeconds emits the §16.1 line 228
+// lenny_audit_siem_delivery_lag_seconds gauge. The §12.3 outbox
+// forwarder calls it after each delivery checkpoint so the §16.5
+// AuditSIEMDeliveryLag alert can evaluate the lag against the
+// configured max-lag scalar. It satisfies siem.LagGauge. F-12.3.6 /
+// F-12.3.17.
+func (m *Metrics) SetSIEMDeliveryLagSeconds(seconds float64) {
+	if m == nil {
+		return
+	}
+	m.siemDeliveryLag.Set(seconds)
+}
+
+// SetSIEMMaxDeliveryLagSeconds emits the §12.3 line 97 configured
+// audit.siem.maxDeliveryLagSeconds threshold so the AuditSIEMDeliveryLag
+// alert resolves scalar(lenny_audit_siem_max_delivery_lag_seconds) to an
+// operator-tunable threshold. F-12.3.17.
+func (m *Metrics) SetSIEMMaxDeliveryLagSeconds(seconds float64) {
+	if m == nil {
+		return
+	}
+	m.siemMaxDeliveryLag.Set(seconds)
 }
 
 // IncAuditChainIntegrity advances the §16.1

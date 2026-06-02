@@ -1047,7 +1047,7 @@ groups:
             description: The number of ready dedicated CoreDNS replicas for the agent namespace has dropped below the configured minimum but not to zero. DNS query logging, rate limiting, and response filtering are partially unavailable.
             summary: Dedicated agent CoreDNS is degraded
         - alert: AuditSIEMDeliveryLag
-          expr: lenny_audit_siem_delivery_lag_seconds > 30
+          expr: lenny_audit_siem_delivery_lag_seconds > scalar(lenny_audit_siem_max_delivery_lag_seconds)
           labels:
             severity: warning
           annotations:
