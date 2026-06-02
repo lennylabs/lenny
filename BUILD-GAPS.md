@@ -39420,7 +39420,7 @@ Implementation status:
 - `pkg/ops/opsserver/backup.go:52-68` registers no route under `/v1/admin/artifact-replication/...`. The agent-facing HTTP surface for these two operations does not exist.
 - Without the route, the operator-facing recovery path documented at §25.11 "Runtime residency preflight" ("Replication remains suspended until an operator … invokes `POST /v1/admin/artifact-replication/{region}/resume`") has no entry point. The fail-closed compliance control is therefore unreachable by an agent following the spec.
 
-### - [ ] F-25.11.2 — Backup and restore audit events never emitted [High] — OPEN
+### - [x] F-25.11.2 — Backup and restore audit events never emitted [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.14 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
@@ -39433,6 +39433,8 @@ Implementation status:
 - The ArtifactStore-replication audit pipeline is the exception: `pkg/blobstore/replication/controller.go:271-326` does call its `AuditSink` for `DataResidencyViolationAttempt`, `artifact.cross_region_replication_verified`, and `artifact_replication.resumed`. But that sink is never wired to the platform audit pipeline because there is no opsserver route invoking the controller in the first place (see previous finding).
 
 This is a security/compliance gap: every backup, every restore, every retention deletion is silent in the audit log.
+
+**Resolution (d358fc2e):** Added an injectable `AuditSink` to the backup `Service`. The orchestrator now emits `backup.created` (CreateBackup), `backup.schedule_updated`/`backup.policy_updated` (Update*), `backup.deleted_by_retention` (EnforceRetention, see F-25.11.15), `restore.preview_generated`/`restore.started`/`restore.resumed`/`restore.failed`, and `legal_hold.ledger_confirmed_current_at` (ConfirmLegalHoldLedger, removing the stale "caller wraps the audit hook" comment) on each transition it owns. `cmd/lenny-ops` wires a logging sink; the durable audit-append destination is a documented seam (lenny-ops has no audit-store client, same posture as the escalation `logEmitter`). Job-completion events (`backup.completed`/`failed`/`verified`, `restore.shard_completed`/`completed`) are emitted by the Job reporter path and remain gated on the real JobLauncher (F-25.11.4). A tier-1 cross-check asserts every emitted type is a known §16.7 catalog entry.
 
 ### - [ ] F-25.11.3 — `ops_*` Postgres tables for backup state never migrated [High] — OPEN
 
@@ -39466,7 +39468,7 @@ Implementation status:
 - `Service.UpdateSchedule` (orchestrator.go:264-272) only writes to the store. The leader-elected cron loop keeps firing on the hardcoded schedule.
 - Effect: an operator changing the schedule via the documented endpoint sees a 200 response but observes no change in actual backup cadence. The endpoint is decorative.
 
-### - [ ] F-25.11.6 — `confirm-legal-hold-ledger` endpoint enforces no `platform-admin` role [High] — OPEN
+### - [x] F-25.11.6 — `confirm-legal-hold-ledger` endpoint enforces no `platform-admin` role [High] — CLOSED
 
 Spec line 3897 requires `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` to "require `platform-admin`; operator identity and justification are recorded in the audit trail." Spec line 4338 (`LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` description) and line 4337 (`ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` description) repeat the requirement.
 
@@ -39477,7 +39479,9 @@ Implementation status:
 
 This is a privilege-escalation gap on the most destructive endpoints in the platform.
 
-### - [ ] F-25.11.7 — Backup metrics (§25.11 Metrics table) never registered [High] — OPEN
+**Resolution (d358fc2e):** New `Server.requirePlatformAdmin` (reusing `callerRole`) guards `handleConfirmLegalHoldLedger`, returning the §25.2 403 envelope for a non-platform-admin caller, per §25.11 line 3897 ("Requires `platform-admin`"). Two opsserver tests assert tenant-admin → 403 and platform-admin → 202. The finding's secondary claim — that `restore/execute` should also be platform-admin-only — is not implemented: §25.11 line 409 states the backup/restore endpoints "require `platform-admin` or `tenant-admin` role (same as the rest of the admin API)", which the existing `requireAdminRole` gate already enforces. Only the one endpoint §25.11 explicitly narrows to platform-admin is narrowed. The `artifact-replication/{region}/resume` platform-admin endpoint (line 3898) is unwired entirely and tracked by F-25.11.1.
+
+### - [ ] F-25.11.7 — Backup metrics (§25.11 Metrics table) never registered [High] — DEFERRED
 
 Spec lines 4304–4311 (Metrics table) list six required metrics: `lenny_backup_duration_seconds` (histogram), `lenny_backup_size_bytes` (gauge), `lenny_backup_total` (counter), `lenny_backup_last_successful_timestamp` (gauge), `lenny_restore_duration_seconds` (histogram), `lenny_restore_total` (counter). Spec line 4320 (BackupReconcileBlocked alert) references `lenny_backup_reconcile_blocked_total`.
 
@@ -39489,6 +39493,8 @@ Implementation status:
 - `MinIOArtifactReplicationLagHigh` / `LagCritical` reference `lenny_minio_replication_lag_seconds`, which is declared in the catalog but no emitter exists (grep for `replicationLag` outside the catalog yields no producer); the lag-driven alerts are also dormant.
 
 Backups can fail silently in production; the alerting surface the spec promises is hollow.
+
+**Deferred (d358fc2e batch):** Blocked on two absent surfaces. (1) lenny-ops exposes no `/metrics` endpoint (`grep promhttp cmd/lenny-ops` is empty), so registered metrics would never be scraped and the alerts that target them could never fire regardless. (2) Four of the six metrics (`lenny_backup_duration_seconds`, `lenny_backup_size_bytes`, `lenny_backup_last_successful_timestamp`, `lenny_restore_duration_seconds`) and the `status="completed"/"failed"` dimension of the counters are Job-completion values emitted by the (still-fake) JobLauncher's reporter path (F-25.11.4). Adding the metrics only to `pkg/observability/metrics/catalog.go` is also inconsistent with that catalog's §16.1/§16.8 scope (the basis on which F-25.11.16 was already closed-deferred to this finding). The metric surface lands with the lenny-ops `/metrics` exporter and the real JobLauncher completion path.
 
 ### - [ ] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — OPEN
 
@@ -39546,13 +39552,15 @@ Implementation status:
 - `lenny_restore_artifact_missing_total` and `lenny_restore_test_artifact_success_rate` are declared in the metrics catalog (catalog.go:285-287) but never emitted (no producer outside the catalog).
 - The restore-test CronJob template (`charts/lenny/templates/restore-test-cronjob.yaml`) renders the Pod and SA but the image's `--mode test-restore` would 404 at process startup because the binary does not handle it.
 
-### - [ ] F-25.11.13 — `SafetyCheckRestore` returns hardcoded zero data-loss estimate [Medium] — OPEN
+### - [x] F-25.11.13 — `SafetyCheckRestore` returns hardcoded zero data-loss estimate [Medium] — CLOSED
 
 Spec line 4225 specifies `mutationsSinceBackup` is computed from Postgres write transaction logs (via `pg_stat_*` or `pg_wal` position). The block describes `sessionsAffected`, `auditEventsLost`, and `tablesWithDivergence` as concrete columns computed at safety-check time.
 
 Implementation status:
 - `Service.SafetyCheckRestore` (orchestrator.go:332-371) constructs `DataLossEstimate{TablesWithDivergence: []string{}}` and never populates `MutationsSinceBackup`, `SessionsAffected`, `AuditEventsLost`, or any divergence detection. The safe/unsafe verdict is purely time-based ("backup younger than 5 minutes is safe").
 - An operator following the spec-documented workflow (line 4236, "Review `affectedResources`, `estimatedDowntime`, `dataLossEstimate`") sees an empty estimate and cannot make an informed acknowledgeDataLoss decision.
+
+**Resolution (80c2f07b):** Verify-closed; evidence stale. `SafetyCheckRestore` (orchestrator.go) now populates `DataLossEstimate` from an injectable `DataLossEstimator` (`MutationsSinceBackup`, `SessionsAffected`, `AuditEventsLost`, `TablesWithDivergence`) and flips `safe:true` when the estimator reports zero mutations (idle platform, §25.11 line 4227). This was implemented by F-17.3.15 in commit 80c2f07b, which post-dates this finding. A nil estimator leaves the zero estimate for a Postgres-less deployment and an estimator error surfaces a warning rather than a silent zero.
 
 ### - [x] F-25.11.14 — `PreviewRestore` does not populate `artifactReplicationLagSeconds` / `estimatedOrphanArtifactRows` [Medium] — CLOSED
 
@@ -39567,7 +39575,7 @@ Implementation status:
 
 **Resolution:** Closed by F-17.3.12 (same defect). `PreviewRestore` now populates both fields from the `ReplicationLagSource` seam. The coarse-compatibility residual (`SchemaMigrationsBetween`/`affectedResources` hardcoded) is tracked separately. (this batch)
 
-### - [ ] F-25.11.15 — `EnforceRetention` does not delete the MinIO object or emit `backup.deleted_by_retention` [Medium] — OPEN
+### - [x] F-25.11.15 — `EnforceRetention` does not delete the MinIO object or emit `backup.deleted_by_retention` [Medium] — CLOSED
 
 Spec lines 4108–4111 require deletion from both MinIO and Postgres after each successful backup AND on a daily 03:30 UTC cron. Spec line 4343 requires the `backup.deleted_by_retention` audit event.
 
@@ -39575,6 +39583,8 @@ Implementation status:
 - `Service.EnforceRetention` (orchestrator.go:584-634) only marks the `ops_backups` row as `expired` with `ExpiresAt: now()`. It does not invoke any MinIO deletion path and does not emit any audit event.
 - A comment at orchestrator.go:622-623 explicitly defers MinIO deletion to "the Job" — but the Job path (`cmd/lenny-backup/reporter.go`) only triggers MinIO deletion when invoked separately in `--mode retention` from the daily cron. The post-backup auto-retention pass on the orchestrator side leaves expired rows pointing at live MinIO objects until the next 03:30 UTC sweep.
 - Coupled with the lack of a real `JobLauncher`, the daily retention sweep also never actually runs in any built deployment.
+
+**Resolution (d358fc2e):** `EnforceRetention` now emits `backup.deleted_by_retention` (via the F-25.11.2 `AuditSink`) for every pruned row, and invokes an injectable `ObjectDeleter` to remove the MinIO object inline when one is configured — closing both the audit half and the "does not invoke any MinIO deletion path" half (§25.11 lines 4108-4111). Object deletion is best-effort: a failure is reported on the audit event's `objectDeleteError` field rather than aborting the pass (the row is already expired and the daily Job re-attempts the sweep). The `ObjectDeleter` production wiring shares the documented MinIO-client seam with the JobLauncher; the daily-cron firing is now leader-gated (see F-25.11.17). Two tier-1 tests cover delete+audit (with and without a deleter).
 
 ### - [x] F-25.11.16 — `lenny_backup_reconcile_blocked_total` metric referenced by alert but undefined [Medium] — CLOSED
 
@@ -39584,13 +39594,15 @@ Spec line 4320 (BackupReconcileBlocked alert) reads `lenny_backup_reconcile_bloc
 
 **Resolution:** Verify-closed as a sub-case of F-25.11.7 (Backup metrics, §25.11 Metrics table, never registered — High, OPEN) and F-25.11.10 (Post-restore GDPR erasure reconciler not implemented — High, OPEN). `pkg/observability/metrics/catalog.go` is explicitly scoped to §16.1 (its header comment excludes §25-introduced metrics); adding only this metric to the §16.1 catalog would be inconsistent with the catalog's scope, and the alert remains doubly dormant until the parent reconciler increments it. The metric registration lands with F-25.11.7 when the §25.11 metric surface is built out.
 
-### - [ ] F-25.11.17 — In-process pending-row reconciler never invoked [Medium] — OPEN
+### - [x] F-25.11.17 — In-process pending-row reconciler never invoked [Medium] — CLOSED
 
 Spec lines 3976–3978 require the reconciler goroutine to run every 60s, failing pending rows older than 2 minutes (`JOB_CREATE_FAILED`) and deleting orphaned Jobs.
 
 Implementation status:
 - `Service.ReconcilePending` (orchestrator.go:641-664) is fully implemented (and unit-tested) — but `grep -rn "ReconcilePending" cmd/` returns no hits. No goroutine in `cmd/lenny-ops/main.go` calls it on a 60s tick.
 - The orphaned-Job cleanup half (delete Jobs with `lenny.dev/backup-id` annotation lacking a matching row) is not implemented at all — `Service` has no method for it.
+
+**Resolution (d358fc2e):** `cmd/lenny-ops` now registers a leader-gated `backup-reconcile` cron job on a per-minute (`* * * * *`) schedule that calls `ReconcilePending` every tick (§25.11 lines 3976-3978, the 60s cadence), reusing the existing leader-elected cron evaluator rather than a bespoke goroutine. The orphaned-Job cleanup half is now a real `Service.ReconcileOrphanedJobs` method over a new optional `JobReaper` launcher capability (`ListManagedJobs`/`DeleteJob`); it deletes any Job whose `lenny.dev/backup-id` annotation has no matching `ops_backups` row and is also driven by the per-minute cron. `FakeLauncher` implements `JobReaper`; a real-K8s reaper lands with the production JobLauncher (F-25.11.4). A tier-1 test asserts an unbacked Job is reaped while a backed Job survives.
 
 ### - [x] F-25.11.18 — `BACKUP_SERVICE_UNAVAILABLE` error code not in §25.11 Error Codes table [Low] — CLOSED
 
