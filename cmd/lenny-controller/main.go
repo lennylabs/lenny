@@ -372,14 +372,14 @@ func main() {
 	}
 
 	if err := (&sandbox.Reconciler{
-		Client:                    mgr.GetClient(),
-		Scheme:                    mgr.GetScheme(),
-		AdapterImage:              adapterImage,
-		EgressCaptureImage:        egressCaptureImage,
-		DevMode:                   devMode,
-		SATokenAudience:           saTokenAudience,
-		AgentServiceAccountName:   agentServiceAccount,
-		DedicatedDNSClusterIP:     dedicatedDNSClusterIP,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		AdapterImage:            adapterImage,
+		EgressCaptureImage:      egressCaptureImage,
+		DevMode:                 devMode,
+		SATokenAudience:         saTokenAudience,
+		AgentServiceAccountName: agentServiceAccount,
+		DedicatedDNSClusterIP:   dedicatedDNSClusterIP,
 		// spec: §13.2 — the dedicated CoreDNS Service lives in the release
 		// namespace (lenny-system); it is the first dnsConfig search domain.
 		ReleaseNamespace:          leaderElectNS,

@@ -534,7 +534,7 @@ func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decisi
 // Every controller-owned field present in the patch carries either
 // the planner's new value or, when the planner is not transitioning
 // that field, the live value re-applied. SSA treats a struct's Go
-// zero-value field as an intentional set ("Phase=''"), so omitting a
+// zero-value field as an intentional set ("Phase=”"), so omitting a
 // field by leaving it zero would clobber the live value and erase
 // the controller's claim onto it. Re-including the live value keeps
 // the WPC's ownership of the field intact without overwriting

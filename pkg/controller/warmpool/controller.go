@@ -534,7 +534,7 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 			GenerateName: pool.Name + "-",
 			Namespace:    pool.Namespace,
 			Labels:       sandboxLabels(pool, tmpl),
-			Annotations: propagatedAnnotations(tmpl),
+			Annotations:  propagatedAnnotations(tmpl),
 			// spec: §4.6.1 "Sandbox finalizers" — every Sandbox carries
 			// the session-cleanup finalizer so a node drain or accidental
 			// deletion never silently orphans an active session; the

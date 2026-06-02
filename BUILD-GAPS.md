@@ -22580,7 +22580,7 @@ Implementation surveyed:
 - `pkg/controller/warmpool/controller.go`, `pkg/controller/sandbox/podspec/podspec.go`
 - `pkg/adapter/transport.go`, `pkg/gateway/adapterclient/`, `cmd/lenny-token-service/main.go`, `cmd/lenny-gateway/main.go`
 
-### - [ ] F-13.2.1 — `allow-pod-egress-llm-proxy` selector is never matched; proxy-mode pods cannot reach gateway LLM proxy [High] — OPEN
+### - [x] F-13.2.1 — `allow-pod-egress-llm-proxy` selector is never matched; proxy-mode pods cannot reach gateway LLM proxy [High] — CLOSED
 Spec (§13.2 lines 116–143, 180): the supplemental policy selects pods with both `lenny.dev/managed: "true"` and `lenny.dev/delivery-mode: proxy`. The WarmPoolController sets `lenny.dev/delivery-mode: proxy` "on pods belonging to proxy-mode pools".
 
 Implementation:
@@ -22590,6 +22590,8 @@ Implementation:
 - The only reference to `LabelDeliveryMode` outside the agent-namespace NetworkPolicy template is in `pkg/admission/label_immutability/label_immutability.go` (immutability enforcement); no controller code path sets it.
 
 Effect: proxy-mode agent pods carry no `lenny.dev/delivery-mode: proxy`, so the supplemental NetworkPolicy matches zero pods. With the agent-namespace default-deny in force, every proxy-mode LLM request is dropped at the CNI; the §4.9 proxy mode is non-functional whenever NetworkPolicy enforcement is on. The `lenny.dev/egress-profile` label has the same issue (no controller writes it, so the `restricted`/`provider-direct`/`internet` profile policies have no targets).
+
+**Resolution:** Closed by `fd3123a4`. The WarmPoolController now builds Sandbox labels through `sandboxLabels(pool, tmpl)`, which stamps `lenny.dev/delivery-mode: proxy` on proxy-mode pools (and only those); the Sandbox reconciler already copies `sb.Labels` onto the pod, so `allow-pod-egress-llm-proxy` now selects a non-empty set. The companion `lenny.dev/egress-profile` half is closed by F-13.2.11 in the same commit (the same helper resolves and stamps the egress profile). Tier-1 `TestSandboxLabelsDeliveryModeProxyOnly` asserts proxy pools get the label and direct/unset pools do not.
 
 ### - [x] F-13.2.2 — Token Service gRPC server runs plaintext; spec mandates mTLS on `tokenService.grpcPort` [High] — CLOSED
 
@@ -22605,7 +22607,7 @@ Effect: any in-`lenny-system` pod that can reach TCP 50052 can mint tokens; the 
 
 **Resolution:** Collapses into F-4.3.2: the same fix wires both server-side `tls.RequireAndVerifyClientCert` in `cmd/lenny-token-service/main.go` and the cert-manager-rendered `lenny-token-service-tls` Secret mount in `charts/lenny/templates/token-service-deployment.yaml`. See F-4.3.2's resolution note for the full description of the wiring change.
 
-### - [ ] F-13.2.3 — Dedicated `lenny-system` CoreDNS Deployment, Service, and Corefile are not rendered [High] — OPEN
+### - [x] F-13.2.3 — Dedicated `lenny-system` CoreDNS Deployment, Service, and Corefile are not rendered [High] — CLOSED
 Spec (§13.2 lines 452–536): a dedicated CoreDNS instance must run in `lenny-system` (`lenny.dev/component: coredns`), with HA replicas (`coredns.replicas >= 2`), a PodDisruptionBudget `minAvailable: 1`, a Service whose ClusterIP is exposed as `coredns.clusterIP`, and a `lenny-agent-dns-corefile` ConfigMap shipping the `log`, `ratelimit`, `filter`, `forward`, `health`, `prometheus`, and `cache` plugins. `templates/coredns-configmap.yaml` and `templates/coredns-service.yaml` are referenced (§13.2 lines 460, 486).
 
 Implementation:
@@ -22616,7 +22618,9 @@ Implementation:
 
 Effect: every agent pod is rendered with the agent-namespace default-deny plus an egress allow that only permits DNS to a non-existent pod. With NetworkPolicy enforcement on, DNS resolution from agent pods fails — every outbound name lookup blackholes. The §13.2 "DNS exfiltration mitigation" (query logging, per-pod rate limiting, response filtering) is entirely unimplemented.
 
-### - [ ] F-13.2.4 — WarmPoolController does not set `dnsPolicy: None` / `dnsConfig` on agent pods (K8S-033) [High] — OPEN
+**Resolution:** Closed by `fd3123a4`. The chart now renders the dedicated instance: `coredns-deployment.yaml` (Deployment with `coredns.replicas` >= 2 enforced by a `fail` guard, plus a PDB `minAvailable: 1`), `coredns-service.yaml` (ClusterIP Service pinned to `coredns.clusterIP`, with a `fail` guard requiring it non-empty when agentNamespaces is set), and `coredns-configmap.yaml` (the `lenny-agent-dns-corefile` ConfigMap shipping the `log`/`ratelimit`/`filter`/`forward`/`health`/`prometheus`/`cache`/`reload`/`errors` plugins). `values.yaml` gains the `coredns:` block (`deploy`, `clusterIP`, `replicas`, `image`, `rateLimit`, `filter`, `cacheTTL`, `resources`). The `lenny.dev/component: coredns` pods the `allow-pod-egress-base` and `allow-dedicated-coredns` policies select and the §16.5 `DedicatedDNS*` alerts scrape now exist. The kind/cloud overlays set `coredns.clusterIP`. 11 tier-2 helm-unittest cases (`coredns_test.yaml`) cover the fail guards, HA Deployment, PDB, Service ports, and Corefile plugin params.
+
+### - [x] F-13.2.4 — WarmPoolController does not set `dnsPolicy: None` / `dnsConfig` on agent pods (K8S-033) [High] — CLOSED
 Spec (§13.2 lines 454–470): the WarmPoolController MUST set `dnsPolicy: None` and a `dnsConfig` pointing at the dedicated CoreDNS Service ClusterIP. "The NetworkPolicy alone is insufficient — Kubernetes defaults `dnsPolicy` to `ClusterFirst`, which configures the pod's `/etc/resolv.conf` to point at the `kube-dns` Service ClusterIP in `kube-system`. Since the NetworkPolicy blocks that path, DNS resolution would fail silently."
 
 Implementation:
@@ -22625,6 +22629,8 @@ Implementation:
 - The `lenny.dev/dns-policy: cluster-default` opt-out label and the corresponding supplemental NetworkPolicy that grants `kube-system` DNS to opted-out pools (§13.2 line 470) are absent.
 
 Effect (compounds with H3): when the agent-namespace default-deny is enforced, the pod's resolver targets `kube-system` `kube-dns` but the policy blocks that path; DNS fails entirely. Even after H3 is fixed, until this controller change lands pods will not query the dedicated instance.
+
+**Resolution:** Closed by `fd3123a4`. `podspec.basePod` now calls `applyDedicatedDNS`, which sets `dnsPolicy: None` plus a `dnsConfig` (nameserver = `Inputs.DedicatedDNSClusterIP`, search domains `<release-ns>.svc.cluster.local`/`svc.cluster.local`/`cluster.local`, `ndots: 5`) on every agent pod whenever the ClusterIP is configured. The value flows `chart coredns.clusterIP → controller --dedicated-dns-cluster-ip → sandbox.Reconciler.DedicatedDNSClusterIP → podspec.Inputs`. The opt-out path is the new `SandboxTemplate.spec.dnsPolicy: cluster-default` enum: the WarmPoolController stamps `lenny.dev/dns-policy: cluster-default`, `applyDedicatedDNS` then leaves the pod at the Kubernetes default, and the chart renders the supplemental `allow-pod-egress-kube-dns` policy (scoped to that label, gated on `coredns.allowClusterDefaultOptOut`) granting kube-system DNS only to opted-out pods. `label_immutability` protects `lenny.dev/dns-policy` per §13.2 line 180. Tests: tier-1 `dedicated_dns_test.go` (dnsConfig set / opt-out omits / no-ClusterIP default / search-domain variants), `TestSandboxLabelsDNSPolicyOptOutOnly`, `TestDecideRejectsDNSPolicyMutation`, plus tier-2 helm-unittest for the controller flag and the kube-dns policy.
 
 ### - [x] F-13.2.5 — Gateway external-HTTPS egress (`allow-gateway-egress-llm-upstream`) is not rendered [High] — CLOSED
 
@@ -22692,7 +22698,7 @@ Implementation:
 
 **Resolution:** Added `gateway.interceptorNamespaces` (default `[]`) and `gateway.interceptorGRPCPort` (default `50053`) to `charts/lenny/values.yaml`; `system-network-policies.yaml` now iterates the namespace list and renders one `allow-gateway-egress-interceptor-<ns>` NetworkPolicy per entry that pairs the `namespaceSelector` with `podSelector lenny.dev/component: interceptor` on the configured port per §13.2 lines 294–324 (NET-039 / NET-058). Empty list (the default) renders no supplemental policy. Three tier-2 helm-unittest cases assert per-namespace rendering, custom port override, and second-namespace independence. The preflight namespace-existence and pod-label check (§13.2 line 322) is tracked separately with the §13.2.13 / §13.2 preflight cluster.
 
-### - [ ] F-13.2.11 — `egressProfile` enum (`restricted` / `provider-direct` / `internet`) supplemental policies are unimplemented [Medium] — OPEN
+### - [x] F-13.2.11 — `egressProfile` enum (`restricted` / `provider-direct` / `internet`) supplemental policies are unimplemented [Medium] — CLOSED
 Spec (§13.2 lines 424–450, 426 table): per-pool egress relaxation policies MUST be pre-created by the chart, keyed on `lenny.dev/egress-profile`. `internet` profile requires `except` for cluster pod/service CIDRs and IMDS plus a sandboxed/microvm isolation profile (the WarmPoolController rejects `standard` + `internet`).
 
 Implementation:
@@ -22702,6 +22708,8 @@ Implementation:
 - `pkg/controller/warmpool/controller.go` does not set the `lenny.dev/egress-profile` label.
 
 Effect: every agent pod silently runs with the base policies only (gateway gRPC + DNS). Pools that declare `egressProfile: provider-direct` or `internet` produce no additional egress; pod-side LLM HTTPS calls cannot reach a provider regardless of the declared profile.
+
+**Resolution:** Closed by `fd3123a4`. The chart pre-creates the supplemental egress-profile policies in every agent namespace, keyed on `lenny.dev/egress-profile`: `allow-pod-egress-provider-direct` (the `egressCIDRs.providers` CIDRs on TCP 443, unconditional IMDS `except` per NET-044) and `allow-pod-egress-internet` (two parallel `ipBlock` peers, `0.0.0.0/0` + `::/0`, with family-partitioned `except` blocks covering cluster pod/service CIDRs, RFC1918/ULA/link-local, and IMDS per NET-062/NET-002). The `restricted` default needs no supplemental policy because `allow-pod-egress-base` already grants its gateway + DNS egress. The WarmPoolController's `sandboxLabels` stamps the resolved profile (empty → `restricted`) on every pod, and `pool_config_validator.decideEgressDeliveryCombo` now rejects `internet` egress on `standard`/unset isolation (NET-002). Tests: tier-1 `TestSandboxLabelsEgressProfileResolved`, the validator `internet requires sandboxed or microvm isolation` subtest, and tier-2 helm-unittest for both policies.
 
 ### - [x] F-13.2.12 — `lenny-direct-mode-isolation` webhook is feature-gated behind `features.llmProxy` but its enforcement target (proxy mode) is independent of LLM-proxy enablement [Medium] — CLOSED
 Spec (§13.2 line 440 step 2; §4.9): the webhook enforces "deliveryMode direct with isolationProfile standard, and deliveryMode proxy with spiffeBinding disabled" in multi-tenant mode regardless of whether the LLM proxy feature flag is set.
@@ -22721,13 +22729,15 @@ Implementation:
 - `pkg/preflight/run.go` enumerates no Service or Node CIDR check; the audit list is `admission-webhook-inventory`, `phase-stamp-consistency`, `host-sharing-flags`, NetworkPolicy parity audits, and SPIFFE/SA-audience uniqueness.
 - `values.yaml` line 77 defaults `kubeApiServerCIDR: "0.0.0.0/0"` and there is no `egressCIDRs.excludeClusterPodCIDR` declaration to validate against.
 
-### - [ ] F-13.2.14 — Per-pod DNS rate limiting and response filtering plugins (`coredns-ratelimit`, `coredns-filter`) are not present in the build [Medium] — OPEN
+### - [x] F-13.2.14 — Per-pod DNS rate limiting and response filtering plugins (`coredns-ratelimit`, `coredns-filter`) are not present in the build [Medium] — CLOSED
 Spec (§13.2 lines 498–536): the dedicated CoreDNS image MUST embed both plugins, configured in the Corefile with `responses_per_second 10` and `max_txt_size 255` / `block_types NULL PRIVATE KEY TYPE65534`. "Source for both plugins is vendored under `build/coredns-plugins/`."
 
 Implementation:
 - No `build/coredns-plugins/` directory exists in the repository.
 - No `lenny-coredns` image is referenced in `values.yaml` (no `coredns.image.repository`).
 - (This finding is downstream of H3; logged separately because even a stock CoreDNS Deployment would not provide query rate limiting or response filtering.)
+
+**Resolution:** Closed by `fd3123a4` alongside F-13.2.3. The `lenny-agent-dns-corefile` Corefile configures the `ratelimit` plugin (`responses_per_second {{ .Values.coredns.rateLimit.responsesPerSecond }}`, default 10) and the `filter` plugin (`max_txt_size {{ .Values.coredns.filter.maxTxtSize }}`, default 255; `block_types {{ .Values.coredns.filter.blockTypes }}`, default `NULL PRIVATE KEY TYPE65534`). `values.yaml` references the `coredns.image` (`ghcr.io/lennylabs/lenny-coredns`) the plugins are compiled into, and the readiness probe in `coredns-deployment.yaml` queries the CoreDNS health endpoint so an image missing either plugin (Corefile load failure) keeps the pod out of the Service. The build scaffolding now exists under `build/coredns-plugins/` — `Dockerfile` (custom CoreDNS build adding both external plugins via `go generate`), `plugin.cfg` (the plugin chain with `ratelimit` before `cache` and `filter` after), and `README.md` (build command and pinned plugin module sources). The two plugins are external Go modules fetched at image-build time with pinned versions rather than checked-in verbatim source; the README documents mirroring them into an internal proxy for an air-gapped build. Tier-2 helm-unittest asserts the Corefile plugin params and the `coredns.image` tag.
 
 ### - [x] F-13.2.15 — Selector-consistency audit has a documented incomplete coverage gap (NET-050 part b) [Low] — CLOSED
 `pkg/preflight/networkpolicy_selectors.go` lines 39–55 (TODO comment): the audit does not check that "any selector matches zero pods for a component that is expected to be running given the rendered Helm values." The TODO acknowledges the constraint (preflight runs before the chart applies platform Deployments). Logged as Low because parts (a) and (c) are enforced and the TODO is intentional.
