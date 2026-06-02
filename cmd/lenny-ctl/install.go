@@ -109,10 +109,17 @@ type installRedis struct {
 	URL string `json:"url,omitempty"`
 }
 
-// installObjectStorage carries the object-store endpoint and bucket.
+// installObjectStorage carries the §17.9.3 object-store selection.
+// Provider switches the ArtifactStore backend ("minio" | "s3" | "gcs"
+// | "azure"); the cloud providers consume Bucket (+ Region for s3, +
+// AccountURL for azure) and ignore Endpoint, which is the MinIO API
+// address. F-17.5.3.
 type installObjectStorage struct {
-	Endpoint string `json:"endpoint,omitempty"`
-	Bucket   string `json:"bucket,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Endpoint   string `json:"endpoint,omitempty"`
+	Bucket     string `json:"bucket,omitempty"`
+	Region     string `json:"region,omitempty"`
+	AccountURL string `json:"accountUrl,omitempty"`
 }
 
 // installAuth carries the platform auth mode and OIDC issuer details.
@@ -481,16 +488,27 @@ func validateAnswers(a installAnswers) []string {
 			))
 		}
 	}
-	// spec: §17.9.3 line 1413 — the chart's MinIO/object-store wiring
-	// (`templates/datastore-secret.yaml`, `gateway-deployment.yaml`)
-	// gates every LENNY_MINIO_* env on `minio.endpoint` being set.
-	// A bucket-only answer is silently dropped at chart-render time,
-	// so reject it during validation rather than letting the operator
-	// believe their bucket choice took effect.
-	if a.ObjectStorage.Bucket != "" && a.ObjectStorage.Endpoint == "" {
+	// spec: §17.9.3 — validate the object-storage selection. A cloud
+	// provider (s3 | gcs | azure) requires a bucket; the MinIO/in-memory
+	// default (provider empty or "minio") requires an endpoint before a
+	// bucket takes effect, since the chart gates LENNY_MINIO_* on
+	// `minio.endpoint`. F-17.5.1 / F-17.5.3.
+	provider := strings.ToLower(strings.TrimSpace(a.ObjectStorage.Provider))
+	isCloud := provider == "s3" || provider == "gcs" || provider == "azure"
+	switch {
+	case provider != "" && provider != "minio" && !isCloud:
+		errs = append(errs, fmt.Sprintf(
+			"objectStorage.provider %q is not one of minio|s3|gcs|azure", a.ObjectStorage.Provider))
+	case isCloud && a.ObjectStorage.Bucket == "":
+		errs = append(errs, fmt.Sprintf(
+			"objectStorage.provider=%s requires objectStorage.bucket", provider))
+	case provider == "azure" && a.ObjectStorage.AccountURL == "":
+		errs = append(errs,
+			"objectStorage.provider=azure requires objectStorage.accountUrl (https://<account>.blob.core.windows.net)")
+	case !isCloud && a.ObjectStorage.Bucket != "" && a.ObjectStorage.Endpoint == "":
 		errs = append(errs,
 			"objectStorage.bucket is set but objectStorage.endpoint is empty; "+
-				"the chart wires MinIO/S3 only when endpoint is supplied")
+				"the chart wires MinIO only when endpoint is supplied (set objectStorage.provider for a cloud backend)")
 	}
 	return errs
 }
@@ -574,6 +592,24 @@ func composeValues(a installAnswers) ([]byte, error) {
 			minio["bucket"] = a.ObjectStorage.Bucket
 		}
 		values["minio"] = minio
+	}
+	// spec: §17.9.3 — emit the canonical `objectStorage:` block for a
+	// cloud-managed backend so the chart renders the gateway's
+	// --object-storage-* selector flags. validateAnswers has already
+	// asserted the required (bucket / accountUrl) fields. F-17.5.1 /
+	// F-17.5.3.
+	if p := strings.ToLower(strings.TrimSpace(a.ObjectStorage.Provider)); p == "s3" || p == "gcs" || p == "azure" {
+		os := map[string]any{"provider": p}
+		if a.ObjectStorage.Bucket != "" {
+			os["bucket"] = a.ObjectStorage.Bucket
+		}
+		if a.ObjectStorage.Region != "" {
+			os["region"] = a.ObjectStorage.Region
+		}
+		if a.ObjectStorage.AccountURL != "" {
+			os["accountUrl"] = a.ObjectStorage.AccountURL
+		}
+		values["objectStorage"] = os
 	}
 
 	// features gates the optional admission webhooks. Only emit the
@@ -660,8 +696,11 @@ func promptAnswers(r *bufio.Reader, w io.Writer) installAnswers {
 	a.TLS = ask(r, w, "TLS strategy (cert-manager|bring-your-own, blank to skip)", "")
 	a.Postgres.DSN = ask(r, w, "Postgres DSN (blank for the chart default)", "")
 	a.Redis.URL = ask(r, w, "Redis URL (blank for the chart default)", "")
-	a.ObjectStorage.Endpoint = ask(r, w, "Object storage endpoint (blank for the chart default)", "")
-	a.ObjectStorage.Bucket = ask(r, w, "Object storage bucket (blank for the chart default)", "")
+	a.ObjectStorage.Provider = ask(r, w, "Object storage provider (minio|s3|gcs|azure)", "minio")
+	a.ObjectStorage.Endpoint = ask(r, w, "MinIO endpoint (blank unless provider=minio with an external MinIO)", "")
+	a.ObjectStorage.Bucket = ask(r, w, "Object storage bucket / Azure container (blank for the chart default)", "")
+	a.ObjectStorage.Region = ask(r, w, "Object storage region (s3 only; blank for the AWS default chain)", "")
+	a.ObjectStorage.AccountURL = ask(r, w, "Azure Blob account URL (azure only; blank otherwise)", "")
 	defAuth := "oidc"
 	if a.Environment == "local" {
 		defAuth = "dev"

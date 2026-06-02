@@ -78,6 +78,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
+	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
@@ -697,6 +698,21 @@ func main() {
 		"§4.9 Azure OpenAI resource base URL for the azure_openai translator. Required with --llm-azure-api-version to register azure_openai.")
 	azureAPIVersion := flag.String("llm-azure-api-version", os.Getenv("LENNY_LLM_AZURE_API_VERSION"),
 		"§4.9 Azure OpenAI api-version query value. Required with --llm-azure-endpoint to register azure_openai.")
+	// spec: §17.9.3 — the canonical objectStorage.provider selector
+	// picks the §12.5 ArtifactStore backend (minio | s3 | gcs | azure,
+	// plus the dev-only in-memory store). Empty defaults to minio: the
+	// MinIO backend when --minio-endpoint is set, otherwise the
+	// in-memory store. The cloud backends consume the shared
+	// objectStorage.{bucket,region,accountUrl} values. F-17.5.1 /
+	// F-12.7.3.
+	objectStorageProvider := flag.String("object-storage-provider", os.Getenv("LENNY_OBJECT_STORAGE_PROVIDER"),
+		"§17.9.3 object-storage backend: minio | s3 | gcs | azure. Empty defaults to minio (MinIO when --minio-endpoint is set, else in-memory). Override via LENNY_OBJECT_STORAGE_PROVIDER. F-17.5.1.")
+	objectStorageBucket := flag.String("object-storage-bucket", os.Getenv("LENNY_OBJECT_STORAGE_BUCKET"),
+		"§17.9.3 objectStorage.bucket: the S3 bucket, GCS bucket, or Azure container for --object-storage-provider in {s3,gcs,azure}. Override via LENNY_OBJECT_STORAGE_BUCKET. F-17.5.1.")
+	objectStorageRegion := flag.String("object-storage-region", os.Getenv("LENNY_OBJECT_STORAGE_REGION"),
+		"§17.9.3 objectStorage.region: the AWS region for --object-storage-provider=s3. Empty falls back to the AWS SDK default chain (AWS_REGION). Override via LENNY_OBJECT_STORAGE_REGION. F-17.5.1.")
+	objectStorageAccountURL := flag.String("object-storage-account-url", os.Getenv("LENNY_OBJECT_STORAGE_ACCOUNT_URL"),
+		"§17.9.3 Azure Blob storage account URL (https://<account>.blob.core.windows.net) for --object-storage-provider=azure. Override via LENNY_OBJECT_STORAGE_ACCOUNT_URL. F-17.5.1.")
 	minioEndpoint := flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
 		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
 	minioAccessKey := flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
@@ -1227,42 +1243,52 @@ func main() {
 	} else {
 		checkpointRetention = checkpointretention.NewMemoryStore(nil)
 	}
-	// §4.5 artifact store: MinIO-backed when --minio-endpoint is set,
-	// otherwise an in-memory store for the minimal gateway. blobProbe
-	// is the §12.5 drain-readiness liveness probe — a real MinIO
-	// bucket check with MinIO, an always-ready stub for the in-memory
-	// store, which is process-local and cannot degrade.
-	//
-	// minioStore retains the concrete *miniostore.Store so the §12.5
-	// ll. 303 fail-closed KMS-unavailable callback can be wired against
-	// it once gwMetrics is constructed below. minioStore is nil when
-	// the in-memory backend is selected (the in-memory path has no
-	// per-tenant SSE-KMS surface).
-	var blobs blobstore.Store = blobstore.NewMemoryStore(nil)
-	var blobProbe drainreadiness.Prober = drainreadiness.ProberFunc(func(context.Context) error { return nil })
-	var minioStore *miniostore.Store
-	if *minioEndpoint != "" {
-		// §12.5 ll. 297-303 SSEKeyResolver: the production gateway must
-		// look up the writing tenant's workspaceTier on every Put and
-		// hand MinIO the per-tenant SSE-KMS alias for T4 tenants.
-		sseResolver := newSSEKeyResolver(tenants)
-		ms, err := miniostore.New(miniostore.Config{
-			Endpoint:       *minioEndpoint,
-			AccessKey:      *minioAccessKey,
-			SecretKey:      *minioSecretKey,
-			Bucket:         *minioBucket,
-			UseSSL:         *minioUseSSL,
-			SSEKeyResolver: sseResolver,
-		})
-		if err != nil {
-			log.Fatalf("lenny-gateway: minio: %v", err)
-		}
-		minioStore = ms
-		blobs = ms
-		blobProbe = ms
-		log.Printf("lenny-gateway: §4.5 artifact store is MinIO at %s (bucket %q); §12.5 SSEKeyResolver wired (T4 tenant-scoped SSE-KMS)",
-			*minioEndpoint, *minioBucket)
+	// §4.5 / §17.9.3 artifact store: the object-storage backend the
+	// operator selected via objectStorage.provider (minio | s3 | gcs |
+	// azure). Empty defaults to MinIO when --minio-endpoint is set,
+	// otherwise the in-memory store for the minimal gateway. The §12.5
+	// ll. 297-303 SSEKeyResolver is wired into every backend so a T4
+	// tenant's Put is fail-closed under the per-tenant SSE-KMS alias
+	// regardless of which provider serves the bucket. F-17.5.1 /
+	// F-12.7.3.
+	objectStore, err := blobproviderflags.Resolve(context.Background(), blobproviderflags.Options{
+		Provider:        *objectStorageProvider,
+		Bucket:          *objectStorageBucket,
+		Region:          *objectStorageRegion,
+		AzureAccountURL: *objectStorageAccountURL,
+		MinIOEndpoint:   *minioEndpoint,
+		MinIOAccessKey:  *minioAccessKey,
+		MinIOSecretKey:  *minioSecretKey,
+		MinIOBucket:     *minioBucket,
+		MinIOUseSSL:     *minioUseSSL,
+		// §12.5 ll. 297-303 SSEKeyResolver: look up the writing
+		// tenant's workspaceTier on every Put and hand the backend the
+		// per-tenant SSE-KMS alias for T4 tenants.
+		SSEKeyResolver: newSSEKeyResolver(tenants),
+	})
+	if err != nil {
+		log.Fatalf("lenny-gateway: §17.9.3 object storage: %v", err)
 	}
+	// minioStore retains the concrete *miniostore.Store so the
+	// MinIO-specific durable-catalog reader and the startup T4 KMS
+	// probe wire against it below. It is nil for every non-MinIO
+	// backend.
+	var minioStore *miniostore.Store
+	if ms, ok := objectStore.(*miniostore.Store); ok {
+		minioStore = ms
+	}
+	var blobs blobstore.Store = objectStore
+	// blobProbe is the §12.5 drain-readiness liveness probe — a real
+	// bucket check when the backend implements drainreadiness.Prober
+	// (MinIO), an always-ready stub otherwise (the in-memory store and
+	// managed cloud object storage, which cannot degrade the way a
+	// self-managed MinIO can).
+	var blobProbe drainreadiness.Prober = drainreadiness.ProberFunc(func(context.Context) error { return nil })
+	if p, ok := objectStore.(drainreadiness.Prober); ok {
+		blobProbe = p
+	}
+	log.Printf("lenny-gateway: §4.5/§17.9.3 artifact store backend=%q (§12.5 SSEKeyResolver wired; T4 tenant-scoped SSE-KMS)",
+		objectStoreBackendName(*objectStorageProvider, *minioEndpoint))
 
 	// §12.5 ll. 309-321 artifact_store catalog. The Postgres-backed
 	// catalog is the surface the §12.5 GC sweep, the §11.2 size
@@ -2298,27 +2324,33 @@ func main() {
 		checkpointSvc.Metrics = gwMetrics
 	}
 
-	// §12.5 ll. 303 — wire the MinIO blob store's fail-closed T4
-	// KMS-unavailable callback to the gateway metrics emitter. Every
-	// ErrClassificationControlViolation the blob store raises bumps
+	// §12.5 ll. 282/303 — wire the artifact store's fail-closed T4
+	// KMS-unavailable callback and its retry-exhausted upload-error
+	// callback to the gateway metrics emitter, regardless of which
+	// §17.9.3 backend (MinIO, S3, GCS, Azure) serves the bucket. Every
+	// ErrClassificationControlViolation the store raises bumps
 	// `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`
 	// so the CheckpointStorageUnavailable alert fires under the
-	// outage. The handler also logs the rejection at INFO so operators
-	// see the tenant id without spelunking through the bucket-side
-	// access logs.
-	if minioStore != nil {
-		minioStore.SetOnKMSUnavailable(func(tenantID string) {
+	// outage; every retry-exhausted upload bumps
+	// `lenny_artifact_upload_error_total` so the §16.5 MinIOUnavailable
+	// alert fires from one source of truth. The handler also logs the
+	// KMS rejection at INFO so operators see the tenant id without
+	// spelunking through the bucket-side access logs. F-17.5.1.
+	if sink, ok := objectStore.(artifactMetricsSink); ok {
+		sink.SetOnKMSUnavailable(func(tenantID string) {
 			gwMetrics.IncCheckpointKMSUnavailable()
 			log.Printf("lenny-gateway: §12.5 ll. 303 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s KMS key unavailable", tenantID)
 		})
-		// §12.5 line 282 — surface every retry-exhausted MinIO PUT
-		// failure on lenny_artifact_upload_error_total and roll the
-		// same signal into lenny_checkpoint_storage_failure_total so
-		// the §16.5 MinIOUnavailable and CheckpointStorageUnavailable
-		// alerts fire from one source of truth.
-		minioStore.SetOnArtifactUploadError(func(tenantID, errorType string) {
+		sink.SetOnArtifactUploadError(func(tenantID, errorType string) {
 			gwMetrics.IncArtifactUploadError(tenantID, errorType)
 		})
+	}
+
+	// §12.8 line 735 / §12.5 ll. 297 — the durable artifact_store
+	// catalog reader and the startup T4 KMS probe are MinIO-specific
+	// (the in-memory and cloud backends do not expose SetCatalog), so
+	// they stay gated on the concrete MinIO store.
+	if minioStore != nil {
 		// §12.8 line 735 — wire the durable artifact_store catalog as
 		// the legal-hold source of truth on DeleteBySession. The
 		// in-memory legalHolds sync.Map remains a v1 fallback for the
@@ -6431,6 +6463,31 @@ func (r bearerTenantRegistry) IsRegistered(tenantID string) (bool, error) {
 // §7.1 retention GC.
 type sessionArtifactDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
+
+// artifactMetricsSink is implemented by every §17.9.3 artifact-store
+// backend that surfaces the §12.5 ll. 282/303 metric callbacks
+// (MinIO, S3, GCS, Azure). The gateway type-asserts the resolved
+// blobstore.Store onto it so the fail-closed KMS-unavailable and
+// retry-exhausted upload-error counters are wired no matter which
+// provider serves the bucket. spec: §12.5 ll. 282, 303; F-17.5.1.
+type artifactMetricsSink interface {
+	SetOnArtifactUploadError(func(tenantID, errorType string))
+	SetOnKMSUnavailable(func(tenantID string))
+}
+
+// objectStoreBackendName returns the human-readable backend name for
+// the startup log line. An empty provider resolves to "minio" when a
+// MinIO endpoint is configured and "memory" otherwise, matching the
+// §17.9.3 default behaviour Resolve implements.
+func objectStoreBackendName(provider, minioEndpoint string) string {
+	if p := strings.ToLower(strings.TrimSpace(provider)); p != "" {
+		return p
+	}
+	if minioEndpoint != "" {
+		return blobproviderflags.ProviderMinIO
+	}
+	return blobproviderflags.ProviderMemory
 }
 
 // newSSEKeyResolver builds the §12.5 ll. 297-303 SSEKeyResolver the

@@ -287,6 +287,83 @@ func TestComposeValuesOmitsMinioWhenEndpointEmpty_spec_17_9_3_1413(t *testing.T)
 	}
 }
 
+// spec: §17.9.3 — a cloud provider requires a bucket; an unknown
+// provider and an azure provider missing accountUrl are rejected.
+// F-17.5.1 / F-17.5.3.
+func TestValidateAnswersObjectStorageProvider_spec_17_9_3(t *testing.T) {
+	base := func(os installObjectStorage) installAnswers {
+		return installAnswers{
+			Environment: "local", Tier: "tier1",
+			Auth: installAuth{Mode: "dev"}, ObjectStorage: os,
+		}
+	}
+	cases := []struct {
+		name   string
+		os     installObjectStorage
+		reject string // substring expected in an error, "" = must pass
+	}{
+		{"s3 needs bucket", installObjectStorage{Provider: "s3"}, "provider=s3 requires objectStorage.bucket"},
+		{"gcs needs bucket", installObjectStorage{Provider: "gcs"}, "provider=gcs requires objectStorage.bucket"},
+		{"azure needs account url", installObjectStorage{Provider: "azure", Bucket: "c"}, "provider=azure requires objectStorage.accountUrl"},
+		{"unknown provider", installObjectStorage{Provider: "wasabi"}, "is not one of minio|s3|gcs|azure"},
+		{"s3 ok", installObjectStorage{Provider: "s3", Bucket: "b", Region: "us-east-1"}, ""},
+		{"azure ok", installObjectStorage{Provider: "azure", Bucket: "c", AccountURL: "https://a.blob.core.windows.net"}, ""},
+		{"minio default ok", installObjectStorage{Provider: "minio"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateAnswers(base(tc.os))
+			if tc.reject == "" {
+				for _, e := range errs {
+					if strings.Contains(e, "objectStorage") {
+						t.Fatalf("unexpected objectStorage error: %v", errs)
+					}
+				}
+				return
+			}
+			var found bool
+			for _, e := range errs {
+				if strings.Contains(e, tc.reject) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("want error containing %q, got %v", tc.reject, errs)
+			}
+		})
+	}
+}
+
+// spec: §17.9.3 — composeValues emits the canonical objectStorage block
+// for a cloud provider so the chart renders the gateway selector flags.
+// F-17.5.1 / F-17.5.3.
+func TestComposeValuesEmitsObjectStorageForCloud_spec_17_9_3(t *testing.T) {
+	a := installAnswers{
+		Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+		Environment: "prod", Tier: "tier2",
+		Auth:          installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+		ObjectStorage: installObjectStorage{Provider: "s3", Bucket: "lenny-artifacts", Region: "us-east-1"},
+	}
+	out, err := composeValues(a)
+	if err != nil {
+		t.Fatalf("composeValues: %v", err)
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal(out, &v); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	os, ok := v["objectStorage"].(map[string]any)
+	if !ok {
+		t.Fatalf("objectStorage block missing: %+v", v)
+	}
+	if os["provider"] != "s3" || os["bucket"] != "lenny-artifacts" || os["region"] != "us-east-1" {
+		t.Fatalf("objectStorage block = %+v, want s3/lenny-artifacts/us-east-1", os)
+	}
+	if _, present := v["minio"]; present {
+		t.Fatalf("minio block must be omitted for a cloud provider: %+v", v)
+	}
+}
+
 func TestComposeValuesEmitsDataStoreOverrides(t *testing.T) {
 	a := installAnswers{
 		Release:       installRelease{Name: "lenny", Namespace: "lenny-system"},

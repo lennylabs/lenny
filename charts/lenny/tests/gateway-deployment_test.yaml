@@ -432,6 +432,60 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --environment=dev
 
+  # spec: §17.9.3 / F-17.5.1 — the gateway receives its ArtifactStore
+  # backend selector from objectStorage.provider; the chart default is
+  # minio so the cloud adapters stay dormant unless an operator opts in.
+  - it: defaults --object-storage-provider to minio
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-provider=minio
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-bucket=
+  # spec: §17.9.3 / F-17.5.1 — an s3 cloud install renders the provider
+  # plus the shared bucket and region selector flags.
+  - it: renders the s3 cloud object-storage selector flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      objectStorage:
+        provider: s3
+        bucket: lenny-artifacts
+        region: us-east-1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-provider=s3
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-bucket=lenny-artifacts
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-region=us-east-1
+  # spec: §17.9.3 / F-17.5.1 — an azure cloud install renders the
+  # account URL selector flag.
+  - it: renders the azure account-url selector flag
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      objectStorage:
+        provider: azure
+        bucket: lenny-artifacts
+        accountUrl: https://acme.blob.core.windows.net
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-provider=azure
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --object-storage-account-url=https://acme.blob.core.windows.net
+
   - it: omits the LLM proxy listener when the feature flag is off
     documentSelector:
       path: kind

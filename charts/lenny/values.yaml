@@ -407,6 +407,29 @@ backends: ""
 # bucket lifecycle and TLS-mandate posture rely on.
 complianceProfile: ""
 
+# objectStorage selects the §17.9.3 ArtifactStore backend. provider is
+# the canonical switch: "minio" | "s3" | "gcs" | "azure". The default
+# is minio, which uses the self-managed MinIO settings in the `minio:`
+# block below (and falls back to the in-process in-memory store when no
+# minio.endpoint is configured — the §17.4 minimal/dev posture). For a
+# cloud-managed install set provider to s3/gcs/azure and supply bucket
+# (+ region for s3, + accountUrl for azure). The chart renders these
+# onto the gateway as --object-storage-* flags; the matching cloud
+# adapter (pkg/blobstore/{s3,gcs,azureblob}) is selected at startup.
+# spec: §17.5 bullet 1, §17.9.3. F-17.5.1 / F-12.7.3 / F-17.5.3.
+objectStorage:
+  # provider: minio | s3 | gcs | azure.
+  provider: "minio"
+  # bucket is the S3 bucket, GCS bucket, or Azure container name for a
+  # cloud provider. Unused when provider=minio (minio.bucket applies).
+  bucket: ""
+  # region is the AWS region for provider=s3. Empty falls back to the
+  # AWS SDK default chain (AWS_REGION / instance profile).
+  region: ""
+  # accountUrl is the Azure Blob storage account URL
+  # (https://<account>.blob.core.windows.net) for provider=azure.
+  accountUrl: ""
+
 # minio configures the MinIO object store (self-managed profile).
 minio:
   # tlsPort is the TLS port the gateway reaches MinIO on (§13.2).

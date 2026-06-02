@@ -373,6 +373,23 @@ spec:
             {{- with .Values.kms.azureVaultURL }}
             - --kms-azure-vault-url={{ . }}
             {{- end }}
+            # §17.9.3 object-storage backend selector (F-17.5.1). The
+            # gateway resolves the matching blobstore.Store adapter
+            # (minio | s3 | gcs | azure) from these flags. The shared
+            # objectStorage.{bucket,region,accountUrl} values feed the
+            # cloud adapters; provider=minio uses the minio.* block.
+            {{- with .Values.objectStorage }}
+            - --object-storage-provider={{ .provider | default "minio" }}
+            {{- with .bucket }}
+            - --object-storage-bucket={{ . }}
+            {{- end }}
+            {{- with .region }}
+            - --object-storage-region={{ . }}
+            {{- end }}
+            {{- with .accountUrl }}
+            - --object-storage-account-url={{ . }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.mtls.enabled }}
             # §4.3 line 195 / §10.3 mTLS client material. The gateway
             # presents the lenny-gateway-tls cert to the Token Service
