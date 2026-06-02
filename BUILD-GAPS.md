@@ -21552,7 +21552,7 @@ Evidence:
 when `spec.workspaceTier == "T4"`, regardless of isolation profile (a
 microvm pool otherwise clears the existing isolation gate). The webhook
 no longer needs an out-of-band Runtime lookup; the tier rides the pool
-CR it already validates. (commit pending)
+CR it already validates. (commit `1e7de66f`)
 
 ### - [ ] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — OPEN
 
@@ -21745,7 +21745,7 @@ passes cleanly (the `monitoring.acknowledgeNoPrometheus` /
 `preflight.attestVolumeEncryption` Helm value (default false), the
 `--dev-mode` / `--attest-volume-encryption` flags on `lenny-preflight`,
 and the preflight-Job template wiring. A `VolumeEncryptionProber` seam is
-left for a future cloud-API probe. (commit pending)
+left for a future cloud-API probe. (commit `1e7de66f`)
 
 ### - [x] F-12.9.13 — 9-11 — Tier-aware retention defaults (T2 90 days, T3 7 days, T4 24 hours) are not enforced as tier-keyed defaults [Medium] — CLOSED
 
@@ -21780,7 +21780,7 @@ terminal roll-forward (`rollRetentionOnTerminal`). A T4-classified tenant
 now gets the 24h Restricted default instead of silently inheriting the T3
 7-day window; T3 keeps the deployer-configured `defaultRetention`. The
 artifact-store HardPrune retention windows remain on their own §12.5
-controls. (commit pending)
+controls. (commit `1e7de66f`)
 
 ### - [x] F-12.9.14 — 9-12 — Data-residency validator is tier-agnostic; T4 "cross-region transfer prohibited" is not a distinct enforcement layer [Medium] — CLOSED
 - **Resolution:** `data_residency_validator.Request` gains a `WorkspaceTier` field and the decision logic a distinct T4 layer (`TierT4`, `CodeRegionCrossTransferProhibited = "REGION_CROSS_TRANSFER_PROHIBITED"`). For a T4 tenant, any region-bearing resource — not only environment-scoped ones — that resolves to a region other than the tenant's pinned region is rejected as a cross-region transfer even when both regions are declared in `storage.regions`; the same request under T3 is admitted (the distinct enforcement layer the §12.9 line 1046 table documents). The T4 branch runs before the §12.8 environment-inheritance check so a divergent T4 environment is reported with the Restricted-tier code. Empty tier preserves the T1–T3 behavior; the webhook transport resolves tier alongside `TenantRegion` (same pattern as today). (commit `c4ae0116`)
