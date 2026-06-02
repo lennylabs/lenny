@@ -656,6 +656,25 @@ monitoring:
     # the monitoring.coreos.com/v1 spec): caFile, certFile, keyFile,
     # insecureSkipVerify, serverName. F-16.9.12.
     tlsConfig: {}
+  # openslo gates the §16.10 OpenSLO export. When enabled, the chart
+  # renders a ConfigMap carrying the §16.5 latency and availability SLOs
+  # as OpenSLO v1 SLO/SLI/AlertPolicy documents for deployers who manage
+  # SLOs in an OpenSLO-compatible tool (Sloth, Nobl9, OpenSLO Reliably).
+  # The documents are generated from the same pkg/alerting/rules SLO
+  # catalog the bundled §16.5 burn-rate alerts derive from, so the export
+  # is a view of that single source. OpenSLO is not a runtime dependency:
+  # the ConfigMap is consumed by the deployer's external tooling. The
+  # rendered queries are scoped to global.deploymentTier so external SLO
+  # tooling produces burn-rate alerts for this deployment's tier.
+  openslo:
+    # enabled gates openslo-configmap.yaml. Default false per §16.10
+    # (the OpenSLO export is opt-in).
+    enabled: false
+    # namespace is where the OpenSLO ConfigMap is created. Defaults to
+    # monitoring.namespace when empty.
+    namespace: ""
+    # name is the OpenSLO ConfigMap name.
+    name: "lenny-openslo"
 
 # slo carries the §16.5 service-level-objective posture. The §16.5 SLO
 # targets are provisional first-principles estimates that must not back

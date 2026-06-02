@@ -1,0 +1,38 @@
+{{- /*
+The §16.10 OpenSLO export. The §16.5 latency and availability SLOs are
+authored once in the shared Go package pkg/alerting/rules (SLODefinitions)
+and rendered into files/openslo.yaml by `make generate` (the
+cmd/gen-alerting-rules build step) as OpenSLO v1 SLO/SLI/AlertPolicy
+documents. The same SLO catalog backs the bundled §16.5 burn-rate alerts,
+so the OpenSLO export cannot drift from what the gateway evaluates.
+
+OpenSLO is not a runtime dependency. When monitoring.openslo.enabled is
+set, the chart renders a ConfigMap carrying the documents for an external
+OpenSLO tool (Sloth, Nobl9, OpenSLO Reliably) to consume. Rendering is
+off by default per §16.10.
+
+The bundled fragment carries the SLOTierPlaceholder token in every query
+and label. The §16.9 ServiceMonitor and PodMonitor metricRelabelings
+stamp the deployment_tier label onto every scraped series (§16.1.1), so
+this template substitutes global.deploymentTier for the placeholder and
+the rendered queries resolve the same series the bundled alerts evaluate.
+*/ -}}
+{{- if .Values.monitoring.openslo.enabled }}
+{{- $ns := .Values.monitoring.openslo.namespace | default .Values.monitoring.namespace }}
+{{- $tier := .Values.global.deploymentTier | default "tier1" }}
+{{- $openslo := .Files.Get "files/openslo.yaml" | replace "__DEPLOYMENT_TIER__" $tier }}
+{{- /* Strip the generated-file comment header so the ConfigMap data
+       carries only the OpenSLO documents. */ -}}
+{{- $body := regexReplaceAll "(?m)^#.*\n" $openslo "" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.monitoring.openslo.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: openslo
+data:
+  openslo.yaml: |
+    {{- $body | nindent 4 }}
+{{- end }}

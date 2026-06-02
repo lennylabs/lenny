@@ -2220,10 +2220,18 @@
     "16.10": {
       "title": "OpenSLO Export",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
-      "packages": [],
-      "blocked_until_phase": "14.5",
-      "notes": "OpenSLO YAML export so the \u00a716.5 alerts can be regenerated from the SLO definitions in code. No implementation package exists yet; Phase 14.5 creates the exporter package and this entry names it then. The packages list is intentionally empty until then so it does not point at a directory that does not exist."
+      "tests": [
+        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOEmitsThreeDocsPerSLO",
+        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOObjectivesMatchCatalog",
+        "pkg/alerting/rules/slo_test.go::TestSLODefinitionsBackEveryBurnRateAlert",
+        "charts/lenny/tests/openslo-configmap_test.yaml"
+      ],
+      "packages": [
+        "pkg/alerting/rules",
+        "cmd/gen-alerting-rules",
+        "charts/lenny/templates/openslo-configmap.yaml"
+      ],
+      "notes": "OpenSLO v1 export. The \u00a716.5 latency and availability SLOs are authored once in pkg/alerting/rules (SLODefinitions); burnRateAlerts and RenderOpenSLO both derive from that single catalog, so the OpenSLO documents cannot drift from the bundled \u00a716.5 burn-rate alerts. cmd/gen-alerting-rules renders charts/lenny/files/openslo.yaml; openslo-configmap.yaml splices it into a ConfigMap gated by monitoring.openslo.enabled, substituting global.deploymentTier. lenny-ctl slo export prints the same documents."
     },
     "17": {
       "title": "Deployment Topology",

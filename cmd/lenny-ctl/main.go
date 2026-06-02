@@ -151,6 +151,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	case "migrate":
 		return cmdMigrate(ctx, client, rest[1:], stdout, stderr)
+	case "slo":
+		// slo export renders the §16.10 OpenSLO documents from the
+		// embedded §16.5 SLO catalog and runs offline; it reaches no
+		// gateway. spec: §16.10 lines 732-736.
+		return cmdSLO(rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
 	// the gateway. opsClient resolves the ops URL (the --ops-server flag
 	// or auto-discovery) on first use.
@@ -240,6 +245,8 @@ Gateway commands:
   migrate status                        Show the expand-contract phase of every active schema migration (§24.13)
   migrate down --version <N> --confirm [--reason <text>]
                                         Roll back the most recently applied migration at version N (§24.13)
+  slo export [--format openslo] [--tier <tier1|tier2|tier3>]
+                                        Print the §16.5 SLOs as OpenSLO v1 documents (offline, §16.10)
 
 Operability commands (§25.14, target lenny-ops):
   runbooks list [--alert <name>]        List runbooks (optionally by alert)

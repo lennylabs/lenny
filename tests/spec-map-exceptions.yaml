@@ -93,9 +93,6 @@ exceptions:
   - section: "16.9"
     reason: deferred
     justification: The ServiceMonitor, PodMonitor, and PrometheusRule chart templates ship in Wave 5 (Phase 2.5).
-  - section: "16.10"
-    reason: deferred
-    justification: OpenSLO export is built in Wave 7 (Phase 14.5).
   - section: "17.1"
     reason: non-normative
     justification: Kubernetes-resource inventory table; the chart templates are verified under §17.2 and the helm-unittest suites.

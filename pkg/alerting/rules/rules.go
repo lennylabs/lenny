@@ -1664,103 +1664,37 @@ func warningAlerts() []Rule {
 }
 
 // burnRateAlerts is the §16.5 multi-window SLO error-budget burn-rate
-// table. Each SLO yields a fast-window critical rule (1h at the
-// configured fast multiplier, default 14x) and a slow-window warning
-// rule (6h at the configured slow multiplier, default 3x). §16.5
-// requires both windows to be present simultaneously for a page, so
-// each SLO is two distinct rules in the rendered manifest.
+// table. Each SLO in the canonical SLODefinitions catalog yields a
+// fast-window critical rule (1h at burnRateFastMultiplier, default 14x)
+// and a slow-window warning rule (6h at burnRateSlowMultiplier, default
+// 3x). §16.5 requires both windows to be present simultaneously for a
+// page, so each SLO is two distinct rules in the rendered manifest. The
+// SLODefinitions catalog is the single source the §16.10 OpenSLO export
+// also derives from (slo.go), so the rendered OpenSLO AlertPolicy
+// conditions stay identical to these rules.
 func burnRateAlerts() []Rule {
-	specs := []struct {
-		name string
-		slo  string
-		expr string
-		slug string
-	}{
-		{
-			name: "SessionCreationSuccessRateBurnRate",
-			slo:  "Session creation success rate >= 99.5%",
-			expr: `lenny_session_creation_error_ratio / (1 - 0.995)`,
-			slug: "session-creation-success-rate-burn-rate",
-		},
-		{
-			name: "SessionCreationLatencyBurnRate",
-			slo:  "Session creation latency P99 < 500ms",
-			expr: `lenny_session_creation_latency_slow_ratio / 0.01`,
-			slug: "session-creation-latency-burn-rate",
-		},
-		{
-			name: "SessionAvailabilityBurnRate",
-			slo:  "Session availability >= 99.9%",
-			expr: `lenny_session_unavailability_ratio / (1 - 0.999)`,
-			slug: "session-availability-burn-rate",
-		},
-		{
-			name: "GatewayAvailabilityBurnRate",
-			slo:  "Gateway availability >= 99.95%",
-			expr: `lenny_gateway_unavailability_ratio / (1 - 0.9995)`,
-			slug: "gateway-availability-burn-rate",
-		},
-		{
-			// The slow ratio is computed inline from the
-			// lenny_session_startup_duration_seconds histogram (§6.3 line 348,
-			// emitted by the gateway start path): the fraction of runc starts
-			// slower than the 2s SLO threshold, against the 5% error budget.
-			// The le="2" bucket boundary is one of the histogram's explicit
-			// buckets. spec: §16.5 line 635, §6.3 line 348.
-			name: "StartupLatencyBurnRate",
-			slo:  "Startup latency P95 < 2s (runc)",
-			expr: `(1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05`,
-			slug: "startup-latency-burn-rate",
-		},
-		{
-			// As above for the gVisor 5s SLO threshold (le="5" bucket).
-			// spec: §16.5 line 636, §6.3 line 348.
-			name: "StartupLatencyGVisorBurnRate",
-			slo:  "Startup latency P95 < 5s (gVisor)",
-			expr: `(1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05`,
-			slug: "startup-latency-gvisor-burn-rate",
-		},
-		{
-			// The slow ratio is computed inline from the
-			// lenny_session_time_to_first_token_seconds histogram (§6.3
-			// line 356, emitted by sessionserver on first agent-streamed
-			// response event): the fraction of starts slower than the
-			// 10s SLO threshold, against the 5% error budget. The
-			// le="10" bucket boundary is one of the histogram's explicit
-			// buckets. spec: §16.5 line 637, §6.3 line 356.
-			name: "TTFTBurnRate",
-			slo:  "Time to first token P95 < 10s",
-			expr: `(1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05`,
-			slug: "ttft-burn-rate",
-		},
-		{
-			name: "CheckpointDurationBurnRate",
-			slo:  "Checkpoint duration P95 < 2s (<= 100MB)",
-			expr: `lenny_checkpoint_duration_slow_ratio / 0.05`,
-			slug: "checkpoint-duration-burn-rate",
-		},
-	}
-	rs := make([]Rule, 0, len(specs)*2)
-	for _, s := range specs {
+	defs := SLODefinitions()
+	rs := make([]Rule, 0, len(defs)*2)
+	for _, d := range defs {
 		rs = append(rs, Rule{
-			Name:        s.name,
-			Expr:        fmt.Sprintf(`%s > 14`, s.expr),
-			For:         1 * time.Hour,
+			Name:        d.AlertName,
+			Expr:        fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateFastMultiplier),
+			For:         burnRateFastWindow,
 			Severity:    SeverityCritical,
-			Summary:     "Fast-window error-budget burn for " + s.slo,
+			Summary:     "Fast-window error-budget burn for " + d.Objective,
 			Description: "Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.",
-			RunbookURL:  runbook(s.slug),
-			SLO:         s.slo,
+			RunbookURL:  runbook(d.RunbookSlug),
+			SLO:         d.Objective,
 			SpecRef:     "§16.5",
 		})
 		rs = append(rs, Rule{
-			Name:        s.name + "Slow",
-			Expr:        fmt.Sprintf(`%s > 3`, s.expr),
-			For:         6 * time.Hour,
+			Name:        d.AlertName + "Slow",
+			Expr:        fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateSlowMultiplier),
+			For:         burnRateSlowWindow,
 			Severity:    SeverityWarning,
-			Summary:     "Slow-window error-budget burn for " + s.slo,
+			Summary:     "Slow-window error-budget burn for " + d.Objective,
 			Description: "Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.",
-			SLO:         s.slo,
+			SLO:         d.Objective,
 			SpecRef:     "§16.5",
 		})
 	}
