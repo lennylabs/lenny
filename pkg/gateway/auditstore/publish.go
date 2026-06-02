@@ -134,14 +134,15 @@ func (a *PublishingAppender) publishAndMark(ctx context.Context, row audit.Row) 
 // record (datacontenttype = application/ocsf+json).
 func (a *PublishingAppender) buildEnvelope(row audit.Row) (eventbus.Event, error) {
 	in := ocsf.Input{
-		ID:              row.TenantID + ":" + fmt.Sprint(row.Seq),
-		Sequence:        row.Seq,
-		TenantID:        row.TenantID,
-		EventType:       row.EventType,
-		CreatedAtUnixMs: row.Timestamp.UTC().UnixMilli(),
-		Payload:         row.Payload,
-		PrevHash:        row.PrevHash,
-		ChainIntegrity:  audit.ChainUnchecked,
+		ID:                 row.TenantID + ":" + fmt.Sprint(row.Seq),
+		Sequence:           row.Seq,
+		TenantID:           row.TenantID,
+		EventType:          row.EventType,
+		EventSchemaVersion: row.EventSchemaVersion,
+		CreatedAtUnixMs:    row.Timestamp.UTC().UnixMilli(),
+		Payload:            row.Payload,
+		PrevHash:           row.PrevHash,
+		ChainIntegrity:     audit.ChainUnchecked,
 	}
 	rec, terr := ocsf.Translate(in)
 	if terr != nil {

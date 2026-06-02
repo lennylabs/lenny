@@ -12,7 +12,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/lennylabs/lenny/pkg/audit/jcs"
 )
+
+// DefaultEventSchemaVersion is the §11.7 item 3 line 365 schema version
+// stamped on a row whose event type does not carry an explicit version.
+// The audit_log.event_schema_version column defaults to the same value,
+// so a row sealed in Go and a row scanned from Postgres hash identically.
+const DefaultEventSchemaVersion = "v1"
 
 // GenesisPrevHash is the §11.7 sentinel prev_hash stamped on the
 // first row of every per-tenant chain. The verifier walks back to
@@ -24,6 +34,12 @@ const GenesisPrevHash = "0000000000000000000000000000000000000000000000000000000
 // once written, only the §12.8 GDPR redaction path may rewrite a
 // row's Payload in place, and that path attaches a RedactionReceipt.
 type Row struct {
+	// ID is the row UUID (audit_log.id). It is part of the §11.7 item 3
+	// hash input tuple, so it is generated at seal time rather than left
+	// to a Postgres column default. A row scanned from Postgres carries
+	// the stored UUID.
+	ID string `json:"id"`
+
 	// Seq is the per-tenant monotonic sequence number, starting at 1.
 	Seq uint64 `json:"seq"`
 
@@ -34,6 +50,11 @@ type Row struct {
 	// (e.g., `admin.tenant.created`).
 	EventType string `json:"event_type"`
 
+	// EventSchemaVersion is the §11.7 item 3 line 365 schema version of
+	// EventType (e.g., `v1`). It is part of the hash input so a payload
+	// shape change for the same event_type produces distinct hashes.
+	EventSchemaVersion string `json:"event_schema_version"`
+
 	// Payload is the canonical event body. Redaction rewrites this
 	// in place per §12.8.
 	Payload json.RawMessage `json:"payload"`
@@ -41,13 +62,15 @@ type Row struct {
 	// Timestamp is the UTC instant the row was committed.
 	Timestamp time.Time `json:"timestamp"`
 
-	// PrevHash links this row to its predecessor:
-	// `prev_hash = H(prev_row.Hash || canonical_bytes(prev_row))`.
+	// PrevHash links this row to its predecessor: it is the SHA-256 hash
+	// of the predecessor's §11.7 item 3 tuple (the predecessor's Hash).
 	// The genesis row carries GenesisPrevHash.
 	PrevHash string `json:"prev_hash"`
 
-	// Hash is this row's content hash: `H(canonical_bytes(row))`
-	// computed over every field except Hash itself.
+	// Hash is this row's content hash: the SHA-256 of the §11.7 item 3
+	// canonical tuple (id, prev_hash, tenant_id, sequence_number,
+	// event_type, event_schema_version, payload_canonical_json,
+	// created_at). The successor row's PrevHash equals this value.
 	Hash string `json:"hash"`
 
 	// Redacted, when true, marks the row as rewritten by a §12.8
@@ -75,45 +98,76 @@ type RedactionReceipt struct {
 	Signature string `json:"signature"`
 }
 
-// canonicalBytes returns the deterministic byte representation of a
-// row over which the content hash is computed — every field except
-// Hash. encoding/json with struct field order is deterministic for
-// a fixed struct definition.
+// CanonicalPayload returns the RFC 8785 JCS canonical form of a row's
+// payload — the value stored in audit_log.payload_canonical_json and
+// fed into the §11.7 hash input. A payload that does not parse as JSON
+// falls back to its raw bytes (audit payloads are always JSON, so this
+// is defensive); an empty payload canonicalizes to `null`.
+//
+// spec: §11.7 item 3 line 364 (payload_canonical_json is RFC 8785 JCS).
+func CanonicalPayload(payload json.RawMessage) []byte {
+	if len(payload) == 0 {
+		return []byte("null")
+	}
+	canon, err := jcs.Canonicalize(payload)
+	if err != nil {
+		return []byte(payload)
+	}
+	return canon
+}
+
+// canonicalBytes returns the deterministic byte representation of the
+// §11.7 item 3 line 361 hash-input tuple: (id, prev_hash, tenant_id,
+// sequence_number, event_type, event_schema_version,
+// payload_canonical_json, created_at). The payload is canonicalized with
+// RFC 8785 JCS so the hash is stable across the key-order and
+// number-form changes a Postgres jsonb round trip introduces.
+// encoding/json with a fixed struct field order is deterministic.
+//
+// spec: §11.7 item 3 lines 361-366.
 func canonicalBytes(r Row) []byte {
+	version := r.EventSchemaVersion
+	if version == "" {
+		version = DefaultEventSchemaVersion
+	}
 	type canonical struct {
-		Seq       uint64          `json:"seq"`
-		TenantID  string          `json:"tenant_id"`
-		EventType string          `json:"event_type"`
-		Payload   json.RawMessage `json:"payload"`
-		Timestamp string          `json:"timestamp"`
-		PrevHash  string          `json:"prev_hash"`
-		Redacted  bool            `json:"redacted"`
+		ID                 string          `json:"id"`
+		PrevHash           string          `json:"prev_hash"`
+		TenantID           string          `json:"tenant_id"`
+		SequenceNumber     uint64          `json:"sequence_number"`
+		EventType          string          `json:"event_type"`
+		EventSchemaVersion string          `json:"event_schema_version"`
+		PayloadCanonical   json.RawMessage `json:"payload_canonical_json"`
+		CreatedAt          string          `json:"created_at"`
 	}
 	b, _ := json.Marshal(canonical{
-		Seq:       r.Seq,
-		TenantID:  r.TenantID,
-		EventType: r.EventType,
-		Payload:   r.Payload,
-		Timestamp: r.Timestamp.UTC().Format(time.RFC3339Nano),
-		PrevHash:  r.PrevHash,
-		Redacted:  r.Redacted,
+		ID:                 r.ID,
+		PrevHash:           r.PrevHash,
+		TenantID:           r.TenantID,
+		SequenceNumber:     r.Seq,
+		EventType:          r.EventType,
+		EventSchemaVersion: version,
+		PayloadCanonical:   json.RawMessage(CanonicalPayload(r.Payload)),
+		CreatedAt:          r.Timestamp.UTC().Format(time.RFC3339Nano),
 	})
 	return b
 }
 
-// computeHash returns the §11.7 content hash of a row.
+// computeHash returns the §11.7 item 3 content hash of a row: the
+// SHA-256 of its canonical tuple. The successor row's prev_hash equals
+// this value.
 func computeHash(r Row) string {
 	sum := sha256.Sum256(canonicalBytes(r))
 	return hex.EncodeToString(sum[:])
 }
 
-// linkHash returns the prev_hash a successor row must carry per
-// §11.7: `H(prev_row.Hash || canonical_bytes(prev_row))`.
+// linkHash returns the prev_hash a successor row must carry per §11.7
+// item 3: the SHA-256 hash of the predecessor's canonical tuple, which
+// is exactly the predecessor's content hash. Because that tuple already
+// folds in the predecessor's own prev_hash, this forms the tamper-
+// evident chain the verifier walks.
 func linkHash(prev Row) string {
-	h := sha256.New()
-	h.Write([]byte(prev.Hash))
-	h.Write(canonicalBytes(prev))
-	return hex.EncodeToString(h.Sum(nil))
+	return prev.Hash
 }
 
 // ComputeHash returns a row's §11.7 content hash. A Postgres-backed
@@ -165,11 +219,13 @@ func (c *Chain) Append(eventType string, payload json.RawMessage, now time.Time)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	row := Row{
-		Seq:       uint64(len(c.rows)) + 1,
-		TenantID:  c.tenantID,
-		EventType: eventType,
-		Payload:   payload,
-		Timestamp: now.UTC(),
+		ID:                 uuid.NewString(),
+		Seq:                uint64(len(c.rows)) + 1,
+		TenantID:           c.tenantID,
+		EventType:          eventType,
+		EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload:            payload,
+		Timestamp:          now.UTC(),
 	}
 	if len(c.rows) == 0 {
 		row.PrevHash = GenesisPrevHash

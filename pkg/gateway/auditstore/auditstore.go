@@ -12,10 +12,14 @@
 // Verify loads the persisted rows and walks them with the shared
 // pkg/audit verification logic.
 //
-// The audit_log row hash uses the v1 pkg/audit construction. The
-// §11.7 wire form (RFC 8785 canonical JSON, the id and
-// event_schema_version columns in the hash input) is a Phase 13
-// upgrade; payload_canonical_json currently mirrors the payload.
+// The row hash is computed over the §11.7 item 3 line 361 canonical
+// tuple (id, prev_hash, tenant_id, sequence_number, event_type,
+// event_schema_version, payload_canonical_json, created_at). The row id
+// is generated at seal time so it can enter the hash, and
+// payload_canonical_json holds the RFC 8785 JCS canonical form of the
+// payload (audit.CanonicalPayload). On verify the chain is reconstructed
+// from the persisted columns and re-canonicalized, so the hash is stable
+// across the jsonb normalization the payload column undergoes.
 package auditstore
 
 import (
@@ -26,6 +30,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -177,7 +182,7 @@ func (s *Store) allShards(ctx context.Context) ([]storerouter.ShardHandle, error
 	return s.router.AllAuditShards(ctx)
 }
 
-const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
+const selectList = `sequence_number, event_type, payload, created_at, prev_hash, id::text, event_schema_version`
 
 // Append commits an audit event to the tenant's chain and returns the
 // sealed row. The append runs under a per-tenant transaction advisory
@@ -323,18 +328,24 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 	if at.IsZero() {
 		at = time.Now()
 	}
-	at = at.UTC()
+	// Postgres TIMESTAMPTZ has microsecond resolution; truncate before
+	// hashing so the created_at fed into the hash equals the value read
+	// back, otherwise the §11.7 verify walk would report a false break on
+	// a sub-microsecond timestamp.
+	at = at.UTC().Truncate(time.Microsecond)
 	tail, hasTail, err := scanTail(ctx, tx, tenantID)
 	if err != nil {
 		return audit.Row{}, err
 	}
 	row := audit.Row{
-		Seq:       1,
-		TenantID:  tenantID,
-		EventType: eventType,
-		Payload:   payload,
-		Timestamp: at,
-		PrevHash:  audit.GenesisPrevHash,
+		ID:                 uuid.NewString(),
+		Seq:                1,
+		TenantID:           tenantID,
+		EventType:          eventType,
+		EventSchemaVersion: audit.DefaultEventSchemaVersion,
+		Payload:            payload,
+		Timestamp:          at,
+		PrevHash:           audit.GenesisPrevHash,
 	}
 	if hasTail {
 		row.Seq = tail.Seq + 1
@@ -345,16 +356,20 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 	if err != nil {
 		return audit.Row{}, fmt.Errorf("auditstore: encode prev_hash: %w", err)
 	}
-	canonical := string(payload)
-	if canonical == "" {
-		canonical = "null"
+	storedPayload := string(payload)
+	if storedPayload == "" {
+		storedPayload = "null"
 	}
+	// payload_canonical_json holds the RFC 8785 JCS canonical form the
+	// §11.7 hash input is computed over (audit.CanonicalPayload), so an
+	// external verifier reads the exact bytes that were hashed.
+	canonical := string(audit.CanonicalPayload(payload))
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_log (
-		tenant_id, sequence_number, prev_hash, event_type,
-		payload, payload_canonical_json, created_at
-	) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)`,
-		tenantID, int64(row.Seq), prevHashBytes, eventType,
-		canonical, canonical, at); err != nil {
+		id, tenant_id, sequence_number, prev_hash, event_type,
+		event_schema_version, payload, payload_canonical_json, created_at
+	) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`,
+		row.ID, tenantID, int64(row.Seq), prevHashBytes, eventType,
+		row.EventSchemaVersion, storedPayload, canonical, at); err != nil {
 		return audit.Row{}, err
 	}
 	return row, nil
@@ -446,7 +461,7 @@ func scanRow(row pgx.Row, tenantID string) (audit.Row, error) {
 		payload  []byte
 		prevHash []byte
 	)
-	if err := row.Scan(&seq, &r.EventType, &payload, &r.Timestamp, &prevHash); err != nil {
+	if err := row.Scan(&seq, &r.EventType, &payload, &r.Timestamp, &prevHash, &r.ID, &r.EventSchemaVersion); err != nil {
 		return audit.Row{}, err
 	}
 	r.Seq = uint64(seq)

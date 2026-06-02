@@ -30,6 +30,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
+	"github.com/lennylabs/lenny/pkg/audit/jcs"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
@@ -170,6 +171,47 @@ func TestAuditPipeline(t *testing.T) {
 		if broken := integrity.FirstBroken(results); broken != nil {
 			t.Errorf("continuity check found a broken chain: tenant %q, %s",
 				broken.TenantID, broken.Result.Detail)
+		}
+	})
+
+	t.Run("the chain survives a payload that jsonb reorders and renormalizes", func(t *testing.T) {
+		// spec: §11.7 item 3 line 364 — the hash is computed over the RFC
+		// 8785 canonical payload, so it must be stable across the key
+		// reordering and numeric renormalization a jsonb column applies.
+		// A payload with unsorted keys and a trailing-zero float would
+		// break a raw-bytes hash after the round trip; the JCS canonical
+		// form keeps the chain verifiable.
+		row, err := store.Append(ctx, tenant, "billing.usage",
+			json.RawMessage(`{"zeta":1,"alpha":"x","amount":1.50,"nested":{"b":2,"a":1}}`),
+			time.Now())
+		if err != nil {
+			t.Fatalf("append jsonb-sensitive payload: %v", err)
+		}
+		res, err := store.Verify(ctx, tenant)
+		if err != nil {
+			t.Fatalf("Verify after jsonb-sensitive append: %v", err)
+		}
+		if res.Integrity != audit.ChainVerified {
+			t.Errorf("chain integrity after jsonb round trip = %q (%s), want verified", res.Integrity, res.Detail)
+		}
+		// payload_canonical_json holds the canonical payload. The column is
+		// jsonb, so Postgres re-serializes it on read with its own key
+		// order; re-canonicalizing the read-back value with JCS recovers
+		// the exact form the hash was computed over, which must equal the
+		// canonical form of the original payload.
+		var stored string
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT payload_canonical_json::text FROM audit_log WHERE tenant_id = $1 AND sequence_number = $2`,
+			tenant, int64(row.Seq)).Scan(&stored); err != nil {
+			t.Fatalf("read payload_canonical_json: %v", err)
+		}
+		reCanon, err := jcs.Canonicalize([]byte(stored))
+		if err != nil {
+			t.Fatalf("re-canonicalize stored payload: %v", err)
+		}
+		want := audit.CanonicalPayload(json.RawMessage(`{"zeta":1,"alpha":"x","amount":1.50,"nested":{"b":2,"a":1}}`))
+		if string(reCanon) != string(want) {
+			t.Errorf("re-canonicalized payload_canonical_json = %q, want %q", reCanon, want)
 		}
 	})
 

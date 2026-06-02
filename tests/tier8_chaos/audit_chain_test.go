@@ -162,11 +162,16 @@ func buildAuditChain(tenantID string) []audit.Row {
 	rows := make([]audit.Row, 3)
 	for i := range rows {
 		r := audit.Row{
-			Seq:       uint64(i + 1),
-			TenantID:  tenantID,
-			EventType: "chaos.audit_probe",
-			Payload:   json.RawMessage(fmt.Sprintf(`{"step":%d}`, i+1)),
-			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			// id is part of the §11.7 item 3 hash tuple, so it must be a
+			// fixed value seeded into audit_log.id (not the column
+			// default) to match the hash computed here.
+			ID:                 fmt.Sprintf("00000000-0000-4000-8000-00000000000%d", i+1),
+			Seq:                uint64(i + 1),
+			TenantID:           tenantID,
+			EventType:          "chaos.audit_probe",
+			EventSchemaVersion: audit.DefaultEventSchemaVersion,
+			Payload:            json.RawMessage(fmt.Sprintf(`{"step":%d}`, i+1)),
+			Timestamp:          base.Add(time.Duration(i) * time.Minute),
 		}
 		if i == 0 {
 			r.PrevHash = audit.GenesisPrevHash
@@ -245,16 +250,18 @@ func seedAuditChain(t *testing.T, c *kind.Cluster, pgIP string, chain []audit.Ro
 	b.WriteString("BEGIN;\n")
 	fmt.Fprintf(&b, "SET LOCAL app.current_tenant = '%s';\n", auditChainTenant)
 	for _, r := range chain {
-		// payload and payload_canonical_json carry the same bytes the
-		// hash was computed over; created_at must equal the hashed
-		// Timestamp (RFC3339Nano).
+		// payload_canonical_json carries the RFC 8785 JCS bytes the §11.7
+		// hash was computed over; id and event_schema_version are hash-
+		// input columns and must match the seeded values; created_at must
+		// equal the hashed Timestamp (RFC3339Nano).
 		payload := string(r.Payload)
+		canonical := string(audit.CanonicalPayload(r.Payload))
 		fmt.Fprintf(&b,
-			"INSERT INTO audit_log (tenant_id, sequence_number, prev_hash, event_type, "+
-				"payload, payload_canonical_json, created_at) VALUES "+
-				"('%s', %d, decode('%s','hex'), '%s', '%s'::jsonb, '%s'::jsonb, '%s');\n",
-			r.TenantID, r.Seq, r.PrevHash, r.EventType,
-			payload, payload, r.Timestamp.UTC().Format(time.RFC3339Nano))
+			"INSERT INTO audit_log (id, tenant_id, sequence_number, prev_hash, event_type, "+
+				"event_schema_version, payload, payload_canonical_json, created_at) VALUES "+
+				"('%s'::uuid, '%s', %d, decode('%s','hex'), '%s', '%s', '%s'::jsonb, '%s'::jsonb, '%s');\n",
+			r.ID, r.TenantID, r.Seq, r.PrevHash, r.EventType,
+			r.EventSchemaVersion, payload, canonical, r.Timestamp.UTC().Format(time.RFC3339Nano))
 	}
 	b.WriteString("COMMIT;\n")
 	runPsql(t, c, pgIP, "chaos-audit-seed", b.String())

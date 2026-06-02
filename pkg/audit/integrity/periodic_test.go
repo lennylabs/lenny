@@ -124,7 +124,7 @@ type scriptQuerier struct {
 	erasureScope [][]any // VerifyErasureRoleScope (table, priv)
 	erasureSrc   string  // VerifyErasureGuard prosrc
 	tenants      [][]any // auditTenants (tenant_id)
-	chainRows    [][]any // loadRecentChainRows (seq, type, payload, created, prev_hash)
+	chainRows    [][]any // loadRecentChainRows (seq, type, payload, created, prev_hash, id, schema_version)
 	queryErr     error   // when set, every Query returns it
 }
 
@@ -220,9 +220,11 @@ func TestPeriodicCheckOnceChainBroken(t *testing.T) {
 			tenants: [][]any{{"acme"}},
 			// A gap between sequence 5 and 7 is a broken chain; the window
 			// does not start at genesis, so contiguity alone is checked.
+			// Columns: seq, event_type, payload, created, prev_hash, id,
+			// event_schema_version (the §11.7 item 3 hash-input set).
 			chainRows: [][]any{
-				{int64(5), "session.created", []byte(`{}`), time.Time{}, []byte("aa")},
-				{int64(7), "session.created", []byte(`{}`), time.Time{}, []byte("bb")},
+				{int64(5), "session.created", []byte(`{}`), time.Time{}, []byte("aa"), "00000000-0000-4000-8000-000000000005", "v1"},
+				{int64(7), "session.created", []byte(`{}`), time.Time{}, []byte("bb"), "00000000-0000-4000-8000-000000000007", "v1"},
 			},
 		},
 		Cfg:          PeriodicConfig{ChainSampleN: 1000},

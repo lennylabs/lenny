@@ -17275,7 +17275,7 @@ by the `AuditGrantDrift` alert at `pkg/alerting/rules/rules.go` lines
 
 **Resolution:** New `integrity.PeriodicCheck` (`pkg/audit/integrity/periodic.go`) runs the §11.7 item 2 background loop: each cycle re-runs `Verify` (grants/triggers/erasure guard) and samples recent chain segments via `CheckChainContinuityRecent`. On drift it logs a CRITICAL line, increments the new `lenny_audit_grant_drift_total` counter (added to `gatewaymetrics`), reports chain states on `lenny_audit_chain_integrity_total`, and — when `audit.hardFailOnDrift` is set — self-signals SIGTERM through the existing graceful-shutdown path. `ResolveGrantCheckInterval` enforces the profile-dependent cadence (regulated default 60s / max 120s; unregulated 300s / 900s) with a fatal startup error above the maximum. The gateway resolves the interval against the active compliance posture, then starts the loop under `watchdogCtx`. Operator-tunable via `--audit-grant-check-interval-seconds` / `--audit-hard-fail-on-drift` and the `audit.grantCheckIntervalSeconds` / `audit.hardFailOnDrift` Helm values. Commit `1a4984e4`.
 
-### - [ ] F-11.7.4 — 04  Audit hash-chain construction omits the spec-mandated input columns and uses non-canonical payload encoding [High] — OPEN
+### - [x] F-11.7.4 — 04  Audit hash-chain construction omits the spec-mandated input columns and uses non-canonical payload encoding [High] — CLOSED
 
 **Spec:** §11.7 item 3 lines 361–367 — "Each audit log entry includes a
 `prev_hash` column containing the SHA-256 hash of the previous entry's
@@ -17321,6 +17321,29 @@ the more painful the cutover.
 
 **Severity:** High — the hash chain is the spec's tamper-evidence
 substrate and the input doesn't match what §11.7 names.
+
+**Resolution:** The §11.7 item 3 hash input now matches the spec tuple.
+New `pkg/audit/jcs` implements RFC 8785 JCS (UTF-16 key order, NFC
+string normalization, whitespace stripping, ECMAScript number form);
+`audit.CanonicalPayload` exposes it. `audit.Row` gains `ID` and
+`EventSchemaVersion`, and `canonicalBytes` now hashes the canonical
+tuple `(id, prev_hash, tenant_id, sequence_number, event_type,
+event_schema_version, payload_canonical_json[JCS], created_at)` — the
+non-spec `Redacted` field is dropped from the hash, and `linkHash(prev)`
+is now the predecessor's content hash (prev_hash(N) = SHA-256 of the
+predecessor tuple, per line 361). `auditstore.sealAndInsert` generates
+the row `id` in Go so it enters the hash, writes the JCS canonical form
+into `payload_canonical_json`, and truncates `created_at` to microseconds
+so the hashed value equals the Postgres round-trip value; `scanRow` and
+`integrity` reconstruction read `id::text` and `event_schema_version`.
+The hash is recomputed from the canonical payload on read, so it is
+stable across jsonb key reordering and numeric renormalization. The DB
+already modeled the spec columns (schema 0001, immutability trigger
+0041), so no migration was needed; the canonical form is computed in Go
+rather than a `pg_jcs_canonicalize()` trigger, consistent with the
+codebase's Go-side hash architecture. The OCSF `event_schema_version`
+echo now reflects a value that is part of the hash input. Commit
+bf8a1b1d.
 
 ### - [x] F-11.7.5 — 05  Audit write path has no statement_timeout, no retry loop, and no `AUDIT_CONCURRENCY_TIMEOUT` surfacing [High] — CLOSED
 

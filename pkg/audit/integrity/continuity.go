@@ -208,7 +208,7 @@ func auditTenants(ctx context.Context, db Querier) ([]string, error) {
 // derives it (the audit_log table does not store the per-row hash).
 func loadChainRows(ctx context.Context, db Querier, tenantID string) ([]audit.Row, error) {
 	rows, err := db.Query(ctx, `
-		SELECT sequence_number, event_type, payload, created_at, prev_hash
+		SELECT sequence_number, event_type, payload, created_at, prev_hash, id::text, event_schema_version
 		FROM audit_log
 		WHERE tenant_id = $1
 		ORDER BY sequence_number`, tenantID)
@@ -227,9 +227,9 @@ func loadRecentChainRows(ctx context.Context, db Querier, tenantID string, lastN
 		return loadChainRows(ctx, db, tenantID)
 	}
 	rows, err := db.Query(ctx, `
-		SELECT sequence_number, event_type, payload, created_at, prev_hash
+		SELECT sequence_number, event_type, payload, created_at, prev_hash, id::text, event_schema_version
 		FROM (
-			SELECT sequence_number, event_type, payload, created_at, prev_hash
+			SELECT sequence_number, event_type, payload, created_at, prev_hash, id, event_schema_version
 			FROM audit_log
 			WHERE tenant_id = $1
 			ORDER BY sequence_number DESC
@@ -256,7 +256,7 @@ func scanChainRows(rows pgx.Rows, tenantID string) ([]audit.Row, error) {
 			prevHash []byte
 			created  time.Time
 		)
-		if err := rows.Scan(&seq, &r.EventType, &payload, &created, &prevHash); err != nil {
+		if err := rows.Scan(&seq, &r.EventType, &payload, &created, &prevHash, &r.ID, &r.EventSchemaVersion); err != nil {
 			return nil, fmt.Errorf("integrity: scan chain row: %w", err)
 		}
 		r.Seq = uint64(seq)
