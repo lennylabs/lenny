@@ -145,6 +145,19 @@ func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.Re
 	})
 }
 
+// parseCommaList splits a comma-separated flag value into its non-empty,
+// trimmed elements. It returns nil for an empty value so the §13.1
+// agent-namespace audits stay disabled when no namespaces are configured.
+func parseCommaList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // parseAcceptDowngrade splits the comma-separated --accept-downgrade
 // value into the set of feature flags whose admission-plane downgrade
 // the operator has explicitly acknowledged.
@@ -165,6 +178,11 @@ func main() {
 
 	namespace := flag.String("namespace", "lenny-system",
 		"release namespace holding the phase-stamp ConfigMap")
+	agentNamespaces := flag.String("agent-namespaces", "",
+		"comma-separated §17.2 agent namespaces (agentNamespaces[].name) the §13.1 "+
+			"host-sharing and credential-fsGroup audits cover in addition to the release "+
+			"namespace; empty scopes the host-sharing audit to the release namespace and "+
+			"skips the agent-pod credential audit")
 	llmProxy := flag.Bool("feature-llm-proxy", false, "value of the features.llmProxy chart flag")
 	drainReadiness := flag.Bool("feature-drain-readiness", false,
 		"value of the features.drainReadiness chart flag")
@@ -260,8 +278,9 @@ func main() {
 	}
 
 	report := preflight.Run(context.Background(), cl, preflight.Config{
-		Namespace:   *namespace,
-		Environment: *environment,
+		Namespace:       *namespace,
+		AgentNamespaces: parseCommaList(*agentNamespaces),
+		Environment:     *environment,
 		Features: preflight.WebhookFeatureFlags{
 			LLMProxy:       *llmProxy,
 			DrainReadiness: *drainReadiness,

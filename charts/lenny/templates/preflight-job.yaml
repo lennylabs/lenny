@@ -43,8 +43,19 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["list"]
+  # §13.1 line 23 host-sharing audit covers Lenny-managed Deployments,
+  # DaemonSets, and Jobs across the release and agent namespaces, and the
+  # §13.1 line 25 credential-fsGroup audit scans the agent Pods the
+  # controller spawns in the agent namespaces — both list cluster-wide so
+  # the scan is not pinned to the release namespace. F-13.1.7 / F-13.1.4.
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
     verbs: ["list"]
   # §5.3 line 676 RuntimeClass presence check (cluster-scoped objects).
   - apiGroups: ["node.k8s.io"]
@@ -89,12 +100,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "daemonsets"]
-    verbs: ["list"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["list"]
+  # Workload (Deployment/DaemonSet/Job) and Pod list permissions moved to
+  # the ClusterRole above so the §13.1 host-sharing and credential-fsGroup
+  # audits reach the agent namespaces. F-13.1.7 / F-13.1.4.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -197,6 +205,12 @@ spec:
           imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
           args:
             - --namespace={{ .Release.Namespace }}
+            # §13.1 lines 23/25 — the host-sharing and credential-fsGroup
+            # audits cover the agent namespaces in addition to the release
+            # namespace. F-13.1.7 / F-13.1.4.
+            {{- $agentNS := list }}
+            {{- range .Values.agentNamespaces }}{{ $agentNS = append $agentNS .name }}{{ end }}
+            - --agent-namespaces={{ join "," $agentNS }}
             - --feature-llm-proxy={{ .Values.features.llmProxy }}
             - --feature-drain-readiness={{ .Values.features.drainReadiness }}
             - --feature-compliance={{ .Values.features.compliance }}

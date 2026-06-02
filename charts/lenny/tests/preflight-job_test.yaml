@@ -88,6 +88,44 @@ tests:
             resources: ["sandboxtemplates"]
             verbs: ["list"]
 
+  # spec: §13.1 lines 23/25 — the host-sharing and credential-fsGroup
+  # audits reach the agent namespaces, so the workload and pod list
+  # permissions are cluster-wide on the ClusterRole. F-13.1.7 / F-13.1.4.
+  - it: grants cluster-wide workload and pod read for the §13.1 agent-namespace audits
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments", "daemonsets"]
+            verbs: ["list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["list"]
+
+  # spec: §13.1 lines 23/25 — the Job tells the preflight binary which
+  # agent namespaces to scan. F-13.1.7 / F-13.1.4.
+  - it: passes the chart agent namespaces to the preflight binary
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--agent-namespaces=lenny-agents,lenny-agents-kata"
+
   # spec: §17.6 line 534 — the preflight Job ships with a hard runtime
   # cap so a slow control plane does not hang the install.
   - it: caps preflight runtime via activeDeadlineSeconds (default 120s)

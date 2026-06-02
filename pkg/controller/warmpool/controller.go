@@ -77,6 +77,13 @@ func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) erro
 // WarmPoolController maintains on SandboxTemplate.status.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
+// conditionConcurrentWorkspaceCredentialSharing is the §13.1 warning-class
+// condition the WarmPoolController stamps on a SandboxWarmPool that runs a
+// concurrent-workspace pool against a credential-bearing Runtime, where
+// slots in the shared pod can read each other's credential files. spec:
+// §13.1 line 29. F-13.1.5.
+const conditionConcurrentWorkspaceCredentialSharing = "ConcurrentWorkspaceCredentialSharing"
+
 // Label keys the controller stamps on every Sandbox it creates. The
 // pool label scopes the per-pool List; the managed label marks the
 // resource as controller-owned for §17.2 admission targeting.
@@ -254,6 +261,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		decision.Create = 0
 	}
 
+	// spec: §13.1 line 29 — stamp the ConcurrentWorkspaceCredentialSharing
+	// warning on a concurrent-workspace pool whose Runtime is
+	// credential-bearing, so the cross-slot credential-read tradeoff is
+	// visible in pool status alongside the other concurrent-workspace
+	// properties. F-13.1.5.
+	credSharing, err := r.evaluateConcurrentWorkspaceSharing(ctx, &pool, tmpl)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	for i := 0; i < decision.Create; i++ {
 		if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
@@ -266,7 +283,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	if err := r.updateStatus(ctx, &pool, decision, degraded); err != nil {
+	if err := r.updateStatus(ctx, &pool, decision, degraded, credSharing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
 	}
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
@@ -615,13 +632,65 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 	return &cond, nil
 }
 
-// updateStatus writes the post-action warm and ready counts, the
-// observed generation, and the optional §5.3 Degraded condition to the
-// pool status. The write is skipped when nothing changed, to avoid
-// generating spurious etcd writes and reconcile events. A nil degraded
-// condition leaves the condition list untouched (the RuntimeClass check
-// is disabled or not applicable).
-func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, degraded *metav1.Condition) error {
+// evaluateConcurrentWorkspaceSharing returns the §13.1 line 29
+// ConcurrentWorkspaceCredentialSharing condition for the pool. The
+// condition is managed only for concurrent-workspace pools (executionMode
+// concurrent + concurrencyStyle workspace), where multiple slots share one
+// pod, one agent UID, and the lenny-cred-readers group, so any slot can
+// read every other slot's credential file. It is True when the pool's
+// Runtime declares non-empty supportedProviders (a credential-bearing
+// runtime) and False otherwise, so the operator-visible warning tracks the
+// Runtime's current provider set. A nil return leaves the condition
+// unmanaged: the pool is not concurrent-workspace, or the Runtime could not
+// be resolved (a transient read error propagates so the reconcile retries).
+//
+// spec: §13.1 line 29; §5.2 (concurrent-workspace pool model). F-13.1.5.
+func (r *Reconciler) evaluateConcurrentWorkspaceSharing(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
+	if tmpl.Spec.ExecutionMode != "concurrent" || tmpl.Spec.ConcurrencyStyle != "workspace" {
+		return nil, nil
+	}
+	if tmpl.Spec.RuntimeRef == "" {
+		return nil, nil
+	}
+	var rt lennyv1.Runtime
+	if err := r.Client.Get(ctx, client.ObjectKey{Name: tmpl.Spec.RuntimeRef}, &rt); err != nil {
+		// A missing Runtime is a separate degraded scenario the pool cannot
+		// warm against; leave the condition unmanaged rather than failing
+		// the reconcile on it. Any other read error propagates for retry.
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get runtime %q for pool %s: %w", tmpl.Spec.RuntimeRef, pool.Name, err)
+	}
+	if len(rt.Spec.SupportedProviders) == 0 {
+		return &metav1.Condition{
+			Type:    conditionConcurrentWorkspaceCredentialSharing,
+			Status:  metav1.ConditionFalse,
+			Reason:  "NoCredentialProviders",
+			Message: "Concurrent-workspace pool runs a Runtime with no supportedProviders; no credential leases are shared across slots.",
+		}, nil
+	}
+	return &metav1.Condition{
+		Type:   conditionConcurrentWorkspaceCredentialSharing,
+		Status: metav1.ConditionTrue,
+		Reason: "CredentialBearingRuntime",
+		Message: fmt.Sprintf(
+			"Concurrent-workspace slots share one pod and the lenny-cred-readers group; "+
+				"any slot can read every other slot's credential file for Runtime %q "+
+				"(supportedProviders: %v). Use executionMode session or task for strict "+
+				"per-task credential isolation.",
+			tmpl.Spec.RuntimeRef, rt.Spec.SupportedProviders),
+	}, nil
+}
+
+// updateStatus writes the post-action warm and ready counts, the observed
+// generation, and any controller-managed status conditions to the pool.
+// Each non-nil condition (the §5.3 RuntimeClass Degraded condition and the
+// §13.1 ConcurrentWorkspaceCredentialSharing warning) is merged into the
+// live condition list. The write is skipped when nothing changed, to avoid
+// spurious etcd writes and reconcile events. When every supplied condition
+// is nil the condition list is left untouched (no checker produced one).
+func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, conds ...*metav1.Condition) error {
 	drained := len(decision.Drain)
 	warm := int32(decision.WarmCount + decision.Create - drained)
 	ready := int32(decision.ReadyCount - drained)
@@ -636,10 +705,17 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		}
 		merged := append([]metav1.Condition{}, live.Status.Conditions...)
 		condChanged := false
-		if degraded != nil {
-			desired := *degraded
+		manageConditions := false
+		for _, c := range conds {
+			if c == nil {
+				continue
+			}
+			manageConditions = true
+			desired := *c
 			desired.ObservedGeneration = live.Generation
-			condChanged = meta.SetStatusCondition(&merged, desired)
+			if meta.SetStatusCondition(&merged, desired) {
+				condChanged = true
+			}
 		}
 		countsChanged := live.Status.WarmCount != warm ||
 			live.Status.ReadyCount != ready ||
@@ -660,10 +736,10 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		patch.Status.WarmCount = warm
 		patch.Status.ReadyCount = ready
 		patch.Status.ObservedGeneration = live.Generation
-		// Only assert ownership of the condition list when the §5.3
-		// RuntimeClass check produced one, so a build without the checker
+		// Only assert ownership of the condition list when a checker
+		// produced a condition, so a build without any condition source
 		// wired keeps the prior counts-only status patch.
-		if degraded != nil {
+		if manageConditions {
 			patch.Status.Conditions = merged
 		}
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))

@@ -14,6 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
 // lennyManagedLabel selects the workloads the chart labels as
@@ -34,6 +36,19 @@ type Config struct {
 	// Namespace is the release namespace holding the phase-stamp
 	// ConfigMap.
 	Namespace string
+	// AgentNamespaces lists the §17.2 agent namespaces (lenny-agents,
+	// lenny-agents-kata, and any future additions) that the §13.1
+	// host-sharing and credential-fsGroup audits cover in addition to the
+	// release namespace. The lenny-preflight Job passes the chart's
+	// agentNamespaces[].name values. When empty the host-sharing scan is
+	// scoped to the release namespace only and the agent-pod credential
+	// audit is skipped.
+	//
+	// spec: §13.1 line 23 (host-sharing scan covers all Lenny-managed
+	// Deployments, DaemonSets, and Jobs), §13.1 line 25
+	// (fsGroup/supplementalGroups audit on every agent-pod template).
+	// F-13.1.7 / F-13.1.4.
+	AgentNamespaces []string
 	// Features are the incoming chart feature-flag values.
 	Features WebhookFeatureFlags
 	// AcceptDowngrade maps a feature flag to its
@@ -157,16 +172,56 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		})
 	}
 
-	if pods, err := gatherWorkloadPodSpecs(ctx, reader, cfg.Namespace); err != nil {
+	// §13.1 line 23 — the host-sharing audit covers all Lenny-managed
+	// Deployments, DaemonSets, and Jobs in the release namespace and the
+	// §17.2 agent namespaces, plus the bare agent Pods the controller
+	// spawns from Sandbox CRs. Scoping the scan to the release namespace
+	// alone let an agent-namespace pod with hostPID escape the gate
+	// (F-13.1.7). The same agent-Pod scan feeds the §13.1 line 25
+	// credential-fsGroup audit (F-13.1.4).
+	workloadNS := dedupeNamespaces(append([]string{cfg.Namespace}, cfg.AgentNamespaces...))
+	workloads, werr := gatherWorkloadPodSpecs(ctx, reader, workloadNS)
+	agentPods, aerr := gatherAgentPods(ctx, reader, cfg.AgentNamespaces)
+	switch {
+	case werr != nil:
 		report = append(report, CheckResult{
 			Name:     "host-sharing-flags",
-			Decision: Decision{Reason: "list Lenny-managed workloads: " + err.Error()},
+			Decision: Decision{Reason: "list Lenny-managed workloads: " + werr.Error()},
 		})
-	} else {
+	case aerr != nil:
 		report = append(report, CheckResult{
 			Name:     "host-sharing-flags",
-			Decision: CheckHostSharing(pods),
+			Decision: Decision{Reason: "list Lenny-managed agent pods: " + aerr.Error()},
 		})
+	default:
+		hostSharing := workloads
+		for _, p := range agentPods {
+			hostSharing = append(hostSharing, p.HostSharingPodSpec)
+		}
+		report = append(report, CheckResult{
+			Name:     "host-sharing-flags",
+			Decision: CheckHostSharing(hostSharing),
+		})
+	}
+
+	// §13.1 line 25 — the lenny-preflight Job validates the presence of
+	// the lenny-cred-readers fsGroup and supplementalGroups on every
+	// agent-pod template, the install-time backstop to the admission
+	// webhook's per-CREATE check (F-13.1.4). The audit runs only when the
+	// chart names the agent namespaces; a fresh install has no agent pods
+	// and the check passes cleanly.
+	if len(cfg.AgentNamespaces) > 0 {
+		if aerr != nil {
+			report = append(report, CheckResult{
+				Name:     "agent-pod-cred-fsgroup",
+				Decision: Decision{Reason: "list Lenny-managed agent pods: " + aerr.Error()},
+			})
+		} else {
+			report = append(report, CheckResult{
+				Name:     "agent-pod-cred-fsgroup",
+				Decision: CheckAgentPodCredFSGroup(agentPods, podspec.CredReadersGID),
+			})
+		}
 	}
 
 	// §13.2 NetworkPolicy selector-consistency and parity audits. A
@@ -336,38 +391,92 @@ func gatherGatewayIdentities(ctx context.Context, reader client.Reader) ([]Gatew
 }
 
 // gatherWorkloadPodSpecs lists the Lenny-managed Deployments,
-// DaemonSets, and Jobs in namespace and projects each pod template
-// onto a HostSharingPodSpec.
-func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespace string) ([]HostSharingPodSpec, error) {
+// DaemonSets, and Jobs in each namespace and projects each pod template
+// onto a HostSharingPodSpec. The workload identifier is namespace-scoped
+// so a host-sharing failure in an agent namespace is unambiguous.
+//
+// spec: §13.1 line 23 — the audit covers every Lenny-managed workload,
+// not only those in the release namespace. F-13.1.7.
+func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespaces []string) ([]HostSharingPodSpec, error) {
 	var out []HostSharingPodSpec
+	for _, namespace := range namespaces {
+		var deploys appsv1.DeploymentList
+		if err := reader.List(ctx, &deploys, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return nil, err
+		}
+		for i := range deploys.Items {
+			d := &deploys.Items[i]
+			out = append(out, projectHostSharing(namespace+"/Deployment/"+d.Name, &d.Spec.Template.Spec))
+		}
 
-	var deploys appsv1.DeploymentList
-	if err := reader.List(ctx, &deploys, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-		return nil, err
-	}
-	for i := range deploys.Items {
-		d := &deploys.Items[i]
-		out = append(out, projectHostSharing("Deployment/"+d.Name, &d.Spec.Template.Spec))
-	}
+		var daemonsets appsv1.DaemonSetList
+		if err := reader.List(ctx, &daemonsets, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return nil, err
+		}
+		for i := range daemonsets.Items {
+			ds := &daemonsets.Items[i]
+			out = append(out, projectHostSharing(namespace+"/DaemonSet/"+ds.Name, &ds.Spec.Template.Spec))
+		}
 
-	var daemonsets appsv1.DaemonSetList
-	if err := reader.List(ctx, &daemonsets, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-		return nil, err
-	}
-	for i := range daemonsets.Items {
-		ds := &daemonsets.Items[i]
-		out = append(out, projectHostSharing("DaemonSet/"+ds.Name, &ds.Spec.Template.Spec))
-	}
-
-	var jobs batchv1.JobList
-	if err := reader.List(ctx, &jobs, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-		return nil, err
-	}
-	for i := range jobs.Items {
-		j := &jobs.Items[i]
-		out = append(out, projectHostSharing("Job/"+j.Name, &j.Spec.Template.Spec))
+		var jobs batchv1.JobList
+		if err := reader.List(ctx, &jobs, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return nil, err
+		}
+		for i := range jobs.Items {
+			j := &jobs.Items[i]
+			out = append(out, projectHostSharing(namespace+"/Job/"+j.Name, &j.Spec.Template.Spec))
+		}
 	}
 	return out, nil
+}
+
+// agentManagedLabel selects the bare agent Pods the WarmPoolController
+// stamps `lenny.dev/managed: "true"` (warmpool.LabelManaged); agent pods
+// do not carry the chart's app.kubernetes.io/name label, so the
+// host-sharing and credential audits select them by the controller-owned
+// managed label instead.
+var agentManagedLabel = client.MatchingLabels{"lenny.dev/managed": "true"}
+
+// gatherAgentPods lists the controller-spawned agent Pods in each agent
+// namespace and projects each onto an AgentPodSpec carrying both the
+// §13.1 host-sharing flags and the pod-level fsGroup / supplementalGroups
+// the §13.1 credential-delivery path requires. An empty namespace list
+// returns no pods so a deployment that does not declare agentNamespaces
+// runs neither agent-scoped audit.
+//
+// spec: §13.1 line 16 (CRD-driven RuntimePool pods are in the
+// forbidden-flag set), §13.1 line 25 (fsGroup/supplementalGroups on every
+// agent-pod template). F-13.1.7 / F-13.1.4.
+func gatherAgentPods(ctx context.Context, reader client.Reader, namespaces []string) ([]AgentPodSpec, error) {
+	var out []AgentPodSpec
+	for _, namespace := range namespaces {
+		var pods corev1.PodList
+		if err := reader.List(ctx, &pods, client.InNamespace(namespace), agentManagedLabel); err != nil {
+			return nil, err
+		}
+		for i := range pods.Items {
+			p := &pods.Items[i]
+			out = append(out, projectAgentPod(namespace+"/Pod/"+p.Name, &p.Spec))
+		}
+	}
+	return out, nil
+}
+
+// dedupeNamespaces returns ns with empty entries dropped and duplicates
+// removed, preserving first-seen order. The release namespace can also
+// appear in agentNamespaces on misconfigured installs; the host-sharing
+// scan must not list it twice.
+func dedupeNamespaces(ns []string) []string {
+	seen := make(map[string]bool, len(ns))
+	out := ns[:0]
+	for _, n := range ns {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // projectHostSharing reduces a pod template to the host-sharing flags

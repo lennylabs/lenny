@@ -222,6 +222,116 @@ func TestRunFailsOnHostSharingWorkload(t *testing.T) {
 	}
 }
 
+func lennyDeploymentNS(ns, name string, hostPID bool) *appsv1.Deployment {
+	d := lennyDeployment(name, hostPID)
+	d.Namespace = ns
+	return d
+}
+
+// agentPod builds a controller-spawned agent Pod carrying the
+// lenny.dev/managed label the §13.1 preflight audits select on.
+func agentPod(ns, name string, fsGroup *int64, supp []int64, hostPID bool) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels:    map[string]string{"lenny.dev/managed": "true"},
+		},
+		Spec: corev1.PodSpec{
+			HostPID: hostPID,
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup:            fsGroup,
+				SupplementalGroups: supp,
+			},
+			Containers: []corev1.Container{{Name: "agent"}},
+		},
+	}
+}
+
+// spec: §13.1 lines 23/25 — a compliant agent pod passes both the
+// host-sharing and credential-fsGroup audits. F-13.1.7 / F-13.1.4.
+func TestRunPassesWhenAgentPodsCompliant(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, agentPod("lenny-agents", "alice-0", i64(credReadersGID), []int64{credReadersGID}, false))
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:       preflightNS,
+		AgentNamespaces: []string{"lenny-agents", "lenny-agents-kata"},
+	})
+	if d := resultByName(report, "host-sharing-flags"); !d.Passed {
+		t.Errorf("host-sharing-flags failed for a compliant agent pod: %s", d.Reason)
+	}
+	if d := resultByName(report, "agent-pod-cred-fsgroup"); !d.Passed {
+		t.Errorf("agent-pod-cred-fsgroup failed for a compliant agent pod: %s", d.Reason)
+	}
+}
+
+// spec: §13.1 line 23 — an agent-namespace pod with hostPID escaped the
+// release-namespace-only scan; the audit must now catch it. F-13.1.7.
+func TestRunFailsOnAgentPodHostSharing(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, agentPod("lenny-agents", "alice-0", i64(credReadersGID), []int64{credReadersGID}, true))
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:       preflightNS,
+		AgentNamespaces: []string{"lenny-agents"},
+	})
+	if resultByName(report, "host-sharing-flags").Passed {
+		t.Error("host-sharing-flags passed an agent pod with hostPID true")
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a host-sharing agent pod")
+	}
+}
+
+// spec: §13.1 line 25 — an agent pod missing the cred-readers fsGroup
+// fails the install-time backstop. F-13.1.4.
+func TestRunFailsOnAgentPodMissingFSGroup(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, agentPod("lenny-agents", "alice-0", nil, nil, false))
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:       preflightNS,
+		AgentNamespaces: []string{"lenny-agents"},
+	})
+	if resultByName(report, "agent-pod-cred-fsgroup").Passed {
+		t.Error("agent-pod-cred-fsgroup passed an agent pod with no fsGroup")
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a non-compliant agent pod fsGroup")
+	}
+}
+
+// spec: §13.1 line 23 — the host-sharing scan now covers Deployments in
+// the agent namespaces, not only the release namespace. F-13.1.7.
+func TestRunFailsOnHostSharingDeploymentInAgentNamespace(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, lennyDeploymentNS("lenny-agents", "lenny-agent-helper", true))
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:       preflightNS,
+		AgentNamespaces: []string{"lenny-agents"},
+	})
+	if resultByName(report, "host-sharing-flags").Passed {
+		t.Error("host-sharing-flags passed a Deployment with hostPID in an agent namespace")
+	}
+}
+
+// When no agent namespaces are configured the credential audit is skipped
+// (and the host-sharing scan stays release-scoped). F-13.1.4.
+func TestRunSkipsAgentAuditWhenNoAgentNamespaces(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if resultByName(report, "agent-pod-cred-fsgroup") != (preflight.Decision{}) {
+		t.Error("agent-pod-cred-fsgroup ran with no agent namespaces configured")
+	}
+}
+
 func TestRunReportsAClusterReadFailureFailClosed(t *testing.T) {
 	c := fake.NewClientBuilder().
 		WithScheme(runScheme(t)).

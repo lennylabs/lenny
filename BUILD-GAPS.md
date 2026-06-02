@@ -21787,7 +21787,11 @@ are only noted under Info.
 
 ---
 
-### - [ ] F-13.1.1 — severity [High] — OPEN
+### - [x] F-13.1.1 — severity [High] — CLOSED
+
+Orphan finding heading with no Spec/Evidence/Gap body (an artifact of the
+review-extraction pass, the same shape as F-12.9.1). Nothing to fix.
+Resolution: marked CLOSED in this batch as an empty heading.
 
 ### - [x] F-13.1.2 — 1-01 — Agent pods omit `/sessions` and `/artifacts` writable paths the §13.1 "Writable paths" row mandates [High] — CLOSED
 
@@ -21899,7 +21903,7 @@ Evidence:
   metric
 - spec/13_security-model.md:14; spec/04_system-components.md:870-888
 
-### - [ ] F-13.1.4 — 1-03 — `lenny-preflight` does not verify `fsGroup` / `supplementalGroups` presence on agent-pod templates [High] — OPEN
+### - [x] F-13.1.4 — 1-03 — `lenny-preflight` does not verify `fsGroup` / `supplementalGroups` presence on agent-pod templates [High] — CLOSED
 
 §13.1 line 25 states "The admission webhook and `lenny-preflight` Job
 validate the presence and immutability of the `fsGroup` and
@@ -21932,7 +21936,18 @@ Evidence:
   present)
 - spec/13_security-model.md:25
 
-### - [ ] F-13.1.5 — 1-04 — Concurrent-workspace pool admission does not emit `ConcurrentWorkspaceCredentialSharing=True` condition [High] — OPEN
+Resolution: added the `agent-pod-cred-fsgroup` preflight check
+(`pkg/preflight/credfsgroup.go`, `CheckAgentPodCredFSGroup`) wired into
+`Run`. It scans the controller-spawned agent Pods (selected by
+`lenny.dev/managed`) in the §17.2 agent namespaces and rejects any pod
+whose pod-level `fsGroup` is absent / not the `podspec.CredReadersGID`
+or whose `supplementalGroups` omits that GID, with
+`POD_SPEC_CRED_FSGROUP_MISSING`. `cmd/lenny-preflight` gains
+`--agent-namespaces`; the preflight Job passes the chart's
+`agentNamespaces[].name` and the ClusterRole now grants cluster-wide pod
+list. A fresh install (no agent pods) passes. spec: §13.1 line 25.
+
+### - [x] F-13.1.5 — 1-04 — Concurrent-workspace pool admission does not emit `ConcurrentWorkspaceCredentialSharing=True` condition [High] — CLOSED
 
 §13.1 line 29 mandates: "The concurrent-workspace pool validation in
 §4.7 pool admission additionally emits a warning-class condition
@@ -21972,11 +21987,28 @@ Evidence:
   exists)
 - spec/13_security-model.md:29
 
+Resolution: the spec mandates the warning be "visible in pool status," a
+SandboxWarmPool status condition, which admission webhooks cannot write.
+The WarmPoolController now emits it: `evaluateConcurrentWorkspaceSharing`
+fetches the pool's Runtime and, for a concurrent-workspace pool
+(`executionMode: concurrent` + `concurrencyStyle: workspace`), stamps
+`ConcurrentWorkspaceCredentialSharing=True` (reason
+`CredentialBearingRuntime`) when the Runtime has non-empty
+`supportedProviders`, or `=False` (reason `NoCredentialProviders`)
+otherwise. `updateStatus` was generalized from a single Degraded
+condition to a variadic condition set so both it and the §5.3 RuntimeClass
+condition merge. The controller already holds `runtimes` read RBAC. spec:
+§13.1 line 29.
+
 ---
 
-### - [ ] F-13.1.6 — severity [Medium] — OPEN
+### - [x] F-13.1.6 — severity [Medium] — CLOSED
 
-### - [ ] F-13.1.7 — 1-01 — `lenny-preflight` host-sharing audit scopes to release namespace only; agent-namespace pods are not covered [Medium] — OPEN
+Orphan finding heading with no Spec/Evidence/Gap body (an artifact of the
+review-extraction pass, the same shape as F-13.1.1 / F-12.9.1). Nothing to
+fix. Resolution: marked CLOSED in this batch as an empty heading.
+
+### - [x] F-13.1.7 — 1-01 — `lenny-preflight` host-sharing audit scopes to release namespace only; agent-namespace pods are not covered [Medium] — CLOSED
 
 §13.1 line 23 states the preflight verifies "all Lenny-managed
 Deployments, DaemonSets, and Jobs" and includes "CRD-driven RuntimePool
@@ -22001,6 +22033,15 @@ Evidence:
 - `pkg/preflight/run.go:199-229` (`InNamespace(namespace)` on every
   list)
 - spec/13_security-model.md:16, 23
+
+Resolution: `gatherWorkloadPodSpecs` now iterates the release namespace
+plus the §17.2 agent namespaces (passed via the new
+`Config.AgentNamespaces` / `--agent-namespaces` flag), and a new
+`gatherAgentPods` scan covers the bare agent Pods the controller spawns
+there, feeding both the host-sharing audit (so an agent-namespace pod with
+`hostPID: true` is caught) and the F-13.1.4 credential-fsGroup audit. The
+preflight Job ClusterRole grants cluster-wide list on
+deployments/daemonsets/jobs/pods. spec: §13.1 lines 16, 23.
 
 ### - [x] F-13.1.8 — 1-02 — Pod-security baseline (capabilities, RO root, seccomp, runAsNonRoot) is not enforced on ephemeral containers [Medium] — CLOSED
 
