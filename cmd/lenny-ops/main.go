@@ -199,6 +199,19 @@ func main() {
 	rateLimitBurst := flag.Int("rate-limit-burst", envInt("LENNY_OPS_RATE_LIMIT_BURST", opsserver.DefaultRateLimitBurst),
 		"§25.4 line 2001 ops.rateLimiting.burst: per-service-account token-bucket depth. "+
 			"Override via LENNY_OPS_RATE_LIMIT_BURST.")
+	// spec: §25.4 lines 2206-2212 ops.locks.memoryTier. Governs whether the
+	// in-memory (Tier-3) remediation-lock store grants an acquisition when
+	// both Postgres and Redis are down. "single-replica-only" (default)
+	// rejects acquisitions in a multi-replica deployment (detected via the
+	// lenny-ops Service Endpoints); "always" grants with a replica-local
+	// warning; "never" disables Tier 3. F-25.4.26.
+	locksMemoryTier := flag.String("locks-memory-tier",
+		envOr("LENNY_OPS_LOCKS_MEMORY_TIER", string(coordination.MemoryTierSingleReplicaOnly)),
+		"§25.4 ops.locks.memoryTier: in-memory lock-tier policy — "+
+			"single-replica-only | always | never. Override via LENNY_OPS_LOCKS_MEMORY_TIER.")
+	opsServiceName := flag.String("ops-service-name", envOr("LENNY_OPS_SERVICE_NAME", "lenny-ops"),
+		"§25.4 line 2208: name of the lenny-ops Service whose Endpoints the single-replica-only "+
+			"lock policy reads to count ready replicas. Override via LENNY_OPS_SERVICE_NAME.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -395,6 +408,34 @@ func main() {
 	// store.
 	lockStore := coordination.NewMemStore()
 
+	// §25.4 lines 2206-2212: the in-memory (Tier-3) lock policy. The mode
+	// is validated at startup so an operator typo fails fast rather than
+	// silently selecting an unintended safety posture. Under the
+	// single-replica-only default, a multi-replica deployment rejects
+	// uncoordinated in-memory acquisitions; the replica count comes from
+	// the lenny-ops Service Endpoints (re-checked every 30s). Without a
+	// cluster connection (single-process dev) the counter is nil and the
+	// policy treats the deployment as a single replica.
+	memTier, ok := coordination.ParseMemoryTier(*locksMemoryTier)
+	if !ok {
+		log.Fatalf("lenny-ops: invalid --locks-memory-tier %q: want single-replica-only, always, or never", *locksMemoryTier)
+	}
+	var replicaCounter coordination.ReplicaCounter
+	if clientset != nil {
+		ns := envOr("POD_NAMESPACE", *leaderElectNS)
+		ep := opsservice.NewEndpointsReplicaCounter(clientset.CoreV1(), ns, *opsServiceName)
+		// §25.4 line 2208: the startup lookup runs synchronously so the
+		// policy has a real count before the first acquire; the 30s
+		// re-check loop then keeps it current.
+		if err := ep.Refresh(ctx); err != nil {
+			log.Printf("lenny-ops: §25.4 startup replica-count lookup failed (assuming single replica): %v", err)
+		}
+		go ep.Run(ctx, opsservice.ReplicaPollInterval)
+		replicaCounter = ep
+	}
+	lockCoordination := coordination.NewCoordinationGate(memTier, replicaCounter)
+	log.Printf("lenny-ops: §25.4 remediation-lock memoryTier=%s", memTier)
+
 	// The §25.4 escalation service, the §25.10 configuration-drift
 	// service, and the §25.6 DiagnosticService. Each runs against an
 	// in-memory or unconfigured backing store in this single-process
@@ -511,6 +552,14 @@ func main() {
 	// restore execute, full backup) reject a missing key and fail closed
 	// on a store outage at Tier 2/3 (the --production posture).
 	idemStore := buildIdempotencyStore(pgPool)
+	// §25.4 lines 2528-2534: the pod-log proxy reads container logs via the
+	// Kubernetes API so agents do not need kubectl access. Wired only when a
+	// cluster connection is available; otherwise the endpoint reports the
+	// proxy unavailable.
+	var podLogs opsserver.PodLogReader
+	if clientset != nil {
+		podLogs = k8sPodLogReader{pods: clientset.CoreV1()}
+	}
 	opsHandler := opsserver.New(opsserver.Options{
 		Probes:           probes,
 		Runbooks:         runbookSource,
@@ -520,9 +569,11 @@ func main() {
 		Diagnostics:      diagnosticSvc,
 		Drift:            driftSvc,
 		Locks:            lockStore,
+		LockCoordination: lockCoordination,
 		Escalations:      escalationSvc,
 		EventStream:      eventStream,
 		ReleaseChannel:   releaseChannelPub,
+		PodLogs:          podLogs,
 		Production:       *production,
 		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
 		Auth:             authCfg,

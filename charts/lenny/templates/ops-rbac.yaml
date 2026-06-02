@@ -30,9 +30,15 @@ rules:
     resources: ["deployments/scale"]
     verbs: ["get", "patch"]
   # §25.4 lines 1082-1084 — pod, pod-log, and event reads for the §25.6
-  # diagnostics surface (the log-proxy and pod-state fallbacks).
+  # diagnostics surface and the §25.4 log-proxy endpoint (lines 2528-2534).
   - apiGroups: [""]
     resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+  # §25.4 line 2208 — Endpoints reads so the single-replica-only lock
+  # policy can count ready lenny-ops replicas from the lenny-ops Service
+  # Endpoints at startup and re-check every 30s.
+  - apiGroups: [""]
+    resources: ["endpoints"]
     verbs: ["get", "list", "watch"]
   # §25.4 lines 1086-1088 — backup, restore, and verify Job lifecycle
   # (§25.11). lenny-ops creates and deletes the lenny-backup Jobs.

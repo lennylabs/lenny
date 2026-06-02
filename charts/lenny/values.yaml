@@ -2498,6 +2498,21 @@ ops:
   rateLimiting:
     requestsPerSecond: 20
     burst: 50
+  # locks carries the §25.4 remediation-lock coordination knobs. memoryTier
+  # (§25.4 lines 2206-2212) governs whether the in-memory (Tier-3) lock
+  # store grants an acquisition when both Postgres and Redis are down:
+  #   - "single-replica-only" (default): grant only when lenny-ops runs as a
+  #     single replica (counted from the lenny-ops Service Endpoints,
+  #     re-checked every 30s). Multi-replica deployments reject the acquire
+  #     with 503 REMEDIATION_LOCK_NO_COORDINATION so two replicas never grant
+  #     uncoordinated locks on the same scope.
+  #   - "always": always grant, attaching a replica-local degradation
+  #     warning. Suitable for single-replica production and dev.
+  #   - "never": disable Tier 3 entirely; every dual-outage acquisition is
+  #     rejected. The most conservative option.
+  # The value renders as --locks-memory-tier on lenny-ops. F-25.4.26.
+  locks:
+    memoryTier: "single-replica-only"
   # drift carries the §25.10 configuration-drift-detection knobs the
   # spec exposes for per-deployment tuning. The values render as
   # lenny-ops flags so the binary's defaults match an operator-supplied

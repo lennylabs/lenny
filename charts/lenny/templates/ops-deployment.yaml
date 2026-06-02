@@ -134,6 +134,12 @@ spec:
             # §25.4 line 2001 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps={{ .Values.ops.rateLimiting.requestsPerSecond }}
             - --rate-limit-burst={{ .Values.ops.rateLimiting.burst }}
+            # §25.4 lines 2206-2212 in-memory (Tier-3) lock policy. The
+            # single-replica-only default counts ready replicas via the
+            # lenny-ops Service Endpoints to reject uncoordinated acquires in
+            # multi-replica deployments. F-25.4.26.
+            - --locks-memory-tier={{ .Values.ops.locks.memoryTier }}
+            - --ops-service-name=lenny-ops
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}
@@ -149,6 +155,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # §25.4 line 2208: the single-replica-only lock policy reads the
+            # lenny-ops Service Endpoints in this pod's own namespace to count
+            # ready replicas.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: http
               containerPort: {{ .Values.ops.httpPort }}

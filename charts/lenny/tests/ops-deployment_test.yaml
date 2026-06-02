@@ -373,3 +373,50 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values."
+
+  # spec: §25.4 lines 2206-2212 — F-25.4.26. The in-memory (Tier-3) lock
+  # policy renders as --locks-memory-tier; the default is
+  # single-replica-only, and --ops-service-name names the Service whose
+  # Endpoints the policy reads to count ready replicas.
+  - it: renders the §25.4 lock memoryTier args with the spec default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-memory-tier=single-replica-only
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ops-service-name=lenny-ops
+
+  # spec: §25.4 line 2210 — F-25.4.26. The operator can select the most
+  # conservative "never" mode, disabling the Tier-3 store entirely.
+  - it: honors ops.locks.memoryTier=never per §25.4 line 2210
+    set:
+      ops:
+        locks:
+          memoryTier: never
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-memory-tier=never
+
+  # spec: §25.4 line 2208 — F-25.4.26. The single-replica-only policy
+  # reads the lenny-ops Service Endpoints in the pod's own namespace, so
+  # POD_NAMESPACE is injected via the downward API.
+  - it: injects POD_NAMESPACE from the downward API for replica detection
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace

@@ -146,6 +146,28 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeLockScope(w, r, body.Scope) {
 		return
 	}
+	// §25.4 lines 2206-2212: the in-memory (Tier-3) acquire path is gated
+	// by ops.locks.memoryTier. In a multi-replica deployment under the
+	// single-replica-only default, an uncoordinated in-memory acquire fails
+	// closed with REMEDIATION_LOCK_NO_COORDINATION rather than granting two
+	// replicas conflicting locks on the same scope; the "always" mode grants
+	// the lock with a replica-local degradation warning. The v1 lock store
+	// always serves the in-memory tier, so the gate evaluates on every
+	// acquire; when the Postgres/Redis tiers land the handler will consult
+	// the active tier first.
+	var coordWarning string
+	if s.lockCoordination != nil {
+		switch dec := s.lockCoordination.Evaluate(); {
+		case dec.Reject:
+			conventions.WriteError(w, http.StatusServiceUnavailable,
+				coordination.ErrCodeNoCoordination, conventions.CategoryTransient,
+				"both Postgres and Redis are unreachable and the in-memory lock tier is not "+
+					"permitted for this deployment (ops.locks.memoryTier); retry after storage recovers")
+			return
+		case dec.Warning != "":
+			coordWarning = dec.Warning
+		}
+	}
 	// §25.17 lines 5185-5186: when the body omits operationId, fall back
 	// to the X-Lenny-Operation-ID correlation header so the lock record
 	// is tied to the remediation effort even when the agent sets the
@@ -165,7 +187,29 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		writeLockError(w, err)
 		return
 	}
+	// §25.4 line 2209: the "always" mode grants the lock but signals that
+	// coordination is replica-local through the §25.2 degradation envelope.
+	if coordWarning != "" {
+		writeJSON(w, http.StatusCreated, acquiredLockResponse{
+			Lock: lock,
+			Degradation: &conventions.Degradation{
+				Level:    conventions.DegradationDegraded,
+				Warnings: []string{coordWarning},
+			},
+		})
+		return
+	}
 	writeJSON(w, http.StatusCreated, lock)
+}
+
+// acquiredLockResponse carries a granted §25.4 remediation lock together
+// with the §25.2 degradation envelope. The embedded *Lock inlines the
+// lock fields, so the response is the lock object with a sibling
+// "degradation" key. It is used only when ops.locks.memoryTier="always"
+// attaches a replica-local warning to an in-memory acquire.
+type acquiredLockResponse struct {
+	*coordination.Lock
+	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
 // handleListLocks serves GET /v1/admin/remediation-locks: list the

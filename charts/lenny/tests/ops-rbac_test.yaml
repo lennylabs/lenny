@@ -41,6 +41,14 @@ tests:
             apiGroups: [""]
             resources: ["pods", "pods/log", "events"]
             verbs: ["get", "list", "watch"]
+      # spec: §25.4 line 2208 — F-25.4.26. Endpoints reads so the
+      # single-replica-only lock policy can count ready lenny-ops replicas.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["endpoints"]
+            verbs: ["get", "list", "watch"]
       - contains:
           path: rules
           content:

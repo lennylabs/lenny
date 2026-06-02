@@ -70,11 +70,13 @@ type Server struct {
 	diagnostics        diagnostics.DiagnosticService
 	drift              *driftservice.Service
 	locks              coordination.RemediationLockService
+	lockCoordination   *coordination.CoordinationGate
 	escalations        *escalation.Service
 	eventStream        *opsevents.Service
 	eventSubscriptions *eventsubscription.Service
 	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
+	podLogs            PodLogReader
 	production         bool
 
 	// idem applies the §25.4 idempotency middleware to mutating routes
@@ -117,6 +119,13 @@ type Options struct {
 	// Locks is the §25.4 remediation-lock service. A nil service reports
 	// the remediation-lock endpoints as unavailable.
 	Locks coordination.RemediationLockService
+	// LockCoordination, when non-nil, applies the §25.4 ops.locks.memoryTier
+	// policy to in-memory (Tier-3) lock acquisitions: a multi-replica
+	// deployment under the single-replica-only default rejects an
+	// uncoordinated acquire with 503 REMEDIATION_LOCK_NO_COORDINATION, and
+	// the "always" mode attaches a replica-local degradation warning. A nil
+	// gate leaves acquisitions ungated (the v1 single-process dev path).
+	LockCoordination *coordination.CoordinationGate
 	// Escalations is the §25.4 escalation service. A nil service reports
 	// the escalation endpoints as unavailable.
 	Escalations *escalation.Service
@@ -141,6 +150,11 @@ type Options struct {
 	// the publisher when no key is configured rather than serving
 	// unsigned responses).
 	ReleaseChannel *releasechannel.Publisher
+	// PodLogs, when non-nil, backs the §25.4 GET
+	// /v1/admin/logs/pods/{namespace}/{name} log-proxy endpoint with the
+	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
+	// the endpoint reporting the log proxy unavailable.
+	PodLogs PodLogReader
 	// Production reports whether this deployment is production, which
 	// gates the §25.11 confirm requirement for a full backup.
 	Production bool
@@ -185,10 +199,12 @@ func New(opts Options) *Server {
 		diagnostics:        opts.Diagnostics,
 		drift:              opts.Drift,
 		locks:              opts.Locks,
+		lockCoordination:   opts.LockCoordination,
 		escalations:        opts.Escalations,
 		eventStream:        opts.EventStream,
 		eventSubscriptions: opts.EventSubscriptions,
 		releaseChannel:     opts.ReleaseChannel,
+		podLogs:            opts.PodLogs,
 		production:         opts.Production,
 		diagAuditCfg:       opts.DiagnosticsAudit,
 	}
@@ -217,6 +233,7 @@ func New(opts Options) *Server {
 	// hop for an agent that already holds the runbook name.
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}", s.handleRunbookMarkdown)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
+	s.registerLogRoutes()
 	s.registerBackupRoutes()
 	s.registerDiagnosticsRoutes()
 	s.registerDriftRoutes()
