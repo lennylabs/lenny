@@ -47,6 +47,19 @@ type Config struct {
 	// PreRestoreRetainDays overrides the pre-restore retention window; a
 	// zero value uses the §25.11 default of 7 days.
 	PreRestoreRetainDays int
+	// ReplicationLag supplies the §25.11 ArtifactStore replication-lag and
+	// orphan-row estimates the restore preview surfaces. A nil source
+	// leaves both preview fields zero (a deployment with no off-cluster
+	// replication configured). spec: §25.11 line 4094.
+	ReplicationLag ReplicationLagSource
+	// DataLoss supplies the §25.11 safety-check data-loss estimate. A nil
+	// estimator leaves the estimate zero (a Postgres-less deployment).
+	// spec: §25.11 line 4225.
+	DataLoss DataLossEstimator
+	// RestoreThroughputBps overrides the per-second pg_restore byte rate
+	// the estimatedDowntime model uses; a zero value uses the §25.11
+	// default. spec: §25.11 line 3957.
+	RestoreThroughputBps int64
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 	// NewID generates a backup/restore ID; nil uses a random hex id.
@@ -57,14 +70,17 @@ type Config struct {
 // Kubernetes Jobs through a JobLauncher and tracks their state in a
 // Store; it does not run backups in-process.
 type Service struct {
-	store    Store
-	launcher JobLauncher
-	locker   RestoreLocker
-	platVer  string
-	schemaV  int
-	preDays  int
-	now      func() time.Time
-	newID    func(prefix string) string
+	store       Store
+	launcher    JobLauncher
+	locker      RestoreLocker
+	platVer     string
+	schemaV     int
+	preDays     int
+	replication ReplicationLagSource
+	dataLoss    DataLossEstimator
+	throughput  int64
+	now         func() time.Time
+	newID       func(prefix string) string
 }
 
 var _ BackupService = (*Service)(nil)
@@ -91,14 +107,17 @@ func NewService(cfg Config) (*Service, error) {
 		preDays = preRestoreRetainDaysDefault
 	}
 	return &Service{
-		store:    cfg.Store,
-		launcher: cfg.Launcher,
-		locker:   cfg.Locker,
-		platVer:  cfg.PlatformVersion,
-		schemaV:  cfg.SchemaVersion,
-		preDays:  preDays,
-		now:      now,
-		newID:    newID,
+		store:       cfg.Store,
+		launcher:    cfg.Launcher,
+		locker:      cfg.Locker,
+		platVer:     cfg.PlatformVersion,
+		schemaV:     cfg.SchemaVersion,
+		preDays:     preDays,
+		replication: cfg.ReplicationLag,
+		dataLoss:    cfg.DataLoss,
+		throughput:  cfg.RestoreThroughputBps,
+		now:         now,
+		newID:       newID,
 	}, nil
 }
 
@@ -312,7 +331,9 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 		CurrentVersion:    s.platVer,
 		Compatible:        compatible,
 		AffectedResources: []string{"postgres", "platform-config"},
-		EstimatedDowntime: "PT15M",
+		// §25.11 line 3957: the downtime is scaled by backup size and
+		// component count rather than a fixed constant.
+		EstimatedDowntime: estimateDowntime(b, s.throughput),
 		RequiresFullStop:  true,
 		Warnings:          []string{},
 	}
@@ -324,7 +345,33 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 			fmt.Sprintf("schema forward-migration required: backup is at version %d, current is %d",
 				b.SchemaVersion, s.schemaV))
 	}
+	// §25.11 line 4094: surface the ArtifactStore replication lag and the
+	// orphan-row estimate so the operator can choose a restore point whose
+	// completed_at <= now() - lag. A nil source means no off-cluster
+	// replication is configured; a source error leaves the fields zero and
+	// flags the uncertainty as a warning rather than silently reporting 0.
+	if s.replication != nil {
+		takenAt := backupTakenAt(b)
+		lag, lagErr := s.replication.ReplicationLagSeconds(ctx)
+		orphans, orphErr := s.replication.EstimatedOrphanArtifactRows(ctx, takenAt)
+		if lagErr != nil || orphErr != nil {
+			preview.Warnings = append(preview.Warnings,
+				"artifact replication lag is unavailable; artifactReplicationLagSeconds and estimatedOrphanArtifactRows are not populated")
+		} else {
+			preview.ArtifactReplicationLagSeconds = lag
+			preview.EstimatedOrphanArtifactRows = orphans
+		}
+	}
 	return preview, nil
+}
+
+// backupTakenAt returns the time a backup's snapshot represents: its
+// completion time when finished, else its start time.
+func backupTakenAt(b Backup) time.Time {
+	if b.CompletedAt != nil {
+		return *b.CompletedAt
+	}
+	return b.StartedAt
 }
 
 // SafetyCheckRestore compares a backup against current state to
@@ -340,10 +387,7 @@ func (s *Service) SafetyCheckRestore(ctx context.Context, backupID string) (*Res
 		return nil, codedError(ErrCodeStorageUnreachable, "read backup: %v", err)
 	}
 	now := s.now()
-	takenAt := b.StartedAt
-	if b.CompletedAt != nil {
-		takenAt = *b.CompletedAt
-	}
+	takenAt := backupTakenAt(b)
 	// §25.11: a backup younger than 5 minutes is treated as a safe
 	// restore point — negligible data could have been written since.
 	safe := now.Sub(takenAt) < 5*time.Minute
@@ -363,6 +407,29 @@ func (s *Service) SafetyCheckRestore(ctx context.Context, backupID string) (*Res
 			SchemaMigrationsBetween: []string{},
 		},
 		DataLossEstimate: DataLossEstimate{TablesWithDivergence: []string{}},
+	}
+	// §25.11 line 4225: populate the data-loss estimate from Postgres
+	// write-transaction state. When the estimator reports no mutations
+	// since the backup, the platform has been idle and the restore is safe
+	// regardless of the backup's age (§25.11 line 4227 "or the platform
+	// has been idle"). A nil estimator leaves the zero estimate; an error
+	// flags the uncertainty so the operator does not read the zero as
+	// "no data would be lost".
+	if s.dataLoss != nil {
+		est, err := s.dataLoss.EstimateDataLoss(ctx, takenAt, now)
+		if err != nil {
+			check.Compatibility.Warnings = append(check.Compatibility.Warnings,
+				"data-loss estimate is unavailable; dataLossEstimate fields are not populated")
+		} else {
+			if est.TablesWithDivergence == nil {
+				est.TablesWithDivergence = []string{}
+			}
+			check.DataLossEstimate = est
+			if !safe && est.MutationsSinceBackup == 0 {
+				safe = true
+				check.Safe = true
+			}
+		}
 	}
 	if safe {
 		check.RecommendedAction = "restore is safe; execute"

@@ -30432,7 +30432,7 @@ not honored for the DR surface.
 
 ---
 
-### - [ ] F-17.3.12 — 3.2 — `RestorePreview.artifactReplicationLagSeconds` and `estimatedOrphanArtifactRows` are declared but never populated [Medium] — OPEN
+### - [x] F-17.3.12 — 3.2 — `RestorePreview.artifactReplicationLagSeconds` and `estimatedOrphanArtifactRows` are declared but never populated [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.11.14 — Both report PreviewRestore declares artifactReplicationLagSeconds and estimatedOrphanArtifactRows but never populates them.
 
@@ -30461,6 +30461,14 @@ Effect: an operator running `restore/preview` sees lag = 0 and
 zero orphans regardless of actual replication state, which
 mis-informs the §25.11 recommendation to choose a restore point
 whose `completed_at <= now() - lag`.
+
+Resolution — Added a `ReplicationLagSource` seam to `backup.Config`
+(`pkg/ops/backup/estimate.go`); `PreviewRestore` now populates
+`artifactReplicationLagSeconds`/`estimatedOrphanArtifactRows` from it
+and appends an explicit "replication lag is unavailable" warning on a
+source error rather than reporting a bare 0. A Postgres-less in-memory
+deployment leaves the source nil (no off-cluster replication) and the
+fields stay 0 with no warning. Closes the dup F-25.11.14. (this batch)
 
 ---
 
@@ -30509,7 +30517,7 @@ guarantee for restore-progress observability is not met.
 
 ---
 
-### - [ ] F-17.3.15 — 3.5 — `Service.SafetyCheckRestore` returns empty `dataLossEstimate.mutationsSinceBackup` [Medium] — OPEN
+### - [x] F-17.3.15 — 3.5 — `Service.SafetyCheckRestore` returns empty `dataLossEstimate.mutationsSinceBackup` [Medium] — CLOSED
 
 Spec — §25.11 safety-check example shows
 `mutationsSinceBackup: 15234`, sourced from
@@ -30528,9 +30536,18 @@ made blind — every non-safe restore reports zero mutations,
 zero sessions affected, zero audit events lost. The §25.11
 acknowledgement gate degenerates into a click-through.
 
+Resolution — Added a `DataLossEstimator` seam to `backup.Config`;
+`SafetyCheckRestore` populates `dataLossEstimate` from it and, per
+§25.11 line 4227, flips `safe:true` when the estimator reports zero
+mutations (idle platform) even for an older backup. A source error
+appends a "data-loss estimate is unavailable" compatibility warning
+rather than reporting zeros as fact. A Postgres-less deployment leaves
+the estimator nil and the zero estimate stands (documented degraded
+mode). (this batch)
+
 ---
 
-### - [ ] F-17.3.16 — 3.6 — `Service.PreviewRestore.estimatedDowntime` is a constant string [Medium] — OPEN
+### - [x] F-17.3.16 — 3.6 — `Service.PreviewRestore.estimatedDowntime` is a constant string [Medium] — CLOSED
 
 Spec — §25.11 RestorePreview type and the example
 `affectedResources` / `estimatedDowntime` field hint at a
@@ -30554,6 +30571,12 @@ the shard count, or the running platform's state.
 Effect: stakeholder coordination per the §25.11 "Notify
 stakeholders" workflow step is mis-informed for any restore that
 deviates from the placeholder estimate.
+
+Resolution — `estimateDowntime` (`pkg/ops/backup/estimate.go`) now
+computes an ISO-8601 downtime from the backup's `SizeBytes` (at a
+configurable `RestoreThroughputBps`, default 50 MiB/s) plus a base
+gateway-restart term and a per-component term; `PreviewRestore` uses
+it in place of the "PT15M" constant. (this batch)
 
 ---
 
@@ -39252,7 +39275,7 @@ Implementation status:
 - `Service.SafetyCheckRestore` (orchestrator.go:332-371) constructs `DataLossEstimate{TablesWithDivergence: []string{}}` and never populates `MutationsSinceBackup`, `SessionsAffected`, `AuditEventsLost`, or any divergence detection. The safe/unsafe verdict is purely time-based ("backup younger than 5 minutes is safe").
 - An operator following the spec-documented workflow (line 4236, "Review `affectedResources`, `estimatedDowntime`, `dataLossEstimate`") sees an empty estimate and cannot make an informed acknowledgeDataLoss decision.
 
-### - [ ] F-25.11.14 — `PreviewRestore` does not populate `artifactReplicationLagSeconds` / `estimatedOrphanArtifactRows` [Medium] — OPEN
+### - [x] F-25.11.14 — `PreviewRestore` does not populate `artifactReplicationLagSeconds` / `estimatedOrphanArtifactRows` [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.12 — Both report PreviewRestore declares artifactReplicationLagSeconds and estimatedOrphanArtifactRows but never populates them.
 
@@ -39262,6 +39285,8 @@ Implementation status:
 - `RestorePreview` struct (service.go:237-249) declares both JSON fields.
 - `Service.PreviewRestore` (orchestrator.go:298-326) leaves both at their zero values; there is no reader for the replication-lag gauge and no count of dangling artifact rows.
 - The compatibility check itself is also coarse: it only compares platform versions character-by-character; `SchemaMigrationsBetween` and `affectedResources` are hardcoded (`[]string{"postgres", "platform-config"}` regardless of backup type).
+
+**Resolution:** Closed by F-17.3.12 (same defect). `PreviewRestore` now populates both fields from the `ReplicationLagSource` seam. The coarse-compatibility residual (`SchemaMigrationsBetween`/`affectedResources` hardcoded) is tracked separately. (this batch)
 
 ### - [ ] F-25.11.15 — `EnforceRetention` does not delete the MinIO object or emit `backup.deleted_by_retention` [Medium] — OPEN
 
