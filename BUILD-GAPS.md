@@ -20618,7 +20618,7 @@ The doc comment acknowledges the divergence: "in a single-shard v1 deployment th
 
 ---
 
-### - [ ] F-12.6.14 — `PodSpec` does not carry `RuntimeDefinitionRef`, `WorkspacePlan`, or resource limits [Medium] — OPEN
+### - [x] F-12.6.14 — `PodSpec` does not carry `RuntimeDefinitionRef`, `WorkspacePlan`, or resource limits [Medium] — CLOSED
 
 **Spec.** §12.6 cross-reference table line 422: `PodSpec` key fields are `RuntimeDefinitionRef`, `WorkspacePlan`, `IsolationProfile`, `ExecutionMode`, resource limits.
 
@@ -20635,6 +20635,8 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 **Impact.** `CreatePod` cannot express the runtime, the workspace plan, or per-pod resource limits — every Sandbox CR created via this path uses defaults from the pool template. The contract is too thin to back a real CreatePod use case at Phase 4+ when the gateway starts creating pods for non-prewarmed sessions.
 
 **Fix.** Add the missing fields to `PodSpec` and have `CreatePod` populate the corresponding fields on the `Sandbox` spec.
+
+**Resolution:** Closed by `a81a7816`. `PodSpec` now carries `RuntimeDefinitionRef`, `ResourceClass` (the §12.6 "resource limits" field, modeled as a §5.1/§5.2 named class per the codebase convention), and `WorkspacePlan` (`json.RawMessage`). `CreatePod` stamps `Sandbox.spec.runtimeRef` (a required CRD field it previously left empty, so a CreatePod pod failed validation), `resourceClass`, and the serialized `workspacePlan` onto the new Sandbox; an empty plan leaves the field nil. `SandboxSpec` gained `resourceClass` and `workspacePlan` (`*apiextensionsv1.JSON`, preserve-unknown-fields); CRD + deepcopy regenerated and the embedded copy synced. The agent_pod_state mirror schema (§12.6) does not carry runtime/workspace/resource, so the Tier-4 PostgresPodRegistry persists only the columns it has (documented in F-12.6.19). Tests: `TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422`, `TestCreatePodLeavesWorkspacePlanNilWhenEmpty_spec_12_6_422`.
 
 ---
 
@@ -20698,7 +20700,7 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 ---
 
-### - [ ] F-12.6.19 — `PostgresPodRegistry` (Tier-4) is not delivered, but the Postgres mirror it would consume is [Medium] — OPEN
+### - [x] F-12.6.19 — `PostgresPodRegistry` (Tier-4) is not delivered, but the Postgres mirror it would consume is [Medium] — CLOSED
 
 **Spec.** §12.6 line 436: "the Tier 4 `PostgresPodRegistry` ... replaces CRD status writes with the `agent_pod_state` Postgres table, eliminating ~95% of etcd write pressure." Line 484 gives implementation guidance (LISTEN/NOTIFY on `pod_state_change_{pool_id}` with poll fallback) and the `lenny_pod_registry_watch_lag_seconds{pool, implementation}` gauge labeled by implementation.
 
@@ -20710,9 +20712,11 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 **Fix.** Either (a) plan and document the `PostgresPodRegistry` adapter so it sits over the existing `agent_pod_state` Postgres mirror (the mirror plus the adapter together implement `PodRegistry`), or (b) update the spec to acknowledge the v1 `agent_pod_state` mirror as a distinct primitive from `PodRegistry`. Either way, the LISTEN/NOTIFY trigger migration and the `lenny_pod_registry_watch_lag_seconds{implementation}` label are spec-required for the Tier-4 swap to land cleanly.
 
+**Resolution:** Closed by `912afb42` (took option (a)). `pkg/podregistry.PostgresPodRegistry` is a full §12.6 `PodRegistry` implementation over `agent_pod_state`: `GetPod`, `UpdatePodState` (the §12.6 line 476 resource_version CAS, mapping a stale version to `ErrResourceConflict` and a `From` mismatch to `ErrInvalidTransition`), `ClaimPod` (`FOR UPDATE SKIP LOCKED`, `ErrPoolExhausted`), `ReleasePod` (reason→state, session/tenant unbind), `ListPodsByPool`, `CountByState`, `CreatePod`, `DeletePod`, and a poll-based `WatchPods`. It is not wired into a v1 binary (v1 ships `CRDPodRegistry`); like F-12.6.10 for the EventBus, it makes the "swap is a configuration-only change" guarantee structural. Migration `0108` provisions the spec-required AFTER INSERT OR UPDATE notify trigger (`pg_notify` on `pod_state_change_{pool_id}`) the LISTEN path consumes; the watch falls back to polling per the spec's PgBouncer caveat. The `lenny_pod_registry_watch_lag_seconds` gauge now carries the spec's `{pool, implementation}` labels and is emitted by both registries (`implementation` = `crd` / `postgres`). The agent_pod_state schema does not carry runtime/workspace/resource columns, so the Postgres `CreatePod` records only the columns the mirror has (documented). Tests: tier-2 component contract against real Postgres (CRUD, CAS conflict under contention, SKIP-LOCKED concurrent claims, release mapping, watch no-snapshot+delta, notify trigger) plus tier-1 watch-lag gauge tests.
+
 ---
 
-### - [ ] F-12.6.20 — spec's shared-type module (`platform/store`) is not present; types are scattered [Medium] — OPEN
+### - [x] F-12.6.20 — spec's shared-type module (`platform/store`) is not present; types are scattered [Medium] — CLOSED
 
 **Spec.** §12.6 line 361: "All five interfaces are in the `platform/store` package." Line 365–415 then declares the shared ID types (`PodID`, `PoolID`, `TenantID`, `SessionID`, `ClusterID`), the `RedisConcern` / `StoreType` / `ReleaseReason` enums, and the `Subscription` interface as a single shared block.
 
@@ -20728,9 +20732,11 @@ The result is two independent definitions of conceptually shared types — `podr
 
 **Fix.** Either create a shared `pkg/platform/store` (or `pkg/coretypes`) package that owns the shared ID types and the `Subscription` interface, and have `storerouter`, `podregistry`, and `eventbus` import it; or amend §12.6 to reflect the deliberate per-interface package split and drop the "all five in `platform/store`" framing. Define `ClusterID` regardless of which path.
 
+**Resolution:** Closed by `a81a7816` (took the create-package path). `pkg/platform/store` owns the §12.6 shared block: the ID types `PodID`, `PoolID`, `TenantID`, `SessionID`, and `ClusterID` (the previously-undefined `ClusterID` now has a single home), the `RedisConcern` and `StoreType` enums with their spec wire values, and the `Subscription` interface. `storerouter`, `podregistry`, and `eventbus` now alias these (`type TenantID = store.TenantID`, etc.), so there is one canonical definition and import path and the existing call sites compile unchanged. The package is a leaf (imports nothing), so it carries no import-cycle or heavy-dependency risk. `ReleaseReason` is intentionally left in `podregistry`: the §12.6 shared-block values (`session_complete`/`session_failed`/`eviction`/`drain`) diverge from the podregistry domain values (`completed`/`failed`/`cancelled`), so unifying it is a behavioral change tracked separately rather than a type move. Tests in `pkg/platform/store/types_test.go` assert the aliases resolve to the single definition across all three packages.
+
 ---
 
-### - [ ] F-12.6.21 — `Event` type is a native struct, not the spec-mandated `cloudevents.Event` alias [Medium] — OPEN
+### - [ ] F-12.6.21 — `Event` type is a native struct, not the spec-mandated `cloudevents.Event` alias [Medium] — DEFERRED
 
 **Spec.** §12.6 lines 654–656:
 ```go
@@ -20744,6 +20750,8 @@ type Event = cloudevents.Event
 **Impact.** Medium — the bytes on the wire are correct and the validation contract is upheld, so external interoperability is not lost. But the spec's "single-envelope model: nothing is double-wrapped" framing (line 679) and the cross-transport flow (Redis pub/sub, SSE, webhooks) are easier to satisfy if every component shares the SDK type.
 
 **Fix.** Either vendor the `github.com/cloudevents/sdk-go/v2` module and switch to the alias, or amend §12.6 to permit a native CloudEvents struct on the condition that it byte-round-trips to/from the SDK type (a test would assert the equivalence).
+
+**Deferred (this batch).** The two offered fixes are both out of reach in a single safe batch: amending §12.6 is forbidden (the spec is the source of truth), and the alias path requires vendoring `github.com/cloudevents/sdk-go/v2`, which is absent from `go.mod`/`go.sum` and the module cache (no network add in this environment). Beyond the dependency, the swap is a wide rewrite: the native `Event` carries custom `MarshalJSON`/`UnmarshalJSON` (the §12.3.7 lenny-prefixed extension flattening), `Validate`, and `NewEvent`, none of which map one-to-one onto the SDK's `cloudevents.Event` setter API, and every `eventbus`/`auditstore` producer and consumer would change. Re-attempt as a dedicated batch once the SDK can be vendored, asserting byte round-trip equivalence between the current wire form and the SDK type.
 
 ---
 
