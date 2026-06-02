@@ -63,6 +63,12 @@ func (s *Server) handleCreateEscalation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	body.Source = callerIdentity(r)
+	// §25.17 lines 5185-5186: tie the escalation to the X-Lenny-Operation-ID
+	// correlation header when the body omits operationId, so the failure-path
+	// escalation joins the rest of the remediation effort's audit trail.
+	if body.OperationID == "" {
+		body.OperationID = callerOperationID(r)
+	}
 	esc, err := s.escalations.Create(r.Context(), body)
 	if err != nil {
 		writeEscalationError(w, err)

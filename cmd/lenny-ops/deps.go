@@ -318,31 +318,65 @@ func scheduledBackupsDisabled(ctx context.Context, svc *backup.Service) (bool, e
 	return !sched.Enabled, nil
 }
 
-// logEmitter is the §25.4 escalation Emitter used until the §25.5 event
-// stream is wired into lenny-ops. Creating an escalation must emit an
-// escalation_created event to the Redis stream and the gateway buffer;
-// until those destinations are wired the emission is logged and
-// reported as not-yet-delivered, so the escalation's emitted flag stays
-// false and the §25.4 background retry re-attempts the publish once a
-// destination exists.
-type logEmitter struct{}
+// streamEscalationEmitter is the §25.4 / §25.17 escalation Emitter. It
+// publishes the escalation_created operational event onto the §25.5
+// event stream (the platform-scoped ops:events:stream when Redis is
+// wired, plus the local opsstream.Service buffer) through the shared
+// EventEmitter. The §25.17 failure-path payoff — a webhook subscriber
+// routing escalation_created to PagerDuty — depends on the event
+// reaching the stream the webhook delivery worker fans out from.
+//
+// spec: §25.17 lines 5266-5285 ("The escalation_created event is emitted
+// to the event stream. A webhook subscriber routes it to PagerDuty.").
+type streamEscalationEmitter struct {
+	emitter events.EventEmitter
+	source  string
+}
 
-// EmitEscalationCreated logs the §25.4 escalation_created event and
-// reports false: with no event-stream destination wired the publish has
-// not been delivered, so the escalation stays un-emitted for the retry.
-func (logEmitter) EmitEscalationCreated(esc escalation.Escalation) bool {
-	log.Printf("lenny-ops: escalation %s created (severity=%s) — escalation_created emission "+
-		"pending the event-stream wiring", esc.ID, esc.Severity)
-	return false
+// newStreamEscalationEmitter wires the escalation service's emit hook to
+// the shared lenny-ops EventEmitter. source is the §25.5 CloudEvents
+// source value for events that originate in lenny-ops.
+func newStreamEscalationEmitter(emitter events.EventEmitter, replicaID string) streamEscalationEmitter {
+	return streamEscalationEmitter{emitter: emitter, source: "//lenny.dev/ops/" + replicaID}
+}
+
+// EmitEscalationCreated publishes the §25.4 escalation_created event and
+// reports whether the publish reached the stream. A true return marks
+// the escalation's emitted flag so the §25.4 background retry does not
+// re-attempt; a false return (marshal or emit failure) leaves it
+// un-emitted for the retry loop.
+func (e streamEscalationEmitter) EmitEscalationCreated(esc escalation.Escalation) bool {
+	payload, err := json.Marshal(esc)
+	if err != nil {
+		log.Printf("lenny-ops: marshal escalation_created for %s: %v", esc.ID, err)
+		return false
+	}
+	severity := esc.Severity
+	if severity == "" {
+		severity = "warning"
+	}
+	if err := e.emitter.Emit(context.Background(), events.OperationalEvent{
+		Type:            events.EventEscalationCreated.CloudEventsType(),
+		Source:          e.source,
+		Subject:         "escalation/" + esc.ID,
+		Severity:        severity,
+		DataContentType: "application/json",
+		Data:            payload,
+	}); err != nil {
+		log.Printf("lenny-ops: emit escalation_created for %s: %v", esc.ID, err)
+		return false
+	}
+	return true
 }
 
 // buildEscalationService constructs the §25.4 escalation service over
-// the in-memory Tier 3 buffer. The Postgres ops_escalations table and
-// the Redis tier are documented seams: until they land the service runs
-// the in-memory buffer so the §25.4 escalation endpoints serve and an
-// agent can exercise them in a single-process degraded mode.
-func buildEscalationService() *escalation.Service {
-	return escalation.NewService(logEmitter{})
+// the in-memory Tier 3 buffer, wired to emitter for the §25.17
+// escalation_created event stream. The Postgres ops_escalations table
+// and the Redis tier are documented seams: until they land the service
+// runs the in-memory buffer so the §25.4 escalation endpoints serve and
+// an agent can exercise them in a single-process degraded mode.
+func buildEscalationService(emitter escalation.Emitter) *escalation.Service {
+	return escalation.NewService(emitter)
 }
 
 // driftServiceConfig carries the §25.10 lines 3809 / 3824 operator-

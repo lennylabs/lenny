@@ -400,7 +400,7 @@ func main() {
 	// in-memory or unconfigured backing store in this single-process
 	// degraded mode so the §25 endpoints serve and an agent can exercise
 	// them; the durable backing stores are documented seams.
-	escalationSvc := buildEscalationService()
+	escalationSvc := buildEscalationService(newStreamEscalationEmitter(opsEmitter, replicaID))
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,

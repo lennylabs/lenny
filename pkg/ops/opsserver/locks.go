@@ -146,11 +146,19 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeLockScope(w, r, body.Scope) {
 		return
 	}
+	// §25.17 lines 5185-5186: when the body omits operationId, fall back
+	// to the X-Lenny-Operation-ID correlation header so the lock record
+	// is tied to the remediation effort even when the agent sets the
+	// header rather than the body field.
+	operationID := body.OperationID
+	if operationID == "" {
+		operationID = callerOperationID(r)
+	}
 	lock, err := s.locks.Acquire(r.Context(), coordination.LockRequest{
 		Scope:       body.Scope,
 		Operation:   body.Operation,
 		TTLSeconds:  body.TTLSeconds,
-		OperationID: body.OperationID,
+		OperationID: operationID,
 		AcquiredBy:  callerIdentity(r),
 	})
 	if err != nil {

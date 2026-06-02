@@ -7,6 +7,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
@@ -101,4 +102,28 @@ func requireAdminRole(inner http.Handler) http.Handler {
 // the caller* helpers fall back to the dev headers.
 func callerPrincipal(r *http.Request) (authmw.Principal, bool) {
 	return authmw.FromContext(r.Context())
+}
+
+// callerOperationID returns the §25.17 X-Lenny-Operation-ID the
+// withCorrelation middleware stamped onto the request context. Handlers
+// that record an operationId on a state-changing resource fall back to
+// this when the request body omits the field, so a watchdog that sends
+// the header on every call (the §25.17 lines 5185-5186 / 5264 pattern)
+// has its operation correlated even on the body-less diagnostic GETs and
+// on POSTs whose body does not carry the field. An empty string means
+// the caller supplied no correlation header.
+//
+// spec: §25.17 lines 5185-5186, 5264 — "the audit trail shows four calls
+// tied to operation 550e8400-...".
+func callerOperationID(r *http.Request) string {
+	return correlation.From(r.Context()).OperationID
+}
+
+// callerAgentName returns the §25.17 X-Lenny-Agent-Name the
+// withCorrelation middleware stamped onto the request context, or the
+// empty string when the caller supplied no agent-name header.
+//
+// spec: §25.17 lines 5185-5186 — X-Lenny-Agent-Name: prod-watchdog-us-east-1.
+func callerAgentName(r *http.Request) string {
+	return correlation.From(r.Context()).AgentName
 }

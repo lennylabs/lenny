@@ -40848,7 +40848,7 @@ The agent reads the runbook body to confirm the diagnosis. The endpoint is also 
 
 ---
 
-### - [ ] F-25.17.6 — 17-06 — `X-Lenny-Operation-ID` and `X-Lenny-Agent-Name` correlation headers are not extracted into lenny-ops handler context [Medium] — OPEN
+### - [x] F-25.17.6 — 17-06 — `X-Lenny-Operation-ID` and `X-Lenny-Agent-Name` correlation headers are not extracted into lenny-ops handler context [Medium] — CLOSED
 
 **Spec:** §25.17 Steps 3, 5, 6 (lines 5185–5186, 5222–5224, 5234–5235, 5248–5249, 5272) all carry:
 
@@ -40869,6 +40869,8 @@ Line 5264 states the audit trail "shows four calls tied to operation `550e8400-.
 **Impact:** Severity Medium. The audit-trail correlation §25.17 promises (line 5264) is broken: even when the agent dutifully sends both headers on every call, the lenny-ops handlers do not extract them, so the resulting audit rows and operational events do not record `operationId` or `agentName`. An auditor cannot answer "show every action taken by this remediation effort", which is the central operational use case §25.17 illustrates.
 
 **Remediation sketch:** Register a `pkg/observability/correlation` HTTP middleware on `opsserver.Server` that extracts the two headers into the request context. Update `callerIdentity` (`pkg/ops/opsserver/backup.go` line 91) and `handleAcquireLock` (`pkg/ops/opsserver/locks.go` line 116) to fall back to the context-carried operation-id when the body field is absent. Pass the operation-id and agent-name through to the audit emitter on every state-changing event (`escalation_created`, `remediation_lock_acquired`, `remediation_lock_released`, `backup_started`, `drift_baseline_updated`).
+
+**Resolution.** The `withCorrelation` middleware already extracts `X-Lenny-Operation-ID` / `X-Lenny-Agent-Name` into the request context (closed earlier by F-25.2.8) and projects them onto every structured log line. This batch closed the residual: new `callerOperationID`/`callerAgentName` helpers read the correlation context, and `handleAcquireLock` (remediation locks) and `handleCreateEscalation` now fall back to the context operation-id when the request body omits `operationId`, so a watchdog that sends only the header still has its lock and escalation records tied to the remediation effort. The explicit body field wins when both are present. Commit {COMMIT_F6}.
 
 ---
 
@@ -40933,7 +40935,7 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 ---
 
-### - [ ] F-25.17.9 — 17-09 — `escalation_created` is not emitted to the event stream, so the failure-path webhook fan-out described in §25.17 cannot fire [Medium] — OPEN
+### - [x] F-25.17.9 — 17-09 — `escalation_created` is not emitted to the event stream, so the failure-path webhook fan-out described in §25.17 cannot fire [Medium] — CLOSED
 
 **Spec:** §25.17 Failure Path (lines 5266–5285):
 
@@ -40948,6 +40950,8 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 **Impact:** Severity Medium. The failure-path payoff of §25.17 (line 5285, "A webhook subscriber routes it to PagerDuty") does not occur. The escalation is recorded in the in-memory Tier 3 buffer with HTTP 202 (per `pkg/ops/opsserver/escalations.go` line 74), but no `escalation_created` event reaches the Redis stream, the gateway buffer, the SSE relay (H-25.17-01), or webhook subscribers. The on-call rotation never sees the escalation.
 
 **Remediation sketch:** Implement an `opsevents.Emitter` backed by the Redis stream `eventbus` and pass it to the escalation service from `cmd/lenny-ops/deps.go` in place of `logEmitter`. Wire `eventsubscription.Service` into `opsserver.Options{EventSubscriptions: ...}` so the webhook CRUD surface is registered and so the delivery worker has subscriptions to fan out to. Wire the gateway-side `opsevents.Emitter` to also publish to Redis (it currently writes only to the in-memory buffer per `pkg/gateway/opsevents/emitter.go`).
+
+**Resolution.** Replaced the `logEmitter` stub with `streamEscalationEmitter`, which publishes the `escalation_created` CloudEvent through the shared lenny-ops `opsEmitter` (`newRedisFanOutEmitter` when Redis is configured, the local `opsstream.Service` buffer otherwise — the same emitter that already carries `ops_health_status_changed`). The escalation service is now wired to it from `cmd/lenny-ops/main.go`, so creating an escalation lands the event on `ops:events:stream`, flips the escalation's `emitted` flag on success, and feeds the §25.5 SSE/polling/webhook surfaces; a failed publish leaves the record un-emitted for the §25.4 retry. Commit {COMMIT_F9}.
 
 ---
 
