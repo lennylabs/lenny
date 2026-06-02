@@ -58,11 +58,37 @@ const podNodeNameIndex = "spec.nodeName"
 const (
 	defaultCertTTL             = 4 * time.Hour
 	defaultCertExpiryThreshold = 30 * time.Minute
+	// defaultCertIssuanceGrace is the §10.3 line 342 cert-issuance grace:
+	// "if cert-manager fails to issue a certificate within 60s of pod
+	// creation, the pod is marked as unhealthy and replaced".
+	defaultCertIssuanceGrace = 60 * time.Second
 	// minCertRequeue floors the re-check interval so an idle pod whose
 	// cert expiry is far out is re-evaluated periodically rather than
 	// hot-looping when it is near the window edge.
 	minCertRequeue = time.Minute
 )
+
+// CertExpiryMetric is the §10.3 lenny_cert_expiry_seconds gauge surface the
+// per-pod reconciler drives. controllermetrics.CertExpiry satisfies it;
+// tests inject fakes. Set records one managed pod's remaining certificate
+// validity; Clear removes the series when the pod is gone.
+//
+// spec: §10.3 lines 342–343 — warm-pool cert awareness / CertExpiryImminent.
+type CertExpiryMetric interface {
+	Set(namespace, pod string, seconds float64)
+	Clear(namespace, pod string)
+}
+
+// preIdleStates is the set of §4.6.1 pod states that precede idle. The
+// §10.3 line 342 cert-issuance grace applies only to these: a pod that has
+// not yet been admitted to the warm pool ("before marking them as idle").
+// An empty state label (a pod the state machine has not stamped yet) is
+// also treated as pre-idle.
+var preIdleStates = map[string]bool{
+	"":                          true,
+	string(state.Warming):       true,
+	string(state.SDKConnecting): true,
+}
 
 // PodReconciler is the §4.6.1 per-pod arm of the WarmPoolController. The
 // controller is the sole evaluator of per-pod host-node schedulability
@@ -99,6 +125,27 @@ type PodReconciler struct {
 	// idle pod whose certificate expires within this duration is drained
 	// and recreated. Zero selects defaultCertExpiryThreshold (30m).
 	CertExpiryThreshold time.Duration
+	// CertIssuanceGrace is the §10.3 line 342 cert-issuance grace: a
+	// pre-idle pod that has not presented a valid certificate within this
+	// window of its creation is treated as a cert-issuance failure and
+	// replaced. Zero selects defaultCertIssuanceGrace (60s). Enforcement
+	// is gated on RequireCertIssuance.
+	CertIssuanceGrace time.Duration
+	// RequireCertIssuance enables the §10.3 line 342 cert-issuance grace
+	// check. It is opt-in because the check keys on the
+	// lenny.dev/cert-not-after annotation (the per-pod cert producer's
+	// forward path documented on AnnotationCertNotAfter): a deployment
+	// without that producer never stamps the annotation, so enabling the
+	// check there would replace every pre-idle pod. An operator wires a
+	// producer that stamps the annotation on cert delivery, then sets this
+	// true. Default false preserves the creation-time-plus-TTL fallback and
+	// leaves pre-idle pods untouched.
+	RequireCertIssuance bool
+	// CertMetrics, when set, receives the §10.3 line 342/343
+	// lenny_cert_expiry_seconds gauge for every managed pod with a
+	// derivable certificate expiry, and a clear when the pod is deleted.
+	// Nil disables the gauge; the reconciler still drains expiring pods.
+	CertMetrics CertExpiryMetric
 
 	// MaxConcurrentReconciles is the §4.6.1 worker count
 	// (--max-concurrent-reconciles). Zero or negative selects the
@@ -134,12 +181,25 @@ func (r *PodReconciler) certExpiryThreshold() time.Duration {
 	return defaultCertExpiryThreshold
 }
 
+func (r *PodReconciler) certIssuanceGrace() time.Duration {
+	if r.CertIssuanceGrace > 0 {
+		return r.CertIssuanceGrace
+	}
+	return defaultCertIssuanceGrace
+}
+
 // Reconcile evaluates one managed agent pod: it stamps the host-node
 // schedulability label and, for idle pods, drains any pod whose
 // certificate is inside the replacement window.
 func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var pod corev1.Pod
 	if err := r.Client.Get(ctx, req.NamespacedName, &pod); err != nil {
+		// A deleted pod's lenny_cert_expiry_seconds series must be dropped
+		// so its last (possibly near-zero) value cannot pin the
+		// CertExpiryImminent alert in the firing state (§10.3 line 343).
+		if apierrors.IsNotFound(err) {
+			r.clearCertExpiry(req.Namespace, req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	// Only the controller-managed warm-pool pods carry the
@@ -149,8 +209,11 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	// A pod already being torn down is left to the Sandbox-to-Pod
-	// reconciler; re-labeling or re-draining it is pointless.
+	// reconciler; re-labeling or re-draining it is pointless. Drop its
+	// cert-expiry gauge series here (with the pod still in cache) so the
+	// retiring pod stops contributing to the CertExpiryImminent min().
 	if pod.DeletionTimestamp != nil {
+		r.clearCertExpiry(pod.Namespace, pod.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -162,6 +225,25 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err := r.reconcileHostSchedulable(ctx, &pod); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// §10.3 line 342/343 — publish remaining certificate validity for the
+	// CertExpiryImminent alert before any drain decision so the gauge
+	// reflects the observed pod even when it is about to be replaced.
+	r.publishCertExpiry(&pod)
+
+	// §10.3 line 342 — cert-issuance grace: a pre-idle pod that has not
+	// presented a valid certificate within the grace window is a
+	// cert-issuance failure and is replaced ahead of the expiry check.
+	issueRequeue, replaced, err := r.reconcileCertIssuance(ctx, &pod)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if replaced {
+		return ctrl.Result{}, nil
+	}
+	if issueRequeue > 0 {
+		return ctrl.Result{RequeueAfter: issueRequeue}, nil
 	}
 
 	requeue, err := r.reconcileCertExpiry(ctx, &pod)
@@ -253,6 +335,88 @@ func (r *PodReconciler) reconcileCertExpiry(ctx context.Context, pod *corev1.Pod
 	// reconciler builds the pod from the Sandbox name).
 	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
 	return 0, patchSandboxDraining(ctx, r.Client, key, true)
+}
+
+// publishCertExpiry sets the §10.3 lenny_cert_expiry_seconds gauge for the
+// pod to its remaining certificate validity. A pod with no derivable
+// expiry (no annotation and a zero creation timestamp) emits no sample.
+func (r *PodReconciler) publishCertExpiry(pod *corev1.Pod) {
+	if r.CertMetrics == nil {
+		return
+	}
+	expiry, ok := r.certExpiry(pod)
+	if !ok {
+		return
+	}
+	r.CertMetrics.Set(pod.Namespace, pod.Name, expiry.Sub(r.now()).Seconds())
+}
+
+// clearCertExpiry removes the §10.3 lenny_cert_expiry_seconds series for a
+// pod that no longer exists or is terminating.
+func (r *PodReconciler) clearCertExpiry(namespace, name string) {
+	if r.CertMetrics == nil {
+		return
+	}
+	r.CertMetrics.Clear(namespace, name)
+}
+
+// reconcileCertIssuance enforces the §10.3 line 342 cert-issuance grace: a
+// pre-idle pod (no state label yet, warming, or sdk_connecting) that has
+// not presented a valid certificate within CertIssuanceGrace of its
+// creation is a cert-issuance failure and is drained so the pool reconciler
+// replaces it. The check is gated on RequireCertIssuance because it keys on
+// the lenny.dev/cert-not-after annotation — a deployment without a per-pod
+// cert producer never stamps it, and enforcing the check there would
+// replace every pre-idle pod (see AnnotationCertNotAfter). It returns
+// replaced=true when the pod was drained, or a positive requeue to re-check
+// a pod still inside the grace window.
+func (r *PodReconciler) reconcileCertIssuance(ctx context.Context, pod *corev1.Pod) (time.Duration, bool, error) {
+	if !r.RequireCertIssuance {
+		return 0, false, nil
+	}
+	if !preIdleStates[pod.Labels[state.LabelState]] {
+		return 0, false, nil
+	}
+	if r.certIssued(pod) {
+		return 0, false, nil
+	}
+	created := pod.CreationTimestamp.Time
+	if created.IsZero() {
+		// No creation time to measure the grace against; leave the pod for
+		// a later reconcile once the timestamp is observed.
+		return 0, false, nil
+	}
+	grace := r.certIssuanceGrace()
+	age := r.now().Sub(created)
+	if age < grace {
+		// Still inside the grace window: re-check right as it closes.
+		return grace - age, false, nil
+	}
+	// Grace exhausted with no valid certificate: cert-manager failed to
+	// issue. Drain the backing Sandbox for replacement (idle is not
+	// required — the pod never reached idle). spec: §10.3 line 342.
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
+	if err := patchSandboxDraining(ctx, r.Client, key, false); err != nil {
+		return 0, false, err
+	}
+	return 0, true, nil
+}
+
+// certIssued reports whether the pod carries a valid (present, parseable,
+// not-yet-expired) lenny.dev/cert-not-after annotation. Unlike certExpiry
+// it has no creation-time fallback: for the §10.3 line 342 issuance check,
+// the absence of the annotation is the signal that no certificate has been
+// delivered yet.
+func (r *PodReconciler) certIssued(pod *corev1.Pod) bool {
+	v := pod.Annotations[AnnotationCertNotAfter]
+	if v == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return false
+	}
+	return t.After(r.now())
 }
 
 // certExpiry resolves a pod's certificate expiry. It prefers an explicit

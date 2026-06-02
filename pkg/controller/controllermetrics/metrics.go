@@ -56,7 +56,42 @@ var (
 		Name: "lenny_controller_workqueue_max_depth",
 		Help: "Configured controller work-queue max depth.",
 	}, nil)
+
+	// certExpirySeconds is the §10.3 line 342/343 lenny_cert_expiry_seconds
+	// gauge: seconds remaining until an agent pod's mTLS certificate
+	// expires, one series per managed pod. The §16.5 CertExpiryImminent
+	// alert fires when min(lenny_cert_expiry_seconds) < 3600 — a cert
+	// within an hour of expiry, which (because cert-manager auto-renews at
+	// 2/3 of the lifetime) signals a renewal failure. The WarmPoolController
+	// per-pod reconciler sets the series for every managed pod with a
+	// derivable expiry and clears it when the pod is deleted so a retired
+	// pod's stale low value cannot pin the alert in the firing state.
+	certExpirySeconds = mustGauge(prometheus.GaugeOpts{
+		Name: "lenny_cert_expiry_seconds",
+		Help: "Seconds remaining until an agent pod's mTLS certificate expires.",
+	}, []string{"namespace", "pod"})
 )
+
+// CertExpiry is the §10.3 cert-expiry gauge surface the WarmPoolController
+// per-pod reconciler drives. Set records the remaining certificate validity
+// for one managed pod; Clear removes the series when the pod is deleted.
+// Removing the series on deletion is required because a deleted pod with a
+// near-zero remaining-validity value would otherwise keep
+// min(lenny_cert_expiry_seconds) below the CertExpiryImminent threshold
+// forever.
+//
+// spec: §10.3 lines 342–343 (warm-pool cert awareness, CertExpiryImminent).
+type CertExpiry struct{}
+
+// Set records the remaining certificate validity (seconds) for one pod.
+func (CertExpiry) Set(namespace, pod string, seconds float64) {
+	certExpirySeconds.WithLabelValues(namespace, pod).Set(seconds)
+}
+
+// Clear removes the gauge series for a pod that no longer exists.
+func (CertExpiry) Clear(namespace, pod string) {
+	certExpirySeconds.DeleteLabelValues(namespace, pod)
+}
 
 func mustGauge(opts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(opts, labels)

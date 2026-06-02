@@ -132,6 +132,8 @@ func main() {
 		devMode                 bool
 		certTTL                 time.Duration
 		certExpiryThreshold     time.Duration
+		certIssuanceGrace       time.Duration
+		requireCertIssuance     bool
 		saTokenAudience         string
 		agentServiceAccount     string
 		runtimeClassStandard    string
@@ -197,6 +199,10 @@ func main() {
 		"§10.3 line 338 agent-pod mTLS certificate lifetime. The §4.6.1 cert-expiry replacement derives an idle pod's certificate expiry as pod-creation-time + this TTL when the pod carries no explicit lenny.dev/cert-not-after annotation.")
 	flag.DurationVar(&certExpiryThreshold, "cert-expiry-threshold", 30*time.Minute,
 		"§4.6.1 / §10.3 line 342 proactive cert-replacement window. An idle pod whose certificate will expire within this duration is drained and recreated so a claim never lands on a pod with insufficient remaining certificate validity.")
+	flag.DurationVar(&certIssuanceGrace, "cert-issuance-grace", 60*time.Second,
+		"§10.3 line 342 cert-issuance grace. A pre-idle pod that has not presented a valid lenny.dev/cert-not-after annotation within this window of its creation is treated as a cert-issuance failure and replaced. Active only with --require-cert-issuance.")
+	flag.BoolVar(&requireCertIssuance, "require-cert-issuance", false,
+		"§10.3 line 342 cert-issuance enforcement. When true, a pre-idle pod without a valid certificate after --cert-issuance-grace is drained for replacement. Default false because the check keys on the lenny.dev/cert-not-after annotation a per-pod cert producer stamps; enable it only when that producer is wired, otherwise every pre-idle pod is replaced.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -389,6 +395,9 @@ func main() {
 		Client:                  mgr.GetClient(),
 		CertTTL:                 certTTL,
 		CertExpiryThreshold:     certExpiryThreshold,
+		CertIssuanceGrace:       certIssuanceGrace,
+		RequireCertIssuance:     requireCertIssuance,
+		CertMetrics:             controllermetrics.CertExpiry{},
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 		QueueFactory:            queueFactory,
 	}).SetupWithManager(mgr); err != nil {

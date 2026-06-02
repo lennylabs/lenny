@@ -221,6 +221,144 @@ func TestPodReconcileCertExpirySkipsClaimedPod_spec_4_6(t *testing.T) {
 	}
 }
 
+// warmingSandbox returns a Sandbox in the §4.6.1 warming (pre-idle) phase
+// so the §10.3 line 342 issuance-grace drain has a live object to patch.
+func warmingSandbox(name string) *lennyv1.Sandbox {
+	return &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: testPool},
+		},
+		Status: lennyv1.SandboxStatus{Phase: string(state.Warming)},
+	}
+}
+
+// recordingCertMetric captures the §10.3 lenny_cert_expiry_seconds Set/Clear
+// calls the reconciler makes through the real Reconcile path.
+type recordingCertMetric struct {
+	set   map[string]float64
+	clear map[string]int
+}
+
+func newRecordingCertMetric() *recordingCertMetric {
+	return &recordingCertMetric{set: map[string]float64{}, clear: map[string]int{}}
+}
+
+func (m *recordingCertMetric) Set(ns, pod string, s float64) { m.set[ns+"/"+pod] = s }
+func (m *recordingCertMetric) Clear(ns, pod string)          { m.clear[ns+"/"+pod]++ }
+
+// TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3 verifies the
+// §10.3 line 342 cert-issuance grace: a pre-idle pod that has not presented
+// a valid certificate within the grace window of its creation is drained for
+// replacement (its Sandbox transitions to draining) when the check is enabled.
+func TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3(t *testing.T) {
+	s := newScheme(t)
+	sb := warmingSandbox("pod-noissue")
+	pod := managedPod("pod-noissue", "", string(state.Warming), nil) // no cert annotation
+	c := newClient(t, s, sb, pod)
+
+	created := getCorePod(t, c, "pod-noissue").CreationTimestamp.Time
+	r := &warmpool.PodReconciler{
+		Client:              c,
+		RequireCertIssuance: true,
+		CertIssuanceGrace:   60 * time.Second,
+		Now:                 func() time.Time { return created.Add(90 * time.Second) }, // 90s > 60s grace
+	}
+	reconcilePod(t, r, "pod-noissue")
+
+	if got := getSandbox(t, c, "pod-noissue").Status.Phase; got != string(state.Draining) {
+		t.Fatalf("sandbox phase=%q after issuance-grace expiry, want %q", got, state.Draining)
+	}
+}
+
+// TestPodReconcileCertIssuanceInsideGraceKeepsPreIdlePod_spec_10_3 verifies a
+// pre-idle pod still inside the §10.3 grace window is left warming and
+// re-queued rather than drained.
+func TestPodReconcileCertIssuanceInsideGraceKeepsPreIdlePod_spec_10_3(t *testing.T) {
+	s := newScheme(t)
+	sb := warmingSandbox("pod-young")
+	pod := managedPod("pod-young", "", string(state.Warming), nil)
+	c := newClient(t, s, sb, pod)
+
+	created := getCorePod(t, c, "pod-young").CreationTimestamp.Time
+	r := &warmpool.PodReconciler{
+		Client:              c,
+		RequireCertIssuance: true,
+		CertIssuanceGrace:   60 * time.Second,
+		Now:                 func() time.Time { return created.Add(15 * time.Second) }, // inside grace
+	}
+	res := reconcilePod(t, r, "pod-young")
+
+	if got := getSandbox(t, c, "pod-young").Status.Phase; got != string(state.Warming) {
+		t.Fatalf("sandbox phase=%q for a pod inside the issuance grace, want %q", got, state.Warming)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("RequeueAfter=%v inside the issuance grace, want > 0", res.RequeueAfter)
+	}
+}
+
+// TestPodReconcileCertIssuanceDisabledKeepsPreIdlePod_spec_10_3 verifies the
+// default posture (RequireCertIssuance=false): a pre-idle pod past the grace
+// with no certificate is not drained, preserving the no-cert-producer path.
+func TestPodReconcileCertIssuanceDisabledKeepsPreIdlePod_spec_10_3(t *testing.T) {
+	s := newScheme(t)
+	sb := warmingSandbox("pod-default")
+	pod := managedPod("pod-default", "", string(state.Warming), nil)
+	c := newClient(t, s, sb, pod)
+
+	created := getCorePod(t, c, "pod-default").CreationTimestamp.Time
+	r := &warmpool.PodReconciler{
+		Client: c,
+		Now:    func() time.Time { return created.Add(10 * time.Minute) },
+	}
+	reconcilePod(t, r, "pod-default")
+
+	if got := getSandbox(t, c, "pod-default").Status.Phase; got != string(state.Warming) {
+		t.Fatalf("sandbox phase=%q with issuance check disabled, want %q (unchanged)", got, state.Warming)
+	}
+}
+
+// TestPodReconcileCertExpiryGaugeEmitted_spec_10_3 verifies the §10.3 line
+// 342/343 lenny_cert_expiry_seconds gauge is published through the real
+// Reconcile path for a managed pod with a derivable expiry.
+func TestPodReconcileCertExpiryGaugeEmitted_spec_10_3(t *testing.T) {
+	s := newScheme(t)
+	now := time.Now()
+	sb := idleSandbox("pod-gauge")
+	pod := managedPod("pod-gauge", "", string(state.Idle), map[string]string{
+		warmpool.AnnotationCertNotAfter: now.Add(45 * time.Minute).Format(time.RFC3339),
+	})
+	c := newClient(t, s, sb, pod)
+
+	m := newRecordingCertMetric()
+	r := &warmpool.PodReconciler{Client: c, CertMetrics: m, Now: func() time.Time { return now }}
+	reconcilePod(t, r, "pod-gauge")
+
+	got, ok := m.set[testNS+"/pod-gauge"]
+	if !ok {
+		t.Fatalf("cert-expiry gauge not set for pod-gauge; set=%v", m.set)
+	}
+	if want := (45 * time.Minute).Seconds(); got < want-2 || got > want+2 {
+		t.Fatalf("cert-expiry gauge=%v, want ~%v", got, want)
+	}
+}
+
+// TestPodReconcileCertExpiryGaugeClearedOnMissingPod_spec_10_3 verifies a
+// reconcile for a pod that no longer exists clears its gauge series so a
+// retired pod cannot pin the CertExpiryImminent alert (§10.3 line 343).
+func TestPodReconcileCertExpiryGaugeClearedOnMissingPod_spec_10_3(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s) // no pods seeded
+	m := newRecordingCertMetric()
+	r := &warmpool.PodReconciler{Client: c, CertMetrics: m}
+	reconcilePod(t, r, "pod-gone")
+
+	if m.clear[testNS+"/pod-gone"] == 0 {
+		t.Fatalf("gauge not cleared for a missing pod; clear=%v", m.clear)
+	}
+}
+
 // TestPodsOnNodeEnqueuesManagedPodsOnNode_spec_4_6 verifies the §4.6.1
 // Node→Pod fan-out: a Node event enqueues exactly the managed pods
 // scheduled onto that node, and ignores pods on other nodes and
