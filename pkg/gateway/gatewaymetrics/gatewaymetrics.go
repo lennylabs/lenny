@@ -483,6 +483,20 @@ type Metrics struct {
 	// failure as the background state machine advances the row toward
 	// retry_pending / dead_lettered. F-11.7.1 / F-11.7.15.
 	auditOCSFTranslationFailed *prometheus.CounterVec
+	// §25.9 audit-query observability surface. auditQueryDuration
+	// observes one query latency per call, labeled by `endpoint`
+	// (list/get/summary/verify) and `shards`. auditChainVerificationBroken
+	// and auditChainRechainedPostOutage are unlabeled counters incremented
+	// when a query surfaces a tampered or post-outage-rechained segment.
+	// auditRateLimited counts audit events dropped by the §25.9 diagnostics
+	// rate limiter, labeled by `event_type` and `service_account`.
+	// auditScatterGatherShards observes the shard fan-out width per query
+	// (1 in single-shard v1). spec: §25.9 metrics table. F-25.9.13.
+	auditQueryDuration            *prometheus.HistogramVec
+	auditChainVerificationBroken  prometheus.Counter
+	auditChainRechainedPostOutage prometheus.Counter
+	auditRateLimited              *prometheus.CounterVec
+	auditScatterGatherShards      prometheus.Histogram
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -1839,6 +1853,35 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §25.9 audit-query observability surface. F-25.9.13.
+	auditQueryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_audit_query_duration_seconds",
+		Help:    "§25.9 audit query latency by endpoint and shard count.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"endpoint", "shards"})
+	if err != nil {
+		return nil, err
+	}
+	auditChainVerificationBroken := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_chain_verification_broken_total",
+		Help: "§25.9 broken chain segments detected during query (tamper evidence).",
+	})
+	auditChainRechainedPostOutage := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_chain_rechained_post_outage_total",
+		Help: "§25.9 chain segments rechained after a Postgres outage (not tamper evidence).",
+	})
+	auditRateLimited, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_rate_limited_total",
+		Help: "§25.9 audit events dropped by rate limiting, by event_type and service_account.",
+	}, []string{"event_type", "service_account"})
+	if err != nil {
+		return nil, err
+	}
+	auditScatterGatherShards := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_audit_scatter_gather_shards_queried",
+		Help:    "§25.9 shard count per scatter-gather audit query.",
+		Buckets: []float64{1, 2, 4, 8, 16, 32},
+	})
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -2062,6 +2105,8 @@ func New() (*Metrics, error) {
 		postgresWriteIops, postgresWriteCeilingIops,
 		siemDeliveryLag, siemMaxDeliveryLag,
 		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
+		auditQueryDuration, auditChainVerificationBroken, auditChainRechainedPostOutage,
+		auditRateLimited, auditScatterGatherShards,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -2265,6 +2310,11 @@ func New() (*Metrics, error) {
 		auditChainIntegrity:                  auditChainIntegrity,
 		auditGrantDrift:                      auditGrantDrift,
 		auditOCSFTranslationFailed:           auditOCSFTranslationFailed,
+		auditQueryDuration:                   auditQueryDuration,
+		auditChainVerificationBroken:         auditChainVerificationBroken,
+		auditChainRechainedPostOutage:        auditChainRechainedPostOutage,
+		auditRateLimited:                     auditRateLimited,
+		auditScatterGatherShards:             auditScatterGatherShards,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -3834,6 +3884,54 @@ func (m *Metrics) IncAuditOCSFTranslationFailed(eventType, errorClass string) {
 		return
 	}
 	m.auditOCSFTranslationFailed.WithLabelValues(eventType, errorClass).Inc()
+}
+
+// ObserveAuditQueryDuration records one §25.9 audit-query latency,
+// labeled by the endpoint (list/get/summary/verify) and the shard count
+// the query fanned out across. F-25.9.13.
+func (m *Metrics) ObserveAuditQueryDuration(endpoint string, shards int, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.auditQueryDuration.WithLabelValues(endpoint, strconv.Itoa(shards)).Observe(seconds)
+}
+
+// IncAuditChainVerificationBroken increments the §25.9 broken-segment
+// counter when a query surfaces a tampered chain segment. F-25.9.13.
+func (m *Metrics) IncAuditChainVerificationBroken() {
+	if m == nil {
+		return
+	}
+	m.auditChainVerificationBroken.Inc()
+}
+
+// IncAuditChainRechainedPostOutage increments the §25.9 post-outage
+// rechain counter when a query surfaces a segment rechained after a
+// Postgres outage (not tamper evidence). F-25.9.13.
+func (m *Metrics) IncAuditChainRechainedPostOutage() {
+	if m == nil {
+		return
+	}
+	m.auditChainRechainedPostOutage.Inc()
+}
+
+// IncAuditRateLimited counts one §25.9 audit event dropped by the
+// diagnostics rate limiter, labeled by event_type and service_account.
+// F-25.9.13.
+func (m *Metrics) IncAuditRateLimited(eventType, serviceAccount string) {
+	if m == nil {
+		return
+	}
+	m.auditRateLimited.WithLabelValues(eventType, serviceAccount).Inc()
+}
+
+// ObserveAuditScatterGatherShards records the §25.9 shard fan-out width
+// for one audit query (1 in single-shard v1). F-25.9.13.
+func (m *Metrics) ObserveAuditScatterGatherShards(shards int) {
+	if m == nil {
+		return
+	}
+	m.auditScatterGatherShards.Observe(float64(shards))
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem

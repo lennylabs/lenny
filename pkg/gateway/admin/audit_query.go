@@ -216,6 +216,47 @@ func (r *Router) WithAuditPruner(p AuditPartitionDropper) *Router {
 	return r
 }
 
+// AuditQueryMetrics records the §25.9 audit-query observability series.
+// *gatewaymetrics.Metrics satisfies it. A nil recorder disables emission
+// (the query still succeeds).
+//
+// spec: §25.9 metrics table (lenny_audit_query_duration_seconds,
+// lenny_audit_chain_verification_broken_total,
+// lenny_audit_chain_rechained_post_outage_total,
+// lenny_audit_scatter_gather_shards_queried).
+type AuditQueryMetrics interface {
+	ObserveAuditQueryDuration(endpoint string, shards int, seconds float64)
+	IncAuditChainVerificationBroken()
+	IncAuditChainRechainedPostOutage()
+	ObserveAuditScatterGatherShards(shards int)
+}
+
+// WithAuditMetrics wires the §25.9 audit-query metrics recorder onto the
+// Router. Without it the query endpoints emit no audit-query series.
+func (r *Router) WithAuditMetrics(m AuditQueryMetrics) *Router {
+	r.auditMetrics = m
+	return r
+}
+
+// recordAuditQuery emits the §25.9 audit-query observability series for
+// one query: the latency (labeled by endpoint and the single-shard v1
+// fan-out width), the shard count, and the broken / post-outage-rechain
+// counters when the returned page surfaced such segments. shards is 1 in
+// single-shard v1; broken and rechained are the per-page tallies.
+func (r *Router) recordAuditQuery(endpoint string, start time.Time, shards, broken, rechained int) {
+	if r.auditMetrics == nil {
+		return
+	}
+	r.auditMetrics.ObserveAuditQueryDuration(endpoint, shards, r.clock().Sub(start).Seconds())
+	r.auditMetrics.ObserveAuditScatterGatherShards(shards)
+	for i := 0; i < broken; i++ {
+		r.auditMetrics.IncAuditChainVerificationBroken()
+	}
+	for i := 0; i < rechained; i++ {
+		r.auditMetrics.IncAuditChainRechainedPostOutage()
+	}
+}
+
 // forceDropRequest is the §25.9 line 3664 force-drop body
 // `{"acknowledgeDataLoss": true, "partition": "<partition-name>"}`. The
 // data-loss acknowledgement is mandatory (the lenny-ctl backing is
@@ -373,6 +414,7 @@ func (r *Router) auditRows(w http.ResponseWriter, req *http.Request, tenant stri
 //
 // spec: §25.9 lines 3653-3710; §4.4 line 232 (OCSF audit-egress).
 func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request) {
+	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
@@ -496,6 +538,9 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	if brokenSeen {
 		r.emitChainIntegrityBroken(req, tenant)
 	}
+	// spec: §25.9 metrics table — query latency + chain-verdict counters.
+	// v1 is single-shard, so shards is 1. F-25.9.13.
+	r.recordAuditQuery("list", start, 1, report.Broken, report.RechainedPostOutage)
 }
 
 // handleGetAuditEvent implements GET /v1/admin/audit-events/{seq}.
@@ -506,6 +551,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 //
 // spec: §25.9 lines 3653, 3660, 3732; §4.4 line 232.
 func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
+	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
@@ -535,9 +581,12 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	for _, row := range rows {
 		if row.Seq == seq {
 			integrity := integrities[row.Seq]
+			singleRow := ChainIntegrityReport{}
+			tallyIntegrity(&singleRow, integrity)
 			if rawCanonical {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(rowToCanonical(row, integrity))
+				r.recordAuditQuery("get", start, 1, singleRow.Broken, singleRow.RechainedPostOutage)
 				return
 			}
 			rec, terr := ocsfRecordForRow(row, integrity)
@@ -552,16 +601,15 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 					"audit ocsf marshal failed: "+merr.Error(), nil)
 				return
 			}
-			report := ChainIntegrityReport{}
-			tallyIntegrity(&report, integrity)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(AuditEventEnvelope{
 				TenantID:             tenant,
 				Items:                []json.RawMessage{ocsfBytes},
 				OCSFVersion:          ocsf.Version,
 				TranslatorVersion:    ocsf.TranslatorVersion,
-				ChainIntegrityReport: &report,
+				ChainIntegrityReport: &singleRow,
 			})
+			r.recordAuditQuery("get", start, 1, singleRow.Broken, singleRow.RechainedPostOutage)
 			return
 		}
 	}
@@ -735,6 +783,7 @@ type AuditSummaryResponse struct {
 // spec: §25.9 line 3661 (summary endpoint; ?since=, ?until=,
 // ?groupBy=eventType|actorId|resourceType).
 func (r *Router) handleAuditSummary(w http.ResponseWriter, req *http.Request) {
+	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
@@ -789,6 +838,7 @@ func (r *Router) handleAuditSummary(w http.ResponseWriter, req *http.Request) {
 		Total:    total,
 		Groups:   groups,
 	})
+	r.recordAuditQuery("summary", start, 1, 0, 0)
 }
 
 // summaryKey extracts a row's grouping key for the §25.9 summary
@@ -818,6 +868,7 @@ func summaryKey(groupBy string, row audit.Row) string {
 // GET /v1/admin/audit-events/verify — the §11.7 chain-integrity
 // check.
 func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request) {
+	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
@@ -841,6 +892,11 @@ func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+	broken := 0
+	if res.Integrity == audit.ChainBroken {
+		broken = 1
+	}
+	r.recordAuditQuery("verify", start, 1, broken, 0)
 }
 
 // retranslateRequest is the §25.9 POST .../retranslate body. The

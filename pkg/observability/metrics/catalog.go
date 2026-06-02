@@ -288,6 +288,12 @@ var metricCatalog = []MetricSpec{
 	{"lenny_audit_siem_delivery_lag_seconds", TypeGauge, "Lag between latest committed and SIEM-acknowledged audit event"},
 	{"lenny_audit_chain_integrity_total", TypeCounter, "Audit chain integrity classifications by state"},
 	{"lenny_audit_redaction_receipt_missing_total", TypeCounter, "redacted_gdpr rows with no signature-verifying receipt"},
+	// §25.9 audit-query observability surface.
+	{"lenny_audit_query_duration_seconds", TypeHistogram, "Audit query latency by endpoint and shard count"},
+	{"lenny_audit_chain_verification_broken_total", TypeCounter, "Broken chain segments detected during query (tamper evidence)"},
+	{"lenny_audit_chain_rechained_post_outage_total", TypeCounter, "Chain segments rechained after a Postgres outage (not tamper evidence)"},
+	{"lenny_audit_rate_limited_total", TypeCounter, "Audit events dropped by rate limiting"},
+	{"lenny_audit_scatter_gather_shards_queried", TypeHistogram, "Shard count per scatter-gather audit query"},
 	{"lenny_event_bus_publish_dropped_total", TypeCounter, "EventBus publishes dropped after durable commit"},
 	{"lenny_event_bus_replay_buffer_utilization", TypeGauge, "EventBus in-memory replay buffer utilization"},
 	{"lenny_event_bus_retranscribe_duration_seconds", TypeHistogram, "EventBus retranscribe sweep duration per topic"},

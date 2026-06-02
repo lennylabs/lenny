@@ -110,7 +110,12 @@ var spec161Metrics = []string{
 	"lenny_pgaudit_grant_events_total", "lenny_audit_ocsf_translation_failed_total",
 	"lenny_audit_lock_acquire_seconds", "lenny_audit_concurrency_timeout_total",
 	"lenny_audit_siem_delivery_lag_seconds", "lenny_audit_chain_integrity_total",
-	"lenny_audit_redaction_receipt_missing_total", "lenny_event_bus_publish_dropped_total",
+	"lenny_audit_redaction_receipt_missing_total",
+	// §25.9 audit-query observability surface.
+	"lenny_audit_query_duration_seconds", "lenny_audit_chain_verification_broken_total",
+	"lenny_audit_chain_rechained_post_outage_total", "lenny_audit_rate_limited_total",
+	"lenny_audit_scatter_gather_shards_queried",
+	"lenny_event_bus_publish_dropped_total",
 	"lenny_event_bus_replay_buffer_utilization", "lenny_event_bus_retranscribe_duration_seconds",
 	"lenny_event_bus_retranscribe_attempts_total", "lenny_oauth_token_rate_limited_total",
 	"lenny_oauth_token_5xx_total", "lenny_oauth_token_rate_limited_sampled_total",

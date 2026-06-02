@@ -3554,6 +3554,9 @@ func main() {
 		}
 	}
 	adminRouter = wireAudit(adminRouter)
+	// §25.9 audit-query observability series (query latency, broken /
+	// post-outage-rechain counters, scatter-gather fan-out). F-25.9.13.
+	adminRouter = adminRouter.WithAuditMetrics(gwMetrics)
 	if auditPruner != nil {
 		// §16.4 line 378 force-drop override surface. F-11.7.17.
 		adminRouter = adminRouter.WithAuditPruner(auditPruner)

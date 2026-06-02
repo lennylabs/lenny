@@ -39454,9 +39454,11 @@ The spec error table (lines 3730-3735) lists `AUDIT_EVENT_NOT_FOUND` (404), `AUD
 
 **Resolution (f753a200):** `handleGetAuditEvent` now returns `404 AUDIT_EVENT_NOT_FOUND`; the shared `auditRows` helper maps every read failure (and the verify/summary read paths) to `503 AUDIT_STORE_UNAVAILABLE` (no read cache, per §25.9 line 3714); `AUDIT_QUERY_TOO_BROAD` (400) is returned by the time-window cap (F-25.9.3). All four codes (`AUDIT_EVENT_NOT_FOUND`, `AUDIT_QUERY_TOO_BROAD`, `AUDIT_STORE_UNAVAILABLE`, `AUDIT_PARTIAL_RESULTS`) are registered in `errorclassify` with their spec categories. `AUDIT_PARTIAL_RESULTS` (207) is reachable only once multi-shard scatter-gather lands (F-25.9.11).
 
-### - [ ] F-25.9.13 — §25.9 metrics are not emitted [Medium] — OPEN
+### - [x] F-25.9.13 — §25.9 metrics are not emitted [Medium] — CLOSED
 
 The metrics table (lines 3720-3726) names five Prometheus series: `lenny_audit_query_duration_seconds`, `lenny_audit_chain_verification_broken_total`, `lenny_audit_chain_rechained_post_outage_total`, `lenny_audit_rate_limited_total`, `lenny_audit_scatter_gather_shards_queried`. Only `lenny_audit_rate_limited_total` has user-visible scaffolding (`pkg/ops/auditrate/auditrate.go:24` documents that the caller increments the counter, but the counter itself is not registered with the rate-limiter package). The other four series have zero matches across `pkg/`. Operators have no visibility into audit query latency, broken-chain detection rate, post-outage rechain rate, or scatter-gather fan-out width.
+
+**Resolution:** All five series are registered in `gatewaymetrics.New()` and transcribed into the §16.1 metric catalog (`pkg/observability/metrics/catalog.go` + the catalog test allow-list). The four audit-query series are emitted from the query path: the new `admin.AuditQueryMetrics` seam (wired via `WithAuditMetrics(gwMetrics)` in `cmd/lenny-gateway`) records `lenny_audit_query_duration_seconds{endpoint,shards}` and `lenny_audit_scatter_gather_shards_queried` on every list/get/summary/verify call, and increments `lenny_audit_chain_verification_broken_total` / `lenny_audit_chain_rechained_post_outage_total` per the page's chainIntegrity tally (shards=1 in single-shard v1). `lenny_audit_rate_limited_total{event_type,service_account}` is registered with the `Metrics.IncAuditRateLimited` accessor; its production emit site is the §25.9 diagnostics rate limiter tracked under F-25.9.15.
 
 ### - [x] F-25.9.14 — `audit.query_executed` and `audit.chain_integrity_broken_detected` never emitted [Medium] — CLOSED
 

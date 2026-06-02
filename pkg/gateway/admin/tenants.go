@@ -154,6 +154,7 @@ type Router struct {
 	tenantAccess            tenantaccessstore.Store
 	auditLog                AuditLog
 	auditPruner             AuditPartitionDropper
+	auditMetrics            AuditQueryMetrics
 	tokenRevoker            IssuedTokenRevoker
 	revocationCache         RevocationCache
 	userPods                UserPodTerminator
