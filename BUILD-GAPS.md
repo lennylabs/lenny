@@ -20307,7 +20307,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.3 — `CredentialGenerator` interface is not implemented [High] — OPEN
+### - [x] F-12.6.3 — `CredentialGenerator` interface is not implemented [High] — CLOSED
 
 **Spec.** §12.6 lines 626–635 define `CredentialGenerator` as one of the five scaling extension interfaces, with the `GenerateCredential(ctx, CredentialRequest) (*CredentialLease, error)` method and a v1 `StaticPoolGenerator` implementation that wraps `CredentialPool`. The build-phase table (line 719) lists this interface in Phase 5.5.
 
@@ -20316,6 +20316,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** The §12.6 swap-at-Tier-4 promise (e.g., dynamic credential generation via a vault or STS) requires retrofitting an interface on top of the existing `Assigner` rather than landing a second implementation. Cross-package code that should depend on the `CredentialGenerator` abstraction depends on `Assigner` instead, locking the dependency graph to the v1 pool model.
 
 **Fix.** Define the `CredentialGenerator` interface and the `CredentialRequest`/`CredentialLease` types described in §12.6 / §4.9; provide `StaticPoolGenerator` as a thin adapter over the existing `Assigner`. Either redefine `Assigner` as a sub-interface of `CredentialGenerator`, or have the credassign service implement both surfaces.
+
+**Resolution:** Closed by `1da8eda8`. `pkg/gateway/credassign/generator.go` declares the §12.6 lines 631-633 `CredentialGenerator` interface, the `CredentialRequest` struct (TenantID/Provider/PoolID/SessionID/SpiffeURI/Scopes per the §12.6 line 431 cross-reference), and `CredentialLease = credential.Lease` (the §12.6 line 432 alias, no new envelope). The v1 `StaticPoolGenerator` is a thin adapter over the existing `Assigner` (`Service` or `Client`): `GenerateCredential` honors a cancelled context, then mints a lease through `Assign`. Tests cover the success path, `ErrPoolNotFound` propagation, and context cancellation.
 
 ---
 
@@ -20359,7 +20361,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.7 — `PodRegistry` observability contract not emitted [High] — OPEN
+### - [x] F-12.6.7 — `PodRegistry` observability contract not emitted [High] — CLOSED
 
 **Spec.** §12.6 line 478: "Every `PodRegistry` implementation MUST emit: `lenny_pod_registry_operation_duration_seconds{operation, pool}` (histogram) and `lenny_pod_registry_error_total{operation, pool}` (counter). The `operation` label is one of: `get`, `update_state`, `claim`, `release`, `list`, `count`, `create`, `delete`, `watch`."
 
@@ -20368,6 +20370,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** Per-operation diagnostics required for §12.6's "detecting a slow `PostgresPodRegistry` at Tier 4" (line 478) and for `lenny_pod_registry_watch_lag_seconds` alerting are missing. Operators have no visibility into individual registry-layer operations.
 
 **Fix.** Wrap `CRDPodRegistry` (or inject a metrics dependency) so every method records its duration and outcome under the catalogued names. Add the same surface to `WatchPods` for the watch-lag gauge.
+
+**Resolution:** Closed by `1da8eda8`. `pkg/podregistry/metrics.go` defines `Metrics` (the catalogued `lenny_pod_registry_operation_duration_seconds{operation, pool}` histogram and `lenny_pod_registry_error_total{operation, pool}` counter, built through the §16.1 `metrics` validators). Each of the nine `CRDPodRegistry` methods (get, update_state, claim, release, list, count, create, delete, watch) records its duration and, on error, the error count via a deferred `recordOp`; the pool label is resolved from the fetched Sandbox for pod-keyed ops and from the argument for pool-keyed ops. A nil `Metrics` (the default, set via `SetMetrics`) is a no-op. The `lenny_pod_registry_watch_lag_seconds` gauge remains a Tier-4 `PostgresPodRegistry` concern (F-12.6.24); CRDPodRegistry itself is not yet constructed in any production binary, so the per-implementation contract is satisfied and exercised by unit tests (duration series per operation, error-counter increments, nil-safe path).
 
 ---
 
@@ -20450,7 +20454,7 @@ Subscribe(...) (Subscription, error)
 
 ---
 
-### - [ ] F-12.6.13 — child sessions do not inherit the routing prefix [High] — OPEN
+### - [x] F-12.6.13 — child sessions do not inherit the routing prefix [High] — CLOSED
 
 **Spec.** §12.6 line 577: "**Child session creation (delegation):** The gateway copies the first 32 bits from the root session's UUID into the child's UUID. The remaining bits are random. This guarantees every session in a delegation tree shares the same routing prefix and lands on the same shard."
 
@@ -20469,6 +20473,8 @@ The doc comment acknowledges the divergence: "in a single-shard v1 deployment th
 **Impact.** A future multi-shard `StoreRouter` immediately violates the §12.6 "all sessions in a delegation tree co-locate on the same shard" invariant. Single-shard tree traversal, cascade cancellation, and delegation lineage queries spec'd at line 550 cannot ride on the shard prefix without first re-issuing every existing session ID or breaking the spec.
 
 **Fix.** Add `NewChildID(rootID string) (string, error)` that parses the routing prefix from `rootID` and reuses it; wire delegation-spawn paths in `pkg/gateway/sessionserver/sessionserver.go` and the MCP delegation tools to call it instead of `NewID()`. Add a test that asserts `SessionShard(child) == SessionShard(root)` for a parent-child pair built through this path. (Pure-v1: keep `NewID()` for root sessions only.)
+
+**Resolution:** Closed by `1da8eda8`. `session.NewChildID(rootID)` copies the first 32 bits (the routing prefix) from `rootID` into a fresh UUIDv8 and randomizes the rest (§12.6 line 577); a malformed root prefix is rejected rather than silently producing a tree-splitting random id. `session.RoutingPrefix` exposes the prefix for equivalence checks. The delegation service mints the child id from the resolved `rootSessionID` via `newChildID` (the test-only `IDFunc` override still takes precedence); production constructs the service without an override, so children of any tree node inherit the apex root's prefix. The MCP delegation tools route through the same service. Root creation and `/v1/sessions/{id}/derive` keep `NewID()` (a derived session is a new independent root, §12.6 line 578). Tests assert prefix equality for child and grandchild, malformed-root rejection, and the UUIDv8 version/variant bits.
 
 ---
 
@@ -20536,7 +20542,7 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 ---
 
-### - [ ] F-12.6.18 — scatter-gather configuration knobs and execution helpers are missing [Medium] — OPEN
+### - [x] F-12.6.18 — scatter-gather configuration knobs and execution helpers are missing [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-25.9.11 — F-12.6.18 covers the generic StoreRouter scatter-gather knobs and helpers, while F-25.9.11 covers the audit-specific scatter-gather plus Redis caching path; related subsystem, different specific gaps.
 
@@ -20547,6 +20553,8 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 **Impact.** v1 is trivially compliant (one shard, no fan-out), but the helpers, metrics, and Helm knobs that should be in place before the first multi-shard deployment are absent. The first caller that actually needs scatter-gather will have to introduce all four (helper, metrics, knobs, alert wiring) — exactly the retrofit the §12.6 phasing was designed to avoid.
 
 **Fix.** Add a `pkg/storerouter/scatter` (or inline) helper that takes a per-shard closure, runs it under the three timeout bounds, emits the two metrics, and returns the `partial: true` flag for reads. Land the Helm values with the documented defaults. Even with one shard in v1, the metrics are emitted and the alert rule has data behind it.
+
+**Resolution:** Closed by `1da8eda8`. `pkg/storerouter/scatter.go` adds (inline in the package) `ScatterConfig` + `DefaultScatterConfig` (§12.6 lines 556-558 defaults 16 / 10s / 120s), the `QueryType` enum (list_sessions, gdpr_erasure, tenant_deletion, delegation_budget_purge), and the generic `ScatterRead[T]` / `ScatterWrite` helpers. Reads run each shard under the per-shard and aggregate deadlines, log a `scatter_gather_shard_timeout` structured event for a timed-out shard, drop it, and return `partial: true`; a non-timeout shard error fails the read. Writes retry a timed-out shard up to twice before failing (a non-timeout error fails immediately). Both emit `lenny_store_router_scatter_gather_duration_seconds{query_type}` and `lenny_store_router_scatter_gather_shard_count{query_type}` once per invocation via the registered `PromScatterMetrics`. The router carries the config (`storerouter.Config.Scatter`, `ScatterConfig()`) and the gateway attaches the metrics after the registerer is built (`SetScatterMetrics`). The `storeRouter.maxScatterGatherConcurrency` / `scatterGatherPerShardTimeoutSeconds` / `scatterGatherAggregateTimeoutSeconds` Helm values render into `LENNY_SCATTER_*` env consumed by the gateway. v1 is single-shard, so the helpers are wired and metric-registered but have no live multi-shard caller yet; emission is exercised by unit tests (happy path, per-shard timeout partial, non-timeout failure, write retry/success-after-retry/no-retry, aggregate timeout, Prometheus emission) plus a helm-unittest for the rendered env.
 
 ---
 
@@ -20611,7 +20619,7 @@ type Event = cloudevents.Event
 
 ---
 
-### - [ ] F-12.6.23 — spec-required `eventBus.*` and `storeRouter.*` Helm values do not exist [Medium] — OPEN
+### - [ ] F-12.6.23 — spec-required `eventBus.*` and `storeRouter.*` Helm values do not exist [Medium] — DEFERRED
 
 **Spec.** §12.6 surfaces these as Helm values: `storeRouter.maxScatterGatherConcurrency` (default 16), `storeRouter.scatterGatherPerShardTimeoutSeconds` (default 10), `storeRouter.scatterGatherAggregateTimeoutSeconds` (default 120), `eventBus.duplicateInjectionFactor`, `eventBus.dropAlertThreshold`, `eventBus.retryInterval`, `eventBus.maxRetryAttempts`.
 
@@ -20620,6 +20628,8 @@ type Event = cloudevents.Event
 **Impact.** Operators cannot tune the retranscribe sweep cadence, the max-retry limit, the drop-alert threshold, the duplicate-injection test factor, or any scatter-gather knob without rebuilding the binary. The §12.6 phrasing "(Helm value, ...)" is contractual.
 
 **Fix.** Add the value keys to `charts/lenny/values.yaml` with the documented defaults; thread them through `templates/deployment.yaml` as env vars or a ConfigMap; consume them in the gateway main when constructing `Retranscriber` and any future scatter-gather helper.
+
+**Deferred (`1da8eda8`).** The `storeRouter.*` half landed with F-12.6.18: `storeRouter.maxScatterGatherConcurrency` / `scatterGatherPerShardTimeoutSeconds` / `scatterGatherAggregateTimeoutSeconds` are in `values.yaml`, render into `LENNY_SCATTER_*` env, and the gateway consumes them into the router's `ScatterConfig`. The `eventBus.*` half (`duplicateInjectionFactor`, `dropAlertThreshold`, `retryInterval`, `maxRetryAttempts`) is blocked on **F-12.6.22**: the §12.6 `RedisEventBus` and the leader-elected `Retranscriber` are not constructed in any production binary, so rendering those values as env would produce unconsumed knobs (the gateway's `eventBus` symbol is the unrelated §7 session SSE bus). Re-attempt once F-12.6.22 wires the EventBus + Retranscriber, threading the four `eventBus.*` values into the `RetranscribeConfig` and the drop-alert/duplicate-injection config at that point.
 
 ---
 
