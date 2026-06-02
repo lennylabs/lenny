@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,9 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/lennylabs/lenny/pkg/preflight"
+	"github.com/lennylabs/lenny/pkg/preflight/infra"
 )
 
 // install.go implements `lenny-ctl install` — the §17.6 / §24.20
@@ -256,6 +260,16 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if cfg.dryRun {
 		fmt.Fprintln(stderr, "lenny-ctl: --dry-run set; not invoking helm")
 		return 0
+	}
+
+	// Preflight phase (§17.6 line 696 / §24.20 line 295: detection →
+	// question → preview → preflight → helm install). The wizard probes
+	// the resolved Postgres/Redis/MinIO backends before mutating the
+	// cluster; any hard failure aborts so a misconfigured DSN surfaces
+	// here rather than as a CrashLoopBackOff after `helm install`.
+	// F-24.2.5 / F-24.20.3.
+	if code := runInstallPreflight(context.Background(), installPreflightConfig(answers), infra.RealProbers(), stdout, stderr); code != 0 {
+		return code
 	}
 
 	// Apply phase (§17.6): run helm install as a subprocess. The
@@ -732,6 +746,49 @@ func answerFileKeys() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// installPreflightConfig maps the wizard answers onto the §24.2 infra
+// preflight config. Postgres and Redis DSNs are self-contained, so they
+// probe directly. MinIO credentials are not part of the answer file
+// (they live in a Kubernetes Secret); the wizard pulls them from the
+// environment when present so the probe can authenticate, and otherwise
+// leaves MinIO unconfigured so it is skipped rather than failing on an
+// anonymous request. spec: §17.6 line 696; §24.2 line 47.
+func installPreflightConfig(a installAnswers) infra.Config {
+	cfg := infra.Config{
+		PostgresDSN: a.Postgres.DSN,
+		RedisDSN:    a.Redis.URL,
+		MinIOUseSSL: true,
+	}
+	ak := os.Getenv("LENNY_MINIO_ACCESS_KEY")
+	sk := os.Getenv("LENNY_MINIO_SECRET_KEY")
+	if a.ObjectStorage.Endpoint != "" && ak != "" && sk != "" {
+		cfg.MinIOEndpoint = a.ObjectStorage.Endpoint
+		cfg.MinIOAccessKey = ak
+		cfg.MinIOSecretKey = sk
+		cfg.MinIOBucket = a.ObjectStorage.Bucket
+	}
+	return cfg
+}
+
+// runInstallPreflight runs the wizard's preflight phase, rendering each
+// check and aborting (exit 1) on the first hard failure. It is split
+// from cmdInstall so a test drives it with fake probers. An empty config
+// (every backend a chart default with no external DSN) probes nothing
+// and passes — there is nothing reachable to validate before install.
+// spec: §17.6 line 696; §24.20 line 295. F-24.2.5 / F-24.20.3.
+func runInstallPreflight(ctx context.Context, cfg infra.Config, probers infra.Probers, stdout, stderr io.Writer) int {
+	fmt.Fprintln(stdout, "# Preflight: validating Postgres/Redis/MinIO connectivity before install")
+	report := infra.Run(ctx, cfg, probers)
+	for _, r := range report {
+		printPreflightCheck(stdout, r.Name, r.Decision.Passed, r.Decision.Reason)
+	}
+	if preflight.Failed(report) {
+		fmt.Fprintln(stderr, "lenny-ctl install: preflight failed; aborting before helm install (see §17.6)")
+		return 1
+	}
+	return 0
 }
 
 const installUsage = `lenny-ctl install — Lenny installation wizard (§17.6, §24.20)

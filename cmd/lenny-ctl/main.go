@@ -137,10 +137,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// global-flag parsing but ignores the gateway client.
 		return cmdInstall(rest[1:], os.Stdin, stdout, stderr)
 	case "preflight":
-		// preflight runs the §10.5 step-1 CRD-currency check against the
-		// ambient-kubeconfig cluster, not the gateway API, so it ignores
-		// the gateway client.
-		return cmdPreflight(ctx, rest[1:], stdout, stderr)
+		// §24.2: preflight runs in two modes. When the gateway is
+		// reachable it delegates to POST /v1/admin/preflight via the
+		// client; otherwise it probes Postgres/Redis/MinIO locally and,
+		// against a reachable cluster, runs the §10.5 CRD-currency check.
+		return cmdPreflight(ctx, client, rest[1:], stdout, stderr)
 	case "runtime":
 		// runtime init and validate are local; runtime publish reaches
 		// the gateway. The group is dispatched with the gateway client

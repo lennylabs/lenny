@@ -4,12 +4,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/lennylabs/lenny/pkg/preflight/infra"
 )
 
 // writeAnswerFile writes an answer file into a temp dir and returns its
@@ -723,5 +726,70 @@ func TestAnswerFileKeysSorted(t *testing.T) {
 		if keys[i-1] > keys[i] {
 			t.Errorf("answerFileKeys not sorted at %d: %q > %q", i, keys[i-1], keys[i])
 		}
+	}
+}
+
+// --- §17.6 line 696 / §24.20 wizard preflight phase (F-24.2.5 / F-24.20.3) ---
+
+// spec: §17.6 line 696 — the wizard probes the resolved backends; an
+// unreachable Postgres is a hard failure that aborts before helm install.
+func TestRunInstallPreflight_HardFailureAborts(t *testing.T) {
+	var out, errb bytes.Buffer
+	cfg := infra.Config{PostgresDSN: "postgres://x"}
+	code := runInstallPreflight(context.Background(), cfg,
+		infra.Probers{Postgres: fakePG{err: context.DeadlineExceeded}}, &out, &errb)
+	if code != 1 {
+		t.Fatalf("want abort exit 1, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "aborting before helm install") {
+		t.Errorf("missing abort message: %s", errb.String())
+	}
+}
+
+// A reachable Postgres lets the wizard proceed (exit 0).
+func TestRunInstallPreflight_PassProceeds(t *testing.T) {
+	var out, errb bytes.Buffer
+	cfg := infra.Config{PostgresDSN: "postgres://x", RedisDSN: "redis://x"}
+	code := runInstallPreflight(context.Background(), cfg,
+		infra.Probers{Postgres: fakePG{version: "116"}, Redis: fakeRD{}}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("want proceed exit 0, got %d (stderr=%s)", code, errb.String())
+	}
+}
+
+// An all-chart-default install with no external DSNs probes nothing and
+// passes — there is nothing reachable to validate before install.
+func TestRunInstallPreflight_NoBackendsConfiguredPasses(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := runInstallPreflight(context.Background(), infra.Config{}, infra.RealProbers(), &out, &errb)
+	if code != 0 {
+		t.Fatalf("empty config should pass, got %d", code)
+	}
+}
+
+// spec: §24.2 line 47 — MinIO is probed only when both endpoint and
+// credentials are available (credentials come from the environment, not
+// the answer file), otherwise it is skipped.
+func TestInstallPreflightConfig_MinIONeedsCredentials(t *testing.T) {
+	a := installAnswers{}
+	a.Postgres.DSN = "postgres://x"
+	a.ObjectStorage.Endpoint = "minio:9000"
+	a.ObjectStorage.Bucket = "artifacts"
+
+	t.Setenv("LENNY_MINIO_ACCESS_KEY", "")
+	t.Setenv("LENNY_MINIO_SECRET_KEY", "")
+	cfg := installPreflightConfig(a)
+	if cfg.MinIOEndpoint != "" {
+		t.Errorf("MinIO should be skipped without credentials, got endpoint %q", cfg.MinIOEndpoint)
+	}
+	if cfg.PostgresDSN != "postgres://x" {
+		t.Errorf("postgres DSN not carried: %q", cfg.PostgresDSN)
+	}
+
+	t.Setenv("LENNY_MINIO_ACCESS_KEY", "ak")
+	t.Setenv("LENNY_MINIO_SECRET_KEY", "sk")
+	cfg = installPreflightConfig(a)
+	if cfg.MinIOEndpoint != "minio:9000" || cfg.MinIOAccessKey != "ak" || cfg.MinIOBucket != "artifacts" {
+		t.Errorf("MinIO should be probed with credentials present: %+v", cfg)
 	}
 }

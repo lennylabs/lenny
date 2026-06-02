@@ -250,6 +250,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
+	"github.com/lennylabs/lenny/pkg/preflight"
+	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
@@ -3552,6 +3554,26 @@ func main() {
 		} else {
 			adminRouter = adminRouter.WithMigrationManager(mig)
 		}
+	}
+	// §15.1 line 890 / §24.2: API-backed `lenny-ctl preflight`. The
+	// endpoint probes the gateway's own configured backends, so it is
+	// registered only when at least one backend DSN is set. The probes
+	// re-dial (the endpoint is POST because the dials are
+	// side-effecting). F-24.2.2.
+	preflightConfig := preflightinfra.Config{
+		PostgresDSN:    *postgresDSN,
+		RedisDSN:       *redisURL,
+		MinIOEndpoint:  *minioEndpoint,
+		MinIOAccessKey: *minioAccessKey,
+		MinIOSecretKey: *minioSecretKey,
+		MinIOBucket:    *minioBucket,
+		MinIOUseSSL:    *minioUseSSL,
+	}
+	if preflightConfig.Configured() {
+		probers := preflightinfra.RealProbers()
+		adminRouter = adminRouter.WithPreflight(admin.InfraPreflightFunc(func(ctx context.Context) []preflight.CheckResult {
+			return preflightinfra.Run(ctx, preflightConfig, probers)
+		}))
 	}
 	adminRouter = wireAudit(adminRouter)
 	// §25.9 audit-query observability series (query latency, broken /

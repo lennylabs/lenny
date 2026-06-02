@@ -207,6 +207,11 @@ type Router struct {
 	// endpoints. Nil leaves them unregistered.
 	migrations MigrationManager
 
+	// preflighter backs the §15.1 line 890 `POST /v1/admin/preflight`
+	// API-backed infrastructure-connectivity preflight. Nil leaves the
+	// endpoint unregistered.
+	preflighter InfraPreflighter
+
 	// leaseDenials clears the §8.6 extension-denied flag, backing the
 	// §15.1 line 868 DELETE …/extension-denial admin endpoint. Nil leaves
 	// the endpoint unregistered.
@@ -752,6 +757,14 @@ func (r *Router) Handler() http.Handler {
 		// operational detail even with secrets redacted).
 		mux.Handle("GET /v1/admin/platform/version", r.requireAdmin(http.HandlerFunc(r.handlePlatformVersion)))
 		mux.Handle("GET /v1/admin/platform/config", r.requireAdmin(http.HandlerFunc(r.handlePlatformConfig)))
+	}
+	if r.preflighter != nil {
+		// §15.1 line 890 / §24.2 — API-backed mode of `lenny-ctl
+		// preflight`: active outbound Postgres/Redis/MinIO connectivity
+		// and schema-version probes against the gateway's configured
+		// backends. POST because it performs side-effecting outbound
+		// dials. Reserved to platform-admin.
+		mux.Handle("POST /v1/admin/preflight", r.requireAdmin(http.HandlerFunc(r.handlePreflight)))
 	}
 	// §25.4 self-introspection — available to any authenticated
 	// caller, no role gate. Returns the calling principal's identity
