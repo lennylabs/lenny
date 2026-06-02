@@ -28771,7 +28771,7 @@ Alerts (`AuditGrantDrift`, `NetworkPolicyCIDRDrift`, `DataResidencyViolationAtte
 
 §16.10 promises OpenSLO export when `monitoring.openslo.enabled: true`. `grep openslo charts/lenny/values.yaml` returns no match. `tests/spec-map-exceptions.yaml` records the deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5).` Out of scope for this §16.5 regression audit; record as informational so the dependency is visible alongside §16.5's burn-rate alerts (which are themselves blocked by F3).
 
-- **Resolution:** Verify-closed. `tests/spec-map-exceptions.yaml:96-98` carries the §16.10 deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5)`; the primary gap is tracked under F-16.10.1. Informational dependency note only.
+- **Resolution:** Verify-closed. `tests/spec-map-exceptions.yaml:96-98` carries the §16.10 deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5)`; the primary gap is tracked under F-16.10.1. Informational dependency note only. Update (3dd580f1): the primary gap F-16.10.1 is now closed — `monitoring.openslo.enabled` and the OpenSLO templates exist, and the §16.10 deferral exception was removed.
 
 ### Catalog parity summary
 
@@ -29822,7 +29822,7 @@ independently testable. The normative requirements are:
 
 ### Findings
 
-### - [ ] F-16.10.1 — (High) — OpenSLO export not implemented; the entire §16.10 surface is absent [Medium] — OPEN
+### - [x] F-16.10.1 — (High) — OpenSLO export not implemented; the entire §16.10 surface is absent [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-16.5.12 — Both report the absent OpenSLO export surface (monitoring.openslo.enabled value and templates); F-16.5.12 records it as a deferred dependency of the same gap.
 
@@ -29853,7 +29853,22 @@ OpenSLO documents under the documented flag, sourced from the same
 catalog as the §16.5 alerts. The deliverable is absent in a phase
 (13) that is reported as Done.
 
-### - [ ] F-16.10.2 — (Medium) — Spec-map exception misroutes §16.10 to Phase 14.5; Phase 13 is reported Done with the deliverable missing [Medium] — OPEN
+**Resolution (3dd580f1):** Built the §16.10 OpenSLO export sourced from
+the same §16.5 catalog as the alerts. New `pkg/alerting/rules/slo.go`
+defines a canonical `SLODefinitions()` catalog (the 8 §16.5 SLOs with
+target, budget-normalised burn-rate expr, runbook slug, and an OpenSLO
+ratio SLI); `burnRateAlerts()` now derives from it (output byte-identical,
+verified by `gen-alerting-rules -check`), so the export cannot drift
+(R-005, R-006). `RenderOpenSLO` (`openslo.go`) renders each SLO as OpenSLO
+v1 SLI + SLO + AlertPolicy documents referencing the canonical metric
+names (R-002) and a `deployment_tier="<tier>"` matcher (R-003).
+`gen-alerting-rules` emits `charts/lenny/files/openslo.yaml` (+ a tier1
+docs reference); the new `openslo-configmap.yaml` template splices it into
+a ConfigMap gated by `monitoring.openslo.enabled` (default false, R-001,
+R-004), substituting `global.deploymentTier`. Added `lenny-ctl slo export`
+and the `monitoring.openslo.*` values block. Resolved this batch.
+
+### - [x] F-16.10.2 — (Medium) — Spec-map exception misroutes §16.10 to Phase 14.5; Phase 13 is reported Done with the deliverable missing [Medium] — CLOSED
 
 `tests/spec-map-exceptions.yaml` line 96 defers §16.10 to
 "Wave 7 (Phase 14.5)." `spec/18_build-sequence.md` line 612 places
@@ -29877,6 +29892,17 @@ Severity: Medium. The deferral is documented, so the build is not
 silently regressing, but the cited phase number is wrong and the
 deferral is operating as a permanent exemption rather than a tracked
 gap.
+
+**Resolution (3dd580f1):** Closed by F-16.10.1 landing the deliverable.
+Removed the `16.10` deferral entry from `tests/spec-map-exceptions.yaml`
+and repointed the `16.10` entry in `tests/spec-map.json` at the real
+tests (`openslo_test.go`, `slo_test.go`, `openslo-configmap_test.yaml`)
+and packages (`pkg/alerting/rules`, `cmd/gen-alerting-rules`, the chart
+template), dropping `blocked_until_phase`. `lenny-test validate-maps`
+spec-map coverage still passes (§16.10 now carries a test reference
+rather than an exception). The phase-routing mismatch is moot now that
+§16.10 is implemented and verified rather than deferred. Resolved this
+batch.
 
 ### - [x] F-16.10.3 — (Medium) — `tests/spec-map.json` points at a non-existent package [Medium] — CLOSED
 
