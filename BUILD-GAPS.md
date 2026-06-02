@@ -25262,7 +25262,7 @@ defers the derive_failure persistence path. The list handler
 the rest of the matrix (404 on event-stream, 409 on action endpoints) is
 not implemented.
 
-**Resolution (commit <pending>):** Built the deferred §7.1 derive rule 2
+**Resolution (commit b5fef886):** Built the deferred §7.1 derive rule 2
 opt-in persistence and wired the reachability matrix. New
 `Options.PersistDeriveFailureRows` (`gateway.persistDeriveFailureRows`
 flag / `LENNY_PERSIST_DERIVE_FAILURE_ROWS`, default off): a `/derive`
@@ -25288,7 +25288,7 @@ Impl (`sessionserver.go:795-800`) supports `state`, `runtime`,
 (`platform-admin` can list across tenants per spec but impl only reads
 the request tenant), no `labels` filter, and no `includeDeriveFailures`.
 
-**Resolution (commit <pending>):** `handleList` now parses all three
+**Resolution (commit b5fef886):** `handleList` now parses all three
 missing filters. `?tenant=<id>` re-scopes the listing when the caller
 holds `platform-admin` (validated tenant id; a non-admin's `?tenant=` is
 ignored and the Postgres RLS context enforces own-tenant regardless).
