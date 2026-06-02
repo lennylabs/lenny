@@ -30396,7 +30396,7 @@ that "retains" all of zero backups. Storage cost grows unbounded.
 
 ### - [ ] F-17.3.10 — SHOULD / capability unimplemented [Medium] — OPEN
 
-### - [ ] F-17.3.11 — 3.1 — No disaster-recovery, backup, restore, or replication runbooks [Medium] — OPEN
+### - [x] F-17.3.11 — 3.1 — No disaster-recovery, backup, restore, or replication runbooks [Medium] — CLOSED
 
 Spec — §17.3 line 140 anchors recovery in the agent-operable
 runbook surface (see also §17.7 "Operational Runbooks", which the
@@ -30429,6 +30429,19 @@ Effect: when any of the §25.11 alerts fires (and §17.3 references
 them via §25.11), the runbook URL the alert carries 404s, and the
 agent-operability promise of `GET /v1/admin/runbooks/{name}` is
 not honored for the DR surface.
+
+Resolution — Authored six DR runbooks (`backup-overdue`,
+`backup-failed`, `backup-storage-high`, `restore-execute`,
+`restore-failure-recovery`, `pre-restore-backup-retention`) and wired
+`RunbookURL` on the `BackupOverdue`/`BackupFailed`/`BackupStorageHigh`
+alerts (to the new pages) and the
+`MinIOArtifactReplicationLagHigh`/`Failed` alerts (to the existing
+`minio-replication-lag`). Added the alert→runbook rows and a `backup`
+component map to `docs/runbooks/index.md`. The §25.11 alerts now resolve
+through the existing tier11 slug-resolution lint; the
+`backup-reconcile-blocked` and `artifact-replication-residency-violation`
+runbooks named in the evidence already existed. Burn-rate alerts stay on
+the §17.7 procedural allowlist by prior decision. (this batch)
 
 ---
 

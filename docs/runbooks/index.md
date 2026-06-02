@@ -57,6 +57,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `BillingStreamEntryAgeHigh` | [billing-stream-backlog](billing-stream-backlog.html) | `billing` |
 | `TokenStoreUnavailable` | [token-store-unavailable](token-store-unavailable.html) | `tokenService` |
 | `LLMUpstreamEgressAnomaly` | [llm-egress-anomaly](llm-egress-anomaly.html) | `gateway` |
+| `BackupReconcileBlocked` | [backup-reconcile-blocked](backup-reconcile-blocked.html) | `backup`, `compliance` |
+| `MinIOArtifactReplicationLagCritical` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
 
 ### Warning alerts
 
@@ -104,6 +106,11 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |
 | `EphemeralContainerCredGuardUnavailable` | [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html) | `admission` |
 | `AdmissionPlaneFeatureFlagDowngrade` | [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html) | `admission` |
+| `BackupOverdue` | [backup-overdue](backup-overdue.html) | `backup` |
+| `BackupFailed` | [backup-failed](backup-failed.html) | `backup` |
+| `BackupStorageHigh` | [backup-storage-high](backup-storage-high.html) | `backup`, `objectStore` |
+| `MinIOArtifactReplicationLagHigh` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
+| `MinIOArtifactReplicationFailed` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
 
 ### SLO burn-rate alerts
 
@@ -129,7 +136,8 @@ When the health API (`GET /v1/admin/health`) returns `degraded` or `unhealthy` f
 | `warmPools` | [warm-pool-exhaustion](warm-pool-exhaustion.html), [sdk-connect-timeout](sdk-connect-timeout.html), [pool-config-drift](pool-config-drift.html), [pool-bootstrap-mode](pool-bootstrap-mode.html) |
 | `postgres` | [postgres-failover](postgres-failover.html), [pgbouncer-saturation](pgbouncer-saturation.html) |
 | `redis` | [redis-failure](redis-failure.html), [delegation-budget-recovery](delegation-budget-recovery.html) |
-| `objectStore` | [minio-failure](minio-failure.html), [storage-quota-high](storage-quota-high.html) |
+| `objectStore` | [minio-failure](minio-failure.html), [storage-quota-high](storage-quota-high.html), [minio-replication-lag](minio-replication-lag.html) |
+| `backup` | [backup-overdue](backup-overdue.html), [backup-failed](backup-failed.html), [backup-storage-high](backup-storage-high.html), [restore-execute](restore-execute.html), [restore-failure-recovery](restore-failure-recovery.html), [pre-restore-backup-retention](pre-restore-backup-retention.html), [backup-reconcile-blocked](backup-reconcile-blocked.html) |
 | `gateway` | [gateway-replica-failure](gateway-replica-failure.html), [gateway-capacity](gateway-capacity.html), [circuit-breaker-open](circuit-breaker-open.html), [gateway-rate-limit-storm](gateway-rate-limit-storm.html), [gateway-clock-drift](gateway-clock-drift.html) |
 | `certManager` | [cert-manager-outage](cert-manager-outage.html) |
 | `credentialPools` | [credential-pool-exhaustion](credential-pool-exhaustion.html), [credential-revocation](credential-revocation.html) |

@@ -1238,6 +1238,7 @@ groups:
             severity: warning
           annotations:
             description: A full backup has not completed within the expected 48h window.
+            runbook_url: https://docs.lenny.dev/runbooks/backup-overdue
             summary: A full backup is overdue
         - alert: BackupFailed
           expr: increase(lenny_backup_total{status="failed"}[1h]) > 0
@@ -1245,6 +1246,7 @@ groups:
             severity: warning
           annotations:
             description: A backup Job terminated with failure; see ops_backups.lastError for the cause.
+            runbook_url: https://docs.lenny.dev/runbooks/backup-failed
             summary: A backup Job failed
         - alert: BackupStorageHigh
           expr: lenny_backup_storage_used_bytes / lenny_backup_storage_quota_bytes > 0.80
@@ -1252,6 +1254,7 @@ groups:
             severity: warning
           annotations:
             description: Backup object storage utilization exceeds 80 percent of the provisioned quota. Retention policy may need tightening or the backup bucket may need resizing.
+            runbook_url: https://docs.lenny.dev/runbooks/backup-storage-high
             summary: Backup object storage above 80 percent of quota
         - alert: MinIOArtifactReplicationLagHigh
           expr: lenny_minio_replication_lag_seconds > 900
@@ -1259,6 +1262,7 @@ groups:
             severity: warning
           annotations:
             description: lenny_minio_replication_lag_seconds exceeds minio.artifactBackup.replicationLagRpoSeconds (1x RPO). The ArtifactStore bucket is falling behind its replication target; artifacts written in the lag window are at risk in a full-site disaster.
+            runbook_url: https://docs.lenny.dev/runbooks/minio-replication-lag
             summary: ArtifactStore replication lag exceeds 1x RPO
         - alert: MinIOArtifactReplicationFailed
           expr: rate(lenny_minio_replication_failed_total[5m]) > 0
@@ -1266,6 +1270,7 @@ groups:
             severity: warning
           annotations:
             description: Object-level replication failures (permission, network, destination bucket unavailable or full) over 5 min. The ArtifactStore backup posture is broken until the failure is resolved.
+            runbook_url: https://docs.lenny.dev/runbooks/minio-replication-lag
             summary: ArtifactStore object-level replication failures
         - alert: CircuitBreakerOpen
           expr: lenny_circuit_breaker_open == 1

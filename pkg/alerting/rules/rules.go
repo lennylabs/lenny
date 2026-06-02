@@ -1543,6 +1543,7 @@ func warningAlerts() []Rule {
 			Severity:    SeverityWarning,
 			Summary:     "A full backup is overdue",
 			Description: "A full backup has not completed within the expected 48h window.",
+			RunbookURL:  runbook("backup-overdue"),
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1551,6 +1552,7 @@ func warningAlerts() []Rule {
 			Severity:    SeverityWarning,
 			Summary:     "A backup Job failed",
 			Description: "A backup Job terminated with failure; see ops_backups.lastError for the cause.",
+			RunbookURL:  runbook("backup-failed"),
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1559,6 +1561,7 @@ func warningAlerts() []Rule {
 			Severity:    SeverityWarning,
 			Summary:     "Backup object storage above 80 percent of quota",
 			Description: "Backup object storage utilization exceeds 80 percent of the provisioned quota. Retention policy may need tightening or the backup bucket may need resizing.",
+			RunbookURL:  runbook("backup-storage-high"),
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1567,6 +1570,7 @@ func warningAlerts() []Rule {
 			Severity:    SeverityWarning,
 			Summary:     "ArtifactStore replication lag exceeds 1x RPO",
 			Description: "lenny_minio_replication_lag_seconds exceeds minio.artifactBackup.replicationLagRpoSeconds (1x RPO). The ArtifactStore bucket is falling behind its replication target; artifacts written in the lag window are at risk in a full-site disaster.",
+			RunbookURL:  runbook("minio-replication-lag"),
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1575,6 +1579,7 @@ func warningAlerts() []Rule {
 			Severity:    SeverityWarning,
 			Summary:     "ArtifactStore object-level replication failures",
 			Description: "Object-level replication failures (permission, network, destination bucket unavailable or full) over 5 min. The ArtifactStore backup posture is broken until the failure is resolved.",
+			RunbookURL:  runbook("minio-replication-lag"),
 			SpecRef:     "§16.5",
 		},
 		{
