@@ -2585,6 +2585,14 @@ func main() {
 		Breaker: &subsystem.Breaker{},
 		Limiter: &subsystem.Limiter{MaxConcurrent: int(extractionthreshold.FromEnv().UploadHandlerActiveConcurrent)},
 	}
+	// §16.1: the upload-handler-specific byte-count and queue-depth
+	// metrics (lenny_upload_bytes_total, lenny_upload_queue_depth) that
+	// the unified per-subsystem family does not carry under their
+	// catalogued names. F-13.4.12.
+	uploadMetrics, err := sessionserver.NewUploadMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: upload metrics: %v", err)
+	}
 
 	// §8.5 lenny/request_input pending-call registry. Shared across the
 	// sessionserver REST surface and the MCP tools so a REST
@@ -2729,6 +2737,7 @@ func main() {
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
 		UploadSubsystem:                   uploadSubsystem,
+		UploadMetrics:                     uploadMetrics,
 		// spec: §11.1 lines 10-11 — concurrent-upload + per-session
 		// upload-size admission caps. F-11.1.5, F-11.1.6.
 		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
@@ -5960,6 +5969,16 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 		// spec: §7.1 line 112 — workspaceSealFailed records the last MinIO
 		// export error in the detail field.
 		payload["detail"] = ev.Detail
+	}
+	if ev.Outcome != "" {
+		// spec: §13.4; §11.7 — the §16.6 session.upload boundary records
+		// accepted/rejected so the SIEM stream carries the upload-rejection
+		// class; the rejected row pairs the outcome with a sub-code reason.
+		// F-13.4.8.
+		payload["outcome"] = ev.Outcome
+	}
+	if ev.Reason != "" {
+		payload["reason"] = ev.Reason
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

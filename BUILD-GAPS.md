@@ -23416,7 +23416,7 @@ numerator for the 100:1 ratio rule; the decoder output is then wrapped in a
 unbounded memory. Zip's compressed total is pulled from the central
 directory.
 
-### - [ ] F-13.4.8 — No audit-trail event is emitted for upload extraction outcomes [High] — OPEN
+### - [x] F-13.4.8 — No audit-trail event is emitted for upload extraction outcomes [High] — CLOSED
 Spec §13.4 routes validator violations to the §15.1 error reference (which is
 client-visible) and to §16.1 metrics, plus the spec's broader audit
 infrastructure (§11.7 / §13.28) requires every security-relevant boundary
@@ -23432,7 +23432,17 @@ Implementation:
 Effect: a series of zip-bomb attempts against a tenant cannot be reconstructed
 from the audit log; the §11.7 SIEM stream sees no upload-rejection class.
 
-### - [ ] F-13.4.9 — `stripComponents` is applied before path-traversal canonicalisation, not after [Medium] — OPEN
+**Resolution:** The accepted `session.upload` / `session.finalize_workspace`
+audit rows already landed (F-7.4.17); the residual was the rejection class.
+`SessionLifecycleEvent` now carries `Outcome` (`accepted`/`rejected`) and
+`Reason`; the upload handler's security-relevant reject paths (per-blob
+`size_limit`, `storage_quota_exceeded`, session cumulative
+`session_upload_bytes`, and `hash_mismatch`) emit a rejected `session.upload`
+row via `emitUploadRejected`, and the gateway auditor threads `outcome`/`reason`
+into the §11.7 audit payload, so the SIEM stream carries the upload-rejection
+class. spec: §13.4; §11.7; §16.6 line 338 — F-13.4.8.
+
+### - [x] F-13.4.9 — `stripComponents` is applied before path-traversal canonicalisation, not after [Medium] — CLOSED
 Spec §7.4 line 459: "the gateway applies it uniformly across all supported
 formats by splitting each entry's path on `/` and discarding the first N
 leading segments **before the zip-slip and size checks above run against the
@@ -23447,6 +23457,16 @@ Implementation:
   `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` / `details.reason = "path_escapes_root"`
   surface the spec mandates. This is a sub-instance of H3 (the right ordering
   is in place, but the error coding is generic).
+
+**Resolution:** Two parts. (1) `upload.ValidateEntry` now returns
+`ReasonPathEscapesRoot` (not `ReasonPathTraversal`) for `..`-bearing and
+absolute paths, matching the §7.4 zip-slip text and the §15.1 line 1093
+client-visible sub-code set (`path_traversal` survives only as a §16.1 metric
+label retained for source compatibility). (2) The archive extraction path
+resolves through the new `resolveArchivePath` helper, which wraps a residual
+filesystem-level escape into a typed `*upload.ValidationError{Reason:
+path_escapes_root}` instead of a generic `fmt.Errorf` string. spec: §7.4
+zip-slip; §13.4 line 654; §15.1 line 1093 — F-13.4.9.
 
 ### - [x] F-13.4.10 — The `workspace_plan_strip_components_skip` warning event is unimplemented [Medium] — CLOSED
 
@@ -23469,7 +23489,7 @@ Effect: a workspace plan author who mistypes `stripComponents` (e.g., sets it
 to 2 when 1 was intended, dropping every leaf file) sees a silently empty
 workspace with no warning that entries were skipped.
 
-### - [ ] F-13.4.11 — `archive/zip.OpenReader` reads from disk and prevents streaming compressed-byte accounting [Medium] — OPEN
+### - [x] F-13.4.11 — `archive/zip.OpenReader` reads from disk and prevents streaming compressed-byte accounting [Medium] — CLOSED
 Spec §7.4 line 451 expects "cumulative compressed bytes read and cumulative
 uncompressed bytes written are tracked" for the ratio bound.
 
@@ -23486,7 +23506,18 @@ decompression-ratio bound without restructuring around a streaming zip reader
 (or rejecting zip outright in favour of tar/tar.gz). The spec lists `zip` as
 a supported format, so the streaming alternative must be wired.
 
-### - [ ] F-13.4.12 — The Upload Handler subsystem isolation (goroutine pool, concurrency limits, circuit breaker) is unimplemented [Medium] — OPEN
+**Resolution:** Premise was superseded by F-7.4.2. `extractUploadZip` already
+derives the cumulative compressed total by summing `CompressedSize64` across
+the zip central directory and feeds it to `upload.ValidateArchive`, so the
+100:1 ratio bound IS enforced for zip (covered by a new
+`TestExtractionZipEnforcesRatioBound`). The streaming-vs-random-access concern
+is moot because the staged archive is already on disk (uploaded as a blob).
+This batch also wraps each zip entry reader in the same per-call 1 MiB
+`readCap` the tar.gz path uses, so the §7.4 line 451 per-read memory bound is
+uniform across formats (round-trip verified by `TestExtractionZipReadCapRoundTrip`).
+spec: §7.4 line 451; §13.4 line 659 — F-13.4.11 (closed alongside F-7.4.2).
+
+### - [x] F-13.4.12 — The Upload Handler subsystem isolation (goroutine pool, concurrency limits, circuit breaker) is unimplemented [Medium] — CLOSED
 Spec §7.4 line 448: "the Upload Handler is isolated from other gateway
 subsystems by its own goroutine pool, concurrency limits, and circuit breaker
 so that a hostile archive cannot starve session attachment or delegation."
@@ -23506,6 +23537,18 @@ attachment, delegation, and MCP streaming can be starved by upload pressure.
 Logged as Medium because the §13.4 isolation guarantee depends on this and
 the §7.4 line is normative ("the Upload Handler is isolated ... by its own
 goroutine pool, concurrency limits, and circuit breaker").
+
+**Resolution:** The isolation itself landed in a prior batch: the upload
+handler runs behind a `subsystem.Subsystem` carrying a `Limiter`
+(MaxConcurrent semaphore from `uploadHandler.activeConcurrent`) and a per-
+replica `Breaker`, wired in `cmd/lenny-gateway` and enforced via
+`acquireUploadSlot` / `recordUploadOutcome` (a saturated handler returns 503
+SUBSYSTEM_UNAVAILABLE while other subsystems keep serving). The residual was
+the two catalogued upload-handler metrics that had no emitter. This batch adds
+`sessionserver.NewUploadMetrics` (`lenny_upload_bytes_total`,
+`lenny_upload_queue_depth`): the byte counter increments on every committed
+upload, and the depth gauge is sampled from the limiter's in-flight count on
+slot acquire and release. spec: §7.4 line 448; §16.1 — F-13.4.12.
 
 ### - [x] F-13.4.13 — `pkg/upload`'s symlink-target check uses Unix paths even on Windows, but the call surface accepts arbitrary `workspaceRoot` [Medium] — CLOSED
 Spec §13.4 line 665 ties the symlink-target check to `/workspace/current` and

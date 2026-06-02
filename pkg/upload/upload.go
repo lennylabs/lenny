@@ -116,8 +116,12 @@ type RuntimeAllow struct {
 type Reason string
 
 const (
-	ReasonZipBomb               Reason = "zip_bomb"
-	ReasonSizeLimit             Reason = "size_limit"
+	ReasonZipBomb   Reason = "zip_bomb"
+	ReasonSizeLimit Reason = "size_limit"
+	// ReasonPathTraversal is a §16.1 metric label retained for source
+	// compatibility only. The client-visible §15.1 line 1093 sub-code
+	// for a `..`/absolute/zip-slip rejection is ReasonPathEscapesRoot;
+	// ValidateEntry returns that. F-13.4.9.
 	ReasonPathTraversal         Reason = "path_traversal"
 	ReasonSymlink               Reason = "symlink"
 	ReasonFormatError           Reason = "format_error"
@@ -163,8 +167,14 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 		return &ValidationError{Reason: ReasonMaxPathLength, Path: e.Path, Detail: fmt.Sprintf("path length %d exceeds maximum %d bytes", len(e.Path), MaxPathLength)}
 	}
 
+	// spec: §7.4 zip-slip — "Paths containing `..` components or absolute
+	// paths are rejected ... details.reason = path_escapes_root"; §15.1
+	// line 1093 lists path_escapes_root (not path_traversal) as the
+	// client-visible UPLOAD_ARCHIVE_LIMIT_EXCEEDED sub-code for these.
+	// path_traversal survives only as a §16.1 metric label retained for
+	// source compatibility. F-13.4.9.
 	if path.IsAbs(e.Path) {
-		return &ValidationError{Reason: ReasonPathTraversal, Path: e.Path, Detail: "absolute paths are forbidden"}
+		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: e.Path, Detail: "absolute paths are forbidden"}
 	}
 
 	// Reject any `..` segment outright, even one that path.Clean
@@ -172,7 +182,7 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 	// still attempting to escape upward through the archive's
 	// implicit root).
 	if ContainsParentSegment(e.Path) {
-		return &ValidationError{Reason: ReasonPathTraversal, Path: e.Path, Detail: "path contains `..` segment"}
+		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: e.Path, Detail: "path contains `..` segment"}
 	}
 	cleaned := path.Clean(e.Path)
 

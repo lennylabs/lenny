@@ -242,6 +242,9 @@ type Server struct {
 	interceptors          *interceptor.Chain
 	policyAuditSink       *policy.AuditSink
 	uploadSubsystem       *subsystem.Subsystem
+	// uploadMetrics, when set, receives the §16.1 upload-handler
+	// byte-count and queue-depth observations. Nil drops them. F-13.4.12.
+	uploadMetrics UploadHandlerMetrics
 	// resumeWindow is the §4.2 line 159 default resume-eligibility
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
@@ -1016,6 +1019,12 @@ type Options struct {
 	// configure a limit).
 	UploadSubsystem *subsystem.Subsystem
 
+	// UploadMetrics, when set, receives the §16.1 upload-handler
+	// observations (lenny_upload_bytes_total, lenny_upload_queue_depth).
+	// *PromUploadMetrics satisfies it. Nil drops the observations (tests
+	// and the minimal gateway). spec: §16.1 — F-13.4.12.
+	UploadMetrics UploadHandlerMetrics
+
 	// MaxConcurrentUploadsPerSession is the §11.1 line 10 per-session
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once a session already holds this many
@@ -1200,6 +1209,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interceptors:             opts.Interceptors,
 		policyAuditSink:          opts.PolicyAuditSink,
 		uploadSubsystem:          opts.UploadSubsystem,
+		uploadMetrics:            opts.UploadMetrics,
 		resumeWindow:             opts.ResumeWindow,
 		sessionLogHook:           opts.SessionLogHook,
 		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,

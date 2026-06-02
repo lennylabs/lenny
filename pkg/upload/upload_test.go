@@ -67,14 +67,19 @@ func TestValidateEntryRejectsForbiddenKinds(t *testing.T) {
 	}
 }
 
+// spec: §7.4 zip-slip / §15.1 line 1093 — an absolute entry path is a
+// path_escapes_root rejection (the §15.1 client-visible sub-code), not
+// the source-compat-only path_traversal label. F-13.4.9.
 func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
 	err := ValidateEntry(Entry{Path: "/etc/passwd", Kind: KindRegular, Size: 1}, RuntimeAllow{})
 	var ve *ValidationError
-	if !errors.As(err, &ve) || ve.Reason != ReasonPathTraversal {
-		t.Errorf("absolute path: want path_traversal, got %v", err)
+	if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+		t.Errorf("absolute path: want path_escapes_root, got %v", err)
 	}
 }
 
+// spec: §7.4 zip-slip / §15.1 line 1093 — `..`-bearing paths surface the
+// path_escapes_root sub-code. F-13.4.9.
 func TestValidateEntryRejectsTraversal(t *testing.T) {
 	cases := []string{
 		"../etc/passwd",
@@ -85,8 +90,8 @@ func TestValidateEntryRejectsTraversal(t *testing.T) {
 	for _, p := range cases {
 		err := ValidateEntry(Entry{Path: p, Kind: KindRegular, Size: 1}, RuntimeAllow{})
 		var ve *ValidationError
-		if !errors.As(err, &ve) || ve.Reason != ReasonPathTraversal {
-			t.Errorf("traversal path %q: want path_traversal, got %v", p, err)
+		if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+			t.Errorf("traversal path %q: want path_escapes_root, got %v", p, err)
 		}
 	}
 }

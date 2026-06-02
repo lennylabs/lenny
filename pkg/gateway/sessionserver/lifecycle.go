@@ -73,9 +73,40 @@ type SessionLifecycleEvent struct {
 	// MinIO error recorded on a workspaceSealFailed event (§7.1 line 112).
 	// Empty for events that need no detail.
 	Detail string
+	// Outcome records whether a boundary decision admitted or rejected
+	// the request. It is populated for the §16.6 session.upload boundary
+	// (uploadOutcomeAccepted / uploadOutcomeRejected) so the §11.7 SIEM
+	// stream carries the upload-rejection class and a series of abusive
+	// upload attempts can be reconstructed. Empty for events with no
+	// accept/reject duality. spec: §13.4; §11.7 — F-13.4.8.
+	Outcome string
+	// Reason is the rejection sub-code recorded alongside a rejected
+	// Outcome (e.g. "size_limit", "storage_quota_exceeded",
+	// "hash_mismatch"). Empty on an accepted outcome. spec: §13.4 —
+	// F-13.4.8.
+	Reason string
 	// At is the event wall-clock time (the gateway clock).
 	At time.Time
 }
+
+// session.upload audit outcomes recorded in SessionLifecycleEvent.Outcome
+// on the §16.6 upload boundary. The accepted row already existed
+// (F-7.4.17); the rejected row gives the §11.7 SIEM stream the
+// upload-rejection class. spec: §13.4; §11.7 — F-13.4.8.
+const (
+	uploadOutcomeAccepted = "accepted"
+	uploadOutcomeRejected = "rejected"
+)
+
+// §13.4 upload-rejection sub-codes recorded in
+// SessionLifecycleEvent.Reason. The values track the gateway-side
+// upload-handler rejection paths. spec: §13.4; §11.7 — F-13.4.8.
+const (
+	uploadRejectSizeLimit    = "size_limit"
+	uploadRejectStorageQuota = "storage_quota_exceeded"
+	uploadRejectSessionBytes = "session_upload_bytes"
+	uploadRejectHashMismatch = "hash_mismatch"
+)
 
 // Session lifecycle audit event types written to the §11.7 audit log.
 // The strings match the §16.6 OCSF mapping prefixes (session.created →

@@ -298,7 +298,7 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 		}
 		entryCount++
 
-		dst, err := resolvePath(root, filepath.Join(prefix, rel))
+		dst, err := resolveArchivePath(root, prefix, rel)
 		if err != nil {
 			sess.rollback()
 			return warnings, err
@@ -403,7 +403,7 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 		}
 		entryCount++
 
-		dst, err := resolvePath(root, filepath.Join(prefix, rel))
+		dst, err := resolveArchivePath(root, prefix, rel)
 		if err != nil {
 			sess.rollback()
 			return warnings, err
@@ -424,7 +424,15 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 				sess.rollback()
 				return warnings, fmt.Errorf("open zip entry: %w", err)
 			}
-			n, err := extractRegular(dst, rc, archiveMode(entry.Mode()), maxExtractBytes-written)
+			// spec: §7.4 line 451 — wrap the deflate reader in the same
+			// per-call 1 MiB cap the tar.gz path uses so a single Read
+			// from the decompressor cannot allocate unbounded memory.
+			// The 100:1 ratio bound itself is enforced after the loop via
+			// compressedTotal (read from the zip central directory), so
+			// zip does not need a streaming compressed-byte counter.
+			// F-13.4.11.
+			capped := &readCap{r: rc, maxRead: decompressorPerReadCap}
+			n, err := extractRegular(dst, capped, archiveMode(entry.Mode()), maxExtractBytes-written)
 			_ = rc.Close()
 			written += n
 			if err != nil {
@@ -453,6 +461,29 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 		return warnings, vErr
 	}
 	return warnings, nil
+}
+
+// resolveArchivePath joins the post-strip entry path onto the workspace
+// root and confirms the result stays within it. ValidateEntry already
+// rejects `..` segments and absolute paths before extraction reaches
+// here; this is the defense-in-depth filesystem-level containment check
+// the §13.4 zip-slip rule mandates ("filepath.Clean + prefix check
+// against the absolute staging root"). A residual escape surfaces as a
+// typed *upload.ValidationError{Reason: path_escapes_root} so the
+// gateway maps it to the §15.1 line 1093 UPLOAD_ARCHIVE_LIMIT_EXCEEDED
+// sub-code instead of a generic InvalidArgument string. spec: §7.4
+// zip-slip; §13.4 line 654; §15.1 line 1093 — F-13.4.9.
+func resolveArchivePath(root, prefix, rel string) (string, error) {
+	entryPath := filepath.ToSlash(filepath.Join(prefix, rel))
+	dst, err := resolvePath(root, filepath.Join(prefix, rel))
+	if err != nil {
+		return "", &upload.ValidationError{
+			Reason: upload.ReasonPathEscapesRoot,
+			Path:   entryPath,
+			Detail: err.Error(),
+		}
+	}
+	return dst, nil
 }
 
 // classifyTarKind maps a tar.Header.Typeflag onto the §13.4 EntryKind

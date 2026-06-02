@@ -161,8 +161,13 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 				"upload handler is temporarily unavailable", nil)
 			return
 		}
+		// §16.1: sample the Upload Handler subsystem depth as this
+		// request enters and leaves the limiter so lenny_upload_queue_depth
+		// tracks the in-flight count. F-13.4.12.
+		s.observeUploadDepth()
 		defer func() {
 			release()
+			s.observeUploadDepth()
 			s.recordUploadOutcome(breakerErr)
 		}()
 	}
@@ -221,6 +226,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 	// so a client that under-declares Content-Length cannot bypass the
 	// cap. F-11.1.6.
 	if current, limit, exceeds := s.uploadLimits.wouldExceedBytes(row.ID, r.ContentLength); exceeds {
+		s.emitUploadRejected(r, row, uploadRejectSessionBytes)
 		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
 			"the upload would exceed the session's cumulative upload-size limit",
 			map[string]any{
@@ -308,6 +314,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			// Client-side error: do NOT count against the breaker.
+			s.emitUploadRejected(r, row, uploadRejectSizeLimit)
 			s.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE",
 				"upload exceeds the per-blob size cap",
 				map[string]any{"maxBytes": UploadMaxBodyBytes})
@@ -346,6 +353,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			// F-7.4.14.
 			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
 			s.softDeleteStagedBlob(uri, ref)
+			s.emitUploadRejected(r, row, uploadRejectStorageQuota)
 			s.writeError(w, http.StatusTooManyRequests, "STORAGE_QUOTA_EXCEEDED",
 				"the upload exceeded the tenant's storage quota", nil)
 			return
@@ -367,6 +375,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 				_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
 			}
 			s.softDeleteStagedBlob(uri, ref)
+			s.emitUploadRejected(r, row, uploadRejectHashMismatch)
 			s.writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 				"upload body hash does not match the client-supplied "+UploadContentHashHeader,
 				map[string]any{
@@ -414,6 +423,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
 		}
 		s.softDeleteStagedBlob(uri, ref)
+		s.emitUploadRejected(r, row, uploadRejectSessionBytes)
 		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
 			"the upload would exceed the session's cumulative upload-size limit",
 			map[string]any{
@@ -432,6 +442,11 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		ContentHash: bytesRead.ContentHash(),
 		IsArchive:   kind == UploadKindArchive,
 	}
+	// §16.1: count the committed bytes against lenny_upload_bytes_total.
+	// F-13.4.12.
+	if s.uploadMetrics != nil {
+		s.uploadMetrics.AddUploadBytes(bytesRead.n)
+	}
 	// F-7.4.17: §16.6 session.upload audit row. One row per successful
 	// blob commit, regardless of UploadKindBlob vs UploadKindArchive —
 	// downstream SOC tooling joins the row to a finalize/extract event
@@ -445,6 +460,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			UserID:     row.UserID,
 			RuntimeRef: row.RuntimeRef,
 			State:      string(row.State),
+			Outcome:    uploadOutcomeAccepted,
 			Detail:     ref,
 			At:         s.clock(),
 		})
@@ -526,6 +542,42 @@ func (s *Server) recordUploadOutcome(err error) {
 		return
 	}
 	s.uploadSubsystem.Breaker.RecordSuccess()
+}
+
+// observeUploadDepth publishes the §16.1 lenny_upload_queue_depth gauge
+// from the §4.1 Upload Handler subsystem limiter's current in-flight
+// plus queued count. It is a no-op when no metrics sink or no limiter is
+// configured (tests, the minimal gateway). spec: §16.1 — F-13.4.12.
+func (s *Server) observeUploadDepth() {
+	if s.uploadMetrics == nil || s.uploadSubsystem == nil || s.uploadSubsystem.Limiter == nil {
+		return
+	}
+	s.uploadMetrics.SetUploadQueueDepth(
+		s.uploadSubsystem.Limiter.InFlight() + s.uploadSubsystem.Limiter.QueueDepth())
+}
+
+// emitUploadRejected writes a §16.6 session.upload audit row with a
+// rejected outcome and the supplied §13.4 sub-code so the §11.7 SIEM
+// stream carries the upload-rejection class. Without it a series of
+// oversize / zip-bomb / quota-busting upload attempts leaves no audit
+// trail (the accepted row at the success path covers admitted uploads
+// only). Best-effort and non-blocking, mirroring the accepted row.
+// spec: §13.4; §11.7; §16.6 line 338 — F-13.4.8.
+func (s *Server) emitUploadRejected(r *http.Request, row sessionstore.Session, reason string) {
+	if s.lifecycleAudit == nil {
+		return
+	}
+	s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
+		EventType:  auditSessionUpload,
+		TenantID:   row.TenantID,
+		SessionID:  row.ID,
+		UserID:     row.UserID,
+		RuntimeRef: row.RuntimeRef,
+		State:      string(row.State),
+		Outcome:    uploadOutcomeRejected,
+		Reason:     reason,
+		At:         s.clock(),
+	})
 }
 
 // quotaReservation records a held §11.2 storage-quota reservation: the
