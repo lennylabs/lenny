@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 )
 
 // Connector captures the §9.3 ConnectorDefinition. v1 supports the
@@ -60,6 +62,30 @@ type Connector struct {
 
 	// Labels is the §9.3 environment-selector label map.
 	Labels map[string]string
+
+	// CapabilityInferenceMode is the §5.1 mode controlling the default
+	// capability for a tool that carries no MCP annotations: `strict`
+	// (default) infers an unannotated tool as admin, `permissive` infers
+	// it as write. spec: §5.1 line 329; §9.3 line 136.
+	CapabilityInferenceMode capabilityinference.Mode
+
+	// Capabilities is the §5.1 union of capabilities inferred from the
+	// connector's tools/list across every tool. It is empty until a
+	// capability refresh runs on the sanctioned outbound path; the
+	// synchronous registration path makes no outbound call (§15.1 line
+	// 1144), so inference is a separate post-create step. spec: §9.3 line
+	// 136.
+	Capabilities []capabilityinference.Capability
+
+	// ToolCapabilities maps each discovered tool name to its inferred
+	// §5.1 capability set. It feeds the §5.3 call-time
+	// TOOL_CAPABILITY_DENIED check: a tool requires every capability in
+	// its set to be callable from a pool. Empty until a refresh runs.
+	ToolCapabilities map[string][]capabilityinference.Capability
+
+	// CapabilitiesRefreshedAt records the last successful capability
+	// refresh. Zero until the first refresh.
+	CapabilitiesRefreshedAt time.Time
 
 	// CreatedAt / UpdatedAt / DeletedAt audit timestamps.
 	CreatedAt time.Time

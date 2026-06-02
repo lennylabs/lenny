@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
@@ -21,6 +22,20 @@ import (
 // connector.
 var ErrConnectorInactive = errors.New("connectorinvoke: connector is not active")
 
+// ConnectorAuthorizer reports whether the calling session's effective
+// §8.3 delegation policy permits an external tool call against a
+// connector. The gateway evaluates the connector against the session's
+// runtime-level effective policy and the §10.6 environment-default
+// policy; a denied connector returns a non-nil error. A nil Authorizer
+// on the Invoker leaves the gate open (no policy layer wired).
+//
+// *connectorauthz.Authorizer is the production implementation.
+//
+// spec: §9.3 line 164.
+type ConnectorAuthorizer interface {
+	AuthorizeConnector(ctx context.Context, tenantID, sessionID, connectorID string, labels map[string]string) error
+}
+
 // Invoker resolves a registered connector and its gateway-held
 // credential, then drives an outbound MCP `tools/call`. It is the
 // gateway-side realization of §9.3 lines 142-164: the gateway acts as
@@ -32,31 +47,59 @@ type Invoker struct {
 	creds      connectorcredstore.Store
 	client     *Client
 	tracer     *tracing.Tracer
+	authz      ConnectorAuthorizer
+	clock      func() time.Time
 }
 
 // NewInvoker wires the connector registry, the connector-credential
 // store, and the outbound MCP client. tracer may be nil; when set, every
-// tools/call opens the §16 `mcp.external_tool_call` span.
-func NewInvoker(connectors connectorstore.Store, creds connectorcredstore.Store, client *Client, tracer *tracing.Tracer) *Invoker {
-	return &Invoker{connectors: connectors, creds: creds, client: client, tracer: tracer}
+// tools/call opens the §16 `mcp.external_tool_call` span. authz may be
+// nil; when set, CallTool enforces the §9.3 line 164 connector-access
+// boundary before proxying a tool call.
+func NewInvoker(connectors connectorstore.Store, creds connectorcredstore.Store, client *Client, tracer *tracing.Tracer, authz ConnectorAuthorizer) *Invoker {
+	return &Invoker{connectors: connectors, creds: creds, client: client, tracer: tracer, authz: authz, clock: func() time.Time { return time.Now().UTC() }}
 }
 
-// CallTool invokes toolName on the connector identified by connectorID,
-// scoped to (tenantID, userID, environment) for credential lookup. The
-// connector must be registered and active. When a stored credential
-// exists for the four-tuple it is carried as the bearer token; a public
-// connector with no stored credential is dialed unauthenticated.
+// WithClock overrides the clock used to stamp CapabilitiesRefreshedAt.
+// Tests inject a deterministic clock; production uses time.Now.
+func (iv *Invoker) WithClock(now func() time.Time) *Invoker {
+	if now != nil {
+		iv.clock = now
+	}
+	return iv
+}
+
+// CallTool invokes toolName on the connector identified by connectorID
+// for the calling session sessionID, scoped to (tenantID, userID,
+// environment) for credential lookup. The connector must be registered
+// and active. Before any outbound dial the §9.3 line 164 connector-access
+// boundary is enforced: the connector is validated against the calling
+// session's effective delegation policy, and a connector the policy does
+// not permit is rejected without contacting the external endpoint. When a
+// stored credential exists for the four-tuple it is carried as the bearer
+// token; a public connector with no stored credential is dialed
+// unauthenticated.
 //
-// spec: §9.1 line 10; §9.3 lines 142-164. The caller is responsible for
-// the §9.3 delegation-policy authorization check before invoking (see
-// F-9.3.1) — this method performs the transport, not the policy gate.
-func (iv *Invoker) CallTool(ctx context.Context, tenantID, connectorID, userID, environment, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
+// spec: §9.1 line 10; §9.3 lines 142-164.
+func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorID, userID, environment, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
 	conn, err := iv.connectors.Get(ctx, tenantID, connectorID)
 	if err != nil {
 		return nil, err
 	}
 	if !conn.IsActive() {
 		return nil, ErrConnectorInactive
+	}
+
+	// spec: §9.3 line 164 — the gateway validates the connector_id against
+	// the calling pod's effective delegation policy before proxying. A
+	// child cannot use connectors its policy does not permit even when a
+	// gateway-held credential exists for them at the root level. The check
+	// runs before the bearer lookup and the outbound dial so a denied call
+	// never reaches the external endpoint.
+	if iv.authz != nil {
+		if err := iv.authz.AuthorizeConnector(ctx, tenantID, sessionID, connectorID, conn.Labels); err != nil {
+			return nil, err
+		}
 	}
 
 	var span trace.Span

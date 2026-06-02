@@ -5,6 +5,7 @@ package connectorinvoke
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -64,8 +65,8 @@ func TestInvokerCallToolUsesStoredCredential_spec_9_3_142(t *testing.T) {
 			jsonResp(200, `{"jsonrpc":"2.0","id":2,"result":{"content":[]}}`, nil),
 		},
 	}
-	iv := NewInvoker(connectors, creds, New(doer), nil)
-	if _, err := iv.CallTool(context.Background(), "acme", "github", "alice", "", "list_repos", nil); err != nil {
+	iv := NewInvoker(connectors, creds, New(doer), nil, nil)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "github", "alice", "", "list_repos", nil); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if got := doer.reqs[0].Header.Get("Authorization"); got != "Bearer secret-token" {
@@ -90,8 +91,8 @@ func TestInvokerPublicConnectorNoBearer_spec_9_3_142(t *testing.T) {
 			jsonResp(200, `{"jsonrpc":"2.0","id":2,"result":{}}`, nil),
 		},
 	}
-	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil)
-	if _, err := iv.CallTool(context.Background(), "acme", "public", "alice", "", "ping", nil); err != nil {
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, nil)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "public", "alice", "", "ping", nil); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if got := doer.reqs[0].Header.Get("Authorization"); got != "" {
@@ -105,8 +106,8 @@ func TestInvokerPublicConnectorNoBearer_spec_9_3_142(t *testing.T) {
 func TestInvokerRejectsUnregisteredConnector_spec_9_3_140(t *testing.T) {
 	connectors := connectorstore.NewMemory()
 	doer := &fakeDoer{}
-	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil)
-	if _, err := iv.CallTool(context.Background(), "acme", "ghost", "alice", "", "x", nil); err == nil {
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, nil)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "ghost", "alice", "", "x", nil); err == nil {
 		t.Fatal("expected error for unregistered connector")
 	}
 	if len(doer.reqs) != 0 {
@@ -125,12 +126,77 @@ func TestInvokerRejectsSoftDeletedConnector_spec_9_3_140(t *testing.T) {
 		t.Fatalf("soft delete: %v", err)
 	}
 	doer := &fakeDoer{}
-	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil)
-	if _, err := iv.CallTool(context.Background(), "acme", "gone", "alice", "", "x", nil); err == nil {
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, nil)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "gone", "alice", "", "x", nil); err == nil {
 		t.Fatal("expected ErrConnectorInactive")
 	}
 	if len(doer.reqs) != 0 {
 		t.Errorf("dialed a soft-deleted connector %d times, want 0", len(doer.reqs))
+	}
+}
+
+// fakeAuthz records its call and replays a fixed verdict, standing in
+// for *connectorauthz.Authorizer.
+type fakeAuthz struct {
+	err       error
+	gotConn   string
+	gotSess   string
+	callCount int
+}
+
+func (f *fakeAuthz) AuthorizeConnector(_ context.Context, _, sessionID, connectorID string, _ map[string]string) error {
+	f.callCount++
+	f.gotConn = connectorID
+	f.gotSess = sessionID
+	return f.err
+}
+
+// TestInvokerCallToolDeniedByPolicy_spec_9_3_164 verifies the §9.3 line
+// 164 boundary: a connector the calling session's effective delegation
+// policy denies is rejected before any outbound dial.
+func TestInvokerCallToolDeniedByPolicy_spec_9_3_164(t *testing.T) {
+	connectors := connectorstore.NewMemory()
+	seedConnector(t, connectors, connectorstore.Connector{
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.example",
+	})
+	doer := &fakeDoer{}
+	authz := &fakeAuthz{err: errors.New("denied by policy")}
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, authz)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "github", "alice", "", "list_repos", nil); err == nil {
+		t.Fatal("expected a policy denial error")
+	}
+	if len(doer.reqs) != 0 {
+		t.Errorf("dialed a policy-denied connector %d times, want 0", len(doer.reqs))
+	}
+	if authz.callCount != 1 || authz.gotConn != "github" || authz.gotSess != "sess-1" {
+		t.Errorf("authz call = %+v, want one call for (sess-1, github)", authz)
+	}
+}
+
+// TestInvokerCallToolPermittedByPolicy_spec_9_3_164 verifies a connector
+// the policy permits proceeds to the outbound dial.
+func TestInvokerCallToolPermittedByPolicy_spec_9_3_164(t *testing.T) {
+	connectors := connectorstore.NewMemory()
+	seedConnector(t, connectors, connectorstore.Connector{
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.example",
+	})
+	doer := &fakeDoer{
+		responses: []*http.Response{
+			jsonResp(200, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`, nil),
+			jsonResp(202, ``, nil),
+			jsonResp(200, `{"jsonrpc":"2.0","id":2,"result":{}}`, nil),
+		},
+	}
+	authz := &fakeAuthz{}
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, authz)
+	if _, err := iv.CallTool(context.Background(), "acme", "sess-1", "github", "alice", "", "ping", nil); err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if authz.callCount != 1 {
+		t.Errorf("authz called %d times, want 1", authz.callCount)
+	}
+	if len(doer.reqs) == 0 {
+		t.Error("a permitted connector was not dialed")
 	}
 }
 

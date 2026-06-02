@@ -161,6 +161,13 @@ var prodMigrationSchema = []struct {
 	// conditional fields to billing_events as a single nullable JSONB
 	// blob, completing the §11.2.1 event schema (F-11.2.12).
 	{migration: "0113", table: "billing_events", columns: []string{"conditional_fields"}},
+	// 0114 adds the §9.3 line 136 / §5.1 connector capability-inference
+	// metadata to connectors: the inference mode, the inferred capability
+	// union, the per-tool capability map, and the last-refresh timestamp
+	// (F-9.3.8).
+	{migration: "0114", table: "connectors", columns: []string{
+		"capability_inference_mode", "capabilities", "tool_capabilities", "capabilities_refreshed_at",
+	}},
 }
 
 // spec: 12.2, 18.5

@@ -8,8 +8,55 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 )
+
+// TestCapabilityMetadataRoundTrip_spec_9_3_136 verifies the §5.1
+// capability fields survive a Create/Get and that an Update mutating them
+// persists the new values — the storage half of the F-9.3.8 capability
+// inference.
+func TestCapabilityMetadataRoundTrip_spec_9_3_136(t *testing.T) {
+	s := connectorstore.NewMemory()
+	c := validConnector()
+	c.CapabilityInferenceMode = capabilityinference.ModePermissive
+	if err := s.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(context.Background(), testTenantID, "github")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CapabilityInferenceMode != capabilityinference.ModePermissive {
+		t.Errorf("mode = %q, want permissive", got.CapabilityInferenceMode)
+	}
+
+	refreshed := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	updated, err := s.Update(context.Background(), testTenantID, "github", func(cn *connectorstore.Connector) error {
+		cn.Capabilities = []capabilityinference.Capability{capabilityinference.CapRead, capabilityinference.CapWrite}
+		cn.ToolCapabilities = map[string][]capabilityinference.Capability{
+			"read_file": {capabilityinference.CapRead},
+		}
+		cn.CapabilitiesRefreshedAt = refreshed
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.Capabilities) != 2 {
+		t.Errorf("capabilities = %v, want [read write]", updated.Capabilities)
+	}
+	reread, err := s.Get(context.Background(), testTenantID, "github")
+	if err != nil {
+		t.Fatalf("re-Get: %v", err)
+	}
+	if got := reread.ToolCapabilities["read_file"]; len(got) != 1 || got[0] != capabilityinference.CapRead {
+		t.Errorf("persisted read_file caps = %v, want [read]", got)
+	}
+	if !reread.CapabilitiesRefreshedAt.Equal(refreshed) {
+		t.Errorf("refreshedAt = %v, want %v", reread.CapabilitiesRefreshedAt, refreshed)
+	}
+}
 
 // spec: §4.2 line 173 — connectors are tenant-scoped. Tests use the
 // built-in default tenant; multi-tenant isolation is exercised in

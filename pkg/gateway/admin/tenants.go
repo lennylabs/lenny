@@ -142,32 +142,37 @@ type Router struct {
 	connectorTester      ConnectorTester
 	connectorCreds       connectorcredstore.Store
 	connectorTestLimiter ratelimit.Counter
-	delegationPolicies   delegationpolicystore.Store
-	credentialPools      credentialpoolstore.Store
-	poolCredRevoker      PoolCredentialRevoker
-	customRoles          customrolestore.Store
-	tenantAccess         tenantaccessstore.Store
-	auditLog             AuditLog
-	tokenRevoker         IssuedTokenRevoker
-	revocationCache      RevocationCache
-	userPods             UserPodTerminator
-	userLeases           UserLeaseRevoker
-	userTokens           UserTokenRevoker
-	userPlayground       UserPlaygroundRevoker
-	erasureRunner        ErasureRunner
-	erasureJobs          erasurejob.Store
-	billing              billingstore.Store
-	corrections          correctionstore.Store
-	dualControlThresh    float64
-	sessions             sessionstore.Store
-	interactions         interactionstore.Store
-	experiments          experimentstore.Store
-	stickyFlusher        StickyFlusher
-	environments         environmentstore.Store
-	evals                evalstore.Store
-	clock                func() time.Time
-	audit                AuditSink
-	metrics              RBACConfigMetrics
+	// connectorRefresher / connectorRefreshLimiter back the §9.3 line 136
+	// `POST /v1/admin/connectors/{name}/refresh` capability-inference
+	// endpoint. A nil refresher leaves the route unregistered.
+	connectorRefresher      ConnectorCapabilityRefresher
+	connectorRefreshLimiter ratelimit.Counter
+	delegationPolicies      delegationpolicystore.Store
+	credentialPools         credentialpoolstore.Store
+	poolCredRevoker         PoolCredentialRevoker
+	customRoles             customrolestore.Store
+	tenantAccess            tenantaccessstore.Store
+	auditLog                AuditLog
+	tokenRevoker            IssuedTokenRevoker
+	revocationCache         RevocationCache
+	userPods                UserPodTerminator
+	userLeases              UserLeaseRevoker
+	userTokens              UserTokenRevoker
+	userPlayground          UserPlaygroundRevoker
+	erasureRunner           ErasureRunner
+	erasureJobs             erasurejob.Store
+	billing                 billingstore.Store
+	corrections             correctionstore.Store
+	dualControlThresh       float64
+	sessions                sessionstore.Store
+	interactions            interactionstore.Store
+	experiments             experimentstore.Store
+	stickyFlusher           StickyFlusher
+	environments            environmentstore.Store
+	evals                   evalstore.Store
+	clock                   func() time.Time
+	audit                   AuditSink
+	metrics                 RBACConfigMetrics
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -597,6 +602,14 @@ func (r *Router) Handler() http.Handler {
 			// contract grants this to platform-admin and tenant-admin.
 			mux.Handle("POST /v1/admin/connectors/{name}/test",
 				r.requireTenantResourceAdmin(http.HandlerFunc(r.handleTestConnector)))
+		}
+		if r.connectorRefresher != nil {
+			// §9.3 line 136 capability inference. Like the test endpoint it
+			// dials the external endpoint on the sanctioned outbound path,
+			// so it is granted to platform-admin and tenant-admin and shares
+			// the §15.1 line 1180 per-connector rate limit.
+			mux.Handle("POST /v1/admin/connectors/{name}/refresh",
+				r.requireTenantResourceAdmin(http.HandlerFunc(r.handleRefreshConnectorCapabilities)))
 		}
 		if r.connectorOAuth != nil {
 			// §9.3 connector OAuth 2.1 authorization-code flow. The

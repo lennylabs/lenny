@@ -104,6 +104,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorauthz"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
@@ -3405,6 +3406,18 @@ func main() {
 	// same recorded last-success time.
 	kmsProbeLifecycle := tenantkms.NewProviderProbeLifecycle(kmsProvider, clockinject.Now)
 
+	// §9.3 outbound MCP transport shared by the connector live test and
+	// the §9.3 line 136 capability refresh. The §9.3 line 164
+	// connector-access authorizer resolves the calling session's effective
+	// delegation policy (runtime-level + §10.6 environment default) so a
+	// session cannot invoke a connector its policy does not permit. The
+	// client carries a bounded egress timeout because it dials untrusted
+	// external endpoints.
+	connectorMCPClient := connectorinvoke.New(&http.Client{Timeout: 15 * time.Second})
+	connectorAuthorizer := connectorauthz.New(delegationSvc, sessions, environments)
+	connectorInvoker := connectorinvoke.NewInvoker(connectors, connectorCreds, connectorMCPClient, nil, connectorAuthorizer).
+		WithClock(clockinject.Now)
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
@@ -3418,10 +3431,14 @@ func main() {
 		// bounded egress timeout; the per-connector limiter enforces the
 		// §15.1 line 1180 10/min cap.
 		WithConnectorTest(
-			connectorinvoke.NewTester(connectorinvoke.New(&http.Client{Timeout: 15 * time.Second})),
+			connectorinvoke.NewTester(connectorMCPClient),
 			connectorCreds,
 			ratelimit.NewMemory(),
 		).
+		// §9.3 line 136 connector capability inference on the sanctioned
+		// outbound path. Carries the same per-connector 10/min cap as the
+		// live test since it also dials the external endpoint.
+		WithConnectorRefresh(connectorInvoker, ratelimit.NewMemory()).
 		WithDelegationPolicies(delegationPolicies).
 		WithCredentialPools(credentialPools).
 		WithCustomRoles(customRoles).

@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
@@ -39,7 +40,8 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ connectorstore.Store = (*Store)(nil)
 
 const selectList = `tenant_id, id, display_name, mcp_server_url, transport, auth,
-	visibility, labels, created_at, updated_at, deleted_at`
+	visibility, labels, capability_inference_mode, capabilities, tool_capabilities,
+	capabilities_refreshed_at, created_at, updated_at, deleted_at`
 
 // Create inserts a new connector row after running the §9.3
 // validation. Returns ErrAlreadyExists when (tenant_id, id) collides.
@@ -62,13 +64,23 @@ func (s *Store) Create(ctx context.Context, c connectorstore.Connector) error {
 	if err != nil {
 		return err
 	}
+	caps, err := capabilitiesJSON(c.Capabilities)
+	if err != nil {
+		return err
+	}
+	toolCaps, err := toolCapabilitiesJSON(c.ToolCapabilities)
+	if err != nil {
+		return err
+	}
 	return pgtenant.InTx(ctx, s.pool, c.TenantID, func(tx pgx.Tx) error {
 		_, ierr := tx.Exec(ctx, `INSERT INTO connectors (
 			tenant_id, id, display_name, mcp_server_url, transport, auth,
-			visibility, labels, created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10, $11)`,
+			visibility, labels, capability_inference_mode, capabilities, tool_capabilities,
+			capabilities_refreshed_at, created_at, updated_at, deleted_at
+		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)`,
 			c.TenantID, c.ID, c.DisplayName, c.MCPServerURL, c.Transport, auth,
-			c.Visibility, labels, c.CreatedAt, c.UpdatedAt, pgtenant.NullTime(c.DeletedAt))
+			c.Visibility, labels, capabilityInferenceMode(c.CapabilityInferenceMode), caps, toolCaps,
+			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.CreatedAt, c.UpdatedAt, pgtenant.NullTime(c.DeletedAt))
 		var pgErr *pgconn.PgError
 		if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
 			return connectorstore.ErrAlreadyExists
@@ -145,12 +157,23 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*co
 		if err != nil {
 			return err
 		}
+		caps, err := capabilitiesJSON(c.Capabilities)
+		if err != nil {
+			return err
+		}
+		toolCaps, err := toolCapabilitiesJSON(c.ToolCapabilities)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE connectors SET
 			display_name = $3, mcp_server_url = $4, transport = $5, auth = $6::jsonb,
-			visibility = $7, labels = $8::jsonb, updated_at = $9, deleted_at = $10
+			visibility = $7, labels = $8::jsonb, capability_inference_mode = $9,
+			capabilities = $10::jsonb, tool_capabilities = $11::jsonb,
+			capabilities_refreshed_at = $12, updated_at = $13, deleted_at = $14
 		WHERE id = $1 AND tenant_id = $2`,
 			id, tenantID, c.DisplayName, c.MCPServerURL, c.Transport, auth,
-			c.Visibility, labels, c.UpdatedAt, pgtenant.NullTime(c.DeletedAt)); err != nil {
+			c.Visibility, labels, capabilityInferenceMode(c.CapabilityInferenceMode), caps, toolCaps,
+			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.UpdatedAt, pgtenant.NullTime(c.DeletedAt)); err != nil {
 			return err
 		}
 		out = c
@@ -278,13 +301,16 @@ func (s *Store) runRead(ctx context.Context, tenantID string, fn func(pgx.Tx) er
 // scanConnector reads one row in selectList order into a Connector.
 func scanConnector(row pgx.Row) (connectorstore.Connector, error) {
 	var (
-		c                  connectorstore.Connector
-		authRaw, labelsRaw []byte
-		deletedAt          *time.Time
+		c                      connectorstore.Connector
+		authRaw, labelsRaw     []byte
+		capsRaw, toolCapsRaw   []byte
+		inferMode              string
+		refreshedAt, deletedAt *time.Time
 	)
 	if err := row.Scan(
 		&c.TenantID, &c.ID, &c.DisplayName, &c.MCPServerURL, &c.Transport, &authRaw,
-		&c.Visibility, &labelsRaw, &c.CreatedAt, &c.UpdatedAt, &deletedAt,
+		&c.Visibility, &labelsRaw, &inferMode, &capsRaw, &toolCapsRaw,
+		&refreshedAt, &c.CreatedAt, &c.UpdatedAt, &deletedAt,
 	); err != nil {
 		return connectorstore.Connector{}, err
 	}
@@ -300,10 +326,62 @@ func scanConnector(row pgx.Row) (connectorstore.Connector, error) {
 			return connectorstore.Connector{}, fmt.Errorf("connectorstore: decode labels: %w", err)
 		}
 	}
+	c.CapabilityInferenceMode = capabilityinference.Mode(inferMode)
+	if len(capsRaw) > 0 {
+		if err := json.Unmarshal(capsRaw, &c.Capabilities); err != nil {
+			return connectorstore.Connector{}, fmt.Errorf("connectorstore: decode capabilities: %w", err)
+		}
+	}
+	if len(toolCapsRaw) > 0 {
+		if err := json.Unmarshal(toolCapsRaw, &c.ToolCapabilities); err != nil {
+			return connectorstore.Connector{}, fmt.Errorf("connectorstore: decode tool_capabilities: %w", err)
+		}
+	}
+	if refreshedAt != nil {
+		c.CapabilitiesRefreshedAt = *refreshedAt
+	}
 	if deletedAt != nil {
 		c.DeletedAt = *deletedAt
 	}
 	return c, nil
+}
+
+// capabilityInferenceMode returns the persisted §5.1 inference mode,
+// defaulting an empty value to strict so a row that predates the
+// capability columns reads back the spec default rather than the empty
+// string.
+func capabilityInferenceMode(m capabilityinference.Mode) string {
+	if m == "" {
+		return string(capabilityinference.DefaultMode)
+	}
+	return string(m)
+}
+
+// capabilitiesJSON marshals the §5.1 inferred capability union for the
+// capabilities jsonb column. A nil slice serializes as an empty array.
+func capabilitiesJSON(caps []capabilityinference.Capability) (string, error) {
+	if caps == nil {
+		caps = []capabilityinference.Capability{}
+	}
+	b, err := json.Marshal(caps)
+	if err != nil {
+		return "", fmt.Errorf("connectorstore: encode capabilities: %w", err)
+	}
+	return string(b), nil
+}
+
+// toolCapabilitiesJSON marshals the §5.1 per-tool capability map for the
+// tool_capabilities jsonb column. A nil map serializes as an empty
+// object.
+func toolCapabilitiesJSON(m map[string][]capabilityinference.Capability) (string, error) {
+	if m == nil {
+		m = map[string][]capabilityinference.Capability{}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("connectorstore: encode tool_capabilities: %w", err)
+	}
+	return string(b), nil
 }
 
 // authJSON marshals an optional ConnectorAuth to a JSON string for
