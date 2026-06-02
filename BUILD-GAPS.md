@@ -22382,7 +22382,7 @@ and `TestValidateRejectsMissingCredSupplementalGroups_spec_13_1` /
 Closes F-13.1.15 in the same commit (the validator now consults the
 field the producer emits).
 
-### - [ ] F-13.1.12 — 1-06 — Pod-level baseline (capabilities, RO root, seccomp) is not enforced on `lenny-system` pods by either webhook or preflight [Medium] — OPEN
+### - [x] F-13.1.12 — 1-06 — Pod-level baseline (capabilities, RO root, seccomp) is not enforced on `lenny-system` pods by either webhook or preflight [Medium] — CLOSED
 
 The `lenny-pod-security` webhook
 (`charts/lenny/templates/admission-policies/pod-security-webhook.yaml:30-34`)
@@ -22418,6 +22418,26 @@ Evidence:
 - `pkg/preflight/hostsharing.go:30-52` (host-sharing flags only)
 - `pkg/preflight/run.go:73-168` (no general SecurityContext audit)
 - spec/13_security-model.md:16
+
+**Resolution (`64fae5af`):** Added the `pod-security-baseline`
+lenny-preflight check (`pkg/preflight/podsecurity.go`): it projects every
+release-namespace Lenny-managed Deployment, DaemonSet, and Job pod
+template onto the §13.1 lines 6-8 baseline and fails the install
+fail-closed with `POD_SPEC_SECURITY_BASELINE_VIOLATION` when any container
+does not run as non-root, drop all capabilities, or mount a read-only root
+filesystem (effective `runAsNonRoot` resolves the container override over
+the pod-level default; lowercase `all` does not count). The check re-asserts
+the baseline the chart authors so a value override, a patched Job, or an
+operator-injected sidecar cannot weaken it silently. The workload listing
+is shared with the host-sharing audit via `forEachLennyWorkload`. Init and
+ephemeral containers stay out of scope (the system pod templates declare
+none; the agent-pod baseline is covered by the controller podspec and the
+agent-pod host-sharing / credential audits). Tests: tier-1
+compliant/each-violation/empty/effective-runAsNonRoot/absent-context/
+case-sensitive-ALL plus tier-1 Run-integration pass and fail cases. The
+admission-webhook half of the finding stays as a separate enforcement
+surface; the preflight backstop is the install-time guarantee §13.1 binds
+to enforcement.
 
 ---
 
@@ -22740,7 +22760,7 @@ Implementation:
 
 **Resolution:** Added `ingress.controllerPodLabel.key`/`.value` Helm values (defaults `app.kubernetes.io/name`/`ingress-nginx`) in `charts/lenny/values.yaml`; `allow-gateway-ingress` in `system-network-policies.yaml` now pairs the `namespaceSelector` (ingressControllerNamespace) with a `podSelector` matching that label so only Ingress controller pods reach the gateway TLS listener — sidecars, cert-manager validators, and debug containers in the same namespace are denied per §13.2 lines 266–292. Two tier-2 helm-unittest cases assert the default pairing and a custom-controller override. The preflight namespace+pod-label check (§13.2 line 292) is the second half of the finding and is tracked separately with the other preflight cluster (the chart rendering portion is fully addressed here).
 
-### - [ ] F-13.2.9 — OTLP TLS posture (`otlpTlsEnabled`, `acknowledgeOtlpPlaintext`, `otlpCaBundle`, preflight TLS handshake probe) is unimplemented (OTLP-068 / NET-059) [Medium] — OPEN
+### - [x] F-13.2.9 — OTLP TLS posture (`otlpTlsEnabled`, `acknowledgeOtlpPlaintext`, `otlpCaBundle`, preflight TLS handshake probe) is unimplemented (OTLP-068 / NET-059) [Medium] — CLOSED
 Spec (§13.2 lines 176–178): OTLP MUST run over TLS by default; the `observability.otlpTlsEnabled` value (defaults `true`) gates plaintext; combining `otlpTlsEnabled: false` outside `global.devMode` requires `observability.acknowledgeOtlpPlaintext: true`. The chart `required` guard MUST refuse to render, NOTES MUST print a deprecation banner, the preflight Job MUST run an `otlp-tls` live TLS handshake against the collector endpoint, and the preflight MUST fail when `observability.otlpEndpoint` begins with `http://` while TLS is on.
 
 Implementation:
@@ -22748,6 +22768,33 @@ Implementation:
 - `templates/agent-network-policies.yaml` lines 118–153 render the OTLP egress rule unconditionally on `otlpEndpoint` without consulting any TLS flag.
 - `pkg/preflight/*` carries no `otlp-tls` check.
 - The `OTLPPlaintextEgressDetected` alert is absent from `charts/lenny/files/alerting-rules.yaml` (a `grep -n OTLPPlaintext` returns nothing).
+
+**Resolution (`64fae5af`):** Added the §13.2 OTLP-068 values
+`observability.otlpTlsEnabled` (default `true`), `acknowledgeOtlpPlaintext`
+(default `false`), and `otlpCaBundle` to `charts/lenny/values.yaml`. The
+new `templates/otlp-tls-guard.yaml` render-time guard fails
+`helm install`/`helm upgrade` with the verbatim spec message when
+`otlpTlsEnabled: false` is combined with unacknowledged plaintext outside
+`global.devMode`; the new `templates/NOTES.txt` prints the verbatim
+deprecation banner once plaintext is acknowledged. The new `otlp-tls`
+lenny-preflight check (`pkg/preflight/otlp_tls.go`) rejects an `http://`
+`otlpEndpoint` while `otlpTlsEnabled` (`OTLP_ENDPOINT_SCHEME_MISMATCH`) and,
+with a wired prober, runs a live TLS 1.2+ handshake against the collector
+validating the SAN against the endpoint host
+(`OTLP_TLS_HANDSHAKE_FAILED`); `cmd/lenny-preflight` builds the real prober
+(system/cluster trust bundle, the spec's primary trust mechanism) and
+`preflight-job.yaml` passes `--otlp-endpoint`/`--otlp-tls-enabled`. The
+`OTLPPlaintextEgressDetected` alert evidence was stale — the alert was
+already in the §16.5 catalog (`pkg/alerting/rules/rules.go`) and rendered
+chart with its runbook present. The agent-network-policies "renders OTLP
+unconditionally without a TLS flag" point is moot: the TLS flag governs
+the OTel SDK transport (L7), not the L3/L4 egress NetworkPolicy. The
+alert's runtime feeder (the OTel exporter emitting
+`lenny_otlp_export_tls_handshake_total{result}`) remains runtime
+observability wiring gated by the gateway's InitProvider/metrics-registry
+ordering; the metric is catalogued. Tests: tier-1 otlp-tls
+(skip/scheme/no-prober/handshake-fail/handshake-success) + Run-integration,
+tier-2 helm-unittest guard (4 cases) + preflight-job flag cases.
 
 ### - [x] F-13.2.10 — `gateway.interceptorNamespaces` and supplemental `allow-gateway-egress-interceptor-*` policies are not rendered (NET-039, NET-058) [Medium] — CLOSED
 Spec (§13.2 lines 294–324): operators register in-cluster external interceptor namespaces via `gateway.interceptorNamespaces`; the chart MUST render one supplemental `allow-gateway-egress-interceptor-{{ namespace }}` policy per entry that selects the interceptor pods by `lenny.dev/component: interceptor`. The preflight Job MUST validate namespace existence and warn when no pod carries that label.
@@ -22783,12 +22830,32 @@ Effect: a multi-tenant install without the LLM-proxy feature flag silently admit
 
 - **Resolution:** Closed by `a367c502`. The `direct-mode-isolation-webhook.yaml` `{{- if .Values.features.llmProxy }}` gate is removed; the webhook (workload + fail-closed ValidatingWebhookConfiguration on `sandboxtemplates`) now renders unconditionally, the §13.2 line 440 step 2 requirement. The server-side `/direct-mode-isolation` route was already registered unconditionally in `cmd/lenny-webhook`, so no handler change was needed; the `--dev-mode` / `--tenancy-mode` flag help was corrected to note that NET-006 is enforced in every mode. The preflight admission-webhook inventory (`pkg/preflight/webhooks.go`) moves `lenny-direct-mode-isolation` from the LLMProxy-gated set to `baselineValidatingWebhooks`, keeping the inventory in sync with the now-unconditional render; the `WebhookFeatureFlags.LLMProxy` field is retained for the §17.2 phase-stamp downgrade audit.
 
-### - [ ] F-13.2.13 — `webhookIngressCIDR` and `kubeApiServerCIDR` operator-discovery validation is not enforced [Medium] — OPEN
+### - [x] F-13.2.13 — `webhookIngressCIDR` and `kubeApiServerCIDR` operator-discovery validation is not enforced [Medium] — CLOSED
 Spec (§13.2 lines 230–262): the `lenny-preflight` Job MUST validate that (a) the actual `kubernetes.default` Service ClusterIP falls within `kubeApiServerCIDR` and fails the install if it does not, and (b) discovered cluster pod/service CIDRs match `egressCIDRs.excludeClusterPodCIDR` / `excludeClusterServiceCIDR`.
 
 Implementation:
 - `pkg/preflight/run.go` enumerates no Service or Node CIDR check; the audit list is `admission-webhook-inventory`, `phase-stamp-consistency`, `host-sharing-flags`, NetworkPolicy parity audits, and SPIFFE/SA-audience uniqueness.
 - `values.yaml` line 77 defaults `kubeApiServerCIDR: "0.0.0.0/0"` and there is no `egressCIDRs.excludeClusterPodCIDR` declaration to validate against.
+
+**Resolution (`64fae5af`):** Added the `cluster-cidr-discovery`
+lenny-preflight check (`pkg/preflight/clustercidr_apiserver.go`). It reads
+the `kubernetes.default` Service ClusterIP and every node-reported pod CIDR
+and validates, fail-closed: (a) the ClusterIP falls within
+`kubeApiServerCIDR` (NET-040) and (b) within
+`egressCIDRs.excludeClusterServiceCIDR` (NET-022), plus each node pod CIDR
+within `egressCIDRs.excludeClusterPodCIDR` (advisory pass when no node
+reports a pod CIDR, as managed CNIs do not populate `node.spec.podCIDR`).
+`cmd/lenny-preflight` gains `--kube-apiserver-cidr`/
+`--exclude-cluster-service-cidr`/`--exclude-cluster-pod-cidr` and
+`preflight-job.yaml` passes them. The stale evidence note is corrected:
+`kubeApiServerCIDR` already defaults to `10.96.0.0/12` (F-17.6.18) and
+`egressCIDRs.excludeClusterPodCIDR`/`excludeClusterServiceCIDR` already
+exist. `webhookIngressCIDR` carries no preflight obligation in §13.2 lines
+230-262 (its `0.0.0.0/0` default is safe behind the `lenny-system`
+default-deny and webhook mTLS, per the spec note). Tests: tier-1
+compliant/apiserver-outside-kubeApiServerCIDR/apiserver-outside-service-
+exclusion/podCIDR-outside-exclusion/no-podCIDR-warns/malformed +
+`cidrWithin`, plus tier-1 Run-integration pass/fail/skip cases.
 
 ### - [x] F-13.2.14 — Per-pod DNS rate limiting and response filtering plugins (`coredns-ratelimit`, `coredns-filter`) are not present in the build [Medium] — CLOSED
 Spec (§13.2 lines 498–536): the dedicated CoreDNS image MUST embed both plugins, configured in the Corefile with `responses_per_second 10` and `max_txt_size 255` / `block_types NULL PRIVATE KEY TYPE65534`. "Source for both plugins is vendored under `build/coredns-plugins/`."
