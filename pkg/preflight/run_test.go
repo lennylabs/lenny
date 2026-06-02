@@ -5,6 +5,7 @@ package preflight_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -111,6 +112,28 @@ func TestRunPassesWhenWebhooksHealthyAndNoPhaseStamp(t *testing.T) {
 				t.Errorf("check %q failed: %s", r.Name, r.Decision.Reason)
 			}
 		}
+	}
+}
+
+// spec: §12.9 line 1050 — Run always emits the volume-encryption check.
+// A default install (no devMode, no attestation) is non-blocking (WARNING);
+// devMode exempts it; attestation clears the warning.
+func TestRunEmitsVolumeEncryptionCheck_spec_12_9_1050(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	def := resultByName(preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS}), "volume-encryption")
+	if !def.Passed || !strings.HasPrefix(def.Reason, "WARNING") {
+		t.Errorf("default install: want non-blocking warning, got passed=%v %q", def.Passed, def.Reason)
+	}
+
+	dev := resultByName(preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS, DevMode: true}), "volume-encryption")
+	if !dev.Passed || !strings.Contains(dev.Reason, "devMode") {
+		t.Errorf("devMode: want clean exempt pass, got passed=%v %q", dev.Passed, dev.Reason)
+	}
+
+	att := resultByName(preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS, AttestVolumeEncryption: true}), "volume-encryption")
+	if !att.Passed || strings.HasPrefix(att.Reason, "WARNING") {
+		t.Errorf("attested: want clean pass, got passed=%v %q", att.Passed, att.Reason)
 	}
 }
 

@@ -21521,7 +21521,7 @@ Consequence: a typo or a stale tier name is silently downgraded to
 falls back, t4-node-isolation predicate skipped) and the §12.9 ledger
 "every data element maps to exactly one tier" is unenforceable.
 
-### - [ ] F-12.9.5 — 9-04 — Pool-config webhook does not reject T4 runtimes with `taskPolicy.allowCrossTenantReuse: true` [High] — OPEN
+### - [x] F-12.9.5 — 9-04 — Pool-config webhook does not reject T4 runtimes with `taskPolicy.allowCrossTenantReuse: true` [High] — CLOSED
 
 `SandboxTemplate.taskPolicy.AllowCrossTenantReuse` documents itself
 ("`pkg/apis/lenny/v1/sandboxtemplate_types.go:24-29`") as "valid only
@@ -21544,6 +21544,15 @@ Evidence:
 - `pkg/apis/lenny/v1/sandboxtemplate_types.go:24-29`
 - `pkg/admission/pool_config_validator/validator.go:285-321`
 - (no T4-tier read in the webhook decision)
+
+**Resolution:** Added a `workspaceTier` field (enum `T1;T2;T3;T4`) to
+`SandboxTemplateSpec` so the deployer-authored pool config declares the
+§12.9 classification of the runtime it serves; the chart CRD carries it.
+`decideTaskMode` now rejects `taskPolicy.allowCrossTenantReuse: true`
+when `spec.workspaceTier == "T4"`, regardless of isolation profile (a
+microvm pool otherwise clears the existing isolation gate). The webhook
+no longer needs an out-of-band Runtime lookup; the tier rides the pool
+CR it already validates. (commit pending)
 
 ### - [ ] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — OPEN
 
@@ -21698,7 +21707,7 @@ Evidence:
 - spec §12.9 default-mapping table row "Credential leases — T4 —
   Redis (encrypted)"
 
-### - [ ] F-12.9.12 — 9-10 — Preflight Job does not validate Postgres / Redis volume encryption; the T2 attestation flag is not implemented [Medium] — OPEN
+### - [x] F-12.9.12 — 9-10 — Preflight Job does not validate Postgres / Redis volume encryption; the T2 attestation flag is not implemented [Medium] — CLOSED
 
 Spec line 1050: "The preflight Job ([Section 17.2]) MUST validate
 that Redis and Postgres volumes are backed by encrypted storage; if
@@ -21724,7 +21733,21 @@ attestation fallback, but a deployer who reads the Helm values
 key the spec sentence refers to; there is no surface to set, and the
 preflight Job logs no warning either.
 
-### - [ ] F-12.9.13 — 9-11 — Tier-aware retention defaults (T2 90 days, T3 7 days, T4 24 hours) are not enforced as tier-keyed defaults [Medium] — OPEN
+**Resolution:** New `pkg/preflight/volume_encryption.go`
+`VolumeEncryptionCheck` runs unconditionally in `preflight.Run` as the
+`volume-encryption` check. `global.devMode` exempts it; a positively
+detected unencrypted volume fails closed; and when the posture cannot be
+determined (the §17.3 BYO Postgres/Redis topology has no in-cluster
+volume to probe) it is non-blocking — an unattested install passes with a
+WARNING that records the attestation obligation, an attested install
+passes cleanly (the `monitoring.acknowledgeNoPrometheus` /
+`playground.acknowledgeApiKeyMode` precedent). Added the
+`preflight.attestVolumeEncryption` Helm value (default false), the
+`--dev-mode` / `--attest-volume-encryption` flags on `lenny-preflight`,
+and the preflight-Job template wiring. A `VolumeEncryptionProber` seam is
+left for a future cloud-API probe. (commit pending)
+
+### - [x] F-12.9.13 — 9-11 — Tier-aware retention defaults (T2 90 days, T3 7 days, T4 24 hours) are not enforced as tier-keyed defaults [Medium] — CLOSED
 
 Spec lines 1043–1045:
 - T2: 90 days.
@@ -21746,6 +21769,18 @@ control — that one is wired into the alert table
 
 This is medium: the operationally-relevant erasure deadlines work; the
 retention default the spec promises is the cleanest fix.
+
+**Resolution:** Added the centralized `tenantstore.TierRetentionDefault`
+map (T2 90d, T4 24h fixed; T3 and the empty default deployer-configured;
+T1 indefinite). The sessionserver `retentionForTier` helper resolves the
+effective §12.9 tier (the tenant's `workspaceTier`, tightened by a
+stricter environment-level override) and stamps the tier-keyed window at
+both create paths (`handleCreate`, `handleCreateAndStart`) and on the
+terminal roll-forward (`rollRetentionOnTerminal`). A T4-classified tenant
+now gets the 24h Restricted default instead of silently inheriting the T3
+7-day window; T3 keeps the deployer-configured `defaultRetention`. The
+artifact-store HardPrune retention windows remain on their own §12.5
+controls. (commit pending)
 
 ### - [x] F-12.9.14 — 9-12 — Data-residency validator is tier-agnostic; T4 "cross-region transfer prohibited" is not a distinct enforcement layer [Medium] — CLOSED
 - **Resolution:** `data_residency_validator.Request` gains a `WorkspaceTier` field and the decision logic a distinct T4 layer (`TierT4`, `CodeRegionCrossTransferProhibited = "REGION_CROSS_TRANSFER_PROHIBITED"`). For a T4 tenant, any region-bearing resource — not only environment-scoped ones — that resolves to a region other than the tenant's pinned region is rejected as a cross-region transfer even when both regions are declared in `storage.regions`; the same request under T3 is admitted (the distinct enforcement layer the §12.9 line 1046 table documents). The T4 branch runs before the §12.8 environment-inheritance check so a divergent T4 environment is reported with the Restricted-tier code. Empty tier preserves the T1–T3 behavior; the webhook transport resolves tier alongside `TenantRegion` (same pattern as today). (commit `c4ae0116`)

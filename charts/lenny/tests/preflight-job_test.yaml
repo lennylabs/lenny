@@ -349,6 +349,32 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--otlp-endpoint=https://otel-collector.lenny-system.svc:4317"
 
+  # spec: §12.9 line 1050 — the preflight Job carries global.devMode and
+  # preflight.attestVolumeEncryption so the volume-encryption check can
+  # exempt dev installs and consume the operator attestation. F-12.9.12.
+  - it: passes the §12.9 volume-encryption flags at their defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--dev-mode=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--attest-volume-encryption=false"
+
+  - it: surfaces the volume-encryption attestation when set
+    set:
+      preflight.attestVolumeEncryption: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--attest-volume-encryption=true"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

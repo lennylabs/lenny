@@ -4,9 +4,37 @@ package tenantstore_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
+
+// spec: §12.9 line 1043 — the per-tier retention default: T2 90 days, T4
+// 24 hours (fixed by the spec), T1 indefinite (zero, fixed), and T3 / the
+// empty default deployer-configured (not fixed). An unrecognized tier is
+// not fixed so the caller keeps its own configured window.
+func TestTierRetentionDefault_spec_12_9_1043(t *testing.T) {
+	cases := []struct {
+		tier      string
+		wantDur   time.Duration
+		wantFixed bool
+	}{
+		{"T1", 0, true},
+		{"T2", 90 * 24 * time.Hour, true},
+		{"T3", 0, false},
+		{"", 0, false},
+		{"T4", 24 * time.Hour, true},
+		{"T5", 0, false},
+		{"prod", 0, false},
+	}
+	for _, c := range cases {
+		gotDur, gotFixed := tenantstore.TierRetentionDefault(c.tier)
+		if gotDur != c.wantDur || gotFixed != c.wantFixed {
+			t.Errorf("TierRetentionDefault(%q) = (%v, %v), want (%v, %v)",
+				c.tier, gotDur, gotFixed, c.wantDur, c.wantFixed)
+		}
+	}
+}
 
 // spec: §12.9 line 1048; §15.1 line 816 — workspaceTier is a closed
 // tenant-settable enum: empty (the T3 default), T3, or T4. T1/T2 and any

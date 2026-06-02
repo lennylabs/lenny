@@ -2633,6 +2633,14 @@ preflight:
   # an operator-managed Redis whose eviction policy is otherwise
   # unverified. A drifted policy fails the install. F-12.4.15.
   checkRedisMaxmemoryPolicy: false
+  # attestVolumeEncryption is the operator's attestation that the Postgres
+  # and Redis persistent volumes are backed by encrypted storage. The §12.9
+  # line 1050 volume-encryption preflight check validates the T2
+  # storage-layer encryption baseline; when it cannot verify the posture
+  # directly (the §17.3 bring-your-own Postgres/Redis topology has no
+  # in-cluster volume for the chart to probe), the install fails closed
+  # unless this is set true. global.devMode exempts the check entirely.
+  attestVolumeEncryption: false
   resources:
     requests:
       cpu: 50m

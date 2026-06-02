@@ -537,6 +537,17 @@ func decideTaskMode(spec lennyv1.SandboxTemplateSpec) Decision {
 				"is permitted only with isolationProfile: microvm (Section 5.2)", isolationLabel(spec.IsolationProfile),
 		))
 	}
+	// spec: §12.9 line 1043 — T4 (Restricted) workspace state must never be
+	// reused across tenants, regardless of isolation profile. A microvm pool
+	// otherwise satisfies the cross-tenant-reuse precondition above, so the
+	// T4 prohibition is the only gate that stops a deployer attaching a
+	// Restricted runtime to a cross-tenant task-mode pool.
+	if tp.AllowCrossTenantReuse && spec.WorkspaceTier == "T4" {
+		return reject(
+			"spec.taskPolicy.allowCrossTenantReuse is true but spec.workspaceTier is \"T4\"; cross-tenant pod " +
+				"reuse is prohibited for T4 (Restricted) runtimes regardless of isolation profile (Section 12.9)",
+		)
+	}
 	if tp.MicrovmScrubMode == "in-place" && !tp.AcknowledgeMicrovmResidualState {
 		return reject(
 			"spec.taskPolicy.microvmScrubMode is \"in-place\" but spec.taskPolicy.acknowledgeMicrovmResidualState " +

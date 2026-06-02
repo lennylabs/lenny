@@ -321,6 +321,10 @@ func main() {
 		"value of the global.devMode chart flag, propagated for the §27.3 authMode=dev gate (§27.2)")
 	playgroundAcknowledgeAPIKeyMode := flag.Bool("playground-acknowledge-api-key-mode", false,
 		"value of the playground.acknowledgeApiKeyMode chart flag (§27.2 line 42; §27.9)")
+	devMode := flag.Bool("dev-mode", false,
+		"value of the global.devMode chart flag; exempts the §12.9 volume-encryption check")
+	attestVolumeEncryption := flag.Bool("attest-volume-encryption", false,
+		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9 line 1050)")
 	flag.Parse()
 
 	// MinIO credentials for the §12.5 line 297 SSE preflight are read
@@ -407,7 +411,9 @@ func main() {
 			Endpoint:   *otlpEndpoint,
 			TLSEnabled: *otlpTLSEnabled,
 		},
-		OTLPTLSProber: otlpTLSProber(*otlpEndpoint, *otlpCaBundle, *otlpTLSEnabled),
+		OTLPTLSProber:          otlpTLSProber(*otlpEndpoint, *otlpCaBundle, *otlpTLSEnabled),
+		DevMode:                *devMode,
+		AttestVolumeEncryption: *attestVolumeEncryption,
 		Playground: preflight.PlaygroundConfig{
 			Enabled:               *playgroundEnabled,
 			AuthMode:              *playgroundAuthMode,

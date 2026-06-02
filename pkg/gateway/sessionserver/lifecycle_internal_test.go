@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // spec: §7.1 lines 75, 77 (retention, isolation), §7.2 lines 137, 141
@@ -382,6 +384,53 @@ func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
 	row, _ := store.Get(context.Background(), "acme", "s")
 	if !row.RetentionExpiresAt.Equal(extended) {
 		t.Errorf("retentionExpiresAt = %v, want preserved %v", row.RetentionExpiresAt, extended)
+	}
+}
+
+// retentionForTier resolves the §12.9 line 1043 tier-keyed retention
+// default: T4 24h, T2 90d, and the deployer-configured window for T3 / the
+// empty default, with a stricter environment override tightening the
+// tenant tier so a T3 tenant's session in a T4 environment retains for 24h.
+func TestRetentionForTier_spec_12_9_1043(t *testing.T) {
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	for _, tc := range []tenantstore.Tenant{
+		{ID: "acme", WorkspaceTier: tenantstore.WorkspaceTierT3},
+		{ID: "globex", WorkspaceTier: ""},
+		{ID: "initech", WorkspaceTier: tenantstore.WorkspaceTierT4},
+	} {
+		if err := tenants.Create(ctx, tc); err != nil {
+			t.Fatalf("seed tenant %s: %v", tc.ID, err)
+		}
+	}
+	envs := environmentstore.NewMemory()
+	// A T4 environment override under the T3 tenant acme.
+	if err := envs.Create(ctx, environmentstore.Environment{
+		Name: "restricted", TenantID: "acme", WorkspaceTier: tenantstore.WorkspaceTierT4,
+	}); err != nil {
+		t.Fatalf("seed env: %v", err)
+	}
+	srv := New(memstore.New(), Options{Tenants: tenants, Environments: envs})
+
+	cases := []struct {
+		name   string
+		tenant string
+		env    string
+		want   time.Duration
+	}{
+		{"t3-deployer-default", "acme", "", DefaultArtifactRetention},
+		{"empty-deployer-default", "globex", "", DefaultArtifactRetention},
+		{"t4-24h", "initech", "", 24 * time.Hour},
+		{"t3-tenant-with-t4-env-tightens", "acme", "restricted", 24 * time.Hour},
+		{"unknown-tenant-deployer-default", "ghosttenant", "", DefaultArtifactRetention},
+		{"unknown-env-keeps-tenant-tier", "initech", "missing", 24 * time.Hour},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := srv.retentionForTier(ctx, c.tenant, c.env); got != c.want {
+				t.Errorf("retentionForTier(%q,%q) = %v, want %v", c.tenant, c.env, got, c.want)
+			}
+		})
 	}
 }
 

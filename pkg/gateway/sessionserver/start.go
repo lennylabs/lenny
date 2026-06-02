@@ -355,10 +355,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
-	// spec: §7.1 line 77 — stamp the default artifact-retention deadline
-	// at create (mirrors the plain create path) so the GC can reclaim
-	// this session's artifacts; the terminal transition rolls it forward.
-	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
+	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
+	// artifact-retention deadline at create (mirrors the plain create path)
+	// so the GC can reclaim this session's artifacts; the terminal
+	// transition rolls it forward.
+	row.RetentionExpiresAt = row.CreatedAt.Add(s.retentionForTier(r.Context(), tenantID, req.Environment))
 	// spec: §4.2 line 159 — stamp the resume-eligibility deadline so the
 	// row reaching `running` carries the same per-session resume window
 	// as the two-step `POST /v1/sessions` + `POST /start` path.

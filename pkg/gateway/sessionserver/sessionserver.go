@@ -1847,12 +1847,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// individual sessions override the platform default by adjusting
 	// this field on Update.
 	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
-	// spec: §7.1 line 77 — stamp the default artifact-retention deadline
-	// at create so a session that never reaches a terminal state is
-	// still eligible for GC (the retention GC treats a zero deadline as
-	// ineligible, which would otherwise let the row live forever). The
-	// terminal transition rolls this forward to terminal_time + default.
-	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
+	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
+	// artifact-retention deadline at create so a session that never reaches
+	// a terminal state is still eligible for GC (the retention GC treats a
+	// zero deadline as ineligible, which would otherwise let the row live
+	// forever). The deadline is the §12.9 per-tier default (T4 24h, T2 90d)
+	// or the deployer-configured window for T3. The terminal transition
+	// rolls this forward to terminal_time + the same window.
+	row.RetentionExpiresAt = row.CreatedAt.Add(s.retentionForTier(r.Context(), tenantID, req.Environment))
 
 	// spec: §14 lines 47-79, 154-155 — validate the §14 request-envelope
 	// fields (env blocklist, pool, timeouts cap, credentialPolicy

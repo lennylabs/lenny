@@ -120,6 +120,19 @@ type Config struct {
 	// lenny-preflight Job constructs a real prober; the scheme guard runs
 	// regardless of whether the prober is wired. F-13.2.9.
 	OTLPTLSProber OTLPTLSProber
+	// DevMode is the global.devMode chart value. It exempts the §12.9
+	// line 1050 volume-encryption check (local development volumes). F-12.9.12.
+	DevMode bool
+	// AttestVolumeEncryption is the preflight.attestVolumeEncryption chart
+	// value: the operator's attestation that the BYO Postgres and Redis
+	// volumes are backed by encrypted storage when the §12.9 line 1050
+	// check cannot verify it directly. F-12.9.12.
+	AttestVolumeEncryption bool
+	// VolumeEncryptionProber, when non-nil, determines the live §12.9
+	// line 1050 encryption posture of the Postgres and Redis volumes. The
+	// §17.3 BYO topology has no in-cluster volumes to probe, so v1 leaves
+	// it nil and the check routes through the attestation path. F-12.9.12.
+	VolumeEncryptionProber VolumeEncryptionProber
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -447,6 +460,20 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			}.Decide(ctx),
 		})
 	}
+
+	// §12.9 line 1050 — the T2 storage-layer encryption baseline: the
+	// Postgres and Redis volumes must be backed by encrypted storage. The
+	// check runs unconditionally; global.devMode exempts it, and the §17.3
+	// BYO topology routes through the preflight.attestVolumeEncryption
+	// attestation when no in-cluster volume can be probed. F-12.9.12.
+	report = append(report, CheckResult{
+		Name: "volume-encryption",
+		Decision: VolumeEncryptionCheck{
+			DevMode:  cfg.DevMode,
+			Attested: cfg.AttestVolumeEncryption,
+			Prober:   cfg.VolumeEncryptionProber,
+		}.Decide(ctx),
+	})
 	return report
 }
 

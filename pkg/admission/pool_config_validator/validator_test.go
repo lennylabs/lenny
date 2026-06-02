@@ -269,6 +269,32 @@ func TestTemplate(t *testing.T) {
 			},
 		},
 		{
+			// spec: §12.9 line 1043 — a microvm pool clears the isolation gate,
+			// so the T4 classification is the control that blocks cross-tenant
+			// reuse of Restricted workspace state.
+			name: "cross-tenant reuse on T4 microvm pool is rejected",
+			spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
+				WorkspaceTier: "T4",
+				TaskPolicy: &lennyv1.TaskPolicy{
+					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
+				},
+			},
+			reject:     true,
+			wantSubstr: "prohibited for T4 (Restricted) runtimes",
+		},
+		{
+			// A T3 microvm pool is admitted; the T4 gate is tier-specific.
+			name: "cross-tenant reuse on T3 microvm pool is admitted",
+			spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
+				WorkspaceTier: "T3",
+				TaskPolicy: &lennyv1.TaskPolicy{
+					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
+				},
+			},
+		},
+		{
 			name: "cross-tenant reuse on standard pool is rejected",
 			spec: lennyv1.SandboxTemplateSpec{
 				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "standard",

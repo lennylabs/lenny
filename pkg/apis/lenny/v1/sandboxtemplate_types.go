@@ -122,6 +122,17 @@ type SandboxTemplateSpec struct {
 	// +optional
 	IsolationProfile string `json:"isolationProfile,omitempty"`
 
+	// WorkspaceTier is the §12.9 data-classification tier of the runtime
+	// this pool serves. The pool-config webhook reads it to enforce the
+	// §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
+	// pool may not set `taskPolicy.allowCrossTenantReuse: true`, because
+	// T4 workspace state must never be reused across tenants regardless of
+	// isolation profile. Empty leaves the tier unclassified at the pool
+	// level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
+	// +kubebuilder:validation:Enum=T1;T2;T3;T4
+	// +optional
+	WorkspaceTier string `json:"workspaceTier,omitempty"`
+
 	// EgressProfile is the §13.2 egress profile the WarmPoolController
 	// stamps onto the pool's pods so the matching pre-created
 	// NetworkPolicy takes effect. Empty inherits the §13.2 default

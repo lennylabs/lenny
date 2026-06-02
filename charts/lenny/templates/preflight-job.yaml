@@ -286,6 +286,12 @@ spec:
             # mechanism). F-13.2.9.
             - --otlp-endpoint={{ .Values.observability.otlpEndpoint }}
             - --otlp-tls-enabled={{ .Values.observability.otlpTlsEnabled }}
+            # §12.9 line 1050 — T2 storage-layer volume-encryption baseline.
+            # global.devMode exempts the check; preflight.attestVolumeEncryption
+            # carries the operator attestation for BYO Postgres/Redis volumes
+            # the chart cannot probe in-cluster.
+            - --dev-mode={{ .Values.global.devMode }}
+            - --attest-volume-encryption={{ .Values.preflight.attestVolumeEncryption }}
           {{- if $hasMinio }}
           env:
             - name: MINIO_ACCESS_KEY_ENV

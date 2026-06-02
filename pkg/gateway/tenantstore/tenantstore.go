@@ -268,6 +268,29 @@ func WorkspaceTierRank(tier string) (rank int, onLadder bool) {
 	return r, ok
 }
 
+// TierRetentionDefault returns the §12.9 line 1043 retention default for a
+// data-classification tier and whether the spec fixes the value. T2 is 90
+// days and T4 is 24 hours (the spec's lease default, applied as the
+// Restricted-tier ceiling for session artifacts). T3 and the empty default
+// are deployer-configured, so fixed is false and the caller keeps its own
+// configured window. T1 retention is indefinite (zero duration, fixed). An
+// unrecognized tier returns (0, false) so the caller keeps the deployer
+// default rather than silently clamping. spec: §12.9 line 1043.
+func TierRetentionDefault(tier string) (d time.Duration, fixed bool) {
+	switch tier {
+	case "T1":
+		return 0, true
+	case "T2":
+		return 90 * 24 * time.Hour, true
+	case WorkspaceTierT4:
+		return 24 * time.Hour, true
+	case WorkspaceTierT3, "":
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
 // IsWorkspaceTierDowngrade reports whether a transition from current to
 // requested lowers the §12.9 classification tier. §15.1 states that
 // workspaceTier is ratcheted stricter-only, exactly as the §11.7

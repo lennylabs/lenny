@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // DefaultArtifactRetention is the §7.1 line 77 default artifact
@@ -465,7 +466,7 @@ func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessi
 // spec: §7.1 line 77 (default 7-day retention) and §7.1.16 — the
 // window starts at the terminal transition.
 func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.Session) {
-	deadline := s.clock().Add(s.defaultRetention)
+	deadline := s.clock().Add(s.retentionForTier(ctx, sess.TenantID, sess.Environment))
 	if sess.RetentionExpiresAt.After(deadline) {
 		// The client extended retention beyond the default window; do
 		// not shorten it.
@@ -479,4 +480,47 @@ func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.
 		row.RetentionExpiresAt = deadline
 		return nil
 	})
+}
+
+// retentionForTier resolves the §12.9 line 1043 tier-keyed default
+// artifact-retention window for a session. It reads the §12.9
+// classification tier in effect for the session (the tenant's
+// workspaceTier, tightened by a stricter environment-level override when
+// the session is scoped to an environment) and applies the spec's fixed
+// per-tier default: T2 90 days, T4 24 hours. T3 and the empty default are
+// the deployer-configured window (s.defaultRetention), so a T4-classified
+// tenant no longer silently inherits the T3 7-day default. spec: §12.9
+// line 1043.
+func (s *Server) retentionForTier(ctx context.Context, tenantID, environment string) time.Duration {
+	tier := s.effectiveWorkspaceTier(ctx, tenantID, environment)
+	if d, fixed := tenantstore.TierRetentionDefault(tier); fixed && d > 0 {
+		return d
+	}
+	return s.defaultRetention
+}
+
+// effectiveWorkspaceTier returns the §12.9 classification tier in effect
+// for a session: the tenant's workspaceTier, replaced by an environment
+// override when the session is scoped to an environment and the override
+// is stricter. The environment override is admitted stricter-only (§12.9
+// line 1033), so taking the higher strictness rank is defensive against a
+// stale row. A missing tenant or environment row resolves to the empty
+// (T3-default) tier rather than failing the create path.
+func (s *Server) effectiveWorkspaceTier(ctx context.Context, tenantID, environment string) string {
+	tier := ""
+	if s.tenants != nil && tenantID != "" {
+		if t, err := s.tenants.Get(ctx, tenantID); err == nil {
+			tier = t.WorkspaceTier
+		}
+	}
+	if s.environments != nil && tenantID != "" && environment != "" {
+		if e, err := s.environments.Get(ctx, tenantID, environment); err == nil && e.WorkspaceTier != "" {
+			envRank, envOK := tenantstore.WorkspaceTierRank(e.WorkspaceTier)
+			curRank, curOK := tenantstore.WorkspaceTierRank(tier)
+			if envOK && (!curOK || envRank > curRank) {
+				tier = e.WorkspaceTier
+			}
+		}
+	}
+	return tier
 }
