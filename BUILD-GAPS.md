@@ -20343,7 +20343,7 @@ Evidence:
 - The minimum-60s and "operators may raise without affecting correctness"
   guards mandated by the spec cannot exist absent the values themselves.
 
-### - [ ] F-12.5.20 — replication controller is unwired in any cmd entry point (§12.5 line 278 + §25.11) [Medium] — OPEN
+### - [x] F-12.5.20 — replication controller is unwired in any cmd entry point (§12.5 line 278 + §25.11) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-16.7.2, F-17.3.7, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
@@ -20367,6 +20367,26 @@ jurisdiction mismatch (the controller's `fail` path) is dead code. The
 `DataResidencyViolationAttempt` audit event and
 `lenny_minio_replication_residency_violation_total` counter the controller
 emits never fire.
+
+- **Resolution (b1544fa6):** The §25.11 replication `Controller` and its
+  production `MinIODriver` are now instantiated in `cmd/lenny-gateway`
+  (new `replication_wiring.go`): the gateway hosts it because it holds
+  the source ArtifactStore MinIO client, the §16.7 audit appender, and
+  the Prometheus metric surface the controller's signals need, co-located
+  with the §12.5 leader-elected MinIO maintenance sweeps. A new
+  `--artifact-replication-config` flag carries the §25.11
+  `minio.artifactBackup` JSON (validated with `Config.Validate`, so a bad
+  config aborts startup with `CONFIG_INVALID`); when enabled,
+  `runReplicationController` runs `Configure` at startup and `PreflightAll`
+  on the residency tick. The `replicationAuditSink` bridges the
+  `artifact.cross_region_replication_verified`,
+  `artifact_replication.resumed`, and `DataResidencyViolationAttempt`
+  events onto the platform §16.7 chain, and `replicationMetricsAdapter`
+  drives the now-emitting `lenny_minio_replication_residency_violation_total`
+  + shared `lenny_data_residency_violation_total` counters. The subsystem
+  is off until an operator supplies an enabled config. The resume/status
+  admin endpoints (F-25.11.1) and the object-level lag gauge (F-17.3.7)
+  are separate residuals tracked in those findings.
 
 ### - [x] F-12.5.21 — gateway `--minio-use-ssl` defaults to false; spec mandates TLS (§12.5 line 279) [Medium] — CLOSED
 - **Resolution:** The chart-side TLS mandate (`minio.tls.enabled` default true, render-time `fail` for non-embedded backends and regulated `complianceProfile`s, `LENNY_MINIO_USE_SSL` rendered from it) was already implemented by F-4.5.16/F-12.5.5 (commit `2d97f85`). This batch additionally flipped the gateway binary default for `--minio-use-ssl` from false to true (`envFlagDefault("LENNY_MINIO_USE_SSL", true)`), matching `lenny-preflight` and the §12.5 line 279 "all other backends enforce TLS" posture, so even a raw binary invocation with `--minio-endpoint` set defaults to HTTPS. The `minio.endpoint` empty default is a deliberate bring-your-own-MinIO design choice documented in `values.yaml`. (commit `e20de488`)
@@ -29014,7 +29034,7 @@ Evidence:
 - Catalog test pass: `go test ./pkg/observability/audit/` confirms all 91 constants exist; this provides no coverage that any are actually written.
 - `pkg/ops/opsserver/*` and `cmd/lenny-ops/*` contain zero `audit`, `Audit`, or `Append` references in non-test code (verified by `grep -rn 'audit\|Audit\|Append' cmd/lenny-ops/ pkg/ops/opsserver/ | grep -v _test.go`).
 
-### - [ ] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — OPEN
+### - [x] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.20, F-17.3.7, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
@@ -29035,6 +29055,17 @@ Evidence:
 - `pkg/blobstore/replication/controller.go:122` defines `NewController(cfg ControllerConfig) (*Controller, error)`; no production caller.
 - `cmd/lenny-gateway/main.go` lacks any `blobstore/replication` import (verified by `grep -n 'blobstore/replication' cmd/lenny-gateway/main.go` returns no hits).
 - `pkg/audit/ocsf/mapping.go` has no `artifact.` or `artifact_replication.` entry in either the exact catalog or the prefix table, so even if these events were appended to a tenant chain the OCSF translator would dead-letter them with `ErrClassMappingMissing`. See F3.
+
+- **Resolution (b1544fa6):** Closed by F-12.5.20 — the controller is now
+  constructed in `cmd/lenny-gateway` and the missing audit bridge is
+  supplied. `replicationAuditSink.emit` (the `AuditSink func(AuditEvent)`
+  the finding flagged as absent) marshals each event and calls
+  `policy.AuditAppender.Append(ctx, "platform", e.Type, payload, at)`,
+  delivering `artifact.cross_region_replication_verified`,
+  `artifact_replication.resumed`, and `DataResidencyViolationAttempt`
+  into the §11.7 hash-chain writer on the platform chain. The OCSF
+  class-mapping half is F-16.7.3 (already CLOSED), so the events both
+  fire and translate.
 
 ### - [x] F-16.7.3 — `artifact.cross_region_replication_verified` and `artifact_replication.resumed` have no OCSF class mapping. [High] — CLOSED
 
@@ -30906,6 +30937,20 @@ unmeasurable and unmet; replication has not been configured by any
 deployment; a primary-site disaster loses every workspace snapshot,
 checkpoint, transcript, and uploaded file, plus all compliance-
 relevant artifacts (legal hold attachments, erasure receipts).
+
+- **Progress (b1544fa6):** The controller-instantiation root cause is
+  resolved by F-12.5.20 — the `Controller` is now wired into
+  `cmd/lenny-gateway` (the gateway owns the source MinIO client + the
+  §16.7 audit pipeline + the metric surface; the finding's "into
+  lenny-ops" framing is satisfied by hosting it in the binary that holds
+  those dependencies). The residency preflight runs, the audit events
+  fire, and `lenny_minio_replication_residency_violation_total` now
+  emits. This finding stays OPEN for its remaining scope: the
+  `POST/GET /v1/admin/artifact-replication/{region}/resume|status` admin
+  endpoints (tracked in F-25.11.1) and the object-level
+  `lenny_minio_replication_lag_seconds` / `lenny_minio_replication_failed_total`
+  gauges (which the controller does not measure; they require scraping
+  MinIO replication metrics).
 
 ---
 
@@ -39797,6 +39842,15 @@ Implementation status:
 - `pkg/blobstore/replication/controller.go:294-327` implements `Controller.Resume(ctx, region, operatorSub, justification)` and `Controller.GetState(ctx, region)` — both functional and unit-tested.
 - `pkg/ops/opsserver/backup.go:52-68` registers no route under `/v1/admin/artifact-replication/...`. The agent-facing HTTP surface for these two operations does not exist.
 - Without the route, the operator-facing recovery path documented at §25.11 "Runtime residency preflight" ("Replication remains suspended until an operator … invokes `POST /v1/admin/artifact-replication/{region}/resume`") has no entry point. The fail-closed compliance control is therefore unreachable by an agent following the spec.
+
+- **Progress (b1544fa6):** The `Controller` is now instantiated and runs
+  in `cmd/lenny-gateway` (F-12.5.20), so `Controller.Resume` /
+  `Controller.GetState` have a live receiver to attach to. This finding
+  stays OPEN for its specific scope — the
+  `POST /v1/admin/artifact-replication/{region}/resume` and
+  `GET /v1/admin/artifact-replication/{region}/status` admin endpoints
+  are still unregistered; wiring them to the live controller is a bounded
+  follow-on now that the controller exists.
 
 ### - [x] F-25.11.2 — Backup and restore audit events never emitted [High] — CLOSED
 
