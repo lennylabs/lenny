@@ -1,0 +1,46 @@
+{{- /*
+ClusterIP Service for the dedicated lenny-system CoreDNS instance (§13.2
+line 486). The Service ClusterIP is pinned to coredns.clusterIP so the
+WarmPoolController's agent-pod dnsConfig nameserver (passed as
+--dedicated-dns-cluster-ip) matches a stable address. The chart fails the
+render when clusterIP is empty while any agent namespace is configured,
+because every agent pod's resolver would then point at an unset address.
+
+Port 53 (UDP and TCP) serves agent-namespace DNS; port 9153 exposes the
+Prometheus metrics endpoint the §16.5 DedicatedDNS alerts scrape.
+
+spec: §13.2 lines 470-490, 486; §13.2 line 222 (CoreDNS ingress row). F-13.2.3.
+*/ -}}
+{{- if .Values.coredns.deploy }}
+{{- $cd := .Values.coredns }}
+{{- if and (not $cd.clusterIP) .Values.agentNamespaces }}
+{{- fail "coredns.clusterIP must be set to a free address in the cluster service CIDR when agentNamespaces is non-empty: every agent pod's dnsConfig nameserver targets it (§13.2 K8S-033)." }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-agent-dns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: coredns
+spec:
+  {{- if $cd.clusterIP }}
+  clusterIP: {{ $cd.clusterIP | quote }}
+  {{- end }}
+  selector:
+    lenny.dev/component: coredns
+  ports:
+    - name: dns-udp
+      port: 53
+      protocol: UDP
+      targetPort: dns-udp
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+      targetPort: dns-tcp
+    - name: metrics
+      port: 9153
+      protocol: TCP
+      targetPort: metrics
+{{- end }}

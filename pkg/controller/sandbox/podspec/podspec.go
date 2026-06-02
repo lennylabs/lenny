@@ -287,6 +287,24 @@ type Inputs struct {
 	// write it (read-only mount), so the scrub-space-prevention guarantee
 	// holds with or without configured assets. spec: §6.4 line 409 — F-6.4.3.
 	SharedAssetsArg string
+
+	// DedicatedDNSClusterIP is the ClusterIP of the lenny-agent-dns
+	// Service in lenny-system. spec: §13.2 lines 470-490 (K8S-033) — when
+	// non-empty the pod builder sets `dnsPolicy: None` and a `dnsConfig`
+	// pointing the pod's resolver at this address, because the
+	// agent-namespace NetworkPolicy blocks the kube-system kube-dns the
+	// Kubernetes default ClusterFirst policy would otherwise target, so
+	// DNS would fail silently. A pool that opts out via the
+	// `lenny.dev/dns-policy: cluster-default` label (carried on Labels)
+	// keeps the Kubernetes default ClusterFirst behavior even when this is
+	// set. An empty value leaves the cluster default in force (dev / no
+	// dedicated CoreDNS configured). F-13.2.4.
+	DedicatedDNSClusterIP string
+
+	// ReleaseNamespace is the Helm release namespace (lenny-system). It is
+	// the first search domain in the dedicated-DNS dnsConfig so in-cluster
+	// Service short-names resolve as they would under ClusterFirst.
+	ReleaseNamespace string
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -705,7 +723,52 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 	if in.WorkspaceTier == WorkspaceTierT4 {
 		applyT4NodeIsolation(pod)
 	}
+	applyDedicatedDNS(in, pod)
 	return pod
+}
+
+// DNSPolicyOptOutLabel is the §13.2 pod label whose presence (value
+// `cluster-default`) signals the pool opted out of the dedicated CoreDNS
+// instance. The pod builder leaves such a pod at the Kubernetes default
+// ClusterFirst behavior so it resolves through kube-system CoreDNS.
+const (
+	DNSPolicyOptOutLabel    = "lenny.dev/dns-policy"
+	DNSPolicyClusterDefault = "cluster-default"
+)
+
+// applyDedicatedDNS points the agent pod's resolver at the dedicated
+// lenny-system CoreDNS instance. spec: §13.2 lines 470-490 (K8S-033) —
+// the agent-namespace NetworkPolicy routes DNS only to the dedicated
+// instance and blocks kube-system kube-dns, so a pod left at the
+// Kubernetes default ClusterFirst policy (resolver pointed at
+// kube-system kube-dns) would have every name lookup blackholed. Setting
+// `dnsPolicy: None` plus an explicit `dnsConfig` makes the pod query the
+// dedicated instance instead. The search domains and ndots mirror the
+// standard ClusterFirst behavior so in-cluster Service short-names still
+// resolve.
+//
+// A pool that opts out via the `lenny.dev/dns-policy: cluster-default`
+// label keeps the Kubernetes default behavior (resolving through
+// kube-system CoreDNS); the builder makes no change in that case. The
+// builder also makes no change when no dedicated ClusterIP is configured
+// (dev or a deployment without the dedicated instance).
+func applyDedicatedDNS(in Inputs, pod *corev1.Pod) {
+	if in.DedicatedDNSClusterIP == "" {
+		return
+	}
+	if in.Labels[DNSPolicyOptOutLabel] == DNSPolicyClusterDefault {
+		return
+	}
+	pod.Spec.DNSPolicy = corev1.DNSNone
+	searches := []string{"svc.cluster.local", "cluster.local"}
+	if in.ReleaseNamespace != "" {
+		searches = append([]string{in.ReleaseNamespace + ".svc.cluster.local"}, searches...)
+	}
+	pod.Spec.DNSConfig = &corev1.PodDNSConfig{
+		Nameservers: []string{in.DedicatedDNSClusterIP},
+		Searches:    searches,
+		Options:     []corev1.PodDNSConfigOption{{Name: "ndots", Value: ptr.To("5")}},
+	}
 }
 
 // WorkspaceTierT4 is the §12.9 / §5.2 Restricted-tier value the Runtime

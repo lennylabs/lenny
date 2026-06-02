@@ -50,6 +50,31 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --sa-token-audience=
 
+  # spec: §13.2 (K8S-033) — the controller points every agent pod's
+  # resolver at the dedicated CoreDNS Service ClusterIP. F-13.2.4.
+  - it: passes --dedicated-dns-cluster-ip when coredns.clusterIP is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dedicated-dns-cluster-ip=10.96.0.53
+
+  - it: omits --dedicated-dns-cluster-ip when the dedicated CoreDNS is disabled
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.deploy: false
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dedicated-dns-cluster-ip=10.96.0.53
+
   - it: runs under the lenny-controller service account
     documentSelector:
       path: kind

@@ -11,9 +11,10 @@ tests:
         - name: lenny-agents
     asserts:
       # default-deny-all, allow-gateway-ingress, allow-pod-egress-base,
-      # allow-pod-egress-llm-proxy — no allow-pod-egress-otlp by default.
+      # allow-pod-egress-llm-proxy, allow-pod-egress-provider-direct,
+      # allow-pod-egress-internet — no OTLP, no kube-dns opt-out by default.
       - hasDocuments:
-          count: 4
+          count: 6
 
   - it: does not render allow-pod-egress-otlp when otlpEndpoint is unset
     set:
@@ -37,8 +38,9 @@ tests:
       observability:
         otlpEndpoint: https://otel-collector.lenny-system.svc:4317
     asserts:
+      # baseline 6 + OTLP (index 4, ahead of provider-direct/internet) = 7.
       - hasDocuments:
-          count: 5
+          count: 7
 
   - it: scopes the OTLP egress policy to managed agent pods
     set:
@@ -126,6 +128,112 @@ tests:
       observability:
         otlpEndpoint: https://otel.acme.com:4317
     asserts:
-      # 5 policies (baseline 4 + OTLP) per namespace, 2 namespaces.
+      # 7 policies (baseline 6 + OTLP) per namespace, 2 namespaces.
       - hasDocuments:
-          count: 10
+          count: 14
+
+  # spec: §13.2 lines 424-432 — the per-pool egress profiles. F-13.2.11.
+  - it: renders the provider-direct egress profile policy scoped to the egress-profile label
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      egressCIDRs:
+        providers:
+          - 52.95.0.0/16
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-provider-direct
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/egress-profile"]
+          value: provider-direct
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: 52.95.0.0/16
+      # IMDS endpoints are excepted unconditionally (NET-044).
+      - contains:
+          path: spec.egress[0].to[0].ipBlock.except
+          content: 169.254.169.254/32
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 443
+
+  - it: renders the provider-direct policy with no CIDR peer when providers is empty
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-provider-direct
+      - notExists:
+          path: spec.egress
+
+  # spec: §13.2 line 432 (NET-002) — the internet profile with two parallel
+  # ipBlock peers and family-partitioned except blocks. F-13.2.11.
+  - it: renders the internet egress profile policy with family-partitioned except blocks
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-internet
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/egress-profile"]
+          value: internet
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: 0.0.0.0/0
+      - contains:
+          path: spec.egress[0].to[0].ipBlock.except
+          content: 10.96.0.0/12
+      - contains:
+          path: spec.egress[0].to[0].ipBlock.except
+          content: 169.254.169.254/32
+      - equal:
+          path: spec.egress[1].to[0].ipBlock.cidr
+          value: ::/0
+      - contains:
+          path: spec.egress[1].to[0].ipBlock.except
+          content: fd00:ec2::254/128
+
+  # spec: §13.2 line 488 — the kube-system DNS opt-out policy, scoped to
+  # the dns-policy label, rendered only when allowClusterDefaultOptOut is
+  # set. F-13.2.4.
+  - it: adds the kube-dns opt-out policy only when allowClusterDefaultOptOut is set
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      coredns:
+        allowClusterDefaultOptOut: true
+    asserts:
+      # baseline 6 + kube-dns opt-out (no OTLP) = 7.
+      - hasDocuments:
+          count: 7
+
+  - it: scopes the kube-dns opt-out policy to the dns-policy label
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      coredns:
+        allowClusterDefaultOptOut: true
+    documentIndex: 6
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-kube-dns
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/dns-policy"]
+          value: cluster-default
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns

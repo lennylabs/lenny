@@ -79,6 +79,12 @@ global:
   # §10.3 (NET-064) F-10.3.4: required chart value (no default).
   spiffeTrustDomain: lenny-aws-e2e
 
+# §13.2 (K8S-033): dedicated CoreDNS Service ClusterIP. EKS defaults to
+# the 10.100.0.0/16 service CIDR (kube-dns at 10.100.0.10); .53 is a free
+# address. Verify it is unallocated for the target cluster's service CIDR.
+coredns:
+  clusterIP: 10.100.0.53
+
 controller:
   image:
     repository: ${ECR_REGISTRY}/lenny-controller

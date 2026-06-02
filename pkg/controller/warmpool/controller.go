@@ -90,6 +90,38 @@ const conditionConcurrentWorkspaceCredentialSharing = "ConcurrentWorkspaceCreden
 const (
 	LabelPool    = "lenny.dev/pool"
 	LabelManaged = "lenny.dev/managed"
+
+	// LabelDeliveryMode is stamped with value `proxy` on pods belonging
+	// to proxy-mode pools so the pre-created allow-pod-egress-llm-proxy
+	// NetworkPolicy (which selects lenny.dev/delivery-mode: proxy) admits
+	// the pod's egress to the gateway LLM proxy port. Direct-mode pools
+	// do not receive the label and therefore cannot reach that port.
+	// spec: §13.2 lines 118, 130.
+	LabelDeliveryMode = "lenny.dev/delivery-mode"
+
+	// LabelEgressProfile is stamped with the pool's resolved §13.2 egress
+	// profile (restricted|provider-direct|internet) so the matching
+	// pre-created supplemental NetworkPolicy takes effect. The controller
+	// does not create NetworkPolicies; it only labels pods so the
+	// chart-rendered policies select them. spec: §13.2 lines 424-432.
+	LabelEgressProfile = "lenny.dev/egress-profile"
+
+	// LabelDNSPolicy is stamped with value `cluster-default` only on pods
+	// in pools that opt out of the dedicated CoreDNS instance, so the
+	// chart-rendered kube-system DNS egress supplemental policy (which
+	// selects this label) admits their fallback DNS path. Pods in all
+	// other pools do not receive the label. spec: §13.2 lines 470-490.
+	LabelDNSPolicy = "lenny.dev/dns-policy"
+
+	// EgressProfileRestricted is the §13.2 default egress profile (gateway
+	// + DNS only); an empty SandboxTemplate.spec.egressProfile resolves to
+	// it. spec: §13.2 line 430.
+	EgressProfileRestricted = "restricted"
+
+	// DNSPolicyClusterDefault is the §13.2 pool opt-out value that reverts
+	// the pod to kube-system CoreDNS instead of the dedicated instance.
+	// spec: §13.2 line 484.
+	DNSPolicyClusterDefault = "cluster-default"
 )
 
 // PoolPhase is the §4.0 warm-pool derived phase the pool state manager
@@ -501,10 +533,7 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: pool.Name + "-",
 			Namespace:    pool.Namespace,
-			Labels: map[string]string{
-				LabelPool:    pool.Name,
-				LabelManaged: "true",
-			},
+			Labels:       sandboxLabels(pool, tmpl),
 			Annotations: propagatedAnnotations(tmpl),
 			// spec: §4.6.1 "Sandbox finalizers" — every Sandbox carries
 			// the session-cleanup finalizer so a node drain or accidental
@@ -534,6 +563,44 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 		return err
 	}
 	return r.Client.Create(ctx, sb)
+}
+
+// sandboxLabels builds the label set the controller stamps on every
+// Sandbox it warms. The labels propagate to the agent pod (the Sandbox
+// reconciler copies sb.Labels onto the pod), where the §13.2
+// pre-created NetworkPolicies select them. The controller never creates
+// NetworkPolicies; it only labels pods so the chart-rendered policies
+// take effect (spec: §13.2 line 424).
+//
+//   - LabelPool / LabelManaged: pool scoping and §17.2 admission targeting.
+//   - LabelDeliveryMode: `proxy` only on proxy-mode pools so the
+//     allow-pod-egress-llm-proxy policy admits the LLM proxy port
+//     (spec: §13.2 lines 118, 130). F-13.2.1.
+//   - LabelEgressProfile: the resolved egress profile so the matching
+//     supplemental policy takes effect; empty resolves to `restricted`
+//     (spec: §13.2 lines 424-432). F-13.2.11.
+//   - LabelDNSPolicy: `cluster-default` only on pools that opt out of the
+//     dedicated CoreDNS instance (spec: §13.2 lines 470-490). F-13.2.4.
+func sandboxLabels(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) map[string]string {
+	labels := map[string]string{
+		LabelPool:    pool.Name,
+		LabelManaged: "true",
+	}
+	if tmpl == nil {
+		return labels
+	}
+	if tmpl.Spec.DeliveryMode == "proxy" {
+		labels[LabelDeliveryMode] = "proxy"
+	}
+	profile := tmpl.Spec.EgressProfile
+	if profile == "" {
+		profile = EgressProfileRestricted
+	}
+	labels[LabelEgressProfile] = profile
+	if tmpl.Spec.DNSPolicy == DNSPolicyClusterDefault {
+		labels[LabelDNSPolicy] = DNSPolicyClusterDefault
+	}
+	return labels
 }
 
 // propagatedAnnotations carries the small set of opt-in annotations

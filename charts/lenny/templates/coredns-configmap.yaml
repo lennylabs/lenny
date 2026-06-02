@@ -1,0 +1,55 @@
+{{- /*
+Corefile for the dedicated lenny-system CoreDNS instance (§13.2 lines
+492-536). The ConfigMap is mounted into the Deployment rendered by
+coredns-deployment.yaml. The Corefile enables:
+
+  - log: every agent-pod DNS query is recorded for audit.
+  - ratelimit (coredns-ratelimit plugin): per-source-IP response
+    throttling to blunt high-throughput DNS tunneling.
+  - filter (coredns-filter plugin): drops oversized TXT records and the
+    record types DNS-tunnel exfiltration carries (NULL, PRIVATE, KEY,
+    TYPE65534).
+  - forward to /etc/resolv.conf: upstream resolution through kube-system
+    CoreDNS for cluster-internal and external names.
+  - health / prometheus / cache / reload / errors.
+
+The ratelimit and filter plugins are non-standard; they are compiled
+into the coredns.image (build/coredns-plugins/). Deployers overriding
+the image MUST include both. spec: §13.2 lines 498-536. F-13.2.3 / F-13.2.14.
+*/ -}}
+{{- if .Values.coredns.deploy }}
+{{- $cd := .Values.coredns }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-agent-dns-corefile
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: coredns
+data:
+  Corefile: |
+    # lenny-agent-dns — dedicated CoreDNS for agent namespaces.
+    # Deployed in {{ .Release.Namespace }}; serves all agent namespaces.
+    .:53 {
+        log {
+            class all
+        }
+        ratelimit {
+            responses_per_second {{ $cd.rateLimit.responsesPerSecond }}
+        }
+        filter {
+            max_txt_size {{ $cd.filter.maxTxtSize }}
+            block_types {{ $cd.filter.blockTypes }}
+        }
+        forward . /etc/resolv.conf {
+            max_concurrent 1000
+            health_check 5s
+        }
+        health :8080
+        prometheus :9153
+        cache {{ $cd.cacheTTL }}
+        reload
+        errors
+    }
+{{- end }}

@@ -120,6 +120,20 @@ spec:
                 - proxy
                 - direct
                 type: string
+              dnsPolicy:
+                description: |-
+                  DNSPolicy opts the pool out of the dedicated lenny-system CoreDNS
+                  instance. The only accepted value is `cluster-default`: pods in the
+                  pool revert to the Kubernetes default ClusterFirst behavior and
+                  resolve through kube-system CoreDNS. Empty (the default) routes DNS
+                  through the dedicated instance, where the WarmPoolController sets
+                  `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
+                  Opting out is permitted only for `standard` (runc) pools and removes
+                  the dedicated instance's query logging, rate limiting, and response
+                  filtering for that pool. spec: §13.2 lines 470-490.
+                enum:
+                - cluster-default
+                type: string
               egressProfile:
                 description: |-
                   EgressProfile is the §13.2 egress profile the WarmPoolController

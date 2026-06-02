@@ -1,0 +1,132 @@
+{{- /*
+The dedicated lenny-system CoreDNS Deployment plus its PodDisruptionBudget
+(§13.2 lines 452-490, NET-018). The instance is the sole authorized DNS
+resolver for every agent namespace, so it runs highly available: the chart
+requires coredns.replicas >= 2 and a PDB minAvailable: 1 keeps at least one
+replica through a node drain or rolling upgrade. Losing all replicas
+blackholes agent DNS by design — the allow-pod-egress-base policy permits no
+kube-system fallback, and the §16.5 DedicatedDNSUnavailable /
+DedicatedDNSDegraded alerts fire instead of silently degrading.
+
+The pod runs the lenny-coredns image (coredns.image) with the
+coredns-ratelimit and coredns-filter plugins compiled in, mounting the
+Corefile from coredns-configmap.yaml.
+
+spec: §13.2 lines 452-490 (HA, PDB, dedicated instance). F-13.2.3 / F-13.2.14.
+*/ -}}
+{{- if .Values.coredns.deploy }}
+{{- $cd := .Values.coredns }}
+{{- if lt (int $cd.replicas) 2 }}
+{{- fail "coredns.replicas must be >= 2: the dedicated CoreDNS instance is the sole DNS resolver for all agent pods, so a single replica blackholes agent DNS on any disruption (§13.2 NET-018)." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-agent-dns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: coredns
+spec:
+  replicas: {{ $cd.replicas }}
+  selector:
+    matchLabels:
+      lenny.dev/component: coredns
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: coredns
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9153"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: coredns
+          image: "{{ $cd.image.repository }}:{{ $cd.image.tag }}"
+          imagePullPolicy: {{ $cd.image.pullPolicy }}
+          args:
+            - -conf
+            - /etc/coredns/Corefile
+          ports:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+            - name: metrics
+              containerPort: 9153
+              protocol: TCP
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          # §13.2 line 536 — the readiness probe queries the CoreDNS health
+          # endpoint so a pod whose image is missing the ratelimit/filter
+          # plugins (the Corefile fails to load) never joins the Service.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 10
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              # CoreDNS binds port 53; NET_BIND_SERVICE lets it do so as
+              # the non-root user without the full set of capabilities.
+              add:
+                - NET_BIND_SERVICE
+          volumeMounts:
+            - name: corefile
+              mountPath: /etc/coredns
+              readOnly: true
+          resources:
+            {{- toYaml $cd.resources | nindent 12 }}
+      # §13.2 NET-018 — spread the replicas across nodes so a single node
+      # loss never removes the whole dedicated DNS tier.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      volumes:
+        - name: corefile
+          configMap:
+            name: lenny-agent-dns-corefile
+            items:
+              - key: Corefile
+                path: Corefile
+---
+# §13.2 line 472 — PodDisruptionBudget minAvailable: 1 keeps at least one
+# replica serving agent DNS through voluntary disruptions.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-agent-dns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: coredns
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/component: coredns
+{{- end }}

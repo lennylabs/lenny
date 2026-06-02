@@ -38,6 +38,7 @@ const (
 	LabelManaged       = "lenny.dev/managed"
 	LabelDeliveryMode  = "lenny.dev/delivery-mode"
 	LabelEgressProfile = "lenny.dev/egress-profile"
+	LabelDNSPolicy     = "lenny.dev/dns-policy"
 	LabelTenantID      = "lenny.dev/tenant-id"
 )
 
@@ -115,18 +116,22 @@ func Decide(r Request) (Decision, error) {
 	return DecideTenantTransition(r)
 }
 
-// DecideImmutableLabels enforces the §17.2 item 5 rule that the three
-// canonical labels (lenny.dev/managed, lenny.dev/delivery-mode,
-// lenny.dev/egress-profile) are immutable on existing agent pods. The
-// gateway-tenant-id transition rules belong to
+// DecideImmutableLabels enforces the §17.2 item 5 rule that the
+// canonical egress-governing labels (lenny.dev/managed,
+// lenny.dev/delivery-mode, lenny.dev/egress-profile, lenny.dev/dns-policy)
+// are immutable on existing agent pods. spec: §13.2 line 180 — mutating
+// lenny.dev/egress-profile from `restricted` to `internet`, or adding
+// lenny.dev/dns-policy to a non-opted-out pod, would broaden egress or
+// bypass the dedicated CoreDNS instance without re-admission through the
+// pool controller. The gateway-tenant-id transition rules belong to
 // DecideTenantTransition.
 //
-// spec: §17.2 item 5; §13.2.
+// spec: §17.2 item 5; §13.2 line 180.
 func DecideImmutableLabels(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels
 	}
-	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile} {
+	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile, LabelDNSPolicy} {
 		if r.OldLabels == nil {
 			continue
 		}

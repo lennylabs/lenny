@@ -136,6 +136,7 @@ func main() {
 		requireCertIssuance     bool
 		saTokenAudience         string
 		agentServiceAccount     string
+		dedicatedDNSClusterIP   string
 		runtimeClassStandard    string
 		runtimeClassSandboxed   string
 		runtimeClassMicrovm     string
@@ -154,6 +155,8 @@ func main() {
 		"§10.3 deployment-specific projected-token audience (global.saTokenAudience, e.g. lenny-gateway-<cluster-name>). When set, every agent pod mounts a §6.1 audience-bound, 900s-TTL projected service-account token; empty leaves the pod without it rather than mounting a cluster-default-audience token.")
 	flag.StringVar(&agentServiceAccount, "agent-service-account", os.Getenv("LENNY_AGENT_SERVICE_ACCOUNT"),
 		"§10.3 zero-RBAC ServiceAccount bound to agent pods. Empty uses the namespace default SA (which carries no RBAC bindings in agent namespaces).")
+	flag.StringVar(&dedicatedDNSClusterIP, "dedicated-dns-cluster-ip", os.Getenv("LENNY_DEDICATED_DNS_CLUSTER_IP"),
+		"§13.2 (K8S-033) ClusterIP of the lenny-agent-dns Service (chart coredns.clusterIP). When set, every agent pod is stamped with dnsPolicy:None and a dnsConfig targeting this address so DNS resolves through the dedicated CoreDNS instance; pools that opt out via dnsPolicy:cluster-default keep the Kubernetes default ClusterFirst behavior. Empty leaves the cluster default in force.")
 	// spec: §17.5 line 3 — operators whose cluster ships the gVisor or
 	// Kata RuntimeClass under a non-default name (`runsc`, `kata-qemu`,
 	// `kata-fc`) override Lenny's literal defaults here so the chart's
@@ -376,6 +379,10 @@ func main() {
 		DevMode:                   devMode,
 		SATokenAudience:           saTokenAudience,
 		AgentServiceAccountName:   agentServiceAccount,
+		DedicatedDNSClusterIP:     dedicatedDNSClusterIP,
+		// spec: §13.2 — the dedicated CoreDNS Service lives in the release
+		// namespace (lenny-system); it is the first dnsConfig search domain.
+		ReleaseNamespace:          leaderElectNS,
 		RuntimeClassNameOverrides: runtimeClassOverrides,
 		StatusDedup:               statusdedup.New(statusDedupWindow),
 		MaxConcurrentReconciles:   maxConcurrentReconciles,

@@ -81,6 +81,13 @@ spec:
             # than a cluster-default-audience token. F-10.3.5.
             - --sa-token-audience={{ . }}
             {{- end }}
+            {{- if and .Values.coredns.deploy .Values.coredns.clusterIP }}
+            # §13.2 (K8S-033): point every agent pod's resolver at the
+            # dedicated lenny-system CoreDNS Service ClusterIP. The
+            # controller stamps dnsPolicy:None + dnsConfig unless the pool
+            # opts out via dnsPolicy:cluster-default. F-13.2.4.
+            - --dedicated-dns-cluster-ip={{ .Values.coredns.clusterIP }}
+            {{- end }}
             {{- /* spec: §17.5 line 3 — per-profile RuntimeClass name
                    overrides. Clusters that ship gVisor as `runsc` or
                    Kata as `kata-qemu`/`kata-fc` set these so the

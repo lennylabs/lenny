@@ -202,6 +202,74 @@ egressCIDRs:
   # exactly these CIDRs (§13.2 default-scope caveat); resolving provider
   # hostnames to CIDRs is the operator's responsibility.
   llmProviders: []
+  # providers is the §13.2 line 434 CIDR allowlist for the
+  # `provider-direct` agent-pod egress profile: the LLM provider endpoint
+  # ranges (e.g. Bedrock, Vertex) a provider-direct pool's pods may reach
+  # directly. The allow-pod-egress-provider-direct supplemental policy
+  # renders one ipBlock per entry, unconditionally carrying the IMDS
+  # except clauses (NET-044). Empty renders the policy with gateway + DNS
+  # egress only (no provider CIDRs), so a provider-direct pool with no
+  # providers configured reaches nothing beyond the base policy.
+  providers: []
+
+# coredns is the §13.2 dedicated CoreDNS instance that resolves DNS for
+# every agent namespace (K8S-033, NET-018). The agent-namespace
+# allow-pod-egress-base policy routes DNS exclusively to this instance
+# (lenny.dev/component: coredns); agent pods cannot reach kube-system
+# CoreDNS directly. The WarmPoolController stamps dnsPolicy:None plus a
+# dnsConfig targeting clusterIP onto every agent pod so its resolver
+# points here. The instance applies query logging, per-pod rate limiting,
+# and DNS-tunnel response filtering, so it must run highly available.
+coredns:
+  # deploy gates rendering of the dedicated CoreDNS Deployment, Service,
+  # ConfigMap, and PDB. It defaults true because the agent-namespace
+  # NetworkPolicies the chart always renders presuppose the instance; a
+  # deployment that disables it must also relax those policies.
+  deploy: true
+  # clusterIP is the ClusterIP assigned to the lenny-agent-dns Service.
+  # It MUST be set to a free address inside the cluster service CIDR when
+  # any agent namespace is configured (the chart fails the render
+  # otherwise) and is passed to the controller as
+  # --dedicated-dns-cluster-ip so the agent-pod dnsConfig nameserver
+  # matches the Service address.
+  clusterIP: ""
+  # replicas is the dedicated CoreDNS replica count. The chart requires
+  # at least 2 so a single pod loss does not blackhole agent DNS (NET-018).
+  replicas: 2
+  # image is the lenny-coredns container image with the coredns-ratelimit
+  # and coredns-filter plugins compiled in (§13.2 lines 498-536). The
+  # plugin source is vendored under build/coredns-plugins/.
+  image:
+    repository: ghcr.io/lennylabs/lenny-coredns
+    tag: "1.11.3-lenny1"
+    pullPolicy: IfNotPresent
+  # rateLimit.responsesPerSecond is the per-source-IP DNS response rate
+  # the coredns-ratelimit plugin enforces (§13.2 line 510), throttling
+  # high-throughput tunneling.
+  rateLimit:
+    responsesPerSecond: 10
+  # filter caps TXT record size and blocks record types used for DNS
+  # exfiltration (§13.2 lines 514-520), supplied by coredns-filter.
+  filter:
+    maxTxtSize: 255
+    blockTypes: "NULL PRIVATE KEY TYPE65534"
+  # cacheTTL is the CoreDNS answer cache TTL in seconds (§13.2 line 530);
+  # a short TTL bounds stale-data exposure.
+  cacheTTL: 30
+  # allowClusterDefaultOptOut renders the supplemental kube-system DNS
+  # egress policy in every agent namespace, scoped to the
+  # lenny.dev/dns-policy: cluster-default label, so `standard`-isolation
+  # pools that set `dnsPolicy: cluster-default` can fall back to
+  # kube-system CoreDNS (§13.2 line 488). Leave false unless at least one
+  # pool opts out; the broad managed selector is never used.
+  allowClusterDefaultOptOut: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 # ingressControllerNamespace is the namespace the Ingress controller
 # runs in (§13.2). The allow-gateway-ingress NetworkPolicy admits

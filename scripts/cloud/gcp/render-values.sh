@@ -54,6 +54,12 @@ global:
   # §10.3 (NET-064) F-10.3.4: required chart value (no default).
   spiffeTrustDomain: lenny-gcp-e2e
 
+# §13.2 (K8S-033): dedicated CoreDNS Service ClusterIP. GKE's default
+# service range places kube-dns at 10.96.0.10; .53 is a free address.
+# Verify it is unallocated for the target cluster's service CIDR.
+coredns:
+  clusterIP: 10.96.0.53
+
 controller:
   image:
     repository: ${AR_REGISTRY}/lenny-controller

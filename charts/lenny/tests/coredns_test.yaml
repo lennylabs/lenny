@@ -1,0 +1,195 @@
+suite: dedicated lenny-system CoreDNS (§13.2 lines 452-536)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - coredns-configmap.yaml
+  - coredns-service.yaml
+  - coredns-deployment.yaml
+tests:
+  # spec: §13.2 line 486 — the chart fails the render when clusterIP is
+  # empty while agent namespaces are configured. F-13.2.3.
+  - it: fails the render when coredns.clusterIP is empty with agent namespaces
+    templates:
+      - coredns-service.yaml
+    set:
+      coredns.clusterIP: ""
+      agentNamespaces:
+        - name: lenny-agents
+    asserts:
+      - failedTemplate:
+          errorMessage: "coredns.clusterIP must be set to a free address in the cluster service CIDR when agentNamespaces is non-empty: every agent pod's dnsConfig nameserver targets it (§13.2 K8S-033)."
+
+  # spec: §13.2 line 470 (NET-018) — a single replica blackholes agent DNS
+  # on disruption; the chart requires >= 2. F-13.2.3.
+  - it: fails the render when coredns.replicas is below 2
+    templates:
+      - coredns-deployment.yaml
+    set:
+      coredns.clusterIP: 10.96.0.53
+      coredns.replicas: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "coredns.replicas must be >= 2: the dedicated CoreDNS instance is the sole DNS resolver for all agent pods, so a single replica blackholes agent DNS on any disruption (§13.2 NET-018)."
+
+  - it: renders nothing when coredns.deploy is false
+    set:
+      coredns.deploy: false
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §13.2 line 486 — the Service pins the configured ClusterIP and
+  # selects the coredns component on UDP/TCP 53 plus the metrics port.
+  - it: pins the Service ClusterIP and DNS ports
+    templates:
+      - coredns-service.yaml
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - isKind:
+          of: Service
+      - equal:
+          path: metadata.name
+          value: lenny-agent-dns
+      - equal:
+          path: spec.clusterIP
+          value: 10.96.0.53
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: coredns
+      - equal:
+          path: spec.selector["lenny.dev/component"]
+          value: coredns
+      - contains:
+          path: spec.ports
+          content:
+            name: dns-udp
+            port: 53
+            protocol: UDP
+            targetPort: dns-udp
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9153
+            protocol: TCP
+            targetPort: metrics
+
+  # spec: §13.2 lines 452-472 — HA Deployment (>= 2 replicas) and a PDB
+  # minAvailable 1. F-13.2.3.
+  - it: renders both the Deployment and the PodDisruptionBudget
+    templates:
+      - coredns-deployment.yaml
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: sets the PDB minAvailable to 1
+    templates:
+      - coredns-deployment.yaml
+    documentSelector:
+      path: kind
+      value: PodDisruptionBudget
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["lenny.dev/component"]
+          value: coredns
+
+  - it: runs at least two replicas by default
+    templates:
+      - coredns-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: honors a custom replica count
+    templates:
+      - coredns-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.clusterIP: 10.96.0.53
+      coredns.replicas: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  # spec: §13.2 line 536 — the readiness probe queries the CoreDNS health
+  # endpoint so a pod whose image lacks the plugins never joins the Service.
+  - it: probes the CoreDNS health endpoint for readiness
+    templates:
+      - coredns-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-coredns:1.11.3-lenny1
+
+  # spec: §13.2 lines 498-536 — the Corefile enables the log, ratelimit,
+  # filter, forward, health, prometheus, cache, reload, and errors plugins.
+  # F-13.2.3 / F-13.2.14.
+  - it: ships the Corefile with the ratelimit and filter plugins
+    templates:
+      - coredns-configmap.yaml
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-agent-dns-corefile
+      - matchRegex:
+          path: data.Corefile
+          pattern: "responses_per_second 10"
+      - matchRegex:
+          path: data.Corefile
+          pattern: "max_txt_size 255"
+      - matchRegex:
+          path: data.Corefile
+          pattern: "block_types NULL PRIVATE KEY TYPE65534"
+      - matchRegex:
+          path: data.Corefile
+          pattern: "cache 30"
+      - matchRegex:
+          path: data.Corefile
+          pattern: "forward . /etc/resolv.conf"
+
+  - it: honors custom ratelimit and filter parameters
+    templates:
+      - coredns-configmap.yaml
+    set:
+      coredns.clusterIP: 10.96.0.53
+      coredns.rateLimit.responsesPerSecond: 25
+      coredns.filter.maxTxtSize: 128
+    asserts:
+      - matchRegex:
+          path: data.Corefile
+          pattern: "responses_per_second 25"
+      - matchRegex:
+          path: data.Corefile
+          pattern: "max_txt_size 128"

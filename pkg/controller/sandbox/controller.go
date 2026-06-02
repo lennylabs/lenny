@@ -104,6 +104,19 @@ type Reconciler struct {
 	// agent pods. Empty uses the namespace default SA (no RBAC bindings in
 	// agent namespaces).
 	AgentServiceAccountName string
+	// DedicatedDNSClusterIP is the ClusterIP of the lenny-agent-dns Service
+	// in lenny-system (the chart's coredns.clusterIP value). spec: §13.2
+	// lines 470-490 (K8S-033) — when set, the pod builder stamps
+	// `dnsPolicy: None` plus a `dnsConfig` pointing the pod at the
+	// dedicated CoreDNS instance, because the agent-namespace NetworkPolicy
+	// blocks the kube-system kube-dns the default ClusterFirst policy would
+	// target. Pools that opt out via `dnsPolicy: cluster-default` keep the
+	// default behavior. Empty leaves the cluster default in force.
+	DedicatedDNSClusterIP string
+	// ReleaseNamespace is the Helm release namespace (lenny-system), used as
+	// the first search domain in the dedicated-DNS dnsConfig so in-cluster
+	// Service short-names resolve. Empty omits the namespace search domain.
+	ReleaseNamespace string
 	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
 	// set, a Sandbox status write within the window of the previous write
 	// for the same Sandbox is deferred and the reconcile requeued so the
@@ -323,6 +336,11 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// spec: §6.4 line 409 — the encoded inline shared-asset set the
 		// adapter materializes into the read-only /workspace/shared tree.
 		SharedAssetsArg: sharedAssetsArg,
+		// spec: §13.2 lines 470-490 (K8S-033) — point the agent pod's
+		// resolver at the dedicated lenny-system CoreDNS instance unless the
+		// pool opted out via the lenny.dev/dns-policy: cluster-default label.
+		DedicatedDNSClusterIP: r.DedicatedDNSClusterIP,
+		ReleaseNamespace:      r.ReleaseNamespace,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

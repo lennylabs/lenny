@@ -639,23 +639,50 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 
 	t.Run("coherent pairings admitted (egress combo gate alone)", func(t *testing.T) {
 		for _, tc := range []struct {
-			name          string
-			delivery, egr string
+			name               string
+			delivery, egr, iso string
 		}{
-			{"proxy + restricted", "proxy", "restricted"},
-			{"direct + provider-direct", "direct", "provider-direct"},
-			{"proxy + empty egress", "proxy", ""},
-			{"empty delivery + provider-direct", "", "provider-direct"},
-			{"direct + internet", "direct", "internet"},
+			{"proxy + restricted", "proxy", "restricted", ""},
+			{"direct + provider-direct", "direct", "provider-direct", ""},
+			{"proxy + empty egress", "proxy", "", ""},
+			{"empty delivery + provider-direct", "", "provider-direct", ""},
+			// internet requires sandboxed/microvm isolation (NET-002).
+			{"direct + internet + sandboxed", "direct", "internet", "sandboxed"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				// session mode carries no other invariant, isolating the combo gate.
 				d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
-					DeliveryMode:  tc.delivery,
-					EgressProfile: tc.egr,
+					DeliveryMode:     tc.delivery,
+					EgressProfile:    tc.egr,
+					IsolationProfile: tc.iso,
 				}))
 				assertAllowed(t, d)
 			})
+		}
+	})
+
+	// spec: §13.2 line 450 (NET-002) — the internet egress profile requires
+	// sandboxed/microvm isolation; standard (runc, including the empty
+	// default) is rejected. F-13.2.11.
+	t.Run("internet requires sandboxed or microvm isolation", func(t *testing.T) {
+		for _, iso := range []string{"", "standard"} {
+			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+				EgressProfile:    "internet",
+				IsolationProfile: iso,
+			}))
+			if d.Allowed {
+				t.Errorf("isolationProfile=%q + internet must be rejected (NET-002)", iso)
+			}
+			if !strings.Contains(d.Reason, "NET-002") {
+				t.Errorf("isolationProfile=%q: reason %q does not cite NET-002", iso, d.Reason)
+			}
+		}
+		for _, iso := range []string{"sandboxed", "microvm"} {
+			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+				EgressProfile:    "internet",
+				IsolationProfile: iso,
+			}))
+			assertAllowed(t, d)
 		}
 	})
 

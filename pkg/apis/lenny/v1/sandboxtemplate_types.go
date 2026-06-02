@@ -131,6 +131,19 @@ type SandboxTemplateSpec struct {
 	// +optional
 	EgressProfile string `json:"egressProfile,omitempty"`
 
+	// DNSPolicy opts the pool out of the dedicated lenny-system CoreDNS
+	// instance. The only accepted value is `cluster-default`: pods in the
+	// pool revert to the Kubernetes default ClusterFirst behavior and
+	// resolve through kube-system CoreDNS. Empty (the default) routes DNS
+	// through the dedicated instance, where the WarmPoolController sets
+	// `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
+	// Opting out is permitted only for `standard` (runc) pools and removes
+	// the dedicated instance's query logging, rate limiting, and response
+	// filtering for that pool. spec: §13.2 lines 470-490.
+	// +kubebuilder:validation:Enum=cluster-default
+	// +optional
+	DNSPolicy string `json:"dnsPolicy,omitempty"`
+
 	// ResourceClass is the §5.2 pod resource class.
 	// +kubebuilder:validation:Enum=small;medium;large
 	// +optional

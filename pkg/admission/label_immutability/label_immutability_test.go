@@ -60,6 +60,21 @@ func TestDecideRejectsEgressProfileMutation(t *testing.T) {
 	}
 }
 
+// spec: §13.2 line 180 — adding lenny.dev/dns-policy to a pod that was not
+// opted out would grant it a kube-system DNS egress path, bypassing the
+// dedicated CoreDNS instance's query logging, rate limiting, and response
+// filtering. The label is immutable on existing pods. F-13.2.4.
+func TestDecideRejectsDNSPolicyMutation(t *testing.T) {
+	d, _ := Decide(Request{
+		OldLabels:        map[string]string{LabelManaged: "true"},
+		NewLabels:        map[string]string{LabelManaged: "true", LabelDNSPolicy: "cluster-default"},
+		UserInfoUsername: GatewayServiceAccount,
+	})
+	if d.Allowed {
+		t.Errorf("adding lenny.dev/dns-policy to an existing pod must be rejected")
+	}
+}
+
 func TestDecideRejectsImmutableLabelUnsetting(t *testing.T) {
 	d, _ := Decide(Request{
 		OldLabels:        map[string]string{LabelManaged: "true"},

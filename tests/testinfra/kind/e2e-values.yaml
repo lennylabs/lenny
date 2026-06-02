@@ -140,6 +140,14 @@ bootstrap:
       executionMode: session
       isolationProfile: standard
 
+# §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP. Kind's
+# default service CIDR is 10.96.0.0/12 with kube-dns at 10.96.0.10;
+# 10.96.0.53 is a free address the controller stamps into every agent
+# pod's dnsConfig. The chart fails the render when this is empty while
+# agentNamespaces is configured.
+coredns:
+  clusterIP: 10.96.0.53
+
 # Dev mode stays on for e2e so the gateway keeps its dev-header auth
 # shortcuts. The data stores below are real in-cluster services, so
 # the gateway and controller persist to them rather than falling back

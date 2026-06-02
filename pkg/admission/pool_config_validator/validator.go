@@ -493,6 +493,20 @@ func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 				"with deliveryMode: direct (Section 13.2)",
 		)
 	}
+	// spec: §13.2 line 450 (NET-002) — the `internet` egress profile
+	// requires a sandboxed isolation profile (`sandboxed` or `microvm`). A
+	// `standard` (runc) pod shares the host kernel, so broad internet
+	// egress plus a runc escape reaches the node directly. An unset
+	// isolation profile defaults to `standard` (§5.3 line 677), so it is
+	// rejected here as well; the deployer must set sandboxed/microvm
+	// explicitly to combine with internet egress.
+	if spec.EgressProfile == "internet" && spec.IsolationProfile != "sandboxed" && spec.IsolationProfile != "microvm" {
+		return reject(
+			"spec.egressProfile \"internet\" requires spec.isolationProfile \"sandboxed\" or \"microvm\"; " +
+				isolationLabel(spec.IsolationProfile) + " (runc) shares the host kernel and cannot be granted " +
+				"broad internet egress (NET-002, Section 13.2)",
+		)
+	}
 	return allow()
 }
 

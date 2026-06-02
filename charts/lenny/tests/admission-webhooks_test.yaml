@@ -327,3 +327,6 @@ tests:
 # annotation `required` guard render in this suite.
 set:
   global.spiffeTrustDomain: cluster.local
+  # §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP, required
+  # when agentNamespaces is configured (the chart default). F-13.2.3.
+  coredns.clusterIP: 10.96.0.53
