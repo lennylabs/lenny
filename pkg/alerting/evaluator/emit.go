@@ -50,15 +50,26 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 	}
 	emit := func(a Alert, eventType events.EventType, severity string) {
 		payload := map[string]any{
-			"ruleName":   a.Rule.Name,
-			"severity":   string(a.Rule.Severity),
-			"summary":    a.Rule.Summary,
-			"sinceUnix":  a.Since.Unix(),
+			"ruleName":  a.Rule.Name,
+			"alertName": a.Rule.Name,
+			"severity":  string(a.Rule.Severity),
+			"summary":   a.Rule.Summary,
+			"sinceUnix": a.Since.Unix(),
 		}
-		// §16.5 alert_fired payloads carry the optional runbook URL when
-		// the rule's annotation set it (§25.7 Path B).
+		// §25.7 line 3236 / §25.17 line 5172: the alert_fired payload's
+		// `runbook` field is the short slug (e.g. "warm-pool-exhaustion")
+		// the watchdog routes on, not the rendered runbook_url annotation.
+		// The full URL is carried separately as `runbookUrl`.
+		if slug := a.Rule.RunbookSlug(); slug != "" {
+			payload["runbook"] = slug
+		}
 		if a.Rule.RunbookURL != "" {
-			payload["runbook"] = a.Rule.RunbookURL
+			payload["runbookUrl"] = a.Rule.RunbookURL
+		}
+		// §25.17 line 5172: carry the proposed remediation so a watchdog
+		// can act without a second diagnostic call.
+		if a.Rule.SuggestedAction != nil {
+			payload["suggestedAction"] = a.Rule.SuggestedAction
 		}
 		data, _ := json.Marshal(payload)
 		event := events.OperationalEvent{

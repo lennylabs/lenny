@@ -39182,11 +39182,13 @@ Spec lines 3217–3234 prescribe a gateway-side map from issue codes to runbook 
 
 **Resolution.** Closed by F-17.7.1 — `pkg/gateway/health/runbook_links.go` now exports the §25.7 line 3222 `issueRunbooks` map (all 8 codes) plus `RunbookForIssue`. `Component.Issue` is added; `Aggregator.Report` and `Aggregator.Component` back-fill `RunbookRef` from the lookup.
 
-### - [ ] F-25.7.5 — `alert_fired` event production is not wired; the `runbook` field on event payloads is never emitted (Medium) [Medium] — OPEN
+### - [x] F-25.7.5 — `alert_fired` event production is not wired; the `runbook` field on event payloads is never emitted (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-25.17.2 — Both report that the alert_fired event payload's runbook/suggestedAction fields are not emitted because OnFired is never wired to an opsevents emitter; same root cause and fix.
 
 Spec lines 3236–3253 prescribe that an emitted `dev.lenny.alert_fired` event carries `data.runbook` set to the alerting rule's `runbook` annotation. `pkg/alerting/evaluator/evaluator.go:64–66` exposes an `OnFired(Alert)` callback; `Alert` carries `Rule, State, Since`. No production code subscribes `OnFired` to a `gateway/opsevents.Emitter`, so no `alert_fired` operational event is ever produced. The `Rule.RunbookURL` field at `pkg/alerting/rules/rules.go:81` carries a full `https://docs.lenny.dev/runbooks/<slug>` URL, which is emitted into the rendered PrometheusRule as a `runbook_url` annotation (`render.go:62–63`). When the OnFired-to-emitter wiring lands it will need to derive the spec's `runbook` field (a short slug) from the rule, not from the rendered annotation URL, or the agent contract at line 3251 will be inconsistent with line 3219. The OperationalEvent payload schema in `pkg/gateway/opsevents/buffer.go` accepts arbitrary `json.RawMessage` data, so the carrier is available; the emit-side path is not.
+
+**Resolution.** Closed by F-25.17.2 (confirmed duplicate). `EmitCallbacks` now emits `data.runbook` as the short slug via `Rule.RunbookSlug()` (derived from `RunbookShortName`, else the `RunbookURL` last segment) rather than the full annotation URL, resolving the line 3219/3251 inconsistency this finding called out. The `OnFired`-not-wired premise is stale: `evaluator.NewWithEmitter` already subscribes the firing edge to the shared EventEmitter in `cmd/lenny-ops/main.go`. Commit {COMMIT_F2}.
 
 ### - [ ] F-25.7.6 — 35 of 94 runbooks lack the `<!-- access: -->` step markers, so their `/steps` responses are empty (Medium) [Medium] — OPEN
 
@@ -40748,7 +40750,7 @@ Accept: text/event-stream
 
 ---
 
-### - [ ] F-25.17.2 — 17-02 — The `alert_fired` event payload does not carry the §25.17 `runbook` and `suggestedAction` fields [High] — OPEN
+### - [x] F-25.17.2 — 17-02 — The `alert_fired` event payload does not carry the §25.17 `runbook` and `suggestedAction` fields [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-25.7.5 — Both report that the alert_fired event payload's runbook/suggestedAction fields are not emitted because OnFired is never wired to an opsevents emitter; same root cause and fix.
 
@@ -40771,6 +40773,8 @@ Step 2 (line 5177) then has the agent read `severity: "critical"` and `runbook: 
 **Impact:** Severity High. Even if the SSE stream from H-25.17-01 were implemented, the `alert_fired` events would not carry the `runbook` short name (only an outbound `RunbookURL`) and would not carry a `suggestedAction` at all, so the watchdog cannot select a runbook by name (Step 2 lines 5177, 5212) or copy the suggested remediation (Step 4 lines 5215–5216). Production gateways do not even emit `alert_fired` events because the alert evaluator is never started.
 
 **Remediation sketch:** Extend `alerting/rules.Rule` with `RunbookShortName string` and `SuggestedAction *conventions.SuggestedAction` fields, populate them on the §16.5 critical-alert table (`WarmPoolExhausted` → `runbook: warm-pool-exhaustion`, suggested action `SCALE_WARM_POOL` → `PUT /v1/admin/pools/{name}` body `{"warmCount": n}`). Instantiate `evaluator.New(...)` in `cmd/lenny-gateway/main.go` against the gateway's PromQL evaluator and wire `OnFired` to `opsevents.Emitter.Emit(...)` with type `dev.lenny.alert_fired` and the data envelope from line 5172.
+
+**Resolution.** `alerting/rules.Rule` now carries `RunbookShortName` and `SuggestedAction *conventions.SuggestedAction`; `WarmPoolExhausted` is populated with `RunbookShortName: "warm-pool-exhaustion"` and a `SCALE_WARM_POOL` suggestedAction (endpoint `PUT /v1/admin/pools/{name}/warm-count`, runbook slug). The evaluator's `EmitCallbacks` payload now emits `runbook` as the short slug (new `Rule.RunbookSlug()` prefers `RunbookShortName`, else derives the slug from the URL's last segment — fixing the §25.7 line 3236 / §25.17 line 5172 contract that previously emitted the full `RunbookURL`), carries the full URL as `runbookUrl`, adds `alertName`, and includes `suggestedAction` when set. The evaluator instantiation premise was stale: `evaluator.NewWithEmitter(...)` is already wired in `cmd/lenny-ops/main.go` (firing is gated only on the §25.13 real PromQL backend, F-25.13.6). Commit {COMMIT_F2}.
 
 ---
 
@@ -40870,7 +40874,7 @@ Line 5264 states the audit trail "shows four calls tied to operation `550e8400-.
 
 **Remediation sketch:** Register a `pkg/observability/correlation` HTTP middleware on `opsserver.Server` that extracts the two headers into the request context. Update `callerIdentity` (`pkg/ops/opsserver/backup.go` line 91) and `handleAcquireLock` (`pkg/ops/opsserver/locks.go` line 116) to fall back to the context-carried operation-id when the body field is absent. Pass the operation-id and agent-name through to the audit emitter on every state-changing event (`escalation_created`, `remediation_lock_acquired`, `remediation_lock_released`, `backup_started`, `drift_baseline_updated`).
 
-**Resolution.** The `withCorrelation` middleware already extracts `X-Lenny-Operation-ID` / `X-Lenny-Agent-Name` into the request context (closed earlier by F-25.2.8) and projects them onto every structured log line. This batch closed the residual: new `callerOperationID`/`callerAgentName` helpers read the correlation context, and `handleAcquireLock` (remediation locks) and `handleCreateEscalation` now fall back to the context operation-id when the request body omits `operationId`, so a watchdog that sends only the header still has its lock and escalation records tied to the remediation effort. The explicit body field wins when both are present. Commit {COMMIT_F6}.
+**Resolution.** The `withCorrelation` middleware already extracts `X-Lenny-Operation-ID` / `X-Lenny-Agent-Name` into the request context (closed earlier by F-25.2.8) and projects them onto every structured log line. This batch closed the residual: new `callerOperationID`/`callerAgentName` helpers read the correlation context, and `handleAcquireLock` (remediation locks) and `handleCreateEscalation` now fall back to the context operation-id when the request body omits `operationId`, so a watchdog that sends only the header still has its lock and escalation records tied to the remediation effort. The explicit body field wins when both are present. Commit 453c8b87.
 
 ---
 
@@ -40951,7 +40955,7 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 **Remediation sketch:** Implement an `opsevents.Emitter` backed by the Redis stream `eventbus` and pass it to the escalation service from `cmd/lenny-ops/deps.go` in place of `logEmitter`. Wire `eventsubscription.Service` into `opsserver.Options{EventSubscriptions: ...}` so the webhook CRUD surface is registered and so the delivery worker has subscriptions to fan out to. Wire the gateway-side `opsevents.Emitter` to also publish to Redis (it currently writes only to the in-memory buffer per `pkg/gateway/opsevents/emitter.go`).
 
-**Resolution.** Replaced the `logEmitter` stub with `streamEscalationEmitter`, which publishes the `escalation_created` CloudEvent through the shared lenny-ops `opsEmitter` (`newRedisFanOutEmitter` when Redis is configured, the local `opsstream.Service` buffer otherwise — the same emitter that already carries `ops_health_status_changed`). The escalation service is now wired to it from `cmd/lenny-ops/main.go`, so creating an escalation lands the event on `ops:events:stream`, flips the escalation's `emitted` flag on success, and feeds the §25.5 SSE/polling/webhook surfaces; a failed publish leaves the record un-emitted for the §25.4 retry. Commit {COMMIT_F9}.
+**Resolution.** Replaced the `logEmitter` stub with `streamEscalationEmitter`, which publishes the `escalation_created` CloudEvent through the shared lenny-ops `opsEmitter` (`newRedisFanOutEmitter` when Redis is configured, the local `opsstream.Service` buffer otherwise — the same emitter that already carries `ops_health_status_changed`). The escalation service is now wired to it from `cmd/lenny-ops/main.go`, so creating an escalation lands the event on `ops:events:stream`, flips the escalation's `emitted` flag on success, and feeds the §25.5 SSE/polling/webhook surfaces; a failed publish leaves the record un-emitted for the §25.4 retry. Commit 453c8b87.
 
 ---
 

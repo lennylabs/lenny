@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/promql/parser"
+
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // Severity is the alert severity enum from §16.5. The §16.5 tables use
@@ -79,6 +81,25 @@ type Rule struct {
 	// Optional for warnings; required for critical alerts per the
 	// §17.7 runbook obligation.
 	RunbookURL string
+
+	// RunbookShortName is the §25.7 / §25.17 runbook slug carried in the
+	// alert_fired operational-event payload's `runbook` field (e.g.
+	// "warm-pool-exhaustion"). It matches the on-disk filename under
+	// docs/runbooks/<slug>.md and the runbook front matter `name`, which
+	// is what a watchdog routes on (§25.17 line 5177 reads `runbook`
+	// directly off the event). When empty, RunbookSlug derives the slug
+	// from the last path segment of RunbookURL.
+	// spec: §25.7 line 3236; §25.17 line 5172.
+	RunbookShortName string
+
+	// SuggestedAction is the §25.17 proposed remediation carried on the
+	// alert_fired payload so a watchdog can route to a concrete action
+	// without a separate diagnostic call (§25.17 line 5216 "the agent
+	// decides to follow the suggestedAction"). nil omits the field. The
+	// runtime-accurate body (e.g. the exact minWarm) is produced by the
+	// §25.6 pool diagnostic; the rule-level value is the routing template.
+	// spec: §25.17 line 5172.
+	SuggestedAction *conventions.SuggestedAction
 
 	// SLO names the §16.5 service-level objective this alert defends,
 	// for the burn-rate alerts that pair one-to-one with an SLO row in
@@ -159,6 +180,28 @@ func runbook(slug string) string {
 	return "https://docs.lenny.dev/runbooks/" + slug
 }
 
+// RunbookSlug returns the §25.7 / §25.17 short runbook slug for the
+// alert_fired payload's `runbook` field. It prefers the explicit
+// RunbookShortName; absent that, it derives the slug from the last path
+// segment of RunbookURL (the docs/runbooks/<slug>.md convention), so a
+// rule that sets only RunbookURL still emits the slug rather than the
+// full URL. Returns "" when neither is set.
+//
+// spec: §25.7 line 3236 — "include a runbook field ... set to the
+// alert's runbook annotation" (the short slug, per §25.17 line 5172).
+func (r Rule) RunbookSlug() string {
+	if r.RunbookShortName != "" {
+		return r.RunbookShortName
+	}
+	if r.RunbookURL == "" {
+		return ""
+	}
+	if i := strings.LastIndex(r.RunbookURL, "/"); i >= 0 && i < len(r.RunbookURL)-1 {
+		return r.RunbookURL[i+1:]
+	}
+	return r.RunbookURL
+}
+
 // admissionPlaneDowngradeRule builds one (flag, webhook) pair of the
 // §16.5 / §17.2 AdmissionPlaneFeatureFlagDowngrade alert. The expression
 // fires when the phase-stamp ConfigMap records the flag as enabled
@@ -216,8 +259,19 @@ func criticalAlerts() []Rule {
 			Description: "Available warm pods = 0 for any pool for more than 60s. New session creation blocks on pod claim until the controller replenishes the pool.",
 			// spec: §25.17 line 5172 — runbook slug is "warm-pool-exhaustion",
 			// matching docs/runbooks/warm-pool-exhaustion.md.
-			RunbookURL: runbook("warm-pool-exhaustion"),
-			SpecRef:    "§16.5",
+			RunbookURL:       runbook("warm-pool-exhaustion"),
+			RunbookShortName: "warm-pool-exhaustion",
+			// §25.17 line 5172: the alert_fired payload carries a
+			// suggestedAction so a watchdog routes straight to the scale
+			// call. The concrete minWarm comes from the §25.6 pool
+			// diagnostic; this rule-level value is the action template.
+			SuggestedAction: &conventions.SuggestedAction{
+				Action:    "SCALE_WARM_POOL",
+				Endpoint:  "PUT /v1/admin/pools/{name}/warm-count",
+				Reasoning: "Warm pool is exhausted; raise the warm-pod floor so new sessions stop blocking on pod claim.",
+				Runbook:   "warm-pool-exhaustion",
+			},
+			SpecRef: "§16.5",
 		},
 		{
 			Name:        "PostgresReplicationLagHigh",
