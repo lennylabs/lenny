@@ -3563,7 +3563,7 @@ func main() {
 		}
 		sessionScoped = append(sessionScoped,
 			erasure.SessionEraser{Name: "eval_results", DeleteBySession: evals.DeleteBySession})
-		erasureOrch := erasure.New(erasure.Config{
+		erasureCfg := erasure.Config{
 			Sessions: func(ctx context.Context, tenantID, userID string) ([]string, error) {
 				rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
 				if err != nil {
@@ -3579,16 +3579,25 @@ func main() {
 			},
 			SessionScoped: sessionScoped,
 			UserScoped: []erasure.Eraser{
-				{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
+				// §12.8: MemoryStore (step 8) precedes the session-keyed
+				// interaction rows; both precede SessionStore (step 17).
 				{Name: "memory", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
 					// §9.4 MemoryStore.DeleteByUser returns only an error;
 					// the orchestrator's adapter reports the count it
 					// cannot supply as 0.
 					return 0, memories.DeleteByUser(ctx, tenantID, userID)
 				}},
+				{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
 				{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
 			},
-		})
+		}
+		// spec: §12.8 lines 792-836 — fail closed if the wired erasure
+		// stores violate the dependency order (a foreign-key child erased
+		// after its parent would leave orphan rows or violate a constraint).
+		if err := erasure.ValidateOrder(erasureCfg); err != nil {
+			log.Fatalf("FATAL: §12.8 erasure store ordering invalid: %v", err)
+		}
+		erasureOrch := erasure.New(erasureCfg)
 		erasureJobs := erasurejob.NewMemory()
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
