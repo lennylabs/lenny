@@ -28,9 +28,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -145,6 +150,66 @@ func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.Re
 	})
 }
 
+// otlpTLSProber builds an OTLPTLSProber for the §13.2 OTLP-068 live TLS
+// handshake check. It dials the collector endpoint, performs a TLS 1.2+
+// handshake validating the server certificate's SAN against the endpoint
+// host using the deployer's trust bundle (the system roots, augmented
+// with caBundlePath when the chart mounts observability.otlpCaBundle), and
+// returns the handshake error otherwise. An empty endpoint returns nil so
+// the check is skipped; an empty caBundlePath uses the system trust store.
+//
+// spec: §13.2 lines 176-178. F-13.2.9.
+func otlpTLSProber(endpoint, caBundlePath string, tlsEnabled bool) preflight.OTLPTLSProber {
+	if endpoint == "" || !tlsEnabled {
+		return nil
+	}
+	return preflight.OTLPTLSProbeFunc(func(ctx context.Context, endpoint string) error {
+		hostPort, serverName, err := otlpDialTarget(endpoint)
+		if err != nil {
+			return err
+		}
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}
+		if caBundlePath != "" {
+			pemBytes, err := os.ReadFile(caBundlePath)
+			if err != nil {
+				return fmt.Errorf("read otlp CA bundle %q: %w", caBundlePath, err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pemBytes) {
+				return fmt.Errorf("otlp CA bundle %q contains no PEM certificates", caBundlePath)
+			}
+			tlsCfg.RootCAs = pool
+		}
+		dialer := tls.Dialer{Config: tlsCfg}
+		conn, err := dialer.DialContext(ctx, "tcp", hostPort)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	})
+}
+
+// otlpDialTarget derives the host:port to dial and the TLS ServerName
+// from an OTLP endpoint, which may carry a scheme (https://host:4317),
+// omit the port (defaulting to OTLP's 4317), or be a bare host:port.
+func otlpDialTarget(endpoint string) (hostPort, serverName string, err error) {
+	const defaultPort = "4317"
+	if u, perr := url.Parse(endpoint); perr == nil && u.Host != "" {
+		host := u.Hostname()
+		port := u.Port()
+		if port == "" {
+			port = defaultPort
+		}
+		return net.JoinHostPort(host, port), host, nil
+	}
+	host, port, serr := net.SplitHostPort(endpoint)
+	if serr != nil {
+		// No port in a schemeless endpoint; treat the whole value as host.
+		return net.JoinHostPort(endpoint, defaultPort), endpoint, nil
+	}
+	return net.JoinHostPort(host, port), host, nil
+}
+
 // parseCommaList splits a comma-separated flag value into its non-empty,
 // trimmed elements. It returns nil for an empty value so the §13.1
 // agent-namespace audits stay disabled when no namespaces are configured.
@@ -227,6 +292,18 @@ func main() {
 		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
 		"opt out of the §12.4 AUTH-and-TLS invariant when dialing the BYO Redis for the maxmemory-policy audit (dev only).")
+	kubeAPIServerCIDR := flag.String("kube-apiserver-cidr", "",
+		"value of the kubeApiServerCIDR chart value; the §13.2 NET-040 check validates the kubernetes.default Service ClusterIP falls within it. Empty skips the check.")
+	excludeClusterServiceCIDR := flag.String("exclude-cluster-service-cidr", "",
+		"value of egressCIDRs.excludeClusterServiceCIDR; §13.2 NET-022 (the apiserver ClusterIP must fall within it).")
+	excludeClusterPodCIDR := flag.String("exclude-cluster-pod-cidr", "",
+		"value of egressCIDRs.excludeClusterPodCIDR; §13.2 NET-022 (node pod CIDRs must fall within it).")
+	otlpEndpoint := flag.String("otlp-endpoint", "",
+		"value of observability.otlpEndpoint; the §13.2 OTLP-068 otlp-tls check rejects an http:// scheme and probes the collector TLS handshake when otlpTlsEnabled. Empty skips the check.")
+	otlpTLSEnabled := flag.Bool("otlp-tls-enabled", true,
+		"value of observability.otlpTlsEnabled; gates the §13.2 OTLP-068 otlp-tls scheme guard and live handshake probe.")
+	otlpCaBundle := flag.String("otlp-ca-bundle", "",
+		"path to the deployer OTLP collector CA bundle (observability.otlpCaBundle); augments the system trust store for the §13.2 OTLP-068 handshake probe.")
 	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
 		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
 			"presence check requires; empty skips the check")
@@ -321,6 +398,16 @@ func main() {
 		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
 		RedisConfigProber:      redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
+		ClusterCIDR: preflight.ClusterCIDRConfig{
+			KubeAPIServerCIDR:         *kubeAPIServerCIDR,
+			ExcludeClusterServiceCIDR: *excludeClusterServiceCIDR,
+			ExcludeClusterPodCIDR:     *excludeClusterPodCIDR,
+		},
+		OTLP: preflight.OTLPTLSConfig{
+			Endpoint:   *otlpEndpoint,
+			TLSEnabled: *otlpTLSEnabled,
+		},
+		OTLPTLSProber: otlpTLSProber(*otlpEndpoint, *otlpCaBundle, *otlpTLSEnabled),
 		Playground: preflight.PlaygroundConfig{
 			Enabled:               *playgroundEnabled,
 			AuthMode:              *playgroundAuthMode,

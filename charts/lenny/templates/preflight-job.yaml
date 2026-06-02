@@ -272,6 +272,20 @@ spec:
             - --playground-multi-tenant={{ eq .Values.tenancy.mode "multi" }}
             - --playground-global-dev-mode={{ .Values.global.devMode }}
             - --playground-acknowledge-api-key-mode={{ .Values.playground.acknowledgeApiKeyMode }}
+            # §13.2 NET-040 / NET-022 — validate the kube-apiserver Service
+            # ClusterIP falls within kubeApiServerCIDR and the cluster
+            # service/pod CIDR exclusions match the discovered cluster
+            # addressing. F-13.2.13.
+            - --kube-apiserver-cidr={{ .Values.kubeApiServerCIDR }}
+            - --exclude-cluster-service-cidr={{ .Values.egressCIDRs.excludeClusterServiceCIDR }}
+            - --exclude-cluster-pod-cidr={{ .Values.egressCIDRs.excludeClusterPodCIDR }}
+            # §13.2 OTLP-068 — when OTLP export runs over TLS, reject an
+            # http:// scheme and probe the collector TLS handshake. The
+            # probe validates the collector certificate against the
+            # cluster-wide trust bundle (the spec's primary trust
+            # mechanism). F-13.2.9.
+            - --otlp-endpoint={{ .Values.observability.otlpEndpoint }}
+            - --otlp-tls-enabled={{ .Values.observability.otlpTlsEnabled }}
           {{- if $hasMinio }}
           env:
             - name: MINIO_ACCESS_KEY_ENV

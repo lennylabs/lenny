@@ -107,6 +107,19 @@ type Config struct {
 	// uses it to verify the policy the cloud Terraform sets natively but
 	// the chart cannot enforce on a BYO instance. F-12.4.15.
 	RedisConfigProber RedisConfigProber
+	// ClusterCIDR carries the §13.2 NET-040 / NET-022 CIDR values the
+	// cluster-CIDR-discovery check validates against the kube-apiserver
+	// Service ClusterIP and the node pod CIDRs. An empty KubeAPIServerCIDR
+	// skips the check (the chart always supplies it). F-13.2.13.
+	ClusterCIDR ClusterCIDRConfig
+	// OTLP carries the §13.2 OTLP-068 observability values the otlp-tls
+	// check evaluates. An empty Endpoint skips the check. F-13.2.9.
+	OTLP OTLPTLSConfig
+	// OTLPTLSProber, when non-nil and OTLP.TLSEnabled with a configured
+	// endpoint, runs the §13.2 OTLP-068 live TLS handshake probe. The
+	// lenny-preflight Job constructs a real prober; the scheme guard runs
+	// regardless of whether the prober is wired. F-13.2.9.
+	OTLPTLSProber OTLPTLSProber
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -222,6 +235,24 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 				Decision: CheckAgentPodCredFSGroup(agentPods, podspec.CredReadersGID),
 			})
 		}
+	}
+
+	// §13.1 lines 6-8 — the pod-security baseline (non-root, all
+	// capabilities dropped, read-only root filesystem) on every
+	// Lenny-managed workload in the release namespace. The chart authors
+	// these settings, so a failure means a value override, a patched Job,
+	// or an injected sidecar weakened the baseline with no other signal.
+	// F-13.1.12.
+	if sec, err := gatherWorkloadPodSecurity(ctx, reader, []string{cfg.Namespace}); err != nil {
+		report = append(report, CheckResult{
+			Name:     "pod-security-baseline",
+			Decision: Decision{Reason: "list Lenny-managed workloads: " + err.Error()},
+		})
+	} else {
+		report = append(report, CheckResult{
+			Name:     "pod-security-baseline",
+			Decision: CheckPodSecurityBaseline(sec),
+		})
 	}
 
 	// §13.2 NetworkPolicy selector-consistency and parity audits. A
@@ -381,6 +412,41 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
 		})
 	}
+
+	// §13.2 lines 230-262 (NET-040) / 416 (NET-022) — the kube-apiserver
+	// Service ClusterIP must fall within kubeApiServerCIDR and the cluster
+	// service CIDR exclusion, and node pod CIDRs within the pod CIDR
+	// exclusion. A mismatch means the gateway cannot reach the control
+	// plane or the broad external-HTTPS egress does not exclude in-cluster
+	// IPs (SSRF). The chart always supplies kubeApiServerCIDR. F-13.2.13.
+	if cfg.ClusterCIDR.KubeAPIServerCIDR != "" {
+		if clusterIP, podCIDRs, err := gatherClusterCIDRDiscovery(ctx, reader); err != nil {
+			report = append(report, CheckResult{
+				Name:     "cluster-cidr-discovery",
+				Decision: Decision{Reason: "read kubernetes.default Service / Nodes: " + err.Error()},
+			})
+		} else {
+			report = append(report, CheckResult{
+				Name:     "cluster-cidr-discovery",
+				Decision: CheckClusterCIDRDiscovery(clusterIP, podCIDRs, cfg.ClusterCIDR),
+			})
+		}
+	}
+
+	// §13.2 lines 176-178 (OTLP-068) — when OTLP export runs over TLS, the
+	// endpoint scheme must not be http:// and the live collector TLS
+	// handshake must complete with a SAN matching the endpoint. Runs only
+	// when an endpoint is configured; the scheme guard is a pure check, the
+	// handshake runs only when the Job wires a prober. F-13.2.9.
+	if cfg.OTLP.Endpoint != "" {
+		report = append(report, CheckResult{
+			Name: "otlp-tls",
+			Decision: OTLPTLSCheck{
+				Config: cfg.OTLP,
+				Prober: cfg.OTLPTLSProber,
+			}.Decide(ctx),
+		})
+	}
 	return report
 }
 
@@ -409,44 +475,104 @@ func gatherGatewayIdentities(ctx context.Context, reader client.Reader) ([]Gatew
 	return out, nil
 }
 
+// forEachLennyWorkload visits the pod template of every Lenny-managed
+// Deployment, DaemonSet, and Job in each namespace, passing a
+// namespace-scoped workload identifier so a per-workload finding is
+// unambiguous. It is the shared lister the host-sharing (§13.1 line 23)
+// and pod-security-baseline (§13.1 lines 6-8) projections both build on,
+// so each gather makes one pass over the same workloads.
+func forEachLennyWorkload(ctx context.Context, reader client.Reader, namespaces []string, visit func(workload string, spec *corev1.PodSpec)) error {
+	for _, namespace := range namespaces {
+		var deploys appsv1.DeploymentList
+		if err := reader.List(ctx, &deploys, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return err
+		}
+		for i := range deploys.Items {
+			d := &deploys.Items[i]
+			visit(namespace+"/Deployment/"+d.Name, &d.Spec.Template.Spec)
+		}
+
+		var daemonsets appsv1.DaemonSetList
+		if err := reader.List(ctx, &daemonsets, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return err
+		}
+		for i := range daemonsets.Items {
+			ds := &daemonsets.Items[i]
+			visit(namespace+"/DaemonSet/"+ds.Name, &ds.Spec.Template.Spec)
+		}
+
+		var jobs batchv1.JobList
+		if err := reader.List(ctx, &jobs, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+			return err
+		}
+		for i := range jobs.Items {
+			j := &jobs.Items[i]
+			visit(namespace+"/Job/"+j.Name, &j.Spec.Template.Spec)
+		}
+	}
+	return nil
+}
+
 // gatherWorkloadPodSpecs lists the Lenny-managed Deployments,
 // DaemonSets, and Jobs in each namespace and projects each pod template
-// onto a HostSharingPodSpec. The workload identifier is namespace-scoped
-// so a host-sharing failure in an agent namespace is unambiguous.
+// onto a HostSharingPodSpec.
 //
 // spec: §13.1 line 23 — the audit covers every Lenny-managed workload,
 // not only those in the release namespace. F-13.1.7.
 func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespaces []string) ([]HostSharingPodSpec, error) {
 	var out []HostSharingPodSpec
-	for _, namespace := range namespaces {
-		var deploys appsv1.DeploymentList
-		if err := reader.List(ctx, &deploys, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-			return nil, err
-		}
-		for i := range deploys.Items {
-			d := &deploys.Items[i]
-			out = append(out, projectHostSharing(namespace+"/Deployment/"+d.Name, &d.Spec.Template.Spec))
-		}
-
-		var daemonsets appsv1.DaemonSetList
-		if err := reader.List(ctx, &daemonsets, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-			return nil, err
-		}
-		for i := range daemonsets.Items {
-			ds := &daemonsets.Items[i]
-			out = append(out, projectHostSharing(namespace+"/DaemonSet/"+ds.Name, &ds.Spec.Template.Spec))
-		}
-
-		var jobs batchv1.JobList
-		if err := reader.List(ctx, &jobs, client.InNamespace(namespace), lennyManagedLabel); err != nil {
-			return nil, err
-		}
-		for i := range jobs.Items {
-			j := &jobs.Items[i]
-			out = append(out, projectHostSharing(namespace+"/Job/"+j.Name, &j.Spec.Template.Spec))
-		}
+	err := forEachLennyWorkload(ctx, reader, namespaces, func(workload string, spec *corev1.PodSpec) {
+		out = append(out, projectHostSharing(workload, spec))
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// gatherWorkloadPodSecurity lists the Lenny-managed workloads in each
+// namespace and projects each pod template onto its §13.1 pod-security
+// baseline. The release namespace alone is passed: the §13.1 baseline
+// for agent-namespace pods is enforced by the controller podspec and the
+// agent-pod host-sharing / credential audits.
+//
+// spec: §13.1 lines 6-8, 16. F-13.1.12.
+func gatherWorkloadPodSecurity(ctx context.Context, reader client.Reader, namespaces []string) ([]WorkloadPodSecurity, error) {
+	var out []WorkloadPodSecurity
+	err := forEachLennyWorkload(ctx, reader, namespaces, func(workload string, spec *corev1.PodSpec) {
+		out = append(out, projectPodSecurity(workload, spec))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// gatherClusterCIDRDiscovery reads the §13.2 cluster addressing the
+// CIDR-discovery check validates: the kubernetes.default Service
+// ClusterIP (NET-040) and every node-reported pod CIDR (NET-022).
+//
+// spec: §13.2 lines 230-262. F-13.2.13.
+func gatherClusterCIDRDiscovery(ctx context.Context, reader client.Reader) (clusterIP string, podCIDRs []string, err error) {
+	var svc corev1.Service
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: "default", Name: "kubernetes"}, &svc); err != nil {
+		return "", nil, err
+	}
+	var nodes corev1.NodeList
+	if err := reader.List(ctx, &nodes); err != nil {
+		return "", nil, err
+	}
+	for i := range nodes.Items {
+		n := &nodes.Items[i]
+		if len(n.Spec.PodCIDRs) > 0 {
+			podCIDRs = append(podCIDRs, n.Spec.PodCIDRs...)
+			continue
+		}
+		if n.Spec.PodCIDR != "" {
+			podCIDRs = append(podCIDRs, n.Spec.PodCIDR)
+		}
+	}
+	return svc.Spec.ClusterIP, podCIDRs, nil
 }
 
 // agentManagedLabel selects the bare agent Pods the WarmPoolController

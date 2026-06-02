@@ -1,0 +1,46 @@
+suite: OTLP TLS plaintext opt-in guard (§13.2 OTLP-068)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - otlp-tls-guard.yaml
+tests:
+  # spec: §13.2 lines 176-178 — TLS is the default, so the guard renders
+  # no object and passes on a stock install.
+  - it: renders nothing when otlpTlsEnabled is true (the default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §13.2 OTLP-068 — disabling TLS without acknowledging plaintext
+  # outside dev mode fails the render with the verbatim guard message.
+  - it: fails the render for unacknowledged plaintext outside dev mode
+    set:
+      global.devMode: false
+      observability.otlpTlsEnabled: false
+      observability.acknowledgeOtlpPlaintext: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "observability.otlpTlsEnabled is false without observability.acknowledgeOtlpPlaintext=true"
+
+  # spec: §13.2 OTLP-068 — the explicit acknowledgement lets the render
+  # proceed (the deprecation banner is printed by NOTES.txt).
+  - it: renders nothing once acknowledgeOtlpPlaintext is set
+    set:
+      global.devMode: false
+      observability.otlpTlsEnabled: false
+      observability.acknowledgeOtlpPlaintext: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §13.2 OTLP-068 — dev mode allows plaintext without the
+  # acknowledgement (local Jaeger/stdout exporters).
+  - it: allows plaintext in dev mode without acknowledgement
+    set:
+      global.devMode: true
+      observability.otlpTlsEnabled: false
+      observability.acknowledgeOtlpPlaintext: false
+    asserts:
+      - hasDocuments:
+          count: 0

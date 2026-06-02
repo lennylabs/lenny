@@ -673,6 +673,26 @@ observability:
   # allow-pod-egress-otlp policy uses an ipBlock CIDR egress rule
   # instead of the in-cluster namespace/pod selector (§13.2 NET-046).
   otlpCIDR: ""
+  # otlpTlsEnabled requires the OTLP export to run over TLS (§13.2
+  # OTLP-068 / NET-059). Trace payloads carry session metadata, tenant
+  # and operation identifiers, and occasional error bodies, so the
+  # collector hop is in-scope for the same confidentiality posture as the
+  # other cross-namespace platform links. The default is true in every
+  # production profile; setting it to false outside global.devMode
+  # additionally requires acknowledgeOtlpPlaintext: true (the chart
+  # refuses to render otherwise).
+  otlpTlsEnabled: true
+  # acknowledgeOtlpPlaintext is the explicit opt-in required to render the
+  # chart with otlpTlsEnabled: false outside global.devMode (§13.2
+  # OTLP-068). Plaintext OTLP export exposes tenant/session metadata to
+  # any in-cluster interceptor; the chart fails the render without this
+  # acknowledgement and prints a deprecation banner when it is set.
+  acknowledgeOtlpPlaintext: false
+  # otlpCaBundle optionally names the deployer-supplied CA bundle the
+  # runtime OTel SDK trusts for the collector certificate, in addition to
+  # the cluster-wide trust bundle (§13.2 OTLP-068). Empty uses the
+  # cluster-wide trust bundle alone.
+  otlpCaBundle: ""
 
 # tracing configures the §16.3 distributed-tracing pipeline. The
 # platform emits 100% of traces (head sampling) to an OpenTelemetry

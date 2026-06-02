@@ -1,0 +1,18 @@
+{{- /*
+OTLP-068 plaintext opt-in guard (§13.2 lines 176-178).
+
+Trace payloads carry session metadata, tenant/operation identifiers, and
+occasional error bodies, so the OTLP collector hop is in-scope for the
+same confidentiality posture as the other cross-namespace platform links.
+The OTLP export therefore runs over TLS by default
+(observability.otlpTlsEnabled: true). Disabling TLS outside the
+dev/`make run` profile (global.devMode) requires the explicit
+observability.acknowledgeOtlpPlaintext: true acknowledgement; this
+render-time guard refuses to render `helm install`/`helm upgrade`
+otherwise. The template emits no Kubernetes object; it exists solely to
+evaluate the guard at template time. The acknowledged-plaintext
+deprecation banner is printed by NOTES.txt.
+*/ -}}
+{{- if and (not .Values.observability.otlpTlsEnabled) (not .Values.observability.acknowledgeOtlpPlaintext) (not .Values.global.devMode) }}
+{{- fail "observability.otlpTlsEnabled is false without observability.acknowledgeOtlpPlaintext=true; plaintext OTLP export exposes tenant/session metadata in-cluster. Set acknowledgeOtlpPlaintext=true to proceed, or re-enable TLS (OTLP-068)." }}
+{{- end }}

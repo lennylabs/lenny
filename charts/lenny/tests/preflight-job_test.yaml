@@ -304,6 +304,51 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--redis-url=rediss://:pw@redis-master:6379"
 
+  # §13.2 NET-040 / NET-022 (F-13.2.13): the preflight Job passes the
+  # cluster-CIDR values so CheckClusterCIDRDiscovery can validate the
+  # apiserver ClusterIP and the node pod CIDRs against the discovered
+  # addressing.
+  - it: passes the §13.2 cluster-CIDR discovery values at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--kube-apiserver-cidr=10.96.0.0/12"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--exclude-cluster-service-cidr=10.96.0.0/12"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--exclude-cluster-pod-cidr=10.244.0.0/16"
+
+  # §13.2 OTLP-068 (F-13.2.9): the preflight Job passes the OTLP TLS
+  # posture so the otlp-tls check can reject an http:// scheme and probe
+  # the collector TLS handshake.
+  - it: passes the §13.2 OTLP TLS posture at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-tls-enabled=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-endpoint="
+
+  - it: surfaces a configured OTLP endpoint to the otlp-tls check
+    set:
+      observability.otlpEndpoint: "https://otel-collector.lenny-system.svc:4317"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-endpoint=https://otel-collector.lenny-system.svc:4317"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.
