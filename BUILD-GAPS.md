@@ -11261,7 +11261,7 @@ What is built and verified:
 
 ### Findings
 
-### - [ ] F-9.3.1 — Connector access not enforced against effective delegation policy on external tool calls [High] — OPEN
+### - [x] F-9.3.1 — Connector access not enforced against effective delegation policy on external tool calls [High] — CLOSED
 
 Spec (§9.3, lines 161–164): "The gateway validates the `connector_id`
 in every external tool call against the calling pod's effective
@@ -11292,6 +11292,8 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/delegationpolicystore/evaluate.go:52`
 - `/Users/joan/projects/lenny/pkg/gateway/connectorcredstore/connectorcredstore.go`
+
+**Resolution (d24dedb2):** New `pkg/gateway/connectorauthz.Authorizer` resolves the calling session's effective delegation policy — the runtime-level §8.3 policy (`delegation.Service.EffectiveDelegationPolicy`) intersected with the §10.6 environment-default policy (`ResolveActivePolicy` against the session's environment) — and evaluates a `delegationpolicystore.Candidate{Type:"connector"}` against every resolved layer (least-privilege intersection, matching the agent-discovery filter). `connectorinvoke.Invoker.CallTool` now gates on a `ConnectorAuthorizer` before the credential lookup and the outbound dial: a connector the policy denies returns `ErrConnectorNotPermitted` and never reaches the external endpoint. The gateway wires the Invoker with `connectorauthz.New(delegationSvc, sessions, environments)`, so `DelegationPolicy.Evaluate` now has a production caller with a connector candidate at the connector-proxy chokepoint (the pod→connector driver is the per-connector intra-pod MCP server, F-9.1.2). Tier-1 tests cover the authorizer (runtime-deny, env-default intersection, conservative fall-through, resolver-error propagation) and the Invoker gate (denied connector not dialed, permitted connector proceeds).
 
 ### - [ ] F-9.3.2 — Per-connector MCP server in adapter manifest never populated [High] — OPEN
 
@@ -11487,7 +11489,7 @@ Files:
 
 **Resolution:** Verify-closed; the gap text reflected a snapshot before migration 0053 landed. `migrations/0053_connectors_tenant_scoped.up.sql` adds `tenant_id`, switches the primary key to `(tenant_id, id)`, enables RLS with `FORCE`, and `pkg/gateway/connectorstore` now carries `Connector.TenantID` plus per-tenant indexes; the pgstore selects/inserts include `tenant_id`. `pkg/gateway/admin/connectors.go:282-314` (`resolveTargetTenant`/`listTenantScope`) refuses tenant-admins writing across tenants and scopes platform-admin reads via `?tenant_id=` (default sentinel). `DeleteByTenant` purges per-tenant rows. The visibility/platform split is now enforceable end-to-end.
 
-### - [ ] F-9.3.8 — Tool capability inference not run at connector registration [Medium] — DEFERRED
+### - [x] F-9.3.8 — Tool capability inference not run at connector registration [Medium] — CLOSED
 
 Spec §9.3 (line 136): "Tool capability metadata derived from MCP
 `ToolAnnotations` at registration time (see Section 5.1 — Capability
@@ -11515,6 +11517,8 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go`
 
 **Deferred:** §9.3 line 136 calls for capability metadata "derived from MCP `ToolAnnotations` at registration time", but §15.1 line 1144 explicitly forbids the synchronous `POST /v1/admin/connectors` create path from making any outbound call to the connector endpoint ("Does **not** perform DNS resolution, TLS handshake, or any outbound call"). Inference needs `tools/list`, which is an outbound MCP call, so it cannot run inside the create handler without violating line 1144. The compliant realization is a separate post-create / refresh step on the sanctioned outbound path (the F-9.3.12 test flow now reaches `tools/list`, and the F-9.1.5 `connectorinvoke.Client.ListTools` returns the `ToolAnnotations` block `capabilityinference.Infer` consumes), plus new `Capabilities`/`CapabilityInferenceMode` columns on `connectorstore.Connector` and a migration. Both prerequisites the inference call needs are now built; the remaining work is the storage schema + the refresh trigger, deferred to its own batch to keep this one scoped to the client and the test endpoint.
+
+**Resolution (d24dedb2):** Realized exactly the compliant out-of-band path the deferral described. `connectorstore.Connector` gains `CapabilityInferenceMode`, `Capabilities` (the §5.1 inferred union), `ToolCapabilities` (the per-tool capability map feeding the §5.3 call-time `TOOL_CAPABILITY_DENIED` check), and `CapabilitiesRefreshedAt`, persisted via migration `0114_connectors_capabilities` (additive `ADD COLUMN` with defaults) and wired through the memory and Postgres stores. `connectorinvoke.Invoker.RefreshCapabilities` dials the connector on the sanctioned outbound path (`initialize` → `tools/list`), runs `capabilityinference.Infer` per tool under the connector's mode (default strict), emits the §5.1 line 327 WARN for unannotated-admin tools, and persists the union + per-tool map. New admin `POST /v1/admin/connectors/{name}/refresh` endpoint (platform/tenant-admin, 10/min per-connector cap) drives it, mirroring the §15.1 live-test endpoint. The synchronous create path still makes no outbound call (§15.1 line 1144 preserved). Tests: tier-1 infer/persist + strict-WARN + permissive-write + inactive-connector + memory round-trip; tier-2 migration column coverage; admin endpoint matrix (admin/tenant-admin allow, user 403, 404, 502-unreachable, 429-rate-limited).
 
 ### - [x] F-9.3.9 — Connector OAuth audit event types not in the §16.7 catalog [Medium] — CLOSED
 
