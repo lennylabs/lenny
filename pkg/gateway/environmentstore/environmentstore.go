@@ -241,6 +241,89 @@ func validateCapabilityLists(allowed, denied []string) []string {
 	return errs
 }
 
+// PermitCapabilities reports whether a tool whose inferred §5.1
+// capability set is toolCaps is permitted by an allowed/denied
+// capability filter. The semantics follow the §10.6 example
+// (allowedCapabilities: [read, execute], deniedCapabilities: [write,
+// delete, admin]):
+//
+//   - A tool is denied when any of its capabilities appears in denied.
+//   - When allowed is non-empty, every capability of the tool must
+//     appear in allowed; a tool carrying a capability outside the
+//     allow-list is denied.
+//   - An empty allowed list imposes no allow-list restriction.
+//
+// A tool with no inferred capabilities is permitted (there is nothing
+// to deny and the allow-list is vacuously satisfied); callers that want
+// an unknown tool to fail closed substitute the §5.1 conservative admin
+// default before calling. blockedBy names the first capability that
+// triggered the denial, for the rejection message; it is empty when
+// permitted. spec: §10.6 lines 588-607.
+func PermitCapabilities(toolCaps, allowed, denied []string) (permitted bool, blockedBy string) {
+	deny := map[string]bool{}
+	for _, c := range denied {
+		deny[c] = true
+	}
+	for _, c := range toolCaps {
+		if deny[c] {
+			return false, c
+		}
+	}
+	if len(allowed) == 0 {
+		return true, ""
+	}
+	allow := map[string]bool{}
+	for _, c := range allowed {
+		allow[c] = true
+	}
+	for _, c := range toolCaps {
+		if !allow[c] {
+			return false, c
+		}
+	}
+	return true, ""
+}
+
+// PermitTool reports whether a tool with the inferred capability set
+// toolCaps is permitted by this connectorSelector's capability filter.
+// spec: §10.6 lines 595-599.
+func (cs ConnectorSelector) PermitTool(toolCaps []string) (bool, string) {
+	return PermitCapabilities(toolCaps, cs.AllowedCapabilities, cs.DeniedCapabilities)
+}
+
+// Admits reports whether the connector identified by id with the given
+// labels is in scope of this connectorSelector's tag selector. The
+// capability filter governs only connectors the selector admits.
+func (cs ConnectorSelector) Admits(id string, labels map[string]string) bool {
+	return cs.Selector.Matches(environment.Candidate{Name: id, Labels: labels})
+}
+
+// PermitTool reports whether a tool with the inferred capability set
+// toolCaps is permitted by this mcpRuntimeFilter's capability filter.
+// spec: §10.6 lines 588-593, line 607.
+func (f MCPRuntimeFilter) PermitTool(toolCaps []string) (bool, string) {
+	return PermitCapabilities(toolCaps, f.AllowedCapabilities, f.DeniedCapabilities)
+}
+
+// Admits reports whether the runtime identified by name/typ with the
+// given labels is in scope of this filter's runtimeSelector.
+func (f MCPRuntimeFilter) Admits(name, typ string, labels map[string]string) bool {
+	return f.RuntimeSelector.Matches(environment.Candidate{Name: name, Type: typ, Labels: labels})
+}
+
+// MCPRuntimeFilterFor returns the first §10.6 mcpRuntimeFilter whose
+// runtimeSelector admits the runtime identified by name/typ/labels, and
+// whether such a filter exists. A runtime that no filter admits has no
+// capability restriction from this environment. spec: §10.6 line 607.
+func (e Environment) MCPRuntimeFilterFor(name, typ string, labels map[string]string) (MCPRuntimeFilter, bool) {
+	for _, f := range e.MCPRuntimeFilters {
+		if f.Admits(name, typ, labels) {
+			return f, true
+		}
+	}
+	return MCPRuntimeFilter{}, false
+}
+
 // Sentinel errors.
 var (
 	// ErrNotFound — no environment with the requested (tenant, name).

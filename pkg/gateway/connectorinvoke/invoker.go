@@ -48,7 +48,11 @@ type Invoker struct {
 	client     *Client
 	tracer     *tracing.Tracer
 	authz      ConnectorAuthorizer
-	clock      func() time.Time
+	// environments resolves the §10.6 environment whose connectorSelector
+	// capability filter gates a connector tools/call. nil leaves the gate
+	// open. spec: §10.6 line 607.
+	environments EnvironmentResolver
+	clock        func() time.Time
 }
 
 // NewInvoker wires the connector registry, the connector-credential
@@ -100,6 +104,14 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		if err := iv.authz.AuthorizeConnector(ctx, tenantID, sessionID, connectorID, conn.Labels); err != nil {
 			return nil, err
 		}
+	}
+
+	// spec: §10.6 line 607 — the calling session's environment
+	// connectorSelector capability filter governs what an admitted
+	// connector may do. A tool whose inferred capability the filter
+	// denies is rejected before the outbound dial. F-10.6.2.
+	if err := iv.enforceConnectorCapabilities(ctx, tenantID, environment, conn, toolName); err != nil {
+		return nil, err
 	}
 
 	var span trace.Span

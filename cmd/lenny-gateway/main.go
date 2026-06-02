@@ -3416,7 +3416,11 @@ func main() {
 	connectorMCPClient := connectorinvoke.New(&http.Client{Timeout: 15 * time.Second})
 	connectorAuthorizer := connectorauthz.New(delegationSvc, sessions, environments)
 	connectorInvoker := connectorinvoke.NewInvoker(connectors, connectorCreds, connectorMCPClient, nil, connectorAuthorizer).
-		WithClock(clockinject.Now)
+		WithClock(clockinject.Now).
+		// spec: §10.6 line 607 — enforce the calling session's environment
+		// connectorSelector capability filter on each connector tools/call.
+		// F-10.6.2.
+		WithEnvironments(environments)
 
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
@@ -3832,7 +3836,10 @@ func main() {
 	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1
 	// while preserving the spec-required 404 / 400 error patterns
 	// for unknown and non-mcp runtimes.
-	mux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(runtimes, nil))
+	// spec: §10.6 line 607 — the per-runtime MCP dispatcher gates a
+	// tools/call scoped to an environment (`?environment=<name>`) by that
+	// environment's mcpRuntimeFilters capability filter. F-10.6.2.
+	mux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(runtimes, nil).WithEnvironments(environments))
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 

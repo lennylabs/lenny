@@ -342,6 +342,7 @@ var table = map[string]entry{
 
 	// POLICY — a deliberate policy decision rejected a well-formed request.
 	"PERMISSION_DENIED":                       {CategoryPolicy, false}, // spec: 15:1028
+	"TOOL_CAPABILITY_DENIED":                  {CategoryPolicy, false}, // spec: 05:327 (§5.3 call-time; §10.6 capability filter)
 	"SCOPE_FORBIDDEN":                         {CategoryPolicy, false}, // spec: 15:1029
 	"CREDENTIAL_REVOKED":                      {CategoryPolicy, false}, // spec: 15:1030
 	"INJECTION_REJECTED":                      {CategoryPolicy, false}, // spec: 15:999

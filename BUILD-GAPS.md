@@ -13637,7 +13637,7 @@ enforcement is the §10.6 line 605 check shared with F-10.6.5. Six tier-1
 tests in `create_test.go` cover the unknown/non-member/out-of-scope-runtime
 rejections, the creator-admitted path, and the no-principal pass-through.
 
-### - [ ] F-10.6.2 — 02  `mcpRuntimeFilters` capability filtering is stored but never enforced [High] — OPEN
+### - [x] F-10.6.2 — 02  `mcpRuntimeFilters` capability filtering is stored but never enforced [High] — CLOSED
 
 **Spec:** §10.6 lines 588–593 and line 607 — "**`mcpRuntimeFilters`** —
 capability-based tool filtering for `type: mcp` runtimes. Capabilities
@@ -13673,6 +13673,26 @@ authorization boundary. An admin who writes `deniedCapabilities: [write,
 delete, admin]` on a security-team environment today has no effect on
 what tools the agents in that environment may invoke against a matching
 mcp runtime.
+
+**Resolution:** Added a reusable §10.6 capability-filter evaluator to
+`environmentstore` (`PermitCapabilities` + `ConnectorSelector.PermitTool`/
+`Admits`, `MCPRuntimeFilter.PermitTool`/`Admits`,
+`Environment.MCPRuntimeFilterFor`): deny-list wins, a non-empty allow-list
+requires every tool capability to be listed. Wired enforcement into the
+two reachable dispatch points: (1) `connectorinvoke.Invoker.CallTool` now
+resolves the calling session's environment (via the new
+`WithEnvironments` resolver) and rejects a connector tool whose inferred
+`ToolCapabilities` the environment's connectorSelector denies, before the
+outbound dial — this closes the connector-capability half flagged in
+F-10.6.3's resolution; (2) the `/mcp/runtimes/{name}` dispatcher
+(`mcpruntimes`) gates a `tools/call` scoped to an environment
+(`?environment=<name>`) by that environment's matching mcpRuntimeFilter,
+resolving the tool's §5.1 capability from the runtime's
+`toolCapabilityOverrides`/inference mode. Both paths fail closed on an
+un-inferred tool (conservative §5.1 admin default) and emit the §5.3
+call-time `TOOL_CAPABILITY_DENIED` code (newly registered in
+`errorclassify` as a non-retryable policy denial). Commit landed this
+batch.
 
 ### - [x] F-10.6.3 — 03  `connectorSelector.allowedCapabilities`/`deniedCapabilities` are not modeled [High] — CLOSED
 

@@ -31,6 +31,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
@@ -74,6 +76,19 @@ type Handler struct {
 	store      runtimestore.Store
 	dispatcher Dispatcher
 	maxBytes   int64
+	// environments resolves the §10.6 environment named by the optional
+	// `?environment=` query parameter so a tools/call can be gated by that
+	// environment's mcpRuntimeFilters. nil leaves the capability gate off.
+	// spec: §10.6 line 607.
+	environments EnvironmentResolver
+}
+
+// EnvironmentResolver loads a §10.6 environment by (tenant, name). It is
+// the seam the per-runtime dispatcher uses to apply an environment's
+// mcpRuntimeFilters capability filter; *environmentstore.Memory and the
+// pgstore satisfy it. spec: §10.6 line 607.
+type EnvironmentResolver interface {
+	Get(ctx context.Context, tenantID, name string) (environmentstore.Environment, error)
 }
 
 // New returns a Handler bound to the supplied runtime registry and
@@ -85,6 +100,62 @@ func New(store runtimestore.Store, dispatcher Dispatcher) *Handler {
 		dispatcher: dispatcher,
 		maxBytes:   1 << 20, // 1 MiB JSON-RPC body cap, matches /mcp.
 	}
+}
+
+// WithEnvironments wires the §10.6 environment registry so a tools/call
+// scoped to an environment (`?environment=<name>`) is gated by that
+// environment's mcpRuntimeFilters capability filter. spec: §10.6 line 607.
+func (h *Handler) WithEnvironments(envs EnvironmentResolver) *Handler {
+	h.environments = envs
+	return h
+}
+
+// mcpRuntimeFilterDenies reports whether the §10.6 environment named by
+// the request's `?environment=` query parameter has an mcpRuntimeFilter
+// that denies the tools/call's tool on this runtime. It returns the
+// blocked capability for the rejection detail. A request that names no
+// environment, an unknown environment, a method other than tools/call,
+// or a runtime no filter admits is not gated. The tool's capability is
+// resolved from the runtime's §5.1 toolCapabilityOverrides and inference
+// mode; an un-annotated, un-overridden tool resolves to the conservative
+// admin default so a restrictive filter fails closed.
+//
+// spec: §10.6 line 607; §5.1 capability inference.
+func (h *Handler) mcpRuntimeFilterDenies(r *http.Request, rt runtimestore.Runtime, req jsonRPCRequest) (bool, string) {
+	if h.environments == nil {
+		return false, ""
+	}
+	tool := req.toolName()
+	if tool == "" {
+		return false, ""
+	}
+	envName := r.URL.Query().Get("environment")
+	if envName == "" {
+		return false, ""
+	}
+	tenantID := r.Header.Get("X-Lenny-Tenant-ID")
+	if tenantID == "" {
+		return false, ""
+	}
+	env, err := h.environments.Get(r.Context(), tenantID, envName)
+	if err != nil {
+		// An unknown environment scope carries no filter; the §10.6
+		// transparent-filtering boundary on runtime visibility is a
+		// separate concern enforced at discovery.
+		return false, ""
+	}
+	filter, ok := env.MCPRuntimeFilterFor(rt.Name, string(rt.Type), rt.Labels)
+	if !ok {
+		return false, ""
+	}
+	res := capabilityinference.Resolve(tool, capabilityinference.ToolAnnotations{},
+		rt.CapabilityInferenceMode, rt.ToolCapabilityOverrides)
+	caps := make([]string, len(res.Capabilities))
+	for i, c := range res.Capabilities {
+		caps[i] = string(c)
+	}
+	permitted, blocked := filter.PermitTool(caps)
+	return !permitted, blocked
 }
 
 // ServeHTTP implements http.Handler.
@@ -131,9 +202,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// JSON-RPC 2.0 request so callers get a JSON-RPC parse error
 	// rather than a "no active client" status when the payload is
 	// malformed.
-	if err := validateJSONRPC(body); err != nil {
+	req, err := parseJSONRPC(body)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, errParse,
 			"VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+
+	// spec: §10.6 line 607 — when the caller scopes the call to an
+	// environment (`?environment=<name>`), the environment's
+	// mcpRuntimeFilters gate a tools/call on this type:mcp runtime by the
+	// tool's inferred §5.1 capability. A denied tool is rejected before
+	// dispatch with TOOL_CAPABILITY_DENIED. F-10.6.2.
+	if blocked, cap := h.mcpRuntimeFilterDenies(r, rt, req); blocked {
+		writeError(w, http.StatusForbidden, errInvalidRequest,
+			"TOOL_CAPABILITY_DENIED",
+			"tool denied by the environment mcpRuntimeFilters capability filter",
+			map[string]any{"capability": cap, "tool": req.toolName()})
 		return
 	}
 
@@ -170,21 +255,38 @@ type jsonRPCRequest struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-func validateJSONRPC(body []byte) error {
+// toolName returns the tool named by a tools/call request, or empty when
+// the request is not a tools/call or the params do not name a tool.
+func (req jsonRPCRequest) toolName() string {
+	if req.Method != "tools/call" || len(req.Params) == 0 {
+		return ""
+	}
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return ""
+	}
+	return p.Name
+}
+
+// parseJSONRPC validates that body is a syntactically well-formed
+// JSON-RPC 2.0 request and returns the parsed envelope.
+func parseJSONRPC(body []byte) (jsonRPCRequest, error) {
 	if len(body) == 0 {
-		return errors.New("request body is empty")
+		return jsonRPCRequest{}, errors.New("request body is empty")
 	}
 	var req jsonRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return errors.New("request is not valid JSON")
+		return jsonRPCRequest{}, errors.New("request is not valid JSON")
 	}
 	if req.JSONRPC != "2.0" {
-		return errors.New(`jsonrpc must be "2.0"`)
+		return jsonRPCRequest{}, errors.New(`jsonrpc must be "2.0"`)
 	}
 	if req.Method == "" {
-		return errors.New("method is required")
+		return jsonRPCRequest{}, errors.New("method is required")
 	}
-	return nil
+	return req, nil
 }
 
 // JSON-RPC + MCP error codes mirrored from pkg/gateway/mcp so the
