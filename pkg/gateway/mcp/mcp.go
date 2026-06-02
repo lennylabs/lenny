@@ -28,6 +28,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
+	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 )
 
 // ProtocolVersion is the MCP protocol revision this adapter
@@ -253,6 +254,23 @@ func (s *Server) RegisterTool(t Tool, h ToolHandler) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mcp", s.handleRPC)
+	return mux
+}
+
+// EnvironmentHandler returns the http.Handler that serves the §10.6
+// explicit-environment MCP surface at POST /mcp/environments/{name}. It
+// runs the same JSON-RPC dispatch as POST /mcp, with the named
+// environment attached to the request context so a tool that creates a
+// session or discovers runtimes defaults to that environment scope
+// without the caller repeating it on each call. spec: §10.6 line 557.
+func (s *Server) EnvironmentHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mcp/environments/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if name := r.PathValue("name"); name != "" {
+			r = r.WithContext(environmentmw.WithExplicitEnvironment(r.Context(), name))
+		}
+		s.handleRPC(w, r)
+	})
 	return mux
 }
 

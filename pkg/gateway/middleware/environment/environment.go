@@ -94,6 +94,26 @@ func WithResolution(ctx context.Context, res Resolution) context.Context {
 	return context.WithValue(ctx, resolutionCtxKey{}, res)
 }
 
+type explicitEnvCtxKey struct{}
+
+// WithExplicitEnvironment marks ctx as scoped to the §10.6
+// explicit-environment named name. The §10.6 explicit-environment access
+// paths (`/mcp/environments/{name}`, the scoped model namespace on the
+// OpenAI/Open Responses surfaces) set it so session-creation and
+// discovery default to that environment without the caller repeating it
+// on each call. spec: §10.6 line 557.
+func WithExplicitEnvironment(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, explicitEnvCtxKey{}, name)
+}
+
+// ExplicitEnvironmentFromContext returns the §10.6 explicit-environment
+// scope a dedicated environment endpoint attached to ctx, or empty when
+// the request did not opt into an explicit environment.
+func ExplicitEnvironmentFromContext(ctx context.Context) string {
+	name, _ := ctx.Value(explicitEnvCtxKey{}).(string)
+	return name
+}
+
 // FilterRuntimes narrows runtimes to the §10.6 transparent-filtering
 // view: the union of runtimes the caller's environment membership
 // authorizes. When the Resolution is not Configured the list is

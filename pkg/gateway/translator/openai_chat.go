@@ -178,7 +178,10 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		return
 	}
 	tenantID := resolveTenant(r)
-	runtimeRef := req.Model
+	// spec: §10.6 line 557 — a model named "environments/{name}/{model}"
+	// scopes the implicit session to the named environment; the bare
+	// model is the runtime reference. F-10.6.11.
+	envScope, runtimeRef := splitEnvModel(req.Model)
 	if runtimeRef == "" {
 		runtimeRef = h.defaultRuntime
 	}
@@ -186,13 +189,14 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	sessionID := h.idFn()
 
 	row := sessionstore.Session{
-		ID:         sessionID,
-		TenantID:   tenantID,
-		UserID:     req.User,
-		RuntimeRef: runtimeRef,
-		State:      session.StateRunning,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:          sessionID,
+		TenantID:    tenantID,
+		UserID:      req.User,
+		RuntimeRef:  runtimeRef,
+		Environment: envScope,
+		State:       session.StateRunning,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := h.store.Create(r.Context(), row); err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",

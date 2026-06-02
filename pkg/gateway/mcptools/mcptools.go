@@ -500,13 +500,21 @@ func Register(srv *mcp.Server, deps Deps) {
 				"runtimeRef is required",
 				map[string]any{"field": "runtimeRef"})
 		}
+		// spec: §10.6 line 557 — a connection scoped to the explicit
+		// environment surface (/mcp/environments/{name}) defaults the
+		// session to that environment when the call omits one. An explicit
+		// `environment` argument still wins. F-10.6.11.
+		env := in.Environment
+		if env == "" {
+			env = environmentmw.ExplicitEnvironmentFromContext(ctx)
+		}
 		now := clock()
 		row := sessionstore.Session{
 			ID:               idFn(),
 			TenantID:         tenant,
 			UserID:           in.UserID,
 			RuntimeRef:       in.RuntimeRef,
-			Environment:      in.Environment,
+			Environment:      env,
 			State:            session.StateRunning,
 			IsolationProfile: isolation.DefaultForMode(deps.DevMode),
 			CreatedAt:        now,
@@ -1881,9 +1889,14 @@ func Register(srv *mcp.Server, deps Deps) {
 			// spec: §10.6 line 672 — `environmentId` stub narrows to one
 			// environment when supplied; unknown environment collapses
 			// the result to empty so a typo never broadens visibility.
-			// F-10.6.10.
-			if in.EnvironmentID != "" {
-				runtimes = narrowRuntimesToEnvironment(ctx, deps, runtimes, in.EnvironmentID)
+			// F-10.6.10. A connection on the /mcp/environments/{name}
+			// surface supplies the scope when the call omits it. F-10.6.11.
+			envID := in.EnvironmentID
+			if envID == "" {
+				envID = environmentmw.ExplicitEnvironmentFromContext(ctx)
+			}
+			if envID != "" {
+				runtimes = narrowRuntimesToEnvironment(ctx, deps, runtimes, envID)
 			}
 			needle := strings.ToLower(in.NameContains)
 			out := make([]discoveredRuntime, 0, len(runtimes))

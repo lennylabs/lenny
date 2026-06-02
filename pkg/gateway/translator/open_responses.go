@@ -153,7 +153,10 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	tenantID := resolveTenant(r)
-	runtimeRef := req.Model
+	// spec: §10.6 line 557 — a model named "environments/{name}/{model}"
+	// scopes the implicit session to the named environment; the bare
+	// model is the runtime reference. F-10.6.11.
+	envScope, runtimeRef := splitEnvModel(req.Model)
 	if runtimeRef == "" {
 		runtimeRef = h.defaultRuntime
 	}
@@ -165,6 +168,7 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		TenantID:        tenantID,
 		UserID:          req.User,
 		RuntimeRef:      runtimeRef,
+		Environment:     envScope,
 		State:           session.StateRunning,
 		ParentSessionID: req.PreviousResponseID, // lineage pointer per §7.1 derive copy semantics
 		CreatedAt:       now,

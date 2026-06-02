@@ -13931,7 +13931,7 @@ by making the env-default participate in the effective scope. Tier-1
 / `...EnvironmentWithNoDefaultPolicyUsesRuntimeOnly` +
 `TestResolveActivePolicy_spec_10_6_601` (+ nil-registry).
 
-### - [ ] F-10.6.8 — 08  OIDC `introspectionEnabled` real-time group check is absent [Medium] — OPEN
+### - [ ] F-10.6.8 — 08  OIDC `introspectionEnabled` real-time group check is absent [Medium] — DEFERRED
 
 **Spec:** §10.6 line 661 — "Identity: OIDC. Groups from LDAP/AD carried
 as JWT claims. `introspectionEnabled: true` adds real-time group checks
@@ -13952,6 +13952,19 @@ claim-based.
 as a tunable, not as a hard requirement (the default is implicitly
 "off"). The capability is unimplemented but the platform's safe-default
 behavior is consistent with `introspectionEnabled: false`.
+
+**Deferred:** the storage/config half is stale — `tenantstore.RBACConfig.
+IdentityProvider.IntrospectionEnabled` already exists and round-trips
+through `PUT/GET /v1/admin/tenants/{id}/rbac-config` (`rbac_config.go`).
+The residual gap is the real-time RFC 7662 introspection call on the auth
+hot path, which needs (a) a per-tenant introspection-endpoint URL +
+client-credentials config (no field exists; only the global OIDC issuer
+is configured), (b) a new RFC 7662 introspection client with a short-TTL
+group cache (the "latency cost" the spec names), and (c) a tenant-RBAC
+read wired into the auth middleware. That is a new auth subsystem rather
+than wiring an existing surface; deferring leaves no enforcement hole
+because the safe default (introspection off, JWT-claim groups only) is
+already in effect.
 
 ### - [x] F-10.6.9 — 09  Billing-event schema has no `environmentId` field [Medium] — CLOSED
 
@@ -14018,7 +14031,7 @@ transparent filter already excluded stays excluded; an unknown
 environment collapses the list to empty so a typo never broadens
 visibility; an empty value is the v1 default no-op.
 
-### - [ ] F-10.6.11 — 11  No `/mcp/environments/{name}` explicit-MCP endpoint dispatcher [Medium] — OPEN
+### - [x] F-10.6.11 — 11  No `/mcp/environments/{name}` explicit-MCP endpoint dispatcher [Medium] — CLOSED
 
 **Spec:** §10.6 line 557 — explicit-environment endpoint exposes
 "dedicated paths across all external interfaces: `/mcp/environments/{name}`,
@@ -14043,6 +14056,21 @@ creation path is the only opt-in route. Severity is Medium because
 F-10.6-01 documents that the implemented one of these endpoints is
 itself unenforced — fixing the broad explicit-endpoint coverage gap
 also needs the membership enforcement fix.
+
+**Resolution:** All three remaining explicit-environment surfaces are now
+served. (1) `mcp.Server.EnvironmentHandler` mounts `POST
+/mcp/environments/{name}`, running the same JSON-RPC dispatch as `POST
+/mcp` with the named environment attached to the request context (new
+`environmentmw.WithExplicitEnvironment`/`ExplicitEnvironmentFromContext`);
+the `lenny/create_session` and `lenny/discover_agents` tools read that
+scope as the default when the call omits an `environment`/`environmentId`
+(an explicit argument still wins). (2)+(3) the OpenAI Chat and Open
+Responses translators now parse the §10.6 scoped model namespace
+`environments/{name}/{model}` (`translator.splitEnvModel`): the named
+environment is stamped on the implicit session and the bare model is used
+as the runtime reference. The membership-enforcement concern referenced
+from F-10.6-01 is the runtime/connector capability filter, now closed by
+F-10.6.2. Commit landed this batch.
 
 ### - [x] F-10.6.12 — 12  Environment `Description` lacks validation; tenantId path/body cross-check absent [Medium] — CLOSED
 

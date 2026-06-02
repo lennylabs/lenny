@@ -3831,6 +3831,12 @@ func main() {
 	// /mcp/v1/ws) and any other MCP-over-WebSocket client land on the
 	// same dispatch logic. The Streamable HTTP path remains on /mcp.
 	mux.Handle("/mcp/v1/ws", mcpSrv.WebSocketHandler())
+	// spec: §10.6 line 557 — the explicit-environment MCP surface. A
+	// client opts into a named environment scope by speaking MCP to
+	// /mcp/environments/{name}; the dispatch is identical to POST /mcp
+	// with the environment attached to the request context so
+	// session-creation and discovery default to that scope. F-10.6.11.
+	mux.Handle("POST /mcp/environments/{name}", mcpSrv.EnvironmentHandler())
 	// §4.1 dedicated MCP endpoints for type:mcp runtimes. The
 	// dispatcher is nil in v1: every request that passes runtime
 	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1
