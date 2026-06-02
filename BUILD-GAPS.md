@@ -18745,7 +18745,7 @@ Sink response loses the record even when Postgres committed it, because no
 forwarder re-reads Postgres-committed rows. The spec's HIPAA AU-9 / FedRAMP
 AU-10 / SOC2 CC7.2 completeness guarantee is not met.
 
-**Resolution (commit pending):** Implemented the §12.3 outbox / CDC
+**Resolution (commit 08a5e1a0):** Implemented the §12.3 outbox / CDC
 forwarder. Migration `0107_siem_delivery_state` adds the durable
 per-tenant delivery high-water-mark table. `pkg/audit/siem/outbox.go`
 (`Outbox`) tails committed audit rows through a `DeliveryStore`,
@@ -18987,7 +18987,7 @@ Defaults today: every audit write is synchronous on the shared pool. The
 spec's T3/T4 default behavior is met; the operator-tunable T2 opt-in is
 missing.
 
-**Resolution (commit pending):** All four settings are now chart values
+**Resolution (commit 2df5e50b):** All four settings are now chart values
 (`audit.syncWritePoolSize`, `audit.batchingEnabled`, `audit.flushIntervalMs`,
 `audit.flushBatchSize`) rendered to gateway env + flags. (a) The dedicated
 audit sync write pool is a separate `pgxpool` sized by `syncWritePoolSize`
@@ -19016,7 +19016,7 @@ Evidence:
 Coupled with the Medium "audit batching not implemented" finding above —
 this warning is only meaningful once batching is wired.
 
-**Resolution (commit pending):** The gateway now emits the
+**Resolution (commit 2df5e50b):** The gateway now emits the
 `lenny_audit_batching_no_siem_total` counter (`gatewaymetrics.IncAuditBatchingNoSIEM`)
 and logs the spec-quoted startup warning when `auditBatchingNoSIEM(LENNY_ENV,
 batchingEnabled, siemConfigured)` holds (production + `audit.batchingEnabled`
@@ -19068,7 +19068,7 @@ Evidence:
 
 Tied to the High finding on the SIEM outbox above.
 
-**Resolution (commit pending):** Closed by **F-12.3.6**. The §12.3 outbox
+**Resolution (commit 08a5e1a0):** Closed by **F-12.3.6**. The §12.3 outbox
 forwarder now emits `lenny_audit_siem_delivery_lag_seconds` after each
 delivery checkpoint (`gatewaymetrics.SetSIEMDeliveryLagSeconds`,
 satisfying `siem.LagGauge`); the `siem_delivery_state` outbox table is
