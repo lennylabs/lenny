@@ -21342,7 +21342,7 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 
 **Impact:** In production-Postgres deployments, billing pseudonymization is a no-op (the runner attaches an in-memory billing eraser to the in-memory `tenantstore.Memory` only). The erasure receipt will record `pseudonymized: 0` for any pg-backed deployment. The mandatory KMS envelope on the salt is unimplemented — even when persisted later, the spec invariant cannot be satisfied without KMS wiring.
 
-### - [ ] F-12.8.6 — Erasure-job SLA enforcement (overdue alert, failure counter) has no emitter [High] — OPEN
+### - [x] F-12.8.6 — Erasure-job SLA enforcement (overdue alert, failure counter) has no emitter [High] — CLOSED
 
 **Spec:** §12.8 lines 766–768 require the platform increment `lenny_erasure_job_failed_total{tenant_id, failure_phase}` on each job failure, fire `ErasureJobFailed` immediately, and fire `ErasureJobOverdue` against the tier-specific deadline (72h T3, 1h T4). Metrics `lenny_erasure_job_duration_seconds` and `lenny_erasure_jobs_active` track throughput.
 
@@ -21353,7 +21353,9 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 
 **Impact:** Operators receive no alert when a user-level erasure stalls or fails, even though the user's `processing_restricted` flag is permanently set in the failure case — they may discover the issue only when the user complains the session-create gate refuses them.
 
-### - [ ] F-12.8.7 — Legal-hold admin endpoint accepts only session-level holds; spec ledger covers artifact, audit_range, workspace_snapshot [High] — OPEN
+**Resolution (commit `7a03c332`):** The failure counter half (line 766, `lenny_erasure_job_failed_total{tenant_id, failure_phase}`) was already wired via `WithFailureObserver(gwMetrics.IncErasureJobFailed)`; the finding evidence was stale on that point. This batch added the line-768 SLA emitters: `gatewaymetrics` now registers `lenny_erasure_jobs_active` (gauge), `lenny_erasure_job_duration_seconds` (histogram), and the `lenny_erasure_job_age_seconds` / `lenny_erasure_job_deadline_seconds` gauges the §16.5 `ErasureJobOverdue` alert compares against. The `erasurejob.Runner` brackets each executing job with the active gauge and observes its wall-clock duration on termination (success or failure), and `WithDeadlineResolver` stamps the tier-specific deadline (T4 1h, otherwise 72h) onto the `Job`. A new `erasurejob.Sampler` republishes each in-progress job's age on a 30s tick (the runner cannot advance age while blocked in a slow `DeleteByUser`), wired in the gateway. The four SLA metrics live in `gatewaymetrics` but not the §16.1 catalog, which transcribes §16.1 only (these are §12.8 / §16.5 metrics).
+
+### - [x] F-12.8.7 — Legal-hold admin endpoint accepts only session-level holds; spec ledger covers artifact, audit_range, workspace_snapshot [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-11.8.5 — Both report the legal-hold admin endpoint accepts only session-level holds and rejects artifact (and other resource-type) scopes the spec requires.
 
@@ -21375,7 +21377,9 @@ The §12.8 step-0 preflight in `pkg/gateway/admin/erasure.go:91` calls `r.heldSe
 
 **Impact:** A platform-admin cannot place an artifact-level hold via the admin API; a hold placed directly on the catalog row is invisible to the erasure preflight; the §12.8 ledger covering all resource types is unenforced. Spoliation risk is real for artifact-only preservation orders.
 
-### - [ ] F-12.8.8 — Spec DSAR template query has no schema support [High] — OPEN
+**Resolution (commit `b531a5a4`):** `POST /v1/admin/legal-hold` now accepts an `artifactId` in addition to `sessionId` (exactly one required), wired to the `artifact_store` catalog's `SetLegalHold` via the new `admin.ArtifactLegalHolder` seam (gateway wires the durable catalog). The §12.8 step-0 erasure preflight (`heldResourcesForUser`) consults artifact-level holds on any artifact owned by one of the user's sessions (line 794(b), via `IsLegalHeldAt`), and the `gdpr.erasure_blocked_by_hold` event plus override receipt now carry `{resourceType, resourceId}` hold tuples. Closes the duplicate **F-11.8.5** (already CLOSED pointing here). The `audit_range` / `workspace_snapshot` ledger resource types remain the documented v2 follow-on per **F-12.8.24** (no ledger store exists in v1); the two flag-backed scopes (`session`, `artifact`) are the v1 surface.
+
+### - [x] F-12.8.8 — Spec DSAR template query has no schema support [High] — CLOSED
 
 **Spec:** §12.8 lines 967–986 provide the canonical DSAR template:
 
@@ -21393,6 +21397,8 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 - `pkg/gateway/admin/audit_query.go:84-126` accepts `?tenantId=`, `?limit=`, `?afterSeq=`. There is no `?actorId=` parameter or any payload-filter.
 
 **Impact:** The spec's DSAR template fails to bind against the schema; deployer DSAR tooling that follows the spec template cannot run. Article 15/20 satisfaction depends on payload JSON traversal not exposed by the API.
+
+**Resolution (commit `b531a5a4`):** The spec's own line 982 directs DSAR tooling to the audit-query API rather than the raw SQL template (the REST surface intentionally exposes no server-side payload filter). Category (a) `GET /v1/admin/audit-events?tenantId=…&actorId=…` was already covered by the `?actorId=` filter added in **F-25.9.2** (matches the payload `user_id` / `actor_subject`). This batch added the remaining piece for category (b): `?eventType=` now accepts a comma-separated list, so the line-986 invocation `eventType=admin.impersonation_started,admin.impersonation_ended` binds (a row matches when its event type is any list member, members trimmed). The raw-SQL `user_id` column the template names is a spec illustration the §12.8 text itself supersedes with the API equivalents.
 
 ### - [x] F-12.8.9 — MemoryStore erasure preflight (startup + per-job) is unimplemented [Medium] — CLOSED
 
@@ -21509,13 +21515,15 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** Spoliation-affecting rotations that occurred before a hold was placed are not surfaced; compliance teams cannot assess prior-rotation impact.
 
-### - [ ] F-12.8.19 — Erasure dependency order (step 0–20) is encoded only in the Orchestrator config, not enforced anywhere [Medium] — OPEN
+### - [x] F-12.8.19 — Erasure dependency order (step 0–20) is encoded only in the Orchestrator config, not enforced anywhere [Medium] — CLOSED
 
 **Spec:** §12.8 lines 792–836 specify a strict dependency-ordered sequence with 20+ steps, including step 0 (legal-hold preflight), per-store ordering for FK constraints (EvalResult before SessionStore, session_tree_archive before SessionStore, etc.), step 5 (billing-buffer purge), step 14 (OCSF dead-letter redaction), step 15 (billing pseudonymization), step 16 (delegation budget purge), step 20 (salt handling).
 
 **Implementation:** `pkg/gateway/erasure/erasure.go:54-79` has a flat `UserScoped []Eraser` slice; the caller controls ordering. No invariant check ensures that `EvalResultStore` precedes `SessionStore` in the slice, nor that `session_tree_archive` precedes `SessionStore`. The runner (`pkg/gateway/erasurejob/runner.go:120-181`) runs `DeleteByUser` then `Pseudonymize` then `Verify` — only the high-level phases. The 20-step ordering is documented in the spec but not encoded as a contract.
 
 **Impact:** A future code change that reorders the `UserScoped` slice — or a deployer-wired customization — could violate FK constraints (`EvalResult.session_id → sessions.id`) and produce silent partial-erasure outcomes. There is no compile-time or runtime test that pins the order against the spec.
+
+**Resolution (commit `0043b23e`):** New `pkg/gateway/erasure/order.go` encodes the §12.8 canonical store rank (steps 1–20) and the foreign-key precedence edges (`eval_results`, `session_tree_archive`, `transcripts`, `artifacts`, `interactions`, `eviction_state`, `session_dlq_archive`, `memory` → `sessions`). `ValidateOrder(cfg)` computes the effective execution order (session-scoped erasers run before user-scoped) and rejects (a) any store name with no dependency rank, (b) a store wired into two slots, and (c) a FK child appearing after its parent. The gateway calls `ValidateOrder` at startup and fails closed (`log.Fatalf`) on a misordered wiring, so a future reorder cannot silently break an FK constraint. `order_test.go` pins the contract (canonical config passes; sessions-before-child, eval-after-sessions, unknown-store, and duplicate-store configs are each rejected). The wired `UserScoped` slice was reordered to `memory → interactions → sessions` to match the spec step order.
 
 ### - [x] F-12.8.20 — Erasure-job retry & failure model differs from spec [Low] — CLOSED
 
