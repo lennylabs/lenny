@@ -32066,7 +32066,7 @@ and the failure surfaces only after the gateway is in `CrashLoopBackOff`.
 
 ---
 
-### - [ ] F-17.6.2 — Bootstrap seed accepts only tenants, runtimes, users; pools/credentialPools/delegationPolicies/environments are not seedable [High] — OPEN
+### - [x] F-17.6.2 — Bootstrap seed accepts only tenants, runtimes, users; pools/credentialPools/delegationPolicies/environments are not seedable [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.1.4 — Both report the bootstrap seed supporting only tenants/runtimes/users while pools/credentialPools/delegationPolicies/environments are dropped.
 
@@ -32111,6 +32111,8 @@ without manual `lenny-ctl admin pools create` calls outside the chart.
 - `/Users/joan/projects/lenny/pkg/gateway/admin/bootstrap.go:25-29`
 - `/Users/joan/projects/lenny/charts/lenny/templates/bootstrap-configmap.yaml:27-28`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:1003-1026`
+
+**Resolution (commit `0866e9fb`):** `BootstrapRequest`/`BootstrapResponse` gained `pools`, `delegationPolicies`, and `environments` (credentialPools already landed in a prior batch), and `handleBootstrap` now seeds in dependency order (tenants → runtimes → pools → credentialPools → delegationPolicies → environments). New `upsertPools`/`upsertDelegationPolicies`/`upsertEnvironments` (in `bootstrap_resources.go`) hold each entry to the same gates the live admin POST runs: pool name/enum validation, runtimeRef resolution, §6.1 SDK-warm execution-mode rule, §5.2 line 396 T4 cross-tenant-reuse rule, with isolationProfile as a §17.6 line 451 security-critical field; §8.3 `delegationpolicystore.Validate`; and the §11.7 line 449 SIEM gate plus the §12.9 tier-tightening invariant for environments. `poolFromPayload` was factored out of `handleCreatePool` for reuse. The chart ConfigMap + `values.yaml` render all seven lists, and `lenny-ctl`'s exit-code/skip mapping covers the new sections. Closes the duplicate F-24.1.4 in the same batch. Covered by 11 tier-1 tests in `bootstrap_resources_test.go` and 3 helm-unittest assertions.
 
 ---
 
@@ -32271,7 +32273,7 @@ step) cannot run.
 
 ---
 
-### - [ ] F-17.6.7 — `global.noEnvironmentPolicy` lives under `gateway.` instead [High] — OPEN
+### - [x] F-17.6.7 — `global.noEnvironmentPolicy` lives under `gateway.` instead [High] — CLOSED
 
 **Spec:** §17.6 line 365 — the Helm values key is
 `global.noEnvironmentPolicy`. It is documented as a "platform-wide default"
@@ -32294,6 +32296,8 @@ setting. A silent override is the worst failure mode for a value labeled
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:497-502`
 - `/Users/joan/projects/lenny/charts/lenny/templates/gateway-deployment.yaml:140`
+
+**Resolution (commit `0866e9fb`):** `noEnvironmentPolicy` now lives at the spec-canonical `global.noEnvironmentPolicy` (chart `values.yaml` global block, default `deny-all`), and `gateway-deployment.yaml` renders `--no-environment-policy={{ .Values.global.noEnvironmentPolicy }}`. An operator override under `global.` flows through (verified by `helm template --set global.noEnvironmentPolicy=allow-all` → `--no-environment-policy=allow-all`); previously a `global.` override was silently dropped because the template read `gateway.`. Two helm-unittest cases lock the default and the override.
 
 ---
 
@@ -32505,7 +32509,7 @@ fails.
 
 ---
 
-### - [ ] F-17.6.15 — Chart's `kubeVersion` constraint diverges from spec [Medium] — OPEN
+### - [x] F-17.6.15 — Chart's `kubeVersion` constraint diverges from spec [Medium] — CLOSED
 
 **Spec:** §17.6 line 503 + line 543 — minimum Kubernetes ≥ 1.27 (preflight
 check: `Kubernetes version <ver> unsupported; minimum 1.27 required`).
@@ -32520,6 +32524,8 @@ error, but the spec's source-of-truth ambiguity should be resolved.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/Chart.yaml:7`
 - `/Users/joan/projects/lenny/spec/17_deployment-topology.md:503,543`
+
+**Resolution (commit `0866e9fb`):** `charts/lenny/Chart.yaml` lowers `kubeVersion` to `">=1.27.0-0"` to match the §17.6 lines 503/543 supported floor, so the chart no longer refuses to template on 1.27/1.28 clusters. The spec is the source of truth (rule B); no spec edit was needed because it already states 1.27 unambiguously.
 
 ---
 
@@ -35093,7 +35099,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ---
 
-### - [ ] F-24.1.4 — (High) — Bootstrap surface only supports `tenants`, `runtimes`, `users`; pools, credentialPools, delegationPolicies, environments are silently dropped [Medium] — OPEN
+### - [x] F-24.1.4 — (High) — Bootstrap surface only supports `tenants`, `runtimes`, `users`; pools, credentialPools, delegationPolicies, environments are silently dropped [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.6.2 — Both report the bootstrap seed supporting only tenants/runtimes/users while pools/credentialPools/delegationPolicies/environments are dropped.
 
@@ -35113,6 +35119,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 - `pkg/gateway/admin/pools.go:81` (`WithPools`), `pkg/gateway/admin/credential_pools.go:88-91` (`WithCredentialPools`), `pkg/gateway/admin/delegation_policies.go:107` (`WithDelegationPolicies`), and `pkg/gateway/admin/environments.go:15` (`WithEnvironments`) all exist for their respective CRUD endpoints but are not wired into the bootstrap upsert.
 
 **Impact:** Day-1 seed of pools (which §17.6:429 marks as **required** for a functional deployment, "sessions require warm pods"), and Phase-15 environment seed (required by the `noEnvironmentPolicy: deny-all` Option B at §17.6:438) cannot be performed via the bootstrap path. Operators must add a second post-install step (or call `POST /v1/admin/pools` etc. directly), which contradicts the §24.1 "one-shot seed" contract.
+
+**Resolution (commit `0866e9fb`):** Closed by F-17.6.2 in the same batch — the bootstrap `BootstrapRequest` now carries `pools`, `credentialPools`, `delegationPolicies`, and `environments`, the gateway wires each through a validating upsert, and the chart ConfigMap renders all of them. The CLI's exit-code/skip mapping (`bootstrapResult.sections()`) was extended to the new types so a partial seed of a pool or environment surfaces as exit 2.
 
 ---
 
