@@ -14,8 +14,12 @@ The Runtime CRD carries the type, image, integration level, execution
 mode, isolation profile, allowed resource classes, supported providers,
 the §5.1 capabilities block (interaction + injection), the §5.1
 runtimeOptionsSchema URL the §26 sections enumerate, the §4.9
-credentialCapabilities.proxyDialect set, and the §8.3
-delegationPolicyRef. F-26.9.2 / F-26.10.2 / F-26.11.2.
+credentialCapabilities.proxyDialect set, the §8.3 delegationPolicyRef,
+and the §26.2 coding-agent shared blocks (limits, setupCommandPolicy,
+setupPolicy, defaultPoolConfig, agentInterface). The §26.3 labels
+(maintainer, upstream) are stamped onto the object's metadata.labels.
+F-26.2.1 / F-26.9.2 / F-26.10.2 / F-26.11.2 / F-26.3.2 / F-26.3.4 /
+F-26.3.5.
 */ -}}
 {{- if .Values.referenceRuntimes.enabled }}
 {{- range .Values.referenceRuntimes.catalog }}
@@ -27,6 +31,9 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
     lenny.dev/reference-runtime: "true"
+    {{- range $k, $v := .labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
 spec:
   type: agent
   image: {{ .image }}
@@ -48,6 +55,26 @@ spec:
   {{- end }}
   {{- with .credentialCapabilities }}
   credentialCapabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .limits }}
+  limits:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .setupCommandPolicy }}
+  setupCommandPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .setupPolicy }}
+  setupPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .defaultPoolConfig }}
+  defaultPoolConfig:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .agentInterface }}
+  agentInterface:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- with .delegationPolicyRef }}

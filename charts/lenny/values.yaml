@@ -2057,6 +2057,54 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [anthropic]
+      # spec: §26.3 lines 166-169 — the §26.2 shared coding-agent limits
+      # (maxSessionAge 14400s, maxUploadSize 500MB = 524288000 bytes,
+      # maxRequestInputWaitSeconds 1800). F-26.2.1 / F-26.3.2.
+      limits:
+        maxSessionAgeSeconds: 14400
+        maxUploadSizeBytes: 524288000
+        maxRequestInputWaitSeconds: 1800
+      # spec: §26.3 lines 170-173 — the §26.2 shared setupCommandPolicy:
+      # allowlist of package-manager prefixes, argv-form (shell false),
+      # capped at 20 commands. F-26.2.1 / F-26.3.4.
+      setupCommandPolicy:
+        mode: allowlist
+        shell: false
+        allowlist: [npm, pnpm, yarn, pip, poetry, go, cargo, make, mvn, gradle, apt-get, chmod, mkdir, cp, mv, ln]
+        maxCommands: 20
+      # spec: §26.3 lines 174-176 — the §26.2 shared setupPolicy (600s cap,
+      # fail on timeout). F-26.2.1 / F-26.3.4.
+      setupPolicy:
+        timeoutSeconds: 600
+        onTimeout: fail
+      # spec: §26.3 lines 181-184 — the §26.2 shared defaultPoolConfig
+      # (warmCount 2, resourceClass medium, egressProfile restricted).
+      # F-26.2.1 / F-26.3.5.
+      defaultPoolConfig:
+        warmCount: 2
+        resourceClass: medium
+        egressProfile: restricted
+      # spec: §26.3 lines 185-199 — the claude-code agentInterface: the
+      # accepted/emitted media types and the declared coding skills.
+      # F-26.2.1 / F-26.3.5.
+      agentInterface:
+        description: Claude Code — Anthropic's general-purpose coding agent
+        inputModes:
+          - {type: text/plain}
+        outputModes:
+          - {type: text/plain, role: primary}
+          - {type: application/json, role: tool_events}
+        supportsWorkspaceFiles: true
+        skills:
+          - {id: code, name: Coding, description: "Read, edit, and create code across a repository"}
+          - {id: debug, name: Debugging, description: "Reproduce and diagnose defects"}
+          - {id: refactor, name: Refactoring, description: "Restructure code without behavior change"}
+          - {id: review, name: Code review, description: "Review diffs and suggest improvements"}
+      # spec: §26.3 lines 200-202 — the §26.3 maintainer/upstream labels,
+      # stamped onto the Runtime object's metadata.labels. F-26.3.5.
+      labels:
+        maintainer: lennylabs
+        upstream: anthropic/claude-code
     # spec: §26.4 lines 244-256 — gemini-cli inherits the §26.2 shared
     # coding-agent capabilities and declares proxyDialect: [google].
     - name: gemini-cli
@@ -2073,6 +2121,25 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [google]
+      # spec: §26.2 lines 81-92 — the shared coding-agent limits,
+      # setupCommandPolicy, setupPolicy, and defaultPoolConfig the §26.4
+      # gemini-cli entry inherits. F-26.2.1 / F-26.2.3.
+      limits:
+        maxSessionAgeSeconds: 14400
+        maxUploadSizeBytes: 524288000
+        maxRequestInputWaitSeconds: 1800
+      setupCommandPolicy:
+        mode: allowlist
+        shell: false
+        allowlist: [npm, pnpm, yarn, pip, poetry, go, cargo, make, mvn, gradle, apt-get, chmod, mkdir, cp, mv, ln]
+        maxCommands: 20
+      setupPolicy:
+        timeoutSeconds: 600
+        onTimeout: fail
+      defaultPoolConfig:
+        warmCount: 2
+        resourceClass: medium
+        egressProfile: restricted
     # spec: §26.5 lines 264-278 — codex inherits the §26.2 shared
     # coding-agent capabilities and declares proxyDialect: [openai].
     - name: codex
@@ -2089,6 +2156,25 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [openai]
+      # spec: §26.2 lines 81-92 — the shared coding-agent limits,
+      # setupCommandPolicy, setupPolicy, and defaultPoolConfig the §26.5
+      # codex entry inherits. F-26.2.1 / F-26.2.3.
+      limits:
+        maxSessionAgeSeconds: 14400
+        maxUploadSizeBytes: 524288000
+        maxRequestInputWaitSeconds: 1800
+      setupCommandPolicy:
+        mode: allowlist
+        shell: false
+        allowlist: [npm, pnpm, yarn, pip, poetry, go, cargo, make, mvn, gradle, apt-get, chmod, mkdir, cp, mv, ln]
+        maxCommands: 20
+      setupPolicy:
+        timeoutSeconds: 600
+        onTimeout: fail
+      defaultPoolConfig:
+        warmCount: 2
+        resourceClass: medium
+        egressProfile: restricted
     # spec: §26.6 lines 295-300 — cursor-cli declares cursor_direct,
     # the new `cursor` LLM-proxy dialect (§4.9 / §26.6 line 297), and
     # the v1 runtimeOptionsSchema URL. F-26.6.1 / F-26.6.2.
@@ -2106,6 +2192,25 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [cursor]
+      # spec: §26.2 lines 81-92 — the shared coding-agent limits,
+      # setupCommandPolicy, setupPolicy, and defaultPoolConfig the §26.6
+      # cursor-cli entry inherits. F-26.2.1 / F-26.2.3.
+      limits:
+        maxSessionAgeSeconds: 14400
+        maxUploadSizeBytes: 524288000
+        maxRequestInputWaitSeconds: 1800
+      setupCommandPolicy:
+        mode: allowlist
+        shell: false
+        allowlist: [npm, pnpm, yarn, pip, poetry, go, cargo, make, mvn, gradle, apt-get, chmod, mkdir, cp, mv, ln]
+        maxCommands: 20
+      setupPolicy:
+        timeoutSeconds: 600
+        onTimeout: fail
+      defaultPoolConfig:
+        warmCount: 2
+        resourceClass: medium
+        egressProfile: restricted
     # spec: §26.1 line 22 anchors `chat` at Standard ("the minimum useful
     # runtime"). Every other reference runtime is Full; the chart value
     # MUST match the spec catalog row so the registered Runtime CRD

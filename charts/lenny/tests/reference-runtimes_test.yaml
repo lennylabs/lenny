@@ -243,3 +243,118 @@ tests:
       - equal:
           path: spec.delegationPolicyRef
           value: crewai-default
+
+  # spec: §26.3 lines 166-169 — claude-code declares the §26.2 shared
+  # limits (maxSessionAge 14400s, maxUploadSize 500MB, request-input wait
+  # 1800s). The chart MUST render them so the §11.3 / §6.2 caps the
+  # registered runtime advertises match the spec. F-26.2.1 / F-26.3.2.
+  - it: stamps the §26.2 shared limits on claude-code per §26.3 lines 166-169
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.limits.maxSessionAgeSeconds
+          value: 14400
+      - equal:
+          path: spec.limits.maxUploadSizeBytes
+          value: 524288000
+      - equal:
+          path: spec.limits.maxRequestInputWaitSeconds
+          value: 1800
+
+  # spec: §26.3 lines 170-176 — claude-code declares the §26.2 shared
+  # setupCommandPolicy (allowlist mode, shell false, maxCommands 20) and
+  # setupPolicy (600s, fail). F-26.2.1 / F-26.3.4.
+  - it: stamps the §26.2 setupCommandPolicy + setupPolicy on claude-code per §26.3 lines 170-176
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.setupCommandPolicy.mode
+          value: allowlist
+      - equal:
+          path: spec.setupCommandPolicy.shell
+          value: false
+      - equal:
+          path: spec.setupCommandPolicy.maxCommands
+          value: 20
+      - contains:
+          path: spec.setupCommandPolicy.allowlist
+          content: npm
+      - equal:
+          path: spec.setupPolicy.timeoutSeconds
+          value: 600
+      - equal:
+          path: spec.setupPolicy.onTimeout
+          value: fail
+
+  # spec: §26.3 lines 181-184 — claude-code declares the §26.2 shared
+  # defaultPoolConfig (warmCount 2, resourceClass medium, egressProfile
+  # restricted). F-26.2.1 / F-26.3.5.
+  - it: stamps the §26.2 defaultPoolConfig on claude-code per §26.3 lines 181-184
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.defaultPoolConfig.warmCount
+          value: 2
+      - equal:
+          path: spec.defaultPoolConfig.resourceClass
+          value: medium
+      - equal:
+          path: spec.defaultPoolConfig.egressProfile
+          value: restricted
+
+  # spec: §26.3 lines 185-199 — claude-code declares the agentInterface
+  # with its coding skills and media types. F-26.2.1 / F-26.3.5.
+  - it: stamps the agentInterface skills on claude-code per §26.3 lines 185-199
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.agentInterface.supportsWorkspaceFiles
+          value: true
+      - equal:
+          path: spec.agentInterface.skills[0].id
+          value: code
+      - equal:
+          path: spec.agentInterface.inputModes[0].type
+          value: text/plain
+
+  # spec: §26.3 lines 200-202 — the maintainer/upstream labels are stamped
+  # onto the Runtime object's metadata.labels. F-26.3.5.
+  - it: stamps the §26.3 maintainer/upstream labels on claude-code
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: metadata.labels.maintainer
+          value: lennylabs
+      - equal:
+          path: metadata.labels["upstream"]
+          value: anthropic/claude-code
+
+  # spec: §26.2 lines 81-92 — the shared coding-agent blocks are inherited
+  # by gemini-cli, codex, and cursor-cli. F-26.2.1 / F-26.2.3.
+  - it: stamps the §26.2 shared coding-agent blocks on gemini-cli
+    documentSelector:
+      path: metadata.name
+      value: gemini-cli
+    asserts:
+      - equal:
+          path: spec.limits.maxSessionAgeSeconds
+          value: 14400
+      - equal:
+          path: spec.setupCommandPolicy.mode
+          value: allowlist
+      - equal:
+          path: spec.setupPolicy.onTimeout
+          value: fail
+      - equal:
+          path: spec.defaultPoolConfig.egressProfile
+          value: restricted

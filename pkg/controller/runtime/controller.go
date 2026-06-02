@@ -9,14 +9,14 @@
 // sets the §5.1 `Registered` status condition the CRD's kubebuilder
 // annotation promises.
 //
-// The CRD carries the registration subset documented in §5.1 and the
-// §26 catalog template (type, image, integration level, execution mode,
-// isolation profile, allowed resource classes, supported providers, and
-// the credential-capabilities block). The richer §5.1 fields
-// (capabilities, limits, the runtime options schema, the agent
-// interface) are configured through the admin API after the CRD
-// registers the base record; the reconciler's update path mirrors only
-// the CRD-owned fields and leaves the admin-configured fields intact.
+// The CRD carries the §5.1 registration fields and the §26 catalog
+// template (type, image, integration level, execution mode, isolation
+// profile, allowed resource classes, supported providers, the
+// credential-capabilities block, capabilities, the runtimeOptionsSchema
+// ref, limits, setupCommandPolicy, setupPolicy, defaultPoolConfig, and the
+// agentInterface). The reconciler's update path mirrors the CRD-owned
+// fields and leaves the few admin-only fields (publishedMetadata, tool
+// capability overrides) intact.
 //
 // Deletion is handled through a finalizer: removing the Runtime CRD
 // soft-deletes the mirrored registry row (the gateway then refuses new
@@ -182,11 +182,10 @@ func (r *Reconciler) mirror(ctx context.Context, rt *lennyv1.Runtime) error {
 
 // updateExisting overwrites only the CRD-owned fields on the stored
 // runtime, re-applies the §5.1 defaults, and clears any prior
-// soft-delete so a re-applied CRD reactivates the registration. Fields
-// the CRD does not model (capabilities, limits, agentInterface, the
-// runtime options schema, setup policy) are left untouched so an
-// admin-API configuration layered on top of the CRD base survives a
-// re-reconcile.
+// soft-delete so a re-applied CRD reactivates the registration. The few
+// admin-only fields the CRD does not model (publishedMetadata, tool
+// capability overrides) are left untouched so an admin-API configuration
+// layered on top of the CRD base survives a re-reconcile.
 func (r *Reconciler) updateExisting(ctx context.Context, rt *lennyv1.Runtime) error {
 	_, err := r.Store.Update(ctx, rt.Name, func(stored *runtimestore.Runtime) error {
 		applyCRDFields(stored, rt)
@@ -253,7 +252,95 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// policy at session-creation time. §26.11 declares the field required
 	// on the crewai runtime. F-26.11.2.
 	dst.DelegationPolicyRef = rt.Spec.DelegationPolicyRef
+	// spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines 166-169 —
+	// limits is mirrored from the CRD so the §11.3 / §6.2 session-age
+	// watchdog, the upload cap, and the inter-agent request_input timeout
+	// read the per-runtime caps the §26 coding-agent catalog declares.
+	// F-26.2.1 / F-26.3.2.
+	dst.Limits = limitsFromCRD(rt.Spec.Limits)
+	// spec: §5.1 lines 90-92; §26.3 lines 174-176 — setupPolicy is mirrored
+	// from the CRD so the §6.2 finalizing-state watchdog enforces the
+	// runtime-declared setup timeout and onTimeout disposition. F-26.2.1 /
+	// F-26.3.4.
+	dst.SetupPolicy = setupPolicyFromCRD(rt.Spec.SetupPolicy)
+	// spec: §5.1 lines 97-100; §26.3 lines 181-184 — defaultPoolConfig is
+	// mirrored from the CRD so the §5.2 pool resolver consults the
+	// runtime-declared warmCount / resourceClass / egressProfile before
+	// falling back to platform defaults. F-26.2.1 / F-26.3.5.
+	dst.DefaultPoolConfig = defaultPoolConfigFromCRD(rt.Spec.DefaultPoolConfig)
+	// spec: §5.1 lines 102-130; §26.3 lines 185-199 — agentInterface is
+	// mirrored from the CRD so the registered Runtime advertises the
+	// agent's declared skills and the §15 A2A agent-card auto-generation
+	// has a source. F-26.2.1 / F-26.3.5.
+	dst.AgentInterface = agentInterfaceFromCRD(rt.Spec.AgentInterface)
 	dst.Labels = domainLabels(rt.Labels)
+}
+
+// limitsFromCRD maps the §5.1 limits block. A nil CRD block mirrors to a
+// nil registry block (the runtime declares no per-runtime caps and the
+// gateway falls back to platform defaults). spec: §5.1 lines 76-79 —
+// F-26.2.1 / F-26.3.2.
+func limitsFromCRD(l *lennyv1.RuntimeLimits) *runtimestore.Limits {
+	if l == nil {
+		return nil
+	}
+	return &runtimestore.Limits{
+		MaxSessionAgeSeconds:       l.MaxSessionAgeSeconds,
+		MaxUploadSizeBytes:         l.MaxUploadSizeBytes,
+		MaxRequestInputWaitSeconds: l.MaxRequestInputWaitSeconds,
+		MaxElicitationWaitSeconds:  l.MaxElicitationWaitSeconds,
+		MaxElicitationsPerSession:  l.MaxElicitationsPerSession,
+	}
+}
+
+// setupPolicyFromCRD maps the §5.1 setupPolicy block. A nil CRD block
+// mirrors to a nil registry block (no aggregate setup cap). spec: §5.1
+// lines 90-92 — F-26.2.1 / F-26.3.4.
+func setupPolicyFromCRD(p *lennyv1.SetupPolicy) *runtimestore.SetupPolicy {
+	if p == nil {
+		return nil
+	}
+	return &runtimestore.SetupPolicy{
+		TimeoutSeconds: p.TimeoutSeconds,
+		OnTimeout:      runtimestore.SetupTimeoutDisposition(p.OnTimeout),
+	}
+}
+
+// defaultPoolConfigFromCRD maps the §5.1 defaultPoolConfig block. A nil CRD
+// block mirrors to a nil registry block (the §5.2 pool resolver falls back
+// to platform defaults). spec: §5.1 lines 97-100 — F-26.2.1 / F-26.3.5.
+func defaultPoolConfigFromCRD(c *lennyv1.DefaultPoolConfig) *runtimestore.DefaultPoolConfig {
+	if c == nil {
+		return nil
+	}
+	return &runtimestore.DefaultPoolConfig{
+		WarmCount:     c.WarmCount,
+		ResourceClass: c.ResourceClass,
+		EgressProfile: c.EgressProfile,
+	}
+}
+
+// agentInterfaceFromCRD maps the §5.1 agentInterface descriptor. A nil CRD
+// block mirrors to a nil registry block (the runtime declares no
+// agentInterface). spec: §5.1 lines 102-130 — F-26.2.1 / F-26.3.5.
+func agentInterfaceFromCRD(a *lennyv1.AgentInterface) *runtimestore.AgentInterface {
+	if a == nil {
+		return nil
+	}
+	out := &runtimestore.AgentInterface{
+		Description:            a.Description,
+		SupportsWorkspaceFiles: a.SupportsWorkspaceFiles,
+	}
+	for _, m := range a.InputModes {
+		out.InputModes = append(out.InputModes, runtimestore.AgentInterfaceMode{Type: m.Type, Role: m.Role})
+	}
+	for _, m := range a.OutputModes {
+		out.OutputModes = append(out.OutputModes, runtimestore.AgentInterfaceMode{Type: m.Type, Role: m.Role})
+	}
+	for _, s := range a.Skills {
+		out.Skills = append(out.Skills, runtimestore.AgentInterfaceSkill{ID: s.ID, Name: s.Name, Description: s.Description})
+	}
+	return out
 }
 
 // credentialCapabilitiesFromCRD maps the §5.1 credentialCapabilities

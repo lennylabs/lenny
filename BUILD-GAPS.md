@@ -40870,7 +40870,7 @@ This audit checks each requirement against the chart (`/Users/joan/projects/lenn
 
 ### Findings
 
-### - [ ] F-26.2.1 — 2-01 — Runtime schema does not carry the §26.2 shared fields, so the platform cannot store, validate, or enforce them [High] — OPEN
+### - [x] F-26.2.1 — 2-01 — Runtime schema does not carry the §26.2 shared fields, so the platform cannot store, validate, or enforce them [High] — CLOSED
 
 **Spec:** §26.2 lines 55–93 normatively declare three structured blocks every coding-agent runtime must carry on its `Runtime` record: `capabilities` (with `preConnect`), `credentialCapabilities` (`hotRotation`, `proxyDialect`), and `limits` (`maxSessionAge`, `maxUploadSize`, `maxRequestInputWaitSeconds`). §26.3–§26.6 then repeat these in each per-runtime spec ("All four coding-agent runtimes declare …"). The §5.1 Runtime record is the authoritative store.
 
@@ -41092,7 +41092,7 @@ not see the capabilities the spec lists as inherent to `claude-code`.
 
 **Resolution:** Closed by the §26 CRD-extension landed under F-26.9.2 (single fix). `RuntimeSpec.Capabilities` (interaction + injection.{supported, modes} + preConnect) is now CRD-modeled; the runtime controller's `applyCRDFields` mirrors it into `runtimestore.Runtime.Capabilities`. The chart template renders the block and `values.yaml` populates claude-code per §26.3 line 151 (multi_turn + immediate+queued). Tier-2 helm-unittest `stamps capabilities.interaction = multi_turn on claude-code per §26.3 line 151` pins the rendered Runtime CR.
 
-### - [ ] F-26.3.2 — 2  `limits` (maxSessionAge, maxUploadSize, maxRequestInputWaitSeconds) not registered [Medium] — OPEN
+### - [x] F-26.3.2 — 2  `limits` (maxSessionAge, maxUploadSize, maxRequestInputWaitSeconds) not registered [Medium] — CLOSED
 
 Spec §26.3 lines 166–169 require:
 
@@ -41127,7 +41127,7 @@ dialect, even though §26.3 says the runtime supports both.
 
 **Resolution:** First-half evidence is stale — `RuntimeSpec.CredentialCapabilities` exists on the CRD (pkg/apis/lenny/v1/runtime_types.go:71); the controller's `credentialCapabilitiesFromCRD` already mirrors it. Second-half (chart) closed by the §26 chart-template extension landed under F-26.9.2: the template now renders `credentialCapabilities` from each catalog value, and `values.yaml` populates claude-code per §26.3 line 165 with `hotRotation: true` + `proxyDialect: [anthropic]`. Tier-2 helm-unittest `stamps credentialCapabilities.proxyDialect on claude-code per §26.3 line 165` pins the rendered Runtime CR.
 
-### - [ ] F-26.3.4 — 4  `setupCommandPolicy` and `setupPolicy` not registered [Medium] — OPEN
+### - [x] F-26.3.4 — 4  `setupCommandPolicy` and `setupPolicy` not registered [Medium] — CLOSED
 
 Spec §26.3 lines 170–177 require:
 
@@ -41152,7 +41152,7 @@ adjacent gap because the spec uses `setupCommandPolicy.mode: allowlist`
 + `shell: false` to bound what tenants can execute during
 materialization.
 
-### - [ ] F-26.3.5 — 5  `agentInterface`, `runtimeOptionsSchema`, `defaultPoolConfig`, `labels` not registered [Medium] — OPEN
+### - [x] F-26.3.5 — 5  `agentInterface`, `runtimeOptionsSchema`, `defaultPoolConfig`, `labels` not registered [Medium] — CLOSED
 
 Spec §26.3 lines 178–199 require an `agentInterface` block (with
 `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, and

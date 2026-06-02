@@ -85,7 +85,7 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 	dst := runtimestore.Runtime{
 		Name:               "scanner",
 		Description:        "configured via admin API",
-		AgentInterface:     &runtimestore.AgentInterface{},
+		AgentInterface:     &runtimestore.AgentInterface{Description: "admin-set"},
 		MinPlatformVersion: "1.4.0",
 	}
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + hex64, IntegrationLevel: "basic"}}
@@ -96,11 +96,14 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 	if dst.Description != "configured via admin API" {
 		t.Errorf("description wiped: %q", dst.Description)
 	}
-	if dst.AgentInterface == nil {
-		t.Error("agentInterface wiped")
-	}
 	if dst.MinPlatformVersion != "1.4.0" {
 		t.Errorf("minPlatformVersion wiped: %q", dst.MinPlatformVersion)
+	}
+	// agentInterface is now a §26 CRD-owned field (F-26.2.1 / F-26.3.5):
+	// a CRD that declares none clears the registry value rather than
+	// preserving an admin-set one, matching how capabilities/limits behave.
+	if dst.AgentInterface != nil {
+		t.Errorf("agentInterface not CRD-owned: %+v", dst.AgentInterface)
 	}
 }
 
@@ -383,6 +386,125 @@ func TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1(t *te
 	}
 	if dst.DelegationPolicyRef != "crewai-default" {
 		t.Errorf("DelegationPolicyRef = %q, want %q", dst.DelegationPolicyRef, "crewai-default")
+	}
+}
+
+// TestLimitsFromCRD_spec_5_1 verifies the §5.1 limits block maps field for
+// field, and a nil CRD block maps to a nil registry block (platform
+// defaults). spec: §5.1 lines 76-79; §26.3 lines 166-169 — F-26.2.1 /
+// F-26.3.2.
+func TestLimitsFromCRD_spec_5_1(t *testing.T) {
+	if got := limitsFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.RuntimeLimits{
+		MaxSessionAgeSeconds:       14400,
+		MaxUploadSizeBytes:         524288000,
+		MaxRequestInputWaitSeconds: 1800,
+		MaxElicitationWaitSeconds:  600,
+		MaxElicitationsPerSession:  50,
+	}
+	got := limitsFromCRD(src)
+	if got == nil {
+		t.Fatal("limitsFromCRD(non-nil) = nil")
+	}
+	if got.MaxSessionAgeSeconds != 14400 || got.MaxUploadSizeBytes != 524288000 ||
+		got.MaxRequestInputWaitSeconds != 1800 || got.MaxElicitationWaitSeconds != 600 ||
+		got.MaxElicitationsPerSession != 50 {
+		t.Errorf("limits not plumbed field-for-field: %+v", got)
+	}
+}
+
+// TestSetupPolicyFromCRD_spec_5_1 verifies the §5.1 setupPolicy block maps
+// the timeout and onTimeout disposition, and a nil CRD block maps to nil.
+// spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 / F-26.3.4.
+func TestSetupPolicyFromCRD_spec_5_1(t *testing.T) {
+	if got := setupPolicyFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	got := setupPolicyFromCRD(&lennyv1.SetupPolicy{TimeoutSeconds: 600, OnTimeout: "fail"})
+	if got == nil || got.TimeoutSeconds != 600 || got.OnTimeout != runtimestore.SetupTimeoutFail {
+		t.Errorf("setupPolicy not plumbed: %+v", got)
+	}
+}
+
+// TestDefaultPoolConfigFromCRD_spec_5_1 verifies the §5.1 defaultPoolConfig
+// block maps warmCount, resourceClass, and egressProfile, and a nil CRD
+// block maps to nil. spec: §5.1 lines 97-100; §26.3 lines 181-184 —
+// F-26.2.1 / F-26.3.5.
+func TestDefaultPoolConfigFromCRD_spec_5_1(t *testing.T) {
+	if got := defaultPoolConfigFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	got := defaultPoolConfigFromCRD(&lennyv1.DefaultPoolConfig{
+		WarmCount: 2, ResourceClass: "medium", EgressProfile: "restricted",
+	})
+	if got == nil || got.WarmCount != 2 || got.ResourceClass != "medium" || got.EgressProfile != "restricted" {
+		t.Errorf("defaultPoolConfig not plumbed: %+v", got)
+	}
+}
+
+// TestAgentInterfaceFromCRD_spec_5_1 verifies the §5.1 agentInterface
+// descriptor maps the description, media-type modes, workspace-files flag,
+// and skills, and a nil CRD block maps to nil. spec: §5.1 lines 102-130;
+// §26.3 lines 185-199 — F-26.2.1 / F-26.3.5.
+func TestAgentInterfaceFromCRD_spec_5_1(t *testing.T) {
+	if got := agentInterfaceFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.AgentInterface{
+		Description:            "Claude Code",
+		InputModes:             []lennyv1.AgentInterfaceMode{{Type: "text/plain"}},
+		OutputModes:            []lennyv1.AgentInterfaceMode{{Type: "application/json", Role: "tool_events"}},
+		SupportsWorkspaceFiles: true,
+		Skills:                 []lennyv1.AgentInterfaceSkill{{ID: "code", Name: "Coding", Description: "edit code"}},
+	}
+	got := agentInterfaceFromCRD(src)
+	if got == nil {
+		t.Fatal("agentInterfaceFromCRD(non-nil) = nil")
+	}
+	if got.Description != "Claude Code" || !got.SupportsWorkspaceFiles {
+		t.Errorf("agentInterface scalars not plumbed: %+v", got)
+	}
+	if len(got.InputModes) != 1 || got.InputModes[0].Type != "text/plain" {
+		t.Errorf("InputModes not plumbed: %+v", got.InputModes)
+	}
+	if len(got.OutputModes) != 1 || got.OutputModes[0].Role != "tool_events" {
+		t.Errorf("OutputModes not plumbed: %+v", got.OutputModes)
+	}
+	if len(got.Skills) != 1 || got.Skills[0].ID != "code" {
+		t.Errorf("Skills not plumbed: %+v", got.Skills)
+	}
+}
+
+// TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2 verifies the §26.2
+// shared coding-agent blocks (limits, setupPolicy, defaultPoolConfig) and
+// the §26.3 agentInterface all land on the registry runtime end-to-end.
+// spec: §26.2 lines 81-92; §26.3 lines 166-199 — F-26.2.1 / F-26.3.2 /
+// F-26.3.4 / F-26.3.5.
+func TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2(t *testing.T) {
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+		Type:              "agent",
+		Image:             "img@sha256:" + hex64,
+		IntegrationLevel:  "full",
+		Limits:            &lennyv1.RuntimeLimits{MaxSessionAgeSeconds: 14400, MaxUploadSizeBytes: 524288000, MaxRequestInputWaitSeconds: 1800},
+		SetupPolicy:       &lennyv1.SetupPolicy{TimeoutSeconds: 600, OnTimeout: "fail"},
+		DefaultPoolConfig: &lennyv1.DefaultPoolConfig{WarmCount: 2, ResourceClass: "medium", EgressProfile: "restricted"},
+		AgentInterface:    &lennyv1.AgentInterface{Description: "Claude Code", SupportsWorkspaceFiles: true},
+	}}
+	var dst runtimestore.Runtime
+	applyCRDFields(&dst, rt)
+	if dst.Limits == nil || dst.Limits.MaxSessionAgeSeconds != 14400 {
+		t.Errorf("Limits not plumbed: %+v", dst.Limits)
+	}
+	if dst.SetupPolicy == nil || dst.SetupPolicy.TimeoutSeconds != 600 {
+		t.Errorf("SetupPolicy not plumbed: %+v", dst.SetupPolicy)
+	}
+	if dst.DefaultPoolConfig == nil || dst.DefaultPoolConfig.EgressProfile != "restricted" {
+		t.Errorf("DefaultPoolConfig not plumbed: %+v", dst.DefaultPoolConfig)
+	}
+	if dst.AgentInterface == nil || dst.AgentInterface.Description != "Claude Code" {
+		t.Errorf("AgentInterface not plumbed: %+v", dst.AgentInterface)
 	}
 }
 

@@ -63,6 +63,88 @@ spec:
               runtime_definitions registry; the CRD is the declarative source.
             x-kubernetes-preserve-unknown-fields: true
             properties:
+              agentInterface:
+                description: |-
+                  AgentInterface is the §5.1 agentInterface descriptor on a
+                  type:agent runtime: the human-readable description, the input and
+                  output media types, the workspace-files flag, and the declared
+                  skills. §26 reference runtimes declare it so the registered Runtime
+                  advertises the agent's skills and the §15 A2A agent-card auto-
+                  generation has a source. The runtime controller mirrors it into the
+                  gateway registry; the admin path regenerates the agent card from it.
+                  It is nil for type:mcp runtimes and for type:agent runtimes that omit
+                  the block. spec: §5.1 lines 102-130; §26.3 lines 185-199 — F-26.2.1 /
+                  F-26.3.5.
+                properties:
+                  description:
+                    description: Description is the human-readable summary of the
+                      runtime's role.
+                    type: string
+                  inputModes:
+                    description: InputModes enumerates the media types the runtime
+                      accepts.
+                    items:
+                      description: |-
+                        AgentInterfaceMode is one entry in AgentInterface.InputModes or
+                        AgentInterface.OutputModes.
+                      properties:
+                        role:
+                          description: Role is an optional tag such as "primary".
+                          type: string
+                        type:
+                          description: Type is the IANA media type, for example "text/plain".
+                          minLength: 1
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  outputModes:
+                    description: OutputModes enumerates the media types the runtime
+                      emits.
+                    items:
+                      description: |-
+                        AgentInterfaceMode is one entry in AgentInterface.InputModes or
+                        AgentInterface.OutputModes.
+                      properties:
+                        role:
+                          description: Role is an optional tag such as "primary".
+                          type: string
+                        type:
+                          description: Type is the IANA media type, for example "text/plain".
+                          minLength: 1
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  skills:
+                    description: Skills enumerates the discrete capabilities the runtime
+                      advertises.
+                    items:
+                      description: AgentInterfaceSkill is one entry in AgentInterface.Skills.
+                      properties:
+                        description:
+                          description: Description elaborates on what the skill does.
+                          type: string
+                        id:
+                          description: ID is the stable skill identifier, for example
+                            "review".
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the human-readable skill name.
+                          type: string
+                      required:
+                      - id
+                      type: object
+                    type: array
+                  supportsWorkspaceFiles:
+                    description: |-
+                      SupportsWorkspaceFiles signals that the runtime honors workspace
+                      files in a TaskSpec.
+                    type: boolean
+                type: object
               allowedResourceClasses:
                 description: |-
                   AllowedResourceClasses lists the §5 resource classes a session
@@ -155,6 +237,31 @@ spec:
                       type: string
                     type: array
                 type: object
+              defaultPoolConfig:
+                description: |-
+                  DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
+                  runtime-declared default pool sizing the §5.2 pool resolver consults
+                  before falling back to platform defaults. The §26 coding-agent
+                  catalog declares it (warmCount 2, resourceClass medium, egressProfile
+                  restricted). The runtime controller mirrors it into the gateway
+                  registry. An empty block leaves the platform defaults. spec: §5.1
+                  lines 97-100; §26.3 lines 181-184 — F-26.2.1 / F-26.3.5.
+                properties:
+                  egressProfile:
+                    description: |-
+                      EgressProfile is the default §13.2 egress profile for the pool. The
+                      §26 coding-agent catalog declares restricted.
+                    type: string
+                  resourceClass:
+                    description: ResourceClass is the default §5.1 resource class
+                      for the pool.
+                    type: string
+                  warmCount:
+                    description: WarmCount is the default number of warm pods the
+                      pool keeps.
+                    minimum: 0
+                    type: integer
+                type: object
               delegationPolicyRef:
                 description: |-
                   DelegationPolicyRef is the §5.1 delegationPolicyRef: the
@@ -211,6 +318,55 @@ spec:
                 - sandboxed
                 - microvm
                 type: string
+              limits:
+                description: |-
+                  Limits is the §5.1 limits block: the per-runtime session-age,
+                  upload-size, and §11.3 request-input / elicitation wait caps. The
+                  §26 coding-agent catalog declares it (maxSessionAge 14400,
+                  maxUploadSize 500MB, maxRequestInputWaitSeconds 1800). The runtime
+                  controller mirrors it into the gateway registry so the
+                  §11.3 / §6.2 session-age watchdog, the upload-handler cap, and the
+                  inter-agent request_input timeout read the values the deployer
+                  declared on the Runtime resource. An empty block leaves the platform
+                  defaults. spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines
+                  166-169 — F-26.2.1 / F-26.3.2.
+                properties:
+                  maxElicitationWaitSeconds:
+                    description: |-
+                      MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+                      lenny/request_elicitation wait timeout in seconds. Zero selects the
+                      platform default (600s).
+                    minimum: 0
+                    type: integer
+                  maxElicitationsPerSession:
+                    description: |-
+                      MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+                      elicitation budget. Zero selects the platform default (50).
+                    minimum: 0
+                    type: integer
+                  maxRequestInputWaitSeconds:
+                    description: |-
+                      MaxRequestInputWaitSeconds is the §11.3 inter-agent
+                      lenny/request_input timeout in seconds. Zero selects the platform
+                      default. The §26 coding-agent catalog declares 1800 (30 minutes).
+                    minimum: 0
+                    type: integer
+                  maxSessionAgeSeconds:
+                    description: |-
+                      MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
+                      declares no per-runtime session-age cap. The §26 coding-agent
+                      catalog declares 14400 (4 hours).
+                    minimum: 0
+                    type: integer
+                  maxUploadSizeBytes:
+                    description: |-
+                      MaxUploadSizeBytes caps a single client upload in bytes. Zero
+                      declares no per-runtime upload cap. The §26 coding-agent catalog
+                      declares 500 MB (524288000 bytes).
+                    format: int64
+                    minimum: 0
+                    type: integer
+                type: object
               runtimeOptionsSchemaRef:
                 description: |-
                   RuntimeOptionsSchemaRef is the §5.1 / §26 runtimeOptionsSchema URL
@@ -270,6 +426,33 @@ spec:
                       whitespace and execs the argv directly, neutering shell
                       metacharacters per §7.5 line 490.
                     type: boolean
+                type: object
+              setupPolicy:
+                description: |-
+                  SetupPolicy is the §5.1 setupPolicy block: the aggregate cap on the
+                  pod setup phase and the disposition when the cap is hit. The §26
+                  coding-agent catalog declares it (timeoutSeconds 600, onTimeout
+                  fail). The runtime controller mirrors it into the gateway registry
+                  so the §6.2 finalizing-state watchdog enforces the runtime-declared
+                  setup timeout. An empty block leaves the runtime with no aggregate
+                  setup cap. spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 /
+                  F-26.3.4.
+                properties:
+                  onTimeout:
+                    description: |-
+                      OnTimeout is the disposition when the cap is exceeded. An empty value
+                      is treated as the conservative "fail" default.
+                    enum:
+                    - fail
+                    - warn
+                    type: string
+                  timeoutSeconds:
+                    description: |-
+                      TimeoutSeconds is the aggregate cap on the setup phase in seconds.
+                      Zero declares no aggregate cap (§5.1 line 260). The §26 coding-agent
+                      catalog declares 600.
+                    minimum: 0
+                    type: integer
                 type: object
               sharedAssets:
                 description: |-

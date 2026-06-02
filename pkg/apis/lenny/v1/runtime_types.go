@@ -145,6 +145,53 @@ type RuntimeSpec struct {
 	// spec: §5.1 line 68; §26.11 line 467 — F-26.11.2.
 	// +optional
 	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
+
+	// Limits is the §5.1 limits block: the per-runtime session-age,
+	// upload-size, and §11.3 request-input / elicitation wait caps. The
+	// §26 coding-agent catalog declares it (maxSessionAge 14400,
+	// maxUploadSize 500MB, maxRequestInputWaitSeconds 1800). The runtime
+	// controller mirrors it into the gateway registry so the
+	// §11.3 / §6.2 session-age watchdog, the upload-handler cap, and the
+	// inter-agent request_input timeout read the values the deployer
+	// declared on the Runtime resource. An empty block leaves the platform
+	// defaults. spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines
+	// 166-169 — F-26.2.1 / F-26.3.2.
+	// +optional
+	Limits *RuntimeLimits `json:"limits,omitempty"`
+
+	// SetupPolicy is the §5.1 setupPolicy block: the aggregate cap on the
+	// pod setup phase and the disposition when the cap is hit. The §26
+	// coding-agent catalog declares it (timeoutSeconds 600, onTimeout
+	// fail). The runtime controller mirrors it into the gateway registry
+	// so the §6.2 finalizing-state watchdog enforces the runtime-declared
+	// setup timeout. An empty block leaves the runtime with no aggregate
+	// setup cap. spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 /
+	// F-26.3.4.
+	// +optional
+	SetupPolicy *SetupPolicy `json:"setupPolicy,omitempty"`
+
+	// DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
+	// runtime-declared default pool sizing the §5.2 pool resolver consults
+	// before falling back to platform defaults. The §26 coding-agent
+	// catalog declares it (warmCount 2, resourceClass medium, egressProfile
+	// restricted). The runtime controller mirrors it into the gateway
+	// registry. An empty block leaves the platform defaults. spec: §5.1
+	// lines 97-100; §26.3 lines 181-184 — F-26.2.1 / F-26.3.5.
+	// +optional
+	DefaultPoolConfig *DefaultPoolConfig `json:"defaultPoolConfig,omitempty"`
+
+	// AgentInterface is the §5.1 agentInterface descriptor on a
+	// type:agent runtime: the human-readable description, the input and
+	// output media types, the workspace-files flag, and the declared
+	// skills. §26 reference runtimes declare it so the registered Runtime
+	// advertises the agent's skills and the §15 A2A agent-card auto-
+	// generation has a source. The runtime controller mirrors it into the
+	// gateway registry; the admin path regenerates the agent card from it.
+	// It is nil for type:mcp runtimes and for type:agent runtimes that omit
+	// the block. spec: §5.1 lines 102-130; §26.3 lines 185-199 — F-26.2.1 /
+	// F-26.3.5.
+	// +optional
+	AgentInterface *AgentInterface `json:"agentInterface,omitempty"`
 }
 
 // RuntimeCapabilitiesCRD mirrors the §5.1 capabilities block onto the
@@ -283,6 +330,155 @@ type CredentialCapabilities struct {
 	// support.
 	// +optional
 	ProxyDialect []string `json:"proxyDialect,omitempty"`
+}
+
+// RuntimeLimits mirrors the §5.1 limits block onto the Runtime CRD so an
+// operator can declare the per-runtime session-age, upload-size, and §11.3
+// request-input / elicitation wait caps declaratively. The runtime
+// controller plumbs every field into the gateway registry's
+// runtimestore.Limits at reconciliation time. Fields carry explicit units
+// (seconds, bytes) to match the registry's typed representation. spec:
+// §5.1 lines 76-79; §11.3 lines 198-204 — F-26.2.1 / F-26.3.2.
+type RuntimeLimits struct {
+	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
+	// declares no per-runtime session-age cap. The §26 coding-agent
+	// catalog declares 14400 (4 hours).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
+
+	// MaxUploadSizeBytes caps a single client upload in bytes. Zero
+	// declares no per-runtime upload cap. The §26 coding-agent catalog
+	// declares 500 MB (524288000 bytes).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxUploadSizeBytes int64 `json:"maxUploadSizeBytes,omitempty"`
+
+	// MaxRequestInputWaitSeconds is the §11.3 inter-agent
+	// lenny/request_input timeout in seconds. Zero selects the platform
+	// default. The §26 coding-agent catalog declares 1800 (30 minutes).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
+
+	// MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+	// lenny/request_elicitation wait timeout in seconds. Zero selects the
+	// platform default (600s).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxElicitationWaitSeconds int `json:"maxElicitationWaitSeconds,omitempty"`
+
+	// MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+	// elicitation budget. Zero selects the platform default (50).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
+}
+
+// SetupTimeoutDisposition is the §5.1 setupPolicy.onTimeout enum: the
+// disposition when a runtime's pod setup phase exceeds its cap.
+// +kubebuilder:validation:Enum=fail;warn
+type SetupTimeoutDisposition string
+
+// SetupPolicy mirrors the §5.1 setupPolicy block onto the Runtime CRD: the
+// aggregate cap on the pod setup phase and the disposition when the cap is
+// hit. The runtime controller plumbs it into the gateway registry's
+// runtimestore.SetupPolicy at reconciliation time. spec: §5.1 lines 90-92;
+// §26.3 lines 174-176 — F-26.2.1 / F-26.3.4.
+type SetupPolicy struct {
+	// TimeoutSeconds is the aggregate cap on the setup phase in seconds.
+	// Zero declares no aggregate cap (§5.1 line 260). The §26 coding-agent
+	// catalog declares 600.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+
+	// OnTimeout is the disposition when the cap is exceeded. An empty value
+	// is treated as the conservative "fail" default.
+	// +optional
+	OnTimeout SetupTimeoutDisposition `json:"onTimeout,omitempty"`
+}
+
+// DefaultPoolConfig mirrors the §5.1 defaultPoolConfig block onto the
+// Runtime CRD: the default pool sizing the §5.2 pool resolver consults
+// before falling back to platform defaults. The runtime controller plumbs
+// it into the gateway registry's runtimestore.DefaultPoolConfig at
+// reconciliation time. spec: §5.1 lines 97-100; §26.3 lines 181-184 —
+// F-26.2.1 / F-26.3.5.
+type DefaultPoolConfig struct {
+	// WarmCount is the default number of warm pods the pool keeps.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	WarmCount int `json:"warmCount,omitempty"`
+
+	// ResourceClass is the default §5.1 resource class for the pool.
+	// +optional
+	ResourceClass string `json:"resourceClass,omitempty"`
+
+	// EgressProfile is the default §13.2 egress profile for the pool. The
+	// §26 coding-agent catalog declares restricted.
+	// +optional
+	EgressProfile string `json:"egressProfile,omitempty"`
+}
+
+// AgentInterface mirrors the §5.1 agentInterface descriptor onto the
+// Runtime CRD: the runtime's human-readable description, accepted and
+// emitted media types, the workspace-files flag, and the declared skills.
+// The runtime controller plumbs it into the gateway registry's
+// runtimestore.AgentInterface at reconciliation time; the admin path then
+// regenerates the §15 A2A agent card from it. type:mcp runtimes do not
+// carry an agentInterface. spec: §5.1 lines 102-130; §26.3 lines 185-199 —
+// F-26.2.1 / F-26.3.5.
+type AgentInterface struct {
+	// Description is the human-readable summary of the runtime's role.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// InputModes enumerates the media types the runtime accepts.
+	// +optional
+	InputModes []AgentInterfaceMode `json:"inputModes,omitempty"`
+
+	// OutputModes enumerates the media types the runtime emits.
+	// +optional
+	OutputModes []AgentInterfaceMode `json:"outputModes,omitempty"`
+
+	// SupportsWorkspaceFiles signals that the runtime honors workspace
+	// files in a TaskSpec.
+	// +optional
+	SupportsWorkspaceFiles bool `json:"supportsWorkspaceFiles,omitempty"`
+
+	// Skills enumerates the discrete capabilities the runtime advertises.
+	// +optional
+	Skills []AgentInterfaceSkill `json:"skills,omitempty"`
+}
+
+// AgentInterfaceMode is one entry in AgentInterface.InputModes or
+// AgentInterface.OutputModes.
+type AgentInterfaceMode struct {
+	// Type is the IANA media type, for example "text/plain".
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Type string `json:"type"`
+
+	// Role is an optional tag such as "primary".
+	// +optional
+	Role string `json:"role,omitempty"`
+}
+
+// AgentInterfaceSkill is one entry in AgentInterface.Skills.
+type AgentInterfaceSkill struct {
+	// ID is the stable skill identifier, for example "review".
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// Name is the human-readable skill name.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Description elaborates on what the skill does.
+	// +optional
+	Description string `json:"description,omitempty"`
 }
 
 // RuntimeStatus is the observed state of a Runtime.
