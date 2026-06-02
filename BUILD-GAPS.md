@@ -37709,9 +37709,11 @@ Evidence gathered via grep/find across `pkg/ops/`, `cmd/lenny-ops/`, `pkg/gatewa
 
 ### Findings
 
-### - [ ] F-25.2.1 — Gateway-side operational `EventEmitter` does not write to the Redis stream. (High) [Medium] — OPEN
+### - [x] F-25.2.1 — Gateway-side operational `EventEmitter` does not write to the Redis stream. (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.3.1, F-25.3.18, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
+**Resolution:** Stale evidence. The producer half landed when `events.StreamEmitter` (`pkg/gateway/events/streamemitter.go`) was wired into `cmd/lenny-gateway/main.go` (and the controller and token-service): when Redis is available, every `Emit` XADDs the event to `ops:events:stream` with `MAXLEN ~ DefaultStreamMaxLen` and always tees a copy into the in-process `EventBuffer` (the §25.5 fallback), inverting the previous buffer-only behavior back to the spec model. The consumer half (the read side the gateway producer feeds) is the new `RedisEventSource` from commit 97ae8442. Closed by 97ae8442 (consumer) plus the prior StreamEmitter wiring.
 
 Spec: lines 150–152 — "Internal: EventEmitter writes to **Redis stream** on state changes + in-memory ring buffer (fallback for Redis outage)". The ASCII diagram explicitly names the Redis stream as the primary destination and the in-memory buffer as the *fallback* the `lenny-ops` event stream reads "when Redis is down" (also reaffirmed at line 158: "reads Redis stream, falls back to gw buffer").
 
@@ -37852,9 +37854,11 @@ Evidence gathered via grep/find across `pkg/gateway/admin/`, `pkg/gateway/health
 
 ### Findings
 
-### - [ ] F-25.3.1 — `EventEmitter` does not write to the Redis stream. (High) [Medium] — OPEN
+### - [x] F-25.3.1 — `EventEmitter` does not write to the Redis stream. (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.18, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
+**Resolution:** Closed by F-25.2.1. The §25.3 `Emit()` Redis-stream destination is satisfied by `events.StreamEmitter`: when Redis is wired it XADDs to `ops:events:stream` (MAXLEN-approximated) and always writes the in-memory ring buffer first, so a Redis-write failure logs and returns the error while the buffer write still succeeds (the §25.3 line 703 fallback). The `lenny_ops_events_emit_failed_total` Redis-outage counter cited in the evidence is the §25.3 metrics surface tracked by F-25.3.11, not this finding. The 97ae8442 consumer closes the read side.
 
 Spec: lines 654–667 — `Emit()` writes to both `(1) Redis stream ops:events:stream via XADD with MAXLEN ~ 10000` and `(2) In-memory ring buffer (500 events, ~250 KB). The buffer is always written, regardless of Redis availability.` Lines 703: `If Redis is unreachable, Emit() skips the Redis write, logs the event at WARN level, and increments lenny_ops_events_emit_failed_total. The in-memory ring buffer write always succeeds.` This is the load-bearing primary destination — the in-memory buffer is the fallback path.
 
@@ -37986,9 +37990,11 @@ Implementation: `pkg/gateway/opsevents/buffer.go` lines 73–88 — `BufferedEve
 
 **Resolution (662adf20):** `BufferedEventPage` now nests a `Pagination` struct carrying the §25.2 canonical fields — `cursor`, `hasMore`, `limit`, `cursorKind` (always `buffer-seq`), `headCursor`, and on eviction `gapDetected` + `gapReason` + `oldestAvailableCursor` + `suggestedAction: "resync"`. `Query` populates it; the admin and lenny-ops poll handlers serialize the page unchanged, so the gap fields now ride under `pagination` rather than at the response root. Tier-1 (envelope fields, gap-recovery fields) + a JSON-shape test asserting the gap fields are NOT at the root. **F-25.2.4** is NOT closed by this: it additionally covers the §25.4 locks/escalations/event-subscription list endpoints and the §25.11 backup-list endpoint, which still lack the envelope — only its buffer-endpoint overlap is addressed here.
 
-### - [ ] F-25.3.18 — `lenny-ops` Redis stream consumer wiring is absent (no producer at gateway, no consumer in opsservice). (High) [Medium] — OPEN
+### - [x] F-25.3.18 — `lenny-ops` Redis stream consumer wiring is absent (no producer at gateway, no consumer in opsservice). (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.1, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
+**Resolution:** Both halves are now wired. Producer: `events.StreamEmitter` XADDs to `ops:events:stream` from the gateway, controller, and token-service (prior batches). Consumer: the new `opsservice.RedisEventSource` (`pkg/ops/opsservice/rediseventsource.go`, commit 97ae8442) XRANGEs the same stream from a per-process independent cursor and yields each event to the §25.5 webhook delivery worker; `cmd/lenny-ops/main.go` swaps the placeholder `emptyEventSource{}` for it when Redis is configured. The cold-start cursor snaps to the stream tail so the MAXLEN backlog is not replayed to subscriptions. Producer→consumer round-trip pinned by `TestStreamProducerConsumerRoundTrip_spec_25_5` over miniredis.
 
 Spec: lines 665–667 and §25.5 (referenced from §25.3 line 703). The Redis stream `ops:events:stream` is the primary destination; `lenny-ops` reads it.
 
@@ -38330,9 +38336,11 @@ Evidence gathered via `grep`/`find` across `pkg/gateway/eventbus/`, `pkg/gateway
 
 ### Findings
 
-### - [ ] F-25.5.1 — The Redis `ops:events:stream` is not written or read. (High) [Medium] — OPEN
+### - [x] F-25.5.1 — The Redis `ops:events:stream` is not written or read. (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.1, F-25.3.18 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
+**Resolution:** The stream is now both written and read. Write: `events.StreamEmitter` creates the `ops:events:stream` key via `XADD` with `Approx` `MAXLEN` honoring `DefaultStreamMaxLen` (operator-tunable), producing the CloudEvents-bearing entries from the gateway, controllers, and lenny-ops. Read: `opsservice.RedisEventSource` (commit 97ae8442) consumes the same key by `XRANGE` from an opaque per-process cursor. The remaining §25.5 query surfaces that sit on top of the stream (the SSE `GET /v1/admin/events/stream` and polling `GET /v1/admin/events`, and the opaque source-kind cursor encoding) are the separate F-25.5.2 / F-25.5.3 / F-25.5.4. Closed by 97ae8442 plus the prior StreamEmitter wiring.
 
 Spec: lines 2552, 2592–2611 ("Redis capped stream. Key: `ops:events:stream` (platform-scoped). Uses Redis Streams (`XADD` with `MAXLEN ~ {ops.events.streamMaxLen}`)"). The stream is the primary durable destination for operational events; the gateway in-memory buffer is the fallback only.
 
@@ -38358,7 +38366,7 @@ Spec: lines 2666–2675 ("Event cursors are opaque strings containing an interna
 
 Implementation: `grep -rn "cursorKind\|source_kind\|mixed.*cursor\|base64.*source" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/pkg/gateway/opsevents /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches. `pkg/gateway/opsevents/buffer.go` line 73 uses a bare `uint64` `Cursor` field; nothing encodes the source kind, nothing translates between sources by `eventKey`. The `eventKey` itself is built (`pkg/gateway/opsevents/emitter.go` lines 53–62 — `{replicaID}:{emittedAt}:{nonce}`), but it is never used as the cross-source translation key because there is only one source (buffer). Consequence: when Redis is added, cursors handed out by Redis will not round-trip to the buffer and vice versa; the §25.5 contract that "Agents MUST NOT parse cursors — they opaquely round-trip them" cannot be honored.
 
-### - [ ] F-25.5.5 — `lenny-ops` does not write or read the operational-event stream. (High) [Medium] — OPEN
+### - [x] F-25.5.5 — `lenny-ops` does not write or read the operational-event stream. (High) [Medium] — CLOSED
 
 Spec: line 2590 ("Both the gateway and `lenny-ops` emit events to the same stream... `lenny-ops` emits signals it originates itself (`ops_health_status_changed`, `escalation_created`, `remediation_lock_acquired`/`_released`, `drift_detected`, `platform_upgrade_*` lifecycle events, `operation_progressed`). Both write to the same Redis stream and the gateway's in-memory ring buffer (via an internal RPC call when `lenny-ops` emits).").
 
@@ -38367,6 +38375,8 @@ Implementation: `grep -rn "emitter\.Emit\|opsEmitter\|EmitEscalationCreated\|Ope
 - `cmd/lenny-ops/main.go:286–292` — `OnSelfHealthChange` only logs `self-health PREV -> NEXT` and the comment says "Event emission is wired with the §25.5 event stream; until then the transition is logged".
 
 No package emits `escalation_created`, `remediation_lock_acquired`, `remediation_lock_released`, `remediation_lock_expired`, `remediation_lock_stolen`, `remediation_lock_split_brain_detected`, `drift_detected`, `platform_upgrade_completed`, `platform_upgrade_verification_failed`, `platform_upgrade_image_pull_failed`, `restore_started`/`*_shard_completed`/`*_completed`/`*_failed`, `event_delivery_failed`, `prometheus_query_timeout`, `lock_split_brain_detected`, `operation_progressed`, or `ops_health_status_changed` to either the Redis stream or the gateway buffer. There is no internal RPC from `lenny-ops` to the gateway carrying buffer-write traffic, and no Redis stream `XADD`. The §16.6 catalogue lives in `pkg/gateway/opsevents/catalog.go:79–98` as constants only — they are never the `Type` of a written `OperationalEvent`. Consequence: every ops-originated signal §25.5 promises (escalation, lock, drift, upgrade, restore, operation_progressed, ops self-health) is not observable through the event stream; subscribers, polling clients, and SSE clients see only gateway-emitted events even when those are wired.
+
+**Resolution:** lenny-ops now both writes and reads `ops:events:stream`. Write: `newRedisFanOutEmitter` (`cmd/lenny-ops/deps.go`) is the §4.0 `opsEmitter` — it XADDs each event to the shared stream and tees a copy into the local `opsstream.Service` buffer; the §25.13 alert evaluator already emits through it, and `OnSelfHealthChange` now emits `ops_health_status_changed` through it (was log-only) on every self-health transition, with the §25.4-status to severity mapping in `selfHealthEventSeverity`. Read: the new `opsservice.RedisEventSource` (commit 97ae8442) consumes the stream into the webhook worker. The `eventKey` (`{replicaID}:{emittedAt}:{nonce}`) is the canonical id on every entry. The remaining per-subsystem catalogue emits the evidence enumerates depend on those subsystems leaving in-memory seam mode and are tracked by their own findings: escalation_created emission is F-25.4.7 ("emission to the Redis stream is stubbed"), the §25.3 metrics counters are F-25.3.11. Closed by 97ae8442.
 
 ### - [ ] F-25.5.6 — Webhook subscriptions are missing the §25.5 column set. (High) [Medium] — OPEN
 
