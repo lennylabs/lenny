@@ -158,6 +158,31 @@ func (f *FakeLauncher) LaunchedSpecs() []JobSpec {
 	return specs
 }
 
+var _ JobReaper = (*FakeLauncher)(nil)
+
+// ListManagedJobs implements JobReaper: it reports every launched Job
+// with its lenny.dev/backup-id annotation (the spec's BackupID) so the
+// §25.11 orphaned-Job reconciler can match Jobs to ops_backups rows.
+func (f *FakeLauncher) ListManagedJobs(_ context.Context) ([]OrphanedJob, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	jobs := make([]OrphanedJob, 0, len(f.jobs))
+	for id, rec := range f.jobs {
+		jobs = append(jobs, OrphanedJob{JobID: id, BackupID: rec.spec.BackupID})
+	}
+	return jobs, nil
+}
+
+// DeleteJob implements JobReaper: it removes a launched Job by name.
+// Deleting an unknown Job is a no-op (the §25.11 reconciler is
+// idempotent against a Job another reconcile already swept).
+func (f *FakeLauncher) DeleteJob(_ context.Context, jobID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.jobs, jobID)
+	return nil
+}
+
 // jobName builds a synthetic Job name from a kind and a sequence
 // number.
 func jobName(kind JobKind, n int) string {

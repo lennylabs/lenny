@@ -145,6 +145,13 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		Store:    store,
 		Launcher: backup.NewFakeLauncher(),
 		Locker:   backup.NewMemLocker(),
+		// §25.11 line 4343: every backup/restore/retention transition is
+		// audited. The orchestrator emits to this sink; the durable
+		// audit-append destination is a documented seam (lenny-ops has no
+		// audit-store client in this single-process mode), so the sink
+		// logs the event until that path lands, matching the escalation
+		// logEmitter posture.
+		Audit: logAuditSink,
 	})
 	if err != nil {
 		// NewService fails only on a missing dependency, all supplied
@@ -208,8 +215,50 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 				return err
 			},
 		},
+		{
+			// spec: §25.11 lines 3976-3978 — the reconciler runs every 60s,
+			// failing ops_backups rows still pending after 2 minutes
+			// (JOB_CREATE_FAILED) and deleting orphaned Kubernetes Jobs. It
+			// is leader-gated like the other cron jobs.
+			Name:       "backup-reconcile",
+			Expression: "* * * * *",
+			Run: func(ctx context.Context) error {
+				failed, err := svc.ReconcilePending(ctx)
+				if err != nil {
+					return err
+				}
+				if len(failed) > 0 {
+					log.Printf("lenny-ops: reconciler failed %d stale pending backups", len(failed))
+				}
+				deleted, err := svc.ReconcileOrphanedJobs(ctx)
+				if err != nil {
+					return err
+				}
+				if len(deleted) > 0 {
+					log.Printf("lenny-ops: reconciler deleted %d orphaned backup Jobs", len(deleted))
+				}
+				return nil
+			},
+		},
 	}
 	return svc, jobs
+}
+
+// logAuditSink is the §25.11 backup/restore AuditSink used until the
+// lenny-ops audit-append path is wired. The orchestrator emits an audit
+// event on every state transition it owns (§25.11 line 4343); with no
+// audit-store client in this single-process mode the event is logged so
+// the emission is observable, matching the escalation logEmitter
+// posture. A future commit that wires the audit-append client swaps
+// this sink for one that writes the §11.7 append-only row.
+func logAuditSink(ev backup.AuditEvent) {
+	outcome := ev.Outcome
+	if outcome == "" {
+		outcome = "success"
+	}
+	log.Printf("lenny-ops: audit %s outcome=%s backup=%s restore=%s actor=%s — "+
+		"audit-append destination pending the audit-store wiring",
+		ev.Type, outcome, ev.BackupID, ev.RestoreID, ev.Actor)
 }
 
 // scheduledBackupsDisabled reports whether the persisted §25.11

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/backup/retention"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // pendingReconcileAge is the §25.11 reconciler threshold: an
@@ -60,6 +61,14 @@ type Config struct {
 	// the estimatedDowntime model uses; a zero value uses the §25.11
 	// default. spec: §25.11 line 3957.
 	RestoreThroughputBps int64
+	// Audit receives the §25.11 line 4343 backup/restore audit events the
+	// orchestrator emits on each state transition it owns. A nil sink
+	// drops them (a deployment whose audit-append path is not yet wired).
+	Audit AuditSink
+	// ObjectStore removes a backup's MinIO object during §25.11 retention
+	// enforcement (the MinIO half of the lines 4108-4111 deletion). A nil
+	// store leaves physical deletion to the daily retention Job.
+	ObjectStore ObjectDeleter
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 	// NewID generates a backup/restore ID; nil uses a random hex id.
@@ -79,6 +88,8 @@ type Service struct {
 	replication ReplicationLagSource
 	dataLoss    DataLossEstimator
 	throughput  int64
+	audit       AuditSink
+	objects     ObjectDeleter
 	now         func() time.Time
 	newID       func(prefix string) string
 }
@@ -116,6 +127,8 @@ func NewService(cfg Config) (*Service, error) {
 		replication: cfg.ReplicationLag,
 		dataLoss:    cfg.DataLoss,
 		throughput:  cfg.RestoreThroughputBps,
+		audit:       cfg.Audit,
+		objects:     cfg.ObjectStore,
 		now:         now,
 		newID:       newID,
 	}, nil
@@ -179,6 +192,13 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 	if err := s.store.UpdateBackup(ctx, b); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record backup job: %v", err)
 	}
+	// spec: §25.11 line 4343 — every backup creation is audited.
+	s.emitAudit(AuditEvent{
+		Type:     string(audit.EventBackupCreated),
+		BackupID: b.ID,
+		Actor:    startedBy,
+		Fields:   map[string]any{"type": b.Type, "jobId": b.JobID},
+	})
 	return &b, nil
 }
 
@@ -289,6 +309,13 @@ func (s *Service) UpdateSchedule(ctx context.Context, schedule BackupSchedule) (
 	if err := s.store.PutSchedule(ctx, schedule); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "write schedule: %v", err)
 	}
+	// spec: §25.11 line 4343 — a schedule edit is audited.
+	s.emitAudit(AuditEvent{
+		Type: string(audit.EventBackupScheduleUpdated),
+		Fields: map[string]any{
+			"full": schedule.Full, "postgres": schedule.Postgres, "enabled": schedule.Enabled,
+		},
+	})
 	return &schedule, nil
 }
 
@@ -310,6 +337,14 @@ func (s *Service) UpdatePolicy(ctx context.Context, policy RetentionPolicy) (*Re
 	if err := s.store.PutPolicy(ctx, policy); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "write policy: %v", err)
 	}
+	// spec: §25.11 line 4343 — a retention-policy edit is audited.
+	s.emitAudit(AuditEvent{
+		Type: string(audit.EventBackupPolicyUpdated),
+		Fields: map[string]any{
+			"retainDays": policy.RetainDays, "retainCount": policy.RetainCount,
+			"retainMinFull": policy.RetainMinFull,
+		},
+	})
 	return &policy, nil
 }
 
@@ -362,6 +397,12 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 			preview.EstimatedOrphanArtifactRows = orphans
 		}
 	}
+	// spec: §25.11 line 4343 — a restore preview is audited.
+	s.emitAudit(AuditEvent{
+		Type:     string(audit.EventRestorePreviewGenerated),
+		BackupID: b.ID,
+		Fields:   map[string]any{"compatible": compatible},
+	})
 	return preview, nil
 }
 
@@ -526,8 +567,25 @@ func (s *Service) ExecuteRestore(ctx context.Context, req RestoreRequest) (*Rest
 		restore.Status = RestoreStatusFailed
 		restore.Error = "BACKUP_JOB_CREATION_FAILED"
 		_ = s.store.UpdateRestore(ctx, restore)
+		// spec: §25.11 line 4343 — a failed restore is audited.
+		s.emitAudit(AuditEvent{
+			Type:      string(audit.EventRestoreFailed),
+			RestoreID: restore.ID,
+			BackupID:  req.BackupID,
+			Actor:     owner,
+			Outcome:   "failed",
+			Detail:    "BACKUP_JOB_CREATION_FAILED",
+		})
 		return nil, codedError(ErrCodeJobCreationFailed, "create restore Job: %v", err)
 	}
+	// spec: §25.11 line 4343 — a started restore is audited.
+	s.emitAudit(AuditEvent{
+		Type:      string(audit.EventRestoreStarted),
+		RestoreID: restore.ID,
+		BackupID:  req.BackupID,
+		Actor:     owner,
+		Fields:    map[string]any{"jobId": launched.JobID, "preRestoreBackupId": preRestore.ID},
+	})
 	return &RestoreResult{
 		RestoreID:          restore.ID,
 		BackupID:           req.BackupID,
@@ -589,6 +647,13 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*Restore
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record resume: %v", err)
 	}
+	// spec: §25.11 line 4343 — a resumed restore is audited.
+	s.emitAudit(AuditEvent{
+		Type:      string(audit.EventRestoreResumed),
+		RestoreID: r.ID,
+		BackupID:  r.BackupID,
+		Fields:    map[string]any{"jobId": launched.JobID},
+	})
 	return &RestoreResult{
 		RestoreID:          r.ID,
 		BackupID:           r.BackupID,
@@ -603,11 +668,9 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*Restore
 // gdpr.backup_reconcile_blocked stall. The synthetic watermark is
 // persisted on the ops_restore_state row so the post-restore reconciler
 // accepts it as ledgerLatestWriteAt on the next ResumeRestore. The
-// caller's identity and justification are recorded on the row. The
-// emission of the §11.7 legal_hold.ledger_confirmed_current_at audit
-// event is the caller's responsibility — opsserver wraps this method
-// with the audit hook so the service layer remains free of an audit
-// dependency.
+// caller's identity and justification are recorded on the row, and the
+// §11.7 legal_hold.ledger_confirmed_current_at audit event is emitted
+// through the configured AuditSink (spec: §25.11 lines 4147/4343).
 //
 // Preconditions: the restore row must exist and be in status "failed"
 // (the only state in which a reconciler block could have surfaced); a
@@ -637,15 +700,30 @@ func (s *Service) ConfirmLegalHoldLedger(ctx context.Context, restoreID, justifi
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record ledger confirmation: %v", err)
 	}
+	// spec: §25.11 lines 4147/4343 — the platform-admin legal-hold-ledger
+	// confirmation is audited with the operator identity and justification.
+	// The orchestrator owns the emission now; the opsserver handler no
+	// longer needs an audit wrapper.
+	s.emitAudit(AuditEvent{
+		Type:      string(audit.EventLegalHoldLedgerConfirmedCurrentAt),
+		RestoreID: r.ID,
+		BackupID:  r.BackupID,
+		Actor:     caller,
+		Detail:    justification,
+		At:        now,
+	})
 	return &r, nil
 }
 
 // EnforceRetention evaluates the §25.11 retention policy against every
-// backup in the store and deletes the expired ones from the store. It
-// is invoked after each successful backup and on the daily 03:30 UTC
-// cron. The MinIO object deletion is the Job's responsibility; this
-// method records the policy decision by removing the ops_backups rows
-// the policy prunes and returns the IDs it pruned.
+// backup in the store and deletes the expired ones. It is invoked after
+// each successful backup and on the daily 03:30 UTC cron. §25.11 lines
+// 4108-4111 require deletion from both MinIO and Postgres: this method
+// marks the ops_backups row expired (the Postgres half) and, when an
+// ObjectDeleter is configured, removes the backup's MinIO object inline
+// (the MinIO half) so an expired row no longer points at a live object
+// until the next sweep. Every pruned backup raises a §25.11 line 4343
+// backup.deleted_by_retention audit event. It returns the IDs it pruned.
 //
 // EnforceRetention reuses pkg/backup/retention.Plan for the policy
 // math, so the orchestrator and the retention package share one
@@ -688,14 +766,33 @@ func (s *Service) EnforceRetention(ctx context.Context) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		// §25.11 retention enforcement records the deletion on the row
-		// before the Job removes the MinIO object; mark it expired.
+		// §25.11 retention enforcement marks the row expired (the Postgres
+		// half of the lines 4108-4111 deletion).
 		b.Status = StatusExpired
 		expiresAt := s.now()
 		b.ExpiresAt = &expiresAt
 		if err := s.store.UpdateBackup(ctx, b); err != nil {
 			return pruned, codedError(ErrCodeStorageUnreachable, "expire backup %q: %v", p.ID, err)
 		}
+		// The MinIO half: remove the stored object inline when a deleter is
+		// configured. A deletion failure is best-effort — the row is already
+		// expired and the daily retention Job re-attempts the object sweep —
+		// so it is reported on the audit event rather than aborting the pass.
+		objectErr := ""
+		if s.objects != nil && b.StoragePath != "" {
+			if err := s.objects.DeleteBackupObject(ctx, b.StoragePath); err != nil {
+				objectErr = err.Error()
+			}
+		}
+		ev := AuditEvent{
+			Type:     string(audit.EventBackupDeletedByRetention),
+			BackupID: b.ID,
+			Fields:   map[string]any{"type": b.Type, "storagePath": b.StoragePath},
+		}
+		if objectErr != "" {
+			ev.Fields["objectDeleteError"] = objectErr
+		}
+		s.emitAudit(ev)
 		pruned = append(pruned, p.ID)
 	}
 	sort.Strings(pruned)
@@ -730,6 +827,46 @@ func (s *Service) ReconcilePending(ctx context.Context) ([]string, error) {
 		failed = append(failed, id)
 	}
 	return failed, nil
+}
+
+// ReconcileOrphanedJobs implements the §25.11 lines 3976-3978 reconciler
+// half that deletes Kubernetes Jobs whose lenny.dev/backup-id annotation
+// has no matching ops_backups row (the row insert failed after the Job
+// was created, or the row was pruned out from under a still-present
+// Job). It is invoked by the lenny-ops reconciler goroutine alongside
+// ReconcilePending. It returns the JobIDs it deleted.
+//
+// A launcher that does not implement JobReaper makes this a no-op — the
+// Postgres store runs the equivalent server-side cleanup query.
+func (s *Service) ReconcileOrphanedJobs(ctx context.Context) ([]string, error) {
+	reaper, ok := s.launcher.(JobReaper)
+	if !ok {
+		return nil, nil
+	}
+	jobs, err := reaper.ListManagedJobs(ctx)
+	if err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "list managed jobs: %v", err)
+	}
+	deleted := make([]string, 0)
+	for _, j := range jobs {
+		if j.BackupID != "" {
+			_, err := s.store.GetBackup(ctx, j.BackupID)
+			if err == nil {
+				// A backup row backs this Job; it is not orphaned.
+				continue
+			}
+			if err != ErrNotFound {
+				return deleted, codedError(ErrCodeStorageUnreachable, "read backup %q: %v", j.BackupID, err)
+			}
+		}
+		// No annotation, or no matching row: the Job is orphaned.
+		if err := reaper.DeleteJob(ctx, j.JobID); err != nil {
+			return deleted, codedError(ErrCodeStorageUnreachable, "delete orphaned job %q: %v", j.JobID, err)
+		}
+		deleted = append(deleted, j.JobID)
+	}
+	sort.Strings(deleted)
+	return deleted, nil
 }
 
 // createPreRestoreBackup creates the §25.11 step-3 pre-restore safety

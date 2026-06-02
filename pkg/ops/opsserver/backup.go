@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
+	"github.com/lennylabs/lenny/pkg/remediationlock"
 )
 
 // backupErrorMap maps each §25.11 canonical error code to its
@@ -387,16 +388,39 @@ type confirmLegalHoldLedgerRequest struct {
 	Justification string `json:"justification"`
 }
 
+// requirePlatformAdmin enforces the §25.11 platform-admin-only gate on
+// the destructive recovery endpoints the spec narrows below the general
+// §25.4 admin-API role gate. requireAdminRole admits platform-admin or
+// tenant-admin on every lenny-ops endpoint; §25.11 line 3897 narrows
+// confirm-legal-hold-ledger to platform-admin specifically (the same
+// narrowing line 3898 applies to artifact-replication resume). It
+// writes the §25.2 canonical 403 envelope and returns false when the
+// caller is not a platform-admin.
+//
+// spec: §25.11 line 3897.
+func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if callerRole(r) == remediationlock.PlatformAdmin {
+		return true
+	}
+	conventions.WriteError(w, http.StatusForbidden, "FORBIDDEN", conventions.CategoryAuth,
+		"this operation requires the platform-admin role")
+	return false
+}
+
 // handleConfirmLegalHoldLedger serves
 // POST /v1/admin/restore/{id}/confirm-legal-hold-ledger. The endpoint
 // records the §12.8 platform-admin confirmation that the legal-hold
 // ledger is current after a gdpr.backup_reconcile_blocked stall. The
 // synthetic watermark is persisted on the restore row so the
 // post-restore reconciler accepts it as the authoritative
-// ledgerLatestWriteAt on the next ResumeRestore.
+// ledgerLatestWriteAt on the next ResumeRestore. §25.11 line 3897
+// requires the platform-admin role specifically.
 func (s *Server) handleConfirmLegalHoldLedger(w http.ResponseWriter, r *http.Request) {
 	if s.backups == nil {
 		s.backupUnavailable(w)
+		return
+	}
+	if !s.requirePlatformAdmin(w, r) {
 		return
 	}
 	var body confirmLegalHoldLedgerRequest

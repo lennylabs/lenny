@@ -354,7 +354,7 @@ type BackupService interface {
 	// ledgerLatestWriteAt <= backupTakenAt). The synthetic watermark is
 	// persisted on the restore row so the reconciler accepts it as the
 	// authoritative ledgerLatestWriteAt on the next ResumeRestore. The
-	// caller's identity and justification are recorded; a separate audit
-	// emission records legal_hold.ledger_confirmed_current_at.
+	// caller's identity and justification are recorded, and the
+	// legal_hold.ledger_confirmed_current_at audit event is emitted.
 	ConfirmLegalHoldLedger(ctx context.Context, restoreID, justification, caller string) (*RestoreState, error)
 }

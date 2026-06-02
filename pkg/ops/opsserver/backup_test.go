@@ -416,3 +416,66 @@ func TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335(t *testing.T) {
 		}
 	}
 }
+
+// setupFailedRestore drives a backup through to a failed restore so the
+// confirm-legal-hold-ledger precondition holds, returning the restore id.
+func setupFailedRestore(t *testing.T, svc *backup.Service, store *backup.MemStore) string {
+	t.Helper()
+	ctx := context.Background()
+	b, err := svc.CreateBackup(ctx, backup.BackupRequest{Type: "full"})
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	completed := time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC)
+	b.Status = backup.StatusCompleted
+	b.CompletedAt = &completed
+	if err := store.UpdateBackup(ctx, *b); err != nil {
+		t.Fatalf("UpdateBackup: %v", err)
+	}
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	state.Status = backup.RestoreStatusFailed
+	if err := store.UpdateRestore(ctx, state); err != nil {
+		t.Fatalf("UpdateRestore: %v", err)
+	}
+	return result.RestoreID
+}
+
+// TestConfirmLegalHoldLedgerRequiresPlatformAdmin_spec_25_11_3897 covers
+// the §25.11 line 3897 narrowing: confirm-legal-hold-ledger requires the
+// platform-admin role specifically, not the general admin role gate that
+// also admits tenant-admin.
+func TestConfirmLegalHoldLedgerRequiresPlatformAdmin_spec_25_11_3897(t *testing.T) {
+	srv, svc, store := newBackupServer(t, false)
+	restoreID := setupFailedRestore(t, svc, store)
+	path := "/v1/admin/restore/" + restoreID + "/confirm-legal-hold-ledger"
+	body := `{"justification":"ledger reapplied out-of-band"}`
+
+	// A tenant-admin caller is rejected with 403 FORBIDDEN.
+	tenantReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	tenantReq.Header.Set("X-Lenny-Role", "tenant-admin")
+	tenantReq.Header.Set("X-Lenny-Caller", "bob")
+	tenantRec := httptest.NewRecorder()
+	srv.ServeHTTP(tenantRec, tenantReq)
+	if tenantRec.Code != http.StatusForbidden {
+		t.Fatalf("tenant-admin status = %d, want 403\nbody: %s", tenantRec.Code, tenantRec.Body.String())
+	}
+
+	// A platform-admin caller is accepted (202).
+	adminReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	adminReq.Header.Set("X-Lenny-Role", "platform-admin")
+	adminReq.Header.Set("X-Lenny-Caller", "alice")
+	adminRec := httptest.NewRecorder()
+	srv.ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusAccepted {
+		t.Fatalf("platform-admin status = %d, want 202\nbody: %s", adminRec.Code, adminRec.Body.String())
+	}
+}
