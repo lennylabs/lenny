@@ -123,11 +123,18 @@ func (c *SubscriptionCache) refresh(ctx context.Context) error {
 	}
 	subs := make([]WebhookSubscription, 0, len(rows))
 	for _, r := range rows {
+		if !r.Active {
+			continue
+		}
 		subs = append(subs, WebhookSubscription{
 			ID:          r.ID,
 			CallbackURL: r.CallbackURL,
-			Secret:      []byte(r.Secret),
-			Types:       append([]string(nil), r.Types...),
+			// §25.5 stores the secret as a SHA-256 hash at rest, never the
+			// plaintext. The worker recovers the plaintext signing key from
+			// the in-memory reveal cache populated at create/rotate; that
+			// retention is the F-25.5.13 cache subsystem. Until it lands the
+			// store-backed reload carries no signing key.
+			Types: append([]string(nil), r.Types...),
 		})
 	}
 	c.mu.Lock()

@@ -175,6 +175,16 @@ var prodMigrationSchema = []struct {
 	// reconstructed via the MAX rule on Redis recovery (F-11.2.5 /
 	// F-12.4.8).
 	{migration: "0115", table: "delegation_tree_budget", create: true},
+	// 0118 extends the §25.5 ops_event_subscriptions registry to the full
+	// webhook column set (secret hash + fingerprint, the tenant-isolation
+	// columns, the generation counter, the severity filter) and adds the
+	// ops_event_deliveries delivery-tracking table. Both platform-scoped.
+	{migration: "0118", table: "ops_event_subscriptions", columns: []string{
+		"severity", "secret_hash", "secret_fingerprint", "previous_secret_fingerprint",
+		"secret_rotated_at", "description", "created_by", "created_by_tenant_id",
+		"tenant_filter", "generation", "updated_at", "active",
+	}},
+	{migration: "0118", table: "ops_event_deliveries", create: true},
 }
 
 // spec: 12.2, 18.5
