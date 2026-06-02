@@ -31,9 +31,8 @@ import (
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 )
 
-// ProtocolVersion is the MCP protocol revision this adapter
-// implements.
-const ProtocolVersion = "2025-06-18"
+// The supported MCP protocol versions, the negotiation rules, and the
+// deprecation header live in version.go (§15.2 "Version negotiation").
 
 // jsonRPCRequest is the JSON-RPC 2.0 request envelope.
 type jsonRPCRequest struct {
@@ -294,11 +293,21 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Method {
 	case "initialize":
-		s.writeResult(w, req.ID, map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "lenny-gateway", "version": "0.1.0"},
-		})
+		// spec: §15.2 lines 1310-1316 — negotiate the highest mutually
+		// supported MCP spec version, reject an unsupported/retired one
+		// with the structured lenny error, and set the deprecation
+		// warning header when the connection lands on the previous
+		// version. F-15.2.1, F-15.5.4.
+		result, deprecated, nerr := initializeResult(requestedProtocolVersion(req.Params))
+		if nerr != nil {
+			s.WriteLennyError(w, req.ID, errInvalidParams, nerr.code, nerr.message,
+				map[string]any{"supportedVersions": SupportedProtocolVersions()})
+			return
+		}
+		if deprecated {
+			w.Header().Set(headerMCPVersionDeprecated, result["protocolVersion"].(string))
+		}
+		s.writeResult(w, req.ID, result)
 	case "tools/list":
 		s.writeResult(w, req.ID, map[string]any{"tools": s.toolList()})
 	case "tools/call":

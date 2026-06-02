@@ -15,10 +15,11 @@ import (
 )
 
 // mcpProtocolVersion is the MCP protocol revision this client requests
-// in the §15.2 initialize handshake. The gateway negotiates the
-// highest version it and the client both support; the negotiated
-// value is reported by Initialize on InitializeResult.ProtocolVersion.
-const mcpProtocolVersion = "2025-06-18"
+// in the §15.2 initialize handshake. It is the §15.2 line 1308 target
+// version. The gateway negotiates the highest version it and the client
+// both support; the negotiated value is reported by Initialize on
+// InitializeResult.ProtocolVersion.
+const mcpProtocolVersion = "2025-03-26"
 
 // mcpClientName identifies this SDK in the §15.2 initialize
 // clientInfo.

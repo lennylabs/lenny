@@ -25536,7 +25536,7 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-15.2.1 — MCP protocol version negotiation absent; gateway hard-codes the wrong version [High] — OPEN
+### - [x] F-15.2.1 — MCP protocol version negotiation absent; gateway hard-codes the wrong version [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.5.4, F-9.1.10 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
 
@@ -25550,6 +25550,8 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
   - No `negotiatedVersion` per-connection field; no `X-Lenny-Mcp-Version-Deprecated` header emission anywhere in `pkg/gateway` (`grep -rn "X-Lenny-Mcp-Version-Deprecated" /Users/joan/projects/lenny` returns zero hits in code).
   - SDK side `sdks/client/go/lenny/mcp.go:21` also pins `"2025-06-18"`.
 - **Impact:** Any MCP client sending the spec's nominal version (`2025-03-26`) gets `2025-06-18` echoed back instead of negotiated; clients that present an unsupported older version are not rejected with `MCP_VERSION_UNSUPPORTED`. The 6-month deprecation policy (header warning, session-lifetime exception, retirement degradation annotation) has zero enforcement. A future deployment that lifts the constant to a newer version silently breaks every active client without the spec's promised compatibility window.
+
+**Resolution:** New `pkg/gateway/mcp/version.go` replaces the single `ProtocolVersion = "2025-06-18"` constant with the §15.2 line 1311 two-version set (`CurrentProtocolVersion = "2025-03-26"` matching the §15.2 line 1308 target and the intra-pod adapter, `PreviousProtocolVersion = "2024-11-05"`). `negotiateVersion` implements the §15.2 lines 1310-1315 rules: empty → current, supported → pinned exactly, newer/in-gap → current offered, older-than-oldest → `MCP_VERSION_UNSUPPORTED`, known-retired → `MCP_PROTOCOL_VERSION_RETIRED` (both via the structured lenny envelope carrying `details.supportedVersions`). Both the POST `/mcp` and the WebSocket `initialize` paths route through the shared `initializeResult`; the POST path sets the `X-Lenny-Mcp-Version-Deprecated` header when the connection negotiates the previous version. SDK request constant moved to `2025-03-26`. Closes F-9.1.10 (already verify-closed pointing here) and F-15.5.4 (duplicate trio) in the same change. The session-lifetime-exception drain machinery (preflight `lenny_mcp_deprecated_version_active_sessions` gauge, forced-close `mcp_protocol_version_retired` annotation) stays dormant: `retiredVersions` is empty in v1 and the SSE session-close path is post-v1 (F-15.2.2). Commit <PENDING>.
 
 ### - [ ] F-15.2.2 — MCP transport is plain JSON-RPC over POST; the spec's Streamable HTTP / SSE surface is absent [High] — OPEN
 
@@ -26375,7 +26377,7 @@ The chart-side wiring is absent because CRDs are single-version (H-1); promoting
 
 **Resolution (c3e76f69):** Added the `conversion-webhook-availability` preflight check (`pkg/preflight/conversionwebhook.go`): `gatherConversionWebhook` reads the `lenny-crd-conversion` Service and Deployment in the release namespace and `CheckConversionWebhook` fails the upgrade fail-closed when the Service is absent or the Deployment has no ready replicas (§15.5 line 2438). A not-yet-deployed workload passes, matching the install-time semantics of the existing admission-webhook-inventory check. The preflight ClusterRole gains `services` list and `customresourcedefinitions` get/list. The webhooks.go "verified separately" comment now names this check. Tests: `pkg/preflight/conversionwebhook_test.go`.
 
-### - [ ] F-15.5.4 — MCP gateway exposes a single protocol version; two-version concurrency, version negotiation, and the deprecation header are absent [High] — OPEN
+### - [x] F-15.5.4 — MCP gateway exposes a single protocol version; two-version concurrency, version negotiation, and the deprecation header are absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.2.1, F-9.1.10 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
 
@@ -26394,6 +26396,8 @@ case "initialize":
 `grep -rn "X-Lenny-Mcp-Version-Deprecated\|McpVersionDeprecated" pkg/ cmd/` returns no matches. The deprecation header is never emitted. The negotiated-version-pinning, the rejection of older versions with `MCP_VERSION_UNSUPPORTED`, and the "session-lifetime exception" all assume a negotiation layer that does not exist in code.
 
 Additional discrepancy: the gateway's `2025-06-18` is itself unsupported by the spec text, which names `2025-03-26` (current) and `2024-11-05` (previous). The intra-pod platform-MCP server (`pkg/adapter/mcp/server.go:15`) uses `2025-03-26`. The gateway and the adapter therefore disagree on which MCP revision they speak.
+
+**Resolution:** Closed by F-15.2.1 (the flagged duplicate trio with F-9.1.10). `pkg/gateway/mcp/version.go` now serves the `{2025-03-26 (current), 2024-11-05 (previous)}` set concurrently, negotiates per the §15.2 rules on `initialize`, returns the structured `MCP_VERSION_UNSUPPORTED` / `MCP_PROTOCOL_VERSION_RETIRED` lenny error with `details.supportedVersions`, and sets the `X-Lenny-Mcp-Version-Deprecated` header on the deprecated-version POST path. The gateway and intra-pod adapter now agree on `2025-03-26`. The `mcp_protocol_version_retired` degradation annotation (F-15.5.5 catalog) and the preflight active-deprecated-session gauge remain dormant until the first real retirement and the post-v1 SSE close path (F-15.2.2). Commit <PENDING>.
 
 ### - [x] F-15.5.5 — Degradation annotation catalog is absent from `MessageEnvelope` and from gateway/SDK code paths [High] — CLOSED
 

@@ -261,11 +261,19 @@ func (s *Server) dispatchFrameBytes(ctx context.Context, data []byte) ([]byte, b
 
 	switch req.Method {
 	case "initialize":
-		return marshalResult(req.ID, map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "lenny-gateway", "version": "0.1.0"},
-		}), false
+		// spec: §15.2 lines 1310-1315 — negotiate the version on the
+		// WebSocket transport with the same rules as POST /mcp. The
+		// X-Lenny-Mcp-Version-Deprecated header is an HTTP-handshake
+		// signal and cannot be set on a frame after the upgrade, so the
+		// WebSocket leg negotiates in the response body only; a rejected
+		// version surfaces the structured lenny error envelope.
+		// F-15.2.1, F-15.5.4.
+		result, _, nerr := initializeResult(requestedProtocolVersion(req.Params))
+		if nerr != nil {
+			return marshalLennyError(req.ID, errInvalidParams, nerr.code, nerr.message,
+				map[string]any{"supportedVersions": SupportedProtocolVersions()}), false
+		}
+		return marshalResult(req.ID, result), false
 	case "tools/list":
 		return marshalResult(req.ID, map[string]any{"tools": s.toolList()}), false
 	case "tools/call":
@@ -347,6 +355,21 @@ func marshalResult(id json.RawMessage, result any) []byte {
 		JSONRPC: "2.0",
 		ID:      id,
 		Result:  result,
+	}
+	b, _ := json.Marshal(envelope)
+	return b
+}
+
+// marshalLennyError serializes a JSON-RPC error envelope whose Data
+// carries the §15.2.1 lenny error envelope (code, category, retryable,
+// details), the WebSocket-transport analogue of Server.WriteLennyError.
+// It backs the version-negotiation rejection path so a client sees the
+// same structured error on either transport. spec: §15.2.1 rule 3.
+func marshalLennyError(id json.RawMessage, jsonRPCCode int, lennyCode, message string, details map[string]any) []byte {
+	envelope := jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &jsonRPCError{Code: jsonRPCCode, Message: message, Data: NewLennyErrorDetail(lennyCode, message, details)},
 	}
 	b, _ := json.Marshal(envelope)
 	return b
