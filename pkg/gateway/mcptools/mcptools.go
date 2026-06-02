@@ -1385,12 +1385,29 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 					fmt.Sprintf("elicitation content is not canonicalizable: %v", err), nil)
 			}
+			// spec: §9.2 lines 86, 90-98 — resolve the per-pool depth
+			// policy and agent-initiated url-mode allowlist from the
+			// raising session's pool so the dispatch applies this pool's
+			// configuration rather than a single Register-time platform
+			// value. A pool with no explicit policy leaves the dispatcher
+			// defaults in place: WalkChain coerces the empty depth policy
+			// to the §9.2 line 92 suppress_at_depth=3 default, and the
+			// zero-value url-mode allowlist blocks agent-initiated
+			// url-mode (the §9.2 default). The dispatcher is copied per
+			// call so the override never races the shared registration.
+			// F-9.2.12.
+			perCall := *dispatcher
+			if dp, suppressAt, urlMode, ok := resolvePoolElicitationPolicy(ctx, deps, row.PoolRef); ok {
+				perCall.depthPolicy = dp
+				perCall.suppressAtDepth = suppressAt
+				perCall.urlModeAllowlist = urlMode
+			}
 			// §9.2: dispatch the elicitation up the hop-by-hop chain. The
 			// dispatcher runs the url-mode provenance check, walks the
 			// delegation tree from this session upward verifying the
 			// content-integrity digest at each forward hop, applies the
 			// depth policy, and reports the chain resolver.
-			dr, err := dispatcher.dispatch(ctx, tenant, row, originalContent, initiator, in.URL)
+			dr, err := perCall.dispatch(ctx, tenant, row, originalContent, initiator, in.URL)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -3003,6 +3020,28 @@ func resolvePoolIsolation(ctx context.Context, deps Deps, poolRef string) isolat
 		return ""
 	}
 	return pool.IsolationProfile
+}
+
+// resolvePoolElicitationPolicy returns the §9.2 per-pool elicitation
+// depth policy and agent-initiated url-mode allowlist configured on the
+// named pool. The §9.2 elicitationDepthPolicy (lines 90-98) and
+// urlModeElicitation (line 86) are per-pool, so the dispatch path
+// resolves them from the raising session's pool rather than from a
+// single Register-time platform value. The bool is false when the pool
+// registry is unwired or the pool cannot be resolved, in which case the
+// caller keeps the dispatcher's Register-time defaults (which the
+// §9.2 WalkChain coerces to the platform suppress_at_depth=3 default and
+// the agent-initiated url-mode block). spec: §9.2 lines 86, 90-98.
+// F-9.2.12.
+func resolvePoolElicitationPolicy(ctx context.Context, deps Deps, poolRef string) (elicitation.DepthPolicy, int, elicitation.URLModeAllowlist, bool) {
+	if deps.Pools == nil || poolRef == "" {
+		return "", 0, elicitation.URLModeAllowlist{}, false
+	}
+	pool, err := deps.Pools.Get(ctx, poolRef)
+	if err != nil {
+		return "", 0, elicitation.URLModeAllowlist{}, false
+	}
+	return pool.ElicitationDepthPolicy, pool.ElicitationSuppressAtDepth, pool.URLModeElicitation, true
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its

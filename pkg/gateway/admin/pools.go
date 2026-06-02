@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -107,9 +108,34 @@ type PoolPayload struct {
 	// match the v1 admin contract. spec: §5.2 lines 398-475.
 	TaskPolicy *TaskPolicyPayload `json:"taskPolicy,omitempty"`
 
+	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool depth
+	// policy (`allow_all`, `suppress_at_depth`, `block_all`) for
+	// agent-initiated elicitations raised by sessions in this pool. An
+	// omitted value resolves to the §9.2 line 92 platform default
+	// (suppress at depth 3). spec: §9.2 lines 90-98.
+	ElicitationDepthPolicy string `json:"elicitationDepthPolicy,omitempty"`
+
+	// ElicitationSuppressAtDepth is the §9.2 line 92 threshold N for the
+	// `suppress_at_depth` policy; ignored for the other policies.
+	ElicitationSuppressAtDepth int `json:"elicitationSuppressAtDepth,omitempty"`
+
+	// URLModeElicitation is the §9.2 line 86 per-pool agent-initiated
+	// url-mode elicitation allowlist. spec: §9.2 line 86.
+	URLModeElicitation *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
+
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	DeletedAt string `json:"deletedAt,omitempty"`
+}
+
+// URLModeElicitationPayload is the §9.2 line 86 per-pool
+// `urlModeElicitation` block on the admin wire:
+// `{"enabled": bool, "domainAllowlist": ["accounts.example.com"]}`.
+// Setting enabled:true with an empty domainAllowlist is rejected with
+// 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED. spec: §9.2 line 86.
+type URLModeElicitationPayload struct {
+	Enabled         bool     `json:"enabled,omitempty"`
+	DomainAllowlist []string `json:"domainAllowlist,omitempty"`
 }
 
 // TaskPolicyPayload is the §5.2 taskPolicy block on the admin wire. It
@@ -161,6 +187,13 @@ type UpdatePoolRequest struct {
 	// in the same PUT. A non-nil TaskPolicy with ClearTaskPolicy set is
 	// rejected (the two operations are mutually exclusive).
 	ClearTaskPolicy bool `json:"clearTaskPolicy,omitempty"`
+
+	// ElicitationDepthPolicy / ElicitationSuppressAtDepth / URLModeElicitation
+	// are the §9.2 per-pool elicitation policy fields. spec: §9.2 lines 86,
+	// 90-98.
+	ElicitationDepthPolicy     *string                    `json:"elicitationDepthPolicy,omitempty"`
+	ElicitationSuppressAtDepth *int                       `json:"elicitationSuppressAtDepth,omitempty"`
+	URLModeElicitation         *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
 }
 
 func fromPool(p poolstore.Pool) PoolPayload {
@@ -185,6 +218,14 @@ func fromPool(p poolstore.Pool) PoolPayload {
 	}
 	if p.TaskPolicy != nil {
 		out.TaskPolicy = taskPolicyToWire(p.TaskPolicy)
+	}
+	out.ElicitationDepthPolicy = string(p.ElicitationDepthPolicy)
+	out.ElicitationSuppressAtDepth = p.ElicitationSuppressAtDepth
+	if p.URLModeElicitation.Enabled || len(p.URLModeElicitation.DomainAllowlist) > 0 {
+		out.URLModeElicitation = &URLModeElicitationPayload{
+			Enabled:         p.URLModeElicitation.Enabled,
+			DomainAllowlist: append([]string(nil), p.URLModeElicitation.DomainAllowlist...),
+		}
 	}
 	return out
 }
@@ -237,6 +278,19 @@ func taskPolicyFromWire(in *TaskPolicyPayload) *poolstore.TaskPolicy {
 	return out
 }
 
+// urlModeFromWire maps the §9.2 url-mode allowlist payload to the store
+// value. A nil payload reads as the zero value (agent-initiated url-mode
+// blocked, the §9.2 default). spec: §9.2 line 86.
+func urlModeFromWire(in *URLModeElicitationPayload) elicitation.URLModeAllowlist {
+	if in == nil {
+		return elicitation.URLModeAllowlist{}
+	}
+	return elicitation.URLModeAllowlist{
+		Enabled:         in.Enabled,
+		DomainAllowlist: append([]string(nil), in.DomainAllowlist...),
+	}
+}
+
 // poolFromPayload builds a poolstore.Pool from the admin wire payload,
 // applying the §13.2 egress default, the §5.3 line 677 dev-mode
 // isolation default, and the §5.2 executionMode default. It is the
@@ -260,6 +314,9 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		AllowStandardIsolation:           body.AllowStandardIsolation,
 		EgressProfile:                    egress.Profile(body.EgressProfile),
 		TaskPolicy:                       taskPolicyFromWire(body.TaskPolicy),
+		ElicitationDepthPolicy:           elicitation.DepthPolicy(body.ElicitationDepthPolicy),
+		ElicitationSuppressAtDepth:       body.ElicitationSuppressAtDepth,
+		URLModeElicitation:               urlModeFromWire(body.URLModeElicitation),
 		CreatedAt:                        r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
@@ -335,6 +392,9 @@ func (p PoolPayload) validateEnums() error {
 	if p.EgressProfile != "" && !egress.IsValid(egress.Profile(p.EgressProfile)) {
 		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
 	}
+	if p.ElicitationDepthPolicy != "" && !elicitation.DepthPolicy(p.ElicitationDepthPolicy).IsValid() {
+		return errors.New("elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)")
+	}
 	return nil
 }
 
@@ -394,6 +454,13 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		if errors.Is(err, poolstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
 				"pool with this name already exists", nil)
+			return
+		}
+		if errors.Is(err, poolstore.ErrURLModeDomainRequired) {
+			// spec: §9.2 line 86 — a pool that enables agent-initiated
+			// url-mode elicitation must name the permitted domains.
+			writeError(w, http.StatusBadRequest, "URL_MODE_ELICITATION_DOMAIN_REQUIRED", err.Error(),
+				map[string]any{"field": "urlModeElicitation.domainAllowlist"})
 			return
 		}
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -733,6 +800,12 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			"clearTaskPolicy and taskPolicy are mutually exclusive in one PUT", nil)
 		return
 	}
+	if body.ElicitationDepthPolicy != nil && *body.ElicitationDepthPolicy != "" &&
+		!elicitation.DepthPolicy(*body.ElicitationDepthPolicy).IsValid() {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)", nil)
+		return
+	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
@@ -862,11 +935,27 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		} else if body.TaskPolicy != nil {
 			p.TaskPolicy = taskPolicyFromWire(body.TaskPolicy)
 		}
+		if body.ElicitationDepthPolicy != nil {
+			p.ElicitationDepthPolicy = elicitation.DepthPolicy(*body.ElicitationDepthPolicy)
+		}
+		if body.ElicitationSuppressAtDepth != nil {
+			p.ElicitationSuppressAtDepth = *body.ElicitationSuppressAtDepth
+		}
+		if body.URLModeElicitation != nil {
+			p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
+		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, poolstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		if errors.Is(err, poolstore.ErrURLModeDomainRequired) {
+			// spec: §9.2 line 86 — enabling agent-initiated url-mode
+			// elicitation requires a non-empty domainAllowlist.
+			writeError(w, http.StatusBadRequest, "URL_MODE_ELICITATION_DOMAIN_REQUIRED", err.Error(),
+				map[string]any{"field": "urlModeElicitation.domainAllowlist"})
 			return
 		}
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)

@@ -11037,7 +11037,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** §16.7 catalog is closed; §9.2 does not list this rejection. Removed `emitURLModeRejection` and replaced the audit emit with a §9.1 drop-counter increment (`reason="domain_not_allowlisted"`). The rich forensic context (host, allowlist, originPod, initiatorType) is preserved on the `DOMAIN_NOT_ALLOWLISTED` `*mcp.ToolError`'s `details` payload, so the rejection is still operator-observable through the metric + the surfaced tool error.
 
-### - [ ] F-9.2.12 — Production binary does not wire pool-level elicitation policy fields [High] — OPEN
+### - [x] F-9.2.12 — Production binary does not wire pool-level elicitation policy fields [High] — CLOSED
 
 - **Spec:** Lines 86, 90–98. `urlModeElicitation.domainAllowlist` is configured per pool. `elicitationDepthPolicy` is configured per pool.
 - **Evidence:**
@@ -11050,6 +11050,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `ElicitationTamperMetrics` is `nil` — even if F-9.2.1 / F-9.2.2 were fixed, the dispatcher's metric increment at `elicitation.go:130-134` is guarded by `if d.tamperMetrics != nil`, so the metric stays at zero.
   - `ElicitationIntercepts` is `nil` — no parent ever intercepts; every elicitation goes to the root.
   - `MaxElicitationsPerSession` defaults to 50 (constant in `mcptools.go:204`) — consistent with spec default; observable but not operator-tunable.
+
+**Resolution (commit `<pending>`):** Several sub-gaps were stale: `ElicitationTamperMetrics` is now wired (F-9.2.4), `ElicitationLifecycleMetrics` is wired (F-9.2.14), and `WalkChain` now coerces the empty depth policy to the §9.2 line 92 `suppress_at_depth=3` default rather than `allow_all` (F-9.2.16), so the default suppression is active. The residual gap — the per-pool source of truth for `elicitationDepthPolicy` (lines 90-98) and `urlModeElicitation` (line 86), plus the gateway resolving them per pool — is now closed. Per §4.6.2 the Postgres poolstore is the source of truth ("CRDs become derived state"), so the three fields (`ElicitationDepthPolicy`, `ElicitationSuppressAtDepth`, `URLModeElicitation`) were added to `poolstore.Pool`, persisted via a new `elicitation_policy` JSONB column (migration 0110), accepted on the admin `POST`/`PUT /v1/admin/pools` surface (and the §17.6 bootstrap seed, which shares `poolFromPayload`), and validated at store admission: `urlModeElicitation.enabled:true` with an empty `domainAllowlist` is rejected with `400 URL_MODE_ELICITATION_DOMAIN_REQUIRED` (line 86), and an unrecognised depth policy is rejected. The `lenny/request_elicitation` handler now resolves the raising session's `PoolRef` via `deps.Pools` and applies the pool's depth policy and url-mode allowlist on a per-call copy of the dispatcher (so a pool's `allow_all` overrides the depth-3 platform default, a `block_all` pool suppresses delegated sessions, and an allowlisting pool permits agent-initiated url-mode to its registered domains). The SandboxTemplate CRD mirror is unnecessary: it is derived pod-lifecycle state with no elicitation-policy consumer in the warm-pool controller, and the gateway resolves the policy from the poolstore, not the CRD. `ElicitationIntercepts` (parent interception) remains a nil-default §9.2 forwarding feature with no spec-mandated production default.
 
 ### - [x] F-9.2.13 — Dispatcher `tenantID` is statically wired to `"default"` [Medium] — CLOSED
 
@@ -11074,7 +11076,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** Registered all four metrics in `gatewaymetrics.go` with the §16.1 catalog names and 4 Inc/Dec/Observe helpers (`IncElicitationPending`, `DecElicitationPending`, `IncElicitationTimeout`, `IncElicitationSuppressed`, `ObserveElicitationRoundtrip`). Added `mcptools.ElicitationLifecycleRecorder` interface + Deps field; the request_elicitation handler stamps admit + every terminal path (responded/dismissed/timeout/ctx-done) with the histogram observation and pending decrement, while the budget-exceeded and depth-suppression drop paths bump the suppressed counter. `cmd/lenny-gateway/main.go` wires `ElicitationLifecycleMetrics: gwMetrics`. The `ElicitationBacklogHigh` alert can now fire.
 
-### - [ ] F-9.2.15 — Idle-timer pause for "waiting_for_human" is unimplemented [Medium] — OPEN
+### - [ ] F-9.2.15 — Idle-timer pause for "waiting_for_human" is unimplemented [Medium] — DEFERRED
 
 - **Spec:** Line 102. "When a session is waiting for an elicitation response, the session's `maxIdleTime` timer is paused. The session is in a 'waiting_for_human' state, not idle."
 - **Evidence:**
@@ -11082,6 +11084,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `grep -rn "waiting_for_human\|WaitingForHuman\|pauseIdle\|idleTimerPaused" pkg/` returns only the spec text (in review-findings notes); no implementation hits.
   - `pkg/gateway/mcptools/mcptools.go:753-774` records the elicitation against the resolver session but does not alter session state. There is no per-session "idle since" tracking that would need pausing.
 - **Gap:** A session that raises a request_elicitation continues to accumulate idle time against `maxIdleTime`. A long-running human-facing elicitation can therefore time out the session via the idle path, contradicting the §9.2 contract that the elicitation timeout (`maxElicitationWait`) is the only one that applies while waiting on a human.
+
+**Deferred:** The §9.2 line 102 contract has two halves, and the one this finding targets — pausing the session `maxIdleTime` timer — has nothing to pause in v1. A repo-wide search (`MaxIdleTime`/`idleTimeout` over `pkg/`, `cmd/`) confirms no session-level idle reaper exists: `runtimestore.Limits` carries `MaxSessionAgeSeconds` but no `maxIdleTimeSeconds`, and the only idle timers are the load-test client (`cmd/lenny-loadctl`) and the playground hard-idle override (`pkg/gateway/playground`), neither of which reaps a production session for inactivity. With no idle accumulator running, a pending elicitation cannot expire a session via the idle path, so the contract is vacuously satisfied today. The visible-state half ("the session is in a 'waiting_for_human' state") is §9.2 prose, not a §15.1 `State` enum value (§15.1 enumerates `input_required` and `suspended` as the `running` sub-states surfaced via `state_change`); introducing a net-new `waiting_for_human` wire value would be a spec-broadening change. Re-attempt once the session-level `maxIdleTime` idle-reaper subsystem is built (it would carry the `maxIdleTimeSeconds` limit, the per-session idle accumulator, and the pause/resume hooks the elicitation admit/resolve path would call); the pause point is the same `request_elicitation` admit/terminal site F-9.2.14 already instruments.
 
 ### - [x] F-9.2.16 — Depth policy default `suppress_at_depth: 3` is not in effect [Medium] — CLOSED
 

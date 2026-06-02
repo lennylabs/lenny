@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -116,6 +117,29 @@ type Pool struct {
 	// when PoolStoreSource maps the pool to its SandboxTemplate. spec:
 	// §5.2 lines 398-475.
 	TaskPolicy *TaskPolicy
+
+	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool
+	// `elicitationDepthPolicy` that governs whether agent-initiated
+	// elicitations raised by a session in this pool are suppressed by
+	// delegation depth (`allow_all`, `suppress_at_depth`, `block_all`).
+	// Empty defaults to the §9.2 line 92 platform default
+	// (`suppress_at_depth` at depth 3) when the dispatcher resolves it.
+	// spec: §9.2 lines 90-98.
+	ElicitationDepthPolicy elicitation.DepthPolicy
+
+	// ElicitationSuppressAtDepth is the §9.2 line 92 threshold N for the
+	// `suppress_at_depth` policy; ignored for the other policies. Zero
+	// with a `suppress_at_depth` policy resolves to the platform default
+	// (DefaultSuppressAtDepth=3) at the dispatcher.
+	ElicitationSuppressAtDepth int
+
+	// URLModeElicitation is the §9.2 line 86 per-pool agent-initiated
+	// url-mode elicitation allowlist. The zero value (Enabled:false)
+	// blocks every agent-initiated url-mode elicitation, the §9.2
+	// default. Enabled:true with an empty DomainAllowlist is rejected at
+	// store admission with URL_MODE_ELICITATION_DOMAIN_REQUIRED.
+	// spec: §9.2 line 86.
+	URLModeElicitation elicitation.URLModeAllowlist
 }
 
 // TaskPolicy mirrors the §5.2 taskPolicy block declared on
@@ -329,6 +353,39 @@ func ValidateConcurrentConfig(p Pool) error {
 	return nil
 }
 
+// ErrURLModeDomainRequired is the §9.2 line 86 admission rejection
+// returned when a pool sets urlModeElicitation.enabled:true with an
+// empty or absent domainAllowlist. The admin handler maps it to the
+// 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED error code.
+var ErrURLModeDomainRequired = errors.New("poolstore: urlModeElicitation.enabled requires a non-empty domainAllowlist (§9.2 URL_MODE_ELICITATION_DOMAIN_REQUIRED)")
+
+// ValidateElicitationPolicy enforces the §9.2 per-pool elicitation
+// configuration invariants at store admission. It is checked in
+// Create and Update so a misconfigured pool fails at the admin API and
+// at the §17.6 bootstrap seed rather than at the first elicitation:
+//
+//   - urlModeElicitation.enabled:true requires a non-empty
+//     domainAllowlist (§9.2 line 86). A pool that enables agent-
+//     initiated url-mode elicitation without naming the permitted
+//     domains is rejected with ErrURLModeDomainRequired, which the
+//     admin handler surfaces as 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED.
+//
+//   - elicitationDepthPolicy, when set, must be one of the §9.2 line
+//     94-96 enum values (`allow_all`, `suppress_at_depth`, `block_all`).
+//     An empty value is permitted and resolves to the §9.2 line 92
+//     platform default at the dispatcher.
+//
+// spec: §9.2 lines 86, 90-98.
+func ValidateElicitationPolicy(p Pool) error {
+	if err := p.URLModeElicitation.Validate(); err != nil {
+		return ErrURLModeDomainRequired
+	}
+	if p.ElicitationDepthPolicy != "" && !p.ElicitationDepthPolicy.IsValid() {
+		return errors.New("poolstore: elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)")
+	}
+	return nil
+}
+
 // ValidateTaskPolicy enforces the §5.2 task-mode taskPolicy invariants
 // at admin admission time. The same invariants are re-checked at the CRD
 // layer by `lenny-pool-config-validator`; running them here makes a
@@ -529,6 +586,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if err := ValidateTaskPolicy(p); err != nil {
 		return err
 	}
+	if err := ValidateElicitationPolicy(p); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.pools[p.Name]; exists {
@@ -545,8 +605,18 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 		p.Generation = 1
 	}
 	p.TaskPolicy = p.TaskPolicy.Clone()
+	p.URLModeElicitation.DomainAllowlist = cloneAllowlist(p.URLModeElicitation.DomainAllowlist)
 	m.pools[p.Name] = p
 	return nil
+}
+
+// cloneAllowlist returns a copy of the §9.2 url-mode domain allowlist so
+// the Memory store never shares the backing slice with a caller.
+func cloneAllowlist(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	return append([]string(nil), in...)
 }
 
 // Get implements Store.
@@ -557,6 +627,7 @@ func (m *Memory) Get(_ context.Context, name string) (Pool, error) {
 	if !ok {
 		return Pool{}, ErrNotFound
 	}
+	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	row.TaskPolicy = row.TaskPolicy.Clone()
 	return row, nil
 }
@@ -591,6 +662,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	if err := ValidateTaskPolicy(row); err != nil {
 		return Pool{}, err
 	}
+	if err := ValidateElicitationPolicy(row); err != nil {
+		return Pool{}, err
+	}
 	now := time.Now().UTC()
 	if !now.After(prev) {
 		now = prev.Add(time.Nanosecond)
@@ -598,9 +672,11 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	row.UpdatedAt = now
 	row.Generation++
 	row.TaskPolicy = row.TaskPolicy.Clone()
+	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	m.pools[name] = row
 	out := row
 	out.TaskPolicy = row.TaskPolicy.Clone()
+	out.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	return out, nil
 }
 
@@ -617,6 +693,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Pool, error) {
 			continue
 		}
 		row.TaskPolicy = row.TaskPolicy.Clone()
+		row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
