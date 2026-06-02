@@ -21191,7 +21191,7 @@ Files:
 
 **Resolution:** Closed by F-4.3.11. `pkg/kms/providerflags` is the shared `--kms-*` flag surface both binaries now consume; the chart's `kms.provider` value renders onto `--kms-provider` for both deployments. The cloud adapters under `pkg/kms/{aws,gcp,azure}` are now reachable through `providerflags.Resolve`.
 
-### - [ ] F-12.7.3 — 3 — Cloud blob backends compiled but unreachable [Medium] — OPEN
+### - [x] F-12.7.3 — 3 — Cloud blob backends compiled but unreachable [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.5.1 — Both report the S3/GCS/Azure blob backends are implemented but not wired into the gateway selector, which recognizes only memory and MinIO.
 
@@ -21215,6 +21215,11 @@ Files:
 - `pkg/blobstore/s3/s3.go:80` (`New`), `pkg/blobstore/azureblob/azureblob.go:79` (`New`), `pkg/blobstore/gcs/gcs.go:80` (`New`).
 - `cmd/lenny-gateway/main.go:393-409` (hard-coded MinIO vs in-memory branch).
 - `charts/lenny/values.yaml:157-173` (`minio:` block only).
+
+**Resolution:** Closed by F-17.5.1 (28a32d8b) — confirmed duplicate. The new
+`pkg/blobstore/providerflags.Resolve` + `--object-storage-provider` gateway
+flag + `objectStorage` chart-values block make the S3/GCS/Azure adapters
+selectable end-to-end. See F-17.5.1's resolution note.
 
 ### - [x] F-12.7.4 — 4 — EventBus is a concrete struct, not an interface [Medium] — CLOSED
 
@@ -32084,7 +32089,7 @@ The spec-map entry (`tests/spec-map.json:2301-2310`) flags §17.5 as "Non-normat
 
 ### Findings
 
-### - [ ] F-17.5.1 — 1 — Cloud blob backends (S3/GCS/Azure) are zero-wired into the gateway [High] — OPEN
+### - [x] F-17.5.1 — 1 — Cloud blob backends (S3/GCS/Azure) are zero-wired into the gateway [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.7.3 — Both report the S3/GCS/Azure blob backends are implemented but not wired into the gateway selector, which recognizes only memory and MinIO.
 
@@ -32115,6 +32120,24 @@ The cloud-adapter test coverage stops at the package boundary: `pkg/blobstore/{s
 **Severity.** High. §17.5 bullet 1 is the load-bearing pluggability claim that distinguishes the cloud-portable design from a MinIO-only stack. The adapters exist but the gateway has no chart-driven selector to consume them, leaving the spec's `objectStorage.provider` contract entirely unimplemented at the wiring boundary.
 
 **Suggested fix.** Add `objectStorage.provider` Helm value with values `s3 | gcs | azure | minio` (default `minio`); render provider-specific flags / env onto the gateway pod (e.g., `--object-store-provider s3 --s3-bucket … --s3-region …`); add a gateway-side switch in `cmd/lenny-gateway/main.go` that constructs the matching `blobstore.Store` from the resolved cloud adapter package. The single-implementation rule (`feedback_v1_no_tier_splitting`) is satisfied because the selector chooses between alternative concrete `Store` implementations of the one canonical interface, not between code paths.
+
+**Resolution (28a32d8b):** New `pkg/blobstore/providerflags.Resolve` constructs
+the matching `blobstore.Store` from `objectStorage.provider`
+(`minio | memory | s3 | gcs | azure`), mirroring the already-closed §17.5
+cloud-KMS `pkg/kms/providerflags` seam. The gateway gained
+`--object-storage-provider` plus the shared §17.9.3
+`--object-storage-{bucket,region,account-url}` flags (rendered from the new
+`objectStorage` chart-values block onto the gateway Deployment); the resolver
+selects the S3/GCS/Azure adapter at startup. The §12.5 ll.297-303
+`SSEKeyResolver` is adapted from the tenant-keyed form to the URI-keyed hook
+the S3/GCS backends expose (Azure relies on account-level CMEK per §17.9.4),
+and the fail-closed KMS-unavailable / upload-error metric callbacks now fire
+on every backend via a generic `artifactMetricsSink` interface. Empty provider
+preserves the prior behaviour (MinIO when `--minio-endpoint` is set, in-memory
+otherwise). The single-implementation rule holds — the selector picks between
+concrete `Store` implementations of the one canonical interface. Closes
+F-12.7.3 (duplicate). Tested: tier-1 `providerflags` (default/memory/minio/
+unknown/cloud-required-config/SSE adapter) + tier-2 helm-unittest selector flags.
 
 ---
 
@@ -32159,7 +32182,7 @@ Each comment block describes the future swap ("a cloud deployment swaps in an AW
 
 ---
 
-### - [ ] F-17.5.3 — 1 — `objectStorage.provider` Helm-values surface is absent end-to-end (chart, install schema, preflight wiring) [Medium] — OPEN
+### - [ ] F-17.5.3 — 1 — `objectStorage.provider` Helm-values surface is absent end-to-end (chart, install schema, preflight wiring) [Medium] — DEFERRED
 
 **Spec basis.** §17.9.3 "Cloud-Managed Backends" canonical example (`spec/17_deployment-topology.md:1402`):
 
@@ -32180,7 +32203,20 @@ The §17.6 preflight check "Cloud object storage lifecycle rules" (`spec/17_depl
 
 **Suggested fix.** Promote `objectStorage` from the answer-file pseudo-namespace into the canonical chart values, with `provider: minio` as the chart default. Then wire the preflight Job's lifecycle-check dispatch table accordingly.
 
----
+**Deferred (28a32d8b).** Two of the three named components landed with F-17.5.1:
+the canonical `objectStorage` block (`provider | bucket | region | accountUrl`,
+default `provider: minio`) now exists in `charts/lenny/values.yaml`, and the
+install CLI schema (`installObjectStorage`) gained `Provider` / `Region` /
+`AccountURL` fields with cloud-provider validation and the canonical
+`objectStorage` values emission. The remaining component — the §17.6 preflight
+"Cloud object storage lifecycle rules" dispatch — has no implementation to wire
+into: `pkg/preflight/` carries no object-storage-lifecycle check at all (only
+`minio_sse`, `volume_encryption`, `crdschema`, etc.). Building it requires a
+per-cloud bucket versioning + lifecycle validator (S3 `GetBucketVersioning` /
+`GetBucketLifecycleConfiguration`, GCS bucket IAM/lifecycle, Azure blob
+versioning) behind the `MinIOEncryptionProber`-style prober seam, dispatched on
+the now-available `objectStorage.provider`. That cloud-lifecycle prober is a
+focused preflight batch; the gating value it dispatches on is no longer absent.
 
 ### - [ ] F-17.5.4 — 2 — Per-cluster answer-file catalog (`eks-small-team.yaml`, `gke-production.yaml`, `aks-production.yaml`, `openshift-self-managed.yaml`, `bare-metal-self-managed.yaml`, `airgap-self-managed.yaml`) is unimplemented [Medium] — OPEN
 
