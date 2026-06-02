@@ -132,7 +132,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 	bearerJTI := mintWithCookie(t, tokenSrv, cookie)
 
 	// The minted bearer is not revoked before logout.
-	id, tenant, _ := splitCookie(cookie)
+	id, tenant := idTenantForCookie(t, store, cookie)
 	revoked, _ := store.IsBearerRevoked(context.Background(), tenant, bearerJTI)
 	if revoked {
 		t.Fatal("bearer revoked before logout")
@@ -208,7 +208,7 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 
 	cookie := completeOIDCLogin(t, replicaA, aPg, oidc)
 	bearerJTI := mintWithCookie(t, aTok, cookie)
-	id, tenant, _ := splitCookie(cookie)
+	id, tenant := idTenantForCookie(t, store, cookie)
 
 	// Logout on replica A.
 	logoutReq, _ := http.NewRequest(http.MethodPost, aPg.URL+"/playground/auth/logout", nil)
@@ -304,10 +304,16 @@ func mintWithCookie(t *testing.T, tokenSrv *httptest.Server, cookie string) stri
 	return jti
 }
 
-func splitCookie(value string) (id, tenant string, ok bool) {
-	i := strings.IndexByte(value, '.')
-	if i < 0 {
-		return "", "", false
+// idTenantForCookie returns the opaque session id (the whole cookie
+// value per §27.3.1 line 81) together with the tenant the store indexed
+// for it. The cookie no longer embeds the tenant, so the tenant is
+// recovered through SessionStore.TenantForSession. F-27.3.8.
+func idTenantForCookie(t *testing.T, store SessionStore, cookie string) (id, tenant string) {
+	t.Helper()
+	id = cookie
+	tenant, ok, err := store.TenantForSession(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("TenantForSession(%q) = (%q, ok=%v, err=%v); want a resolved tenant", id, tenant, ok, err)
 	}
-	return value[:i], value[i+1:], true
+	return id, tenant
 }

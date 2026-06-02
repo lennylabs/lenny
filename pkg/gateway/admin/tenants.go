@@ -718,10 +718,11 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handleRevokeToken)))
 	}
 	if r.auditLog != nil {
-		// §25.9 Audit Log Query API. The verify and summary routes are
-		// registered before the {seq} route so the literal path segments
-		// are not parsed as a sequence number.
-		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))
+		// §25.9 Audit Log Query API. The summary route is registered
+		// before the {seq} route so the literal path segment is not parsed
+		// as a sequence number. Chain integrity is carried by the list
+		// response's chainIntegrityReport envelope (§25.9 line 3653); §25.9
+		// defines no standalone verify route. F-25.9.10.
 		// §25.9 line 3661 aggregate counts by type/actor/resource.
 		mux.Handle("GET /v1/admin/audit-events/summary", r.requireAuditReader(http.HandlerFunc(r.handleAuditSummary)))
 		mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))

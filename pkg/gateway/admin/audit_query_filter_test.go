@@ -369,7 +369,6 @@ func TestAuditStoreUnavailable_spec_25_9_3714(t *testing.T) {
 	for _, path := range []string{
 		"/v1/admin/audit-events?tenantId=platform",
 		"/v1/admin/audit-events/1?tenantId=platform",
-		"/v1/admin/audit-events/verify?tenantId=platform",
 		"/v1/admin/audit-events/summary?tenantId=platform",
 	} {
 		rr := httptest.NewRecorder()

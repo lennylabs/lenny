@@ -160,7 +160,6 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/schema/migrations/{version}/down",
 		"/v1/admin/audit-events",
 		"/v1/admin/audit-events/{seq}",
-		"/v1/admin/audit-events/verify",
 		"/v1/admin/health",
 		"/v1/admin/health/summary",
 		"/v1/admin/health/{component}",

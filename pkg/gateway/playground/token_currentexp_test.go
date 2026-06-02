@@ -64,7 +64,7 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 		t.Fatalf("minted JWT carried no exp claim: %v", claims["exp"])
 	}
 
-	id, tenant, _ := splitCookie(cookie)
+	id, tenant := idTenantForCookie(t, store, cookie)
 	rec, err := store.GetSession(context.Background(), tenant, id)
 	if err != nil {
 		t.Fatalf("GetSession after mint: %v", err)

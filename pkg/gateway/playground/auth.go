@@ -5,7 +5,6 @@ package playground
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -195,9 +194,12 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 	if err := h.sessions.PutSession(ctx, subject.TenantID, sessionID, rec, h.cfg.OIDCSessionTTL); err != nil {
 		return err
 	}
+	// §27.3.1 line 81: the cookie carries only the opaque session id. The
+	// tenant is recovered server-side from the fan-in index PutSession
+	// wrote, so the cookie value discloses no tenant id. F-27.3.8.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
-		Value:    sessionID + "." + subject.TenantID,
+		Value:    sessionID,
 		Path:     sessionCookiePath,
 		HttpOnly: true,
 		Secure:   true,
@@ -219,10 +221,18 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clearCookie(w, sessionCookie, sessionCookiePath)
-	id, tenant, ok := parseSessionCookie(r)
+	id, ok := parseSessionCookie(r)
 	if !ok || h.sessions == nil {
 		// No cookie or no store: logout is idempotent, the cleared
 		// cookie above is the only effect.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	// §27.3.1 line 81: recover the tenant from the fan-in index since the
+	// cookie carries only the opaque id. A missing entry or store error
+	// leaves logout idempotent (the cookie is already cleared). F-27.3.8.
+	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
+	if terr != nil || !found {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -380,20 +390,19 @@ func (h *Handler) callbackURL(r *http.Request) string {
 	return scheme + "://" + r.Host + "/playground/auth/callback"
 }
 
-// parseSessionCookie reads and splits the lenny_playground_session
-// cookie into its opaque session id and tenant. The cookie value is
-// "<session-id>.<tenant-id>" so the per-request revocation check can
-// resolve the per-tenant Redis key without a separate lookup.
-func parseSessionCookie(r *http.Request) (id, tenant string, ok bool) {
+// parseSessionCookie reads the lenny_playground_session cookie and
+// returns its opaque session id. Per §27.3.1 line 81 the cookie value
+// is the opaque session id alone; the tenant is recovered server-side
+// via SessionStore.TenantForSession rather than embedded in the cookie.
+// The opaque id is base64url (newOpaqueID) and never contains a dot, so
+// a legacy dotted value fails the index lookup and is treated as an
+// expired session. F-27.3.8.
+func parseSessionCookie(r *http.Request) (id string, ok bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {
-		return "", "", false
+		return "", false
 	}
-	idPart, tenantPart, found := strings.Cut(c.Value, ".")
-	if !found || idPart == "" || tenantPart == "" {
-		return "", "", false
-	}
-	return idPart, tenantPart, true
+	return c.Value, true
 }
 
 // clearCookie writes a Max-Age=0 Set-Cookie for name at path.

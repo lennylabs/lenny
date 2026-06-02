@@ -171,15 +171,6 @@ type AuditEventEnvelope struct {
 	NextCursor           string                `json:"nextCursor,omitempty"`
 }
 
-// AuditVerifyResponse is the §11.7 chain-verification response.
-type AuditVerifyResponse struct {
-	TenantID  string `json:"tenantId"`
-	Integrity string `json:"integrity"`
-	BreakSeq  uint64 `json:"breakSeq,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	RowCount  int    `json:"rowCount"`
-}
-
 // WithAuditChains wires the §25.9 Audit Log Query API onto the
 // Router over an in-memory ChainSet — the same one the ChainAuditSink
 // writes to.
@@ -862,41 +853,6 @@ func summaryKey(groupBy string, row audit.Row) string {
 		return "(none)"
 	}
 	return key
-}
-
-// handleVerifyAuditChain implements
-// GET /v1/admin/audit-events/verify — the §11.7 chain-integrity
-// check.
-func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request) {
-	start := r.clock()
-	tenant, ok := r.auditTenant(w, req)
-	if !ok {
-		return
-	}
-	res, err := r.auditLog.Verify(req.Context(), tenant)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "AUDIT_STORE_UNAVAILABLE",
-			"audit store unreachable: "+err.Error(), nil)
-		return
-	}
-	rows, ok := r.auditRows(w, req, tenant)
-	if !ok {
-		return
-	}
-	resp := AuditVerifyResponse{
-		TenantID:  tenant,
-		Integrity: string(res.Integrity),
-		BreakSeq:  res.BreakSeq,
-		Detail:    res.Detail,
-		RowCount:  len(rows),
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-	broken := 0
-	if res.Integrity == audit.ChainBroken {
-		broken = 1
-	}
-	r.recordAuditQuery("verify", start, 1, broken, 0)
 }
 
 // retranslateRequest is the §25.9 POST .../retranslate body. The

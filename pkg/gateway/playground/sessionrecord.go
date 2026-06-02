@@ -131,6 +131,17 @@ type SessionStore interface {
 	// (a session already revoked or expired) is harmless. spec: §27.3.1
 	// line 148, §11.4.
 	SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error)
+
+	// TenantForSession resolves the tenant that owns an opaque session
+	// id through the §27.3.1 fan-in index, so the
+	// lenny_playground_session cookie carries only the opaque session id
+	// (line 81) and never the tenant. ok is false when no index entry
+	// exists (the cookie expired or was never issued). The error is
+	// non-nil only when the backing store is unreachable, so a caller on
+	// the auth path fails closed. The index is written by PutSession and
+	// removed by RevokeSession. spec: §27.3.1 line 81 (the cookie carries
+	// only the opaque session id).
+	TenantForSession(ctx context.Context, id string) (tenant string, ok bool, err error)
 }
 
 // sessionKey is the §12.4 / §27.3.1 Redis key for a playground
@@ -143,6 +154,19 @@ func sessionKey(tenant, id string) string {
 // marker.
 func revokedKey(tenant, jti string) string {
 	return "t:" + tenant + ":pg:revoked:" + jti
+}
+
+// sessTenantIndexKey is the §27.3.1 fan-in index that recovers the
+// tenant owning an opaque session id. It lets the
+// lenny_playground_session cookie carry only the opaque session id
+// (§27.3.1 line 81) rather than embedding the tenant in the cookie
+// value. The session id is a 256-bit opaque random (newOpaqueID), so
+// this platform-scoped lookup discloses no tenant data on its own:
+// resolving the index requires already possessing the opaque id, which
+// is the cookie credential. The entry is written under the session TTL
+// by PutSession and deleted by RevokeSession. spec: §27.3.1 line 81.
+func sessTenantIndexKey(id string) string {
+	return "pg:sess-tenant:" + id
 }
 
 // userIndexKey is the §11.4 Redis key for the set of playground session
@@ -238,6 +262,10 @@ type MemorySessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]memSession
 	revoked  map[string]time.Time
+	// idTenant is the §27.3.1 fan-in index: opaque session id -> tenant,
+	// so TenantForSession recovers the tenant the cookie no longer
+	// carries. F-27.3.8.
+	idTenant map[string]memTenantIndex
 	now      func() time.Time
 }
 
@@ -246,11 +274,19 @@ type memSession struct {
 	expiresAt time.Time
 }
 
+// memTenantIndex is one §27.3.1 session-id -> tenant index entry, held
+// under the session TTL so a stale id self-expires. F-27.3.8.
+type memTenantIndex struct {
+	tenant    string
+	expiresAt time.Time
+}
+
 // NewMemorySessionStore returns an empty MemorySessionStore.
 func NewMemorySessionStore() *MemorySessionStore {
 	return &MemorySessionStore{
 		sessions: map[string]memSession{},
 		revoked:  map[string]time.Time{},
+		idTenant: map[string]memTenantIndex{},
 		now:      time.Now,
 	}
 }
@@ -261,8 +297,25 @@ var _ SessionStore = (*MemorySessionStore)(nil)
 func (m *MemorySessionStore) PutSession(_ context.Context, tenant, id string, rec SessionRecord, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sessions[sessionKey(tenant, id)] = memSession{rec: rec, expiresAt: m.now().Add(ttl)}
+	exp := m.now().Add(ttl)
+	m.sessions[sessionKey(tenant, id)] = memSession{rec: rec, expiresAt: exp}
+	// §27.3.1 fan-in index so the cookie carries only the opaque id.
+	m.idTenant[id] = memTenantIndex{tenant: tenant, expiresAt: exp}
 	return nil
+}
+
+// TenantForSession implements SessionStore.
+func (m *MemorySessionStore) TenantForSession(_ context.Context, id string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.idTenant[id]
+	if !ok || m.now().After(e.expiresAt) {
+		if ok {
+			delete(m.idTenant, id)
+		}
+		return "", false, nil
+	}
+	return e.tenant, true, nil
 }
 
 // GetSession implements SessionStore.
@@ -281,6 +334,7 @@ func (m *MemorySessionStore) RevokeSession(_ context.Context, tenant, id string,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, sessionKey(tenant, id))
+	delete(m.idTenant, id)
 	exp := m.now().Add(revokedTTL)
 	for _, jti := range jtis {
 		if jti == "" {
@@ -413,6 +467,9 @@ func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, r
 	}
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, sessionKey(tenant, id), payload, ttl)
+	// §27.3.1 fan-in index so the cookie carries only the opaque id; it
+	// shares the session TTL so it self-expires with the record.
+	pipe.Set(ctx, sessTenantIndexKey(id), tenant, ttl)
 	if rec.UserID != "" {
 		uk := userIndexKey(tenant, rec.UserID)
 		pipe.SAdd(ctx, uk, id)
@@ -422,6 +479,20 @@ func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, r
 	}
 	_, err = pipe.Exec(ctx)
 	return err
+}
+
+// TenantForSession implements SessionStore. It reads the §27.3.1 fan-in
+// index. A missing entry returns ok=false; a transport error is
+// returned so the auth path fails closed.
+func (s *RedisSessionStore) TenantForSession(ctx context.Context, id string) (string, bool, error) {
+	tenant, err := s.client.Get(ctx, sessTenantIndexKey(id)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return tenant, true, nil
 }
 
 // GetSession implements SessionStore.
@@ -448,6 +519,7 @@ func (s *RedisSessionStore) GetSession(ctx context.Context, tenant, id string) (
 func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string, jtis []string, revokedTTL time.Duration) error {
 	pipe := s.client.TxPipeline()
 	pipe.Del(ctx, sessionKey(tenant, id))
+	pipe.Del(ctx, sessTenantIndexKey(id))
 	for _, jti := range jtis {
 		if jti == "" {
 			continue

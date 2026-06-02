@@ -39440,9 +39440,11 @@ Implementation inverts the default: the standard list response is already the ra
 
 **Resolution (f753a200):** new `audit.Chain.VerifyRows()` returns the per-row §11.7 ChainIntegrity (verified/broken/gap_suspected/redacted_gdpr); the list/get handlers run it over the full ordered chain and stamp each row's verdict onto its OCSF record's `unmapped.lenny_chain.integrity` (and onto the raw-canonical `chainIntegrity` field). The envelope gains `chainIntegrityReport` (the spec's `{verified, broken, gap_suspected, rechained_post_outage, redacted_gdpr}` tally over returned rows) and `auditMetadata.suspectedGaps` (windows derived from sequence discontinuities). The cross-reference to `ops_postgres_outage_log` for the precise outage reason is a separate subsystem; the window records the sequence-jump detection basis.
 
-### - [ ] F-25.9.10 — `verify` endpoint is non-standard and per-tenant only [Medium] — OPEN
+### - [x] F-25.9.10 — `verify` endpoint is non-standard and per-tenant only [Medium] — CLOSED
 
 §25.9 does not define a `GET /v1/admin/audit-events/verify` route; it expects the verifier verdict to be carried by the list-response `chainIntegrityReport` envelope (line 3653). The implementation provides a separate verify endpoint (`pkg/gateway/admin/audit_query.go:158-184`) bound to `mux.Handle("GET /v1/admin/audit-events/verify", ...)`. The endpoint accepts only one tenant per call (via `auditTenant`); the spec'd cross-shard verify report is computed across all shards into the single envelope. The work shipped here is useful but does not satisfy the spec's wire contract.
+
+**Resolution:** Removed the non-spec `GET /v1/admin/audit-events/verify` route, its `handleVerifyAuditChain` handler, the `AuditVerifyResponse` type, the openapi.json path entry, and the `admin.verify_audit_chain` MCP-tool extension. The §25.9 line 3653 `chainIntegrityReport` envelope on the list response (delivered by F-25.9.9) is the spec mechanism for surfacing the per-row chain verdict tally; the verified- and broken-chain report cases are covered by `TestListAuditEventsChainIntegrityReport_spec_25_9_3653` and `TestAuditQueryEmitsChainIntegrityBroken_spec_25_9_3750`, and the broken-segment metric now fires from the list path (`TestAuditListMetricsRecordsBroken`).
 
 ### - [ ] F-25.9.11 — scatter-gather and Redis cache absent [Medium] — OPEN
 
@@ -42697,7 +42699,7 @@ The five reasons declared on the enum are never written through to Redis; only `
 
 **Severity rationale (Medium):** SHOULD-equivalent capability gap. The plumbing is built but unused, so the idle-timeout and admin revocation paths the spec promises do not exist end-to-end.
 
-### - [ ] F-27.3.8 — `lenny_playground_session` cookie value embeds the tenant id; the spec calls for an opaque session id [Medium] — OPEN
+### - [x] F-27.3.8 — `lenny_playground_session` cookie value embeds the tenant id; the spec calls for an opaque session id [Medium] — CLOSED
 
 Spec §27.3.1 step 1 (line 81):
 
@@ -42716,6 +42718,8 @@ The implementation at `pkg/gateway/playground/auth.go:199` constructs the cookie
 A minimal fix is to store the `tenant → session-id` mapping under a fan-in index key (`t:*:pg:sess:*` is already prefixed by tenant — the gateway could maintain `pg:sess-tenant:{session_id} → {tenant_id}` to recover the tenant at request time).
 
 **Severity rationale (Medium):** SHOULD-equivalent deviation from the documented cookie format and the §27.3 promise.
+
+**Resolution:** The `lenny_playground_session` cookie value is now the opaque session id alone (§27.3.1 line 81). `SessionStore` gained `TenantForSession`, backed by the suggested `pg:sess-tenant:{session_id} → {tenant_id}` fan-in index written under the session TTL by `PutSession` and deleted by `RevokeSession` (both `MemorySessionStore` and `RedisSessionStore`). `parseSessionCookie` returns only the opaque id; `handleLogout` and the OIDC mint path recover the tenant through the index (a store error fails closed, a missing entry is an expired session). The index key is a 256-bit-opaque-id lookup, so it discloses no tenant data without the cookie credential. Tests: `TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81`, `TestTenantForSessionIndexRoundTripAndRevocation_spec_27_3_1_81`, `TestTenantForSessionExpires_spec_27_3_1_81`, and the Redis round-trip `TestRedisTenantForSessionIndexRoundTrip_spec_27_3_1_81`.
 
 ### - [x] F-27.3.9 — `oidcStateCookie` uses `SameSite=Lax`; spec only specifies `Path=/playground/auth/` and HttpOnly + TTL, leaving SameSite under-specified [Low] — CLOSED
 

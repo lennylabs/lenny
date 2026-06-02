@@ -74,7 +74,7 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 		h.rejectWrongMaterial(w, "bearer")
 		return
 	}
-	id, tenant, ok := parseSessionCookie(r)
+	id, ok := parseSessionCookie(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"no lenny_playground_session cookie", nil)
@@ -83,6 +83,20 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 	if h.sessions == nil {
 		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
 			"the playground session store is not configured", nil)
+		return
+	}
+	// §27.3.1 line 81: recover the tenant from the fan-in index since the
+	// cookie carries only the opaque id. A store error fails closed (503);
+	// a missing entry is an expired session (401). F-27.3.8.
+	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
+	if terr != nil {
+		writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",
+			"the playground session lookup did not complete: "+terr.Error(), nil)
+		return
+	}
+	if !found {
+		writeErrorReason(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"the playground session record has expired", "playground_session_expired")
 		return
 	}
 	rec, err := h.sessions.GetSession(r.Context(), tenant, id)

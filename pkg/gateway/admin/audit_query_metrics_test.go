@@ -63,9 +63,11 @@ func newMeteredAuditRouter(t *testing.T, rec admin.AuditQueryMetrics) *admin.Rou
 	}).WithAuditChains(chains).WithAuditMetrics(rec)
 }
 
-// TestAuditQueryMetricsEmittedPerEndpoint confirms the list, summary, and
-// verify endpoints each record a duration + scatter-gather observation
-// labeled with the §25.9 single-shard fan-out width.
+// TestAuditQueryMetricsEmittedPerEndpoint confirms the list and summary
+// endpoints each record a duration + scatter-gather observation labeled
+// with the §25.9 single-shard fan-out width. (§25.9 carries chain
+// integrity in the list envelope, so there is no separate verify
+// endpoint — F-25.9.10.)
 func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 	rec := &fakeAuditMetrics{}
 	router := newMeteredAuditRouter(t, rec)
@@ -81,7 +83,6 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 	for _, path := range []string{
 		"/v1/admin/audit-events?tenantId=platform",
 		"/v1/admin/audit-events/summary?tenantId=platform",
-		"/v1/admin/audit-events/verify?tenantId=platform",
 	} {
 		rr = httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, withAdminPrincipal(
@@ -91,7 +92,7 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 		}
 	}
 
-	for _, ep := range []string{"list", "summary", "verify"} {
+	for _, ep := range []string{"list", "summary"} {
 		if rec.endpointCount(ep) != 1 {
 			t.Errorf("endpoint %q recorded %d durations, want 1 (all: %+v)", ep, rec.endpointCount(ep), rec.durations)
 		}
@@ -101,14 +102,16 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 			t.Errorf("endpoint %q recorded shards=%d, want 1 (single-shard v1)", d.endpoint, d.shards)
 		}
 	}
-	if len(rec.shards) != 3 {
-		t.Errorf("scatter-gather observations = %d, want 3", len(rec.shards))
+	if len(rec.shards) != 2 {
+		t.Errorf("scatter-gather observations = %d, want 2", len(rec.shards))
 	}
 }
 
-// TestAuditVerifyMetricsRecordsBroken confirms the verify endpoint
-// increments the broken-segment counter when the chain verdict is broken.
-func TestAuditVerifyMetricsRecordsBroken_spec_25_9_metrics(t *testing.T) {
+// TestAuditListMetricsRecordsBroken confirms the list endpoint increments
+// the broken-segment counter when a returned row's chainIntegrity verdict
+// is broken (the §25.9 line 3653 chainIntegrityReport tally). F-25.9.10,
+// F-25.9.13.
+func TestAuditListMetricsRecordsBroken_spec_25_9_metrics(t *testing.T) {
 	rec := &fakeAuditMetrics{}
 	fake := &brokenChainLog{}
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
@@ -116,25 +119,35 @@ func TestAuditVerifyMetricsRecordsBroken_spec_25_9_metrics(t *testing.T) {
 	}).WithAuditLog(fake).WithAuditMetrics(rec)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/verify?tenantId=platform", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil)))
 	if rr.Code != http.StatusOK {
-		t.Fatalf("verify: status %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("list: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	if rec.broken != 1 {
 		t.Errorf("broken counter = %d, want 1", rec.broken)
 	}
 }
 
-// brokenChainLog is an admin.AuditLog whose Verify reports a broken
-// chain, so the verify metric path is exercisable without forging a
-// tampered chain.
+// brokenChainLog is an admin.AuditLog returning a single row whose stored
+// hash does not match its content, so the list path's per-row
+// chainIntegrity verdict is broken and the §25.9 broken counter fires.
 type brokenChainLog struct{}
 
 func (brokenChainLog) Append(context.Context, string, string, json.RawMessage, time.Time) (audit.Row, error) {
 	return audit.Row{}, nil
 }
 func (brokenChainLog) Rows(context.Context, string) ([]audit.Row, error) {
-	return []audit.Row{{Seq: 1, TenantID: "platform", EventType: "admin.tenant.created"}}, nil
+	// Timestamp inside the default 24h window; Hash deliberately wrong so
+	// VerifyRows classifies the row as broken.
+	return []audit.Row{{
+		Seq:       1,
+		TenantID:  "platform",
+		EventType: "admin.tenant.created",
+		Payload:   json.RawMessage(`{}`),
+		Timestamp: time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC),
+		PrevHash:  audit.GenesisPrevHash,
+		Hash:      "deadbeef",
+	}}, nil
 }
 func (brokenChainLog) Verify(context.Context, string) (audit.VerifyResult, error) {
 	return audit.VerifyResult{Integrity: audit.ChainBroken, BreakSeq: 1}, nil

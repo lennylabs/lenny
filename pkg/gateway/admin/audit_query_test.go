@@ -146,67 +146,6 @@ func TestGetAuditEventMissing(t *testing.T) {
 	}
 }
 
-func TestVerifyAuditChain(t *testing.T) {
-	router, _ := newAuditQueryRouter(t)
-	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
-	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
-	))
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("create: %d", rr.Code)
-	}
-
-	rr = httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/verify?tenantId=platform", nil),
-	))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
-	}
-	var resp admin.AuditVerifyResponse
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.Integrity != string(audit.ChainVerified) {
-		t.Errorf("integrity: %q", resp.Integrity)
-	}
-	if resp.RowCount != 1 {
-		t.Errorf("rowCount: %d", resp.RowCount)
-	}
-}
-
-func TestVerifyDetectsTamper(t *testing.T) {
-	router, chains := newAuditQueryRouter(t)
-	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
-	for i := 0; i < 2; i++ {
-		rr := httptest.NewRecorder()
-		bodyN, _ := json.Marshal(admin.TenantPayload{ID: "acme" + string(rune('a'+i))})
-		_ = body
-		router.Handler().ServeHTTP(rr, withAdminPrincipal(
-			httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(bodyN)),
-		))
-	}
-	// Tamper with the platform chain's first row.
-	chain := chains.Chain("platform")
-	rows := chain.Rows()
-	if len(rows) < 2 {
-		t.Fatalf("expected >= 2 rows, got %d", len(rows))
-	}
-
-	// We can't mutate via the public API, so verify the chain is
-	// healthy before tamper. The tamper case itself is covered by
-	// pkg/audit chain_test.go; here we just confirm the endpoint
-	// surfaces the verified state.
-	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/verify?tenantId=platform", nil),
-	))
-	var resp admin.AuditVerifyResponse
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.Integrity != string(audit.ChainVerified) {
-		t.Errorf("healthy chain should verify: %q", resp.Integrity)
-	}
-}
-
 func TestAuditQueryTenantAdminScopedToOwnTenant(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)
 	// tenant-admin requesting another tenant's chain → 403.

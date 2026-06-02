@@ -1889,17 +1889,6 @@
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       }
     },
-    "/v1/admin/audit-events/verify": {
-      "get": {
-        "summary": "Verify the audit hash chain integrity",
-        "x-lenny-mcp-tool": "admin.verify_audit_chain",
-        "x-lenny-scope": "admin.audit.read",
-        "x-lenny-required-role": "tenant-admin",
-        "x-lenny-category": "audit",
-        "security": [{ "BearerAuth": [] }],
-        "responses": { "200": { "description": "Chain integrity verdict" } }
-      }
-    },
     "/v1/admin/health": {
       "get": {
         "summary": "Platform health report",
