@@ -39820,7 +39820,7 @@ Spec line 3659: default 100, max 1000. Implementation (`audit_query.go:104-109`)
 
 ### Findings
 
-### - [ ] F-25.10.1 — `POST /v1/admin/drift/reconcile` endpoint not implemented [High] — OPEN
+### - [x] F-25.10.1 — `POST /v1/admin/drift/reconcile` endpoint not implemented [High] — CLOSED
 
 Spec line 3765 mandates `POST /v1/admin/drift/reconcile` for reconciling drifted resources with the canonical `confirm:true` dry-run pattern. Lines 3840–3844 require it to call gateway `PUT` endpoints, surface in the Operations Inventory with `kind: "drift_reconciliation"`, populate the `progress` envelope (`totalSteps`, `currentStep`, `etaMethod: "linear_extrapolation"`), and emit `operation_progressed` events.
 
@@ -39831,7 +39831,9 @@ Implementation status:
 - Operations Inventory integration absent: no `drift_reconciliation` operation kind is registered.
 - Error code `DRIFT_RECONCILE_PARTIAL` is declared (`driftservice.go:58`) and mapped to HTTP 207 (`opsserver/drift.go:20`), but never returned anywhere.
 
-### - [ ] F-25.10.2 — Drift audit events declared but never emitted [High] — OPEN
+**Resolution (a0c83622):** `Service.Reconcile` + `handleDriftReconcile` build the endpoint end-to-end. The flow computes drift against the live snapshot (or a caller-supplied desired body for the §25.10 line 3852 Postgres-outage path), groups drifted fields into per-resource targets, and — under the §25.2 `confirm` gate — applies each through an injected `ResourceApplier`. Dry-run previews without applying; a per-resource apply failure returns the §25.10 line 3852/3865 partial result (`DRIFT_RECONCILE_PARTIAL` → HTTP 207, now actually returned). In-flight reconciliations project onto the §25.4 Operations Inventory via the new `ReconcileTracker` (an `operations.Source` producing kind `drift_reconciliation` with the canonical `totalSteps`/`currentStep="{type}:{id}"`/`etaMethod:linear_extrapolation` envelope); `operation_progressed` fires per resource. The gateway-side PUT applier is the F-25.10.4 seam — a confirm with no applier wired fails closed with `DRIFT_RECONCILE_UNAVAILABLE` (503). The CLI route now resolves (no longer 404). The host wiring of `/v1/admin/operations` into lenny-ops is tracked by F-4.0.4; the source is built and registrable.
+
+### - [x] F-25.10.2 — Drift audit events declared but never emitted [High] — CLOSED
 
 Spec line 3871 requires the report/validate/refresh/reconcile flows to emit `drift.report_generated`, `drift.reconciliation_started`, `drift.resource_reconciled`, `drift.reconciliation_completed`, and `drift.snapshot_refreshed`. The `drift.snapshot_refreshed` event must carry `previous_written_at`, `previous_source`, `new_source`, and `byteSize` in its details.
 
@@ -39839,29 +39841,39 @@ Implementation status:
 - All five `EventType` constants are declared in `pkg/observability/audit/catalog.go:134-140` and included in the catalog list at line 227.
 - No call site for any of `EventDriftReportGenerated`, `EventDriftReconciliationStarted`, `EventDriftResourceReconciled`, `EventDriftReconciliationCompleted`, or `EventDriftSnapshotRefreshed` exists outside `catalog_test.go`. `handleDriftSnapshotRefresh` (`pkg/ops/opsserver/drift.go:98-142`) and `Service.RefreshSnapshot` (`driftservice.go:375-400`) both succeed without writing to the audit sink. `byteSize` is not computed or surfaced anywhere.
 
-### - [ ] F-25.10.3 — Drift metrics not emitted [High] — OPEN
+**Resolution (a0c83622):** New `driftservice.AuditSink` seam. `Report` emits `drift.report_generated`; `Reconcile` emits `drift.reconciliation_started` / `drift.resource_reconciled` (per resource) / `drift.reconciliation_completed`; `RefreshSnapshot` emits `drift.snapshot_refreshed` carrying `{previous_written_at, previous_source, new_source, byteSize}` (byteSize was already computed by the F-25.10.8 fix off `json.Marshal(req.Desired)`). The deps wiring logs the event until the lenny-ops audit-store client lands, matching the backup `logAuditSink` / diagnostics-audit posture.
+
+### - [x] F-25.10.3 — Drift metrics not emitted [High] — CLOSED
 
 Spec lines 3854–3860 require `lenny_drift_detected_total{resource_type,severity}` and `lenny_drift_reconciled_total{resource_type,outcome}` counters.
 
 Implementation status: a recursive grep for `lenny_drift_detected_total`, `lenny_drift_reconciled_total`, or `drift.*total` across the repo returns no matches outside spec/docs. Neither counter is registered or incremented.
 
-### - [ ] F-25.10.4 — Running-state collection unimplemented (production wiring stub) [High] — OPEN
+**Resolution (a0c83622):** Both counters are now in the §16.1 metric catalog and registered on the default registry (deps `driftDetectedTotal` / `driftReconciledTotal`). `Report` increments `lenny_drift_detected_total{resource_type,severity}` per drifted field (resource_type = top path segment); `Reconcile` increments `lenny_drift_reconciled_total{resource_type,outcome}` per resource. The lenny-ops `/metrics` exposition that scrapes them is the same documented gap F-16.8.1 tracks (mirroring `lenny_backup_last_successful_timestamp`).
+
+### - [ ] F-25.10.4 — Running-state collection unimplemented (production wiring stub) [High] — DEFERRED
 
 Spec lines 3769–3771 require `GET /v1/admin/drift` to read running state via `GatewayClient` calls to `GET /v1/admin/runtimes`, `GET /v1/admin/pools`, etc.
 
 Implementation status: `cmd/lenny-ops/deps.go:160-174` wires an `emptyRunningState` reader whose `RunningState` method returns `map[string]any{}`. The doc comment at line 154 admits this is "a documented seam" until the gateway-client reader lands. With the live snapshot present, the report renders every desired-state field as `removed` drift — incorrect, and the `GatewayClient` integration is absent.
 
-### - [ ] F-25.10.5 — Snapshot store not Postgres-backed (production wiring stub) [High] — OPEN
+**Deferred:** The gateway admin client is a dedicated effort, not a leaf wire-up. The hard part is normalizing the gateway admin-API responses (`GET /v1/admin/runtimes`, `/pools`, `/tenants`, `/credential-pools` — each its own JSON schema) into the same structure as the desired-state snapshot (rendered Helm values), so the §25.10 field-by-field diff compares like with like; the spec describes the diff but not this mapping, and a wrong mapping produces false drift. The `RunningStateReader` seam (and the reconcile `ResourceApplier` seam) are in place to receive both halves of the gateway client when it lands. F-25.10.1's reconcile orchestration and the metrics/audit/both-mode work (F-25.10.2/.3/.6) closed independently of this seam.
+
+### - [x] F-25.10.5 — Snapshot store not Postgres-backed (production wiring stub) [High] — CLOSED
 
 Spec lines 3811–3820 define the `bootstrap_seed_snapshot` Postgres table as the durable desired-state store and its `('live'|'target', desired_state, source, upgrade_id, written_at, written_by)` schema.
 
 Implementation status: `cmd/lenny-ops/deps.go:161` wires `driftservice.NewMemSnapshotStore()`, an in-process `sync.Mutex`-guarded `map`. No Postgres-backed `SnapshotStore` implementation exists. The §25.10 "snapshot updated at OpsRoll" and "target → live promotion at Verification completion" behaviors documented at lines 3786–3789 cannot occur because the snapshots vanish on every `lenny-ops` restart. There is no SQL migration for the `bootstrap_seed_snapshot` table.
 
-### - [ ] F-25.10.6 — `?against=both` query mode not implemented [High] — OPEN
+**Resolution (355628be):** Migration 0117 creates the `bootstrap_seed_snapshot` table per the §25.10 lines 3811-3820 schema, with the id `CHECK (id IN ('live','target'))` (also closing the F-25.10.13 gap-survives note). New `pkg/ops/driftservice/pgstore` implements the `SnapshotStore` contract with an upsert-on-conflict `Put` so a refresh replaces the live row in place; `buildDriftService` selects it whenever a Postgres pool is available and falls back to the in-memory store otherwise. Verified against an embedded Postgres (provenance round-trip, live+target coexistence with upgrade_id, CHECK rejection of a third row). The OpsRoll/Verification snapshot-write call sites remain to be wired by the §25.8 upgrade orchestrator; the durable store they write to now exists.
+
+### - [x] F-25.10.6 — `?against=both` query mode not implemented [High] — CLOSED
 
 Spec line 3791 requires `GET /v1/admin/drift?against=both` to return both live and target diffs in a single response.
 
 Implementation status: `Service.Report` (`driftservice.go:255-257`) rejects any `against` value other than `"live"` or `"target"` with `DRIFT_INVALID` / HTTP 400. Callers asking for `both` get a bad-request rejection instead of a dual-diff response.
+
+**Resolution (a0c83622):** New `Service.ReportBoth` collects the running state once and diffs it against both the live and target snapshots, returning a `BothReport` with `against:"both"` and nested `live`/`target` reports. `handleDriftReport` routes `?against=both` to it. A caller-supplied desired body is rejected (both mode is defined only over the stored snapshots); a missing target row fails `DRIFT_NO_TARGET_SNAPSHOT` (404), matching the `against=target` contract.
 
 ### - [x] F-25.10.7 — `?fresh=true` parameter not honored; no running-state caching [Medium] — CLOSED
 
