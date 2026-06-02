@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
 
 // paginationMint is a one-liner around pagination.MintCursor so test
@@ -356,6 +357,222 @@ func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 			if strings.Contains(line, "gap_detected") || strings.Contains(line, "checkpoint_boundary") {
 				t.Errorf("fresh connect emitted gap marker: %q", line)
 			}
+		}
+	}
+}
+
+// collectSSELines reads SSE lines from resp for d and returns them. It
+// is used by the handoff-synthesis tests which assert on the presence
+// and ordering of synthesized frames rather than blocking for a specific
+// terminal frame.
+func collectSSELines(resp *http.Response, d time.Duration) []string {
+	scanner := bufio.NewScanner(resp.Body)
+	lines := make(chan string, 128)
+	go func() {
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+	var out []string
+	deadline := time.After(d)
+	for {
+		select {
+		case <-deadline:
+			return out
+		case line, ok := <-lines:
+			if !ok {
+				return out
+			}
+			out = append(out, line)
+		}
+	}
+}
+
+// indexOfLine returns the position of the first line equal to want, or
+// -1 when absent.
+func indexOfLine(lines []string, want string) int {
+	for i, l := range lines {
+		if l == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// spec: §10.4 lines 391-397 — a reconnect that spans a coordinator
+// handoff (the client resumes from a cursor it saw under a prior
+// coordinator, the session has a durable last_seq, but this coordinator
+// has no in-memory replay history) synthesizes session.resumed +
+// status_change before any gap marker. F-7.2.13, F-10.4.2.
+func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0) // no events published → no local history
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_handoff", TenantID: "acme", State: session.StateRunning,
+		LastSeq:   5, // a prior coordinator durably advanced the counter
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_handoff/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	lines := collectSSELines(resp, 600*time.Millisecond)
+	resumedIdx := indexOfLine(lines, "event: session.resumed")
+	statusIdx := indexOfLine(lines, "event: status_change")
+	if resumedIdx < 0 {
+		t.Fatalf("no synthesized session.resumed frame: %v", lines)
+	}
+	if statusIdx < 0 {
+		t.Fatalf("no synthesized status_change frame: %v", lines)
+	}
+	// session.resumed precedes status_change (the §10.4 frame order).
+	if resumedIdx > statusIdx {
+		t.Errorf("session.resumed should precede status_change: resumed=%d status=%d", resumedIdx, statusIdx)
+	}
+	// The session.resumed data carries the coordinator_handoff mode and a
+	// full workspace-recovery fraction.
+	if data := lines[resumedIdx+1]; !strings.Contains(data, `"resumeMode":"coordinator_handoff"`) ||
+		!strings.Contains(data, `"workspaceRecoveryFraction":1`) {
+		t.Errorf("session.resumed payload: %q", data)
+	}
+	if data := lines[statusIdx+1]; !strings.Contains(data, `"state":"running"`) {
+		t.Errorf("status_change payload: %q", data)
+	}
+	// Synthesized frames carry no id: line (they must not advance the
+	// client's reconnect cursor). The line before `event: session.resumed`
+	// must not be an id: line for the synthesized frame.
+	if resumedIdx > 0 && strings.HasPrefix(lines[resumedIdx-1], "id: ") {
+		t.Errorf("synthesized session.resumed must not carry an id: line, got %q", lines[resumedIdx-1])
+	}
+}
+
+// spec: §10.4 lines 395-397 — the handoff children_reattached frame
+// streams archived children whose CompletionSeq exceeds the client's
+// resume cursor (missed completions) and re-lists active children.
+// F-7.2.13, F-10.4.2.
+func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	archive := treearchive.NewMemory()
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus, TreeArchive: archive})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		LastSeq:   5,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	// An active child (re-awaited) and a settled child whose completion
+	// (CompletionSeq 4) lands above the client's cursor of 2.
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_child_active", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_child_done", TenantID: "acme", State: session.StateCompleted,
+		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
+	})
+	_ = archive.Archive(context.Background(), treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "sess_parent", NodeSessionID: "sess_child_done",
+		ParentSessionID: "sess_parent", State: "completed", Result: `{"state":"completed"}`,
+		CompletionSeq: 4, SettledAt: now,
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_parent/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	lines := collectSSELines(resp, 600*time.Millisecond)
+	idx := indexOfLine(lines, "event: children_reattached")
+	if idx < 0 {
+		t.Fatalf("no synthesized children_reattached frame: %v", lines)
+	}
+	data := lines[idx+1]
+	if !strings.Contains(data, "sess_child_done") {
+		t.Errorf("children_reattached missing the archived missed-completion child: %q", data)
+	}
+	if !strings.Contains(data, "sess_child_active") {
+		t.Errorf("children_reattached missing the active child: %q", data)
+	}
+}
+
+// spec: §10.4 line 391 — no synthesis when this coordinator already holds
+// the session's replay history (an ordinary reconnect, not a handoff).
+func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(10)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_local", TenantID: "acme", State: session.StateRunning,
+		LastSeq:   5,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	for i := 0; i < 5; i++ {
+		bus.PublishForTenant("acme", "sess_local", "e", `{}`, now)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_local/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	for _, line := range collectSSELines(resp, 400*time.Millisecond) {
+		if line == "event: session.resumed" || line == "event: status_change" {
+			t.Errorf("unexpected handoff synthesis on local-history reconnect: %q", line)
+		}
+	}
+}
+
+// spec: §10.4 line 391 — a fresh connect (cursor=0) is never a handoff.
+func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_fresh2", TenantID: "acme", State: session.StateRunning,
+		LastSeq:   5,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh2/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	// No Last-Event-ID → fresh connect.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	for _, line := range collectSSELines(resp, 400*time.Millisecond) {
+		if line == "event: session.resumed" || line == "event: status_change" {
+			t.Errorf("unexpected handoff synthesis on fresh connect: %q", line)
 		}
 	}
 }

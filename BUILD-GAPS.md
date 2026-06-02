@@ -6109,7 +6109,7 @@ Effect: a sender that received `queued` from `lenny/send_message` has no signal 
 
 ---
 
-### - [ ] F-7.2.13 — (Medium) — Coordinator-handoff `session.resumed` synthesis is unimplemented (no last_seq durability either) [Medium] — OPEN
+### - [x] F-7.2.13 — (Medium) — Coordinator-handoff `session.resumed` synthesis is unimplemented (no last_seq durability either) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.4.3, F-7.3.3 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
 
@@ -6120,6 +6120,8 @@ Implementation:
 - No coordinator-handoff event synthesizer exists. `grep -rn "synth.*resumed\|reconstruct.*event" pkg/gateway/` returns zero matches.
 
 Effect: coordinator failover loses the entire in-memory event history. The §7.2 STR-007 invariant (single-coordinator vs. handoff reconnect symmetry) cannot hold.
+
+**Resolution:** The durable-counter half was already closed by `45997ecb` (migration 0088, `sessions.last_seq` with a `GREATEST` monotonic floor, seeded on the first publish via `LastSeqLoader`). This batch lands the remaining synthesis half. The SSE handler (`pkg/gateway/sessionserver/events.go`) now detects a coordinator-handoff reattach — the client resumes from a non-zero cursor, the session row carries a durable `LastSeq > 0`, this coordinator holds no in-memory replay history for the session, and the available backlog does not continue contiguously from the cursor — via `isCoordinatorHandoffReattach`. On a detected handoff `synthesizeHandoffReattach` writes the §10.4 lines 391-397 frames to the reconnecting client ahead of any `gap_detected` marker: a `session.resumed` (`resumeMode: coordinator_handoff`, `workspaceLost: false`, `workspaceRecoveryFraction: 1.0`), an unconditional `status_change` carrying the authoritative current state (the SSE reconnect transmits only a cursor, so the gateway cannot compute the spec's "if differs" predicate and emits it for the client to reconcile), and a `children_reattached` for archived children whose `CompletionSeq` exceeds the cursor plus the still-active children. The synthesized frames carry no `id:` line so they never advance the client's reconnect cursor. Closed alongside F-10.4.2 (the High duplicate of the synthesis defect).
 
 ---
 
@@ -12838,7 +12840,7 @@ out to eliminate.
 
 **Resolution:** Closed by F-7.2.11 in the same batch. `pkg/gateway/sessionserver/events.go:writeGapMarkers` emits the §10.4 line 389 `gap_detected` frame (no SeqNum, no `id:` line) ahead of the backlog whenever the SSE cursor predates the bus's oldest retained event. The new `sessionevents.Bus.OldestRetainedSeq` is the buffer-eviction detector. Tier-1 in `pkg/gateway/sessionserver/events_test.go:TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2`.
 
-### - [ ] F-10.4.2 — 02  Coordinator-handoff reattach synthesis is unimplemented [High] — OPEN
+### - [x] F-10.4.2 — 02  Coordinator-handoff reattach synthesis is unimplemented [High] — CLOSED
 
 **Spec:** §10.4 lines 391–397 mandate that before any `gap_detected` frame
 is emitted on a coordinator-handoff reattach, the new coordinator MUST
@@ -12881,6 +12883,8 @@ preserving the STR-007 guarantee — that single-coordinator reconnect and
 post-handoff reconnect are symmetric from the client's perspective. The
 implementation is missing in two layers: the synthesis path itself and the
 durable state it would read from.
+
+**Resolution:** Both layers are now in place. The durable state the evidence flagged as missing has since landed independently: `sessions.last_seq` via migration `0088` (F-7.3.3 / `45997ecb`) and `session_tree_archive` as a Postgres-backed store via migration `0100` (F-8.9.3), so the "in-memory only" claims for both are stale. This batch lands the synthesis path itself. `pkg/gateway/sessionserver/events.go` `handleEvents` now calls `isCoordinatorHandoffReattach` (cursor present, durable `LastSeq > 0`, no local replay history, non-contiguous backlog) and `synthesizeHandoffReattach`, which emits the three §10.4 lines 391-397 frames ahead of any `gap_detected` marker: `session.resumed` with `resumeMode: coordinator_handoff` and `workspaceRecoveryFraction: 1.0` (a handoff re-attaches the live pod, so the workspace is intact; the partial-recovery fraction from a durable checkpoint-meta record applies to the distinct `partial_workspace` mode), `status_change` with the current state, and `children_reattached` built by `buildHandoffChildrenReattached` from the durable tree archive (nodes with `CompletionSeq > resumeFromSeq` — the completions missed during the handoff) plus the live active children. The synthesized frames carry no `id:` so they do not rewind the client's cursor. Closed alongside F-7.2.13. The `workspaceRecoveryFraction`-from-`session_checkpoint_meta` source for a partial-recovery handoff (when the pod itself was lost mid-handoff) remains a follow-up; the v1 handoff path re-attaches the live pod and reports the full fraction.
 
 ### - [x] F-10.4.3 — 03  `sessions.last_seq` durable counter does not exist [High] — CLOSED
 

@@ -1821,6 +1821,116 @@ func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, m
 	s.publishEvent(row.TenantID, row.ID, "session.resumed", payload)
 }
 
+// handoffResumedFrame builds the §10.4 line 391 synthesized
+// `session.resumed` payload for a coordinator-handoff reattach. The
+// resume mode is fixed to `coordinator_handoff`; the handoff re-attaches
+// the live pod, so the workspace is intact (workspaceLost: false) and
+// workspaceRecoveryFraction is 1.0. ok is false only on a marshal error.
+// spec: §10.4 lines 391-393; §7.2 line 138. F-7.2.13, F-10.4.2.
+func (s *Server) handoffResumedFrame() ([]byte, bool) {
+	full := 1.0
+	payload := resumedEventPayload{
+		ResumeMode:                string(checkpoint.ResumeCoordinatorHandoff),
+		WorkspaceLost:             false,
+		WorkspaceRecoveryFraction: &full,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+// buildHandoffChildrenReattached builds the §10.4 lines 395-397
+// synthesized `children_reattached` payload for a coordinator-handoff
+// reattach. The §10.4 predicate fires the frame "if the session is a
+// parent with archived children whose completion_seq is greater than the
+// client's resumeFromSeq" — the child completions the client missed
+// while the handoff was in flight. Those archived nodes are streamed in
+// §8.10 original-settlement order, and the parent's still-active children
+// are appended so the resumed parent re-establishes its await set (the
+// §7.2 STR-007 symmetry with the single-coordinator resume path). Returns
+// ok=false when the session is not a parent, has no missed completions,
+// and has no active children. spec: §10.4 lines 395-397; §7.2 line 153.
+// F-7.2.13, F-10.4.2.
+func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, parentID string, afterSeq uint64) ([]byte, bool) {
+	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return nil, false
+	}
+	childRows := make([]sessionstore.Session, 0)
+	var parent sessionstore.Session
+	parentFound := false
+	for _, row := range all {
+		if row.ID == parentID {
+			parent = row
+			parentFound = true
+		}
+		if row.ParentSessionID == parentID {
+			childRows = append(childRows, row)
+		}
+	}
+
+	children := make([]reattachedChild, 0, len(childRows))
+	emitted := make(map[string]bool, len(childRows))
+	missedCompletion := false
+	if s.treeArchive != nil && parentFound {
+		root := s.treeRoot(ctx, parent)
+		if nodes, rerr := s.treeArchive.Replay(ctx, tenantID, root); rerr == nil {
+			for _, n := range nodes {
+				if n.ParentSessionID != parentID || emitted[n.NodeSessionID] {
+					continue
+				}
+				// spec: §10.4 line 395 — only archived children whose
+				// completion the client has not yet observed (CompletionSeq
+				// strictly above the resume cursor). A v1 archive writer
+				// that does not stamp a per-session sequence leaves
+				// CompletionSeq at 0, which never exceeds a non-zero cursor,
+				// so those nodes fall to the active-children pass below.
+				if n.CompletionSeq <= 0 || uint64(n.CompletionSeq) <= afterSeq {
+					continue
+				}
+				emitted[n.NodeSessionID] = true
+				missedCompletion = true
+				children = append(children, reattachedChild{
+					SessionID:         n.NodeSessionID,
+					State:             n.State,
+					Result:            json.RawMessage(n.Result),
+					DelegationLeaseID: n.NodeSessionID,
+				})
+			}
+		}
+	}
+
+	sort.Slice(childRows, func(i, j int) bool { return childRows[i].ID < childRows[j].ID })
+	anyActive := false
+	for _, row := range childRows {
+		if emitted[row.ID] || session.IsTerminal(row.State) {
+			continue
+		}
+		anyActive = true
+		children = append(children, reattachedChild{
+			SessionID:         row.ID,
+			State:             string(row.State),
+			DelegationLeaseID: row.ID,
+			// spec: §7.2 line 153 — surface the pending request id so the
+			// resumed parent can answer a child blocked on
+			// lenny/request_input or a §6/§9.2 interaction.
+			PendingRequestID: s.lookupPendingRequest(ctx, tenantID, row.ID),
+		})
+	}
+	if !missedCompletion && !anyActive {
+		return nil, false
+	}
+	data, err := json.Marshal(struct {
+		Children []reattachedChild `json:"children"`
+	}{Children: children})
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
 // bumpCoordinationGenerationOnSnapshotClose increments the §4.2
 // coordination_generation counter on a session row as part of the §7.2
 // line 214 snapshot-close terminal-collapse sequence. The bump runs in

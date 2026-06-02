@@ -3,6 +3,7 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +90,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
-	if _, err := s.store.Get(r.Context(), tenantID, id); err != nil {
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
@@ -126,6 +128,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+
+	// spec: §10.4 lines 391-397 — coordinator-handoff reattach synthesis.
+	// When this reconnect spans a coordinator handoff (the client resumes
+	// from a cursor it saw under a prior coordinator, the session has
+	// durably produced events, but this coordinator has no local replay
+	// history and the available backlog does not continue contiguously
+	// from the cursor) the new coordinator MUST synthesize one
+	// `session.resumed`, an optional `status_change`, and a
+	// `children_reattached` frame *before* any gap_detected marker so the
+	// client re-establishes session state (the §7.2 STR-007 single-
+	// coordinator / post-handoff reconnect symmetry). F-7.2.13, F-10.4.2.
+	if s.isCoordinatorHandoffReattach(row, afterSeq, sub.Backlog) {
+		s.synthesizeHandoffReattach(r.Context(), w, row, afterSeq)
+	}
 
 	// spec: §7.2 line 143 (gap_detected) / lines 349-361
 	// (checkpoint_boundary). When the requested cursor falls below the
@@ -184,6 +200,93 @@ func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
 	fmt.Fprintf(w, "id: %d\n", ev.Seq)
 	fmt.Fprintf(w, "event: %s\n", ev.Type)
 	fmt.Fprintf(w, "data: %s\n\n", ev.Data)
+}
+
+// writeSyntheticSSE writes a synthesized SSE frame with no `id:` line.
+// The §10.4 handoff-reattach frames are re-projections of session state
+// rather than new SessionEvents: emitting them with the session's next
+// monotonic Seq would either advance the durable last_seq counter (a
+// rewind risk) or duplicate a seq the client already holds. Writing them
+// without an `id:` keeps the client's reconnect cursor anchored at its
+// last real event, mirroring how the gap_detected / checkpoint_boundary
+// markers are framed. spec: §10.4 lines 391-397; §7.2 line 143.
+func writeSyntheticSSE(w http.ResponseWriter, eventType string, data []byte) {
+	if len(data) == 0 {
+		data = []byte("{}")
+	}
+	fmt.Fprintf(w, "event: %s\n", eventType)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+}
+
+// isCoordinatorHandoffReattach reports whether this SSE reconnect spans a
+// §10.4 coordinator handoff and therefore requires synthesized reattach
+// frames. The signal combines three facts:
+//
+//   - The client is resuming (afterSeq > 0), so it saw events under a
+//     prior coordinator.
+//   - The session has durably produced events (row.LastSeq > 0), so the
+//     prior coordinator's stream is authoritative — this rules out a
+//     bogus cursor on a freshly-created session.
+//   - This coordinator has no in-memory replay history for the session,
+//     so it never published these events: it is the new coordinator
+//     taking over (a process restart in single-replica mode, or a
+//     subscriber replica that is not the publishing coordinator in the
+//     §4.4 Redis-relay topology).
+//
+// The final guard skips synthesis when the available backlog already
+// continues contiguously from the client's cursor (backlog[0].Seq ==
+// afterSeq+1). In the Redis-relay topology a non-coordinator replica can
+// serve the full relayed backlog, so the client lost nothing and the
+// reconnect needs no recovery frames; emitting them would be spurious.
+// spec: §10.4 lines 391-397. F-7.2.13, F-10.4.2.
+func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq uint64, backlog []sessionevents.Event) bool {
+	if s.events == nil || afterSeq == 0 || row.LastSeq <= 0 {
+		return false
+	}
+	if _, hasLocal := s.events.OldestRetainedSeq(row.ID); hasLocal {
+		return false
+	}
+	if len(backlog) > 0 && backlog[0].Seq == afterSeq+1 {
+		return false
+	}
+	return true
+}
+
+// synthesizeHandoffReattach writes the §10.4 lines 391-397 reattach
+// frames directly to the reconnecting client's SSE stream. The frames
+// are synthesized for this connection only (they are not republished to
+// the bus, so other subscribers and the durable log are untouched):
+//
+//   - session.resumed: always, carrying resumeMode "coordinator_handoff"
+//     and workspaceLost: false. A handoff re-attaches the live pod, so
+//     the workspace is intact and workspaceRecoveryFraction is 1.0 (the
+//     partial-recovery fraction sourced from a durable checkpoint-meta
+//     record applies to the partial_workspace resume mode, a distinct
+//     path).
+//   - status_change: carrying the session's current authoritative state.
+//     §10.4 line 393 makes this optional "if the current state differs
+//     from the client's last-known state". The standard SSE reconnect
+//     transmits only a cursor (Last-Event-ID), never the client's
+//     last-known state, so the gateway cannot compute the difference and
+//     emits the frame unconditionally; a client whose view already
+//     matches no-ops on it.
+//   - children_reattached: only when the session is a parent with
+//     archived children whose CompletionSeq exceeds the client's cursor
+//     (completions missed during the handoff) or with still-active
+//     children to re-await.
+//
+// Best-effort: a nil event bus or store error simply elides the frames.
+// spec: §10.4 lines 391-397; §7.2 line 138 (session.resumed), line 137
+// (status_change), line 153 (children_reattached). F-7.2.13, F-10.4.2.
+func (s *Server) synthesizeHandoffReattach(ctx context.Context, w http.ResponseWriter, row sessionstore.Session, afterSeq uint64) {
+	if frame, ok := s.handoffResumedFrame(); ok {
+		writeSyntheticSSE(w, "session.resumed", frame)
+	}
+	stateFrame, _ := json.Marshal(map[string]any{"state": string(row.State)})
+	writeSyntheticSSE(w, "status_change", stateFrame)
+	if children, ok := s.buildHandoffChildrenReattached(ctx, row.TenantID, row.ID, afterSeq); ok {
+		writeSyntheticSSE(w, "children_reattached", children)
+	}
 }
 
 // writeGapMarkers emits the §7.2 line 143 `gap_detected` frame and the
