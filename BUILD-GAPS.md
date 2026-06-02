@@ -17343,7 +17343,7 @@ already modeled the spec columns (schema 0001, immutability trigger
 rather than a `pg_jcs_canonicalize()` trigger, consistent with the
 codebase's Go-side hash architecture. The OCSF `event_schema_version`
 echo now reflects a value that is part of the hash input. Commit
-bf8a1b1d.
+d040e526.
 
 ### - [x] F-11.7.5 — 05  Audit write path has no statement_timeout, no retry loop, and no `AUDIT_CONCURRENCY_TIMEOUT` surfacing [High] — CLOSED
 
