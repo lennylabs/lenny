@@ -6044,7 +6044,7 @@ Effect: who-approved-what / who-denied-what is not in the audit log. Post-incide
 
 ---
 
-### - [ ] F-7.2.9 — (High) — No runtime/adapter code path creates `KindToolUse` interactions for the approve/deny REST endpoints [Medium] — OPEN
+### - [x] F-7.2.9 — (High) — No runtime/adapter code path creates `KindToolUse` interactions for the approve/deny REST endpoints [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-7.2.18 — Both concern §7.2 tool-use approve/deny but describe different defects: no code path creates KindToolUse interactions versus approve/deny not unblocking the runtime.
 
@@ -6057,6 +6057,8 @@ Implementation:
 - `grep -rn "tool_use_requested" pkg/ schemas/` returns zero matches; the SSE event type is never published.
 
 Effect: the approve/deny REST endpoints have no producer. Any tool that should require explicit user approval cannot block the agent; the entire approval workflow is wired on the consumer side only.
+
+**Resolution:** The gateway is now the §7.2 approval producer at the §4.7 Attach-stream seam — the point where the in-pod adapter relays a runtime's platform `tool_call` frame. New `executor.ApprovalGate` interface; `PodExecutor.readAttachResponse` recognizes a `tool_call` carrying `approvalRequired:true` and, when a gate is wired, calls `ApprovalGate.AwaitApproval` instead of skipping the frame. The gate (`sessionserver.ToolApprovalGate`) records a `KindToolUse` interaction directed at the session's owning user (looked up via the session store for the §15.1 triple) and publishes the `tool_use_requested(tool_call_id, tool, args)` SSE event on the session stream before blocking. Wired in `cmd/lenny-gateway` only when the executor is a `*PodExecutor` (the echo/subprocess dev posture keeps skipping the frame, preserving prior behavior). The adapter `tool_call` frame already carries `approvalRequired` from F-7.2.19. Closed alongside F-7.2.18 (the overlap pair: producer + unblock). Tier-1 covers the producer (interaction Put + SSE publish) and the executor frame recognition against a live bufconn adapter.
 
 ---
 
@@ -6185,7 +6187,7 @@ Effect: clients subscribed to the SSE stream filtering on the spec-documented ev
 
 ---
 
-### - [ ] F-7.2.18 — (Medium) — Approve/deny resolution does not unblock the runtime [Medium] — OPEN
+### - [x] F-7.2.18 — (Medium) — Approve/deny resolution does not unblock the runtime [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-7.2.9 — Both concern §7.2 tool-use approve/deny but describe different defects: no code path creates KindToolUse interactions versus approve/deny not unblocking the runtime.
 
@@ -6196,6 +6198,8 @@ Implementation:
 - The `interactionstore.Memory` (`pkg/gateway/interactionstore/interactionstore.go:107-166`) is a passive registry; nothing watches it.
 
 Effect: a runtime that creates a tool-use interaction will never be unblocked by approve/deny. The endpoints succeed (HTTP 200) and the row is updated, but the agent never sees the resolution. This is a producer/consumer gap (F9) plus a notification gap.
+
+**Resolution:** New `pkg/gateway/toolapproval.Registry` — a waiter registry (mirroring `inputwait`) keyed by `(sessionID, toolCallID)`, returning a buffered channel per pending approval. The `ToolApprovalGate` (F-7.2.9 producer) registers the waiter before recording the interaction and blocks on its channel, with a configurable timeout (`--tool-approval-timeout`, default unbounded) and request-context cancellation; a timeout or cancellation resolves to an implicit denial so the runtime's tool call never executes without an affirmative approve. The §15.1 `resolveInteraction` handler, after the interaction-store phase flip for a `KindToolUse`, delivers the verdict (`Approved = phase==approved`, plus the deny reason) onto the same registry via the Server's shared `ToolApprovalWaits`. On wake the `PodExecutor` relays the verdict over the Attach stream: an approval forwards the call (re-sends the `tool_call` with the approval flag cleared so the runtime executes it, per §7.2); a denial writes a `tool_result{isError:true}` carrying the reason back to the runtime (§7.2 line 125). A missing waiter (no executor on this replica is blocked, or the non-pod posture) is ignored — the phase update stays authoritative. Closed alongside F-7.2.9 (overlap pair). Tier-1 covers the registry (register/resolve/deny/cancel/buffered-race/duplicate/distinct-keys), the gate (approve/deny/timeout/context-cancel), the executor approve-forward and deny-tool_result paths against a live adapter, and the end-to-end REST-approve→gate-unblock.
 
 ---
 

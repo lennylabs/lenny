@@ -65,6 +65,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
@@ -316,6 +317,14 @@ type Server struct {
 	// Nil disables the emission; the resolution itself proceeds either
 	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
 	interactionAudit InteractionAuditSink
+
+	// toolApprovalWaits, when set, is the §7.2 tool-use approval waiter
+	// registry the approve/deny endpoints signal so a blocked executor
+	// read (the pod runtime awaiting a tool-call verdict) unblocks. Nil
+	// leaves the resolution endpoints recording the interaction phase
+	// only — the dev / non-pod posture where nothing blocks on the
+	// verdict. spec: §7.2 lines 124-125. F-7.2.18.
+	toolApprovalWaits *toolapproval.Registry
 
 	// treeCycleObserver, when set, receives a §8.9 cycle observation
 	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
@@ -599,6 +608,14 @@ type Options struct {
 	// emission and the resolution still proceeds.
 	// spec: §7.2 table lines 124-127. F-7.2.8.
 	InteractionAuditSink InteractionAuditSink
+
+	// ToolApprovalWaits, when set, is the §7.2 tool-use approval waiter
+	// registry shared with the ToolApprovalGate the pod executor calls.
+	// The approve/deny endpoints deliver the verdict onto it so the
+	// blocked runtime tool call unblocks. Nil leaves the endpoints
+	// recording the interaction phase only. spec: §7.2 lines 124-125.
+	// F-7.2.18.
+	ToolApprovalWaits *toolapproval.Registry
 
 	// TreeCycleObserver, when set, receives a §8.9 cycle observation
 	// when /v1/sessions/{id}/tree hits a repeated node in the
@@ -1236,6 +1253,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		observeTimeToFirstToken:  opts.ObserveTimeToFirstToken,
 		lifecycleAudit:           opts.LifecycleAuditSink,
 		interactionAudit:         opts.InteractionAuditSink,
+		toolApprovalWaits:        opts.ToolApprovalWaits,
 		treeCycleObserver:        opts.TreeCycleObserver,
 		inputWaits:               opts.InputWaits,
 		defaultRetention:         opts.DefaultRetention,

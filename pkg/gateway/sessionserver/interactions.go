@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 )
 
 // handleToolUseApprove implements
@@ -138,6 +139,20 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		}
 		return
+	}
+	// spec: §7.2 lines 124-125 — a tool-use approve/deny must unblock the
+	// runtime's blocked tool call, not merely flip the interaction phase.
+	// Deliver the verdict onto the shared approval-waiter registry so the
+	// PodExecutor read blocked on this tool_call wakes and relays the
+	// result to the runtime (approve → forward the call; deny → a
+	// tool_result error). A missing waiter (no executor on this replica is
+	// blocked, or the non-pod posture) is ignored: the phase update above
+	// is the authoritative record. F-7.2.18.
+	if res.kind == interactionstore.KindToolUse && s.toolApprovalWaits != nil {
+		_ = s.toolApprovalWaits.Resolve(sessionID, interactionID, toolapproval.Decision{
+			Approved: res.phase == interactionstore.PhaseApproved,
+			Reason:   res.reason,
+		})
 	}
 	// spec: §7.2 lines 124-127 / §11.7 / §16.7 — every state-changing
 	// user decision (tool-use approve/deny, elicitation respond/dismiss)

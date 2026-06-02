@@ -220,6 +220,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tlsprobe"
+	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
@@ -601,6 +602,8 @@ func main() {
 		"§7.2 maxInboxSize: per-session inbox capacity before the oldest buffered message is evicted with a message_dropped(inbox_overflow) receipt. Override via LENNY_MESSAGING_MAX_INBOX_SIZE.")
 	messagingMaxDLQSize := flag.Int("messaging-max-dlq-size", envInt("LENNY_MESSAGING_MAX_DLQ_SIZE", 500),
 		"§7.2 maxDLQSize: per-session dead-letter-queue capacity before the oldest entry is evicted with a message_dropped(dlq_overflow) receipt. Override via LENNY_MESSAGING_MAX_DLQ_SIZE.")
+	toolApprovalTimeout := flag.Duration("tool-approval-timeout", envDuration("LENNY_TOOL_APPROVAL_TIMEOUT", 0),
+		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
 	treeArchiveCacheEntries := flag.Int("tree-archive-cache-entries", envInt("LENNY_TREE_ARCHIVE_CACHE_ENTRIES", 128),
 		"§8.10 per-replica LRU cache size fronting the Postgres session_tree_archive (default 128 entries). Override via LENNY_TREE_ARCHIVE_CACHE_ENTRIES.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
@@ -2000,6 +2003,20 @@ func main() {
 	if pgPool != nil {
 		interactions = interactionpg.New(pgPool)
 	}
+	// spec: §7.2 lines 124-134 — the tool-use approval loop. When a
+	// runtime emits a tool_call(approvalRequired) over the §4.7 Attach
+	// stream the pod executor consults the gate, which records the
+	// KindToolUse interaction, publishes the tool_use_requested SSE
+	// event, and blocks until the §15.1 approve/deny endpoint delivers
+	// the verdict onto this shared waiter registry. The pod executor is
+	// the only producer of approval-required frames, so the gate is wired
+	// only when exec is a *PodExecutor (the echo / subprocess dev posture
+	// never blocks on approval). F-7.2.9, F-7.2.18.
+	toolApprovalWaits := toolapproval.NewRegistry()
+	if pe, ok := exec.(*executor.PodExecutor); ok {
+		pe.SetApprovalGate(sessionserver.NewToolApprovalGate(
+			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout))
+	}
 	var evals evalstore.Store = evalstore.NewMemory(0, nil)
 	if pgPool != nil {
 		evals = evalpg.New(pgPool)
@@ -2767,6 +2784,7 @@ func main() {
 		DualStore:                  dsMonitor,
 		Messaging:                  messagingCoord,
 		Interactions:               interactions,
+		ToolApprovalWaits:          toolApprovalWaits,
 		Evals:                      evals,
 		Experiments:                experiments,
 		Pools:                      pools,

@@ -26,6 +26,12 @@ type PodExecutor struct {
 	registry *podsession.Registry
 	binder   *podsession.Binder
 
+	// approvals is the §7.2 tool-use approval authority. When set, a
+	// tool_call frame carrying approvalRequired:true blocks the
+	// in-flight Send until the user resolves it; nil preserves the
+	// prior behavior of skipping the frame. F-7.2.9, F-7.2.18.
+	approvals ApprovalGate
+
 	mu      sync.Mutex
 	streams map[string]*adapterclient.AttachStream
 }
@@ -41,6 +47,15 @@ func NewPodExecutor(registry *podsession.Registry, binder *podsession.Binder) *P
 	}
 }
 
+// SetApprovalGate wires the §7.2 tool-use approval authority. The
+// gateway calls it during wiring after the interaction store and event
+// bus exist. A nil gate (the dev / echo posture) leaves approval-
+// required tool_call frames skipped, matching the prior behavior.
+// spec: §7.2 lines 124-134. F-7.2.9, F-7.2.18.
+func (e *PodExecutor) SetApprovalGate(g ApprovalGate) {
+	e.approvals = g
+}
+
 var (
 	_ Executor        = (*PodExecutor)(nil)
 	_ SessionReleaser = (*PodExecutor)(nil)
@@ -52,6 +67,13 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	stream, err := e.streamFor(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	// The §7.2 KindToolUse interaction the approval gate records is keyed
+	// on the session's tenant; capture it from the live binding once so
+	// each approval-required frame on this Send carries it.
+	var tenantID string
+	if bind, ok := e.registry.Get(sessionID); ok {
+		tenantID = bind.TenantID
 	}
 	var out []OutputPart
 	for _, m := range messages {
@@ -69,7 +91,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		if err := stream.Send(line); err != nil {
 			return nil, fmt.Errorf("podexec: send to pod: %w", err)
 		}
-		parts, err := readAttachResponse(stream)
+		parts, err := e.readAttachResponse(ctx, tenantID, sessionID, stream)
 		if err != nil {
 			return nil, err
 		}
@@ -99,10 +121,17 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	return s, nil
 }
 
-// readAttachResponse reads Attach frames until a `response` envelope
-// and returns its output parts. heartbeat_ack, status, and unparseable
-// frames are skipped.
-func readAttachResponse(stream *adapterclient.AttachStream) ([]OutputPart, error) {
+// readAttachResponse reads Attach frames until a `response` envelope and
+// returns its output parts. heartbeat_ack, status, and unparseable
+// frames are skipped. A `tool_call` frame carrying approvalRequired:true
+// is the §7.2 line 134 user-approval signal: when an ApprovalGate is
+// wired the executor records the interaction, publishes the
+// `tool_use_requested` SSE event, and blocks on the gate until the user
+// resolves the call, then relays the verdict to the runtime (approve →
+// the call is forwarded for execution; deny → a tool_result error is
+// written back). Without a gate the frame is skipped like any other
+// intermediate frame. F-7.2.9, F-7.2.18.
+func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]OutputPart, error) {
 	for {
 		frame, err := stream.Recv()
 		if err == io.EOF {
@@ -110,6 +139,15 @@ func readAttachResponse(stream *adapterclient.AttachStream) ([]OutputPart, error
 		}
 		if err != nil {
 			return nil, fmt.Errorf("podexec: receive from pod: %w", err)
+		}
+		if e.approvals != nil {
+			handled, herr := e.maybeGateToolCall(ctx, tenantID, sessionID, frame, stream)
+			if herr != nil {
+				return nil, herr
+			}
+			if handled {
+				continue
+			}
 		}
 		var env responseEnvelope
 		if err := json.Unmarshal(frame, &env); err != nil {
@@ -131,6 +169,85 @@ func readAttachResponse(stream *adapterclient.AttachStream) ([]OutputPart, error
 		}
 		return parts, nil
 	}
+}
+
+// toolCallFrame is the subset of the §15.4.1 tool_call frame the
+// executor inspects to decide whether the call needs user approval.
+type toolCallFrame struct {
+	Type             string          `json:"type"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments"`
+	ApprovalRequired bool            `json:"approvalRequired"`
+	SlotID           string          `json:"slotId,omitempty"`
+}
+
+// toolResultFrame is the §15.4.1 tool_result the executor writes back to
+// the runtime on a denial (isError:true) so the blocked tool call
+// returns the deny reason rather than executing.
+type toolResultFrame struct {
+	Type    string           `json:"type"`
+	ID      string           `json:"id"`
+	Content []wireOutputPart `json:"content"`
+	IsError bool             `json:"isError"`
+}
+
+// maybeGateToolCall inspects one frame. When it is a tool_call requiring
+// approval it drives the §7.2 approval handshake and returns handled=true
+// so the read loop continues; for any other frame it returns
+// handled=false and the caller resumes normal parsing. A gate error or a
+// failure to relay the verdict aborts the in-flight Send.
+func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID string, frame []byte, stream *adapterclient.AttachStream) (bool, error) {
+	var call toolCallFrame
+	if err := json.Unmarshal(frame, &call); err != nil {
+		return false, nil
+	}
+	if call.Type != "tool_call" || !call.ApprovalRequired {
+		return false, nil
+	}
+	decision, err := e.approvals.AwaitApproval(ctx, tenantID, sessionID, PendingToolCall{
+		ID:        call.ID,
+		Name:      call.Name,
+		Arguments: call.Arguments,
+		SlotID:    call.SlotID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("podexec: await tool-use approval: %w", err)
+	}
+	if decision.Approved {
+		// §7.2: an approval forwards the call. Re-send the tool_call with
+		// the approval flag cleared so the runtime executes it without
+		// re-entering the gate.
+		approved, mErr := json.Marshal(toolCallFrame{
+			Type:      "tool_call",
+			ID:        call.ID,
+			Name:      call.Name,
+			Arguments: call.Arguments,
+			SlotID:    call.SlotID,
+		})
+		if mErr != nil {
+			return false, fmt.Errorf("podexec: encode approved tool_call: %w", mErr)
+		}
+		if sErr := stream.Send(approved); sErr != nil {
+			return false, fmt.Errorf("podexec: forward approved tool_call: %w", sErr)
+		}
+		return true, nil
+	}
+	// §7.2 line 125: a denial returns the tool a tool_result carrying
+	// isError:true and the deny reason.
+	denied, mErr := json.Marshal(toolResultFrame{
+		Type:    "tool_result",
+		ID:      call.ID,
+		Content: []wireOutputPart{{Type: "text", Inline: decision.Reason}},
+		IsError: true,
+	})
+	if mErr != nil {
+		return false, fmt.Errorf("podexec: encode deny tool_result: %w", mErr)
+	}
+	if sErr := stream.Send(denied); sErr != nil {
+		return false, fmt.Errorf("podexec: deliver deny tool_result: %w", sErr)
+	}
+	return true, nil
 }
 
 // Close removes the session's binding, closes its Attach stream, and
