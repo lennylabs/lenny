@@ -32527,7 +32527,7 @@ step) cannot run.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:73-122`
 - `/Users/joan/projects/lenny/cmd/lenny-preflight/main.go:58-117` (in-cluster only)
 
-**Resolution (commit `<batch>`):** Closed by F-24.2.1. `lenny-ctl preflight --config <values.yaml>` now runs standalone (resolving Postgres/Redis/MinIO DSNs from flags → env → values file per §24.2 line 47 and probing each backend via the new `pkg/preflight/infra` package) or, when the gateway is reachable, delegates to `POST /v1/admin/preflight`. The §10.5 CRD-currency check still runs against an upgrade cluster. `scripts/lenny-upgrade.sh` step 1 and the Day-0 walkthrough now have an executable subcommand.
+**Resolution (commit `502e840d`):** Closed by F-24.2.1. `lenny-ctl preflight --config <values.yaml>` now runs standalone (resolving Postgres/Redis/MinIO DSNs from flags → env → values file per §24.2 line 47 and probing each backend via the new `pkg/preflight/infra` package) or, when the gateway is reachable, delegates to `POST /v1/admin/preflight`. The §10.5 CRD-currency check still runs against an upgrade cluster. `scripts/lenny-upgrade.sh` step 1 and the Day-0 walkthrough now have an executable subcommand.
 
 ---
 
@@ -35555,7 +35555,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** The §24.2 row that the spec calls "the primary use case" of preflight is non-functional. Operators cannot validate `values.yaml` pre-deployment from the CLI; CI pipelines that follow §17.2:76's instruction to invoke `lenny-ctl preflight --config <values.yaml>` as a pre-Sync hook (ArgoCD/Flux) fail with `unknown command`. The §17.6:696 wizard-time preflight step has no executable to invoke. The §17.6:813 recovery runbook step "re-run preflight: `lenny-ctl preflight --config <values.yaml>`" cannot be followed.
 
-**Resolution (commit `<batch>`):** `cmd/lenny-ctl/preflight.go` now implements the two-mode subcommand: standalone (the default) resolves `--postgres-dsn`/`--redis-dsn`/`--minio-endpoint`/`--minio-access-key`/`--minio-secret-key`/`--minio-bucket` over `$LENNY_*` env vars over the `--config` values file (§24.2 line 47 precedence) and probes each backend via `pkg/preflight/infra.Run`; API-backed mode (when the gateway's `/healthz` is reachable) delegates to `POST /v1/admin/preflight`. Closes the duplicate F-17.6.6. spec: §24.2 lines 39-47; §15.1 line 890.
+**Resolution (commit `502e840d`):** `cmd/lenny-ctl/preflight.go` now implements the two-mode subcommand: standalone (the default) resolves `--postgres-dsn`/`--redis-dsn`/`--minio-endpoint`/`--minio-access-key`/`--minio-secret-key`/`--minio-bucket` over `$LENNY_*` env vars over the `--config` values file (§24.2 line 47 precedence) and probes each backend via `pkg/preflight/infra.Run`; API-backed mode (when the gateway's `/healthz` is reachable) delegates to `POST /v1/admin/preflight`. Closes the duplicate F-17.6.6. spec: §24.2 lines 39-47; §15.1 line 890.
 
 ---
 
@@ -35570,7 +35570,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** API-backed mode cannot be exercised end-to-end even if the CLI subcommand existed. The `lenny-ctl upgrade --answers` command path declared in §24.20:304 cannot call its declared API. Any operator following the §15.1 admin surface to script preflight invocations (per §25.14 agent-operability) hits a 404.
 
-**Resolution (commit `<batch>`):** New `pkg/gateway/admin/preflight.go` adds the `InfraPreflighter` seam and registers `POST /v1/admin/preflight` (platform-admin gated, registered only when the gateway has at least one backend DSN configured). The handler runs the §15.1 line 890 active outbound probes against the gateway's configured backends via `infra.Run` and returns the per-check report (`passed` plus `{name, passed, reason}` rows); `cmd/lenny-gateway/main.go` wires it with `infra.RealProbers()`. spec: §15.1 line 890; §24.2 line 43.
+**Resolution (commit `502e840d`):** New `pkg/gateway/admin/preflight.go` adds the `InfraPreflighter` seam and registers `POST /v1/admin/preflight` (platform-admin gated, registered only when the gateway has at least one backend DSN configured). The handler runs the §15.1 line 890 active outbound probes against the gateway's configured backends via `infra.Run` and returns the per-check report (`passed` plus `{name, passed, reason}` rows); `cmd/lenny-gateway/main.go` wires it with `infra.RealProbers()`. spec: §15.1 line 890; §24.2 line 43.
 
 ---
 
@@ -35599,7 +35599,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** The "active outbound connectivity probes" promise at §15.1:890 — the whole reason `POST /v1/admin/preflight` is documented as `POST` rather than `GET` — has no executor. Operators cannot detect a wrong Postgres password, an unreachable Redis, a misconfigured MinIO bucket, or a stale schema version before `helm install`. Common deployment failures (PostgreSQL hostname typo, MinIO bucket missing, Redis ACL misconfiguration) surface only after the gateway starts and crash-loops.
 
-**Resolution (commit `<batch>`):** New `pkg/preflight/infra` package: `RealPostgresProber` (pgx connect + ping + best-effort `schema_migrations` version read), `RealRedisProber` (go-redis `ParseURL` + PING), and `RealMinIOProber` (minio-go `BucketExists`/`ListBuckets`), behind the testable `Probers` seam. `infra.Resolve` applies the §24.2 line 47 flags→env→values precedence per field; `infra.Run` returns a `pkg/preflight.CheckResult` per backend (unconfigured backends skip, configured-but-unreachable fail closed). Wired into both the standalone CLI and the API endpoint. spec: §24.2 line 47; §15.1 line 890.
+**Resolution (commit `502e840d`):** New `pkg/preflight/infra` package: `RealPostgresProber` (pgx connect + ping + best-effort `schema_migrations` version read), `RealRedisProber` (go-redis `ParseURL` + PING), and `RealMinIOProber` (minio-go `BucketExists`/`ListBuckets`), behind the testable `Probers` seam. `infra.Resolve` applies the §24.2 line 47 flags→env→values precedence per field; `infra.Run` returns a `pkg/preflight.CheckResult` per backend (unconfigured backends skip, configured-but-unreachable fail closed). Wired into both the standalone CLI and the API endpoint. spec: §24.2 line 47; §15.1 line 890.
 
 ---
 
@@ -35615,7 +35615,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** The wizard's preflight phase is absent. A misconfigured `values.yaml` (unreachable Postgres, wrong MinIO bucket, feature-flag downgrade) silently proceeds to `helm install`; failures surface only after Helm has applied resources and the pods crash-loop. The "any hard failure aborts" guarantee at §17.6:696 does not hold.
 
-**Resolution (commit `<batch>`):** `cmdInstall` now runs a preflight phase (`runInstallPreflight`) between the preview/dry-run gate and the `helm install` subprocess: it maps the wizard answers onto an `infra.Config` (Postgres/Redis DSNs from the answer file; MinIO only when endpoint plus `$LENNY_MINIO_ACCESS_KEY`/`$LENNY_MINIO_SECRET_KEY` are present so the probe can authenticate), probes via `infra.RealProbers()`, prints each check, and aborts (exit 1) on any hard failure before mutating the cluster. Closes the duplicate F-24.20.3. spec: §17.6 line 696; §24.20 line 295.
+**Resolution (commit `502e840d`):** `cmdInstall` now runs a preflight phase (`runInstallPreflight`) between the preview/dry-run gate and the `helm install` subprocess: it maps the wizard answers onto an `infra.Config` (Postgres/Redis DSNs from the answer file; MinIO only when endpoint plus `$LENNY_MINIO_ACCESS_KEY`/`$LENNY_MINIO_SECRET_KEY` are present so the probe can authenticate), probes via `infra.RealProbers()`, prints each check, and aborts (exit 1) on any hard failure before mutating the cluster. Closes the duplicate F-24.20.3. spec: §17.6 line 696; §24.20 line 295.
 
 ---
 
@@ -35627,7 +35627,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** Recovery procedures lose their "verify step", which is the difference between "we believe we are back" and "we have confirmed we are back". The `PHASE_STAMP_FEATURE_FLAG_DOWNGRADE` pre-Sync gate at §17.2:76 — the **only** enforcement path for GitOps deployers that bypass the render-time `lookup` check — is unreachable through the documented operator interface. (The in-cluster admission webhook `PREFLIGHT_PHASE_STAMP_MISMATCH` still catches the downgrade post-Sync, so the violation is not undetected, but the spec's pre-Sync placement explicitly exists to reject before any cluster mutation.)
 
-**Resolution (commit `<batch>`):** Closed by F-24.2.1. `lenny-ctl preflight --config <values.yaml>` is now an executable subcommand, so the §17.6:392/618/813 and §17.2:76 runbook steps that name it can be followed. Standalone mode runs from CI without a cluster; against a reachable cluster the §10.5 CRD-currency verify step still runs (the §17.6:392 CRD-recovery case).
+**Resolution (commit `502e840d`):** Closed by F-24.2.1. `lenny-ctl preflight --config <values.yaml>` is now an executable subcommand, so the §17.6:392/618/813 and §17.2:76 runbook steps that name it can be followed. Standalone mode runs from CI without a cluster; against a reachable cluster the §10.5 CRD-currency verify step still runs (the §17.6:392 CRD-recovery case).
 
 ---
 
@@ -35644,7 +35644,7 @@ The current codebase has no equivalent "feature detection then fall back to loca
 
 **Impact:** Without an explicit fallback contract, operators in CI environments where the gateway is partially reachable (DNS resolves, TCP open, but admin API returns 404 because of F2) will see ambiguous failures rather than transparent fallback to standalone-mode local checks.
 
-**Resolution (commit `<batch>`):** `cmdPreflight` selects the mode by probing the gateway's unauthenticated `/healthz` with a 3s context timeout (`preflightGatewayReachable`): reachable → API-backed (`POST /v1/admin/preflight`); unreachable or absent → standalone local probes. This satisfies the §24.2:39 "default when the gateway is unreachable" rule and the transparent CI fallback (a CI run with the default localhost URL and no gateway lands in standalone mode automatically). spec: §24.2 line 39.
+**Resolution (commit `502e840d`):** `cmdPreflight` selects the mode by probing the gateway's unauthenticated `/healthz` with a 3s context timeout (`preflightGatewayReachable`): reachable → API-backed (`POST /v1/admin/preflight`); unreachable or absent → standalone local probes. This satisfies the §24.2:39 "default when the gateway is unreachable" rule and the transparent CI fallback (a CI run with the default localhost URL and no gateway lands in standalone mode automatically). spec: §24.2 line 39.
 
 ---
 
@@ -37998,7 +37998,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** Installs proceed against unreachable Postgres/Redis/MinIO and silently fail at first session creation. The §24.2 audit cross-references this gap.
 - **Suggested resolution:** Wire `pkg/preflight/Run` between the preview and `helm install` phases; exit with the spec-mandated error envelope on first failure.
 
-**Resolution (commit `<batch>`):** Closed by F-24.2.5. `cmdInstall` runs `runInstallPreflight` (probing the wizard's resolved Postgres/Redis/MinIO backends via `pkg/preflight/infra.Run`) between the preview/dry-run gate and the `helm install` subprocess; any hard failure aborts before any cluster mutation.
+**Resolution (commit `502e840d`):** Closed by F-24.2.5. `cmdInstall` runs `runInstallPreflight` (probing the wizard's resolved Postgres/Redis/MinIO backends via `pkg/preflight/infra.Run`) between the preview/dry-run gate and the `helm install` subprocess; any hard failure aborts before any cluster mutation.
 
 ### - [ ] F-24.20.4 — Smoke-test phase missing from `lenny-ctl install` [High] — OPEN
 - **Spec:** §24.20 line 299 — "runs a smoke test against the `chat` reference runtime."
