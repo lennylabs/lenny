@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -22,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // concurrentAdapter is a gRPC adapter fake that models a concurrent-mode
@@ -430,5 +433,64 @@ func TestBindSlotEmitsNoSlotFailureOnSuccess_spec_5_2(t *testing.T) {
 	defer res.Adapter.Close()
 	if failed {
 		t.Error("a successful slot bind emitted lenny_slot_failure_total")
+	}
+}
+
+// spec: §5.2 — a slot bind failure after reservation surfaces a
+// *SlotBindError carrying the pod, slot, and stage so the gateway retry
+// policy can release the slot and classify the failure. A ResourceExhausted
+// classifies as oom (non-retryable).
+func TestBindSlotReturnsSlotBindError_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	a.startErr = status.Error(codes.ResourceExhausted, "pod OOM-killed")
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, concurrentAdapterDialer(t, a))
+
+	_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Style: podclaim.StyleWorkspace, MaxConcurrent: 8,
+		Plan: &adapterv1.WorkspacePlan{},
+	})
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) {
+		t.Fatalf("BindSlot error = %v, want *SlotBindError", err)
+	}
+	if sbe.Pod != "sbx-1" || sbe.SlotID != "sess-1" || sbe.Stage != "session_start" {
+		t.Errorf("SlotBindError = {Pod:%q SlotID:%q Stage:%q}, want {sbx-1 sess-1 session_start}",
+			sbe.Pod, sbe.SlotID, sbe.Stage)
+	}
+	if got := sbe.Reason(); got != podsession.SlotReasonOOM {
+		t.Errorf("Reason() = %q, want oom", got)
+	}
+}
+
+// spec: §6.2 line 165 — DrainSandbox retires a concurrent-mode pod as a
+// whole (slot_active → draining), is idempotent, and tolerates a missing
+// Sandbox.
+func TestBinderDrainSandbox_spec_6_2(t *testing.T) {
+	sb := concurrentIdleSandbox("sbx-1", "10.244.1.7")
+	sb.Status.Phase = string(state.SlotActive)
+	sb.Status.ActiveSlots = 2
+	c := k8sClient(t, sb)
+	binder := newBinder(c, concurrentAdapterDialer(t, newConcurrentAdapter()))
+	ctx := context.Background()
+
+	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
+		t.Fatalf("DrainSandbox: %v", err)
+	}
+	var got lennyv1.Sandbox
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &got); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if got.Status.Phase != string(state.Draining) {
+		t.Errorf("phase = %q, want draining", got.Status.Phase)
+	}
+	// Idempotent: a second drain is a no-op and does not error.
+	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
+		t.Fatalf("idempotent DrainSandbox: %v", err)
+	}
+	// Missing sandbox: tolerated.
+	if err := binder.DrainSandbox(ctx, "sbx-absent"); err != nil {
+		t.Fatalf("DrainSandbox on missing sandbox: %v", err)
 	}
 }

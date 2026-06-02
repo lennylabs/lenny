@@ -2736,6 +2736,10 @@ func main() {
 		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
+		// §5.2 — whole-pod replacement counter, incremented when the
+		// concurrent-workspace slot retry policy drains an unhealthy pod
+		// (ceil(maxConcurrent/2) slots failed or leaked in the window).
+		SlotReplacement: gwMetrics.IncSlotPodReplacement,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,

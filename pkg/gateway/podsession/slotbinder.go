@@ -111,20 +111,23 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-			return nil, fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err)
+			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+				fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 		}
 		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-			return nil, fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err)
+			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+				fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 		}
 		finalizeWarnings = warnings
 		outs, err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
-			return nil, &SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: outs}
+			return nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
+				&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: outs})
 		}
 		setupOutputs = outs
 	}
@@ -134,7 +137,8 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	if err := b.assignSlotCredentials(ctx, cl, req); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
-		return nil, fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err)
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
+			fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err))
 	}
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
@@ -146,7 +150,8 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	}); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
-		return nil, fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err)
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureSessionStart,
+			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
 	}
 	return &BindResult{
 		SessionID:             req.SessionID,
@@ -235,30 +240,56 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	sandboxName = res.SandboxName
 	slotID = res.SlotID
 
+	// Past this point a slot is reserved on sandboxName. Any failure is
+	// wrapped in a SlotBindError so the caller can release the reservation,
+	// count it toward the pod's §5.2 fail/leak window, and retry on a fresh
+	// slot. The reservation-bearing failures use the slotFailureConnect
+	// stage (no lenny_slot_failure_total emission — that counter labels the
+	// four post-connection bind stages).
 	sb, err := b.resolveSandbox(ctx, sandboxName)
 	if err != nil {
-		return "", "", "", nil, err
+		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
 	}
 	podIP = sb.Status.PodIP
 
 	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
 	cl, err = b.DialAdapter(addr)
 	if err != nil {
-		return "", "", "", nil, fmt.Errorf("podsession: dial slot adapter at %s: %w", addr, err)
+		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+			fmt.Errorf("podsession: dial slot adapter at %s: %w", addr, err))
 	}
 
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return "", "", "", nil, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
+		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+			fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err))
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
-		return "", "", "", nil, fmt.Errorf(
+		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
-		)
+		))
 	}
 	return sandboxName, slotID, podIP, cl, nil
+}
+
+// slotBindError wraps a post-reservation slot failure with the pod and
+// slot it belongs to so the §5.2 retry policy can release and account for
+// it. spec: §5.2 "Concurrent-workspace slot retry policy".
+func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *SlotBindError {
+	return &SlotBindError{Pod: sandboxName, SlotID: slotID, Stage: stage, Err: err}
+}
+
+// ReleaseSlotReservation releases a §5.2 slot reservation (the SandboxClaim
+// and the active_slots count) without an adapter Shutdown. The §5.2 retry
+// policy calls it after a failed bind so the retry lands on a genuinely
+// fresh slot and the pod's active_slots is not leaked by the failed
+// attempt. It is the slot-count half of ReleaseSlot, reused here because
+// the failed attempt already closed its adapter connection.
+func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error {
+	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
+	return claimer.ReleaseSlot(ctx, sandboxName, slotID)
 }
 
 // ReleaseSlot tears down a concurrent-mode slot when its session ends.
@@ -285,21 +316,41 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
 }
 
-// drainSandbox transitions a Sandbox to the draining phase. It is the
-// shared teardown used when a concurrent-mode pod must be retired as a
-// whole (for example after the §5.2 unhealthy-slot threshold) rather
-// than releasing a single slot.
-func (b *Binder) drainSandbox(ctx context.Context, sandboxName string) error {
-	var sb lennyv1.Sandbox
-	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		if apierrors.IsNotFound(err) {
+// DrainSandbox transitions a concurrent-mode Sandbox to the draining
+// phase. It is the §6.2 line 165 whole-pod retirement used when a pod
+// crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2) slots
+// failed or leaked within the rolling window) rather than releasing a
+// single slot: the pod accepts no new slots and its existing slots drain.
+//
+// The transition is idempotent (a no-op when the Sandbox is already
+// draining or gone) and is best-effort under contention: a status-update
+// conflict re-reads and re-applies, and the legal source phases are
+// slot_active and idle (a pod that drained to idle between observation and
+// apply still retires).
+//
+// spec: §6.2 line 165 (slot_active → draining on the unhealthy threshold);
+// §5.2 "whole-pod replacement trigger".
+func (b *Binder) DrainSandbox(ctx context.Context, sandboxName string) error {
+	const maxConflictRetries = 3
+	for attempt := 0; ; attempt++ {
+		var sb lennyv1.Sandbox
+		if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
+		}
+		if sb.Status.Phase == string(state.Draining) {
 			return nil
 		}
-		return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
-	}
-	sb.Status.Phase = string(state.Draining)
-	if err := b.Client.Status().Update(ctx, &sb); err != nil {
+		sb.Status.Phase = string(state.Draining)
+		err := b.Client.Status().Update(ctx, &sb)
+		if err == nil {
+			return nil
+		}
+		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
+			continue
+		}
 		return fmt.Errorf("podsession: drain sandbox %s: %w", sandboxName, err)
 	}
-	return nil
 }

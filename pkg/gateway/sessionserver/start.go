@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -66,6 +67,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
 	var setupFail *podsession.SetupCommandFailure
+	var slotFailed *podsession.SlotFailedError
 	switch {
 	case errors.As(err, &setupFail):
 		// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — the
@@ -106,6 +108,15 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		s.writeWarmPoolExhausted(w, "no_idle_pods")
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
 		s.writeWarmPoolExhausted(w, "concurrent_slots_exhausted")
+	case errors.As(err, &slotFailed):
+		// spec: §5.2 "Client error on exhaustion" — a concurrent-workspace
+		// slot failure that was non-retryable or whose single retry was
+		// exhausted. The body carries error.category (the failure reason),
+		// error.retryable=false (the client may resubmit as a new request),
+		// and error.slotId. It is checked after the typed setup/credential
+		// cases so a SlotFailedError wrapping one of those still routes to
+		// the specific handler via the unwrap chain.
+		s.writeSlotFailed(w, slotFailed)
 	default:
 		// spec: §7.1 line 28 / §15.1 line 1138 — the atomic-unit fallback
 		// is always retryable; include Retry-After so a client backs off
@@ -148,6 +159,26 @@ func (s *Server) writeCredentialPoolExhausted(w http.ResponseWriter, reason stri
 	s.writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_POOL_EXHAUSTED",
 		"no provider has an assignable credential; retry once the pool frees up",
 		map[string]any{"reason": reason})
+}
+
+// writeSlotFailed writes the §5.2 "Client error on exhaustion" envelope
+// for a concurrent-workspace slot failure that was not (or no longer)
+// retried. The body carries error.category (the §5.2 failure reason),
+// error.retryable=false (the platform will not retry; the client may
+// resubmit a new request), and error.slotId. HTTP 422 is used because the
+// failure is not transient: a non-retryable category (oom,
+// workspace_validation, policy_rejection) fails identically on resubmit,
+// and an exhausted retry has already consumed the §5.2 retry budget, so no
+// Retry-After is offered.
+// spec: §5.2 "Client error on exhaustion".
+func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailedError) {
+	s.writeError(w, http.StatusUnprocessableEntity, "SLOT_FAILED",
+		"concurrent-workspace slot failed and was not retried; resubmit as a new request",
+		map[string]any{
+			"category":  e.Category,
+			"retryable": false,
+			"slotId":    e.SlotID,
+		})
 }
 
 // writeWarmPoolExhausted writes the §5.2 line 519 WARM_POOL_EXHAUSTED
@@ -985,7 +1016,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
-		result, err := s.podBinder.BindSlot(ctx, podsession.SlotBindRequest{
+		slotReq := podsession.SlotBindRequest{
 			Pool:               match.Pool,
 			SessionID:          row.ID,
 			TenantID:           row.TenantID,
@@ -999,11 +1030,8 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			CredentialPools:    credPools,
 			AgentInterface:     agentInterface,
 			MinPlatformVersion: minPlatformVersion,
-		})
-		if err != nil {
-			return nil, err
 		}
-		return result, nil
+		return s.bindSlotWithRetry(ctx, slotReq)
 	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
 		Pool:               match.Pool,
@@ -1023,6 +1051,97 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	}
 	s.recordStartupMetrics(match, result.Timings)
 	return result, nil
+}
+
+// maxSlotRetries is the §5.2 concurrent-workspace slot retry budget: one
+// retry, two total attempts including the original. The retry always lands
+// on a fresh slot (BindSlot re-reserves, materializing a fresh workspace),
+// satisfying the §5.2 "fresh workspace guarantee".
+const maxSlotRetries = 1
+
+// slotBinder is the subset of *podsession.Binder the §5.2 slot retry
+// policy drives. The interface seam lets applySlotRetryPolicy be unit
+// tested with a fake binder rather than an envtest cluster.
+type slotBinder interface {
+	BindSlot(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error)
+	ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error
+	DrainSandbox(ctx context.Context, sandboxName string) error
+}
+
+// bindSlotWithRetry applies the §5.2 concurrent-workspace slot retry
+// policy around the gateway's pod binder. It is the production entry point
+// that threads the server's binder, slot-health tracker, and replacement
+// metric into applySlotRetryPolicy.
+func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error) {
+	return applySlotRetryPolicy(ctx, s.podBinder, s.slotHealth, s.slotReplacement, req)
+}
+
+// applySlotRetryPolicy is the §5.2 "Concurrent-workspace slot retry
+// policy":
+//
+//   - A reservation-exhaustion sentinel (no slot was reserved) is returned
+//     unchanged so the handler maps it to WARM_POOL_EXHAUSTED.
+//   - A slot failure after reservation is released (so the retry lands on a
+//     genuinely fresh slot and the pod's active_slots is not leaked) and
+//     recorded against the pod's rolling fail/leak window. When the pod
+//     crosses the ceil(maxConcurrent/2) unhealthy threshold it is drained
+//     as a whole and the replacement counter is incremented.
+//   - A non-retryable reason (oom, workspace_validation, policy_rejection)
+//     or an exhausted retry returns the §5.2 structured SlotFailedError.
+//   - A transient reason retries once on a fresh slot.
+//
+// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2 line 165
+// (slot_active → draining on the unhealthy-slot threshold).
+func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, replacement func(pool string), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxSlotRetries; attempt++ {
+		result, err := binder.BindSlot(ctx, req)
+		if err == nil {
+			return result, nil
+		}
+		// Exhaustion sentinels are not slot failures (no slot was reserved):
+		// surface them unchanged for the WARM_POOL_EXHAUSTED mapping.
+		if errors.Is(err, podclaim.ErrNoConcurrentSlot) ||
+			errors.Is(err, podclaim.ErrTenantMismatch) ||
+			errors.Is(err, podclaim.ErrNoIdlePod) {
+			return nil, err
+		}
+		var sbe *podsession.SlotBindError
+		if !errors.As(err, &sbe) {
+			// A failure outside the reserved-slot window (e.g. pool resolve)
+			// is not subject to the slot retry policy.
+			return nil, err
+		}
+		lastErr = err
+		reason := sbe.Reason()
+		// Release the failed slot so a retry re-reserves a fresh one and the
+		// pod's active_slots is not leaked by the failed attempt.
+		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
+			log.Printf("sessionserver: §5.2 release failed slot %s on pod %s: %v", sbe.SlotID, sbe.Pod, relErr)
+		}
+		// Account the failure toward the pod's §5.2 rolling fail/leak window
+		// and retire the whole pod when it crosses the unhealthy threshold.
+		health.RecordFailure(sbe.Pod)
+		if health.Unhealthy(sbe.Pod, req.MaxConcurrent) {
+			if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
+				log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
+			}
+			if replacement != nil {
+				replacement(req.Pool)
+			}
+			health.Forget(sbe.Pod)
+		}
+		if reason.NonRetryable() || attempt == maxSlotRetries {
+			return nil, &podsession.SlotFailedError{
+				Category: string(reason),
+				SlotID:   sbe.SlotID,
+				Pool:     req.Pool,
+				Err:      sbe.Err,
+			}
+		}
+		// Transient with a retry remaining: loop to re-claim a fresh slot.
+	}
+	return nil, lastErr
 }
 
 // registerBinding publishes a successful startOnPod / resumeOnPod

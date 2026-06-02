@@ -132,6 +132,11 @@ const (
 	slotFailureSetup                = "setup"
 	slotFailureCredentialAssignment = "credential_assignment"
 	slotFailureSessionStart         = "session_start"
+	// slotFailureConnect labels a reservation-bearing failure before the
+	// post-connection bind stages run (resolve, dial, version handshake).
+	// It is used only on the SlotBindError for retry classification; it is
+	// not a lenny_slot_failure_total error_type value.
+	slotFailureConnect = "connect"
 )
 
 // §4.6.1 lenny_pod_claim_fallback_skipped_total reason labels: the two

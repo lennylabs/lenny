@@ -59,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -261,6 +262,17 @@ type Server struct {
 	// preclaimMismatch, when set, increments the §4.9 line 1220
 	// pre-claim mismatch metric.
 	preclaimMismatch func(pool, provider string)
+	// slotHealth tracks §5.2 concurrent-workspace slot failures and leaks
+	// per pod over the rolling 5-minute window so the slot retry policy can
+	// drain a pod that crosses the ceil(maxConcurrent/2) unhealthy
+	// threshold. Never nil after New (defaults to a fresh Tracker).
+	// spec: §5.2 "whole-pod replacement trigger".
+	slotHealth *slothealth.Tracker
+	// slotReplacement, when set, increments
+	// lenny_slot_pod_replacement_total{pool} when the slot retry policy
+	// drains an unhealthy concurrent-mode pod for replacement. Nil disables
+	// the emission. spec: §5.2 "whole-pod replacement trigger".
+	slotReplacement func(pool string)
 	// observeStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
@@ -1056,6 +1068,13 @@ type Options struct {
 	// spec: §4.9 line 1220.
 	PreclaimMismatch func(pool, provider string)
 
+	// SlotReplacement, when set, increments
+	// lenny_slot_pod_replacement_total{pool} when the §5.2 concurrent-
+	// workspace slot retry policy drains an unhealthy pod (ceil(maxConcurrent
+	// /2) slots failed or leaked within the rolling window) for replacement.
+	// Nil disables the emission. spec: §5.2 "whole-pod replacement trigger".
+	SlotReplacement func(pool string)
+
 	// ObserveStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm session startup latency (pod claim through
 	// agent session ready, excluding upload and workspace
@@ -1186,6 +1205,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
 		credRouter:               opts.CredentialRouter,
 		preclaimMismatch:         opts.PreclaimMismatch,
+		slotHealth:               slothealth.New(),
+		slotReplacement:          opts.SlotReplacement,
 		observeStartupDuration:   opts.ObserveStartupDuration,
 		observeStartupPhase:      opts.ObserveStartupPhase,
 		observeTimeToFirstToken:  opts.ObserveTimeToFirstToken,

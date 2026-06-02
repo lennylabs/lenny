@@ -271,6 +271,10 @@ type Metrics struct {
 	// stage), `pool` (finite, the warm-pool registry), and `k8s_pod_name`
 	// (the §16.1.1-sanctioned pod label for this metric).
 	slotFailure *prometheus.CounterVec
+	// slotPodReplacement counts the §5.2 whole-pod replacements the
+	// concurrent-workspace slot retry policy triggers when a pod crosses
+	// the ceil(maxConcurrent/2) fail-or-leak threshold. Labeled by pool.
+	slotPodReplacement *prometheus.CounterVec
 	// slotRehydration counts the §5.2 line 521 post-recovery slot-counter
 	// rehydration events: a pod's active_slots counter was seeded from
 	// Postgres after a Redis restart. Labels: `pod` and `pool` (both
@@ -1371,6 +1375,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.2 — `lenny_slot_pod_replacement_total` counts whole-pod
+	// replacements triggered by the concurrent-workspace slot retry policy:
+	// a pod is marked unhealthy and drained when ceil(maxConcurrent/2) or
+	// more of its slots fail or leak within the rolling 5-minute window.
+	// Labels: `pool` (finite).
+	slotPodReplacement, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_pod_replacement_total",
+		Help: "Concurrent-workspace whole-pod replacements on the unhealthy-slot threshold (§5.2).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -1865,7 +1881,7 @@ func New() (*Metrics, error) {
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
-		slotRehydration,
+		slotRehydration, slotPodReplacement,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
@@ -2019,6 +2035,7 @@ func New() (*Metrics, error) {
 		llmTranslationErrors:                 llmTranslationErrors,
 		slotFailure:                          slotFailure,
 		slotRehydration:                      slotRehydration,
+		slotPodReplacement:                   slotPodReplacement,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		sigkillStreams:                       sigkillStreams,
@@ -2908,6 +2925,18 @@ func (m *Metrics) IncSlotRehydration(pod, pool string) {
 		return
 	}
 	m.slotRehydration.WithLabelValues(pod, pool).Inc()
+}
+
+// IncSlotPodReplacement increments the §5.2 `lenny_slot_pod_replacement_total`
+// counter for pool. Called by the concurrent-workspace slot retry policy
+// when a pod is marked unhealthy and drained because ceil(maxConcurrent/2)
+// or more of its slots failed or leaked within the rolling 5-minute window.
+// spec: §5.2 "whole-pod replacement trigger".
+func (m *Metrics) IncSlotPodReplacement(pool string) {
+	if m == nil {
+		return
+	}
+	m.slotPodReplacement.WithLabelValues(pool).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234
