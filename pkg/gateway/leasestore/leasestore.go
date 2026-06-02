@@ -14,7 +14,11 @@
 // that does not hold it.
 //
 // §12.4 specifies a Postgres advisory-lock fallback for the Redis
-// outage window; that degraded-mode path is not yet implemented.
+// outage window. That degraded-mode path lives in the leasestore/pgstore
+// subpackage, behind the Failover wrapper (failover.go): the gateway
+// wires Failover{primary: this Redis store, fallback: pgstore} so a
+// Redis outage routes lease operations through Postgres advisory locks
+// at higher latency instead of breaking lease acquisition.
 package leasestore
 
 import (

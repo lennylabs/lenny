@@ -132,6 +132,40 @@ func TestDeleteByUserNoInteractionsIsNoOp(t *testing.T) {
 	}
 }
 
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant is mandatory on
+// the Store interface (lifted from the concrete type by F-12.2.11) and
+// erases exactly one tenant's interactions.
+func TestDeleteByTenantScopesToTenant_spec_12_1(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	put := func(id, tenant, user string) {
+		t.Helper()
+		if err := s.Put(ctx, interactionstore.Interaction{
+			ID: id, Kind: interactionstore.KindToolUse, SessionID: "sess-" + id, TenantID: tenant, UserID: user,
+		}); err != nil {
+			t.Fatalf("Put %s: %v", id, err)
+		}
+	}
+	put("a1", "acme", "alice")
+	put("a2", "acme", "bob")
+	put("g1", "globex", "carol")
+
+	deleted, err := s.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2 (acme's two interactions)", deleted)
+	}
+	if _, err := s.Get(ctx, "globex", "sess-g1", "carol", "g1"); err != nil {
+		t.Errorf("globex interaction must survive acme's tenant deletion: %v", err)
+	}
+	// Idempotent: a second deletion of the now-empty tenant is a no-op.
+	if d, err := s.DeleteByTenant(ctx, "acme"); err != nil || d != 0 {
+		t.Errorf("repeat DeleteByTenant = (%d, %v), want (0, nil)", d, err)
+	}
+}
+
 // spec: §11.4 full_revoke — dismiss a revoked user's pending elicitations.
 
 func TestDismissByUserDismissesPendingElicitations(t *testing.T) {

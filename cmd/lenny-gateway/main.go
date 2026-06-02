@@ -162,6 +162,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -1310,9 +1311,18 @@ func main() {
 		cacheClient := concernRedis.For(storerouter.RedisConcernCachePubSub)
 		breakerCache = cachingstore.New(redisstore.New(cacheClient), cacheClient)
 		breakers = breakerCache
-		// §12.4 Coordination concern: session leases.
+		// §12.4 Coordination concern: session leases. The Redis-backed
+		// store is the primary; with Postgres also wired the failover
+		// wrapper routes lease operations to the §12.4 line 206 Postgres
+		// advisory-lock fallback during a Redis outage, so coordination
+		// degrades to higher latency rather than breaking lease
+		// acquisition outright.
+		var leaseStore leasestore.LeaseStore = leasestore.New(concernRedis.For(storerouter.RedisConcernCoordination))
+		if pgPool != nil {
+			leaseStore = leasestore.NewFailover(leaseStore, leasepg.New(pgPool), nil)
+		}
 		coordinator = coordination.NewSweeper(
-			tenantsLister{tenants}, sessions, leasestore.New(concernRedis.For(storerouter.RedisConcernCoordination)),
+			tenantsLister{tenants}, sessions, leaseStore,
 			coordination.Options{ReplicaID: replica, Interval: *coordInterval},
 		)
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter

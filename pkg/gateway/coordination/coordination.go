@@ -10,7 +10,9 @@
 // The leases are held in Redis via pkg/gateway/leasestore. leasestore
 // Acquire is idempotent for the current holder — it refreshes the TTL
 // — so one Acquire call per session per sweep both claims new
-// sessions and renews held ones.
+// sessions and renews held ones. The sweeper holds the leasestore.LeaseStore
+// interface, so a Redis outage transparently routes through the §12.4
+// Postgres advisory-lock fallback when a leasestore.Failover is wired.
 package coordination
 
 import (
@@ -45,7 +47,7 @@ type Options struct {
 type Sweeper struct {
 	tenants   TenantLister
 	sessions  sessionstore.Store
-	leases    *leasestore.Store
+	leases    leasestore.LeaseStore
 	replicaID string
 	ttl       time.Duration
 	interval  time.Duration
@@ -53,7 +55,7 @@ type Sweeper struct {
 
 // NewSweeper returns a Sweeper. Interval defaults to 15s and TTL to
 // four sweep intervals when not set.
-func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases *leasestore.Store, opts Options) *Sweeper {
+func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leasestore.LeaseStore, opts Options) *Sweeper {
 	interval := opts.Interval
 	if interval <= 0 {
 		interval = 15 * time.Second

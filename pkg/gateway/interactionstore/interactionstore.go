@@ -105,6 +105,14 @@ type Store interface {
 	// no-op returning (0, nil).
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
+	// DeleteByTenant removes every interaction belonging to tenantID and
+	// returns the count deleted — the §12.8 Phase-4 tenant-deletion
+	// adapter. Mandatory at the interface per §12.1 so the production
+	// pgstore (not only the in-memory store) carries it. A tenant with no
+	// interactions is a no-op returning (0, nil).
+	// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+
 	// DismissByUser sets every pending elicitation directed at userID
 	// within tenantID to dismissed and returns the count dismissed —
 	// the §11.4 full_revoke step that clears a revoked user's pending

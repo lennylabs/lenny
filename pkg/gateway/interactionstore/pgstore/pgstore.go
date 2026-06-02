@@ -230,6 +230,25 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	return deleted, err
 }
 
+// DeleteByTenant removes every interaction belonging to tenantID and
+// returns the count deleted — the §12.8 Phase-4 tenant-deletion adapter.
+// A tenant with no interactions is a no-op returning (0, nil).
+//
+// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	deleted := 0
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM interactions WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	return deleted, err
+}
+
 // DismissByUser sets every pending elicitation directed at userID
 // within tenantID to dismissed and returns the count dismissed — the
 // §11.4 full_revoke step that clears a revoked user's pending

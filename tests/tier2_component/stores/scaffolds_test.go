@@ -29,7 +29,11 @@ import "testing"
 
 // TestLeaseStoreContract — the Redis lease primitives are implemented
 // in tests/tier2_component/leases against pkg/gateway/leasestore. The
-// §12.4 Redis-outage Postgres advisory-lock fallback is not yet built.
+// §12.4 Redis-outage Postgres advisory-lock fallback lives in
+// pkg/gateway/leasestore/pgstore behind the leasestore.Failover wrapper;
+// its advisory-lock CAS is exercised in
+// tests/tier4_integration/lease_failover_test.go and the failover
+// routing in pkg/gateway/leasestore/failover_test.go.
 
 // TestQuotaStoreContract — Redis-backed token-usage counter contract.
 // Fixed-window counter: tests/tier2_component/quota/quotastore_test.go.
