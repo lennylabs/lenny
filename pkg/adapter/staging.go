@@ -165,6 +165,14 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 			pw.UnknownType = w.UnknownType
 			pw.SchemaVersion = int32(schemaVersion)
 		}
+		// spec: §14 line 338 — the path-collision warning carries `path`,
+		// `winningSourceIndex`, and `losingSourceIndex` so a consumer can
+		// audit which source overwrote which. F-14.1.9.
+		if w.Code == "workspace_plan_path_collision" {
+			pw.Path = w.Path
+			pw.WinningSourceIndex = int32(w.WinningSourceIndex)
+			pw.LosingSourceIndex = int32(w.LosingSourceIndex)
+		}
 		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, pw)
 	}
 	return resp, nil

@@ -29,34 +29,36 @@ func GitCloneStagingRef(src *adapterv1.WorkspaceSource) string {
 // repository at the pinned commit and delivers its tree to the staging
 // area as a gzip-tar. extractGitClone extracts that staged archive
 // under the source path.
-func extractGitClone(root, stagingDir string, src *adapterv1.WorkspaceSource) error {
+func extractGitClone(root, stagingDir string, src *adapterv1.WorkspaceSource) ([]string, error) {
 	if stagingDir == "" {
-		return errors.New("gitClone source requires a staging directory")
+		return nil, errors.New("gitClone source requires a staging directory")
 	}
 	staged, err := StagingPath(stagingDir, GitCloneStagingRef(src))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	f, err := os.Open(staged)
 	if err != nil {
-		return fmt.Errorf("open staged repository archive: %w", err)
+		return nil, fmt.Errorf("open staged repository archive: %w", err)
 	}
 	defer f.Close()
 	counter := &byteCounter{r: f}
 	gz, err := gzip.NewReader(counter)
 	if err != nil {
-		return fmt.Errorf("open gzip stream: %w", err)
+		return nil, fmt.Errorf("open gzip stream: %w", err)
 	}
 	defer gz.Close()
 	capped := &readCap{r: gz, maxRead: decompressorPerReadCap}
 	// gitClone never raises a strip-components skip — strip=0 cannot
 	// drop any entry — so any returned warnings are spurious; discard
-	// them rather than mix them into the parent Materialize slice.
+	// them rather than mix them into the parent Materialize slice. The
+	// written paths are kept so a later source overwriting a checked-out
+	// repository file raises the §14 line 338 collision warning. F-14.1.9.
 	// Git histories often carry symlinks (e.g., monorepos, vendored
 	// repos), so gitClone opts in to symlinks unconditionally; the
 	// validator still resolves every target through ValidateSymlinkTarget
 	// using the workspace root. spec: §7.4 line 458; §13.4 — F-7.4.4.
 	allow := upload.RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: root}
-	_, err = extractUploadTar(root, src.GetPath(), 0, 0, capped, counter, allow)
-	return err
+	written, _, err := extractUploadTar(root, src.GetPath(), 0, 0, capped, counter, allow)
+	return written, err
 }

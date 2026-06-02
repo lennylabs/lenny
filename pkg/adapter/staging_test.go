@@ -239,6 +239,40 @@ func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
+// spec: §14 line 338 — when two sources resolve to the same workspace
+// path the adapter raises a workspace_plan_path_collision warning on
+// FinalizeWorkspaceResponse carrying `path`, `winningSourceIndex`, and
+// `losingSourceIndex` so the gateway can republish them. F-14.1.9.
+func TestFinalizeWorkspaceTranscribesPathCollision_spec_14_338(t *testing.T) {
+	srv := &Server{WorkspaceRoot: t.TempDir()}
+	resp, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
+		wsSource("inlineFile", "conf/app.yaml", "first", "644"),
+		wsSource("inlineFile", "conf/app.yaml", "second", "644")))
+	if err != nil {
+		t.Fatalf("FinalizeWorkspace: %v", err)
+	}
+	var coll *adapterv1.WorkspacePlanWarning
+	for _, w := range resp.GetWorkspacePlanWarnings() {
+		if w.GetCode() == "workspace_plan_path_collision" {
+			coll = w
+		}
+	}
+	if coll == nil {
+		t.Fatalf("no path-collision warning transcribed: %+v", resp.GetWorkspacePlanWarnings())
+	}
+	if coll.GetPath() != "conf/app.yaml" {
+		t.Errorf("path = %q, want conf/app.yaml", coll.GetPath())
+	}
+	if coll.GetWinningSourceIndex() != 1 || coll.GetLosingSourceIndex() != 0 {
+		t.Errorf("winning/losing = %d/%d, want 1/0", coll.GetWinningSourceIndex(), coll.GetLosingSourceIndex())
+	}
+	// The proto source_index mirrors the winning index for back-compat
+	// single-index consumers.
+	if coll.GetSourceIndex() != coll.GetWinningSourceIndex() {
+		t.Errorf("source_index = %d, want = winning_source_index %d", coll.GetSourceIndex(), coll.GetWinningSourceIndex())
+	}
+}
+
 func TestRunSetupExecutesCommands(t *testing.T) {
 	root := t.TempDir()
 	srv := &Server{WorkspaceRoot: root}

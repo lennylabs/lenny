@@ -473,6 +473,21 @@ message WorkspacePlanWarning {
   // `workspace_plan_unknown_source_type` warnings; zero on other codes.
   // F-14.1.2.
   int32 schema_version = 8;
+  // path is the workspace-relative path two sources resolved to during
+  // materialization. spec: §14 line 338 — `path`. Populated only on
+  // `workspace_plan_path_collision` warnings; empty on other codes.
+  // F-14.1.9.
+  string path = 9;
+  // winning_source_index is the later (last-writer-wins) source index
+  // whose content survives the collision. spec: §14 line 338 —
+  // `winningSourceIndex`. Populated only on
+  // `workspace_plan_path_collision` warnings; equals source_index.
+  // F-14.1.9.
+  int32 winning_source_index = 10;
+  // losing_source_index is the earlier source index the later write
+  // overwrote. spec: §14 line 338 — `losingSourceIndex`. Populated only
+  // on `workspace_plan_path_collision` warnings. F-14.1.9.
+  int32 losing_source_index = 11;
 }
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the

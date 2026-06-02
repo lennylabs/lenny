@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/upload"
@@ -57,9 +58,29 @@ type Warning struct {
 	// `workspace_plan_unknown_source_type` warnings.
 	// spec: §14 line 334 — `unknownType`. F-14.1.2.
 	UnknownType string
+	// Path is the workspace-relative path two sources resolved to.
+	// Populated only on `workspace_plan_path_collision` warnings.
+	// spec: §14 line 338 — `path`. F-14.1.9.
+	Path string
+	// WinningSourceIndex is the later (last-writer-wins) source whose
+	// content survives the collision. Equals SourceIndex. Populated only
+	// on `workspace_plan_path_collision` warnings.
+	// spec: §14 line 338 — `winningSourceIndex`. F-14.1.9.
+	WinningSourceIndex int
+	// LosingSourceIndex is the earlier source the later write overwrote.
+	// Populated only on `workspace_plan_path_collision` warnings.
+	// spec: §14 line 338 — `losingSourceIndex`. F-14.1.9.
+	LosingSourceIndex int
 	// Message is a human-readable explanation.
 	Message string
 }
+
+// pathCollisionCode is the §14 line 338 closed-enum WarningCode for the
+// last-writer-wins path-collision advisory raised when two sources
+// resolve to the same workspace path during materialization. The string
+// matches pkg/workspaceplan.WarnPathCollision so the two definitions
+// stay aligned. F-14.1.9.
+const pathCollisionCode = "workspace_plan_path_collision"
 
 // unknownSourceTypeSkipCode is the §14 closed-enum WarningCode for the
 // §14 line 334 "unknown source.type is skipped, not rejected" advisory.
@@ -151,8 +172,14 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 	}
 
 	var warnings []Warning
+	// seen maps a workspace-relative path to the source index that last
+	// wrote it, so a later source writing the same path raises the §14
+	// line 338 last-writer-wins collision warning. Directories are not
+	// tracked: two sources both creating a directory is normal merging,
+	// not an overwrite.
+	seen := make(map[string]int)
 	for i, src := range sources {
-		w, err := materializeSource(buildDir, stagingDir, i, src, archive)
+		written, w, err := materializeSource(buildDir, stagingDir, i, src, archive)
 		warnings = append(warnings, w...)
 		if err != nil {
 			// spec: §7.4 line 460 — a failure at any source returns the
@@ -160,6 +187,26 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 			// build tree leaves the live workspace root untouched.
 			_ = os.RemoveAll(buildDir)
 			return warnings, fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
+		}
+		// spec: §14 line 338 — a path collision is detected "during
+		// materialization", not only at parse time. A path an earlier
+		// source already materialized that a later source overwrites
+		// raises the warning here, where archive-extracted entry paths
+		// (unknown until extraction) are finally visible. F-14.1.9.
+		for _, rel := range written {
+			if prev, ok := seen[rel]; ok && prev != i {
+				warnings = append(warnings, Warning{
+					Code:               pathCollisionCode,
+					SourceIndex:        i,
+					Path:               rel,
+					WinningSourceIndex: i,
+					LosingSourceIndex:  prev,
+					Message: fmt.Sprintf(
+						"path %q written by source %d overwrites source %d (last-writer-wins)",
+						rel, i, prev),
+				})
+			}
+			seen[rel] = i
 		}
 	}
 
@@ -275,18 +322,29 @@ func revalidatePromotedSymlinks(root string) error {
 	})
 }
 
-func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+// materializeSource writes one §14 source into root and returns the
+// workspace-relative paths of the regular files and symlinks it created
+// (directories are excluded — see MaterializeWithPolicy). The path slice
+// feeds the §14 line 338 collision detector. F-14.1.9.
+func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]string, []Warning, error) {
 	switch src.GetType() {
 	case "inlineFile":
-		return nil, writeInlineFile(root, src)
+		if err := writeInlineFile(root, src); err != nil {
+			return nil, nil, err
+		}
+		return writtenPaths(root, src.GetPath()), nil, nil
 	case "mkdir":
-		return nil, makeDir(root, src)
+		return nil, nil, makeDir(root, src)
 	case "uploadFile":
-		return nil, writeUploadFile(root, stagingDir, src)
+		if err := writeUploadFile(root, stagingDir, src); err != nil {
+			return nil, nil, err
+		}
+		return writtenPaths(root, src.GetPath()), nil, nil
 	case "uploadArchive":
 		return extractUploadArchive(root, stagingDir, sourceIndex, src, archive)
 	case "gitClone":
-		return nil, extractGitClone(root, stagingDir, src)
+		written, err := extractGitClone(root, stagingDir, src)
+		return written, nil, err
 	default:
 		// spec: §14 line 334 — a consumer that encounters an unknown
 		// source.type MUST skip the entry and emit a
@@ -296,13 +354,47 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		// type this adapter predates during a rolling upgrade. The
 		// `schemaVersion` warning field is stamped by FinalizeWorkspace,
 		// which holds the plan. F-14.1.2.
-		return []Warning{{
+		return nil, []Warning{{
 			Code:        unknownSourceTypeSkipCode,
 			SourceIndex: sourceIndex,
 			UnknownType: src.GetType(),
 			Message:     fmt.Sprintf("unknown source type %q; skipped per §14 open-string discriminator", src.GetType()),
 		}}, nil
 	}
+}
+
+// writtenPaths returns the single workspace-relative slash-path a direct
+// writer (inlineFile, uploadFile) created, normalized the same way the
+// archive extractors normalize entry paths so the §14 line 338 collision
+// detector compares identical strings. A path that does not resolve under
+// root (already rejected by the writer that just succeeded) yields no
+// entry. F-14.1.9.
+func writtenPaths(root, planPath string) []string {
+	dst, err := resolvePath(root, planPath)
+	if err != nil {
+		return nil
+	}
+	rel, ok := relUnderRoot(root, dst)
+	if !ok {
+		return nil
+	}
+	return []string{rel}
+}
+
+// relUnderRoot expresses abs as a workspace-root-relative slash-path. It
+// returns ("", false) when abs is root itself or escapes it. Archive
+// extractors and direct writers route every materialized path through it
+// so the collision detector keys on a single canonical form. F-14.1.9.
+func relUnderRoot(root, abs string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(root), abs)
+	if err != nil || rel == "." || rel == "" {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return rel, true
 }
 
 func writeInlineFile(root string, src *adapterv1.WorkspaceSource) error {

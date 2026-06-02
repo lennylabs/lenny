@@ -40,17 +40,17 @@ import (
 // `workspace_plan_strip_components_skip` advisory: one entry per
 // archive entry the strip-components rule discarded. spec: §7.4 lines
 // 449-462; §13.4 — F-7.4.2, F-7.4.3, F-7.4.4, F-7.4.13, F-7.4.15.
-func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]string, []Warning, error) {
 	if stagingDir == "" {
-		return nil, errors.New("uploadArchive source requires a staging directory")
+		return nil, nil, errors.New("uploadArchive source requires a staging directory")
 	}
 	staged, err := StagingPath(stagingDir, src.GetUploadRef())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	strip := int(src.GetStripComponents())
 	if strip < 0 {
-		return nil, fmt.Errorf("stripComponents %d is negative", strip)
+		return nil, nil, fmt.Errorf("stripComponents %d is negative", strip)
 	}
 	prefix := src.GetPath()
 	allow := upload.RuntimeAllow{
@@ -62,14 +62,14 @@ func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapter
 	case "tar":
 		f, err := os.Open(staged)
 		if err != nil {
-			return nil, fmt.Errorf("open staged archive: %w", err)
+			return nil, nil, fmt.Errorf("open staged archive: %w", err)
 		}
 		defer f.Close()
 		return extractUploadTar(root, prefix, strip, sourceIndex, f, &nopByteCounter{}, allow)
 	case "tar.gz":
 		f, err := os.Open(staged)
 		if err != nil {
-			return nil, fmt.Errorf("open staged archive: %w", err)
+			return nil, nil, fmt.Errorf("open staged archive: %w", err)
 		}
 		defer f.Close()
 		// Wrap the underlying reader so the §13.4 100:1 decompression-
@@ -79,7 +79,7 @@ func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapter
 		counter := &byteCounter{r: f}
 		gz, err := gzip.NewReader(counter)
 		if err != nil {
-			return nil, fmt.Errorf("open gzip stream: %w", err)
+			return nil, nil, fmt.Errorf("open gzip stream: %w", err)
 		}
 		defer gz.Close()
 		capped := &readCap{r: gz, maxRead: decompressorPerReadCap}
@@ -87,7 +87,7 @@ func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapter
 	case "zip":
 		return extractUploadZip(root, prefix, strip, sourceIndex, staged, allow)
 	default:
-		return nil, fmt.Errorf("unsupported archive format %q", src.GetFormat())
+		return nil, nil, fmt.Errorf("unsupported archive format %q", src.GetFormat())
 	}
 }
 
@@ -164,6 +164,23 @@ func (s *archiveSession) trackWritten(path string) {
 	s.written = append(s.written, path)
 }
 
+// relWritten returns the workspace-root-relative slash-paths of every
+// file and symlink the session created, for the §14 line 338 collision
+// detector. Directories are excluded (they are tracked separately and
+// merging is not an overwrite). F-14.1.9.
+func (s *archiveSession) relWritten() []string {
+	if len(s.written) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.written))
+	for _, abs := range s.written {
+		if rel, ok := relUnderRoot(s.root, abs); ok {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
 // trackDir records an interior directory the extractor created so the
 // cleanup pass can remove it after its children are gone. Directories
 // already present (e.g., the workspace root itself) are not tracked.
@@ -227,7 +244,7 @@ func (s *archiveSession) ensureDir(dir string, mode os.FileMode) error {
 	return nil
 }
 
-func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, compressed compressedReporter, allow upload.RuntimeAllow) ([]Warning, error) {
+func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, compressed compressedReporter, allow upload.RuntimeAllow) ([]string, []Warning, error) {
 	tr := tar.NewReader(r)
 	sess := newArchiveSession(root)
 	var written int64
@@ -242,13 +259,13 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 				EntryCount:        entryCount,
 			}); vErr != nil {
 				sess.rollback()
-				return warnings, vErr
+				return nil, warnings, vErr
 			}
-			return warnings, nil
+			return sess.relWritten(), warnings, nil
 		}
 		if err != nil {
 			sess.rollback()
-			return warnings, fmt.Errorf("read tar entry: %w", err)
+			return nil, warnings, fmt.Errorf("read tar entry: %w", err)
 		}
 		rel, segCount, ok := stripPath(hdr.Name, strip)
 		if !ok {
@@ -283,14 +300,14 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 				LinkTarget: hdr.Linkname,
 			}, allow); vErr != nil {
 				sess.rollback()
-				return warnings, vErr
+				return nil, warnings, vErr
 			}
 		} else {
 			// non_regular_entry abort fast-path: emit the §13.4 typed
 			// error without re-running ValidateEntry, which would
 			// double-report. F-7.4.3.
 			sess.rollback()
-			return warnings, &upload.ValidationError{
+			return nil, warnings, &upload.ValidationError{
 				Reason: upload.ReasonNonRegularEntry,
 				Path:   hdr.Name,
 				Detail: fmt.Sprintf("entry kind %q is forbidden by §13.4", validatedKind),
@@ -301,24 +318,24 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 		dst, err := resolveArchivePath(root, prefix, rel)
 		if err != nil {
 			sess.rollback()
-			return warnings, err
+			return nil, warnings, err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := sess.ensureDir(dst, 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create archive directory: %w", err)
+				return nil, warnings, fmt.Errorf("create archive directory: %w", err)
 			}
 		case tar.TypeReg:
 			if err := sess.ensureDir(filepath.Dir(dst), 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create parent directory: %w", err)
+				return nil, warnings, fmt.Errorf("create parent directory: %w", err)
 			}
 			n, err := extractRegular(dst, tr, archiveMode(os.FileMode(hdr.Mode)), maxExtractBytes-written)
 			written += n
 			if err != nil {
 				sess.rollback()
-				return warnings, err
+				return nil, warnings, err
 			}
 			sess.trackWritten(dst)
 		case tar.TypeSymlink:
@@ -327,21 +344,21 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 			// the target is preserved on disk.
 			if err := sess.ensureDir(filepath.Dir(dst), 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create parent directory: %w", err)
+				return nil, warnings, fmt.Errorf("create parent directory: %w", err)
 			}
 			if err := os.Symlink(hdr.Linkname, dst); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create symlink: %w", err)
+				return nil, warnings, fmt.Errorf("create symlink: %w", err)
 			}
 			sess.trackWritten(dst)
 		}
 	}
 }
 
-func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath string, allow upload.RuntimeAllow) ([]Warning, error) {
+func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath string, allow upload.RuntimeAllow) ([]string, []Warning, error) {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return nil, fmt.Errorf("open zip archive: %w", err)
+		return nil, nil, fmt.Errorf("open zip archive: %w", err)
 	}
 	defer zr.Close()
 	// spec: §13.4 — the zip compressed/uncompressed totals are walked
@@ -374,7 +391,7 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 		kind, abort := classifyZipKind(entry)
 		if abort {
 			sess.rollback()
-			return warnings, &upload.ValidationError{
+			return nil, warnings, &upload.ValidationError{
 				Reason: upload.ReasonNonRegularEntry,
 				Path:   entry.Name,
 				Detail: fmt.Sprintf("entry kind %q is forbidden by §13.4", kind),
@@ -388,7 +405,7 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 			t, err := readZipSymlink(entry)
 			if err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("read zip symlink target: %w", err)
+				return nil, warnings, fmt.Errorf("read zip symlink target: %w", err)
 			}
 			linkTarget = t
 		}
@@ -399,30 +416,30 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 			LinkTarget: linkTarget,
 		}, allow); vErr != nil {
 			sess.rollback()
-			return warnings, vErr
+			return nil, warnings, vErr
 		}
 		entryCount++
 
 		dst, err := resolveArchivePath(root, prefix, rel)
 		if err != nil {
 			sess.rollback()
-			return warnings, err
+			return nil, warnings, err
 		}
 		switch kind {
 		case upload.KindDirectory:
 			if err := sess.ensureDir(dst, 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create archive directory: %w", err)
+				return nil, warnings, fmt.Errorf("create archive directory: %w", err)
 			}
 		case upload.KindRegular:
 			if err := sess.ensureDir(filepath.Dir(dst), 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create parent directory: %w", err)
+				return nil, warnings, fmt.Errorf("create parent directory: %w", err)
 			}
 			rc, err := entry.Open()
 			if err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("open zip entry: %w", err)
+				return nil, warnings, fmt.Errorf("open zip entry: %w", err)
 			}
 			// spec: §7.4 line 451 — wrap the deflate reader in the same
 			// per-call 1 MiB cap the tar.gz path uses so a single Read
@@ -437,17 +454,17 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 			written += n
 			if err != nil {
 				sess.rollback()
-				return warnings, err
+				return nil, warnings, err
 			}
 			sess.trackWritten(dst)
 		case upload.KindSymlink:
 			if err := sess.ensureDir(filepath.Dir(dst), 0o755); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create parent directory: %w", err)
+				return nil, warnings, fmt.Errorf("create parent directory: %w", err)
 			}
 			if err := os.Symlink(linkTarget, dst); err != nil {
 				sess.rollback()
-				return warnings, fmt.Errorf("create symlink: %w", err)
+				return nil, warnings, fmt.Errorf("create symlink: %w", err)
 			}
 			sess.trackWritten(dst)
 		}
@@ -458,9 +475,9 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 		EntryCount:        entryCount,
 	}); vErr != nil {
 		sess.rollback()
-		return warnings, vErr
+		return nil, warnings, vErr
 	}
-	return warnings, nil
+	return sess.relWritten(), warnings, nil
 }
 
 // resolveArchivePath joins the post-strip entry path onto the workspace

@@ -1296,8 +1296,23 @@ type WorkspacePlanWarning struct {
 	// `workspace_plan_unknown_source_type` warnings; zero on other codes.
 	// F-14.1.2.
 	SchemaVersion int32 `protobuf:"varint,8,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// path is the workspace-relative path two sources resolved to during
+	// materialization. spec: §14 line 338 — `path`. Populated only on
+	// `workspace_plan_path_collision` warnings; empty on other codes.
+	// F-14.1.9.
+	Path string `protobuf:"bytes,9,opt,name=path,proto3" json:"path,omitempty"`
+	// winning_source_index is the later (last-writer-wins) source index
+	// whose content survives the collision. spec: §14 line 338 —
+	// `winningSourceIndex`. Populated only on
+	// `workspace_plan_path_collision` warnings; equals source_index.
+	// F-14.1.9.
+	WinningSourceIndex int32 `protobuf:"varint,10,opt,name=winning_source_index,json=winningSourceIndex,proto3" json:"winning_source_index,omitempty"`
+	// losing_source_index is the earlier source index the later write
+	// overwrote. spec: §14 line 338 — `losingSourceIndex`. Populated only
+	// on `workspace_plan_path_collision` warnings. F-14.1.9.
+	LosingSourceIndex int32 `protobuf:"varint,11,opt,name=losing_source_index,json=losingSourceIndex,proto3" json:"losing_source_index,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *WorkspacePlanWarning) Reset() {
@@ -1382,6 +1397,27 @@ func (x *WorkspacePlanWarning) GetUnknownType() string {
 func (x *WorkspacePlanWarning) GetSchemaVersion() int32 {
 	if x != nil {
 		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *WorkspacePlanWarning) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *WorkspacePlanWarning) GetWinningSourceIndex() int32 {
+	if x != nil {
+		return x.WinningSourceIndex
+	}
+	return 0
+}
+
+func (x *WorkspacePlanWarning) GetLosingSourceIndex() int32 {
+	if x != nil {
+		return x.LosingSourceIndex
 	}
 	return 0
 }
@@ -4493,7 +4529,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x0eallow_symlinks\x18\x01 \x01(\bR\rallowSymlinks\x12%\n" +
 	"\x0eworkspace_root\x18\x02 \x01(\tR\rworkspaceRoot\"{\n" +
 	"\x19FinalizeWorkspaceResponse\x12^\n" +
-	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"\xa0\x02\n" +
+	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"\x96\x03\n" +
 	"\x14WorkspacePlanWarning\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12!\n" +
 	"\fsource_index\x18\x02 \x01(\x05R\vsourceIndex\x12\x1d\n" +
@@ -4503,7 +4539,11 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\rsegment_count\x18\x05 \x01(\x05R\fsegmentCount\x12)\n" +
 	"\x10strip_components\x18\x06 \x01(\x05R\x0fstripComponents\x12!\n" +
 	"\funknown_type\x18\a \x01(\tR\vunknownType\x12%\n" +
-	"\x0eschema_version\x18\b \x01(\x05R\rschemaVersion\"\xd6\x01\n" +
+	"\x0eschema_version\x18\b \x01(\x05R\rschemaVersion\x12\x12\n" +
+	"\x04path\x18\t \x01(\tR\x04path\x120\n" +
+	"\x14winning_source_index\x18\n" +
+	" \x01(\x05R\x12winningSourceIndex\x12.\n" +
+	"\x13losing_source_index\x18\v \x01(\x05R\x11losingSourceIndex\"\xd6\x01\n" +
 	"\x0fRunSetupRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12E\n" +

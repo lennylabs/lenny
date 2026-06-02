@@ -95,6 +95,63 @@ func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing
 	}
 }
 
+// F-14.1.9: spec §14 line 338 — the materialization-time
+// workspace_plan_path_collision warning is published on the per-session
+// SSE bus with `path`, `winningSourceIndex`, and `losingSourceIndex`
+// structured fields. Other warning codes (empty path) do not leak them.
+func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) {
+	bus := sessionevents.NewBus(0)
+	srv := New(memstore.New(), Options{Events: bus})
+
+	result := &podsession.BindResult{
+		TenantID:  "default",
+		SessionID: "sess_c",
+		WorkspacePlanWarnings: []*adapterv1.WorkspacePlanWarning{
+			{
+				Code:               "workspace_plan_path_collision",
+				SourceIndex:        2,
+				Path:               "foo/bar.txt",
+				WinningSourceIndex: 2,
+				LosingSourceIndex:  0,
+				Message:            "path overwrite",
+			},
+			{
+				Code:            "workspace_plan_strip_components_skip",
+				SourceIndex:     1,
+				EntryPath:       "x.txt",
+				SegmentCount:    1,
+				StripComponents: 2,
+				Message:         "skipped x.txt",
+			},
+		},
+	}
+	srv.publishWorkspaceWarnings(result)
+
+	events := bus.History("sess_c", 0)
+	if len(events) != 2 {
+		t.Fatalf("events: got %d, want 2", len(events))
+	}
+	coll := decodeWarningPayload(t, events[0].Data)
+	if got := coll["path"]; got != "foo/bar.txt" {
+		t.Errorf("path = %v, want foo/bar.txt", got)
+	}
+	if got := coll["winningSourceIndex"]; got != float64(2) {
+		t.Errorf("winningSourceIndex = %v, want 2", got)
+	}
+	if got := coll["losingSourceIndex"]; got != float64(0) {
+		t.Errorf("losingSourceIndex = %v, want 0", got)
+	}
+	// The strip-components warning (empty path) must not carry the
+	// collision-only fields.
+	skip := decodeWarningPayload(t, events[1].Data)
+	if _, ok := skip["winningSourceIndex"]; ok {
+		t.Errorf("strip-components payload leaked winningSourceIndex")
+	}
+	if _, ok := skip["path"]; ok {
+		t.Errorf("strip-components payload leaked path")
+	}
+}
+
 // F-14.1.17 / F-14.1.18: spec §14 line 334 — the parse-time
 // unknown-source-type warning is published on the per-session SSE
 // bus with `schemaVersion` and `unknownType` structured fields.

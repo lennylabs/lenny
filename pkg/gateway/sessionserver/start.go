@@ -1211,6 +1211,16 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 		if w.GetSchemaVersion() != 0 {
 			payload["schemaVersion"] = w.GetSchemaVersion()
 		}
+		// spec: §14 line 338 — the materialization-time
+		// `workspace_plan_path_collision` warning carries `path`,
+		// `winningSourceIndex`, `losingSourceIndex`. A non-empty path is
+		// the discriminator: only collision warnings set it, so the other
+		// codes keep their existing payload. F-14.1.9.
+		if w.GetPath() != "" {
+			payload["path"] = w.GetPath()
+			payload["winningSourceIndex"] = w.GetWinningSourceIndex()
+			payload["losingSourceIndex"] = w.GetLosingSourceIndex()
+		}
 		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", payload)
 		s.emitWorkspacePlanWarningOps(result.TenantID, result.SessionID, payload)
 	}
