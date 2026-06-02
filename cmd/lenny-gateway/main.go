@@ -142,6 +142,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -448,6 +449,25 @@ func main() {
 	rlFailOpenMaxSeconds := flag.Int("rate-limit-failopen-max-seconds",
 		envInt("LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS", int(ratelimitmw.DefaultFailOpenMaxSeconds/time.Second)),
 		"§11.3 line 222 rateLimitFailOpenMaxSeconds: cap on a single fail-open episode in the §11.1 admission middleware. Negative disables the cap. Default 60s. Override via LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS.")
+	// spec: §12.4 lines 222-224 — the per-replica fail-open emergency
+	// controls. quotaUserFailOpenFraction bounds a single user during the
+	// outage window; quotaPerReplicaHardCap caps the per-replica tenant
+	// ceiling; quotaFailOpenCumulativeMaxSeconds is the financial-security
+	// control that transitions the replica to fail-closed for quota once
+	// cumulative fail-open time exceeds it within the rolling hour.
+	// F-12.4.9 / F-11.2.6.
+	quotaUserFailOpenFraction := flag.Float64("quota-user-failopen-fraction",
+		envFloat("LENNY_QUOTA_USER_FAILOPEN_FRACTION", failopen.DefaultUserFailOpenFraction),
+		"§12.4 line 222 quotaUserFailOpenFraction: a single user's fail-open ceiling as a fraction of the per-replica tenant ceiling. Must satisfy 0 < value <= 1.0; >= 0.5 weakens the monopolization control. Default 0.25. Override via LENNY_QUOTA_USER_FAILOPEN_FRACTION.")
+	quotaPerReplicaHardCap := flag.Int64("quota-per-replica-hard-cap",
+		envInt64("LENNY_QUOTA_PER_REPLICA_HARD_CAP", 0),
+		"§12.4 line 224 quotaPerReplicaHardCap: hard per-replica ceiling on a tenant's fail-open allocation regardless of replica count. Zero defaults to tenant_limit/2 per tenant. Override via LENNY_QUOTA_PER_REPLICA_HARD_CAP.")
+	quotaFailOpenCumulativeMaxSeconds := flag.Int("quota-failopen-cumulative-max-seconds",
+		envInt("LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS", int(failopen.DefaultCumulativeMaxSeconds/time.Second)),
+		"§12.4 line 224 quotaFailOpenCumulativeMaxSeconds: cumulative fail-open seconds within the rolling 1h window past which the replica fails closed for quota. Financial-security control. Default 300s. Override via LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS.")
+	failOpenStatePath := flag.String("failopen-cumulative-state-path",
+		envOr("LENNY_FAILOPEN_CUMULATIVE_STATE_PATH", failopen.DefaultCumulativeStatePath),
+		"§12.4 line 224 local file the cumulative fail-open timer persists on every transition so a restart resumes rather than resetting the timer. Override via LENNY_FAILOPEN_CUMULATIVE_STATE_PATH.")
 	auditLockAcquireTimeoutMs := flag.Int("audit-lock-acquire-timeout-ms",
 		envInt("LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS", auditstore.DefaultLockConfig().AcquireTimeoutMs),
 		"§11.7 item 3 audit.lock.acquireTimeoutMs: statement_timeout on the per-tenant audit advisory-lock acquisition. Default 5000ms. Override via LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS.")
@@ -872,6 +892,8 @@ func main() {
 		"§10.4 namespace holding the gateway PodDisruptionBudget for the periodic poller (defaults to POD_NAMESPACE). Override via LENNY_GATEWAY_NAMESPACE.")
 	gatewayPDBName := flag.String("gateway-pdb-name", envOr("LENNY_GATEWAY_PDB_NAME", "lenny-gateway"),
 		"§10.4 name of the gateway PodDisruptionBudget object for the periodic poller. Override via LENNY_GATEWAY_PDB_NAME.")
+	gatewayServiceName := flag.String("gateway-service-name", envOr("LENNY_GATEWAY_SERVICE_NAME", "lenny-gateway"),
+		"§12.4 line 224 name of the gateway Service whose Endpoints object the fail-open cached_replica_count poller reads. Override via LENNY_GATEWAY_SERVICE_NAME.")
 	// spec: §10.4 line 389 — operator-tunable SSE replay-buffer depth.
 	// Default 512 events matches the §10.4 reconnect-window assumption
 	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated
@@ -4274,6 +4296,34 @@ func main() {
 		},
 	})
 
+	// spec: §12.4 lines 220-224 — the per-replica fail-open controller. The
+	// per-user fraction is validated config-time (a value outside (0, 1.0]
+	// fails the process fast per §12.4 line 222); the cumulative timer, the
+	// per-user / per-tenant emergency backstop, and the cached replica count
+	// are assembled here and consulted by the ratelimit middleware while
+	// failing open on a Redis outage. F-12.4.9 / F-11.2.6.
+	if err := failopen.ValidateUserFraction(*quotaUserFailOpenFraction); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	gwMetrics.SetQuotaUserFailopenFraction(*quotaUserFailOpenFraction)
+	if failopen.UserFractionWeakened(*quotaUserFailOpenFraction) {
+		// spec: §12.4 line 222 — QuotaFailOpenUserFractionInoperative: a
+		// fraction >= 0.5 substantially weakens the monopolization control.
+		log.Printf("lenny-gateway: WARNING QuotaFailOpenUserFractionInoperative — quotaUserFailOpenFraction=%v >= 0.5 weakens the per-user fail-open cap; acknowledge the posture in the deployment answer file",
+			*quotaUserFailOpenFraction)
+	}
+	failOpenReplicas := failopen.NewReplicaCount()
+	failOpenController := buildFailOpenController(failOpenWiring{
+		metrics:              gwMetrics,
+		replicas:             failOpenReplicas,
+		appender:             auditAppender,
+		statePath:            *failOpenStatePath,
+		cumulativeMaxSeconds: *quotaFailOpenCumulativeMaxSeconds,
+		perReplicaHardCap:    *quotaPerReplicaHardCap,
+		userFraction:         *quotaUserFailOpenFraction,
+		serviceInstanceID:    replica,
+	})
+
 	// §11.1 rate limiting next — runs just after auth so the per-user
 	// scope sees the authenticated principal. Limits default to zero
 	// (disabled); operators set them via the rate-limit flags. Metrics
@@ -4290,6 +4340,9 @@ func main() {
 		// spec: §11.3 line 222 / §12.4 line 220 — operator-tunable cap on
 		// the fail-open episode. F-11.3.22.
 		FailOpenMax: time.Duration(*rlFailOpenMaxSeconds) * time.Second,
+		// spec: §12.4 lines 220-224 — per-replica fail-open emergency
+		// ceilings + cumulative timer. F-12.4.9 / F-11.2.6.
+		FailOpen: failOpenController,
 	})
 
 	// §10.6 transparent-filtering environment resolver — runs
@@ -5326,6 +5379,24 @@ func main() {
 		go watcher.Run(watchdogCtx)
 		log.Printf("lenny-gateway: §10.4 PDB poller watching %s/%s",
 			*gatewayNamespace, *gatewayPDBName)
+
+		// spec: §12.4 line 224 — drive the fail-open cached_replica_count
+		// from the gateway Service's Endpoints object so the per-replica
+		// ceiling divides by the last-known good replica count. The poller
+		// retains the cached value across poll failures, so a dual outage
+		// (Redis + Endpoints) divides by the last observed count rather than
+		// collapsing every replica to 1. F-12.4.9.
+		go (&failopen.ReplicaPoller{
+			Lister: gatewayEndpointsLister{
+				client:    clusterClient,
+				namespace: *gatewayNamespace,
+				service:   *gatewayServiceName,
+			},
+			Count: failOpenReplicas,
+			Logf:  func(format string, args ...any) { log.Printf(format, args...) },
+		}).Run(watchdogCtx)
+		log.Printf("lenny-gateway: §12.4 fail-open replica-count poller watching endpoints %s/%s",
+			*gatewayNamespace, *gatewayServiceName)
 	}
 
 	// §4.1 per-subsystem state publisher. Periodically reads the

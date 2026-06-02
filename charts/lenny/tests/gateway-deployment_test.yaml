@@ -624,10 +624,14 @@ tests:
       #   F-12.3.17)
       # + LENNY_AUDIT_SYNC_WRITE_POOL_SIZE / LENNY_AUDIT_BATCHING_ENABLED
       #   / LENNY_AUDIT_FLUSH_INTERVAL_MS / LENNY_AUDIT_FLUSH_BATCH_SIZE
-      #   (§12.3 lines 79-81, F-12.3.14) = 60.
+      #   (§12.3 lines 79-81, F-12.3.14)
+      # + LENNY_QUOTA_USER_FAILOPEN_FRACTION /
+      #   LENNY_QUOTA_PER_REPLICA_HARD_CAP /
+      #   LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
+      #   (§12.4 lines 222-224, F-12.4.9) = 64.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 60
+          count: 64
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1082,6 +1086,45 @@ tests:
           content:
             name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
             value: "30"
+
+  # spec: §12.4 lines 222-224 — the per-replica fail-open emergency controls
+  # flow through to the binary. F-12.4.9.
+  - it: wires the §12.4 fail-open emergency controls from the chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_USER_FAILOPEN_FRACTION
+            value: "0.25"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_PER_REPLICA_HARD_CAP
+            value: "0"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
+            value: "300"
+
+  # spec: §12.4 line 222 — operator override of the per-user fraction
+  # propagates to the binary (the binary fails fast on an out-of-range
+  # value). F-12.4.9.
+  - it: wires LENNY_QUOTA_USER_FAILOPEN_FRACTION from a gateway override
+    set:
+      gateway.quotaUserFailOpenFraction: 0.5
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_USER_FAILOPEN_FRACTION
+            value: "0.5"
 
   # spec: §11.2 line 44 — quotaSyncIntervalSeconds (default 30s) flows
   # through to LENNY_QUOTA_SYNC_INTERVAL_SECONDS. F-11.2.16.

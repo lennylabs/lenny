@@ -411,6 +411,17 @@ type Metrics struct {
 	// errors but stays under the alert's persistence window.
 	// spec: §11.1 line 7 fail-open observability.
 	rateLimitCounterFailure prometheus.Counter
+	// quotaFailopenCumulativeSeconds is the §12.4 line 224 cumulative
+	// fail-open timer gauge: the total seconds this replica has spent in
+	// fail-open mode within the rolling 1-hour window. The §16.5
+	// QuotaFailOpenCumulativeThreshold alert fires at 80% of the
+	// configured maximum. spec: §12.4 line 224; §16.1 / §16.5.
+	quotaFailopenCumulativeSeconds prometheus.Gauge
+	// quotaUserFailopenFraction exports the configured
+	// quotaUserFailOpenFraction so the §16.5
+	// QuotaFailOpenUserFractionInoperative warning fires for operators who
+	// joined after startup. spec: §12.4 line 222; §16.1 / §16.5.
+	quotaUserFailopenFraction prometheus.Gauge
 	// dualStoreUnavailable is the §10.1 line 45 DualStoreUnavailable
 	// alert's source gauge: 1 while this replica observes Postgres and
 	// Redis simultaneously unreachable, 0 otherwise. The §16.5 alert
@@ -1742,6 +1753,27 @@ func New() (*Metrics, error) {
 		Name: "lenny_rate_limit_counter_failure_total",
 		Help: "§11.1 ratelimit counter errors observed by the middleware.",
 	})
+	// §12.4 line 224 — `lenny_quota_failopen_cumulative_seconds` is the
+	// cumulative fail-open timer: total seconds spent fail-open within the
+	// rolling 1h window. Drives the QuotaFailOpenCumulativeThreshold alert.
+	quotaFailopenCumulativeSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_quota_failopen_cumulative_seconds",
+		Help: "§12.4 cumulative quota fail-open seconds per replica (rolling 1h window).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §12.4 line 222 — `lenny_quota_user_failopen_fraction` exports the
+	// configured quotaUserFailOpenFraction so the
+	// QuotaFailOpenUserFractionInoperative warning reflects a weakened
+	// (>= 0.5) per-user fail-open cap.
+	quotaUserFailopenFraction, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_quota_user_failopen_fraction",
+		Help: "§12.4 configured quotaUserFailOpenFraction value.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	// §11.5 line 277 — `lenny_idempotency_cache_write_failures_total`
 	// counts §11.5 idempotency-key Put failures (inner handler ran,
 	// durable store rejected the cache row; next retry WILL
@@ -2099,6 +2131,7 @@ func New() (*Metrics, error) {
 		delegationBudgetReconstruction,
 		delegationParallelChildrenHWM,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
+		quotaFailopenCumulativeSeconds, quotaUserFailopenFraction,
 		dualStoreUnavailable,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		billingFlushPressure, auditBatchingNoSIEM,
@@ -2298,6 +2331,8 @@ func New() (*Metrics, error) {
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
 		rateLimitCounterFailure:              rateLimitCounterFailure,
+		quotaFailopenCumulativeSeconds:       quotaFailopenCumulativeSeconds.WithLabelValues(),
+		quotaUserFailopenFraction:            quotaUserFailopenFraction.WithLabelValues(),
 		dualStoreUnavailable:                 dualStoreUnavailable.WithLabelValues(),
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
@@ -2907,6 +2942,28 @@ func (m *Metrics) IncRateLimitCounterFailure() {
 		return
 	}
 	m.rateLimitCounterFailure.Inc()
+}
+
+// SetQuotaFailopenCumulativeSeconds records the §12.4 line 224 cumulative
+// fail-open timer onto its gauge. The failopen.CumulativeTimer calls this
+// on every fail-open transition so the §16.5 QuotaFailOpenCumulativeThreshold
+// alert sees the live value. spec: §12.4 line 224; §16.1 / §16.5.
+func (m *Metrics) SetQuotaFailopenCumulativeSeconds(seconds float64) {
+	if m == nil {
+		return
+	}
+	m.quotaFailopenCumulativeSeconds.Set(seconds)
+}
+
+// SetQuotaUserFailopenFraction exports the configured
+// quotaUserFailOpenFraction. The gateway sets it once at startup so the
+// §16.5 QuotaFailOpenUserFractionInoperative warning fires for a weakened
+// (>= 0.5) per-user fail-open cap. spec: §12.4 line 222; §16.1 / §16.5.
+func (m *Metrics) SetQuotaUserFailopenFraction(fraction float64) {
+	if m == nil {
+		return
+	}
+	m.quotaUserFailopenFraction.Set(fraction)
 }
 
 // SetDualStoreUnavailable flips the §10.1 line 45 DualStoreUnavailable

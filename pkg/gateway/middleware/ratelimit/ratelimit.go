@@ -43,6 +43,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 )
@@ -109,6 +110,18 @@ type Options struct {
 	// negative value disables the cap (the legacy unbounded behaviour
 	// preserved for tests). spec: §11.3 line 222; §12.4 line 220.
 	FailOpenMax time.Duration
+
+	// FailOpen is the §12.4 lines 220-224 per-replica degraded-mode
+	// controller. When set, a request that fails open on a counter error
+	// is additionally evaluated against the in-memory per-user / per-tenant
+	// emergency ceilings and the cumulative fail-open timer: a single user
+	// cannot monopolize the tenant's per-replica allocation during the
+	// outage, and the replica transitions to fail-closed once it has spent
+	// more than quotaFailOpenCumulativeMaxSeconds in fail-open mode. The
+	// controller's Enter/Exit edges are driven by the same counter
+	// error/recovery edges that flip the failopen gauge. Nil leaves the
+	// legacy allow-until-episode-cap behaviour. spec: §12.4 lines 220-224.
+	FailOpen *failopen.Controller
 }
 
 // Wrap returns the §11.1 rate-limit middleware around inner.
@@ -284,6 +297,19 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §12.4 lines 220-224 — while failing open on a Redis outage,
+	// apply the per-replica emergency ceilings (per-user / per-tenant) and
+	// the cumulative fail-open timer so a single user cannot monopolize the
+	// tenant allocation and a sustained-outage replica transitions to
+	// fail-closed for quota once cumulative time exceeds the configured
+	// maximum. F-12.4.9 / F-11.2.6.
+	if counterFailed && m.opts.FailOpen != nil {
+		if dec := m.opts.FailOpen.Evaluate(m.failOpenRequest(r), now); !dec.Admit {
+			m.writeFailOpenRejected(rw, dec, now)
+			return
+		}
+	}
+
 	// spec: §15.1 lines 1131-1138 — admitted requests carry the triplet
 	// for the binding scope so clients can proactively respect the
 	// budget. With no configured scope (limits all zero, or an
@@ -431,6 +457,12 @@ func (m *middleware) onCounterError(scope string, err error, now time.Time) {
 		if m.opts.Metrics != nil {
 			m.opts.Metrics.SetRateLimitFailopenActive(true)
 		}
+		// spec: §12.4 line 224 — drive the per-replica fail-open controller
+		// on the same leading edge so the cumulative timer starts and the
+		// quota_failopen_started audit event fires exactly once per episode.
+		if m.opts.FailOpen != nil {
+			m.opts.FailOpen.Enter()
+		}
 	}
 	m.noteFailOpenEpisode(now)
 }
@@ -449,6 +481,11 @@ func (m *middleware) onCounterSuccess() {
 		m.opts.Metrics.SetRateLimitFailopenActive(false)
 	}
 	m.clearFailOpenEpisode()
+	// spec: §12.4 lines 222, 224 — close the cumulative episode and reset
+	// the per-replica per-user backstop counters on the Redis-recovery edge.
+	if m.opts.FailOpen != nil {
+		m.opts.FailOpen.Exit()
+	}
 }
 
 // writeFailOpenExceeded writes the §11.3 line 222 / §12.4 line 220
@@ -478,6 +515,57 @@ func (m *middleware) writeFailOpenExceeded(w http.ResponseWriter, now time.Time)
 				"scope":              "failopen_exceeded",
 				"failOpenMaxSeconds": int(m.effectiveFailOpenMax() / time.Second),
 			},
+		},
+	})
+}
+
+// failOpenRequest builds the §12.4 per-replica ceiling-evaluation input
+// for r. The per-tenant request limit (PerTenantPerMinute) is the
+// `tenant_limit` the §12.4 ceiling formula divides by the cached replica
+// count; the per-user ceiling is derived from it by the controller. The
+// backstop keys reuse the same identity the shared-counter scopes use so a
+// fail-open count for one user does not collide with a tenant bucket.
+// spec: §12.4 lines 222-224. F-12.4.9.
+func (m *middleware) failOpenRequest(r *http.Request) failopen.FailOpenRequest {
+	req := failopen.FailOpenRequest{TenantLimit: int64(m.opts.PerTenantPerMinute)}
+	if key, ok := userKey(r); ok {
+		req.UserKey = key
+	}
+	if key, ok := tenantKey(r); ok {
+		req.TenantKey = key
+	}
+	return req
+}
+
+// writeFailOpenRejected writes the §12.4 line 222/224 degraded-mode 429
+// when a request is rejected by a per-replica emergency ceiling or by the
+// cumulative fail-open timer. The envelope reuses the §15.1 RATE_LIMITED
+// code so client error handling applies uniformly; details.scope names the
+// binding control. spec: §12.4 lines 222-224. F-12.4.9.
+func (m *middleware) writeFailOpenRejected(w http.ResponseWriter, dec failopen.Decision, now time.Time) {
+	scope := "failopen_" + string(dec.Reason)
+	if m.opts.Metrics != nil {
+		m.opts.Metrics.IncRateLimitRejected(scope)
+	}
+	retryAfter := retryAfterSeconds(now)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	w.WriteHeader(http.StatusTooManyRequests)
+	details := map[string]any{"scope": scope}
+	if dec.Ceiling > 0 {
+		details["failOpenCeiling"] = dec.Ceiling
+	}
+	message := "rate-limit counter unavailable; per-replica fail-open ceiling reached"
+	if dec.Reason == failopen.ReasonCumulativeExceeded {
+		message = "rate-limit counter unavailable; cumulative fail-open budget exhausted — failing closed for quota"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"code":      "RATE_LIMITED",
+			"category":  "POLICY",
+			"message":   message,
+			"retryable": true,
+			"details":   details,
 		},
 	})
 }

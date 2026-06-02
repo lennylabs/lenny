@@ -1597,6 +1597,25 @@ gateway:
   # behaviour). 0 selects the binary default (60s).
   # F-11.3.22.
   rateLimitFailOpenMaxSeconds: 60
+  # quotaUserFailOpenFraction — §12.4 line 222. A single user's fail-open
+  # ceiling as a fraction of the per-replica tenant ceiling during a Redis
+  # outage. Must satisfy 0 < value <= 1.0; the gateway rejects an
+  # out-of-range value at startup with CONFIG_INVALID. A value >= 0.5
+  # weakens the monopolization control and raises the
+  # QuotaFailOpenUserFractionInoperative warning. Default 0.25.
+  # F-12.4.9.
+  quotaUserFailOpenFraction: 0.25
+  # quotaPerReplicaHardCap — §12.4 line 224. Hard ceiling on a tenant's
+  # per-replica fail-open allocation regardless of replica count. 0 (the
+  # default) defaults the cap to tenant_limit/2 per tenant. F-12.4.9.
+  quotaPerReplicaHardCap: 0
+  # quotaFailOpenCumulativeMaxSeconds — §12.4 line 224. A financial-security
+  # control: cumulative seconds the replica may spend in fail-open mode
+  # within the rolling 1h window before it transitions to fail-closed for
+  # quota (blocking new token-consuming requests until Redis recovers).
+  # Review per the deployment's financial-risk exposure. Default 300s.
+  # F-12.4.9.
+  quotaFailOpenCumulativeMaxSeconds: 300
   # quotaSyncIntervalSeconds — §11.2 line 44. Cadence (seconds) at which
   # the gateway checkpoints Redis quota and delegation-budget counters to
   # Postgres, and the final reconciliation baseline on session completion.

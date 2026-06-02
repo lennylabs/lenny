@@ -568,6 +568,23 @@ spec:
             - name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
               value: {{ .Values.gateway.rateLimitFailOpenMaxSeconds | quote }}
             {{- end }}
+            # §12.4 lines 222-224 — per-replica fail-open emergency controls.
+            # quotaUserFailOpenFraction bounds a single user; the hard cap
+            # bounds the per-replica tenant ceiling; the cumulative max is the
+            # financial-security control that transitions the replica to
+            # fail-closed for quota. F-12.4.9.
+            {{- if hasKey .Values.gateway "quotaUserFailOpenFraction" }}
+            - name: LENNY_QUOTA_USER_FAILOPEN_FRACTION
+              value: {{ .Values.gateway.quotaUserFailOpenFraction | quote }}
+            {{- end }}
+            {{- if hasKey .Values.gateway "quotaPerReplicaHardCap" }}
+            - name: LENNY_QUOTA_PER_REPLICA_HARD_CAP
+              value: {{ .Values.gateway.quotaPerReplicaHardCap | quote }}
+            {{- end }}
+            {{- if hasKey .Values.gateway "quotaFailOpenCumulativeMaxSeconds" }}
+            - name: LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
+              value: {{ .Values.gateway.quotaFailOpenCumulativeMaxSeconds | quote }}
+            {{- end }}
             # §11.2 line 44 — quotaSyncIntervalSeconds: cadence at which
             # Redis quota and delegation-budget counters checkpoint to
             # Postgres (default 30, minimum 10). Lower it for high-throughput
