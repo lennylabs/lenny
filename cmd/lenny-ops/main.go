@@ -506,6 +506,11 @@ func main() {
 	// self-health, remediation-lock, and escalation endpoints, the
 	// §25.10 drift endpoints, the §25.11 backup endpoints, and the
 	// §25.12 MCP management server.
+	// §25.4 idempotency: durable when Postgres is available, in-memory in
+	// single-process degraded mode. Required-key endpoints (upgrade start,
+	// restore execute, full backup) reject a missing key and fail closed
+	// on a store outage at Tier 2/3 (the --production posture).
+	idemStore := buildIdempotencyStore(pgPool)
 	opsHandler := opsserver.New(opsserver.Options{
 		Probes:           probes,
 		Runbooks:         runbookSource,
@@ -521,6 +526,7 @@ func main() {
 		Production:       *production,
 		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
 		Auth:             authCfg,
+		Idempotency:      idemStore,
 	})
 	srv := &http.Server{
 		Addr:              *addr,
@@ -541,6 +547,28 @@ func main() {
 				return
 			case t := <-ticker.C:
 				opsHandler.SweepDiagnosticsAudit(t)
+			}
+		}
+	}()
+
+	// spec: §25.4 line 2127 — the retention backstop. Lazy cleanup on
+	// Claim removes a key's own expired row, but a key never re-claimed
+	// lingers; an hourly PruneExpired sweep DELETEs every expired row so
+	// the table does not grow unbounded. (The spec's daily 02:30 UTC
+	// schedule is the minimum; an hourly sweep is a tighter superset.)
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				if n, err := idemStore.PruneExpired(ctx, t.UTC()); err != nil {
+					log.Printf("lenny-ops: idempotency retention sweep: %v", err)
+				} else if n > 0 {
+					log.Printf("lenny-ops: idempotency retention sweep removed %d expired keys", n)
+				}
 			}
 		}
 	}()

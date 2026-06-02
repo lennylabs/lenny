@@ -26,6 +26,7 @@ import (
 	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
+	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
@@ -75,6 +76,11 @@ type Server struct {
 	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
 	production         bool
+
+	// idem applies the §25.4 idempotency middleware to mutating routes
+	// when an Idempotency store is configured; nil leaves the surface
+	// without idempotency tracking.
+	idem *opsidem.Middleware
 
 	// diagAudit applies the §25.9 diagnostics-audit rate limiting +
 	// coalescing when DiagnosticsAudit is configured; nil disables it.
@@ -151,6 +157,16 @@ type Options struct {
 	// unauthenticated (dev / embedded single-node only); the production
 	// binary always supplies it.
 	Auth *AuthConfig
+
+	// Idempotency, when non-nil, wraps every mutating (POST/PUT)
+	// operability route in the §25.4 idempotency middleware backed by this
+	// store. Records are keyed by (Idempotency-Key, caller_id); the
+	// required-key endpoints (upgrade start, restore execute, full backup)
+	// reject a missing key (400) and fail closed (503) on a store outage
+	// at Tier 2/3. A nil store leaves the surface without idempotency
+	// tracking. The middleware sits inside the Auth wrapper so caller_id
+	// resolves from the verified principal.
+	Idempotency opsidem.Store
 }
 
 // New returns a Server with the liveness probe, readiness probe, and
@@ -175,6 +191,16 @@ func New(opts Options) *Server {
 		releaseChannel:     opts.ReleaseChannel,
 		production:         opts.Production,
 		diagAuditCfg:       opts.DiagnosticsAudit,
+	}
+	// §25.4 idempotency: caller_id is the verified principal's OIDC sub
+	// (callerIdentity), and Production reports the Tier 2/3 required-key
+	// posture so required endpoints reject a missing key and fail closed
+	// on a store outage.
+	if opts.Idempotency != nil {
+		s.idem = opsidem.New(opts.Idempotency, opsidem.Config{
+			CallerID:   callerIdentity,
+			Production: opts.Production,
+		})
 	}
 	// §25.9 diagnostics-audit rate limiting: when configured, the §25.6
 	// diagnostic endpoints record each access through the coalescing
@@ -205,14 +231,22 @@ func New(opts Options) *Server {
 	s.mcp = mcp.NewServer(s.mcpInvoker())
 	s.mux.Handle("/mcp/management", s.mcp)
 	s.mux.Handle("/mcp/management/", s.mcp)
+	// §25.4 idempotency sits closest to the mux, inside the auth wrapper,
+	// so it reads caller_id from the principal the auth middleware
+	// attaches. Probe paths are GET, so the middleware passes them through
+	// untouched even on the dev (Auth nil) path.
+	inner := http.Handler(s.mux)
+	if s.idem != nil {
+		inner = s.idem.Wrap(inner)
+	}
 	// §25.4 lines 1562-1564: when an AuthConfig is supplied, every
 	// operability route runs through the OIDC authentication + role gate
 	// (the Kubernetes probes are exempt). The auth wrapper sits inside the
 	// correlation/access-log middleware so a rejected request is still
 	// logged with its correlation context.
-	routes := http.Handler(s.mux)
+	routes := inner
 	if opts.Auth != nil {
-		routes = s.withOpsAuth(s.mux, opts.Auth)
+		routes = s.withOpsAuth(inner, opts.Auth)
 	}
 	// §25.4 lines 2499-2526: every request runs through the correlation
 	// middleware (stamps operation_id / agent_name / trace_id from inbound

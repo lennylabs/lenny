@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/opsidem"
+	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
@@ -377,6 +380,22 @@ func (e streamEscalationEmitter) EmitEscalationCreated(esc escalation.Escalation
 // an agent can exercise them in a single-process degraded mode.
 func buildEscalationService(emitter escalation.Emitter) *escalation.Service {
 	return escalation.NewService(emitter)
+}
+
+// buildIdempotencyStore returns the §25.4 idempotency store. When a
+// Postgres pool is available it uses the durable ops_idempotency_keys
+// table (migration 0116) so required-key endpoints coordinate across
+// replicas and survive a restart, and a real outage surfaces as
+// IDEMPOTENCY_STORE_UNAVAILABLE. Without Postgres it falls back to the
+// in-process MemoryStore (single-process degraded mode / dev), which
+// never reports an outage.
+//
+// spec: §25.4 lines 2011-2130.
+func buildIdempotencyStore(pgPool *pgxpool.Pool) opsidem.Store {
+	if pgPool != nil {
+		return idempgstore.New(pgPool)
+	}
+	return opsidem.NewMemoryStore()
 }
 
 // driftServiceConfig carries the §25.10 lines 3809 / 3824 operator-
