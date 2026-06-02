@@ -12669,7 +12669,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution (commit `9d2c51d8`):** All three named tests now exist. `TestGatewayConfigValidation` (the existing `_spec_11_1` for noEnvironmentPolicy plus the new `TestGatewayConfigValidationRequiredKeys_spec_10_3`) asserts each required key fails startup when absent with the correct `config_key`, and that the OIDC keys are exempt under dev mode. `TestRedisTLSEnforcement_spec_10_3_373` and `TestPgBouncerTLSEnforcement_spec_10_3_373` (in `pkg/gateway/tlsprobe`) assert a plaintext connection attempt is rejected: each passes against a TLS-only in-process listener and fails against a listener that completes the backend's plaintext exchange — a deterministic harness that proves the enforcement logic with in-process listeners rather than a live cluster, so the regression gate runs in standard CI. The `port 0` / `client_tls_sslmode=require` posture is now exercised through the same probe code path the gateway runs at startup.
 
-### - [ ] F-10.3.17 — 10.3-G17. Warm-pool controller has no certificate-lifecycle awareness [High] — OPEN
+### - [x] F-10.3.17 — 10.3-G17. Warm-pool controller has no certificate-lifecycle awareness [High] — CLOSED
 
 **Spec lines:** 342 ("Warm pool cert awareness: the warm pool controller should verify that newly created pods have valid certificates before marking them as `idle`. If cert-manager fails to issue a certificate within 60s of pod creation, the pod is marked as unhealthy and replaced. Additionally, the controller continuously tracks certificate expiry on idle pods and proactively drains any idle pod whose certificate will expire within 30 minutes").
 **Evidence:**
@@ -12677,6 +12677,29 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - No 60s cert-issuance grace check, no 30-minute proactive drain, no `lenny_cert_expiry_seconds` metric source. The `CertExpiryImminent` alert at `pkg/alerting/rules/rules.go:647` and `charts/lenny/files/alerting-rules.yaml:436` watches a Prometheus series that no Lenny code emits.
 
 **Impact:** An idle pod claimed at the tail of its 4h cert TTL begins a session with minutes of cert validity remaining. The proactive-drain mitigation the spec describes does not run.
+
+**Resolution (commit `f3dc340c`):** The evidence was stale on the first two
+points — `pkg/controller/warmpool/pod_reconciler.go` already implemented the
+§10.3 line 342 30-minute proactive idle-pod drain (`reconcileCertExpiry`,
+`AnnotationCertNotAfter`/creation+TTL expiry). This batch lands the two
+remaining halves. (1) The reconciler now publishes
+`lenny_cert_expiry_seconds` per managed pod via
+`controllermetrics.CertExpiry` (gauge labeled `namespace`,`pod`), so the
+`CertExpiryImminent` alert (`min(lenny_cert_expiry_seconds) < 3600`) reads a
+real series; the series is cleared on pod deletion / not-found so a retired
+pod's near-zero value cannot pin the alert in the firing state. (2) A §10.3
+line 342 cert-issuance grace (`reconcileCertIssuance`) drains a pre-idle pod
+(warming / sdk_connecting) that has not presented a valid
+`lenny.dev/cert-not-after` annotation within 60s of creation, replacing it.
+The issuance check is gated on `--require-cert-issuance` (default off,
+`--cert-issuance-grace` default 60s) because it keys on the cert-producer
+annotation — enabling it on a deployment with no per-pod cert producer would
+replace every pre-idle pod. `cmd/lenny-controller` wires both flags and the
+metric adapter. Covered by 9 new tests (5 internal unit:
+publishCertExpiry / certIssued / non-drain issuance branches; 1
+controllermetrics gauge Set/Clear; 5 envtest reconciler:
+issuance-failure-drains / inside-grace / disabled-default / gauge-emitted /
+gauge-cleared-on-missing).
 
 ### - [x] F-10.3.18 — 10.3-G18. Admission policy preventing RoleBindings on agent ServiceAccounts is missing [High] — CLOSED
 
@@ -12991,7 +13014,7 @@ backend health checks against `/healthz`) is the missing wiring.
 mechanism. A static `/healthz` does not satisfy "remove unhealthy
 replicas from traffic" — only "remove crashed replicas from traffic."
 
-### - [ ] F-10.4.7 — 07  Graceful shutdown leaves SSE streams and in-flight session work unhandled [High] — OPEN
+### - [x] F-10.4.7 — 07  Graceful shutdown leaves SSE streams and in-flight session work unhandled [High] — CLOSED
 
 **Spec:** §10.4 line 377 — "Gateway pod failure causes a broken stream
 and reconnect, never session loss" — read together with the preStop /
@@ -13024,6 +13047,30 @@ unemitted.
 practice — a `kubectl rollout restart` mid-checkpoint loses
 un-checkpointed state because the new coordinator has no signal that the
 old replica is in mid-drain.
+
+**Resolution (verify-closed):** The drain machinery the finding flags as
+absent has all landed in later batches; the evidence is stale.
+`cmd/lenny-gateway/main.go` instantiates `prestop.Hook`, mounts it on
+`POST/GET /internal/prestop`, and the chart renders the `preStop`
+lifecycle hook plus `terminationGracePeriodSeconds` (default 240) on the
+gateway Deployment (F-4.4.26 / F-10.1.6). The staged drain flips a
+`draining` flag first; the gateway serves a distinct `/readyz` that
+returns 503 while draining (chart `readinessProbe` retargeted to it),
+removing the replica from the Service before the eviction-checkpoint
+drain runs (F-10.1.6). The drain checkpoints every coordinated session
+under the §10.1 tiered cap, so a `kubectl rollout restart` no longer
+loses un-checkpointed state. `lenny_pdb_blocked_evictions_total` is
+emitted by `pkg/gateway/pdbwatcher` (F-17.8.8 / F-10.4.4). SSE streams
+breaking on shutdown with client reconnect is the §10.4 line 377 model
+("broken stream and reconnect, never session loss"); leases lapse on TTL
+and the new coordinator reclaims, so no proactive lease release is
+required. The one residual symptom — `lenny_prestop_barrier_target_source_total`
+— belongs to the §10.1 lines 163–178 CheckpointBarrier-target-set Postgres
+sourcing (a `coordination_lease` mirror keyed by `coordinator_replica`,
+which does not exist; the gateway sources its per-replica set from the
+in-memory `podsession.Registry`). That is the CheckpointBarrier protocol,
+tracked separately by **F-10.1.7** (CheckpointBarrier protocol not
+implemented), not the graceful-shutdown drain this finding scopes.
 
 ### - [x] F-10.4.8 — 08  No multi-zone / multi-node placement constraints on the gateway [Medium] — CLOSED
 
