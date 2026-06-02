@@ -50,6 +50,24 @@ type EraseUserRequest struct {
 	Justification string `json:"justification,omitempty"`
 }
 
+// summarizeHolds projects the §12.8 preflight hold set into the two
+// shapes the erasure audit surface uses: the session-id list
+// (heldSessions, retained for backward-compatible SIEM correlation) and
+// the {resourceType, resourceId} tuples the §12.8 line 794 blocked event
+// and override receipt carry.
+func summarizeHolds(holds []heldResource) (sessions []string, tuples []map[string]any) {
+	for _, h := range holds {
+		tuples = append(tuples, map[string]any{
+			"resourceType": h.ResourceType,
+			"resourceId":   h.ResourceID,
+		})
+		if h.ResourceType == "session" {
+			sessions = append(sessions, h.ResourceID)
+		}
+	}
+	return sessions, tuples
+}
+
 // handleEraseUser implements POST /v1/admin/users/{user_id}/erase —
 // the §12.8 GDPR erasure initiation. It records an erasure job, starts
 // the dependency-ordered DeleteByUser deletion in the background, and
@@ -85,29 +103,33 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	// §12.8 step 0: legal-hold preflight. A user with a legally-held
-	// session is rejected synchronously before the job initiates, so
-	// the processing restriction is never applied. Destroying data
-	// under a preservation order would be spoliation.
-	held, err := r.heldSessions(req.Context(), tenant, subject)
+	// session or artifact is rejected synchronously before the job
+	// initiates, so the processing restriction is never applied.
+	// Destroying data under a preservation order would be spoliation.
+	holds, err := r.heldResourcesForUser(req.Context(), tenant, subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"legal-hold preflight failed: "+err.Error(), nil)
 		return
 	}
+	heldSessions, holdTuples := summarizeHolds(holds)
 	// overrideReceipt carries the §12.8 legal-hold override fields into
 	// the completion receipt; it stays nil when no override occurred.
 	var overrideReceipt map[string]any
-	if len(held) > 0 {
+	if len(holds) > 0 {
 		if !body.AcknowledgeHoldOverride {
+			// spec: §12.8 line 794 — the blocked event carries the
+			// {resourceType, resourceId} tuples for every blocking hold.
 			r.emit(req.Context(), principal, "gdpr.erasure_blocked_by_hold", subject, map[string]any{
 				"tenantId":     tenant,
 				"userId":       subject,
-				"holdCount":    len(held),
-				"heldSessions": held,
+				"holdCount":    len(holds),
+				"holds":        holdTuples,
+				"heldSessions": heldSessions,
 			})
 			writeError(w, http.StatusConflict, "ERASURE_BLOCKED_BY_LEGAL_HOLD",
-				"the user has one or more sessions under a legal hold; erasure is blocked until the holds are released",
-				map[string]any{"heldSessions": held})
+				"the user has one or more sessions or artifacts under a legal hold; erasure is blocked until the holds are released",
+				map[string]any{"holds": holdTuples, "heldSessions": heldSessions})
 			return
 		}
 		// §12.8: a platform-admin may override the preflight with a
@@ -133,7 +155,8 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"overrideBy":            principal.Subject,
 			"overrideJustification": body.Justification,
 			"overrideAt":            rfc3339Nano(r.clock()),
-			"overriddenHolds":       held,
+			"overriddenHolds":       heldSessions,
+			"holds":                 holdTuples,
 		}
 		// The underlying legal-hold rows are left set; the erasure
 		// proceeds. The gdpr.legal_hold_overridden audit event is emitted
@@ -157,7 +180,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"tenantId":  tenant,
 			"userId":    subject,
 			"jobId":     jobID,
-			"holdCount": len(held),
+			"holdCount": len(holds),
 		}
 		for k, v := range overrideReceipt {
 			overrideEvent[k] = v

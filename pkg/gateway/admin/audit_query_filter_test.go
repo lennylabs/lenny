@@ -140,6 +140,36 @@ func TestListAuditEventsFilterByEventType_spec_25_9_3659(t *testing.T) {
 	}
 }
 
+// spec: §12.8 line 986 — the DSAR template's category-(b) invocation
+// passes a comma-separated eventType list
+// (admin.impersonation_started,admin.impersonation_ended). A row matches
+// when its event type is any list member.
+func TestListAuditEventsFilterByEventTypeList_spec_12_8_986(t *testing.T) {
+	ts := auditTestClock.Add(-time.Hour)
+	backend := &craftedAuditLog{rows: craftChain("platform",
+		[3]any{"admin.impersonation_started", `{}`, ts},
+		[3]any{"admin.impersonation_ended", `{}`, ts},
+		[3]any{"admin.tenant.created", `{}`, ts},
+	)}
+	router := newCraftedRouter(backend, &recordingSink{})
+	since := "since=" + ts.Add(-time.Hour).Format(time.RFC3339)
+
+	rr, env := listAudit(t, router,
+		"eventType=admin.impersonation_started,admin.impersonation_ended&"+since)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(env.Items) != 2 {
+		t.Fatalf("eventType list returned %d items, want 2 (both impersonation events)", len(env.Items))
+	}
+	// A list with surrounding spaces is trimmed (the %20 decodes to a
+	// space before TrimSpace); the named rows match.
+	_, env = listAudit(t, router, "eventType=admin.impersonation_started,%20admin.tenant.created&"+since)
+	if len(env.Items) != 2 {
+		t.Fatalf("trimmed eventType list returned %d items, want 2", len(env.Items))
+	}
+}
+
 func TestListAuditEventsFilterByActorAndResource_spec_25_9_3659(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
 	backend := &craftedAuditLog{rows: craftChain("platform",

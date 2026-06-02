@@ -14,6 +14,7 @@ import (
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -465,6 +466,52 @@ func TestEraseUserBlockedByLegalHold(t *testing.T) {
 	}
 	if !found {
 		t.Error("a hold-blocked erasure must emit gdpr.erasure_blocked_by_hold")
+	}
+}
+
+// spec: §12.8 line 794(b) — an artifact-level hold on an artifact owned
+// by one of the user's sessions blocks the erasure even when the session
+// itself is not held.
+func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
+	users := userstore.NewMemory()
+	jobs := erasurejob.NewMemory()
+	sessions := memstore.New()
+	audit := &recordingAudit{}
+	holder := newFakeArtifactHolder()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: erasureClock, Audit: audit}).
+		WithUsers(users).WithErasure(runner, jobs).WithSessions(sessions).WithArtifactLegalHold(holder)
+
+	seedUser(t, users, "acme", "alice@acme.com")
+	// The session is NOT held, but it owns a held artifact.
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_free", TenantID: "acme", UserID: "alice@acme.com", LegalHold: false,
+	})
+	holder.records["blob://acme/sess_free/file"] = artifactcatalog.Record{
+		URI: "blob://acme/sess_free/file", TenantID: "acme", SessionID: "sess_free", LegalHold: true,
+	}
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("erase with a held artifact: status %d, want 409; body %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "ERASURE_BLOCKED_BY_LEGAL_HOLD") {
+		t.Errorf("rejection should carry ERASURE_BLOCKED_BY_LEGAL_HOLD: %s", rr.Body.String())
+	}
+	u, _ := users.Get(context.Background(), "acme", "alice@acme.com")
+	if u.ProcessingRestricted {
+		t.Error("a hold-blocked erasure must not set the processing restriction")
+	}
+	blocked, ok := findAuditEvent(audit.snapshot(), "gdpr.erasure_blocked_by_hold")
+	if !ok {
+		t.Fatal("a hold-blocked erasure must emit gdpr.erasure_blocked_by_hold")
+	}
+	// spec: §12.8 line 794 — the blocked event carries the resource tuples.
+	tuples, ok := blocked.Detail["holds"].([]map[string]any)
+	if !ok || len(tuples) != 1 || tuples[0]["resourceType"] != "artifact" {
+		t.Errorf("blocked event holds = %v, want one artifact tuple", blocked.Detail["holds"])
 	}
 }
 

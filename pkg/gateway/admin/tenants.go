@@ -162,6 +162,7 @@ type Router struct {
 	userPlayground          UserPlaygroundRevoker
 	erasureRunner           ErasureRunner
 	erasureJobs             erasurejob.Store
+	artifactHolds           ArtifactLegalHolder
 	billing                 billingstore.Store
 	corrections             correctionstore.Store
 	dualControlThresh       float64

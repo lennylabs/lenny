@@ -27,7 +27,8 @@ import (
 type auditQueryFilter struct {
 	since            time.Time
 	until            time.Time
-	eventType        string
+	eventType        string   // raw ?eventType= value, echoed in diagnostics
+	eventTypes       []string // eventType split on commas; OR-matched per row
 	actorID          string
 	resourceType     string
 	resourceID       string
@@ -59,7 +60,13 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 	}
 	f.since, f.until = since, until
 
+	// spec: §25.9 line 3659 / §12.8 line 986 — ?eventType= accepts a
+	// comma-separated list. The §12.8 DSAR template's category-(b)
+	// invocation passes
+	// `eventType=admin.impersonation_started,admin.impersonation_ended`;
+	// a row matches when its event type is any list member.
 	f.eventType = q.Get("eventType")
+	f.eventTypes = splitCSV(f.eventType)
 	f.actorID = q.Get("actorId")
 	f.resourceType = q.Get("resourceType")
 	f.resourceID = q.Get("resourceId")
@@ -146,7 +153,7 @@ func (f auditQueryFilter) matchesRow(row audit.Row) bool {
 	if row.Timestamp.Before(f.since) || row.Timestamp.After(f.until) {
 		return false
 	}
-	if f.eventType != "" && row.EventType != f.eventType {
+	if len(f.eventTypes) > 0 && !containsString(f.eventTypes, row.EventType) {
 		return false
 	}
 	if f.actorID == "" && f.resourceType == "" && f.resourceID == "" && f.operationID == "" {
@@ -192,6 +199,33 @@ func decodePayload(raw json.RawMessage) map[string]any {
 	}
 	_ = json.Unmarshal(raw, &m)
 	return m
+}
+
+// splitCSV splits a comma-separated query value into its trimmed,
+// non-empty members. An empty input yields a nil slice so callers can
+// treat "no filter" as len == 0.
+func splitCSV(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// containsString reports whether s is a member of list.
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesActor matches an actorId filter against either the OCSF-mapped

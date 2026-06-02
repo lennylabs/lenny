@@ -12,11 +12,49 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
+
+// fakeArtifactHolder is an in-memory admin.ArtifactLegalHolder for the
+// §12.8 artifact-scoped legal-hold tests.
+type fakeArtifactHolder struct {
+	records map[string]artifactcatalog.Record // keyed by URI
+}
+
+func newFakeArtifactHolder() *fakeArtifactHolder {
+	return &fakeArtifactHolder{records: map[string]artifactcatalog.Record{}}
+}
+
+func (f *fakeArtifactHolder) Get(_ context.Context, uri string) (artifactcatalog.Record, error) {
+	r, ok := f.records[uri]
+	if !ok {
+		return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
+	}
+	return r, nil
+}
+
+func (f *fakeArtifactHolder) SetLegalHold(_ context.Context, uri string, hold bool) error {
+	r, ok := f.records[uri]
+	if !ok {
+		return artifactcatalog.ErrNotFound
+	}
+	r.LegalHold = hold
+	f.records[uri] = r
+	return nil
+}
+
+func (f *fakeArtifactHolder) IsLegalHeldAt(_ context.Context, tenantID, sessionID string) (bool, error) {
+	for _, r := range f.records {
+		if r.TenantID == tenantID && r.SessionID == sessionID && r.LegalHold {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // spec: §12.8 legal hold — POST /v1/admin/legal-hold.
 
@@ -115,11 +153,98 @@ func TestSetLegalHoldRequiresPlatformAdmin(t *testing.T) {
 	}
 }
 
-func TestSetLegalHoldRequiresSessionID(t *testing.T) {
+func TestSetLegalHoldRequiresSessionOrArtifact(t *testing.T) {
 	router, _, _ := newLegalHoldAdmin(t)
 	rr := setLegalHold(t, router.Handler(),
 		admin.LegalHoldRequest{TenantID: "acme", Hold: true}, withAdminPrincipal)
 	if rr.Code != http.StatusBadRequest {
-		t.Errorf("missing sessionId: status %d, want 400", rr.Code)
+		t.Errorf("missing sessionId/artifactId: status %d, want 400", rr.Code)
+	}
+}
+
+// spec: §12.8 line 735 — exactly one of sessionId / artifactId.
+func TestSetLegalHoldRejectsBothScopes(t *testing.T) {
+	router, sessions, _ := newLegalHoldAdmin(t)
+	seedSession(t, sessions, sessionstore.Session{ID: "sess_x", TenantID: "acme", UserID: "alice@acme.com"})
+	rr := setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_x", ArtifactID: "blob://a", Hold: true},
+		withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("both sessionId and artifactId: status %d, want 400", rr.Code)
+	}
+}
+
+// spec: §12.8 line 735 — POST /v1/admin/legal-hold accepts an artifact
+// ID and flips artifacts.legal_hold.
+func TestSetArtifactLegalHold(t *testing.T) {
+	sessions := memstore.New()
+	audit := &recordingAudit{}
+	holder := newFakeArtifactHolder()
+	holder.records["blob://acme/s1/file"] = artifactcatalog.Record{
+		URI: "blob://acme/s1/file", TenantID: "acme", SessionID: "s1",
+	}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	}).WithSessions(sessions).WithArtifactLegalHold(holder)
+
+	rr := setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true},
+		withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set artifact hold: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if !holder.records["blob://acme/s1/file"].LegalHold {
+		t.Error("POST artifactId hold:true must set legal_hold on the artifact")
+	}
+	snap := audit.snapshot()
+	if len(snap) != 1 || snap[0].Type != "legal_hold.set" {
+		t.Fatalf("audit: %+v, want one legal_hold.set", snap)
+	}
+	if snap[0].Detail["resourceType"] != "artifact" {
+		t.Errorf("event resourceType = %v, want artifact", snap[0].Detail["resourceType"])
+	}
+
+	// A clear flips it back.
+	rr = setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: false},
+		withAdminPrincipal)
+	if rr.Code != http.StatusOK || holder.records["blob://acme/s1/file"].LegalHold {
+		t.Errorf("clear artifact hold: status %d, held=%v", rr.Code, holder.records["blob://acme/s1/file"].LegalHold)
+	}
+}
+
+// A cross-tenant or unknown artifact reads as not-found so the catalog
+// is not probed across the tenant boundary.
+func TestSetArtifactLegalHoldCrossTenantNotFound(t *testing.T) {
+	sessions := memstore.New()
+	holder := newFakeArtifactHolder()
+	holder.records["blob://globex/s1/file"] = artifactcatalog.Record{
+		URI: "blob://globex/s1/file", TenantID: "globex", SessionID: "s1",
+	}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+		Audit: &recordingAudit{},
+	}).WithSessions(sessions).WithArtifactLegalHold(holder)
+
+	rr := setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://globex/s1/file", Hold: true},
+		withAdminPrincipal)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant artifact: status %d, want 404", rr.Code)
+	}
+	if holder.records["blob://globex/s1/file"].LegalHold {
+		t.Error("a cross-tenant artifact hold must not be applied")
+	}
+}
+
+// Without an artifact holder wired, an artifactId request is rejected.
+func TestSetArtifactLegalHoldUnavailable(t *testing.T) {
+	router, _, _ := newLegalHoldAdmin(t)
+	rr := setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true},
+		withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("artifact hold without holder: status %d, want 400", rr.Code)
 	}
 }

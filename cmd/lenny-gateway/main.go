@@ -3489,6 +3489,13 @@ func main() {
 		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
 		WithOperationsInventory(operations.New())
+	if artifactCatalog != nil {
+		// §12.8 line 735 / 794(b): the durable artifact_store catalog backs
+		// artifact-scoped legal holds (POST /v1/admin/legal-hold with
+		// artifactId) and the artifact half of the GDPR-erasure legal-hold
+		// preflight.
+		adminRouter = adminRouter.WithArtifactLegalHold(artifactCatalog)
+	}
 	if leaseBudgets != nil {
 		// §15.1 line 868: expose DELETE …/extension-denial backed by the
 		// same leasecontrol budget source the GatewayControl handler reads.
