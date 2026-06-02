@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
 
-// This file declares the §16.1 metrics catalog as a typed surface.
-// §16.1 is the canonical metric table; each MetricSpec here transcribes
-// one metric definition from that table (name and type). The catalog
-// is a type-level enumeration of what the platform exports; the §16.1
-// table prose remains the source of truth for full label dimensions
-// and semantics.
+// This file declares the platform metrics catalog as a typed surface.
+// Each MetricSpec transcribes one metric definition (name and type)
+// from a spec metric table. The catalog is a type-level enumeration of
+// what the platform exports; the spec table prose remains the source of
+// truth for full label dimensions and semantics.
 //
-// The catalog covers §16.1 only. The §25-introduced metrics enumerated
-// in §16.8 are a separate surface and are not included here.
+// The catalog covers the §16.1 canonical metric table and the
+// §25-introduced metrics enumerated in §16.8 (audit chain integrity,
+// redaction-receipt, MinIO replication, region-unresolvable, and
+// restore-artifact series). Both surfaces share this single typed
+// catalog so an alert expression can be validated against one
+// enumeration. F-16.8.5.
 
 package metrics
 

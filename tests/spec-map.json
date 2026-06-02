@@ -2097,11 +2097,9 @@
       "title": "Key Latency Breakpoints",
       "spec_file": "spec/16_observability.md",
       "tests": [],
-      "packages": [
-        "pkg/observability/slo"
-      ],
+      "packages": [],
       "blocked_until_phase": "14.5",
-      "notes": "Per-percentile latency targets for the four hot paths. Phase 14.5 lands the production baseline; SLO comparator runs in pre-release."
+      "notes": "Per-percentile latency targets for the four hot paths. Phase 14.5 lands the production baseline and the SLO package; the packages list is intentionally empty until then so it does not point at a directory that does not exist. SLO comparator runs in pre-release."
     },
     "16.3": {
       "title": "Distributed Tracing",
@@ -2223,11 +2221,9 @@
       "title": "OpenSLO Export",
       "spec_file": "spec/16_observability.md",
       "tests": [],
-      "packages": [
-        "pkg/observability/slo"
-      ],
+      "packages": [],
       "blocked_until_phase": "14.5",
-      "notes": "OpenSLO YAML export so the \u00a716.5 alerts can be regenerated from the SLO definitions in code. Phase 14.5 ships the exporter."
+      "notes": "OpenSLO YAML export so the \u00a716.5 alerts can be regenerated from the SLO definitions in code. No implementation package exists yet; Phase 14.5 creates the exporter package and this entry names it then. The packages list is intentionally empty until then so it does not point at a directory that does not exist."
     },
     "17": {
       "title": "Deployment Topology",

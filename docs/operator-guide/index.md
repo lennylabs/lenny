@@ -82,7 +82,7 @@ You have a working install. Now harden it, wire observability, decide on auth an
 
 6. [**Security Principles**](security-principles.html) — the posture and the control map (skim this even if you're not the security reviewer — it explains what the next page is for).
 7. [**Security**](security.html) — configuration reference for mTLS, OIDC, Token Service, KMS, credential leasing, RBAC.
-8. [**Observability**](observability.html) — Prometheus metrics, bundled alerting rules, the Prometheus Operator CRs, OpenSLO export, Grafana dashboards. Read this before Scaling — you'll use the signals it surfaces to pick the right autoscaler targets.
+8. [**Observability**](observability.html) — Prometheus metrics, bundled alerting rules, the Prometheus Operator CRs, and Grafana dashboards (OpenSLO export is planned and does not ship yet). Read this before Scaling — you'll use the signals it surfaces to pick the right autoscaler targets.
 9. [**Scaling**](scaling.html) — sizing by deployment size, autoscaler configuration, warm pool sizing, capacity calibration.
 10. [**Multi-Tenancy**](multi-tenancy.html) — RLS, per-tenant quotas, isolation testing — needed before you open the platform to more than one team.
 
@@ -124,7 +124,7 @@ A quick map of the work, grouped by when you'll do it.
 - Configure delegation and content policies.
 - Harden the cluster: network policies, admission policies, node taints.
 - Configure authentication -- OIDC or OAuth 2.1 -- and verify the token-exchange endpoint is reachable.
-- Wire up observability: Prometheus Operator custom resources, Grafana dashboards, the bundled alerting rules, and OpenSLO export if you use an SLO platform.
+- Wire up observability: Prometheus Operator custom resources, Grafana dashboards, and the bundled alerting rules. OpenSLO export for SLO platforms is planned and does not ship yet.
 - Decide what to do with the web playground -- leave it on for developer tenants, gate it behind auth, or turn it off entirely.
 
 ### Day 2 -- steady state

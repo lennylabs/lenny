@@ -28876,13 +28876,17 @@ grep -nE "lenny_platform_upgrade_available|lenny_backup_storage_used_bytes|lenny
 # only the two rules.go lines match
 ```
 
-### - [ ] F-16.8.4 — `lenny_audit_rate_limited_total` exists in spec, comment, and decision API, but no instrument [Medium] — OPEN
+### - [ ] F-16.8.4 — `lenny_audit_rate_limited_total` exists in spec, comment, and decision API, but no instrument [Medium] — DEFERRED
 
 `pkg/ops/auditrate/auditrate.go` implements the §25.6 per-service-account diagnostic rate-limit logic and a `Drop` decision constant whose doc-comment promises "the caller increments `lenny_audit_rate_limited_total`" (line 24). No metric is registered, no instrument is incremented, and no caller wraps `Limiter.Decide(...) == Drop` with a counter inc. The capability is partially implemented (decision logic and tests exist) but the spec-mandated metric does not.
 
-### - [ ] F-16.8.5 — catalog header understates surface coverage [Medium] — OPEN
+**Resolution:** Deferred. `auditrate.Limiter` has no production caller — `grep` for `auditrate` / `.Decide(` outside the package returns nothing; the §25.6 diagnostics-audit path that would invoke the limiter is unbuilt, and `lenny-ops` has no Prometheus `/metrics` surface to register the counter against (F-16.8.1, OPEN). Wiring the counter requires both an increment site (the limiter's caller) and an emitter surface; both are gated on F-16.8.1. The diagnostics `RateLimited` flag in `pkg/ops/diagnostics/service.go` is a distinct credential-pool concept, not the §25.6 diagnostic limiter.
+
+### - [x] F-16.8.5 — catalog header understates surface coverage [Medium] — CLOSED
 
 `pkg/observability/metrics/catalog.go:1–11` documents the catalog as "§16.1 only" and explicitly excludes §16.8: "The catalog covers §16.1 only. The §25-introduced metrics enumerated in §16.8 are a separate surface and are not included here." In fact the catalog contains 10 §16.8-listed metrics (`lenny_audit_chain_integrity_total`, `lenny_audit_redaction_receipt_missing_total`, the `lenny_minio_replication_*` set, the `lenny_*_region_unresolvable_total` set, the `lenny_restore_*_artifact_*` set, and `lenny_restore_artifact_missing_total`). The header comment is stale and contradicts the data structure it documents.
+
+**Resolution:** Rewrote the `catalog.go` package header to state accurately that the catalog covers both the §16.1 canonical metric table and the §25-introduced metrics enumerated in §16.8 (naming the audit-chain-integrity, redaction-receipt, MinIO-replication, region-unresolvable, and restore-artifact series), and that both surfaces share the single typed catalog so alert expressions validate against one enumeration. The catalog data itself (the source of truth `catalog_test.go` already pins) was already correct; only the misleading comment is fixed. Resolved this batch.
 
 ### - [x] F-16.8.6 — §16.8 entry annotations reference the wrong section for the integrity counter [Low] — CLOSED
 
@@ -29336,7 +29340,7 @@ silently regressing, but the cited phase number is wrong and the
 deferral is operating as a permanent exemption rather than a tracked
 gap.
 
-### - [ ] F-16.10.3 — (Medium) — `tests/spec-map.json` points at a non-existent package [Medium] — OPEN
+### - [x] F-16.10.3 — (Medium) — `tests/spec-map.json` points at a non-existent package [Medium] — CLOSED
 
 The §16.10 entry in `tests/spec-map.json` lists `pkg/observability/slo`
 as the implementation package. That directory does not exist
@@ -29366,7 +29370,9 @@ behavior, but the spec-map is the cross-check substrate that gates
 the build's "every normative section maps to a test or an
 exception" property.
 
-### - [ ] F-16.10.4 — (Medium) — Customer-facing documentation advertises an OpenSLO export and a `lenny-ctl slo` command that do not exist [Medium] — OPEN
+**Resolution:** Removed `pkg/observability/slo` from the `packages` list of the §16.10 entry (and the §16.2 entry, which named the same phantom directory) in `tests/spec-map.json`, setting both to `[]`. The `blocked_until_phase: "14.5"` field plus the expanded `notes` now serve as the deferral marker — the notes state that no implementation package exists yet and that Phase 14.5 creates and names it. `lenny-test validate-maps` keeps passing (`spec-map paths: every spec_file resolves`); the validator does not require `packages` entries to exist, so the empty list is clean. Resolved this batch.
+
+### - [x] F-16.10.4 — (Medium) — Customer-facing documentation advertises an OpenSLO export and a `lenny-ctl slo` command that do not exist [Medium] — CLOSED
 
 `README.md` line 81 and `docs/index.md` line 66 advertise that "Prometheus
 alerting rules and OpenSLO definitions drop into any standard
@@ -29403,6 +29409,8 @@ Evidence: `README.md` line 81; `docs/index.md` line 66;
 
 Severity: Medium. Customer-facing claim that misrepresents the
 shipped surface.
+
+**Resolution:** Aligned the four doc pages with the deferred implementation (F-16.10.1, still OPEN). `README.md` and `docs/index.md` now state that the Prometheus alerting rules ship today and that OpenSLO export "is planned and does not ship yet"; `docs/operator-guide/index.md` (both the chapter list and the Day-1 checklist) drops OpenSLO from the shipping-surface list and marks it planned. The `docs/tutorials/alerting-and-openslo.md` callout no longer tells operators to run `lenny-ctl slo export` as if it works — it states plainly that the export and the `lenny-ctl slo` command are planned and that running `lenny-ctl slo` returns `unknown command "slo"`, and the body's OpenSLO claim is reworded to future tense. `docs/about/status.md` already marked the surface "In progress". Verified the absence: no `slo` subcommand exists (only an alert-annotation key) and no chart renders OpenSLO objects. The docs now describe shipping behavior accurately; the export itself stays tracked under F-16.10.1. Resolved this batch.
 
 ### Summary
 

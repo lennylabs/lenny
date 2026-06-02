@@ -78,7 +78,7 @@ Everything below ships with the same single binary. No post-install glue.
 - **Installable with a wizard.** `lenny-ctl install` inspects your cluster, asks about ten targeted questions, composes a Helm values file, previews the diff, runs the install, and smoke-tests it. The answer file is reusable — replay installs in CI.
 - **Management plane included.** `lenny-ops` exposes structured diagnostic endpoints, runbooks, backup and restore APIs, and drift detection, so an on-call engineer — or an on-call AI agent — can investigate without scraping `kubectl` output. `lenny-ctl doctor --fix` applies idempotent remediations for common misconfigurations.
 - **Browser-based playground.** Every install serves a web UI at `/playground` that drives sessions through the same public API every SDK uses. Turn it off in production with one Helm flag.
-- **Bundled monitoring.** Prometheus alerting rules and OpenSLO definitions drop into any standard observability stack; a Grafana dashboard covers core health signals.
+- **Bundled monitoring.** Prometheus alerting rules drop into any standard observability stack, and a Grafana dashboard covers core health signals. OpenSLO export of those rules is planned and does not ship yet.
 
 Every capability above is specified in [`spec/`](spec/) and covered by the integration test suite.
 

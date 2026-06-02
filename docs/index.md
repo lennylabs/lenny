@@ -63,7 +63,7 @@ runtimes. There's no custom scheduler, no external control plane, and no outboun
 
 **Management plane included.** A dedicated management plane (`lenny-ops`) ships with every install. It exposes structured diagnostic endpoints, runbooks, backup and restore APIs, and drift detection, so an on-call engineer (or an on-call AI agent) can investigate without scraping `kubectl` output. `lenny-ctl doctor --fix` applies idempotent remediations for common misconfigurations.
 
-**Monitoring is wired up.** Bundled Prometheus alerting rules and OpenSLO definitions drop into any standard observability stack. There's a Grafana dashboard for core health signals.
+**Monitoring is wired up.** Bundled Prometheus alerting rules drop into any standard observability stack, and a Grafana dashboard covers core health signals. OpenSLO export of those rules is planned and does not ship yet.
 
 **A browser-based playground.** Every install serves a web UI at `/playground` that drives sessions through the same public API any client SDK uses. Demo a runtime without writing code. Turn it off in production with one Helm flag.
 

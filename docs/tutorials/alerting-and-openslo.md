@@ -11,9 +11,9 @@ description: Wire Lenny's bundled alerting rules into Prometheus Operator, and e
 **Persona:** Platform Operator | **Difficulty:** Intermediate
 
 {: .highlight }
-> **Status: planned.** This alerting walkthrough is scheduled for the initial tutorial set. The bundled alerts and OpenSLO export are canonical in the spec sections below; until the walkthrough lands, use `kubectl get prometheusrule -n lenny-system` to inspect rules directly and `lenny-ctl slo export --format openslo` for OpenSLO output.
+> **Status: planned.** The bundled alerting rules ship today. The OpenSLO export and the `lenny-ctl slo` command described below are planned and do not exist yet; running `lenny-ctl slo` returns `unknown command "slo"`. Until the export and this walkthrough land, inspect the shipped rules directly with `kubectl get prometheusrule -n lenny-system`.
 
-Lenny ships a single source of truth for its alerting rules (`pkg/alerting/rules`), compiled into both the gateway binary (for in-process fallback) and the Helm chart (as `PrometheusRule` CRDs or a plain `ConfigMap`). SLOs are published in the OpenSLO v1 format for import into your SLO tooling.
+Lenny ships a single source of truth for its alerting rules (`pkg/alerting/rules`), compiled into both the gateway binary (for in-process fallback) and the Helm chart (as `PrometheusRule` CRDs or a plain `ConfigMap`). Once the OpenSLO export lands, SLOs will be published in the OpenSLO v1 format for import into SLO tooling.
 
 ## What this walkthrough will cover
 
