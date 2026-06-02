@@ -411,6 +411,38 @@ func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 	}
 }
 
+// TestAuditQueryExecutedRowReQueriesCleanly confirms the emitted
+// audit.query_executed row is itself OCSF-translatable (it matches the
+// `audit.` prefix mapping), so a second list call does not 500 when it
+// encounters the row the first call wrote.
+//
+// spec: §25.9 line 3750; §4.4 line 232 (every audit row is OCSF-egress
+// translatable).
+func TestAuditQueryExecutedRowReQueriesCleanly(t *testing.T) {
+	router, _ := newAuditQueryRouter(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body)))))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create tenant: %d", rr.Code)
+	}
+
+	// First list writes an audit.query_executed row onto the platform chain.
+	_, env1 := listAudit(t, router, "")
+	first := len(env1.Items)
+
+	// Second list must translate that row without erroring, and the row
+	// must now be visible.
+	rr2, env2 := listAudit(t, router, "")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second list: status %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if len(env2.Items) <= first {
+		t.Errorf("second list items=%d, want > %d (query_executed row should appear)", len(env2.Items), first)
+	}
+}
+
 func TestAuditSummaryInvalidGroupBy_spec_25_9_3661(t *testing.T) {
 	router := newCraftedRouter(&craftedAuditLog{}, &recordingSink{})
 	rr := httptest.NewRecorder()

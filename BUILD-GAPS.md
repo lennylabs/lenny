@@ -39353,13 +39353,15 @@ _ = json.NewEncoder(w).Encode(map[string]any{
 
 where `AuditEventPayload` (lines 15-25) carries `seq`, `tenantId`, `eventType`, raw `payload`, `timestamp`, `prevHash`, `hash`, `redacted` — the pre-OCSF canonical tuple. The OCSF translator `pkg/audit/ocsf` exists and is exercised by the EventBus retranscribe path (`pkg/gateway/auditstore/retranscribe.go:128-160`), but no admin handler calls it. The envelope key is also `auditEvents`, not `items[]`, and there is no `ocsfVersion` or `chainIntegrityReport` field. Clients that depend on the OCSF wire format will receive an incompatible payload.
 
-### - [ ] F-25.9.2 — query filters are not implemented [High] — OPEN
+### - [x] F-25.9.2 — query filters are not implemented [High] — CLOSED
 
 `§25.9` line 3659 lists nine list-endpoint query parameters: `since`, `until`, `eventType`, `actorId`, `resourceType`, `resourceId`, `tenantId`, `severity`, `cursor`, plus `limit`, `ocsf_translation_state`, `eventbus_publish_state`, and `?fresh=true` for cache bypass. The diagnostics-correlation paragraph (line 3703) adds `?operationId=`.
 
 `handleListAuditEvents` (`pkg/gateway/admin/audit_query.go:86-126`) reads `req.URL.Query().Get("tenantId")` via `auditTenant`, `afterSeq` (not in the spec), and `limit` only. The remaining twelve filters are silently ignored. Operators reconciling after an EventBus outage cannot run the spec's canonical recovery query `?eventbus_publish_state=failed&since=<outage_start>`; investigators cannot scope by event type, actor, resource, or severity; cursor pagination is not honored.
 
-### - [ ] F-25.9.3 — `since`/`until` default and `AUDIT_QUERY_TOO_BROAD` cap absent [High] — OPEN
+**Resolution (f753a200):** `auditQueryFilter` (`pkg/gateway/admin/audit_query_filter.go`) parses and AND-applies `since`/`until`/`eventType`/`actorId`/`resourceType`/`resourceId`/`severity`/`operationId` (row+payload predicates), `ocsf_translation_state`/`eventbus_publish_state` (via the optional backend state interfaces), and the opaque `?cursor=` token (replacing `afterSeq`; the list response now carries `nextCursor`). `actorId` matches `user_id` or `actor_subject`; `resourceType`/`resourceId` fall back to the `target_resource` "type/id" split; `severity` matches the translated record's severity_id by OCSF word or number. `?fresh=true` is parsed as a no-op in single-shard v1 (the Redis scatter-gather cache it bypasses is F-25.9.11).
+
+### - [x] F-25.9.3 — `since`/`until` default and `AUDIT_QUERY_TOO_BROAD` cap absent [High] — CLOSED
 
 §25.9 (lines 3707-3708) requires:
 
@@ -39367,6 +39369,8 @@ where `AuditEventPayload` (lines 15-25) carries `seq`, `tenantId`, `eventType`, 
 - Queries that would scan more than 10M rows, or whose time range exceeds 90 days without sufficient filters, MUST return `400 AUDIT_QUERY_TOO_BROAD`.
 
 `handleListAuditEvents` performs `r.auditLog.Rows(req.Context(), tenant)` (line 91) which fetches all rows for the tenant via `auditstore.Rows` (`pkg/gateway/auditstore/auditstore.go:111-134`, `SELECT ... FROM audit_log WHERE tenant_id = $1 ORDER BY sequence_number`) before applying `afterSeq` and `limit` in-process. Unbounded queries are not disabled by policy, no time-range cap is enforced, and the spec'd `AUDIT_QUERY_TOO_BROAD` error code is unused in the repository. The full-table read pattern is also a scalability problem in its own right.
+
+**Resolution (f753a200):** `parseAuditTimeWindow` defaults a query without `since`/`until` to the last 24 hours (anchoring to the supplied bound when only one is given), and `parseAuditFilter` rejects a span exceeding 90 days without a narrowing filter as `400 AUDIT_QUERY_TOO_BROAD`. The 10M-row cap is not reachable in single-shard v1 (the full-table-scan + shard-fan-out replacement is the §25.9 scatter-gather work, F-25.9.11); the time-window policy is the enforced half of the spec rule.
 
 ### - [x] F-25.9.4 — `retranslate` endpoint not implemented [High] — CLOSED
 
@@ -39390,9 +39394,11 @@ The auditstore exposes `PendingRepublish`/`SetPublishState` (`pkg/gateway/audits
 
 No matching route is registered (`grep -rn "audit-partitions" pkg/` returns no matches outside the spec). The `AuditPartitionDropBlocked` alert is wired (`pkg/alerting/rules/rules.go:1228`) and the catalog declares `EventAuditPartitionDropForced` (`pkg/observability/audit/catalog.go:130`), but the only `acknowledgeDataLoss` consumer is the §25.11 backup orchestrator (`pkg/ops/backup/service.go:228`). Without this endpoint the alert is permanent until the SIEM forwarder catches up, blocking partition GC.
 
-### - [ ] F-25.9.7 — summary endpoint not implemented [High] — OPEN
+### - [x] F-25.9.7 — summary endpoint not implemented [High] — CLOSED
 
 `§25.9` line 3661 specifies `GET /v1/admin/audit-events/summary` with `?since=`, `?until=`, `?groupBy=eventType|actorId|resourceType`. No such handler or route exists; the mux in `pkg/gateway/admin/tenants.go:484-486` lacks any `/summary` route, and the codebase does not reference `groupBy`. Investigators that need aggregate counts must page through the full event list manually.
+
+**Resolution (f753a200):** `handleAuditSummary` (`pkg/gateway/admin/audit_query.go`) implements `GET /v1/admin/audit-events/summary`, registered before the `{seq}` route. It groups by `eventType` (default), `actorId`, or `resourceType` over the shared §25.9 time window (24h default), rejects an unknown `groupBy` with `400 INVALID_ARGUMENT`, and returns `{tenantId, groupBy, since, until, total, groups[]}` sorted by descending count (ties by key).
 
 ### - [x] F-25.9.8 — `format=raw-canonical` not implemented; scope absent [High] — CLOSED
 
@@ -39402,9 +39408,11 @@ Implementation inverts the default: the standard list response is already the ra
 
 **Resolution:** Closed by F-11.7.12 (same commit). The default list/get wire form is already the OCSF envelope (fixed in the prior OCSF-default rewrite); `GET /v1/admin/audit-events/{seq}?format=raw-canonical` now returns the pre-OCSF canonical tuple (`AuditEventPayload`), gated on the §15.2-canonical `tools:audit:raw_canonical_read` scope (the spec shorthand `audit:raw-canonical:read` on the `audit` domain). A caller carrying a scope claim lacking it receives 403; an absent scope claim defers to the platform/tenant-admin role ceiling per §25.1.
 
-### - [ ] F-25.9.9 — `chainIntegrity` per-row field is never populated by query responses [High] — OPEN
+### - [x] F-25.9.9 — `chainIntegrity` per-row field is never populated by query responses [High] — CLOSED
 
 `§25.9` lines 3670-3679 require each event in the response to include a `chainIntegrity` field whose values are `verified`, `broken`, `unchecked`, `redacted_gdpr`, or `gap_suspected`, with `auditMetadata` listing suspected gap windows cross-referenced against `ops_postgres_outage_log`. The enum is defined in `pkg/audit/audit.go:25-57` with all six values, but `AuditEventPayload` (`pkg/gateway/admin/audit_query.go:15-25`) has no `chainIntegrity` field and `auditRowPayload` (lines 186-197) never sets one. The response envelope also lacks the `auditMetadata` gap-window object. Consumers cannot distinguish a verified row from a rechained-post-outage row from a tampered row at query time.
+
+**Resolution (f753a200):** new `audit.Chain.VerifyRows()` returns the per-row §11.7 ChainIntegrity (verified/broken/gap_suspected/redacted_gdpr); the list/get handlers run it over the full ordered chain and stamp each row's verdict onto its OCSF record's `unmapped.lenny_chain.integrity` (and onto the raw-canonical `chainIntegrity` field). The envelope gains `chainIntegrityReport` (the spec's `{verified, broken, gap_suspected, rechained_post_outage, redacted_gdpr}` tally over returned rows) and `auditMetadata.suspectedGaps` (windows derived from sequence discontinuities). The cross-reference to `ops_postgres_outage_log` for the precise outage reason is a separate subsystem; the window records the sequence-jump detection basis.
 
 ### - [ ] F-25.9.10 — `verify` endpoint is non-standard and per-tenant only [Medium] — OPEN
 
@@ -39418,17 +39426,21 @@ Implementation inverts the default: the standard list response is already the ra
 
 `auditstore.Rows` (`pkg/gateway/auditstore/auditstore.go:111-134`) goes directly through a single `pgxpool.Pool` injected at construction (no `StoreRouter` indirection in the read path); the `pkg/storerouter` package exposes `AuditShard`/`AllAuditShards`, but `audit_query.go` never calls them. No Redis cache or `?fresh=true` knob is wired, and there is no fan-out concurrency or per-shard timeout. The `AUDIT_PARTIAL_RESULTS` (207) partial-result envelope is unreachable as a consequence. In a single-shard v1 deployment this is acceptable as documented behavior, but the storage interface plumbing required by the spec is missing, so multi-shard rollout is blocked without code change.
 
-### - [ ] F-25.9.12 — §25.9 error codes are not emitted [Medium] — OPEN
+### - [x] F-25.9.12 — §25.9 error codes are not emitted [Medium] — CLOSED
 
 The spec error table (lines 3730-3735) lists `AUDIT_EVENT_NOT_FOUND` (404), `AUDIT_QUERY_TOO_BROAD` (400), `AUDIT_STORE_UNAVAILABLE` (503), `AUDIT_PARTIAL_RESULTS` (207). `handleGetAuditEvent` returns `RESOURCE_NOT_FOUND` (`audit_query.go:152`) instead of `AUDIT_EVENT_NOT_FOUND`. The other three codes do not appear in the source tree (`grep -rn` confirms zero matches). A Postgres outage in the read path produces a generic `INTERNAL_ERROR` (`audit_query.go:93`), not the spec'd `AUDIT_STORE_UNAVAILABLE` with 503.
+
+**Resolution (f753a200):** `handleGetAuditEvent` now returns `404 AUDIT_EVENT_NOT_FOUND`; the shared `auditRows` helper maps every read failure (and the verify/summary read paths) to `503 AUDIT_STORE_UNAVAILABLE` (no read cache, per §25.9 line 3714); `AUDIT_QUERY_TOO_BROAD` (400) is returned by the time-window cap (F-25.9.3). All four codes (`AUDIT_EVENT_NOT_FOUND`, `AUDIT_QUERY_TOO_BROAD`, `AUDIT_STORE_UNAVAILABLE`, `AUDIT_PARTIAL_RESULTS`) are registered in `errorclassify` with their spec categories. `AUDIT_PARTIAL_RESULTS` (207) is reachable only once multi-shard scatter-gather lands (F-25.9.11).
 
 ### - [ ] F-25.9.13 — §25.9 metrics are not emitted [Medium] — OPEN
 
 The metrics table (lines 3720-3726) names five Prometheus series: `lenny_audit_query_duration_seconds`, `lenny_audit_chain_verification_broken_total`, `lenny_audit_chain_rechained_post_outage_total`, `lenny_audit_rate_limited_total`, `lenny_audit_scatter_gather_shards_queried`. Only `lenny_audit_rate_limited_total` has user-visible scaffolding (`pkg/ops/auditrate/auditrate.go:24` documents that the caller increments the counter, but the counter itself is not registered with the rate-limiter package). The other four series have zero matches across `pkg/`. Operators have no visibility into audit query latency, broken-chain detection rate, post-outage rechain rate, or scatter-gather fan-out width.
 
-### - [ ] F-25.9.14 — `audit.query_executed` and `audit.chain_integrity_broken_detected` never emitted [Medium] — OPEN
+### - [x] F-25.9.14 — `audit.query_executed` and `audit.chain_integrity_broken_detected` never emitted [Medium] — CLOSED
 
 §25.9 line 3750 requires `audit.query_executed` (with query parameters, result count, cache hit/miss, shards touched) and `audit.chain_integrity_broken_detected` to be emitted from the query path. Both constants exist in `pkg/observability/audit/catalog.go:127-128` and the catalog test enumerates them (`catalog_test.go:70-71`), but no code path appends them. The list/get/verify handlers do not call `auditLog.Append`. Without these signals, audit-of-audit-access is not recoverable and the §16.5 chain-integrity alert pipeline loses its data source.
+
+**Resolution (f753a200):** `handleListAuditEvents` emits `audit.query_executed` after writing the response (carrying the query parameters, result count, `cacheHit:false`, and `shardsTouched:1` for single-shard v1) via the existing `r.emit` admin-audit path, and emits `audit.chain_integrity_broken_detected` when any returned row's verdict is `broken`. Both flow through `EmitAdminEvent` onto the §11.7 chain, recoverable by the same query API and consumed by the §16.5 chain-integrity alert pipeline.
 
 ### - [ ] F-25.9.15 — diagnostics rate-limiter has no audit-query wiring [Medium] — OPEN
 
