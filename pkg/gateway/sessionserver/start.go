@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
@@ -924,10 +925,20 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		byName[p.Name] = p
 	}
 
+	// spec: §14 credentialPolicy; §4.9 line 1362 — a per-session
+	// credentialPolicy override narrows the tenant policy's
+	// preferredSource (the gateway validated at admission that the
+	// override only restricts, never expands). When the session carries
+	// one, it wins over the tenant default for this session's credential
+	// resolution. F-14.1.14.
+	preferred := policy.PreferredSource
+	if row.CredentialPolicyOverride != nil && row.CredentialPolicyOverride.PreferredSource != "" {
+		preferred = credential.PreferredSource(row.CredentialPolicyOverride.PreferredSource)
+	}
 	in := credrouter.PreClaimInput{
 		TenantID:        row.TenantID,
 		UserID:          row.UserID,
-		PreferredSource: policy.PreferredSource,
+		PreferredSource: preferred,
 	}
 	for _, provider := range intersection {
 		var descs []credrouter.PoolDescriptor

@@ -151,6 +151,11 @@ const (
 	WarnStripComponentsSkip       WarningCode = "workspace_plan_strip_components_skip"
 	WarnPathCollision             WarningCode = "workspace_plan_path_collision"
 	WarnDurableSchemaVersionAhead WarningCode = "workspace_plan_durable_schema_version_ahead"
+	// WarnRuntimeOptionsUnschematized is the §14 line 155 warning the
+	// gateway emits when a CreateSessionRequest carries runtimeOptions but
+	// the target runtime registered no runtimeOptionsSchema, so the
+	// options pass through unvalidated. F-14.1.15.
+	WarnRuntimeOptionsUnschematized WarningCode = "RuntimeOptionsUnschematized"
 )
 
 // Warning is a non-fatal advisory the parser raised against a plan.

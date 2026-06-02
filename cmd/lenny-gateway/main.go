@@ -569,6 +569,8 @@ func main() {
 		"§12.3 line 81 audit.flushBatchSize: the buffered T2 audit-event count that triggers an immediate flush when batching is enabled. Default 100. Override via LENNY_AUDIT_FLUSH_BATCH_SIZE. F-12.3.14.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
+	envVarBlocklistCSV := flag.String("env-var-blocklist", os.Getenv("LENNY_ENV_VAR_BLOCKLIST"),
+		"§14 line 105 deployer extension to the env-var blocklist applied to a CreateSessionRequest's `env` field, a comma-separated list of exact names or `*` globs (e.g. AWS_SECRET_ACCESS_KEY,*_TOKEN). The platform default blocklist is always merged in first, so an operator can extend but not reduce it. Override via LENNY_ENV_VAR_BLOCKLIST.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
 		envInt("LENNY_MAX_RESUME_PENDING_SECONDS", watchdog.DefaultMaxResumePendingSeconds),
 		"§6.2 line 292 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
@@ -2902,6 +2904,10 @@ func main() {
 			MaxSessionAgeSeconds:   watchdog.DefaultMaxSessionAgeSeconds,
 			MaxResumeWindowSeconds: *maxResumePendingSeconds,
 		},
+		// §14 line 105 — deployer extension to the platform env-var
+		// blocklist; the platform default is always merged in first.
+		// F-14.1.12.
+		EnvVarBlocklist: splitCSV(*envVarBlocklistCSV),
 		// §7.3 / §16.1 — retry + resume metric emitters. The
 		// watchdog/coordinator path bumps retryCount on each pod
 		// recovery (the v1 retry path); the explicit /resume endpoint

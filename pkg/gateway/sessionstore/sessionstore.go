@@ -330,6 +330,85 @@ type Session struct {
 	// parent's effective visibility). spec: §8.5 line 540; §8.3 lines
 	// 311-319. F-8.5.2 / F-8.9.2 / F-13.5.8.
 	TreeVisibility session.TreeVisibility
+
+	// Env is the §14 client-supplied environment-variable map injected
+	// into the agent session. The gateway validates every key against the
+	// deployer-configured blocklist (exact names and `*` globs) at
+	// admission and rejects a blocked key with 400 ENV_VAR_BLOCKLISTED, so
+	// a stored Env has already passed the blocklist. Nil when the client
+	// supplied none. spec: §14 lines 47-50, 105. F-14.1.12.
+	Env map[string]string
+
+	// Pool is the §14 / §14.1 line 311 client-requested target pool from
+	// the CreateSessionRequest envelope. Recorded at create so a client
+	// that lost the create response can recover its requested pool and so
+	// the admission rate-limit scope can key on the explicit pool. It is
+	// distinct from PoolRef, which records the pool the gateway actually
+	// resolved and scheduled against. Empty when the request named no
+	// pool. spec: §14 example; §14.1 line 311. F-14.1.14.
+	Pool string
+
+	// Timeouts holds the §14 per-session timeout overrides
+	// (maxSessionAgeSeconds, maxIdleSeconds). The gateway validates them
+	// against the runtime's limits.maxSessionAge at admission (a session
+	// override cannot exceed the runtime cap). Nil when the client
+	// supplied none. spec: §14 line 154. F-14.1.14.
+	Timeouts *SessionTimeouts
+
+	// CredentialPolicyOverride is the §14 per-session credentialPolicy
+	// hint. A per-session override can only restrict, never expand, the
+	// tenant credentialPolicy, so the gateway rejects an override that
+	// enables a credential source the tenant policy disallows. Nil when
+	// the client supplied none, in which case the tenant policy applies
+	// unchanged. spec: §14 credentialPolicy; §4.9 lines 1310, 1336.
+	// F-14.1.14.
+	CredentialPolicyOverride *CredentialPolicyOverride
+
+	// DelegationLeaseRequest is the §14 client-requested delegation lease
+	// bounds {maxDepth, maxChildrenTotal, delegationPolicyRef} carried on
+	// the CreateSessionRequest envelope. It is distinct from
+	// DelegationLease, the §8.2 granted LeaseSlice the delegation Service
+	// stamps on a child it admits. Nil when the client supplied none.
+	// spec: §14 lines 75-79. F-14.1.14.
+	DelegationLeaseRequest *DelegationLeaseRequest
+
+	// RuntimeOptions is the §14 per-runtime discriminated-union options
+	// blob (raw JSON, ≤64 KB). When the target runtime registered a
+	// runtimeOptionsSchema the gateway validates this against it at
+	// admission (400 RUNTIME_OPTIONS_INVALID on failure); when no schema
+	// is registered the options pass through and the gateway emits a
+	// RuntimeOptionsUnschematized warning. Nil when the client supplied
+	// none. spec: §14 line 155. F-14.1.14 / F-14.1.15.
+	RuntimeOptions json.RawMessage
+}
+
+// SessionTimeouts is the §14 per-session timeouts envelope: the
+// maxSessionAge / maxIdle overrides a client may request, each capped by
+// deployer policy and bounded above by the runtime's limits.maxSessionAge.
+// A zero field means the client requested no override for that axis.
+// spec: §14 line 154. F-14.1.14.
+type SessionTimeouts struct {
+	MaxSessionAgeSeconds int64 `json:"maxSessionAgeSeconds,omitempty"`
+	MaxIdleSeconds       int64 `json:"maxIdleSeconds,omitempty"`
+}
+
+// CredentialPolicyOverride is the §14 per-session credentialPolicy
+// override carried on the CreateSessionRequest envelope. v1 carries the
+// preferredSource hint; per §14 it may only restrict the tenant policy.
+// spec: §14 credentialPolicy; §4.9 lines 1310, 1336. F-14.1.14.
+type CredentialPolicyOverride struct {
+	PreferredSource string `json:"preferredSource,omitempty"`
+}
+
+// DelegationLeaseRequest is the §14 client-requested delegation lease
+// bounds on the CreateSessionRequest envelope. MaxDepth and
+// MaxChildrenTotal are pointers so an explicit zero ("no further
+// delegation") is distinguishable from an unset bound. spec: §14 lines
+// 75-79. F-14.1.14.
+type DelegationLeaseRequest struct {
+	MaxDepth            *int   `json:"maxDepth,omitempty"`
+	MaxChildrenTotal    *int   `json:"maxChildrenTotal,omitempty"`
+	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
 }
 
 // SetupCommandOutput is one §7.5 line 475 setup-command record retained

@@ -87,7 +87,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	COALESCE(root_session_id::text, ''),
 	tree_visibility,
 	delegation_depth,
-	delegation_lease`
+	delegation_lease,
+	env, request_envelope`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -146,7 +147,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		tracing_context, cascade_on_failure,
 		tree_visibility,
 		delegation_depth,
-		delegation_lease
+		delegation_lease,
+		env, request_envelope
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -175,7 +177,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$43::jsonb, $44,
 		$46,
 		$47,
-		$48::jsonb
+		$48::jsonb,
+		$49::jsonb, $50::jsonb
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -227,7 +230,15 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// ancestor ceiling. NULL for a root/standalone session and
 			// any child whose lease declared no slice. Invariant after
 			// creation, so it is absent from updateSQL. F-8.2.2.
-			delegationLeaseArg(sess.DelegationLease))
+			delegationLeaseArg(sess.DelegationLease),
+			// $49 — §14 client-supplied env map; every key passed the
+			// deployer blocklist at admission. NULL when the client
+			// supplied none. F-14.1.12.
+			envArg(sess.Env),
+			// $50 — §14.1 request envelope bundle (pool, timeouts,
+			// credentialPolicy, delegationLease, runtimeOptions). NULL when
+			// the client supplied none of the bundled fields. F-14.1.14.
+			requestEnvelopeArg(sess))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -306,7 +317,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		END,
 		tracing_context = $41::jsonb,
 		cascade_on_failure = $42,
-		tree_visibility = $43
+		tree_visibility = $43,
+		env = $44::jsonb,
+		request_envelope = $45::jsonb
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -380,6 +393,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			string(sess.CascadeOnFailure),
 			// $43 — §8.5 tree_visibility; see Create. F-8.5.2 / F-8.9.2.
 			string(sess.TreeVisibility),
+			// $44 — §14 client-supplied env map; see Create. F-14.1.12.
+			envArg(sess.Env),
+			// $45 — §14.1 request envelope bundle; see Create. F-14.1.14.
+			requestEnvelopeArg(sess),
 		); err != nil {
 			return err
 		}
@@ -719,6 +736,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §8.2 delegation_lease granted lease_slice from migration 0099
 		// (F-8.2.2).
 		delegationLeaseJSON []byte
+		// §14 client-supplied env map and the §14.1 request envelope
+		// bundle from migration 0109 (F-14.1.12 / F-14.1.14).
+		envJSON             []byte
+		requestEnvelopeJSON []byte
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -769,8 +790,25 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// lease_slice so a descendant's slice validates against the
 		// ancestor ceiling; from migration 0099 (F-8.2.2).
 		&delegationLeaseJSON,
+		// §14 / §14.1 — env map + request envelope bundle from
+		// migration 0109 (F-14.1.12 / F-14.1.14).
+		&envJSON, &requestEnvelopeJSON,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	// spec: §14 lines 47-50 — decode the client-supplied env map. A
+	// nil/empty payload leaves Env nil so the read envelope omits it.
+	// F-14.1.12.
+	if len(envJSON) > 0 {
+		if env, err := decodeMetadata(envJSON); err == nil && len(env) > 0 {
+			s.Env = env
+		}
+	}
+	// spec: §14.1 — decode the request envelope bundle back into the
+	// distinct Session fields. A nil/empty payload leaves all of them
+	// unset. F-14.1.14 / F-14.1.15.
+	if len(requestEnvelopeJSON) > 0 {
+		applyStoredEnvelope(&s, requestEnvelopeJSON)
 	}
 	s.DelegationDepth = uint32(delegationDepth)
 	// spec: §8.2 lines 38-48 — decode the granted lease_slice. A
@@ -926,6 +964,68 @@ func metadataArg(md map[string]string) any {
 		return nil
 	}
 	return string(b)
+}
+
+// envArg renders the §14 client-supplied env map as a jsonb argument.
+// A nil or empty map stores SQL NULL so the read path distinguishes
+// "client supplied no env" from "client supplied {}" — the §15.1 GET
+// envelope omits the field in both cases. F-14.1.12.
+func envArg(env map[string]string) any {
+	return metadataArg(env)
+}
+
+// storedEnvelope is the on-disk shape of the §14.1 request-envelope
+// bundle: the outer-envelope fields that do not need their own column or
+// index (pool, timeouts, credentialPolicy, delegationLease,
+// runtimeOptions). Bundling them into one JSONB column keeps the §14.1
+// surface to a single migration column. spec: §14.1 line 311. F-14.1.14.
+type storedEnvelope struct {
+	Pool             string                                 `json:"pool,omitempty"`
+	Timeouts         *sessionstore.SessionTimeouts          `json:"timeouts,omitempty"`
+	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
+	DelegationLease  *sessionstore.DelegationLeaseRequest   `json:"delegationLease,omitempty"`
+	RuntimeOptions   json.RawMessage                        `json:"runtimeOptions,omitempty"`
+}
+
+// requestEnvelopeArg renders the §14.1 request-envelope bundle for a
+// session as a jsonb argument. When the session carries none of the
+// bundled fields the column stays SQL NULL so the read path leaves every
+// bundled field unset. F-14.1.14.
+func requestEnvelopeArg(sess sessionstore.Session) any {
+	env := storedEnvelope{
+		Pool:             sess.Pool,
+		Timeouts:         sess.Timeouts,
+		CredentialPolicy: sess.CredentialPolicyOverride,
+		DelegationLease:  sess.DelegationLeaseRequest,
+		RuntimeOptions:   sess.RuntimeOptions,
+	}
+	if env.Pool == "" && env.Timeouts == nil && env.CredentialPolicy == nil &&
+		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// applyStoredEnvelope decodes the §14.1 request-envelope bundle and
+// distributes it back onto the Session's distinct fields. A malformed
+// payload is ignored (the gateway validates the bundle at admission, so
+// a stored value is by-construction well-formed). F-14.1.14.
+func applyStoredEnvelope(s *sessionstore.Session, raw []byte) {
+	var env storedEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return
+	}
+	s.Pool = env.Pool
+	s.Timeouts = env.Timeouts
+	s.CredentialPolicyOverride = env.CredentialPolicy
+	s.DelegationLeaseRequest = env.DelegationLease
+	if len(env.RuntimeOptions) > 0 {
+		s.RuntimeOptions = env.RuntimeOptions
+	}
 }
 
 // decodeMetadata parses the JSONB payload back into a string→string

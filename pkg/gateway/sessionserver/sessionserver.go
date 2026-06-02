@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
+	"github.com/lennylabs/lenny/pkg/gateway/envblock"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
@@ -362,6 +363,12 @@ type Server struct {
 	// enforces. F-7.3.1 / F-7.3.24.
 	// spec: §7.3 lines 377-393.
 	retryPolicyCaps session.RetryPolicyCaps
+
+	// envBlocklist is the §14 deployer-configured env-var blocklist
+	// applied to a CreateSessionRequest's `env` field. Never nil after
+	// New (defaults to the platform default blocklist alone). spec: §14
+	// line 105. F-14.1.12.
+	envBlocklist *envblock.Matcher
 
 	// incSessionResumeAttempt, when set, increments the §16.1
 	// lenny_session_resume_attempts_total{pool, outcome} counter for the
@@ -1114,6 +1121,13 @@ type Options struct {
 	// spec: §7.3 lines 377-393.
 	RetryPolicyCaps session.RetryPolicyCaps
 
+	// EnvVarBlocklist extends the §14 platform default env-var blocklist
+	// with deployer-supplied entries (exact names or `*` globs). The
+	// platform default is always merged in first so an operator can
+	// extend but not reduce it. A nil slice leaves the platform default
+	// in force. spec: §14 line 105. F-14.1.12.
+	EnvVarBlocklist []string
+
 	// IncSessionResumeAttempt, when set, increments the §16.1
 	// lenny_session_resume_attempts_total{pool, outcome} counter on
 	// every POST /v1/sessions/{id}/resume call (after the precondition
@@ -1226,6 +1240,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		inputWaits:               opts.InputWaits,
 		defaultRetention:         opts.DefaultRetention,
 		retryPolicyCaps:          opts.RetryPolicyCaps,
+		envBlocklist:             envblock.New(opts.EnvVarBlocklist),
 		incSessionResumeAttempt:  opts.IncSessionResumeAttempt,
 		incSessionRetry:          opts.IncSessionRetry,
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
@@ -1400,6 +1415,41 @@ type CreateSessionRequest struct {
 	// policy back. F-7.3.1.
 	// spec: §7.3 lines 377-393.
 	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Env is the §14 client-supplied environment-variable map injected
+	// into the agent session. Every key is validated against the deployer
+	// blocklist at admission; a blocked key rejects with
+	// 400 ENV_VAR_BLOCKLISTED. The §15.1 GET envelope echoes it back.
+	// spec: §14 lines 47-50, 105. F-14.1.12.
+	Env map[string]string `json:"env,omitempty"`
+
+	// Pool is the §14 / §14.1 line 311 client-requested target pool. The
+	// minimal gateway records it for echo and admission pool-scope; the
+	// resolved pool the gateway schedules against is reported separately.
+	// spec: §14 example; §14.1 line 311. F-14.1.14.
+	Pool string `json:"pool,omitempty"`
+
+	// Timeouts is the §14 per-session timeout override block. The gateway
+	// rejects a maxSessionAge that exceeds the runtime's
+	// limits.maxSessionAge. spec: §14 line 154. F-14.1.14.
+	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
+
+	// CredentialPolicy is the §14 per-session credentialPolicy override.
+	// A per-session override can only restrict, never expand, the tenant
+	// policy. spec: §14 credentialPolicy; §4.9 lines 1310, 1336. F-14.1.14.
+	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
+
+	// DelegationLease is the §14 client-requested delegation lease bounds
+	// {maxDepth, maxChildrenTotal, delegationPolicyRef}. spec: §14 lines
+	// 75-79. F-14.1.14.
+	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
+
+	// RuntimeOptions is the §14 per-runtime discriminated-union options
+	// blob (≤64 KB). Validated against the target runtime's
+	// runtimeOptionsSchema when registered; when no schema is registered
+	// a RuntimeOptionsUnschematized warning is emitted. spec: §14 line
+	// 155. F-14.1.14 / F-14.1.15.
+	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
 }
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
@@ -1481,6 +1531,34 @@ type SessionResponse struct {
 	// when the session was created with no override. F-7.3.1.
 	// spec: §7.3 lines 377-393.
 	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Env echoes the §14 client-supplied env map (which passed the
+	// deployer blocklist at admission). Omitted when the client supplied
+	// none. spec: §14 lines 47-50. F-14.1.12.
+	Env map[string]string `json:"env,omitempty"`
+
+	// Pool echoes the §14 / §14.1 client-requested target pool. Omitted
+	// when the request named no pool. spec: §14.1 line 311. F-14.1.14.
+	Pool string `json:"pool,omitempty"`
+
+	// Timeouts echoes the §14 per-session timeout overrides. Omitted when
+	// the client supplied none. spec: §14 line 154. F-14.1.14.
+	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
+
+	// CredentialPolicy echoes the §14 per-session credentialPolicy
+	// override. Omitted when the client supplied none. spec: §14
+	// credentialPolicy. F-14.1.14.
+	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
+
+	// DelegationLease echoes the §14 client-requested delegation lease
+	// bounds. Omitted when the client supplied none. spec: §14 lines
+	// 75-79. F-14.1.14.
+	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
+
+	// RuntimeOptions echoes the §14 per-runtime options blob the session
+	// was created with. Omitted when the client supplied none. spec: §14
+	// line 155. F-14.1.14.
+	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
 
 	// SetupOutput is the §7.5 line 475 captured per-command output the
 	// adapter returned at setup time, plus any §7.5 line 488 synthetic
@@ -1757,6 +1835,18 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// ineligible, which would otherwise let the row live forever). The
 	// terminal transition rolls this forward to terminal_time + default.
 	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
+
+	// spec: §14 lines 47-79, 154-155 — validate the §14 request-envelope
+	// fields (env blocklist, pool, timeouts cap, credentialPolicy
+	// restrict-only, delegationLease bounds, runtimeOptions schema) and
+	// copy the accepted values onto the row. Rejection writes the §15.1
+	// error envelope (400 ENV_VAR_BLOCKLISTED / RUNTIME_OPTIONS_INVALID /
+	// VALIDATION_ERROR) and returns. F-14.1.12 / F-14.1.14 / F-14.1.15.
+	envWarnings, ok := s.validateRequestEnvelope(w, r, req, tenantID, &row)
+	if !ok {
+		return
+	}
+
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than
@@ -1801,8 +1891,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// `workspace_plan_path_collision` warnings on the same per-session
 	// SSE bus that the materializer's `workspace_plan_strip_components_skip`
 	// warnings ride, so Ops/audit consumers see all three async.
-	// F-14.1.17.
-	s.publishParsePlanWarnings(row.TenantID, row.ID, planWarnings)
+	// F-14.1.17. The §14 line 155 RuntimeOptionsUnschematized warning the
+	// envelope validation raised rides the same plane. F-14.1.15.
+	allWarnings := append(append([]workspaceplan.Warning(nil), planWarnings...), envWarnings...)
+	s.publishParsePlanWarnings(row.TenantID, row.ID, allWarnings)
 
 	base := toResponse(row)
 	// spec: §7.1 line 75 — the pool-resolved level is now persisted on
@@ -1814,7 +1906,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	resp := CreateSessionResponse{
 		SessionResponse:       base,
 		UploadToken:           tok,
-		WorkspacePlanWarnings: planWarnings,
+		WorkspacePlanWarnings: allWarnings,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -2376,6 +2468,29 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	if row.RetryPolicy != nil {
 		out.RetryPolicy = cloneRetryPolicy(row.RetryPolicy)
 	}
+	// spec: §14 — echo the request envelope so a client that lost the
+	// create response can recover its own env / pool / timeouts /
+	// credentialPolicy / delegationLease / runtimeOptions. The env map
+	// is the gateway-accepted set (every key passed the blocklist).
+	// F-14.1.12 / F-14.1.14.
+	if len(row.Env) > 0 {
+		out.Env = cloneMetadata(row.Env)
+	}
+	out.Pool = row.Pool
+	if row.Timeouts != nil {
+		t := *row.Timeouts
+		out.Timeouts = &t
+	}
+	if row.CredentialPolicyOverride != nil {
+		c := *row.CredentialPolicyOverride
+		out.CredentialPolicy = &c
+	}
+	if row.DelegationLeaseRequest != nil {
+		out.DelegationLease = cloneDelegationLeaseRequest(row.DelegationLeaseRequest)
+	}
+	if len(row.RuntimeOptions) > 0 {
+		out.RuntimeOptions = append(json.RawMessage(nil), row.RuntimeOptions...)
+	}
 	// spec: §7.5 lines 475, 488 — echo the captured / rejected setup
 	// outputs. F-7.5.4 / F-7.5.11.
 	if len(row.SetupOutput) > 0 {
@@ -2425,6 +2540,26 @@ func cloneRetryPolicy(in *session.RetryPolicy) *session.RetryPolicy {
 	}
 	if len(in.NonRetryableFailures) > 0 {
 		out.NonRetryableFailures = append([]string(nil), in.NonRetryableFailures...)
+	}
+	return &out
+}
+
+// cloneDelegationLeaseRequest returns a defensive copy of the §14
+// delegation-lease request so the wire envelope cannot mutate the
+// persisted row through a shared pointer. A nil input maps to nil so the
+// envelope honours `omitempty`. F-14.1.14.
+func cloneDelegationLeaseRequest(in *sessionstore.DelegationLeaseRequest) *sessionstore.DelegationLeaseRequest {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.MaxDepth != nil {
+		v := *in.MaxDepth
+		out.MaxDepth = &v
+	}
+	if in.MaxChildrenTotal != nil {
+		v := *in.MaxChildrenTotal
+		out.MaxChildrenTotal = &v
 	}
 	return &out
 }
