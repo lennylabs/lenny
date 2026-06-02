@@ -168,6 +168,13 @@ var prodMigrationSchema = []struct {
 	{migration: "0114", table: "connectors", columns: []string{
 		"capability_inference_mode", "capabilities", "tool_capabilities", "capabilities_refreshed_at",
 	}},
+	// 0115 creates the §11.2 line 29 / §12.4 line 218 durable checkpoint
+	// of the §8.2 delegation tree budget counters (tree_size,
+	// token_budget_consumed, tree_memory_bytes) keyed by
+	// (tenant_id, root_session_id), so the Redis dlg:* counters are
+	// reconstructed via the MAX rule on Redis recovery (F-11.2.5 /
+	// F-12.4.8).
+	{migration: "0115", table: "delegation_tree_budget", create: true},
 }
 
 // spec: 12.2, 18.5

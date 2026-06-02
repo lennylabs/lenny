@@ -576,6 +576,14 @@ spec:
             - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
               value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
             {{- end }}
+            # §11.2 line 48 — delegationNodeMemoryFootprintBytes: per-node
+            # footprint the delegation-budget reconstruction multiplies by
+            # the live descendant count to derive liveMemoryBytes on Redis
+            # recovery (default 12288 / 12 KB). F-11.2.5.
+            {{- if hasKey .Values.gateway "delegationNodeMemoryFootprintBytes" }}
+            - name: LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES
+              value: {{ .Values.gateway.delegationNodeMemoryFootprintBytes | quote }}
+            {{- end }}
             # §10.7 line 938 — per-session and per-tenant eval-submission
             # rate limits on POST /v1/sessions/{id}/eval. Default 100 /
             # 10000 per minute; a negative value disables the scope.

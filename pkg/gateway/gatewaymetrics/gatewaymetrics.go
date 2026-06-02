@@ -60,19 +60,19 @@ type Metrics struct {
 	// window, and envProduction is 1 when LENNY_ENV=production. The
 	// alerts gate on `lenny_env_production == 1` so they stay inert
 	// outside production. F-16.4.9; F-16.4.10.
-	auditSIEMConfigured prometheus.Gauge
-	auditRetentionDays  prometheus.Gauge
-	envProduction       prometheus.Gauge
-	extractionThreshold *prometheus.GaugeVec
-	storageQuotaUsed               *prometheus.GaugeVec
-	storageQuotaLimit              *prometheus.GaugeVec
-	circuitBreakerOpen             *prometheus.GaugeVec
-	cbRejections                   *prometheus.CounterVec
-	cbRejectionsSuppressed         *prometheus.CounterVec
-	cbCacheStale                   prometheus.Gauge
-	cbCacheInitialized             prometheus.Gauge
-	elicitationDropped             *prometheus.CounterVec
-	elicitationTamperDetected      *prometheus.CounterVec
+	auditSIEMConfigured       prometheus.Gauge
+	auditRetentionDays        prometheus.Gauge
+	envProduction             prometheus.Gauge
+	extractionThreshold       *prometheus.GaugeVec
+	storageQuotaUsed          *prometheus.GaugeVec
+	storageQuotaLimit         *prometheus.GaugeVec
+	circuitBreakerOpen        *prometheus.GaugeVec
+	cbRejections              *prometheus.CounterVec
+	cbRejectionsSuppressed    *prometheus.CounterVec
+	cbCacheStale              prometheus.Gauge
+	cbCacheInitialized        prometheus.Gauge
+	elicitationDropped        *prometheus.CounterVec
+	elicitationTamperDetected *prometheus.CounterVec
 	// elicitationIntegrityWeakened is the §16.5 line 460 standing-alert
 	// gauge: the count of active tenants whose §9.2 effective
 	// elicitation content-integrity mode is weaker than enforce. A
@@ -375,6 +375,13 @@ type Metrics struct {
 	// pre-delegation cycle detector — typically a §8.10 recovery write
 	// that re-parented a node. spec: §8.9 line 1003; F-8.9.10.
 	delegationTreeCycleDetected *prometheus.CounterVec
+	// delegationBudgetReconstruction counts §11.2 line 48 delegation tree
+	// budget reconstruction events on Redis recovery. Label `outcome` is
+	// one of `success` (counters restored via the MAX rule) or
+	// `irrecoverable` (checkpoint too stale and live state unenumerable,
+	// so the tree root was moved to awaiting_client_action). spec: §11.2
+	// line 48; §12.4 line 218; F-11.2.5.
+	delegationBudgetReconstruction *prometheus.CounterVec
 	// delegationParallelChildrenHWM observes the §8.3 line 379 maximum
 	// simultaneous in-flight children per delegation tree, sampled once
 	// when the tree root reaches a terminal state. Labels `pool` and
@@ -1654,6 +1661,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §11.2 line 48 — `lenny_delegation_budget_reconstruction_total`
+	// counts delegation tree budget reconstruction events on Redis
+	// recovery, labelled by outcome (`success` | `irrecoverable`) so
+	// operators monitor reconstruction volume and detect trees that could
+	// not be reconstructed. F-11.2.5.
+	delegationBudgetReconstruction, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_budget_reconstruction_total",
+		Help: "Delegation budget reconstruction events by outcome (success | irrecoverable).",
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 / §8.3 line 379 — `lenny_delegation_parallel_children_high_watermark`
 	// records the maximum simultaneous in-flight children observed for
 	// each delegation tree at tree completion, labelled by `pool` and
@@ -2034,6 +2053,7 @@ func New() (*Metrics, error) {
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
+		delegationBudgetReconstruction,
 		delegationParallelChildrenHWM,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		dualStoreUnavailable,
@@ -2228,6 +2248,7 @@ func New() (*Metrics, error) {
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
 		delegationTreeCycleDetected:          delegationTreeCycleDetected,
+		delegationBudgetReconstruction:       delegationBudgetReconstruction,
 		delegationParallelChildrenHWM:        delegationParallelChildrenHWM,
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
@@ -2278,6 +2299,19 @@ func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 		return
 	}
 	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
+}
+
+// IncDelegationBudgetReconstruction records one §11.2 line 48 delegation
+// tree budget reconstruction event. `outcome` is `success` (counters
+// restored via the MAX rule) or `irrecoverable` (the tree root was moved
+// to awaiting_client_action because the checkpoint was too stale and the
+// live state could not be enumerated). spec: §11.2 line 48; §12.4 line
+// 218; F-11.2.5.
+func (m *Metrics) IncDelegationBudgetReconstruction(outcome string) {
+	if m == nil {
+		return
+	}
+	m.delegationBudgetReconstruction.WithLabelValues(outcome).Inc()
 }
 
 // IncExportFileScan records one §8.7 PreExportMaterialization per-file

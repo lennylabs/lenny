@@ -1605,6 +1605,13 @@ gateway:
   # crash-recovery exposure. Values below 10 are clamped up by the binary.
   # Default 30. F-11.2.16.
   quotaSyncIntervalSeconds: 30
+  # delegationNodeMemoryFootprintBytes — §11.2 line 48. Per-node in-memory
+  # footprint estimate the §11.2 delegation-budget crash-recovery
+  # reconstruction multiplies by the live descendant count to derive
+  # liveMemoryBytes when restoring the tree's tree_memory counter via the
+  # MAX rule. Default 12288 (12 KB), matching the §8.2 per-node estimate.
+  # F-11.2.5.
+  delegationNodeMemoryFootprintBytes: 12288
   # evalRateLimit — §10.7 line 938. Per-session and per-tenant
   # eval-submission rate limits on POST /v1/sessions/{id}/eval, enforced
   # by the gateway via the §11.1 per-minute counter and returning 429

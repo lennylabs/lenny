@@ -134,6 +134,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/childtoken"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/exportwire"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationbudget"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
@@ -463,6 +465,9 @@ func main() {
 	quotaSyncIntervalSeconds := flag.Int("quota-sync-interval-seconds",
 		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
 		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
+	delegationNodeMemoryFootprintBytes := flag.Int64("delegation-node-memory-footprint-bytes",
+		int64(envInt("LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES", int(delegationbudget.DefaultNodeMemoryFootprintBytes))),
+		"§11.2 line 48 delegationNodeMemoryFootprintBytes: per-node in-memory footprint estimate the delegation-budget crash-recovery reconstruction multiplies by the live descendant count to derive liveMemoryBytes. Default 12288 (12 KB). Override via LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES.")
 	// §4.8 line 1019: deployer-supplied external interceptors. Each
 	// --external-interceptor value registers one §4 RequestInterceptor
 	// service on the policy chain. Repeatable. Form:
@@ -1263,6 +1268,13 @@ func main() {
 		// storage-quota counters to Redis on a Redis-recovery edge. Set only
 		// when both Redis and the Postgres artifact catalog are wired.
 		storageRecoveryReconciler *storagequota.RecoveryReconciler
+
+		// delegationBudgetReconciler drives the §11.2 periodic Postgres
+		// checkpoint of the §8.2 delegation tree budget counters and their
+		// §11.2 line 48 two-source reconstruction on a Redis-recovery edge.
+		// Set only when the delegation Redis counters, the Postgres pool,
+		// and the SessionStore are all wired. F-11.2.5 / F-12.4.8.
+		delegationBudgetReconciler *delegationbudget.Reconciler
 	)
 	if *redisURL != "" || *redisSentinelAddrs != "" || *redisClusterAddrs != "" {
 		if *redisURL != "" && *redisSentinelAddrs != "" {
@@ -2030,11 +2042,17 @@ func main() {
 	// nil interface genuinely nil so the typed-nil-in-interface trap is
 	// avoided. F-8.9.6.
 	var hwmReader sessionserver.DelegationHighWatermarkReader
+	// treeBudgetConcrete keeps the concrete *treebudget.Reserver so the
+	// §11.2 delegation-budget checkpoint/reconstruction reconciler can
+	// call Snapshot/Restore (not part of the narrow Reserve/Return
+	// interfaces). Nil when Redis is not configured. F-11.2.5.
+	var treeBudgetConcrete *treebudget.Reserver
 	if redisClient != nil {
 		// §12.4 Delegation concern: tree-budget keys {root_session_id}:dlg:*.
 		r := treebudget.New(concernRedis.For(storerouter.RedisConcernDelegation), 0)
 		treeBudgetReserver = r
 		hwmReader = r
+		treeBudgetConcrete = r
 	}
 	// One §9.2 interaction store shared by the sessionserver (which
 	// serves the respond/dismiss endpoints) and the platform MCP tools
@@ -4683,6 +4701,37 @@ func main() {
 	// Redis and the Postgres artifact catalog are wired. F-12.4.11.
 	if storageRecoveryReconciler != nil {
 		go storageRecoveryReconciler.Run(watchdogCtx)
+	}
+
+	// ----- §11.2 delegation tree budget checkpoint + reconstruction -----
+	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
+	// active tree's Redis dlg:* counters to the delegation_tree_budget
+	// table (§11.2 line 44); on a Redis-recovery edge it reconstructs each
+	// checkpointed tree's counters to max(postgres_checkpoint, live) per
+	// axis before new delegations resume (§11.2 line 48 / §12.4 line 218),
+	// moving a tree whose checkpoint is stale and whose live state cannot
+	// be enumerated to awaiting_client_action. Active only when the
+	// delegation Redis counters, the Postgres pool, and the SessionStore
+	// are all wired. F-11.2.5 / F-12.4.8.
+	if treeBudgetConcrete != nil && pgPool != nil && sessions != nil {
+		delegationBudgetReconciler = &delegationbudget.Reconciler{
+			Probe: func(ctx context.Context) bool {
+				return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
+			},
+			Counters:        delegationbudget.CounterAdapter{Reserver: treeBudgetConcrete},
+			Trees:           delegationbudget.SessionTreeLister{Sessions: sessions, Tenants: (tenantsLister{tenants}).ListTenants},
+			Store:           delegationbudgetpg.New(pgPool),
+			Live:            delegationbudget.SessionEnumerator{Sessions: sessions},
+			Marker:          delegationbudget.SessionUnrecoverableMarker{Sessions: sessions},
+			Metrics:         gwMetrics,
+			Interval:        time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
+			NodeMemoryBytes: *delegationNodeMemoryFootprintBytes,
+			Now:             clockinject.Now,
+			Logf:            log.Printf,
+		}
+		log.Printf("lenny-gateway: §11.2 delegation tree budget checkpoint cadence %s (node footprint %d bytes)",
+			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second, *delegationNodeMemoryFootprintBytes)
+		go delegationBudgetReconciler.Run(watchdogCtx)
 	}
 
 	// ----- §7.1 artifact-retention GC -----
