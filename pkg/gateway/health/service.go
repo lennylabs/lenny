@@ -319,3 +319,32 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 	// single-component pull does not bypass the 5-second window.
 	return a.probe(ctx, c), true
 }
+
+// HardDependencyStatus probes the named checkers and returns the worst
+// Status among those that are registered, skipping any name that has no
+// registered Checker. When none of the names is registered it returns
+// StatusHealthy, so a deployment that wired no hard backend has nothing
+// to gate on.
+//
+// The §10.4 readiness probe uses this to reflect the gateway replica's
+// hard backend dependencies (the externalized session-truth store) in
+// its verdict without rolling in the §11.7 SIEM-delivery checker, which
+// is deliberately non-gating so a shared-SIEM outage cannot pull every
+// replica out of the Service. The probe-result cache is shared with
+// Report so the readiness probe does not stampede the backend.
+//
+// spec: §10.4 line 386 ("Readiness probes remove unhealthy replicas
+// from traffic"). F-10.4.6.
+func (a *Aggregator) HardDependencyStatus(ctx context.Context, names ...string) Status {
+	worst := StatusHealthy
+	for _, name := range names {
+		comp, ok := a.Component(ctx, name)
+		if !ok {
+			continue
+		}
+		if comp.Status.rank() > worst.rank() {
+			worst = comp.Status
+		}
+	}
+	return worst
+}

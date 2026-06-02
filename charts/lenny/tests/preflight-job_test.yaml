@@ -37,6 +37,29 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--sa-token-audience="
 
+  # spec: §10.3 line 304 / F-10.3.12 — the preflight Job carries the
+  # certmanager.enabled value so the cert-manager version check knows
+  # whether cert-manager >= v1.12.0 is a prerequisite.
+  - it: passes --certmanager-enabled=true by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--certmanager-enabled=true"
+
+  - it: passes --certmanager-enabled=false for a mesh-managed install
+    set:
+      certmanager.enabled: false
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--certmanager-enabled=false"
+
   - it: requires both gVisor and Kata when microvm is also enabled
     set:
       runtimeClasses.profiles.microvm.enabled: true

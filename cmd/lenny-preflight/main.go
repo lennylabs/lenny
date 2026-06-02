@@ -42,6 +42,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -116,6 +117,30 @@ func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool
 			return "", errors.New("preflight: GetBucketEncryption returned a rule with no algorithm")
 		}
 		return algo, nil
+	})
+}
+
+// certManagerVersionProber reads the cert-manager version from the
+// `certificates.cert-manager.io` CRD's `app.kubernetes.io/version`
+// label. Reading a cluster-scoped CRD stays within the preflight Job's
+// existing RBAC (it already reads the Lenny CRDs for the schema-version
+// check), so the §10.3 line 304 check needs no cross-namespace
+// Deployment read in the operator-owned cert-manager namespace. A
+// missing CRD reports cert-manager as not installed; a present CRD with
+// no version label reports it installed but version-unknown (advisory).
+//
+// spec: §10.3 line 304. F-10.3.12.
+func certManagerVersionProber(reader client.Reader) preflight.CertManagerProber {
+	return preflight.CertManagerProbeFunc(func(ctx context.Context) (string, bool, error) {
+		var crd apiextensionsv1.CustomResourceDefinition
+		err := reader.Get(ctx, client.ObjectKey{Name: "certificates.cert-manager.io"}, &crd)
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		return strings.TrimSpace(crd.Labels["app.kubernetes.io/version"]), true, nil
 	})
 }
 
@@ -325,6 +350,8 @@ func main() {
 		"value of the global.devMode chart flag; exempts the §12.9 volume-encryption check")
 	attestVolumeEncryption := flag.Bool("attest-volume-encryption", false,
 		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9 line 1050)")
+	certManagerEnabled := flag.Bool("certmanager-enabled", true,
+		"value of the certmanager.enabled chart flag; when true the §10.3 line 304 cert-manager version check requires cert-manager >= v1.12.0")
 	flag.Parse()
 
 	// MinIO credentials for the §12.5 line 297 SSE preflight are read
@@ -422,6 +449,8 @@ func main() {
 			GlobalDevMode:         *playgroundGlobalDevMode,
 			AcknowledgeAPIKeyMode: *playgroundAcknowledgeAPIKeyMode,
 		},
+		CertManagerEnabled: *certManagerEnabled,
+		CertManagerProber:  certManagerVersionProber(cl),
 	})
 
 	for _, r := range report {

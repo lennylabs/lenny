@@ -495,6 +495,11 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
+      # §10.4 line 386 / F-10.4.6: /readyz runs a cached backend probe
+      # with a 2s budget, so the probe timeout leaves headroom over it.
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
 
   - it: grants SandboxClaim create+delete and Sandbox status RBAC
     documentSelector:

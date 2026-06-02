@@ -1332,6 +1332,20 @@ mtls:
   # the default 8h on a 24h certificate matches that ratio.
   leafRenewBeforeHours: 8
 
+# certmanager is the §10.3 line 304 gate for the cert-manager prerequisite.
+# cert-manager is a cluster-wide, CRD-owning operator that jetstack
+# recommends installing separately (not as an application subchart, to
+# avoid CRD-ownership conflicts during chart upgrades), so the chart does
+# not bundle it. Instead the lenny-preflight Job verifies the installed
+# cert-manager version. spec: §10.3 line 304. F-10.3.12.
+certmanager:
+  # enabled is the spec's `condition: certmanager.enabled`. When true the
+  # preflight requires cert-manager >= v1.12.0 to be installed (the chart
+  # renders cert-manager Certificate/Issuer resources via mtls.enabled).
+  # Set false alongside mtls.enabled=false when a service mesh supplies
+  # mTLS, so the cert-manager prerequisite is not enforced.
+  enabled: true
+
 # adapter configures the §4.7 runtime adapter sidecar that runs in
 # every agent pod.
 adapter:
@@ -2641,6 +2655,34 @@ preflight:
   # in-cluster volume for the chart to probe), the install fails closed
   # unless this is set true. global.devMode exempts the check entirely.
   attestVolumeEncryption: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# migrate configures the §10.5 line 408 schema-migration Job. The Job is
+# a pre-install/pre-upgrade hook (weight -5, after preflight) that runs
+# `lenny-migrate up` against postgres.dsn before the gateway rolls out.
+# It renders only when postgres.dsn is set; a stock in-memory install has
+# no schema to migrate. spec: §10.5 line 408. F-10.5.2.
+migrate:
+  # enabled gates the pre-deploy migration Job. Set false when migrations
+  # are applied out-of-band (e.g. a separate GitOps/CI step), in which
+  # case the operator is responsible for running `lenny-migrate up`
+  # before the gateway Deployment rolls.
+  enabled: true
+  image:
+    repository: ghcr.io/lennylabs/lenny-migrate
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # backoffLimit caps Job retries. golang-migrate holds an advisory lock
+  # and is re-runnable, so a transient Postgres outage is retried rather
+  # than failing the install on the first attempt.
+  backoffLimit: 5
   resources:
     requests:
       cpu: 50m

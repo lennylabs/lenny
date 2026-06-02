@@ -133,6 +133,17 @@ type Config struct {
 	// §17.3 BYO topology has no in-cluster volumes to probe, so v1 leaves
 	// it nil and the check routes through the attestation path. F-12.9.12.
 	VolumeEncryptionProber VolumeEncryptionProber
+	// CertManagerEnabled is the certmanager.enabled chart value: when
+	// true the chart relies on the cert-manager-backed mTLS PKI, so the
+	// §10.3 line 304 version check requires cert-manager >= v1.12.0. When
+	// false the operator manages mTLS through a service mesh and the
+	// check is a no-op. F-10.3.12.
+	CertManagerEnabled bool
+	// CertManagerProber discovers the installed cert-manager version. The
+	// lenny-preflight Job wires one that reads the cert-manager CRD
+	// version label; a nil prober while CertManagerEnabled routes through
+	// the can't-determine advisory. F-10.3.12.
+	CertManagerProber CertManagerProber
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -393,6 +404,18 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Expected: cfg.CRDSchemaVersion,
 			Names:    cfg.CRDNames,
 		}.Decide(ctx, reader),
+	})
+
+	// spec: §10.3 line 304 — when the cert-manager-backed mTLS PKI is
+	// enabled, cert-manager >= v1.12.0 must be installed; an absent or
+	// stale cert-manager aborts the install rather than failing silently
+	// at the first Certificate-resource creation. F-10.3.12.
+	report = append(report, CheckResult{
+		Name: "cert-manager-version",
+		Decision: CertManagerVersionCheck{
+			Required: cfg.CertManagerEnabled,
+			Prober:   cfg.CertManagerProber,
+		}.Decide(ctx),
 	})
 
 	// spec: §15.5 line 2438 / §17.2 line 58 — the lenny-crd-conversion

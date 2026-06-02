@@ -65,7 +65,9 @@ rules:
     resources: ["services"]
     verbs: ["list"]
   # §10 line 443 crd-schema-version check reads each installed Lenny CRD's
-  # lenny.dev/schema-version annotation. F-15.5.12.
+  # lenny.dev/schema-version annotation. F-15.5.12. The §10.3 line 304
+  # cert-manager-version check reuses this grant to read the cluster-scoped
+  # certificates.cert-manager.io CRD's version label. F-10.3.12.
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list"]
@@ -292,6 +294,11 @@ spec:
             # the chart cannot probe in-cluster.
             - --dev-mode={{ .Values.global.devMode }}
             - --attest-volume-encryption={{ .Values.preflight.attestVolumeEncryption }}
+            # §10.3 line 304 / F-10.3.12: when the cert-manager-backed mTLS
+            # PKI is enabled, the preflight requires cert-manager >= v1.12.0.
+            # Set certmanager.enabled=false alongside mtls.enabled=false for
+            # a mesh-managed install so the prerequisite is not enforced.
+            - --certmanager-enabled={{ .Values.certmanager.enabled }}
           {{- if $hasMinio }}
           env:
             - name: MINIO_ACCESS_KEY_ENV

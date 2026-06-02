@@ -1062,13 +1062,18 @@ spec:
           # NotReady — removing it from the Service endpoints before the
           # eviction-checkpoint drain begins — without also tripping the
           # liveness probe (/healthz) and being killed mid-drain. /readyz
-          # also reports NotReady on NTP drift.
+          # also reports NotReady on NTP drift and on §10.4 line 386 hard
+          # backend (Postgres session-truth) unreachability, so a replica
+          # whose store connection is broken leaves traffic. The handler
+          # runs a cached (5s) backend probe with a 2s budget, so
+          # timeoutSeconds is 3 to leave headroom over the probe. F-10.4.6.
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
           # §4.4 line 234, 263 / §10.1 preStop staged drain. Kubernetes
           # invokes the hook before SIGTERM; the gateway selects the
           # tiered checkpoint cap per session, triggers a synchronous

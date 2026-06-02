@@ -139,6 +139,34 @@ func TestAggregatorTakesWorstStatus(t *testing.T) {
 	}
 }
 
+// spec: §10.4 line 386 — the readiness probe gates only on the named
+// hard backend dependencies, never on a non-gating checker (e.g. SIEM).
+// F-10.4.6.
+func TestHardDependencyStatus_spec_10_4_386(t *testing.T) {
+	agg := health.NewAggregator()
+	agg.Register(healthy("postgres"))
+	agg.Register(failing("redis", health.StatusUnhealthy))
+	agg.Register(failing("siem", health.StatusUnhealthy))
+
+	// Gating on postgres only: a SIEM/redis outage does not flip the
+	// verdict because neither name is queried.
+	if got := agg.HardDependencyStatus(context.Background(), "postgres"); got != health.StatusHealthy {
+		t.Errorf("postgres-only verdict = %q, want healthy", got)
+	}
+	// Worst-of across the queried set.
+	if got := agg.HardDependencyStatus(context.Background(), "postgres", "redis"); got != health.StatusUnhealthy {
+		t.Errorf("postgres+redis verdict = %q, want unhealthy", got)
+	}
+	// An unregistered name is skipped, not treated as unhealthy.
+	if got := agg.HardDependencyStatus(context.Background(), "postgres", "missing"); got != health.StatusHealthy {
+		t.Errorf("verdict with a missing checker = %q, want healthy", got)
+	}
+	// No names registered at all: nothing to gate on.
+	if got := agg.HardDependencyStatus(context.Background()); got != health.StatusHealthy {
+		t.Errorf("empty verdict = %q, want healthy", got)
+	}
+}
+
 func TestAggregatorComponentLookup(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(failing("redis", health.StatusDegraded))

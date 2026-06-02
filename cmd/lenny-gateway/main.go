@@ -3633,8 +3633,17 @@ func main() {
 	healthAgg.Register(staticHealthy("executor"))
 	// When a backing service is wired, the §25.3 health API reports
 	// its real reachability instead of a static verdict.
+	//
+	// readinessDeps lists the hard backend dependencies whose
+	// unreachability the §10.4 /readyz probe gates on. Only Postgres
+	// (the externalized session-truth store, §10.4 mechanism 1) is
+	// included: Redis loss has the §12.4 advisory-lock lease fallback,
+	// and the SIEM-delivery checker is §11.7-non-gating, so neither
+	// should pull a replica out of the Service on its own. F-10.4.6.
+	var readinessDeps []string
 	if pgPool != nil {
 		healthAgg.Register(backends.Postgres(pgPool, "postgres"))
+		readinessDeps = append(readinessDeps, "postgres")
 	}
 	if redisClient != nil {
 		healthAgg.Register(backends.Redis(redisClient, "redis"))
@@ -3946,19 +3955,26 @@ func main() {
 	// readiness probe also fails on NTP drift so a clock-untrustworthy
 	// replica is removed from the endpoints (the §13.3.5 behaviour that
 	// previously rode on /healthz serving double duty). F-10.1.6.
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+	//
+	// spec: §10.4 line 386 — readiness additionally reflects the hard
+	// backend dependency (Postgres session truth) so a replica whose
+	// store connection is broken is removed from traffic rather than
+	// serving until the process crashes. The dual-store-both-down case
+	// is exempted so the replica stays ready to answer the §10.1 503
+	// PLATFORM_DEGRADED. F-10.4.6.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		if prestopHook.Draining() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("draining\n"))
-			return
+		dualStoreDown := dsMonitor != nil && dsMonitor.Unavailable()
+		probe := func(ctx context.Context) health.Status {
+			return healthAgg.HardDependencyStatus(ctx, readinessDeps...)
 		}
-		if driftMonitor.Degraded() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("clock_drift_exceeded\n"))
-			return
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		res := readinessVerdict(ctx, prestopHook.Draining(), driftMonitor.Degraded(), dualStoreDown, probe)
+		w.WriteHeader(res.Code)
+		if res.Body != "" {
+			_, _ = w.Write([]byte(res.Body))
 		}
-		w.WriteHeader(http.StatusOK)
 	})
 
 	// ----- Middleware stack -----
