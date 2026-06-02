@@ -1242,6 +1242,16 @@ global:
   # development (§4.9). It must never be enabled on a real multi-tenant
   # cluster.
   devMode: false
+  # noEnvironmentPolicy is the §10.6 / §17.6 line 365 platform-wide
+  # default access policy applied to a session that names no environment.
+  # It MUST be "deny-all" (default; an authenticated user with no
+  # environment membership is denied all runtime access) or "allow-all"
+  # (every authenticated tenant user reaches all tenant-owned runtimes —
+  # do not use in production multi-tenant deployments). The gateway
+  # refuses to start when it is unset outside --dev-mode
+  # (LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy). This is the
+  # spec-canonical key; it was previously under `gateway.`. F-17.6.7.
+  noEnvironmentPolicy: deny-all
   # spiffeTrustDomain is the SPIFFE trust domain anchoring agent-pod
   # and in-cluster-interceptor identities (§10.3 line 316). It is the
   # host component of every spiffe:// URI Lenny issues. This is a
@@ -1399,10 +1409,12 @@ isolation:
 # HPA-compatible posture.
 gateway:
   replicas: 2
-  # noEnvironmentPolicy is the §10.6 platform default applied when a
-  # session names no environment. It MUST be "deny-all" or "allow-all";
-  # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
-  noEnvironmentPolicy: deny-all
+  # noEnvironmentPolicy is the §10.6 / §17.6 line 365 platform default
+  # applied when a session names no environment. It now lives under
+  # `global.noEnvironmentPolicy` (the spec-canonical key) so it reads as
+  # a platform-wide setting; see the global block below. It MUST be
+  # "deny-all" or "allow-all"; the gateway refuses to start when it is
+  # unset (LENNY_CONFIG_MISSING). F-17.6.7.
   # startupTlsProbe drives the §10.3 line 359 gateway startup TLS probe:
   # before a replica is marked ready it verifies a TLS handshake to Redis
   # and PgBouncer succeeds and that a plaintext connection is refused,
@@ -2797,22 +2809,34 @@ bootstrap:
     # operatorTokenSecret is set and global.devMode is true.
     devTenant: platform
     devRoles: platform-admin
-  # tenants, runtimes, users, and credentialPools are the seed
-  # resources. Each list matches the POST /v1/admin/bootstrap
-  # BootstrapRequest schema. All are optional and idempotent (upsert by
-  # name; credentialPools by tenantId+name).
+  # tenants, runtimes, users, pools, credentialPools,
+  # delegationPolicies, and environments are the seed resources. Each
+  # list matches the POST /v1/admin/bootstrap BootstrapRequest schema
+  # (§17.6 lines 403-411). All are optional and idempotent (upsert by
+  # name; credentialPools / delegationPolicies / environments by
+  # tenantId+name). The seed is applied in dependency order — tenants,
+  # runtimes, pools, credentialPools, delegationPolicies, environments —
+  # so a single run can stand up a functional deployment. §17.6 line 429
+  # marks at least one pool as required for any session-creating
+  # deployment; §17.6 line 438 marks an environment (or
+  # global.noEnvironmentPolicy: allow-all) as required once
+  # noEnvironmentPolicy is deny-all.
   #
   # Example seed (uncomment and adapt for a Day-1 install):
   #
   # tenants:
   #   - id: acme
   #     displayName: Acme Corp
-  #     workspaceTier: standard
+  #     workspaceTier: T3
   # runtimes:
   #   - name: echo
   #     type: agent
   #     image: ghcr.io/lennylabs/echo:latest
   #     executionMode: direct
+  # pools:
+  #   - name: echo-pool
+  #     runtimeRef: echo
+  #     warmCount: 2
   # users:
   #   - subject: alice@acme.com
   #     tenantId: acme
@@ -2837,7 +2861,20 @@ bootstrap:
   #     credentials:
   #       - id: primary
   #         secretRef: anthropic-api-key
+  # delegationPolicies:
+  #   - tenantId: acme
+  #     name: default-deny
+  #     allowSelfRecursion: false
+  # environments:
+  #   - tenantId: acme
+  #     name: default
+  #     members:
+  #       - identity: { type: user, value: alice@acme.com }
+  #         role: member
   tenants: []
   runtimes: []
   users: []
+  pools: []
   credentialPools: []
+  delegationPolicies: []
+  environments: []

@@ -47,11 +47,21 @@ tests:
         users:
           - subject: alice@acme.com
             tenantId: acme
+        pools:
+          - name: echo-pool
+            runtimeRef: echo
+            warmCount: 2
         credentialPools:
           - tenantId: acme
             name: anthropic-shared
             provider: anthropic_direct
             cacheScope: per-user
+        delegationPolicies:
+          - tenantId: acme
+            name: default-deny
+        environments:
+          - tenantId: acme
+            name: default
     asserts:
       - matchRegex:
           path: data["bootstrap-values.yaml"]
@@ -68,6 +78,17 @@ tests:
       - matchRegex:
           path: data["bootstrap-values.yaml"]
           pattern: "cacheScope: per-user"
+      # §17.6 lines 408-411 / F-17.6.2: pools, delegationPolicies, and
+      # environments are seedable through the bootstrap ConfigMap.
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: echo-pool"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: default-deny"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: default"
 
   - it: annotates the ConfigMap as a post-install,post-upgrade hook before the Job
     template: bootstrap-configmap.yaml

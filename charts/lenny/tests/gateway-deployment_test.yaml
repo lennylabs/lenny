@@ -2,6 +2,30 @@ suite: lenny-gateway deployment
 templates:
   - gateway-deployment.yaml
 tests:
+  # spec: §17.6 line 365 / F-17.6.7 — the noEnvironmentPolicy platform
+  # default is the spec-canonical global.* key; an operator override
+  # under global flows through to the gateway flag (it was previously
+  # read from gateway.* and a global override was silently ignored).
+  - it: drives --no-environment-policy from global.noEnvironmentPolicy
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global:
+        noEnvironmentPolicy: allow-all
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --no-environment-policy=allow-all
+  - it: defaults --no-environment-policy to deny-all
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --no-environment-policy=deny-all
+
   # spec: §4.3 line 195 / §10.3 — when mtls.enabled the gateway mounts
   # the lenny-gateway-tls Secret and passes the --token-service-tls-*
   # flags so the gRPC dial to the Token Service presents a client cert

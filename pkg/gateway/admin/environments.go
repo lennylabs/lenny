@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -56,6 +57,34 @@ func (r *Router) requireEnvironmentTierOverride(w http.ResponseWriter, req *http
 		return false
 	}
 	return true
+}
+
+// environmentTierOverrideError is the non-HTTP core of
+// requireEnvironmentTierOverride. It returns a non-nil error when the
+// environment workspaceTier override is malformed or would loosen the
+// tenant's tier (§10.6 / §12.9 CLASSIFICATION_CONTROL_VIOLATION). The
+// §17.6 bootstrap environment seed reuses it so a seeded environment is
+// held to the same tier-tightening invariant as the live admin POST.
+func (r *Router) environmentTierOverrideError(ctx context.Context, tenant, envTier string) error {
+	if envTier == "" {
+		return nil
+	}
+	if !tenantstore.ValidWorkspaceTier(envTier) {
+		return errors.New("workspaceTier must be T3 or T4")
+	}
+	if r.tenants == nil {
+		return nil
+	}
+	row, err := r.tenants.Get(ctx, tenant)
+	if err != nil {
+		return nil
+	}
+	envRank, _ := tenantstore.WorkspaceTierRank(envTier)
+	tenantRank, _ := tenantstore.WorkspaceTierRank(row.WorkspaceTier)
+	if envRank < tenantRank {
+		return errors.New("environment workspaceTier override may only tighten the tenant tier, never loosen it (CLASSIFICATION_CONTROL_VIOLATION)")
+	}
+	return nil
 }
 
 // WithEnvironments wires the §10.6 / §15.1 environment admin endpoints

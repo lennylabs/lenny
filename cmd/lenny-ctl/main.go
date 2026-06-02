@@ -1084,10 +1084,13 @@ func bootstrapQuery(dryRun, forceUpdate bool) string {
 // CLI decodes only the fields it needs to log skips and compute the exit
 // code, keeping the client thin (no dependency on the gateway package).
 type bootstrapResult struct {
-	Tenants         bootstrapSection `json:"tenants"`
-	Runtimes        bootstrapSection `json:"runtimes"`
-	Users           bootstrapSection `json:"users"`
-	CredentialPools bootstrapSection `json:"credentialPools"`
+	Tenants            bootstrapSection `json:"tenants"`
+	Runtimes           bootstrapSection `json:"runtimes"`
+	Users              bootstrapSection `json:"users"`
+	Pools              bootstrapSection `json:"pools"`
+	CredentialPools    bootstrapSection `json:"credentialPools"`
+	DelegationPolicies bootstrapSection `json:"delegationPolicies"`
+	Environments       bootstrapSection `json:"environments"`
 }
 
 type bootstrapSection struct {
@@ -1112,10 +1115,13 @@ type bootstrapSkip struct {
 
 func (b bootstrapResult) sections() map[string]bootstrapSection {
 	return map[string]bootstrapSection{
-		"tenant":         b.Tenants,
-		"runtime":        b.Runtimes,
-		"user":           b.Users,
-		"credentialPool": b.CredentialPools,
+		"tenant":           b.Tenants,
+		"runtime":          b.Runtimes,
+		"user":             b.Users,
+		"pool":             b.Pools,
+		"credentialPool":   b.CredentialPools,
+		"delegationPolicy": b.DelegationPolicies,
+		"environment":      b.Environments,
 	}
 }
 

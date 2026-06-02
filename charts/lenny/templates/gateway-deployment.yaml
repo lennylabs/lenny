@@ -312,7 +312,9 @@ spec:
             {{- if gt (int .Values.gateway.leaseExtension.autoModeMaxPerMinute) 0 }}
             - --lease-extension-auto-max-per-min={{ .Values.gateway.leaseExtension.autoModeMaxPerMinute }}
             {{- end }}
-            - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
+            {{- /* §17.6 line 365 / F-17.6.7: noEnvironmentPolicy is the
+                spec-canonical global.* platform default. */}}
+            - --no-environment-policy={{ .Values.global.noEnvironmentPolicy }}
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.

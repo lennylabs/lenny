@@ -237,6 +237,56 @@ func taskPolicyFromWire(in *TaskPolicyPayload) *poolstore.TaskPolicy {
 	return out
 }
 
+// poolFromPayload builds a poolstore.Pool from the admin wire payload,
+// applying the §13.2 egress default, the §5.3 line 677 dev-mode
+// isolation default, and the §5.2 executionMode default. It is the
+// shared create-side build used by the POST /v1/admin/pools handler and
+// the §17.6 bootstrap pool seed so both paths resolve identical
+// defaults. CreatedAt/UpdatedAt are stamped from the Router clock.
+func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
+	pl := poolstore.Pool{
+		Name:                             body.Name,
+		RuntimeRef:                       body.RuntimeRef,
+		IsolationProfile:                 isolation.Profile(body.IsolationProfile),
+		ExecutionMode:                    runtimestore.ExecutionMode(body.ExecutionMode),
+		ConcurrencyStyle:                 poolstore.ConcurrencyStyle(body.ConcurrencyStyle),
+		MaxConcurrent:                    body.MaxConcurrent,
+		AcknowledgeProcessLevelIsolation: body.AcknowledgeProcessLevelIsolation,
+		CleanupTimeoutSeconds:            body.CleanupTimeoutSeconds,
+		AllowCrossTenantReuse:            body.AllowCrossTenantReuse,
+		ResourceClass:                    body.ResourceClass,
+		WarmCount:                        body.WarmCount,
+		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
+		AllowStandardIsolation:           body.AllowStandardIsolation,
+		EgressProfile:                    egress.Profile(body.EgressProfile),
+		TaskPolicy:                       taskPolicyFromWire(body.TaskPolicy),
+		CreatedAt:                        r.clock(),
+	}
+	pl.UpdatedAt = pl.CreatedAt
+	if pl.EgressProfile == "" {
+		// spec: §13.2 — an omitted egress profile resolves to the
+		// narrowest egress (`restricted`), so the stored record reflects
+		// the resolved profile rather than an ambiguous empty value.
+		pl.EgressProfile = egress.Default()
+	}
+	if pl.IsolationProfile == "" {
+		// spec: §5.3 line 677 — in dev mode the default isolation profile
+		// falls back to `standard` (runc) so a developer can launch pods on
+		// a cluster without gVisor. A standard-isolation pool requires the
+		// explicit allowStandardIsolation opt-in; dev mode supplies it on
+		// the operator's behalf for the default fallback (the warning is
+		// logged once at gateway startup).
+		pl.IsolationProfile = isolation.DefaultForMode(r.devMode)
+		if r.devMode && pl.IsolationProfile == isolation.ProfileStandard {
+			pl.AllowStandardIsolation = true
+		}
+	}
+	if pl.ExecutionMode == "" {
+		pl.ExecutionMode = runtimestore.ExecutionModeSession
+	}
+	return pl
+}
+
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
 func (r *Router) WithPools(s poolstore.Store) *Router {
 	r.pools = s
@@ -322,46 +372,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
 	}
 
-	pl := poolstore.Pool{
-		Name:                             body.Name,
-		RuntimeRef:                       body.RuntimeRef,
-		IsolationProfile:                 isolation.Profile(body.IsolationProfile),
-		ExecutionMode:                    runtimestore.ExecutionMode(body.ExecutionMode),
-		ConcurrencyStyle:                 poolstore.ConcurrencyStyle(body.ConcurrencyStyle),
-		MaxConcurrent:                    body.MaxConcurrent,
-		AcknowledgeProcessLevelIsolation: body.AcknowledgeProcessLevelIsolation,
-		CleanupTimeoutSeconds:            body.CleanupTimeoutSeconds,
-		AllowCrossTenantReuse:            body.AllowCrossTenantReuse,
-		ResourceClass:                    body.ResourceClass,
-		WarmCount:                        body.WarmCount,
-		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
-		AllowStandardIsolation:           body.AllowStandardIsolation,
-		EgressProfile:                    egress.Profile(body.EgressProfile),
-		TaskPolicy:                       taskPolicyFromWire(body.TaskPolicy),
-		CreatedAt:                        r.clock(),
-	}
-	pl.UpdatedAt = pl.CreatedAt
-	if pl.EgressProfile == "" {
-		// spec: §13.2 — an omitted egress profile resolves to the
-		// narrowest egress (`restricted`), so the stored record reflects
-		// the resolved profile rather than an ambiguous empty value.
-		pl.EgressProfile = egress.Default()
-	}
-	if pl.IsolationProfile == "" {
-		// spec: §5.3 line 677 — in dev mode the default isolation profile
-		// falls back to `standard` (runc) so a developer can launch pods on
-		// a cluster without gVisor. A standard-isolation pool requires the
-		// explicit allowStandardIsolation opt-in; dev mode supplies it on
-		// the operator's behalf for the default fallback (the warning is
-		// logged once at gateway startup).
-		pl.IsolationProfile = isolation.DefaultForMode(r.devMode)
-		if r.devMode && pl.IsolationProfile == isolation.ProfileStandard {
-			pl.AllowStandardIsolation = true
-		}
-	}
-	if pl.ExecutionMode == "" {
-		pl.ExecutionMode = runtimestore.ExecutionModeSession
-	}
+	pl := r.poolFromPayload(body)
 	// spec: §6.1 lines 77-78 — reject an SDK-warm runtime (preConnect: true)
 	// bound to a concurrent-mode pool before storage; SDK-warm assumes a
 	// single pre-connected agent process, which both concurrency styles

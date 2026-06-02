@@ -62,10 +62,13 @@ const (
 // rejected. Operations are best-effort — the handler returns an
 // aggregate result with per-section counts and per-entry outcomes.
 type BootstrapRequest struct {
-	Tenants         []TenantPayload         `json:"tenants,omitempty"`
-	Runtimes        []RuntimePayload        `json:"runtimes,omitempty"`
-	Users           []UserPayload           `json:"users,omitempty"`
-	CredentialPools []CredentialPoolPayload `json:"credentialPools,omitempty"`
+	Tenants            []TenantPayload           `json:"tenants,omitempty"`
+	Runtimes           []RuntimePayload          `json:"runtimes,omitempty"`
+	Users              []UserPayload             `json:"users,omitempty"`
+	Pools              []PoolPayload             `json:"pools,omitempty"`
+	CredentialPools    []CredentialPoolPayload   `json:"credentialPools,omitempty"`
+	DelegationPolicies []DelegationPolicyPayload `json:"delegationPolicies,omitempty"`
+	Environments       []EnvironmentPayload      `json:"environments,omitempty"`
 }
 
 // bootstrapOptions carries the per-request §17.6 upsert modifiers parsed
@@ -84,10 +87,13 @@ type bootstrapOptions struct {
 // handler does NOT stop on the first error — §17.6 line 420 partial
 // failure). Results is the ordered per-entry action summary.
 type BootstrapResponse struct {
-	Tenants         BootstrapSection `json:"tenants,omitempty"`
-	Runtimes        BootstrapSection `json:"runtimes,omitempty"`
-	Users           BootstrapSection `json:"users,omitempty"`
-	CredentialPools BootstrapSection `json:"credentialPools,omitempty"`
+	Tenants            BootstrapSection `json:"tenants,omitempty"`
+	Runtimes           BootstrapSection `json:"runtimes,omitempty"`
+	Users              BootstrapSection `json:"users,omitempty"`
+	Pools              BootstrapSection `json:"pools,omitempty"`
+	CredentialPools    BootstrapSection `json:"credentialPools,omitempty"`
+	DelegationPolicies BootstrapSection `json:"delegationPolicies,omitempty"`
+	Environments       BootstrapSection `json:"environments,omitempty"`
 }
 
 // BootstrapSection is the per-resource result.
@@ -178,6 +184,11 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		forceUpdate: req.URL.Query().Get("forceUpdate") == "true",
 	}
 
+	// Seed in dependency order so a single bootstrap run can stand up a
+	// functional deployment: tenants first, then runtimes, then pools
+	// (which reference a runtimeRef), credential pools, delegation
+	// policies, and environments (which reference a defaultDelegationPolicy
+	// and a tenant). This mirrors the §17.6 lines 403-411 values block.
 	out := BootstrapResponse{}
 	if r.tenants != nil {
 		out.Tenants = r.upsertTenants(req, body.Tenants, opts)
@@ -188,8 +199,17 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	if r.users != nil {
 		out.Users = r.upsertUsers(req, body.Users, opts)
 	}
+	if r.pools != nil {
+		out.Pools = r.upsertPools(req, body.Pools, opts)
+	}
 	if r.credentialPools != nil {
 		out.CredentialPools = r.upsertCredentialPools(req, body.CredentialPools, opts)
+	}
+	if r.delegationPolicies != nil {
+		out.DelegationPolicies = r.upsertDelegationPolicies(req, body.DelegationPolicies, opts)
+	}
+	if r.environments != nil {
+		out.Environments = r.upsertEnvironments(req, body.Environments, opts)
 	}
 
 	// §15.1 line 863 — the `platform.bootstrap_applied` audit event (T3)
@@ -203,10 +223,13 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		"seedSha256": hex.EncodeToString(seedHash[:]),
 		"resources":  bootstrapResourceSummary(out),
 		// Retain the per-section counts for at-a-glance forensic reads.
-		"tenants":         bootstrapSectionAuditPayload(out.Tenants),
-		"runtimes":        bootstrapSectionAuditPayload(out.Runtimes),
-		"users":           bootstrapSectionAuditPayload(out.Users),
-		"credentialPools": bootstrapSectionAuditPayload(out.CredentialPools),
+		"tenants":            bootstrapSectionAuditPayload(out.Tenants),
+		"runtimes":           bootstrapSectionAuditPayload(out.Runtimes),
+		"users":              bootstrapSectionAuditPayload(out.Users),
+		"pools":              bootstrapSectionAuditPayload(out.Pools),
+		"credentialPools":    bootstrapSectionAuditPayload(out.CredentialPools),
+		"delegationPolicies": bootstrapSectionAuditPayload(out.DelegationPolicies),
+		"environments":       bootstrapSectionAuditPayload(out.Environments),
 	})
 
 	if opts.dryRun {
@@ -243,7 +266,10 @@ func bootstrapResourceSummary(out BootstrapResponse) []map[string]any {
 	appendSection("tenant", out.Tenants)
 	appendSection("runtime", out.Runtimes)
 	appendSection("user", out.Users)
+	appendSection("pool", out.Pools)
 	appendSection("credentialPool", out.CredentialPools)
+	appendSection("delegationPolicy", out.DelegationPolicies)
+	appendSection("environment", out.Environments)
 	return rows
 }
 
@@ -277,7 +303,10 @@ func anyFailures(out BootstrapResponse) bool {
 	return len(out.Tenants.Errors) > 0 ||
 		len(out.Runtimes.Errors) > 0 ||
 		len(out.Users.Errors) > 0 ||
-		len(out.CredentialPools.Errors) > 0
+		len(out.Pools.Errors) > 0 ||
+		len(out.CredentialPools.Errors) > 0 ||
+		len(out.DelegationPolicies.Errors) > 0 ||
+		len(out.Environments.Errors) > 0
 }
 
 // resolveExisting decides the §17.6 line 444 action when a resource

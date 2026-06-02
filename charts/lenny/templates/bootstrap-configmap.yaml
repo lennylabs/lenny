@@ -1,8 +1,9 @@
 {{- /*
 lenny-bootstrap-values ConfigMap (§17.6 Day-1 seed mechanism). Renders
-the .Values.bootstrap tenants, runtimes, users, and credentialPools
-lists into a single bootstrap-values.yaml data key. The lenny-bootstrap
-Job mounts this ConfigMap at /etc/lenny/ and runs
+the .Values.bootstrap tenants, runtimes, users, pools, credentialPools,
+delegationPolicies, and environments lists into a single
+bootstrap-values.yaml data key. The lenny-bootstrap Job mounts this
+ConfigMap at /etc/lenny/ and runs
 `lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml`.
 
 The ConfigMap is a post-install/post-upgrade hook at weight 5, lower
@@ -25,5 +26,5 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 data:
   bootstrap-values.yaml: |
-    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users "credentialPools" .Values.bootstrap.credentialPools | toYaml | nindent 4 }}
+    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users "pools" .Values.bootstrap.pools "credentialPools" .Values.bootstrap.credentialPools "delegationPolicies" .Values.bootstrap.delegationPolicies "environments" .Values.bootstrap.environments | toYaml | nindent 4 }}
 {{- end }}
