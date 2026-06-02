@@ -40890,6 +40890,8 @@ This audit checks each requirement against the chart (`/Users/joan/projects/lenn
 
 **Remediation sketch:** Extend `RuntimeSpec` (CRD), `runtimestore.Runtime`, `RuntimePayload`, and `UpdateRuntimeRequest` to model `setupCommandPolicy` (mode/shell/allowlist/maxCommands), `credentialCapabilities` (hotRotation/proxyDialect), `limits` (maxSessionAge/maxUploadSize/maxRequestInputWaitSeconds), `runtimeOptionsSchema` ($ref or inline JSON Schema), `defaultPoolConfig` (warmCount/resourceClass/egressProfile), `allowedResourceClasses`, `supportedProviders`, and add `PreConnect` to `RuntimeCapabilities`. Wire the gateway's pool-creation and credential-leasing paths to consume these. The CRD-to-store mirror in the controller needs the same fields end to end.
 
+**Resolution:** Closed by 212e8c93 (with prior work). Most of the data model already landed before this batch: `runtimestore.Runtime`, `RuntimePayload`, and `UpdateRuntimeRequest` carry every field (limits, setupCommandPolicy, credentialCapabilities, defaultPoolConfig, runtimeOptionsSchema, allowedResourceClasses, supportedProviders), `RuntimeCapabilities` has `PreConnect`, and the gateway pool-resolver / session-age watchdog / credential-routing consumers already read them — so the "admin API silently truncates" / "consumers cannot read" evidence was stale. The residual gap was the CRD layer: 212e8c93 adds `limits`, `setupPolicy`, `defaultPoolConfig`, and `agentInterface` to `RuntimeSpec` (`setupCommandPolicy`, `credentialCapabilities`, `runtimeOptionsSchemaRef`, `capabilities.preConnect` were already present from F-7.5.10 / F-26.9.2) and wires the controller's `applyCRDFields` mirror end to end, so a `kubectl apply` of the §26.2 YAML no longer drops fields. The category-conditional rejection of `coding-agent + standard` is tracked separately under F-26.2.2.
+
 ---
 
 ### - [ ] F-26.2.2 — 2-02 — Coding-agent + `isolationProfile: standard` is not rejected at pool creation [High] — OPEN
@@ -41110,6 +41112,8 @@ session-age cap, upload cap, and request-input-wait cap therefore default
 to whatever the gateway uses for the unset case rather than the values
 the spec ascribes to `claude-code`.
 
+**Resolution:** Closed by 212e8c93. `RuntimeSpec` gains a `limits` block (CRD type `RuntimeLimits`, explicit-unit fields matching `runtimestore.Limits`); the runtime controller's `limitsFromCRD` mirrors it. `reference-runtimes.yaml` renders it, and the four coding-agent catalog entries carry `maxSessionAgeSeconds: 14400`, `maxUploadSizeBytes: 524288000` (500 MB), `maxRequestInputWaitSeconds: 1800` per §26.2/§26.3. The §11.3 / §6.2 watchdog and upload-cap consumers already read `runtimestore.Limits`. Tier-2 helm-unittest + tier-1 `TestLimitsFromCRD_spec_5_1` pin it.
+
 ### - [x] F-26.3.3 — 3  `credentialCapabilities` not registered [Medium] — CLOSED
 
 Spec §26.3 lines 163–165 require:
@@ -41152,6 +41156,8 @@ adjacent gap because the spec uses `setupCommandPolicy.mode: allowlist`
 + `shell: false` to bound what tenants can execute during
 materialization.
 
+**Resolution:** Closed by 212e8c93. `setupCommandPolicy` was already on the CRD (F-7.5.10); 212e8c93 adds the missing `setupPolicy` CRD type and the runtime controller's `setupPolicyFromCRD` mirror. `reference-runtimes.yaml` now renders both blocks, and the four coding-agent catalog entries carry the §26.3 `setupCommandPolicy` (allowlist, shell false, maxCommands 20) and `setupPolicy` (600s, fail). Tier-2 helm-unittest pins the rendered fields; tier-1 `TestSetupPolicyFromCRD_spec_5_1` pins the mirror.
+
 ### - [x] F-26.3.5 — 5  `agentInterface`, `runtimeOptionsSchema`, `defaultPoolConfig`, `labels` not registered [Medium] — CLOSED
 
 Spec §26.3 lines 178–199 require an `agentInterface` block (with
@@ -41170,6 +41176,8 @@ reference, the warm-pool defaults, or the `lenny.dev/reference-runtime`
 maintainer/upstream labels (only the generic
 `lenny.dev/reference-runtime: "true"` label from
 `charts/lenny/templates/reference-runtimes.yaml:28` is set).
+
+**Resolution:** Closed by 212e8c93. `RuntimeSpec` gains `agentInterface` and `defaultPoolConfig` CRD types (runtimeOptionsSchema was already on the CRD as `runtimeOptionsSchemaRef`, F-26.9.2); the runtime controller's `agentInterfaceFromCRD` / `defaultPoolConfigFromCRD` mirror them into the registry. `reference-runtimes.yaml` renders both blocks plus a `metadata.labels` range, and the claude-code catalog entry carries the §26.3 agentInterface (skills code/debug/refactor/review, text/plain + application/json modes), `defaultPoolConfig` (warmCount 2, medium, restricted), and the maintainer/upstream labels. Tier-2 helm-unittest pins the rendered fields; tier-1 `TestAgentInterfaceFromCRD_spec_5_1` / `TestDefaultPoolConfigFromCRD_spec_5_1` pin the mirror.
 
 ### - [ ] F-26.3.6 — 6  Embedded-stack image is placeholder-digest-pinned and will fail on first pull [Medium] — OPEN
 
