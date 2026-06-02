@@ -432,11 +432,13 @@
       appendMsg("error", "connection", "the chat stream is not open");
       return;
     }
+    // §27.5: send_message is the registered §15.2 tool; its schema names
+    // the target as `to` and the body as `message` (§8.5 line 537).
     var frame = JSON.stringify({
       jsonrpc: "2.0",
       id: "msg-" + Date.now(),
       method: "tools/call",
-      params: { name: "lenny/session_message", arguments: { sessionId: state.sessionId, message: text } },
+      params: { name: "lenny/send_message", arguments: { to: state.sessionId, message: text } },
     });
     state.ws.send(frame);
     recordFrame("=>", frame);
@@ -444,7 +446,9 @@
 
   function sendControl(kind) {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-    var tool = kind === "interrupt" ? "lenny/session_interrupt" : "lenny/session_cancel";
+    // §15.2 lines 1295/1303: the registered control tools are
+    // interrupt_session and cancel_session.
+    var tool = kind === "interrupt" ? "lenny/interrupt_session" : "lenny/cancel_session";
     state.ws.send(JSON.stringify({
       jsonrpc: "2.0",
       id: kind + "-" + Date.now(),
@@ -462,7 +466,7 @@
           jsonrpc: "2.0",
           method: "tools/call",
           params: {
-            name: "lenny/session_cancel",
+            name: "lenny/cancel_session",
             arguments: { sessionId: state.sessionId, reason: "playground_client_closed" },
           },
         }));

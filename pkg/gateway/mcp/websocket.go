@@ -38,6 +38,70 @@ const wsWriteTimeout = 30 * time.Second
 // handler (1 MiB).
 const wsMaxMessageBytes = 1 << 20
 
+// wsSubprotocol is the §27.3.1 line 142 MCP WebSocket sub-protocol the
+// gateway negotiates. Browsers that cannot set an Authorization header on
+// the upgrade send `Sec-WebSocket-Protocol: lenny.mcp.v1, lenny.bearer.<token>`;
+// the gateway selects and echoes `lenny.mcp.v1` so the browser's
+// WebSocket negotiation completes. The credential entry is stripped from
+// the request before this handler runs (see WebSocketBearerCarrier).
+const wsSubprotocol = "lenny.mcp.v1"
+
+// wsCloseBearerRevoked is the §27 Failure-modes WebSocket close code
+// (line 167) the gateway sends when an origin=playground bearer is
+// revoked mid-stream. The client (pkg/gateway/playground/ui/app.js)
+// special-cases 4401 to re-authenticate. spec: §27.3.1; §27.5.4.
+const wsCloseBearerRevoked = 4401
+
+// playgroundOriginClaim is the §27.3 `origin` claim value the revocation
+// watch keys on; only a playground-origin bearer is watched for the
+// §27.6 revocation primitive.
+const playgroundOriginClaim = "playground"
+
+// defaultWSRevPollInterval bounds how often the §27.5.4 revocation watch
+// re-consults the playground revocation store for a long-lived WebSocket
+// that is otherwise idle. It is a backstop on top of the authoritative
+// per-upgrade check the auth middleware already ran; a tighter value
+// shortens the §27.6 logout-to-disconnect window at the cost of more
+// store reads.
+const defaultWSRevPollInterval = 2 * time.Second
+
+// WSPrincipal carries the per-connection identity the §27.5.4 revocation
+// watch needs: the tenant and JWT id to key the revocation lookup, plus
+// the §27.3 origin claim so only playground bearers are watched.
+type WSPrincipal struct {
+	Tenant string
+	JTI    string
+	Origin string
+}
+
+// RevocationChecker reports whether a playground-origin bearer has been
+// revoked. The signature matches the auth middleware's
+// PlaygroundRevocationChecker so the gateway passes the same value to
+// both. spec: §27.6 line 204; §27.3.1 lines 95-97.
+type RevocationChecker interface {
+	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
+}
+
+// wsAuthConfig is the §27.5.4 WebSocket revocation-watch wiring.
+type wsAuthConfig struct {
+	principal    func(*http.Request) (WSPrincipal, bool)
+	revocations  RevocationChecker
+	pollInterval time.Duration
+}
+
+// SetWebSocketAuth installs the §27.5.4 revocation watch. extract derives
+// the connection principal from the upgraded request (the gateway reads
+// it from the auth-middleware context); rev is the §27.6 playground
+// revocation checker. When both are non-nil and the connection carries an
+// origin=playground bearer, the WebSocket transport polls rev every
+// pollInterval and closes the connection with code 4401 once the bearer
+// is revoked. A non-positive pollInterval selects the package default.
+// Passing a nil extract or rev leaves the watch off. spec: §27.3.1 line
+// 167; §27.5.4.
+func (s *Server) SetWebSocketAuth(extract func(*http.Request) (WSPrincipal, bool), rev RevocationChecker, pollInterval time.Duration) {
+	s.wsAuth = wsAuthConfig{principal: extract, revocations: rev, pollInterval: pollInterval}
+}
+
 // WebSocketHandler returns the http.Handler that serves the §4.1
 // streaming MCP transport at /mcp/v1/ws. The handler upgrades the
 // connection, then reads JSON-RPC frames in a loop, dispatching each
@@ -59,9 +123,19 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// callers reach this handler. CompressionMode is disabled because
 	// JSON-RPC frames are small and the compression layer adds CPU on
 	// the hot dispatch path.
+	//
+	// §27.3.1 line 142 — when the browser offered the `lenny.mcp.v1`
+	// sub-protocol (the carrier path that ferries the bearer through
+	// `Sec-WebSocket-Protocol` because a browser cannot set an
+	// Authorization header on the upgrade), the gateway MUST echo it
+	// back. Listing it in Subprotocols makes the upgrader select and
+	// echo `lenny.mcp.v1` when the client offered it; a client that used
+	// the Authorization-header path offers no sub-protocol and the
+	// upgrader echoes none.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 		CompressionMode:    websocket.CompressionDisabled,
+		Subprotocols:       []string{wsSubprotocol},
 	})
 	if err != nil {
 		return
@@ -69,8 +143,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(wsMaxMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
+	// §27.5.4 — watch the playground revocation store for the lifetime of
+	// the connection. The watch closes the socket with code 4401 the
+	// moment an origin=playground bearer is revoked (logout, idle, admin,
+	// user.invalidated) so an in-flight WebSocket is disconnected rather
+	// than honored to its token expiry. Cancelling watchCtx on return
+	// stops the poller when the client closes first.
+	watchCtx, cancelWatch := context.WithCancel(r.Context())
+	defer cancelWatch()
+	s.startRevocationWatch(watchCtx, conn, r)
+
 	for {
-		readCtx, cancelRead := context.WithTimeout(r.Context(), wsReadFrameTimeout)
+		readCtx, cancelRead := context.WithTimeout(watchCtx, wsReadFrameTimeout)
 		msgType, data, err := conn.Read(readCtx)
 		cancelRead()
 		if err != nil {
@@ -88,8 +172,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// path uses so REST/MCP semantics stay in lockstep per
 		// §15.2.1. dispatchRPC returns the response envelope ready for
 		// JSON encoding.
-		respBytes, fatal := s.dispatchFrameBytes(r.Context(), data)
-		writeCtx, cancelWrite := context.WithTimeout(r.Context(), wsWriteTimeout)
+		respBytes, fatal := s.dispatchFrameBytes(watchCtx, data)
+		writeCtx, cancelWrite := context.WithTimeout(watchCtx, wsWriteTimeout)
 		writeErr := conn.Write(writeCtx, websocket.MessageText, respBytes)
 		cancelWrite()
 		if writeErr != nil {
@@ -104,6 +188,49 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// startRevocationWatch spawns the §27.5.4 revocation poller for an
+// origin=playground connection. It is a no-op when the watch is not
+// wired, the request carries no principal, the bearer is not a
+// playground-origin bearer, or the principal has no jti to key on — a
+// non-playground MCP WebSocket client therefore serves frames without a
+// watch. On a confirmed revocation the poller closes the connection with
+// code 4401, which unblocks the read loop. A transient store error is
+// treated as fail-open for the watch (the authoritative per-upgrade
+// check already ran in the auth middleware); the next tick retries.
+// spec: §27.3.1 line 167; §27.5.4; §27.6 line 204.
+func (s *Server) startRevocationWatch(ctx context.Context, conn *websocket.Conn, r *http.Request) {
+	if s.wsAuth.principal == nil || s.wsAuth.revocations == nil {
+		return
+	}
+	p, ok := s.wsAuth.principal(r)
+	if !ok || p.Origin != playgroundOriginClaim || p.JTI == "" {
+		return
+	}
+	interval := s.wsAuth.pollInterval
+	if interval <= 0 {
+		interval = defaultWSRevPollInterval
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				revoked, err := s.wsAuth.revocations.IsBearerRevoked(ctx, p.Tenant, p.JTI)
+				if err != nil {
+					continue
+				}
+				if revoked {
+					conn.Close(websocket.StatusCode(wsCloseBearerRevoked), "bearer_revoked")
+					return
+				}
+			}
+		}
+	}()
 }
 
 // dispatchFrameBytes parses raw JSON-RPC bytes, dispatches through the

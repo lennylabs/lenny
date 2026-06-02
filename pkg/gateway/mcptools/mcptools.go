@@ -133,6 +133,26 @@ func errSessionTerminalState(id string, state session.State) error {
 		fmt.Sprintf("session %s is terminal (%s)", id, state), nil)
 }
 
+// errPrecondition maps a §15.1 state-transition precondition failure to
+// the MCP tool-error envelope, preserving the spec INVALID_STATE_TRANSITION
+// code and surfacing the current/allowed states so the MCP surface returns
+// the same (code, details) pair the REST endpoint returns. spec: §15.2.1
+// REST/MCP error parity; §15.1 precondition table.
+func errPrecondition(err error) error {
+	var pe *session.PreconditionError
+	if errors.As(err, &pe) {
+		allowed := make([]string, 0, len(pe.AllowedStates))
+		for _, st := range pe.AllowedStates {
+			allowed = append(allowed, string(st))
+		}
+		return mcp.NewToolError(pe.ErrorCode(), pe.Error(), map[string]any{
+			"currentState":  string(pe.CurrentState),
+			"allowedStates": allowed,
+		})
+	}
+	return mcp.NewToolError("INVALID_STATE_TRANSITION", err.Error(), nil)
+}
+
 // DelegationAuditor records §11.7 audit events for delegation
 // operations such as the §10.6 isolation-monotonicity violation.
 type DelegationAuditor interface {
@@ -684,6 +704,111 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 		}
 		return mcp.ToolResult{Content: content}, nil
+	})
+
+	// spec: §15.2 lines 1295, 1303 — interrupt_session and cancel_session
+	// are client-facing MCP tools on the public surface. §27.5 binds the
+	// playground to "a client of the public MCP surface", so the chat
+	// pane's Interrupt and Cancel buttons (and the §27.6 best-effort
+	// cancel hint on browser close) MUST resolve to registered tools.
+	// Both reuse the §15.1 precondition table so the MCP transition is
+	// identical to the REST POST /v1/sessions/{id}/interrupt and
+	// DELETE /v1/sessions/{id} edges. F-27.5.3.
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/interrupt_session",
+		Description: "Interrupt the running agent in a session (§15.2). REST equivalent: POST /v1/sessions/{id}/interrupt.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"Target session id."}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		tenant := callerTenantID(ctx, tenant)
+		var in struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, errInvalidArgs(err)
+		}
+		if in.SessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", map[string]any{"field": "sessionId"})
+		}
+		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if err != nil {
+			return mcp.ToolResult{}, errSessionLookup(err)
+		}
+		// spec: §15.1 — /interrupt is valid only from running /
+		// input_required; any other state is INVALID_STATE_TRANSITION.
+		if perr := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointInterrupt,
+			CurrentState: row.State,
+		}); perr != nil {
+			return mcp.ToolResult{}, errPrecondition(perr)
+		}
+		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
+			// spec: §15.1 — interrupt transitions running → suspended.
+			row.State = session.StateSuspended
+			return nil
+		})
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, updated.ID, updated.State)), nil
+	})
+
+	srv.RegisterTool(mcp.Tool{
+		Name: "lenny/cancel_session",
+		// spec: §27.6 line 202 — the optional `reason` carries the
+		// playground best-effort cancel hint (`playground_client_closed`).
+		// When the reason marks a best-effort hint the gateway accepts the
+		// frame even if the session is already gone or terminal (the
+		// dropped-frame fallback is the §27.6 idle-timeout path), instead
+		// of returning a hard error. F-27.5.3 / F-27.6.5.
+		Description: "Force-cancel a session; marks cancelled (§15.2). REST equivalent: DELETE /v1/sessions/{id}.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"Target session id."},"reason":{"type":"string","description":"§27.6 best-effort hint reason, e.g. playground_client_closed."}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		tenant := callerTenantID(ctx, tenant)
+		var in struct {
+			SessionID string `json:"sessionId"`
+			Reason    string `json:"reason"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, errInvalidArgs(err)
+		}
+		if in.SessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", map[string]any{"field": "sessionId"})
+		}
+		// spec: §27.6 line 202 — playground_client_closed is a best-effort
+		// hint, not an authoritative teardown. A dropped/late frame must
+		// not error; it falls through to the idle-timeout path.
+		bestEffort := in.Reason == "playground_client_closed"
+		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if err != nil {
+			if bestEffort {
+				return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"reason":%q}`, in.SessionID, in.Reason)), nil
+			}
+			return mcp.ToolResult{}, errSessionLookup(err)
+		}
+		// spec: §15.1 — DELETE/cancel is valid from any non-terminal
+		// state. For a best-effort hint a terminal session is a no-op
+		// (already torn down), so the hint succeeds idempotently.
+		if perr := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointDelete,
+			CurrentState: row.State,
+		}); perr != nil {
+			if bestEffort {
+				return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"state":%q,"reason":%q}`, in.SessionID, row.State, in.Reason)), nil
+			}
+			return mcp.ToolResult{}, errPrecondition(perr)
+		}
+		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
+			// spec: §15.1 — cancel marks the session cancelled.
+			row.State = session.StateCancelled
+			return nil
+		})
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		if in.Reason != "" {
+			return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q,"reason":%q}`, updated.ID, updated.State, in.Reason)), nil
+		}
+		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, updated.ID, updated.State)), nil
 	})
 
 	srv.RegisterTool(mcp.Tool{

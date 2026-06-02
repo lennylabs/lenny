@@ -42507,7 +42507,7 @@ Note this is a §27.6/§27.8 enforcement gap whose root cause is in §27.3's "mo
 
 **Resolution (commit 62839bb8):** Closed together with F-27.6.1/F-27.6.2/F-27.6.8. The consumer side now reads the mode-agnostic claim: `auth.Principal` carries an `Origin` field populated from `claims.Origin` on the Bearer path, and the session-creation paths (`createSession` and `handleCreateAndStart`) call the new `sessionserver.Server.applyPlaygroundCaps`, which on an `origin=playground` principal stamps the §27.6 line 200 duration cap and §27.6 line 201 idle override onto `row.Timeouts` (min-wins over any §14 client timeout) and records `row.Origin = "playground"`. The §11.3 watchdog enforces the duration cap because `sessionage.Resolver` now clamps the resolved maxSessionAge by `row.Timeouts.MaxSessionAgeSeconds`. Caps wire from the §27.2-normalized `playground.Config` via the `PlaygroundCapResolver` seam (`cmd/lenny-gateway` calls `SetPlaygroundCaps`). The consequence-3 §27.8 slice is now satisfiable: the origin label is persisted on the session row and surfaced in the session response. v1 models no per-runtime idle limit, so the idle side resolves to the playground cap unchanged.
 
-### - [ ] F-27.3.4 — MCP WebSocket upgrade is not implemented; `Sec-WebSocket-Protocol: lenny.bearer.<token>` carrier has no server-side handler [High] — OPEN
+### - [x] F-27.3.4 — MCP WebSocket upgrade is not implemented; `Sec-WebSocket-Protocol: lenny.bearer.<token>` carrier has no server-side handler [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.5.1, F-27.5.2 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
 
@@ -42533,6 +42533,8 @@ The single use of `nhooyr.io/websocket` in the tree is in `pkg/loadctl/hub.go` (
 The playground UI cannot complete a session against this gateway as built. This is also a §27.5 gap (the chat-stream protocol bullet at line 189 names the same `/mcp/v1/ws` endpoint).
 
 **Severity rationale (High):** capability is entirely absent. The "playground is a working client of the public MCP surface" claim is unsatisfiable, and the sub-protocol credential-redaction obligation is unmet by construction.
+
+**Resolution:** A prior batch added the `/mcp/v1/ws` frame loop (`pkg/gateway/mcp/websocket.go`); this batch completed the §27.3.1 line 142 obligations. `WebSocketBearerCarrier` (`pkg/gateway/mcp/wscarrier.go`), wired as the gateway's outermost middleware in `cmd/lenny-gateway/main.go`, promotes `Sec-WebSocket-Protocol: lenny.bearer.<token>` to `Authorization: Bearer` and strips the credential entry from the sub-protocol header **before** the correlation/access-log and auth middleware run (so the bearer is never logged or audited), then the standard auth chain validates it. The upgrader now lists `lenny.mcp.v1` in `Subprotocols` so the gateway echoes it back. WS close code 4401 on revocation is closed by F-27.5.4. The middleware-chain `Hijack` passthroughs (rateLimitRW / statusRecorder / recordingResponseWriter / captureRW) make the upgrade actually succeed end-to-end through the production chain. Closes F-27.5.1, F-27.5.2 (confirmed duplicates). Commit: see batch.
 
 ### - [x] F-27.3.5 — Playground audit events do not reach the durable §11.7 audit sink [Medium] — CLOSED
 
@@ -42813,7 +42815,7 @@ R7. WebSocket close code `4401` MUST surface to the client on bearer revocation 
 
 ### Findings
 
-### - [ ] F-27.5.1 — (High, MUST, correctness) — MCP WebSocket endpoint `/mcp/v1/ws` is not implemented [Medium] — OPEN
+### - [x] F-27.5.1 — (High, MUST, correctness) — MCP WebSocket endpoint `/mcp/v1/ws` is not implemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.3.4, F-27.5.2 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
 
@@ -42825,7 +42827,9 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:372-399` (client dials the missing route).
 - `/Users/joan/projects/lenny/pkg/gateway/playground/assets.go:100` (advertises `wsPath: /mcp/v1/ws`).
 
-### - [ ] F-27.5.2 — (High, MUST, correctness) — `Sec-WebSocket-Protocol` bearer carrier and `lenny.mcp.v1` echo are unimplemented [Medium] — OPEN
+**Resolution:** Closed by [[F-27.3.4]]. The `/mcp/v1/ws` handler is mounted (`mcpSrv.WebSocketHandler()`), and this batch made the upgrade work end-to-end through the gateway's production middleware chain by adding `Hijack` passthroughs to every writer-wrapping middleware on the path (nhooyr.io/websocket does a direct `http.Hijacker` assertion). The chain is exercised by `TestWebSocketUpgradeSurvivesMiddlewareChain`.
+
+### - [x] F-27.5.2 — (High, MUST, correctness) — `Sec-WebSocket-Protocol` bearer carrier and `lenny.mcp.v1` echo are unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.3.4, F-27.5.1 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
 
@@ -42833,7 +42837,9 @@ Locations:
 
 Locations: same as F1; additional negative search across `pkg/gateway/**` shows no reference to `Sec-WebSocket-Protocol` or `lenny.bearer.` outside the playground client JS.
 
-### - [ ] F-27.5.3 — (High, MUST, correctness) — Playground client invokes tool names that are not registered [Medium] — OPEN
+**Resolution:** Closed by [[F-27.3.4]]. `WebSocketBearerCarrier` strips the `lenny.bearer.*` sub-protocol entry and promotes it to `Authorization: Bearer` ahead of any logging/audit (credential treatment), and the upgrader lists `lenny.mcp.v1` in `Subprotocols` so it is echoed back. Tests: `TestWebSocketBearerCarrierPromotesAndRedacts` (and siblings), `TestWebSocketEchoesSubprotocol`.
+
+### - [x] F-27.5.3 — (High, MUST, correctness) — Playground client invokes tool names that are not registered [Medium] — CLOSED
 
 The SPA emits `lenny/session_message` (`app.js:439`), `lenny/session_interrupt`, and `lenny/session_cancel` (`app.js:447`, `app.js:465-468`). The registered tools are `lenny/send_message` and there are no `interrupt` / `cancel` tools at all (the closest spec-defined verbs are `interrupt_session` and `cancel_session` per §15.2 lines 1294–1303). Even if the WebSocket transport were implemented (F1), every `tools/call` from the playground would return JSON-RPC `-32601 unknown tool …` from `mcp.go:235-239`. The playground is required by §27.5 ¶1 to be "a living reference implementation"; emitting tool names that do not exist on the public surface contradicts that requirement.
 
@@ -42841,9 +42847,13 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:439,447,465-468`.
 - `/Users/joan/projects/lenny/pkg/gateway/mcptools/mcptools.go:276` (`lenny/send_message`) — no `lenny/session_*` registrations anywhere.
 
-### - [ ] F-27.5.4 — (Medium, MUST, correctness) — WebSocket close code `4401` on bearer revocation is unobservable [Medium] — OPEN
+**Resolution:** Two-sided fix. (1) `lenny/interrupt_session` and `lenny/cancel_session` are now registered §15.2 tools (`pkg/gateway/mcptools/mcptools.go`), reusing the §15.1 precondition table so the MCP transitions equal the REST `POST /v1/sessions/{id}/interrupt` and `DELETE /v1/sessions/{id}` edges. (2) The SPA now calls the registered names: `lenny/send_message` with the §8.5 `to`/`message` schema, `lenny/interrupt_session`, and `lenny/cancel_session` (`pkg/gateway/playground/ui/app.js`). Tests: `session_control_test.go` (running→suspended, invalid-state, unknown-session, cancel-marks-cancelled). The `cancel_session` `playground_client_closed` best-effort path is [[F-27.6.5]].
+
+### - [x] F-27.5.4 — (Medium, MUST, correctness) — WebSocket close code `4401` on bearer revocation is unobservable [Medium] — CLOSED
 
 §27.3.1 + the §27 Failure modes summary (line 167) require WebSocket close code `4401` when a bearer is revoked mid-stream. The client handles it (`app.js:386-388`), but no server-side path emits it because the WebSocket server does not exist. Tracked separately from F1 because closing this requires explicit wiring of the revocation deny-list pub/sub (§27.3.1) into the WebSocket connection lifecycle, not merely accepting upgrades. Severity downgraded to Medium because once F1 is implemented, the `4401` wiring is a defined incremental step rather than an absent surface.
+
+**Resolution:** `Server.SetWebSocketAuth` (`pkg/gateway/mcp/websocket.go`) installs a per-connection revocation watch: for an `origin=playground` bearer it polls the same §27.6 `PlaygroundRevocationChecker` the auth hot path uses (`IsBearerRevoked(tenant, jti)`) and, on a confirmed revocation, closes the socket with `websocket.StatusCode(4401)` and reason `bearer_revoked`. `cmd/lenny-gateway/main.go` wires the principal extractor (from the auth-middleware context) and the playground checker. Non-playground bearers are not watched; a transient store error fails open (the authoritative per-upgrade check already ran). Tests: `TestWebSocketRevocationClosesWith4401`, plus the skip-non-playground and keep-alive-when-live cases.
 
 ### - [x] F-27.5.5 — (Low, Info) — SPA inline comment acknowledges the spec deviation in `app.js:11-13` [Medium] — CLOSED
 
@@ -42926,11 +42936,13 @@ Evidence: `pkg/gateway/playground/auth.go:265` exports `(Handler).RevokeSession(
 
 **Resolution (commit c709fb42):** The `user.invalidated` half is closed. `admin.Router.WithPlaygroundRevocation` wires the new `playground.Handler.RevokeSessionsForUser` into the §11.4 `runFullRevokeFanOut`, so a `full_revoke` now drives every playground session the user holds through `revokeSessionRecord` with reason `RevokeUserInvalidated` (DEL record + SET `pg:revoked` per bearer + PUBLISH), exercising the previously-dead `user_invalidated` reason end-to-end. The fan-out is best-effort (a playground-store error is recorded in the audit detail + response, not fatal); `soft_disable`/`hard_disable` skip it. The remaining drivers — the idle-timeout sweep (`RevokeIdleTimeout`) and a standalone admin-revocation surface (`RevokeAdmin`) — are tracked separately by [[F-27.3.7]] and stay OPEN. Tests: `user_invalidation_test.go` (per-user index, revoke-all, idempotency, nil-store, Redis index + tenant isolation) and `users_invalidate_fanout_test.go` (fan-out call, best-effort error, soft-disable skip). spec: §27.3.1 line 148, §27.6 line 204.
 
-### - [ ] F-27.6.5 — `session.cancel` MCP tool with `playground_client_closed` reason has no server-side handler. (High) [Medium] — OPEN
+### - [x] F-27.6.5 — `session.cancel` MCP tool with `playground_client_closed` reason has no server-side handler. (High) [Medium] — CLOSED
 
 Spec: line 202 — "On browser close / navigation away, the client sends `session.cancel` with reason `playground_client_closed`. Gateway treats this as a best-effort hint."
 
 Evidence: the client side is implemented at `pkg/gateway/playground/ui/app.js:465-466`, which invokes the `lenny/session_cancel` tool with `reason: "playground_client_closed"`. `grep -rn 'lenny/session_cancel\|session_cancel\|sessionCancel\|playground_client_closed' pkg/gateway/sessionserver/ pkg/gateway/` finds no server-side tool registration, dispatch path, or reason-aware handler. `pkg/gateway/sessionserver/usage.go:95` references `opsevents.EventSessionCancelled` only for usage accounting. The "best-effort hint" pathway therefore drops on the floor: the gateway neither tears the session down promptly nor records a metric for the reason. The spec's claim that the idle-timeout path is the fallback when the cancel hint fails to deliver still requires the cancel-success path to exist as the fast track; absent F1's idle-cap enforcement, neither path operates.
+
+**Resolution:** The registered `lenny/cancel_session` tool (added by [[F-27.5.3]]) now reads the optional `reason` field and treats `playground_client_closed` as the §27.6 line 202 best-effort hint: when the reason marks a hint, a session that is already terminal or already reclaimed (not-found) returns an accepted no-op instead of `INVALID_STATE_TRANSITION` / `RESOURCE_NOT_FOUND`, so a late or dropped frame falls through to the §27.6 idle-timeout fallback rather than erroring; a live session is force-cancelled (`StateCancelled`) as the fast track. Without the reason the tool keeps the strict §15.1 DELETE semantics. The SPA's `beforeunload` handler now invokes `lenny/cancel_session` with the hint reason (`pkg/gateway/playground/ui/app.js`). The idle-cap enforcement the finding cross-references is already closed (F-27.6.1/F-27.6.2). Tests: `session_control_test.go` (best-effort no-op on terminal, best-effort accepted on unknown, strict terminal rejected).
 
 ### - [x] F-27.6.6 — Logout-propagation metric measures the local Redis write, not cross-replica visibility. (Medium) [Medium] — CLOSED
 

@@ -32,8 +32,11 @@
 package ratelimit
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -395,6 +398,19 @@ func (rw *rateLimitRW) Flush() {
 // Unwrap exposes the wrapped writer to net/http's ResponseController so
 // Hijack and deadline capabilities the inner handlers rely on traverse.
 func (rw *rateLimitRW) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
+// Hijack forwards to the underlying http.Hijacker. This wrapper is the
+// topmost ResponseWriter the §15.2 / §27.5 MCP WebSocket handler at
+// /mcp/v1/ws receives, and nhooyr.io/websocket performs a direct
+// http.Hijacker type assertion (it does not consult Unwrap), so the
+// method must be present on the concrete type for the upgrade to
+// succeed. spec: §27.5 / §27.3.1 line 142.
+func (rw *rateLimitRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("ratelimit: underlying ResponseWriter does not support hijacking")
+}
 
 // onCounterError emits the §11.1 fail-open observability triplet — a
 // structured WARN log, the failopen-active gauge flip, and the

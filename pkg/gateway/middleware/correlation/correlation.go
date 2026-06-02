@@ -24,7 +24,10 @@
 package correlation
 
 import (
+	"bufio"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -147,3 +150,16 @@ func (c *captureRW) Flush() {
 
 // Unwrap exposes the wrapped writer to net/http's ResponseController.
 func (c *captureRW) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+// Hijack forwards to the underlying http.Hijacker so a WebSocket upgrade
+// survives this outermost wrapper. The §15.2 / §27.5 MCP WebSocket
+// transport at /mcp/v1/ws upgrades through the full middleware chain;
+// nhooyr.io/websocket performs a direct http.Hijacker type assertion, so
+// this wrapper must re-expose Hijack or the upgrade fails. spec: §27.5 /
+// §27.3.1 line 142.
+func (c *captureRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := c.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("correlation: underlying ResponseWriter does not support hijacking")
+}

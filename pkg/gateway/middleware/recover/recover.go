@@ -15,8 +15,11 @@
 package recover
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"runtime/debug"
 )
@@ -115,4 +118,18 @@ func (w *recordingResponseWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack forwards to the underlying http.Hijacker so a WebSocket
+// upgrade survives this wrapper. The §15.2 / §27.5 MCP WebSocket
+// transport at /mcp/v1/ws upgrades through the full middleware chain;
+// nhooyr.io/websocket performs a direct http.Hijacker type assertion on
+// the ResponseWriter it is handed, so every wrapper between net/http and
+// the upgrade handler must re-expose Hijack or the upgrade fails. spec:
+// §27.5 / §27.3.1 line 142.
+func (w *recordingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("recover: underlying ResponseWriter does not support hijacking")
 }

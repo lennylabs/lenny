@@ -3920,6 +3920,20 @@ func main() {
 		// auth middleware so an origin=playground bearer is rejected on
 		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.
 		playgroundRevocations = pg
+		// §27.5.4 — wire the same revocation check into the MCP WebSocket
+		// transport so an origin=playground bearer revoked mid-stream
+		// (logout / idle / admin / user.invalidated) closes the in-flight
+		// connection with WebSocket code 4401. The principal is read from
+		// the auth-middleware context the upgrade request already carries;
+		// non-playground bearers (no origin claim) are not watched.
+		// F-27.5.4.
+		mcpSrv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
+			p, ok := authmw.FromContext(r.Context())
+			if !ok {
+				return mcp.WSPrincipal{}, false
+			}
+			return mcp.WSPrincipal{Tenant: p.TenantID, JTI: p.JTI, Origin: p.Origin}, true
+		}, pg, 0)
 		// §11.4 / §27.6 line 204 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.
@@ -4257,6 +4271,17 @@ func main() {
 			"/internal/drain-readiness": true,
 		},
 	})
+
+	// spec: §27.3.1 line 142 — outermost wrapper. The §27.5 MCP WebSocket
+	// bearer carrier promotes `Sec-WebSocket-Protocol: lenny.bearer.<token>`
+	// (the browser fallback for upgrades that cannot set an Authorization
+	// header) to a standard `Authorization: Bearer` header and strips the
+	// credential entry from the sub-protocol header. It runs ahead of the
+	// correlation/access-log and auth middleware so the bearer is never
+	// logged or emitted in audit traces and is validated on the standard
+	// bearer path. It is a no-op for every request without a
+	// `lenny.bearer.` carrier. F-27.3.4 / F-27.5.2.
+	handler = mcp.WebSocketBearerCarrier(handler)
 
 	httpSrv := &http.Server{
 		Addr:              *addr,

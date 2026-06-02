@@ -9,6 +9,9 @@
 package gatewaymetrics
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -3888,6 +3891,20 @@ func (s *statusRecorder) Flush() {
 		}
 		f.Flush()
 	}
+}
+
+// Hijack forwards to the underlying http.Hijacker so a WebSocket upgrade
+// survives the request-metrics wrapper. The §15.2 / §27.5 MCP WebSocket
+// transport at /mcp/v1/ws upgrades through this middleware;
+// nhooyr.io/websocket performs a direct http.Hijacker type assertion on
+// the handed ResponseWriter, so without this forwarder the metrics
+// wrapper hides the Hijacker and the upgrade fails. spec: §27.5 /
+// §27.3.1 line 142.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("gatewaymetrics: underlying ResponseWriter does not support hijacking")
 }
 
 // statusClass collapses an HTTP status to its §16.1.1 low-cardinality
