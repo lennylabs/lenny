@@ -24,6 +24,22 @@ func (r *Router) WithExperiments(s experimentstore.Store) *Router {
 	return r
 }
 
+// StickyFlusher clears the §10.7 `sticky: user` assignment cache for an
+// experiment. The PATCH status-transition handler invokes it when an
+// experiment moves to `paused` or `concluded` (§10.7 line 1096).
+// *experimentsticky.RedisCache satisfies it. A nil flusher leaves the cache
+// untouched (the single-instance / in-memory posture has no Redis cache).
+type StickyFlusher interface {
+	Flush(ctx context.Context, tenantID, experimentID, transition string) (int, error)
+}
+
+// WithStickyFlusher wires the §10.7 sticky-cache invalidation hook onto the
+// PATCH status-transition handler.
+func (r *Router) WithStickyFlusher(f StickyFlusher) *Router {
+	r.stickyFlusher = f
+	return r
+}
+
 // ExperimentVariant is the wire shape of one §10.7 variant.
 type ExperimentVariant struct {
 	ID             string  `json:"id"`
@@ -503,6 +519,17 @@ func (r *Router) handlePatchExperiment(w http.ResponseWriter, req *http.Request)
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	// spec: §10.7 line 1096 — flush the `sticky: user` assignment cache when
+	// the experiment transitions to paused or concluded so re-activated or
+	// re-pointed variants are re-evaluated. A `paused → active` transition
+	// requires no flush. The flush is best-effort: a Redis error leaves the
+	// stale cache to expire under its TTL and does not fail the transition,
+	// which is already durably persisted.
+	if prev != updated.Status &&
+		(updated.Status == experiment.StatusPaused || updated.Status == experiment.StatusConcluded) &&
+		r.stickyFlusher != nil {
+		_, _ = r.stickyFlusher.Flush(req.Context(), tenant, name, string(updated.Status))
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "experiment.status_changed", name, map[string]any{

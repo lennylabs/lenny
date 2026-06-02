@@ -146,6 +146,7 @@ import (
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
@@ -2767,6 +2768,27 @@ func main() {
 	// spec: §7.2 line 317 (path 1); F-7.2.14.
 	inputWaits := inputwait.NewRegistry()
 
+	// spec: §10.7 lines 831, 1096 / §12.4 (`t:{tenant}:exp:{exp}:sticky:*`) —
+	// the `sticky: user` variant-assignment cache. Backed by the cache/pubsub
+	// Redis concern; nil without Redis, in which case the ExperimentRouter
+	// re-evaluates every experiment fresh (the §12.4 fail-open path) and the
+	// PATCH flush is a no-op. F-12.4.7 / F-10.7.6.
+	var (
+		sessionStickyCache sessionserver.StickyCache
+		adminStickyFlusher admin.StickyFlusher
+	)
+	if redisClient != nil {
+		stickyCache := experimentsticky.NewRedis(
+			concernRedis.For(storerouter.RedisConcernCachePubSub),
+			experimentsticky.WithInvalidationRecorder(gwMetrics),
+		)
+		// Assign to the interface variables only when constructed so the
+		// nil-Redis posture leaves a genuine nil interface (not a typed-nil
+		// *RedisCache the consumers would call methods on).
+		sessionStickyCache = stickyCache
+		adminStickyFlusher = stickyCache
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
@@ -2811,6 +2833,7 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
+		StickyCache: sessionStickyCache,
 		Usage:          usage,
 		Users:          users,
 		Billing:        billing,
@@ -3380,6 +3403,7 @@ func main() {
 		WithSessions(sessions).
 		WithInteractions(interactions).
 		WithExperiments(experiments).
+		WithStickyFlusher(adminStickyFlusher).
 		WithEnvironments(environments).
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityServiceWithConfig(

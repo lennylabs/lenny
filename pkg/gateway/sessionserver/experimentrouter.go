@@ -61,6 +61,19 @@ type ExperimentRejectionReporter interface {
 	RecordTargetingError(ctx context.Context, provider, errorType string)
 }
 
+// StickyCache is the §10.7 `sticky: user` variant-assignment cache the
+// ExperimentRouter reads through for `mode: external` experiments so the
+// OpenFeature provider "is not called again for subsequent sessions if a
+// cached assignment exists" (§10.7 line 831). *experimentsticky.RedisCache
+// satisfies it. A nil cache disables read-through; routing re-evaluates
+// every experiment fresh, which is also the §12.4 Redis-outage fail-open
+// path. Get/Put return Redis errors so the router degrades to fresh
+// evaluation rather than failing the session.
+type StickyCache interface {
+	Get(ctx context.Context, tenantID, experimentID, userID string) (variantID string, ok bool, err error)
+	Put(ctx context.Context, tenantID, experimentID, userID, variantID string) error
+}
+
 // ExperimentIsolationRejection is the §16.6 `experiment.isolation_mismatch`
 // event payload. Field names carry through to the operational-event
 // record and the §16.1 counter labels.
@@ -119,6 +132,13 @@ func (s *Server) ApplyExperimentRouting(ctx context.Context, row *sessionstore.S
 	// provider. A tenant with no external targeting yields a nil
 	// evaluator and RouteMixed skips external-mode experiments.
 	evaluator := s.buildExternalEvaluator(ctx, row, candidates)
+	// §10.7 lines 831, 1096: a `mode: external` + `sticky: user` experiment
+	// reads its assignment from the sticky cache before calling the provider,
+	// and writes a fresh evaluation back. A Redis outage falls open to fresh
+	// evaluation (§12.4 failure behavior). Percentage-mode `sticky: user`
+	// assignment is deterministic in user_id under the built-in HMAC, so it
+	// is recomputed rather than cached.
+	evaluator = s.stickyWrappedEvaluator(ctx, row, candidates, evaluator)
 	assignment := experiment.RouteMixed(defs, row.UserID, row.ID, evaluator)
 	if assignment.ExperimentID == "" {
 		return nil
@@ -267,6 +287,59 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 			return "", false
 		}
 		return variantID, true
+	}
+}
+
+// stickyWrappedEvaluator returns inner wrapped with the §10.7 sticky-cache
+// read-through for `mode: external` + `sticky: user` experiments. For such
+// an experiment the wrapper consults the cache first (skipping the
+// OpenFeature provider on a hit) and writes a fresh provider result back.
+// Any other experiment, or a cache miss / Redis error, falls through to
+// inner unchanged so routing degrades to fresh evaluation. When no sticky
+// cache is wired the wrapper returns inner untouched.
+//
+// A cached control assignment is kept and returned: the provider is not
+// re-called for a user the experiment already bucketed to control, and
+// RouteMixed treats the control variant as no-enrollment exactly as it does
+// for a fresh control result.
+//
+// spec: §10.7 line 831 (provider not re-called when a cached assignment
+// exists), line 1096 (the cache the pause/conclude flush clears).
+func (s *Server) stickyWrappedEvaluator(ctx context.Context, row *sessionstore.Session, candidates []experimentstore.Experiment, inner experiment.ExternalEvaluator) experiment.ExternalEvaluator {
+	if s.stickyCache == nil {
+		return inner
+	}
+	stickyExternal := make(map[string]bool, len(candidates))
+	for _, e := range candidates {
+		d := e.Definition()
+		if d.TargetingMode == experiment.TargetingExternal && d.Sticky == experiment.StickyUser {
+			stickyExternal[e.ID] = true
+		}
+	}
+	if len(stickyExternal) == 0 {
+		return inner
+	}
+	return func(experimentID string) (string, bool) {
+		if !stickyExternal[experimentID] {
+			if inner == nil {
+				return "", false
+			}
+			return inner(experimentID)
+		}
+		if v, ok, err := s.stickyCache.Get(ctx, row.TenantID, experimentID, row.UserID); err == nil && ok {
+			return v, true
+		}
+		if inner == nil {
+			return "", false
+		}
+		v, ok := inner(experimentID)
+		if ok {
+			// Best-effort write-back: a Redis failure here is the §12.4
+			// fail-open path (the next session re-evaluates), not a session
+			// error.
+			_ = s.stickyCache.Put(ctx, row.TenantID, experimentID, row.UserID, v)
+		}
+		return v, ok
 	}
 }
 

@@ -96,6 +96,7 @@ type Metrics struct {
 	experimentIsoRej            *prometheus.CounterVec
 	experimentTargetingDur      *prometheus.HistogramVec
 	experimentTargetingErr      *prometheus.CounterVec
+	experimentStickyInval       *prometheus.CounterVec
 	experimentTargetingCircuit  *prometheus.GaugeVec
 	sessionTotal                *prometheus.CounterVec
 	sessionError                *prometheus.CounterVec
@@ -966,6 +967,18 @@ func New() (*Metrics, error) {
 		Name: "lenny_experiment_targeting_error_total",
 		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1 line 157).",
 	}, []string{"provider", "error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.7 line 1096 / §16.1 line 159 — incremented once per
+	// sticky-cache flush, i.e. each time an experiment transitions to
+	// paused or concluded and the gateway DELs its
+	// `t:{tenant}:exp:{exp}:sticky:*` keys. Labeled by experiment_id and
+	// transition (the target status: paused or concluded).
+	experimentStickyInval, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_experiment_sticky_cache_invalidations_total",
+		Help: "§10.7 sticky-assignment cache flushes on experiment pause/conclude, by experiment and transition.",
+	}, []string{"experiment_id", "transition"})
 	if err != nil {
 		return nil, err
 	}
@@ -1951,7 +1964,7 @@ func New() (*Metrics, error) {
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
 		elicitationRoundtripSeconds,
 		experimentIsoRej,
-		experimentTargetingDur, experimentTargetingErr, experimentTargetingCircuit,
+		experimentTargetingDur, experimentTargetingErr, experimentStickyInval, experimentTargetingCircuit,
 		sessionTotal, sessionError, sessionDuration, evalScore,
 		noEnvPolicyAllowAll, erasureJobFailed, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
@@ -2103,6 +2116,7 @@ func New() (*Metrics, error) {
 		experimentIsoRej:                     experimentIsoRej,
 		experimentTargetingDur:               experimentTargetingDur,
 		experimentTargetingErr:               experimentTargetingErr,
+		experimentStickyInval:                experimentStickyInval,
 		experimentTargetingCircuit:           experimentTargetingCircuit,
 		sessionTotal:                         sessionTotal,
 		sessionError:                         sessionError,
@@ -3323,6 +3337,15 @@ func (m *Metrics) RecordExperimentIsolationRejection(tenantID, experimentID, var
 // provider:ofrep.
 func (m *Metrics) ObserveExperimentTargetingDuration(provider string, seconds float64) {
 	m.experimentTargetingDur.WithLabelValues(provider).Observe(seconds)
+}
+
+// RecordExperimentStickyCacheInvalidation increments the §16.1 line 159
+// lenny_experiment_sticky_cache_invalidations_total counter once per §10.7
+// line 1096 sticky-cache flush (an experiment transition to paused or
+// concluded that DELs the experiment's `…:sticky:*` keys). transition is the
+// target status ("paused" or "concluded").
+func (m *Metrics) RecordExperimentStickyCacheInvalidation(experimentID, transition string) {
+	m.experimentStickyInval.WithLabelValues(experimentID, transition).Inc()
 }
 
 // RecordExperimentTargetingError increments the §16.1 line 157

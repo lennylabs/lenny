@@ -14454,7 +14454,7 @@ df2deef2.
 
 ---
 
-### - [ ] F-10.7.6 — 06  Sticky-cache and its transition-time invalidation are absent [Medium] — OPEN
+### - [x] F-10.7.6 — 06  Sticky-cache and its transition-time invalidation are absent [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.4.7 — Both report the experiment sticky-assignment Redis cache and its invalidation are absent, so assignment is recomputed on every session creation.
 
@@ -14487,6 +14487,8 @@ guarantee is broken for percentage mode. For external mode the absence is
 more consequential: the spec says the OpenFeature client "is not called again
 for subsequent sessions if a cached assignment exists" (line 831), so the
 external-provider integration always pays the per-session evaluation cost.
+
+- **Resolution:** Closed by F-12.4.7 (same batch) — confirmed duplicate. The new `experimentsticky.RedisCache` provides the per-`(user_id, experiment_id)` cache, the PATCH-to-paused/concluded flush DELs `t:{tenant}:exp:{exp}:sticky:*` (no flush on `paused → active`), and `lenny_experiment_sticky_cache_invalidations_total{experiment_id,transition}` is incremented on each flush, matching §10.7 line 1096 and §16.1 line 159.
 
 ---
 
@@ -19485,7 +19487,7 @@ Consequence: sessions created with `messaging.durableInbox: true` have no Redis 
 
 **Resolution:** Closed by F-7.2.4 (same batch). Confirmed duplicate — both stores now exist in `pkg/gateway/sessioninbox` with the §12.4 canonical key formats: `RedisInbox` backs `t:{tenant}:session:{id}:inbox` (Redis list, RPUSH/LPOP/LRANGE/LLEN; the atomic `maxInboxSize` Lua script supplies the `LPOP`-on-overflow eviction; `LTRIM`/`LREM` ACK trimming lands with the durable-inbox delivery path) and `DLQ` backs `t:{tenant}:session:{id}:dlq` (sorted set scored by expiry, ZADD/ZRANGE/ZREMRANGEBYSCORE). The §7.2 inbox-to-DLQ migration on `resume_pending` and the terminal DLQ drain are wired into the gateway (see F-7.2.4 / F-7.3.12 resolutions), giving the `RedisConcernSessionData` concern its first live consumer. The `lenny_inbox_drain_failure_total` counter sink is an optional `DrainFailureRecorder` on the coordinator (the §16.5 InboxDrainFailure alert's source); wiring it to `gatewaymetrics` is a follow-up.
 
-### - [ ] F-12.4.7 — Experiment sticky-assignment Redis cache is absent [High] — OPEN
+### - [x] F-12.4.7 — Experiment sticky-assignment Redis cache is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.7.6 — Both report the experiment sticky-assignment Redis cache and its invalidation are absent, so assignment is recomputed on every session creation.
 
@@ -19494,6 +19496,8 @@ Spec §12.4 row: `t:{tenant_id}:exp:{experiment_id}:sticky:{user_id}` — "Exper
 Spec §12.4 "Failure behavior" row: "Experiment sticky assignments … On Redis unavailability, the gateway re-computes the assignment from the hash on each session creation instead of reading the cache. On Redis recovery, newly computed assignments are written back to the cache."
 
 `pkg/experiment/experiment.go` and `pkg/gateway/sessionserver/experimentrouter.go` never read or write any Redis key. `assignVariant` is invoked deterministically on each session creation. So the "fail-open path" is the default path, and the cache write-back on recovery has no implementation to invoke. The §10.7 promise that pause/conclude flushes the cache is also vacuous because the cache does not exist.
+
+- **Resolution:** New `pkg/gateway/experimentsticky.RedisCache` over the §12.4 cache_pubsub Redis concern stores assignments at the canonical key `t:{tenant}:exp:{exp}:sticky:{user}` (TTL safety net + `Flush` SCAN/DEL of `…:sticky:*`). `Server.stickyWrappedEvaluator` (`pkg/gateway/sessionserver/experimentrouter.go`) reads through the cache for `mode: external` + `sticky: user` experiments so the OpenFeature provider is not re-called when a cached assignment exists (§10.7 line 831), writes fresh results back, and falls open to fresh evaluation on a Redis error (§12.4 line 212). Percentage-mode `sticky: user` is left deterministic/recomputed per §10.7 line 771 (the cache is "a performance optimisation, not a correctness requirement"). The admin PATCH handler flushes the experiment's keys on a transition to paused/concluded (not on `paused → active`), incrementing `lenny_experiment_sticky_cache_invalidations_total{experiment_id,transition}`. Wired in `cmd/lenny-gateway` (nil without Redis). Closes duplicate F-10.7.6. Resolved in this batch's commit.
 
 ### - [ ] F-12.4.8 — Delegation budget Redis enforcement (Lua scripts and counters) is absent [High] — OPEN
 
@@ -19559,7 +19563,7 @@ Spec §12.4 "Failure behavior" row: "Storage quota counter (`storage_bytes_used`
 
 `pkg/gateway/storagequota/redisstore/redisstore.go` performs the atomic reserve via Lua but has no rehydration path. On a Redis outage the counter returns the Redis client error to callers; there is no Postgres aggregator that reconstructs `storage_bytes_used` from `SUM(artifact_size_bytes)`. The fail-closed 503 fallback on dual outage is also not wired; the upload handler simply propagates the Redis error.
 
-### - [ ] F-12.4.12 — Circuit-breaker "fail closed (last-known state persists)" on Redis outage is partial [High] — OPEN
+### - [x] F-12.4.12 — Circuit-breaker "fail closed (last-known state persists)" on Redis outage is partial [High] — CLOSED
 
 Spec §12.4 "Failure behavior" row: "Circuit breakers … Fail closed (last-known state persists) — each gateway replica retains the last-known circuit breaker state from its 5-second in-process cache. Open breakers remain enforced; no breaker can transition to closed without a confirmed Redis read."
 
@@ -19567,6 +19571,8 @@ Spec §12.4 "Failure behavior" row: "Circuit breakers … Fail closed (last-know
 
 - There is no explicit assertion that a closed-on-Redis breaker cannot be observed as closed by the in-process cache while Redis is down — the cache simply continues to serve the last successful snapshot. If the last successful snapshot showed the breaker as closed and an operator then opened the breaker against the (failed) Redis, the local cache will continue to report closed. This is the correct fail-closed behavior for the operator's intent (open ⇒ block), but the converse (an operator closes during the outage) is not addressed by the code or the test surface.
 - The 5-second staleness budget the spec cites is enforced as a `DefaultRefreshInterval` of 2 seconds (`cachingstore.go:35`), which gives an effective bound under 5s; the `LastRefresh` method (line 130) exists but no observability surface compares it to the 5s budget at request time.
+
+- **Resolution:** Verify-closed plus a regression test. The 5-second staleness observability surface already landed: `health/backends.CircuitBreakerCache` (`breakerCacheStaleAfter = 5 * time.Second`) reads `cachingstore.LastRefresh()` and reports the `circuit-breaker` §25.3 health component degraded once the cache exceeds the budget (covered by `backends_test.go` fresh/stale/before-first-refresh cases), so the evidence was stale on this point. The remaining §12.4 "no breaker can transition to closed without a confirmed Redis read" semantics is correct by construction (`Refresh` retains the prior snapshot on a Redis error) and is now pinned by `TestNoCloseWithoutConfirmedRead_spec_12_4`: an operator "close" that races a Redis outage is not observed in the in-process cache (the open breaker stays enforced), and only a confirmed read on recovery transitions it to closed. Resolved in this batch's commit.
 
 ### - [x] F-12.4.13 — Redis Cluster client mode is absent; the Tier-3 migration pre-plan is unimplementable [Medium] — CLOSED
 

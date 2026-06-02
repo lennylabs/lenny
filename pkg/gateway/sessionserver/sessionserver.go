@@ -233,6 +233,7 @@ type Server struct {
 	experiments           experimentstore.Store
 	pools                 poolstore.Store
 	experimentReporter    ExperimentRejectionReporter
+	stickyCache           StickyCache
 	runtimes              runtimestore.Store
 	environments          environmentstore.Store
 	tenantAccess          tenantaccessstore.Store
@@ -748,6 +749,13 @@ type Options struct {
 	// reporting; the 422 rejection still fires.
 	ExperimentRejections ExperimentRejectionReporter
 
+	// StickyCache is the §10.7 `sticky: user` variant-assignment cache. When
+	// set, the ExperimentRouter reads a `mode: external` assignment from the
+	// cache before calling the OpenFeature provider and writes fresh results
+	// back (§10.7 line 831). Nil re-evaluates every experiment fresh, which is
+	// also the §12.4 Redis-outage fail-open path.
+	StickyCache StickyCache
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -1190,6 +1198,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		experiments:              opts.Experiments,
 		pools:                    opts.Pools,
 		experimentReporter:       opts.ExperimentRejections,
+		stickyCache:              opts.StickyCache,
 		events:                   opts.Events,
 		dualStore:                opts.DualStore,
 		messaging:                opts.Messaging,

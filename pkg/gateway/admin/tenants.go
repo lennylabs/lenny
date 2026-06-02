@@ -162,6 +162,7 @@ type Router struct {
 	sessions             sessionstore.Store
 	interactions         interactionstore.Store
 	experiments          experimentstore.Store
+	stickyFlusher        StickyFlusher
 	environments         environmentstore.Store
 	evals                evalstore.Store
 	clock                func() time.Time

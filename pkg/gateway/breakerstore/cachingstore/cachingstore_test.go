@@ -103,6 +103,39 @@ func TestRefreshErrorRetainsStaleCache(t *testing.T) {
 	}
 }
 
+// spec: §12.4 failure behavior (circuit breakers) — "Fail closed
+// (last-known state persists). Open breakers remain enforced; no breaker can
+// transition to closed without a confirmed Redis read." During a Redis
+// outage the in-process cache must keep serving the last-known open set even
+// if the registry's underlying state would now report the breaker closed,
+// because that close cannot be confirmed by a read.
+func TestNoCloseWithoutConfirmedRead_spec_12_4(t *testing.T) {
+	reg := &fakeRegistry{snapshot: []circuitbreaker.Breaker{openBreaker("rt-x")}}
+	store := cachingstore.New(reg, nil)
+	if err := store.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	// Redis outage begins; concurrently the operator "closes" rt-x (the
+	// registry's would-be snapshot is now empty), but the read fails.
+	reg.snapshot = nil
+	reg.snapErr = errors.New("redis: connection refused")
+	if err := store.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh should surface the registry error during the outage")
+	}
+	got, _ := store.Snapshot(context.Background())
+	if len(got) != 1 || got[0].Name != "rt-x" || got[0].State != circuitbreaker.StateOpen {
+		t.Fatalf("rt-x must stay enforced (open) during the outage, got %+v", got)
+	}
+	// On Redis recovery the confirmed read transitions the cache to closed.
+	reg.snapErr = nil
+	if err := store.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh after recovery: %v", err)
+	}
+	if got, _ := store.Snapshot(context.Background()); len(got) != 0 {
+		t.Fatalf("after a confirmed read the breaker is closed, got %+v", got)
+	}
+}
+
 func TestLastRefreshAdvancesOnRefresh(t *testing.T) {
 	store := cachingstore.New(&fakeRegistry{}, nil)
 	if !store.LastRefresh().IsZero() {
