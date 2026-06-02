@@ -29056,7 +29056,7 @@ Evidence:
 
 **Resolution:** Both emit sites now use `audit.EventCircuitBreakerStateChanged` and write the spec-mandated payload (`circuit_name`, `old_state`/`new_state`, `reason`, `limit_tier`, `scope`, `operator_sub`, `operator_tenant_id`, `timestamp`). Close emits the platform-generated `"operator close"` reason and echoes the persisted tier/scope so a SIEM joining on `limit_tier` resolves both transitions for the same breaker. The standalone operational-event-stream constants `circuit_breaker_opened/closed` (events package) are unchanged — they are a separate gateway-emitted stream per §16.5 line 646.
 
-### - [ ] F-16.7.5 — `token.revoked` emit site covers only one of the three spec-required revocation paths. [High] — OPEN
+### - [ ] F-16.7.5 — `token.revoked` emit site covers only one of the three spec-required revocation paths. [High] — DEFERRED
 
 §16.7 specifies that `token.revoked` is emitted "when a token is revoked (admin rotation replacing the caller's current token, explicit revocation via the `revoked` `requested_token_type`, or recursive revocation cascading to delegation children)." The payload fields are `revoked_jti`, `revoked_sub`, `revocation_reason` (`rotation_replaced` | `explicit_revoke` | `cascade_from_parent`), `cascade_root_jti`, `propagation_mode`.
 
@@ -29076,7 +29076,9 @@ Evidence:
 - `cmd/lenny-token-service/` — no audit-emit lines (`grep -rn audit\|Append cmd/lenny-token-service/` returns no hits).
 - No EventBus-driven revocation cascade worker in `pkg/` (searched for `cascade_from_parent` and `RevocationCascade` — only spec/catalog references found).
 
-### - [ ] F-16.7.6 — The §16.7 opening clause requires `operation_id` and `caller_kind` correlation fields on every §25 audit row; the writer never carries them. [High] — OPEN
+**Deferred:** Two of the three paths cannot be wired because their underlying §13.3 mechanisms do not exist yet. `rotation_replaced` requires the Token Service `/v1/oauth/token` rotation that writes `revoked_at` on the previous token inside the write-before-issue transaction (§13.3 line 597), and `cascade_from_parent` requires the recursive-revocation request `requested_token_type=…:access_token:revoked` with delegation-child cascade (§13.3 line 603 / §8.3); neither exists — `pkg/tokenservice/tokenexchange/` has no revoke/rotation/recursive logic. The two existing emit sites (the admin explicit-revoke handler `pkg/gateway/admin/issued_tokens.go:77` and the Token Service `EmitRevocation` for the GRPC `RevokeCredentials` path) emit `token.revoked` only for the `explicit_revoke` reason and with a non-spec payload (`tenantId`/`reason` vs the §16.7 `revoked_jti`/`revoked_sub`/`revocation_reason`/`cascade_root_jti`/`propagation_mode`). Closing this finding is gated on the absent token-rotation-with-revocation and recursive-revocation subsystems; the payload reshape is best done in the same batch that lands them so the enum and `propagation_mode` are populated at their real emit sites.
+
+### - [x] F-16.7.6 — The §16.7 opening clause requires `operation_id` and `caller_kind` correlation fields on every §25 audit row; the writer never carries them. [High] — CLOSED
 
 §16.7 opens with: "[§25] introduces new audit event types. These are written through the standard audit path ([§11.7]) with the optional `operation_id` and `caller_kind` correlation fields." The `auditstore.Append` signature has no extension point for these fields:
 
@@ -29092,6 +29094,8 @@ The OCSF translator at `pkg/audit/ocsf/ocsf.go:345-356` lists `caller_kind` as a
 Evidence:
 - `auditstore.Append` signature (no `OperationID` or `CallerKind` parameter).
 - `pkg/audit/ocsf/ocsf.go:345`: `var mappedPayloadKeys = map[string]bool{... "caller_kind": true, "operation_id": true, ...}` — these are declared as mapped keys but no producer ever sets them.
+
+**Resolution:** Verify-closed (commit 3614a9f4, F-11.7.6/F-11.7.13). §16.7 specifies `operation_id`/`caller_kind` as *optional correlation fields written through the standard audit path* — payload keys, not a new `Append` column — so the resolution carries them in the payload rather than widening the signature. The standard §11.7 writer for §25 admin events, `admin.ChainAuditSink.EmitAdminEvent` (`pkg/gateway/admin/audit_sink.go:108-140`), now stamps `operation_id` (from the emitter or the `X-Lenny-Operation-ID` correlation context), `caller_kind` (from the principal's `caller_type`), and `agent_name` into the payload; every admin §25 emit routes through `Router.emit` (`tenants.go:379`), including `audit.query_executed` and the chain-integrity events. The OCSF translator reads them back (`pkg/audit/ocsf/ocsf.go:523-538`): `caller_kind → actor.user.type/type_id`, `operation_id → metadata.correlation_uid`. Covered by `pkg/gateway/admin/audit_sink_correlation_test.go` (explicit/context-fallback/omit-empty) and `pkg/audit/ocsf/ocsf_test.go` (caller-kind type-id mapping). The lenny-ops-emitted backup/restore §25 rows ride the separate non-durable `logAuditSink` stub until the lenny-ops audit-store client lands (a distinct gap), but the §11.7 audit writer itself now carries the fields.
 
 ### - [x] F-16.7.7 — The OCSF translator and SIEM forwarder are not wired into any deployed binary. [High] — CLOSED
 
@@ -29112,7 +29116,7 @@ Evidence:
 
 **Resolution:** Closed by F-11.7.1 (commit `8e31f8b1`). Confirmed duplicate — the core claim (the OCSF translator and SIEM forwarder are imported by no deployed binary) is the same defect. `cmd/lenny-gateway/main.go` now imports both `pkg/audit/ocsf` and `pkg/audit/siem`, constructs the forwarder + translator, validates SIEM connectivity at startup, and runs the translator's egress loop. The async-outbox/CDC lag forwarder and its `lenny_audit_siem_delivery_lag_seconds` / `audit.siem.maxDeliveryLagSeconds` surface remain a distinct defect tracked under F-12.3.6 / F-12.3.17.
 
-### - [ ] F-16.7.8 — `pkg/ops/opsserver/backup.go:handleConfirmLegalHoldLedger` documents an audit-hook contract that does not exist. [High] — OPEN
+### - [x] F-16.7.8 — `pkg/ops/opsserver/backup.go:handleConfirmLegalHoldLedger` documents an audit-hook contract that does not exist. [High] — CLOSED
 
 The handler at `pkg/ops/opsserver/backup.go:388` calls `s.backups.ConfirmLegalHoldLedger(...)` and returns 202 Accepted with the state row. The service method's contract at `pkg/ops/backup/orchestrator.go:537-541` is:
 
@@ -29124,6 +29128,8 @@ Evidence:
 - `pkg/ops/opsserver/backup.go:388-406` — handler body has no audit emit.
 - `pkg/ops/backup/orchestrator.go:537-541` — comment explicitly defers emit to opsserver.
 - No `legal_hold.ledger_confirmed_current_at` emit site anywhere in the repo (verified by grep).
+
+**Resolution:** Verify-closed (commit d358fc2e, F-25.11.2). The deferral was reversed: the orchestrator now owns the emission directly rather than relying on an opsserver wrapper. `Service.ConfirmLegalHoldLedger` (`pkg/ops/backup/orchestrator.go:707-714`) calls `s.emitAudit` with `EventLegalHoldLedgerConfirmedCurrentAt`, the operator `caller`, the justification `Detail`, and the confirmation timestamp; the docstring at line 703-706 records that "the orchestrator owns the emission now; the opsserver handler no longer needs an audit wrapper." The sink is wired in production via `backup.Config.Audit` (`cmd/lenny-ops/deps.go:161`). `pkg/ops/backup/audit_test.go:191-197` asserts exactly one `legal_hold.ledger_confirmed_current_at` event with the right actor/detail. The durable lenny-ops audit-append client (the `logAuditSink` stub at `deps.go:299`) is a separate, broader gap, not this finding's claim.
 
 ### - [x] F-16.7.9 — Every event maps to OCSF `severity_id: 1` (Informational) regardless of spec-specified severity. [Medium] — CLOSED
 
@@ -29964,7 +29970,7 @@ matching the opt-in posture of `gateway.topologySpread`; a stock render
 emits nothing. Host-less rules and an absent TLS secret degrade
 gracefully. F-17.1.2 (commit c625edae).
 
-### - [ ] F-17.1.3 — 03 — `lenny-ops` Ingress and PDB are not rendered [High] — OPEN
+### - [x] F-17.1.3 — 03 — `lenny-ops` Ingress and PDB are not rendered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.16.1, F-25.2.11 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
 
@@ -29991,6 +29997,8 @@ external surface depends on operator-supplied wiring; without a PDB
 `kubectl drain` may take both ops replicas concurrently and stall
 leader election plus webhook delivery for the full
 `terminationGracePeriodSeconds`.
+
+**Resolution:** Verify-closed; the evidence grep was stale because both objects live in a dedicated `ops-ingress.yaml`, not `ops-deployment.yaml`. `charts/lenny/templates/ops-ingress.yaml` (commit c08e1be1) renders the `lenny-ops` Ingress opt-in via `ops.ingress.enabled` (with the §25.4 SSE proxy-timeout/affinity annotations) and the `lenny-ops` PodDisruptionBudget unconditionally with `minAvailable: 1` (§25.4 line 1316). `charts/lenny/tests/ops-ingress_test.yaml` asserts the PDB renders regardless of replica count and the Ingress on opt-in.
 
 ### - [x] F-17.1.4 — 04 — Four `lenny-ops`/`lenny-backup` NetworkPolicies named in §17.1 do not render [High] — CLOSED
 
@@ -30020,7 +30028,7 @@ layout the chart must always render.
 
 **Resolution (commit c08e1be1):** Closed by **F-25.4.12**. All four named policies now render: `lenny-ops-deny-all-ingress` (existing, F-17.2.16) plus the new `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, and `lenny-backup-job` in `charts/lenny/templates/ops-network-policies.yaml`. The allow-from-ingress policy honors the chart's `ingressControllerNamespace` + `ingress.controllerPodLabel` value pair.
 
-### - [ ] F-17.1.5 — 05 — `lenny-backup-sa` ServiceAccount and the on-demand `lenny-backup` Job template are not rendered [High] — OPEN
+### - [x] F-17.1.5 — 05 — `lenny-backup-sa` ServiceAccount and the on-demand `lenny-backup` Job template are not rendered [High] — CLOSED
 
 Spec row 17: "Transient Jobs using the `lenny-backup` image for
 Postgres/MinIO backup, restore, and verification … ServiceAccount
@@ -30039,6 +30047,8 @@ verify Jobs against `ops_backup_schedule` — is not provisioned, and no
 chart-rendered Job template or `lenny-ops`-owned Job factory exists
 yet. The `lenny-backup` image is built (`cmd/lenny-backup` exists) but
 nothing wires it into the cluster.
+
+**Resolution (commit 21e42088):** New `charts/lenny/templates/backup-job.yaml` renders the `lenny-backup-sa` ServiceAccount unconditionally (part of the §17.8.5 mandatory core inventory) plus the §25-narrowed RBAC envelope: a ClusterRole granting `get`/`list` on `customresourcedefinitions` and `lenny.dev/*` (the backup flow's CRD/CR export), a release-namespace Role granting `get` on `configmaps`, and no Pod/Deployment/Secret read. An opt-in on-demand Job (`backups.onDemand.enabled`, default false so a stock render and every `helm upgrade` run no backup) executes the `lenny-backup` image with the §25.11 Job Pod Specification — `restartPolicy: Never`, `backoffLimit: 3`, `ttlSecondsAfterFinished: 3600`, `activeDeadlineSeconds: 7200`, non-root, read-only rootfs, `/tmp` emptyDir — sourcing credentials from the `lenny-backup-postgres`/`lenny-backup-minio` Secrets (F-17.1.10). `lenny-ops` remains the production Job factory for scheduled runs. Covered by `charts/lenny/tests/backup-job_test.yaml` (7 helm-unittest cases).
 
 ### - [x] F-17.1.6 — 06 — `PoolScalingController` is not deployed as a separate workload [High] — CLOSED
 
@@ -30166,7 +30176,7 @@ binding. The functional outcome is the same — pods are created — but
 the spec's pluggable interface and the named default implementation
 are not present.
 
-### - [ ] F-17.1.12 — 12 — `core_deployment_inventory_test.go` integration suite is absent [Medium] — OPEN
+### - [x] F-17.1.12 — 12 — `core_deployment_inventory_test.go` integration suite is absent [Medium] — CLOSED
 
 Spec §17.2 line 84 (cross-cut with §17.1) names "A parallel suite
 (`tests/integration/core_deployment_inventory_test.go`) covers the
@@ -30182,6 +30192,8 @@ returns no matches. `admission_webhook_inventory_test.go` and
 suites the inventory drift the spec calls out as a release-gate cannot
 be caught in CI. Cross-link: F-17.1-03, F-17.1-04, F-17.1-05 would all
 be caught by the missing core-inventory suite.
+
+**Resolution (commit 21e42088):** New `tests/tier0_static/core_deployment_inventory_test.go` renders the chart with stock values (reusing the `tests/testinfra/helm` render helper) and fail-closes on absence of every §17.8.5 mandatory item: the `lenny-ops` Deployment, the headless `lenny-gateway-pods` Service (asserted `clusterIP: None`), the `lenny-backup-sa` ServiceAccount (F-17.1.5), the four NetworkPolicies (`lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job`; F-17.1.4), and the `lenny-ops` PodDisruptionBudget (F-17.1.3). The runtime-created `lenny-ops-leader` Lease is represented by its chart-rendered `lenny-ops-leader-election` Role. The spec names the file `tests/integration/...`; this repo files pure chart-render checks under `tier0_static` (no live cluster, only the helm CLI), and the suite skips gracefully when helm is absent. The companion `admission_webhook_inventory_test.go` / `phase_stamp_downgrade_test.go` suites named in §17.2 remain separate gated-webhook surfaces.
 
 ### - [x] F-17.1.13 — 13 — `monitoring.format: configmap`/`both` ConfigMap fallback is rendered but no `monitoring.format: prometheusrule` fallback to ConfigMap [Info] — CLOSED
 
