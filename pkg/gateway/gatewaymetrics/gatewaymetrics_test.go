@@ -284,6 +284,57 @@ func TestSetBillingCorrectionRateThreshold_spec_11_2_1_187(t *testing.T) {
 	}
 }
 
+// spec: §16.4 / §16.5 — SetAuditSIEMConfigured / SetAuditRetentionDays /
+// SetEnvProduction drive the three scalar gauges the AuditSIEMNotConfigured
+// and AuditRetentionLow alert expressions read. The fail-safe defaults
+// (SIEM unconfigured, 365-day window, non-production) pre-materialize the
+// series so a scrape before the gateway main has wired configuration still
+// yields a finite reading, and the production gate keeps the alerts inert
+// until envProduction is set. F-16.4.9; F-16.4.10.
+func TestSetAuditAlertScalars_spec_16_4_9(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Pre-Set defaults: SIEM unconfigured (0), default window (365),
+	// non-production (0).
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_audit_siem_configured 0",
+		"lenny_audit_retention_days 365",
+		"lenny_env_production 0",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing default audit scalar %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+	// A production gateway with a SIEM and a tightened retention window
+	// flows the operator configuration through to the gauges.
+	m.SetAuditSIEMConfigured(true)
+	m.SetAuditRetentionDays(2190)
+	m.SetEnvProduction(true)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_audit_siem_configured 1",
+		"lenny_audit_retention_days 2190",
+		"lenny_env_production 1",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing updated audit scalar %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+	// The SIEM-configured term must accept a flip back to 0 (a SIEM
+	// endpoint removed from Helm values) so AuditSIEMNotConfigured re-arms.
+	m.SetAuditSIEMConfigured(false)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_audit_siem_configured 0") {
+		t.Fatalf("/metrics missing re-armed siem-configured gauge\n---\n%s", rr.Body.String())
+	}
+}
+
 // spec: §25.13 line 4737 / §16.5 — SetGatewayQueueDepthThreshold /
 // SetGatewayLatencyThresholdSeconds / SetCredentialPoolLowThreshold
 // drive the §25.13 tier-dependent threshold gauges the §16.5

@@ -49,7 +49,18 @@ type Metrics struct {
 	gatewayQueueDepthThreshold     prometheus.Gauge
 	gatewayLatencyThresholdSeconds prometheus.Gauge
 	credentialPoolLowThreshold     prometheus.Gauge
-	extractionThreshold            *prometheus.GaugeVec
+	// auditSIEMConfigured / auditRetentionDays / envProduction are the
+	// §16.4 / §16.5 startup-set scalar gauges the AuditSIEMNotConfigured
+	// and AuditRetentionLow alerts read. auditSIEMConfigured is 1 when
+	// audit.siem.endpoint is set (the SIEM-configured suppression term),
+	// auditRetentionDays is the resolved §16.4 audit.retentionDays
+	// window, and envProduction is 1 when LENNY_ENV=production. The
+	// alerts gate on `lenny_env_production == 1` so they stay inert
+	// outside production. F-16.4.9; F-16.4.10.
+	auditSIEMConfigured prometheus.Gauge
+	auditRetentionDays  prometheus.Gauge
+	envProduction       prometheus.Gauge
+	extractionThreshold *prometheus.GaugeVec
 	storageQuotaUsed               *prometheus.GaugeVec
 	storageQuotaLimit              *prometheus.GaugeVec
 	circuitBreakerOpen             *prometheus.GaugeVec
@@ -697,6 +708,33 @@ func New() (*Metrics, error) {
 	credentialPoolLowThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_credential_pool_low_threshold",
 		Help: "Configured §16.5 CredentialPoolLow utilisation fraction (§25.13 line 4737).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §16.4 / §16.5: the audit SIEM-configured suppression term, the
+	// resolved general audit retention window, and the production-mode
+	// indicator the AuditSIEMNotConfigured and AuditRetentionLow alerts
+	// read. The gateway main sets them at startup from audit.siem.endpoint,
+	// the resolved audit.retentionDays / audit.retentionPreset, and
+	// LENNY_ENV. F-16.4.9; F-16.4.10.
+	auditSIEMConfigured, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_audit_siem_configured",
+		Help: "1 when audit.siem.endpoint is configured, 0 otherwise; suppresses AuditSIEMNotConfigured / AuditRetentionLow (§16.4 / §16.5).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	auditRetentionDays, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_audit_retention_days",
+		Help: "Resolved general (non-gdpr) audit-log retention window in days, from audit.retentionPreset or audit.retentionDays (§16.4).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	envProduction, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_env_production",
+		Help: "1 when LENNY_ENV=production, 0 otherwise; gates the production-only audit alerts (§16.5).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -1937,6 +1975,17 @@ func New() (*Metrics, error) {
 	gatewayLatencyThresholdSecondsChild.Set(3.0)
 	credentialPoolLowThresholdChild := credentialPoolLowThreshold.WithLabelValues()
 	credentialPoolLowThresholdChild.Set(0.80)
+	// §16.4 / §16.5: pre-materialize the audit alert-support gauges with
+	// their fail-safe defaults — SIEM unconfigured (0), the §16.4 default
+	// retention window (365 days), and non-production (0) — so the
+	// AuditSIEMNotConfigured / AuditRetentionLow expressions evaluate to a
+	// finite value before the gateway main has called the Set helpers.
+	// The production-only gate (lenny_env_production == 1) keeps both
+	// alerts inert until the main sets envProduction. F-16.4.9; F-16.4.10.
+	auditSIEMConfiguredChild := auditSIEMConfigured.WithLabelValues()
+	auditRetentionDaysChild := auditRetentionDays.WithLabelValues()
+	auditRetentionDaysChild.Set(365)
+	envProductionChild := envProduction.WithLabelValues()
 	// spec: §10.4 / §16 — pre-materialize the unlabelled replay buffer
 	// utilization gauge so /metrics emits the series even before the
 	// gateway has published any session events. F-10.4.11.
@@ -1953,7 +2002,8 @@ func New() (*Metrics, error) {
 		billingCorrectionRateThreshold,
 		gatewayQueueDepthThreshold,
 		gatewayLatencyThresholdSeconds,
-		credentialPoolLowThreshold)
+		credentialPoolLowThreshold,
+		auditSIEMConfigured, auditRetentionDays, envProduction)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	kmsSigningCircuitChild := kmsSigningCircuitState.WithLabelValues()
@@ -1973,6 +2023,9 @@ func New() (*Metrics, error) {
 		gatewayQueueDepthThreshold:           gatewayQueueDepthThresholdChild,
 		gatewayLatencyThresholdSeconds:       gatewayLatencyThresholdSecondsChild,
 		credentialPoolLowThreshold:           credentialPoolLowThresholdChild,
+		auditSIEMConfigured:                  auditSIEMConfiguredChild,
+		auditRetentionDays:                   auditRetentionDaysChild,
+		envProduction:                        envProductionChild,
 		extractionThreshold:                  extractionThreshold,
 		storageQuotaUsed:                     storageQuotaUsed,
 		storageQuotaLimit:                    storageQuotaLimit,
@@ -3413,6 +3466,41 @@ func (m *Metrics) SetReplicaCount(value int) {
 // scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 func (m *Metrics) SetBillingCorrectionRateThreshold(value float64) {
 	m.billingCorrectionRateThreshold.Set(value)
+}
+
+// SetAuditSIEMConfigured emits the §16.4 / §16.5 lenny_audit_siem_configured
+// gauge: 1 when audit.siem.endpoint is set, 0 otherwise. The
+// AuditSIEMNotConfigured alert fires on `== 0 and lenny_env_production == 1`,
+// and AuditRetentionLow uses the same term to suppress its warning once a
+// SIEM is configured. F-16.4.9.
+func (m *Metrics) SetAuditSIEMConfigured(configured bool) {
+	m.auditSIEMConfigured.Set(boolGauge(configured))
+}
+
+// SetAuditRetentionDays emits the §16.4 lenny_audit_retention_days gauge:
+// the resolved general (non-gdpr) audit-log retention window in days, from
+// audit.retentionPreset or the explicit audit.retentionDays. The
+// AuditRetentionLow alert fires on `< 365 and lenny_audit_siem_configured
+// == 0 and lenny_env_production == 1`. F-16.4.9; F-16.4.10.
+func (m *Metrics) SetAuditRetentionDays(days int) {
+	m.auditRetentionDays.Set(float64(days))
+}
+
+// SetEnvProduction emits the §16.5 lenny_env_production gauge: 1 when
+// LENNY_ENV=production, 0 otherwise. The production-only audit alerts gate
+// on `lenny_env_production == 1` so they stay inert in dev and staging.
+// F-16.4.9.
+func (m *Metrics) SetEnvProduction(production bool) {
+	m.envProduction.Set(boolGauge(production))
+}
+
+// boolGauge maps a boolean to the 1/0 gauge convention the §16.5 alert
+// expressions compare against.
+func boolGauge(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // SetGatewayQueueDepthThreshold emits the §25.13 line 4737 / §16.5

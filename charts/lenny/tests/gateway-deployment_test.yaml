@@ -588,10 +588,12 @@ tests:
       #   F-11.7.16) + LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS /
       #   _MAX_ATTEMPTS / _BATCH_SIZE (§11.7 Wire Format, F-11.7.1)
       # + LENNY_SCATTER_MAX_CONCURRENCY / _PER_SHARD_TIMEOUT_SECONDS /
-      #   _AGGREGATE_TIMEOUT_SECONDS (§12.6 lines 556-558, F-12.6.18) = 53.
+      #   _AGGREGATE_TIMEOUT_SECONDS (§12.6 lines 556-558, F-12.6.18)
+      # + LENNY_AUDIT_RETENTION_PRESET / LENNY_AUDIT_RETENTION_DAYS
+      #   (§16.4, F-16.4.9 / F-16.4.10) = 55.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 53
+          count: 55
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1423,6 +1425,45 @@ tests:
           content:
             name: LENNY_AUDIT_GDPR_RETENTION_DAYS
             value: "2920"
+
+  # spec: §16.4 — audit.retentionPreset / audit.retentionDays render
+  # LENNY_AUDIT_RETENTION_PRESET / LENNY_AUDIT_RETENTION_DAYS so the
+  # gateway resolves the §16.4 window and emits lenny_audit_retention_days
+  # for the §16.5 AuditRetentionLow alert. F-16.4.9 / F-16.4.10.
+  - it: wires LENNY_AUDIT_RETENTION_PRESET and LENNY_AUDIT_RETENTION_DAYS from chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETENTION_PRESET
+            value: "soc2"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETENTION_DAYS
+            value: "365"
+
+  - it: renders LENNY_AUDIT_RETENTION_PRESET and LENNY_AUDIT_RETENTION_DAYS from audit overrides
+    set:
+      audit.retentionPreset: custom
+      audit.retentionDays: 730
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETENTION_PRESET
+            value: "custom"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETENTION_DAYS
+            value: "730"
 
   # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap

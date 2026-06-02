@@ -996,9 +996,19 @@ audit:
     # per-cycle batch size: the maximum number of pending rows one
     # translation cycle drains.
     batchSize: 256
+  # §16.4 audit.retentionPreset: the compliance-aware retention bundle
+  # for non-gdpr audit rows. One of soc2 (365 days, default), fedramp-high
+  # (1095), hipaa (2190), nis2-dora (1825), or custom (uses retentionDays
+  # below). A named preset fixes the window and ignores retentionDays. The
+  # gateway warns at startup when the preset is incompatible with an
+  # active tenant's complianceProfile. F-16.4.10.
+  retentionPreset: soc2
   # §16.4 audit.retentionDays: the general Postgres audit-log retention
-  # window in days. The audit GC applies it to non-gdpr.* rows. gdpr.*
-  # rows are governed separately by gdprRetentionDays below. F-12.8.16.
+  # window in days, used when retentionPreset is custom. The audit GC
+  # applies it to non-gdpr.* rows. gdpr.* rows are governed separately by
+  # gdprRetentionDays below. The resolved window is emitted on the
+  # lenny_audit_retention_days gauge for the §16.5 AuditRetentionLow
+  # alert. F-12.8.16; F-16.4.9.
   retentionDays: 365
   # §12.8 line 839 audit.gdprRetentionDays: how long gdpr.* audit rows
   # (erasure receipts, legal-hold ledger events) are retained, on a

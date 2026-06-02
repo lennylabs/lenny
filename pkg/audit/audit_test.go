@@ -73,6 +73,34 @@ func TestPresetDaysMatchesSpec(t *testing.T) {
 	}
 }
 
+// spec: §16.4 — ResolveRetentionDays fixes the window from a named
+// preset and ignores customDays, while PresetCustom uses customDays
+// (falling back to the soc2 default when customDays is non-positive).
+// F-16.4.10.
+func TestResolveRetentionDays_spec_16_4(t *testing.T) {
+	cases := []struct {
+		name       string
+		preset     RetentionPreset
+		customDays int
+		want       int
+	}{
+		{"soc2 fixes 365 ignoring custom", PresetSOC2, 99, 365},
+		{"fedramp-high fixes 1095", PresetFedRAMPHigh, 0, 1095},
+		{"hipaa fixes 2190", PresetHIPAA, 10, 2190},
+		{"nis2-dora fixes 1825", PresetNIS2DORA, 0, 1825},
+		{"custom uses explicit days", PresetCustom, 730, 730},
+		{"custom non-positive falls back to soc2 default", PresetCustom, 0, 365},
+		{"custom negative falls back to soc2 default", PresetCustom, -5, 365},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveRetentionDays(tc.preset, tc.customDays); got != tc.want {
+				t.Errorf("ResolveRetentionDays(%q, %d) = %d, want %d", tc.preset, tc.customDays, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPresetWindowMatchesDays(t *testing.T) {
 	if got := PresetSOC2.PresetWindow(); got != 365*24*time.Hour {
 		t.Errorf("PresetSOC2.PresetWindow() = %v, want 365d", got)

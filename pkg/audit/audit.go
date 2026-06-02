@@ -187,6 +187,25 @@ func (p RetentionPreset) PresetWindow() time.Duration {
 	return time.Duration(p.PresetDays()) * 24 * time.Hour
 }
 
+// ResolveRetentionDays returns the effective §16.4 general
+// audit-log retention window in days for a configured preset. A
+// named preset (soc2, fedramp-high, hipaa, nis2-dora) fixes the
+// window via PresetDays and ignores customDays. PresetCustom (or an
+// unrecognised value) uses the explicit customDays. A non-positive
+// customDays under the custom preset falls back to the PresetSOC2
+// default (365) so the resolved window is always a usable positive
+// value the GC and the lenny_audit_retention_days alert gauge can
+// consume. F-16.4.10.
+func ResolveRetentionDays(p RetentionPreset, customDays int) int {
+	if d := p.PresetDays(); d > 0 {
+		return d
+	}
+	if customDays > 0 {
+		return customDays
+	}
+	return PresetSOC2.PresetDays()
+}
+
 // CompatibleProfiles returns the compliance profiles a preset is a
 // valid pairing for. §16.4 says:
 //

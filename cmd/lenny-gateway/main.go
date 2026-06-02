@@ -788,6 +788,10 @@ func main() {
 		"§11.2.1 line 151 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
 	gdprRetentionDays := flag.Int("audit-gdpr-retention-days", envInt("LENNY_AUDIT_GDPR_RETENTION_DAYS", audit.GDPRRetentionDefaultDays),
 		"§12.8 line 839 audit.gdprRetentionDays: how long gdpr.* audit rows (erasure receipts, legal-hold ledger events) are retained, on a window separate from audit.retentionDays (default 2555 / 7 years). The gateway rejects a value below 2190 (6 years) when any tenant has a regulated complianceProfile (soc2, fedramp, hipaa) at startup. Override via LENNY_AUDIT_GDPR_RETENTION_DAYS.")
+	auditRetentionPreset := flag.String("audit-retention-preset", envOr("LENNY_AUDIT_RETENTION_PRESET", string(audit.PresetSOC2)),
+		"§16.4 audit.retentionPreset: the compliance-aware retention bundle for non-gdpr audit rows (soc2, fedramp-high, hipaa, nis2-dora, custom). A named preset fixes the retention window (soc2 365, fedramp-high 1095, hipaa 2190, nis2-dora 1825); custom uses --audit-retention-days. The gateway warns at startup when the preset is incompatible with an active tenant's complianceProfile. Override via LENNY_AUDIT_RETENTION_PRESET.")
+	auditRetentionDays := flag.Int("audit-retention-days", envInt("LENNY_AUDIT_RETENTION_DAYS", audit.PresetSOC2.PresetDays()),
+		"§16.4 audit.retentionDays: the general (non-gdpr) Postgres audit-log retention window in days, used when --audit-retention-preset is custom. Emitted at startup on the lenny_audit_retention_days gauge so the §16.5 AuditRetentionLow alert can evaluate. Override via LENNY_AUDIT_RETENTION_DAYS.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -1431,6 +1435,18 @@ func main() {
 	// and any subsequent tenant deletion. A transient tenant-list failure
 	// degrades to a warning rather than crashing the boot. F-11.2.15,
 	// F-12.8.16.
+	// §16.4 audit.retentionPreset: resolve the compliance-aware retention
+	// bundle for non-gdpr audit rows. A preset typo is a fatal config
+	// error (the closed §16.4 enum); a valid preset fixes the retention
+	// window, and `custom` uses --audit-retention-days. The resolved
+	// window is emitted on lenny_audit_retention_days below so the §16.5
+	// AuditRetentionLow alert can evaluate. F-16.4.10.
+	auditRetentionPresetValue := audit.RetentionPreset(*auditRetentionPreset)
+	if !auditRetentionPresetValue.IsValid() {
+		log.Fatalf("lenny-gateway: §16.4 audit.retentionPreset %q is not a valid preset (soc2, fedramp-high, hipaa, nis2-dora, custom)", *auditRetentionPreset)
+	}
+	effectiveAuditRetentionDays := audit.ResolveRetentionDays(auditRetentionPresetValue, *auditRetentionDays)
+
 	if profiles, err := activeComplianceProfiles(context.Background(), tenants); err != nil {
 		log.Printf("lenny-gateway: WARNING: retention-days compliance-floor preflight could not list tenants: %v", err)
 	} else {
@@ -1440,8 +1456,21 @@ func main() {
 		if err := audit.ValidateGDPRRetentionDays(*gdprRetentionDays, profiles); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
+		// §16.4 preset × compliance-profile pairing matrix. A mismatch is
+		// a diagnostic warning rather than a fatal error: the resolved
+		// window still satisfies the compliance minimum (a stricter preset
+		// only lengthens retention), and a single global preset cannot
+		// satisfy a deployment that mixes incompatible regulated profiles.
+		// The warning names the compatible presets so an operator can
+		// align the configuration. F-16.4.10.
+		for _, p := range profiles {
+			if err := audit.ValidatePairing(auditRetentionPresetValue, audit.ComplianceProfile(p)); err != nil {
+				log.Printf("lenny-gateway: WARNING: §16.4 %v", err)
+			}
+		}
 	}
 	log.Printf("lenny-gateway: §12.8 audit.gdprRetentionDays floor active (gdpr.* retention %d days)", *gdprRetentionDays)
+	log.Printf("lenny-gateway: §16.4 audit.retentionPreset=%s (non-gdpr retention %d days)", auditRetentionPresetValue, effectiveAuditRetentionDays)
 
 	// spec: §11.7 item 2 lines 357-359 — resolve the periodic background
 	// integrity-check cadence against the active compliance posture. Any
@@ -2189,6 +2218,14 @@ func main() {
 	gwMetrics.SetMinReplicas(*minReplicas)
 	gwMetrics.SetStreamCeiling(*streamCeiling)
 	gwMetrics.SetReplicaCount(1)
+	// §16.4 / §16.5: emit the audit alert-support scalars so the
+	// AuditSIEMNotConfigured and AuditRetentionLow expressions resolve.
+	// siemConfigured is the suppression term (1 when audit.siem.endpoint
+	// is set), retentionDays is the resolved §16.4 window, and
+	// envProduction gates both alerts to production. F-16.4.9; F-16.4.10.
+	gwMetrics.SetAuditSIEMConfigured(*auditSIEMEndpoint != "")
+	gwMetrics.SetAuditRetentionDays(effectiveAuditRetentionDays)
+	gwMetrics.SetEnvProduction(os.Getenv("LENNY_ENV") == "production")
 	// spec: §11.2.1 line 187 — emit the configured BillingCorrectionRateHigh
 	// threshold as a startup-set scalar gauge so the alert expression in
 	// pkg/alerting/rules can read it via scalar(lenny_billing_correction_rate_threshold).

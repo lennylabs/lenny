@@ -847,6 +847,19 @@ spec:
             - name: LENNY_AUDIT_GDPR_RETENTION_DAYS
               value: {{ .Values.audit.gdprRetentionDays | quote }}
             {{- end }}
+            # §16.4 audit.retentionPreset / audit.retentionDays: the
+            # compliance-aware retention bundle and explicit window for
+            # non-gdpr audit rows. The resolved window is emitted on the
+            # lenny_audit_retention_days gauge that drives the §16.5
+            # AuditRetentionLow alert. F-16.4.9 / F-16.4.10.
+            {{- if and .Values.audit (hasKey .Values.audit "retentionPreset") }}
+            - name: LENNY_AUDIT_RETENTION_PRESET
+              value: {{ .Values.audit.retentionPreset | quote }}
+            {{- end }}
+            {{- if and .Values.audit (hasKey .Values.audit "retentionDays") }}
+            - name: LENNY_AUDIT_RETENTION_DAYS
+              value: {{ .Values.audit.retentionDays | quote }}
+            {{- end }}
             # §25.13 line 4798 healthTracker.useCompiledRules: gates the
             # gateway's in-process §16.5 alert evaluator. Set false to
             # suppress the per-replica tracker and let /v1/admin/health
