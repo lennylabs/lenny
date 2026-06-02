@@ -412,6 +412,12 @@ type Metrics struct {
 	// the implementation, so the catalog (which transcribes §16.1 only)
 	// excludes it. F-12.3.13.
 	billingFlushPressure prometheus.Counter
+	// auditBatchingNoSIEM is the §12.3 line 99 AuditBatchingNoSIEM
+	// counter. The gateway increments it once at startup when
+	// LENNY_ENV=production has audit.batchingEnabled set but no SIEM
+	// endpoint configured: buffered T2 audit events would be lost on a
+	// crash with no external durable copy to recover from. F-12.3.15.
+	auditBatchingNoSIEM prometheus.Counter
 	// postgresWriteIops is the §12.3 lines 115-125 sustained Postgres
 	// write-IOPS gauge the §16.5 PostgresWriteSaturation alert reads as
 	// the numerator of `lenny_postgres_write_iops /
@@ -1678,6 +1684,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §12.3 line 99 AuditBatchingNoSIEM — incremented once at startup
+	// when production has audit.batchingEnabled but no SIEM endpoint.
+	// F-12.3.15.
+	auditBatchingNoSIEM, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_batching_no_siem_total",
+		Help: "§12.3 line 99 AuditBatchingNoSIEM: production audit.batchingEnabled is set with no SIEM endpoint, so buffered T2 events are lost on crash with no external copy.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	// §12.3 lines 115-125 — sustained Postgres write IOPS, sampled from
 	// pg_stat_database row-write deltas. Numerator of the §16.5
 	// PostgresWriteSaturation ratio. F-12.3.7.
@@ -1964,7 +1980,8 @@ func New() (*Metrics, error) {
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		dualStoreUnavailable,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
-		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
+		billingFlushPressure, auditBatchingNoSIEM,
+		postgresWriteIops, postgresWriteCeilingIops,
 		siemDeliveryLag, siemMaxDeliveryLag,
 		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
 		maxOrphanTasksPerTenant,
@@ -2153,6 +2170,7 @@ func New() (*Metrics, error) {
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
 		billingFlushPressure:                 billingFlushPressure.WithLabelValues(),
+		auditBatchingNoSIEM:                  auditBatchingNoSIEM.WithLabelValues(),
 		postgresWriteIops:                    postgresWriteIops.WithLabelValues(),
 		postgresWriteCeilingIops:             postgresWriteCeilingIops.WithLabelValues(),
 		siemDeliveryLag:                      siemDeliveryLag.WithLabelValues(),
@@ -3579,6 +3597,18 @@ func (m *Metrics) IncBillingFlushPressure() {
 		return
 	}
 	m.billingFlushPressure.Inc()
+}
+
+// IncAuditBatchingNoSIEM advances the §12.3 line 99 AuditBatchingNoSIEM
+// counter. The gateway calls it once at startup when production has
+// audit.batchingEnabled set but no SIEM endpoint, so buffered T2 audit
+// events would be lost on a crash with no external durable copy.
+// F-12.3.15.
+func (m *Metrics) IncAuditBatchingNoSIEM() {
+	if m == nil {
+		return
+	}
+	m.auditBatchingNoSIEM.Inc()
 }
 
 // SetPostgresWriteIops sets the §12.3 lines 115-125 sustained Postgres

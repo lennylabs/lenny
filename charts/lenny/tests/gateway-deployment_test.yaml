@@ -592,10 +592,13 @@ tests:
       # + LENNY_AUDIT_RETENTION_PRESET / LENNY_AUDIT_RETENTION_DAYS
       #   (§16.4, F-16.4.9 / F-16.4.10)
       # + LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS (§12.3 line 97,
-      #   F-12.3.17) = 56.
+      #   F-12.3.17)
+      # + LENNY_AUDIT_SYNC_WRITE_POOL_SIZE / LENNY_AUDIT_BATCHING_ENABLED
+      #   / LENNY_AUDIT_FLUSH_INTERVAL_MS / LENNY_AUDIT_FLUSH_BATCH_SIZE
+      #   (§12.3 lines 79-81, F-12.3.14) = 60.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 56
+          count: 60
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1375,6 +1378,29 @@ tests:
           content:
             name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS
             value: "30"
+      # spec: §12.3 lines 79-81 — the audit sync write pool size and the
+      # T2 batching toggles render from chart defaults (batching off).
+      # F-12.3.14.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SYNC_WRITE_POOL_SIZE
+            value: "4"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_BATCHING_ENABLED
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_FLUSH_INTERVAL_MS
+            value: "250"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_FLUSH_BATCH_SIZE
+            value: "100"
       - contains:
           path: spec.template.spec.containers[0].env
           content:

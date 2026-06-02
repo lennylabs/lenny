@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -80,6 +81,26 @@ type Store struct {
 	router  Router
 	lockCfg LockConfig
 	metrics *LockMetrics
+	// syncWritePool is the §12.3 line 79 dedicated audit sync write pool
+	// (audit.syncWritePoolSize, default 4). When set, the synchronous
+	// Append / AppendBatch write path uses it instead of the shared
+	// request pool so audit writes do not contend with request-serving
+	// connections. Reads stay on the router pool. Nil keeps the v1
+	// behavior of writing through the router's audit shard. F-12.3.14.
+	syncWritePool *pgxpool.Pool
+	// batchBuffer is the §12.3 line 81 opt-in T2 batching buffer. When
+	// set (audit.batchingEnabled: true), non-PII T2 operational audit
+	// events ride the batched-insert path instead of a synchronous
+	// write. Nil keeps every audit write synchronous. F-12.3.14.
+	batchBuffer batchEnqueuer
+}
+
+// batchEnqueuer is the seam the §12.3 batch buffer satisfies. It is an
+// interface (not a direct *auditbatch.Buffer) so the auditbatch flush
+// callback can close over this Store's AppendBatch without an import
+// cycle.
+type batchEnqueuer interface {
+	Enqueue(it auditbatch.Item)
 }
 
 var _ EventStore = (*Store)(nil)
@@ -96,6 +117,28 @@ func WithLockConfig(cfg LockConfig) Option { return func(s *Store) { s.lockCfg =
 // no samples.
 func WithLockMetrics(m *LockMetrics) Option { return func(s *Store) { s.metrics = m } }
 
+// WithSyncWritePool wires the §12.3 line 79 dedicated audit sync write
+// pool (audit.syncWritePoolSize). The synchronous Append / AppendBatch
+// write path uses it so audit writes do not consume request-serving
+// connections from the shared pool. F-12.3.14.
+func WithSyncWritePool(pool *pgxpool.Pool) Option {
+	return func(s *Store) { s.syncWritePool = pool }
+}
+
+// WithBatchBuffer wires the §12.3 line 81 opt-in T2 batching buffer.
+// When set, non-PII T2 operational audit events (the cross_tenant_read
+// worker receipts) are enqueued onto the buffer instead of written
+// synchronously. F-12.3.14.
+func WithBatchBuffer(b batchEnqueuer) Option {
+	return func(s *Store) { s.batchBuffer = b }
+}
+
+// SetBatchBuffer wires the §12.3 T2 batch buffer after construction.
+// The buffer's flush callback closes over this Store's AppendBatch, so
+// it must be created after the Store; this setter completes the cycle.
+// F-12.3.14.
+func (s *Store) SetBatchBuffer(b batchEnqueuer) { s.batchBuffer = b }
+
 // New returns a Store that routes every audit write through router
 // (§12.3 R-03). The router must resolve to a database that has the
 // migrations/ schema applied. Lock acquisition uses the §11.7 spec
@@ -109,9 +152,22 @@ func New(router Router, opts ...Option) *Store {
 }
 
 // shard resolves the audit Postgres pool for tenantID through the
-// §12.3 R-03 router.
+// §12.3 R-03 router. Reads (Rows, Get, Verify) and the §12.3 outbox
+// scatter reads use it.
 func (s *Store) shard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
 	return s.router.AuditShard(ctx, storerouter.TenantID(tenantID))
+}
+
+// writeShard resolves the pool for the synchronous audit write path.
+// It prefers the §12.3 line 79 dedicated audit sync write pool when one
+// is wired (audit.syncWritePoolSize) so audit writes do not contend
+// with request-serving connections, falling back to the router's audit
+// shard otherwise. F-12.3.14.
+func (s *Store) writeShard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+	if s.syncWritePool != nil {
+		return s.syncWritePool, nil
+	}
+	return s.shard(ctx, tenantID)
 }
 
 // allShards returns every audit Postgres shard for the §25.9
@@ -136,7 +192,7 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
 // failure is returned immediately without consuming a retry.
 // spec: §11.7 item 3 line 368.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	pool, err := s.shard(ctx, tenantID)
+	pool, err := s.writeShard(ctx, tenantID)
 	if err != nil {
 		return audit.Row{}, err
 	}

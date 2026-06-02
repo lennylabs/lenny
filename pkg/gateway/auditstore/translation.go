@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
@@ -134,6 +135,18 @@ func (s *Store) pendingTranslationOnShard(ctx context.Context, pool *pgxpool.Poo
 // observability — it is not load-bearing for the audit chain).
 func (s *Store) emitCrossTenantRead(ctx context.Context, category string, rowCount int) error {
 	payload := []byte(fmt.Sprintf(`{"category":%q,"row_count":%d}`, category, rowCount))
+	// cross_tenant_read is a non-PII T2 (Internal) operational receipt.
+	// When §12.3 audit batching is enabled it rides the batch buffer
+	// instead of a synchronous write; the buffer flushes it within
+	// auditFlushIntervalMs. F-12.3.14.
+	if s.batchBuffer != nil {
+		s.batchBuffer.Enqueue(auditbatch.Item{
+			TenantID:  "platform",
+			EventType: "cross_tenant_read",
+			Payload:   payload,
+		})
+		return nil
+	}
 	_, err := s.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{})
 	if err != nil {
 		return fmt.Errorf("auditstore: emit cross_tenant_read (%s): %w", category, err)

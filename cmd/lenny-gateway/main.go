@@ -92,6 +92,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
@@ -554,6 +555,18 @@ func main() {
 	auditOCSFBatchSize := flag.Int("audit-ocsf-batch-size",
 		envInt("LENNY_AUDIT_OCSF_BATCH_SIZE", 256),
 		"§11.7 OCSF translator per-cycle batch size: the maximum number of pending audit rows one translation cycle drains. Default 256. Override via LENNY_AUDIT_OCSF_BATCH_SIZE. F-11.7.1.")
+	auditSyncWritePoolSize := flag.Int("audit-sync-write-pool-size",
+		envInt("LENNY_AUDIT_SYNC_WRITE_POOL_SIZE", 4),
+		"§12.3 line 79 audit.syncWritePoolSize: the size of the dedicated audit sync write pool. Synchronous audit writes use this pool so they do not consume request-serving connections from the shared primary pool. Default 4. Override via LENNY_AUDIT_SYNC_WRITE_POOL_SIZE. F-12.3.14.")
+	auditBatchingEnabled := flag.Bool("audit-batching-enabled",
+		envBool("LENNY_AUDIT_BATCHING_ENABLED", false),
+		"§12.3 line 81 audit.batchingEnabled: opt-in T2 (non-PII) audit-event batching. Disabled by default. When true, non-PII T2 operational audit events are buffered in memory and flushed in batches (accepting the documented data-loss risk on a crash); T3/T4 PII events always stay synchronous. Override via LENNY_AUDIT_BATCHING_ENABLED. F-12.3.14.")
+	auditFlushIntervalMs := flag.Int("audit-flush-interval-ms",
+		envInt("LENNY_AUDIT_FLUSH_INTERVAL_MS", 250),
+		"§12.3 line 81 audit.flushIntervalMs: the maximum age of a buffered T2 audit event before it is flushed when batching is enabled. Default 250ms. Override via LENNY_AUDIT_FLUSH_INTERVAL_MS. F-12.3.14.")
+	auditFlushBatchSize := flag.Int("audit-flush-batch-size",
+		envInt("LENNY_AUDIT_FLUSH_BATCH_SIZE", 100),
+		"§12.3 line 81 audit.flushBatchSize: the buffered T2 audit-event count that triggers an immediate flush when batching is enabled. Default 100. Override via LENNY_AUDIT_FLUSH_BATCH_SIZE. F-12.3.14.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -1021,6 +1034,7 @@ func main() {
 		billing          billingstore.Store
 		pgPool           *pgxpool.Pool
 		billingAuditPool *pgxpool.Pool
+		auditSyncPool    *pgxpool.Pool
 	)
 	if *postgresDSN != "" {
 		pool, err := pgxpool.New(context.Background(), *postgresDSN)
@@ -1062,6 +1076,30 @@ func main() {
 			}
 			billingAuditPool = bapool
 			log.Printf("lenny-gateway: §12.3 routing billing-event and audit-log writes to the separate LENNY_PG_BILLING_AUDIT_DSN instance")
+		}
+		// §12.3 line 79: a dedicated, small audit sync write pool so the
+		// synchronous audit hash-chain writes do not consume the shared
+		// request pool's connections. It targets the instance where the
+		// audit ledger physically lives (the separate billing/audit
+		// instance when configured, otherwise the primary), sized by
+		// audit.syncWritePoolSize. A non-positive size keeps audit writes
+		// on the router pool. F-12.3.14.
+		if *auditSyncWritePoolSize > 0 {
+			auditDSN := *postgresDSN
+			if *billingAuditDSN != "" {
+				auditDSN = *billingAuditDSN
+			}
+			syncCfg, err := pgxpool.ParseConfig(auditDSN)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.3 audit sync write pool config: %v", err)
+			}
+			syncCfg.MaxConns = int32(*auditSyncWritePoolSize)
+			sp, err := pgxpool.NewWithConfig(context.Background(), syncCfg)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.3 audit sync write pool: %v", err)
+			}
+			auditSyncPool = sp
+			log.Printf("lenny-gateway: §12.3 dedicated audit sync write pool active (max_conns=%d)", *auditSyncWritePoolSize)
 		}
 		// §11.7 startup integrity check: the append-only ledgers must
 		// keep their grants, triggers, and erasure guard intact.
@@ -2232,6 +2270,14 @@ func main() {
 	gwMetrics.SetAuditSIEMConfigured(*auditSIEMEndpoint != "")
 	gwMetrics.SetAuditRetentionDays(effectiveAuditRetentionDays)
 	gwMetrics.SetEnvProduction(os.Getenv("LENNY_ENV") == "production")
+	// spec: §12.3 line 99 — in production with T2 audit batching enabled
+	// but no SIEM endpoint, there is no external durable copy to recover
+	// buffered T2 events from on a crash. Warn at startup and emit the
+	// AuditBatchingNoSIEM counter. F-12.3.15.
+	if auditBatchingNoSIEM(os.Getenv("LENNY_ENV"), *auditBatchingEnabled, *auditSIEMEndpoint != "") {
+		log.Printf("lenny-gateway: WARNING: Audit batching is enabled for T2 events but no SIEM is configured — buffered T2 audit events will be lost on gateway crash")
+		gwMetrics.IncAuditBatchingNoSIEM()
+	}
 	// spec: §11.2.1 line 187 — emit the configured BillingCorrectionRateHigh
 	// threshold as a startup-set scalar gauge so the alert expression in
 	// pkg/alerting/rules can read it via scalar(lenny_billing_correction_rate_threshold).
@@ -2317,6 +2363,7 @@ func main() {
 		auditValidator       *auditscope.Validator
 		ocsfTranslationStore ocsf.TranslationStore
 		siemDeliveryStore    siem.DeliveryStore
+		auditBatchBuffer     *auditbatch.Buffer
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2336,7 +2383,22 @@ func main() {
 				MaxRetries:       *auditLockMaxRetries,
 				RetryBaseMs:      *auditLockRetryBaseMs,
 			}),
-			auditstore.WithLockMetrics(auditLockMetrics))
+			auditstore.WithLockMetrics(auditLockMetrics),
+			// §12.3 line 79: route synchronous audit writes onto the
+			// dedicated sync write pool when one was opened. F-12.3.14.
+			auditstore.WithSyncWritePool(auditSyncPool))
+		// §12.3 line 81: opt-in T2 audit-event batching. When enabled, the
+		// non-PII cross_tenant_read worker receipts are buffered and
+		// flushed in batches through the dedicated sync write pool instead
+		// of one synchronous write each; T3/T4 PII audit events stay
+		// synchronous. F-12.3.14.
+		if *auditBatchingEnabled {
+			auditBatchBuffer = auditbatch.New(pgAudit.AppendBatch, auditbatch.Config{
+				FlushInterval: time.Duration(*auditFlushIntervalMs) * time.Millisecond,
+				BatchSize:     *auditFlushBatchSize,
+			}, nil)
+			pgAudit.SetBatchBuffer(auditBatchBuffer)
+		}
 		// spec: §11.7 line 428 — guard the caller-driven audit-write
 		// boundaries (the admin sink and the §4.8 policy-rejection sink)
 		// with the write-time tenant-scope validator so a forged-tenant
@@ -5074,6 +5136,16 @@ func main() {
 		go ocsfOutbox.Run(watchdogCtx)
 	}
 
+	// spec: §12.3 line 81 — drive the opt-in T2 audit batch buffer's
+	// flush loop. It flushes buffered non-PII T2 audit events every
+	// flushIntervalMs or when the buffer reaches flushBatchSize, and
+	// flushes the remainder on shutdown. F-12.3.14.
+	if auditBatchBuffer != nil {
+		log.Printf("lenny-gateway: §12.3 T2 audit batching enabled (flushInterval=%dms flushBatchSize=%d)",
+			*auditFlushIntervalMs, *auditFlushBatchSize)
+		go auditBatchBuffer.Run(watchdogCtx)
+	}
+
 	go func() {
 		log.Printf("lenny-gateway: listening on %s (dev_mode=%v multi_tenant=%v)",
 			*addr, *devMode, *multiTenant)
@@ -6726,6 +6798,14 @@ func envBool(name string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// auditBatchingNoSIEM reports the §12.3 line 99 AuditBatchingNoSIEM
+// condition: production mode has T2 audit batching enabled but no SIEM
+// endpoint, so buffered T2 audit events would be lost on a crash with
+// no external durable copy to recover from. F-12.3.15.
+func auditBatchingNoSIEM(env string, batchingEnabled, siemConfigured bool) bool {
+	return env == "production" && batchingEnabled && !siemConfigured
 }
 
 // envInt64 mirrors envInt for int64-valued flags (idempotency body

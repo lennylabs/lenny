@@ -18969,7 +18969,7 @@ default 500, clamped below the write-ahead cap) and `OnFlushPressure`. An
 Helm values). `billing_flush_pressure` is implementation-named so it is excluded
 from the §16.1 catalog (the `rateLimitRejected` precedent).
 
-### - [ ] F-12.3.14 — `audit.batchingEnabled`, `auditFlushIntervalMs`, [Medium] — OPEN
+### - [x] F-12.3.14 — `audit.batchingEnabled`, `auditFlushIntervalMs`, [Medium] — CLOSED
 `auditFlushBatchSize`, and `audit.syncWritePoolSize` are not implemented (§12.3 lines 79–81)
 
 Spec mandates a T2 audit-event batching opt-in (`audit.batchingEnabled: true`,
@@ -18987,7 +18987,23 @@ Defaults today: every audit write is synchronous on the shared pool. The
 spec's T3/T4 default behavior is met; the operator-tunable T2 opt-in is
 missing.
 
-### - [ ] F-12.3.15 — `AuditBatchingNoSIEM` startup warning and metric counter are not implemented (§12.3 line 99) [Medium] — OPEN
+**Resolution (commit pending):** All four settings are now chart values
+(`audit.syncWritePoolSize`, `audit.batchingEnabled`, `audit.flushIntervalMs`,
+`audit.flushBatchSize`) rendered to gateway env + flags. (a) The dedicated
+audit sync write pool is a separate `pgxpool` sized by `syncWritePoolSize`
+(default 4) opened against the audit instance; `auditstore.WithSyncWritePool`
+routes the synchronous Append / AppendBatch write path onto it so audit
+writes do not consume request-pool connections (reads stay on the router
+shard). (b) The batching code path is `pkg/gateway/auditstore/auditbatch`
+(`Buffer`, flush by `flushIntervalMs` / `flushBatchSize`) plus
+`auditstore.AppendBatch` (groups by tenant chain and seals each under one
+advisory lock, reusing the synchronous `sealAndInsert` so batched inserts
+chain correctly). When `batchingEnabled`, the non-PII T2 `cross_tenant_read`
+operational receipts ride the buffer; T3/T4 PII events always stay
+synchronous. (c) The chart toggles render with batching disabled by
+default.
+
+### - [x] F-12.3.15 — `AuditBatchingNoSIEM` startup warning and metric counter are not implemented (§12.3 line 99) [Medium] — CLOSED
 
 "In `LENNY_ENV=production` mode without SIEM, the gateway logs ... at
 startup and emits the `AuditBatchingNoSIEM` metric counter."
@@ -19000,7 +19016,14 @@ Evidence:
 Coupled with the Medium "audit batching not implemented" finding above —
 this warning is only meaningful once batching is wired.
 
-### - [ ] F-12.3.16 — Read replica routing is unimplemented (§12.3 line 146) [Medium] — OPEN
+**Resolution (commit pending):** The gateway now emits the
+`lenny_audit_batching_no_siem_total` counter (`gatewaymetrics.IncAuditBatchingNoSIEM`)
+and logs the spec-quoted startup warning when `auditBatchingNoSIEM(LENNY_ENV,
+batchingEnabled, siemConfigured)` holds (production + `audit.batchingEnabled`
++ no `audit.siem.endpoint`). The batch buffer it warns about is wired by
+**F-12.3.14**.
+
+### - [ ] F-12.3.16 — Read replica routing is unimplemented (§12.3 line 146) [Medium] — DEFERRED
 
 "The gateway should use separate connection strings for read and write
 traffic. Read-heavy queries (session status, task tree, audit reads, usage
@@ -19016,6 +19039,15 @@ Evidence:
 Spec wording is "should," so this is a SHOULD-class capability gap. The
 finding records that the read/write split is not wired and the gateway has
 no second DSN.
+
+**Deferred:** A correct read/write split routes every read-heavy query
+class the spec names — session status, task tree, audit reads, and usage
+reports — through a second DSN, which spans the session, task, usage, and
+audit stores plus a StoreRouter read accessor. That is a dedicated
+read-path vertical rather than part of this §12.3 audit-pipeline batch;
+wiring only a subset (e.g. audit reads) would leave the SHOULD half-met
+and misrepresent the split. Deferred as a standalone read-replica change.
+Not blocked on any finding closed in this batch.
 
 ### - [x] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — CLOSED
 

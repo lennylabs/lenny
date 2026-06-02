@@ -962,6 +962,30 @@ audit:
   # addition to the critical alert and lenny_audit_grant_drift_total
   # increment). F-11.7.3.
   hardFailOnDrift: false
+  # §12.3 line 79 audit.syncWritePoolSize: the size of the dedicated
+  # audit sync write pool (default 4). Synchronous audit writes use this
+  # pool so they do not consume request-serving connections from the
+  # shared primary pool. F-12.3.14.
+  syncWritePoolSize: 4
+  # §12.3 line 81 audit.batchingEnabled: opt-in T2 (non-PII) audit-event
+  # batching. Disabled by default. When true, non-PII T2 operational
+  # audit events are buffered in memory and flushed in batches; the
+  # in-memory buffer has no write-ahead log, so a gateway crash during a
+  # flush interval loses the buffered T2 events. T3/T4 (PII) audit events
+  # always stay on the synchronous write path regardless of this flag.
+  # When enabled in production without a SIEM endpoint the gateway logs a
+  # startup warning and emits lenny_audit_batching_no_siem_total. Record
+  # the accepted data-loss risk in the deployment documentation before
+  # enabling. F-12.3.14 / F-12.3.15.
+  batchingEnabled: false
+  # §12.3 line 81 audit.flushIntervalMs (default 250): the maximum age of
+  # a buffered T2 audit event before it is flushed when batching is
+  # enabled. F-12.3.14.
+  flushIntervalMs: 250
+  # §12.3 line 81 audit.flushBatchSize (default 100): the buffered T2
+  # audit-event count that triggers an immediate flush when batching is
+  # enabled. F-12.3.14.
+  flushBatchSize: 100
   # §11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When
   # empty (default), the compliance gate rejects creating or updating a
   # tenant to a regulated complianceProfile (soc2, fedramp, hipaa) and
