@@ -72,7 +72,7 @@ func TestExtendLeaseGranted(t *testing.T) {
 	}}
 	client := dialStub(t, stub)
 
-	res, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	res, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestExtendLeasePartiallyGranted(t *testing.T) {
 	}}
 	client := dialStub(t, stub)
 
-	res, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	res, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestExtendLeaseCeilingReached(t *testing.T) {
 	}}
 	client := dialStub(t, stub)
 
-	res, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	res, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestExtendLeaseRejected(t *testing.T) {
 	}}
 	client := dialStub(t, stub)
 
-	res, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	res, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestExtendLeaseTransportError(t *testing.T) {
 	stub := &stubGatewayControl{err: status.Error(codes.Unavailable, "gateway down")}
 	client := dialStub(t, stub)
 
-	_, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	_, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if err == nil {
 		t.Fatal("ExtendLease should return the gateway error")
 	}
@@ -194,7 +194,7 @@ func TestExtendLeaseUnknownStatus(t *testing.T) {
 	}}
 	client := dialStub(t, stub)
 
-	_, err := client.ExtendLease(context.Background(), "sess-1", 200_000)
+	_, err := client.ExtendLease(context.Background(), "sess-1", gatewaycontrol.Extension{AdditionalTokens: 200_000})
 	if !errors.Is(err, gatewaycontrol.ErrUnknownStatus) {
 		t.Errorf("error = %v, want ErrUnknownStatus", err)
 	}
@@ -231,5 +231,68 @@ func TestDialBadTarget(t *testing.T) {
 func TestGatewayDNSNameMatchesSpec_spec_10_3_322(t *testing.T) {
 	if gatewaycontrol.GatewayDNSName != "lenny-gateway.lenny-system.svc" {
 		t.Errorf("GatewayDNSName = %q, want the NET-060 gateway Service DNS SAN", gatewaycontrol.GatewayDNSName)
+	}
+}
+
+// TestExtendLeaseCarriesAllDimensions confirms the §8.6 extensions
+// block is wire-complete: every extendable dimension the Extension
+// struct exposes lands on the ExtendLeaseRequest, including the
+// FileExportLimitsDelta sub-message. spec: §8.6 lines 633-643; F-15.3.4.
+func TestExtendLeaseCarriesAllDimensions_spec_8_6(t *testing.T) {
+	stub := &stubGatewayControl{resp: &adapterv1.ExtendLeaseResponse{
+		Status: adapterv1.ExtendLeaseResponse_STATUS_GRANTED,
+	}}
+	client := dialStub(t, stub)
+
+	ext := gatewaycontrol.Extension{
+		AdditionalTokens:           200_000,
+		AdditionalSeconds:          1800,
+		AdditionalChildren:         5,
+		AdditionalParallelChildren: 2,
+		AdditionalTreeSize:         10,
+		AdditionalMaxFiles:         3,
+		AdditionalMaxBytes:         4096,
+	}
+	if _, err := client.ExtendLease(context.Background(), "sess-1", ext); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	got := stub.gotReq
+	if got.GetRequestedTokens() != 200_000 {
+		t.Errorf("RequestedTokens = %d, want 200000", got.GetRequestedTokens())
+	}
+	if got.GetRequestedSeconds() != 1800 {
+		t.Errorf("RequestedSeconds = %d, want 1800", got.GetRequestedSeconds())
+	}
+	if got.GetRequestedChildren() != 5 {
+		t.Errorf("RequestedChildren = %d, want 5", got.GetRequestedChildren())
+	}
+	if got.GetRequestedParallelChildren() != 2 {
+		t.Errorf("RequestedParallelChildren = %d, want 2", got.GetRequestedParallelChildren())
+	}
+	if got.GetRequestedTreeSize() != 10 {
+		t.Errorf("RequestedTreeSize = %d, want 10", got.GetRequestedTreeSize())
+	}
+	fe := got.GetRequestedFileExportLimits()
+	if fe == nil || fe.GetAdditionalMaxFiles() != 3 || fe.GetAdditionalMaxBytes() != 4096 {
+		t.Errorf("RequestedFileExportLimits = %+v, want {3, 4096}", fe)
+	}
+}
+
+// TestExtendLeaseOmitsFileExportDeltaWhenZero confirms the optional
+// FileExportLimitsDelta sub-message is absent when neither file-export
+// dimension is requested, so a zero extension does not send an empty
+// delta. spec: §8.6 line 643.
+func TestExtendLeaseOmitsFileExportDeltaWhenZero(t *testing.T) {
+	stub := &stubGatewayControl{resp: &adapterv1.ExtendLeaseResponse{
+		Status: adapterv1.ExtendLeaseResponse_STATUS_GRANTED,
+	}}
+	client := dialStub(t, stub)
+	if _, err := client.ExtendLease(context.Background(), "sess-1",
+		gatewaycontrol.Extension{AdditionalTokens: 1}); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if stub.gotReq.GetRequestedFileExportLimits() != nil {
+		t.Errorf("RequestedFileExportLimits = %+v, want nil for a tokens-only extension",
+			stub.gotReq.GetRequestedFileExportLimits())
 	}
 }

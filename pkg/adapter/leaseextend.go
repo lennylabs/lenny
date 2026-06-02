@@ -19,9 +19,10 @@ import (
 // integration and the gateway round-trip, so the budget-exhaustion
 // handler is unit-testable without a live gateway.
 type LeaseExtender interface {
-	// ExtendLease requests additional token budget for sessionID. See
-	// gatewaycontrol.Client.ExtendLease for the §8.6 semantics.
-	ExtendLease(ctx context.Context, sessionID string, requestedTokens int64) (gatewaycontrol.ExtensionResult, error)
+	// ExtendLease requests an extension on one or more §8.6 lease
+	// dimensions for sessionID. See gatewaycontrol.Client.ExtendLease
+	// for the §8.6 semantics.
+	ExtendLease(ctx context.Context, sessionID string, ext gatewaycontrol.Extension) (gatewaycontrol.ExtensionResult, error)
 }
 
 // BudgetExhaustionDecision is what the adapter does after a §8.6
@@ -67,7 +68,11 @@ func (s *Server) HandleBudgetExhaustion(ctx context.Context, requestedTokens int
 			errors.New("adapter: no session assigned; cannot request a §8.6 lease extension")
 	}
 
-	res, err := s.LeaseExtender.ExtendLease(ctx, sessionID, requestedTokens)
+	// The budget-exhaustion trigger extends the token dimension only;
+	// the wire carries the full §8.6 extension set so a future trigger
+	// can request additional children, tree size, or file-export limits.
+	res, err := s.LeaseExtender.ExtendLease(ctx, sessionID,
+		gatewaycontrol.Extension{AdditionalTokens: requestedTokens})
 	if err != nil {
 		// A transport or gateway error is not a grant. The adapter
 		// cannot retry the LLM call, so it propagates BUDGET_EXHAUSTED.

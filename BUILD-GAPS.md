@@ -17871,7 +17871,7 @@ event has no producer.
 a missing component, but it does not actively misclassify or expose
 PII, so calibrated below the High-severity write-time controls.
 
-**Resolution:** New `pkg/gateway/auditretention.Pruner` runs a leader-gated periodic sweep (`--audit-retention-prune-interval-seconds`, default 3600, 60s floor) that deletes audit rows past the resolved `audit.retentionDays` window via the new `auditstore.Store.PruneRetention`. The DELETE runs under `SET LOCAL lenny.erasure_mode = 'true'` (same mechanism as `DeleteByTenant`) and respects the three §16.4 carve-outs: gdpr.* erasure receipts are held under the separate `audit.gdprRetentionDays` window (>= 2190-day floor enforced at startup), and when `audit.siem.endpoint` is set the SIEM delivery guard withholds any row whose `sequence_number` exceeds the forwarder's `siem_delivery_state.last_acked_sequence`. The §16.7 `audit.partition_drop_forced` event now has a producer: `Pruner.ForceDrop` records it (with `RetentionWindowStats` populating `oldest_event_ts`/`newest_event_ts`/`siem_high_water_mark_at_drop`/`events_lost_count`) before bypassing the guard, surfaced through the new platform-admin `POST /v1/admin/audit-partitions/{partition}/drop` endpoint (data-loss acknowledgement required). Wired in `cmd/lenny-gateway` only when a durable Postgres audit chain exists. Commit `__C1__`.
+**Resolution:** New `pkg/gateway/auditretention.Pruner` runs a leader-gated periodic sweep (`--audit-retention-prune-interval-seconds`, default 3600, 60s floor) that deletes audit rows past the resolved `audit.retentionDays` window via the new `auditstore.Store.PruneRetention`. The DELETE runs under `SET LOCAL lenny.erasure_mode = 'true'` (same mechanism as `DeleteByTenant`) and respects the three §16.4 carve-outs: gdpr.* erasure receipts are held under the separate `audit.gdprRetentionDays` window (>= 2190-day floor enforced at startup), and when `audit.siem.endpoint` is set the SIEM delivery guard withholds any row whose `sequence_number` exceeds the forwarder's `siem_delivery_state.last_acked_sequence`. The §16.7 `audit.partition_drop_forced` event now has a producer: `Pruner.ForceDrop` records it (with `RetentionWindowStats` populating `oldest_event_ts`/`newest_event_ts`/`siem_high_water_mark_at_drop`/`events_lost_count`) before bypassing the guard, surfaced through the new platform-admin `POST /v1/admin/audit-partitions/{partition}/drop` endpoint (data-loss acknowledgement required). Wired in `cmd/lenny-gateway` only when a durable Postgres audit chain exists. Commit `da4f7ed9`.
 
 ### - [x] F-11.7.18 — 18  No `interceptor.rejected` registration in §16.7 catalog despite production emission [Medium] — CLOSED
 
@@ -25897,7 +25897,7 @@ lenny-adapter_grpc.pb.go:491`, missing across `pkg/adapter/`.
 
 **Resolution:** Duplicate of F-4.7.1 / F-4.7.3. Closed by those: `Server.LifecycleChannel` now implements the adapter→gateway control stream and emits `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, and `FINAL_USAGE_REPORT` as JSON envelopes. `CheckpointBarrierAck` (the §10.1 graceful-drain event also listed in this finding) remains tracked under F-4.7.2, which adds the `CheckpointBarrier`/`CoordinatorFence` RPC pair. (commit 2569adeb)
 
-### - [ ] F-15.3.4 — `ExtendLeaseRequest` is missing the §8.6 `extensions` block [Medium] — OPEN
+### - [x] F-15.3.4 — `ExtendLeaseRequest` is missing the §8.6 `extensions` block [Medium] — CLOSED
 
 §4.7 line 644: "Request body carries `extensions.additionalChildren`,
 `extensions.additionalTokenBudget`, `extensions.additionalMaxAge`, etc."
@@ -25919,6 +25919,8 @@ even before the request reaches the gateway.
 Severity: Medium (capability/wire schema). Files: `schemas/lenny-adapter.
 proto:506–510`, `pkg/gateway/leasecontrol/leasecontrol.go:208`,
 `pkg/adapter/gatewaycontrol/gatewaycontrol.go:136–144`.
+
+**Resolution:** The finding's proto + gateway-handler premise was stale — the §8.6 extendable dimensions (`requested_children`, `requested_parallel_children`, `requested_tree_size`, `requested_file_export_limits`) were added to `ExtendLeaseRequest` and are read by the gateway via `requestedDimensions` (F-8.6.1). The residual gap was the adapter side: `gatewaycontrol.Client.ExtendLease` and the `adapter.LeaseExtender` interface accepted only `requestedTokens int64`, so the adapter could never ask for the other dimensions. Replaced that scalar with a new `gatewaycontrol.Extension` struct (AdditionalTokens/Seconds/Children/ParallelChildren/TreeSize/MaxFiles/MaxBytes) that populates every proto field, sending the optional `FileExportLimitsDelta` only when a file-export dimension is non-zero. `HandleBudgetExhaustion` (the token-exhaustion trigger) builds `Extension{AdditionalTokens: …}`; the wire is now complete for any future trigger. Commit `__C2__`.
 
 ### - [ ] F-15.3.5 — GatewayControl service is wired but functionally inert in production [Medium] — OPEN
 

@@ -153,19 +153,70 @@ type ExtensionResult struct {
 // avoid a budget-exhaustion retry loop.
 var ErrUnknownStatus = errors.New("gatewaycontrol: gateway returned an unrecognised ExtendLease status")
 
+// Extension carries the §8.6 extendable lease dimensions a single
+// ExtendLease request may ask for. Each field is the *additional*
+// amount over the current grant; a zero field requests no change on
+// that dimension. The set mirrors the §8.6 line 643 extendable fields
+// (`maxTokenBudget`, `perChildMaxAge`, `maxChildrenTotal`,
+// `maxParallelChildren`, `maxTreeSize`, `fileExportLimits`); the
+// non-extendable security/reliability boundaries (`maxDepth`,
+// `minIsolationProfile`, etc.) have no field.
+//
+// spec: §8.6 lines 633-643.
+type Extension struct {
+	// AdditionalTokens is `extensions.additionalTokenBudget` →
+	// maxTokenBudget. The budget-exhaustion trigger sets this.
+	AdditionalTokens int64
+	// AdditionalSeconds is `extensions.additionalMaxAge` →
+	// perChildMaxAge, in seconds.
+	AdditionalSeconds int64
+	// AdditionalChildren is `extensions.additionalChildren` →
+	// maxChildrenTotal.
+	AdditionalChildren int64
+	// AdditionalParallelChildren extends maxParallelChildren.
+	AdditionalParallelChildren int64
+	// AdditionalTreeSize extends maxTreeSize.
+	AdditionalTreeSize int64
+	// AdditionalMaxFiles / AdditionalMaxBytes extend fileExportLimits.
+	// They travel together in the proto FileExportLimitsDelta; either
+	// being non-zero sends the delta message.
+	AdditionalMaxFiles int64
+	AdditionalMaxBytes int64
+}
+
+// IsZero reports whether the extension requests no change on any
+// dimension.
+func (e Extension) IsZero() bool {
+	return e == Extension{}
+}
+
 // ExtendLease issues the §8.6 extension request to the gateway. The
 // adapter calls it when its LLM proxy rejects a request for budget
 // exhaustion; sessionID is the session whose lease is being extended
-// and requestedTokens is the additional token budget asked for.
+// and ext carries the additional amounts requested on each extendable
+// dimension (the budget-exhaustion trigger sets only AdditionalTokens).
 //
 // On GRANTED or PARTIALLY_GRANTED the caller retries the rejected LLM
 // call. On CEILING_REACHED or REJECTED the caller MUST NOT retry the
 // extension and propagates BUDGET_EXHAUSTED to the runtime.
-func (c *Client) ExtendLease(ctx context.Context, sessionID string, requestedTokens int64) (ExtensionResult, error) {
-	resp, err := c.rpc.ExtendLease(ctx, &adapterv1.ExtendLeaseRequest{
-		SessionId:       &adapterv1.SessionId{Value: sessionID},
-		RequestedTokens: requestedTokens,
-	})
+//
+// spec: §8.6 lines 633-643 (the extensions block); §4.7 line 644.
+func (c *Client) ExtendLease(ctx context.Context, sessionID string, ext Extension) (ExtensionResult, error) {
+	req := &adapterv1.ExtendLeaseRequest{
+		SessionId:                 &adapterv1.SessionId{Value: sessionID},
+		RequestedTokens:           ext.AdditionalTokens,
+		RequestedSeconds:          int32(ext.AdditionalSeconds),
+		RequestedChildren:         ext.AdditionalChildren,
+		RequestedParallelChildren: ext.AdditionalParallelChildren,
+		RequestedTreeSize:         ext.AdditionalTreeSize,
+	}
+	if ext.AdditionalMaxFiles != 0 || ext.AdditionalMaxBytes != 0 {
+		req.RequestedFileExportLimits = &adapterv1.FileExportLimitsDelta{
+			AdditionalMaxFiles: ext.AdditionalMaxFiles,
+			AdditionalMaxBytes: ext.AdditionalMaxBytes,
+		}
+	}
+	resp, err := c.rpc.ExtendLease(ctx, req)
 	if err != nil {
 		return ExtensionResult{}, fmt.Errorf("gatewaycontrol: ExtendLease for session %s: %w", sessionID, err)
 	}

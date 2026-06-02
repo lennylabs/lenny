@@ -19,14 +19,14 @@ type fakeExtender struct {
 	err    error
 
 	gotSessionID string
-	gotTokens    int64
+	gotExt       gatewaycontrol.Extension
 	calls        int
 }
 
-func (f *fakeExtender) ExtendLease(_ context.Context, sessionID string, requestedTokens int64) (gatewaycontrol.ExtensionResult, error) {
+func (f *fakeExtender) ExtendLease(_ context.Context, sessionID string, ext gatewaycontrol.Extension) (gatewaycontrol.ExtensionResult, error) {
 	f.calls++
 	f.gotSessionID = sessionID
-	f.gotTokens = requestedTokens
+	f.gotExt = ext
 	if f.err != nil {
 		return gatewaycontrol.ExtensionResult{}, f.err
 	}
@@ -68,8 +68,13 @@ func TestHandleBudgetExhaustionGrantedRetries(t *testing.T) {
 	if ext.gotSessionID != "sess-1" {
 		t.Errorf("extender session = %q, want sess-1", ext.gotSessionID)
 	}
-	if ext.gotTokens != 200_000 {
-		t.Errorf("extender tokens = %d, want 200000", ext.gotTokens)
+	if ext.gotExt.AdditionalTokens != 200_000 {
+		t.Errorf("extender tokens = %d, want 200000", ext.gotExt.AdditionalTokens)
+	}
+	// spec: §8.6 — the budget-exhaustion trigger extends only the token
+	// dimension; the other extendable fields stay zero.
+	if ext.gotExt.AdditionalChildren != 0 || ext.gotExt.AdditionalTreeSize != 0 {
+		t.Errorf("budget-exhaustion trigger set non-token dimensions: %+v", ext.gotExt)
 	}
 }
 
