@@ -68,6 +68,11 @@ type Job struct {
 	Phase Phase
 	// StartedAt is the instant the job record was created.
 	StartedAt time.Time
+	// Deadline is the §12.8 line 768 tier-specific SLA window the job
+	// must complete within (T3 72h, T4 1h). Recorded at Start so the
+	// overdue sampler and the completion receipt can present it. Zero
+	// when no deadline resolver is wired into the Runner.
+	Deadline time.Duration
 	// CompletedAt is set when Phase becomes completed or failed.
 	CompletedAt time.Time
 	// Deleted maps each store's name to its deleted-row count, for the
@@ -112,6 +117,11 @@ type Store interface {
 	// Update applies mutate to a copy of the job and persists the
 	// result. Returns ErrNotFound when the job is missing.
 	Update(ctx context.Context, id string, mutate func(*Job) error) (Job, error)
+	// List returns every recorded job. The §12.8 erasure-SLA sampler
+	// uses it to publish the age of each in-progress job so the §16.5
+	// ErasureJobOverdue alert can detect a stall before the deadline
+	// breaches. spec: §12.8 line 768.
+	List(ctx context.Context) ([]Job, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -164,6 +174,17 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Job) error) (
 	}
 	m.jobs[id] = cloneJob(j)
 	return cloneJob(j), nil
+}
+
+// List implements Store.
+func (m *Memory) List(_ context.Context) ([]Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Job, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		out = append(out, cloneJob(j))
+	}
+	return out, nil
 }
 
 // cloneJob deep-copies the Deleted map and PhaseLog slice so a stored

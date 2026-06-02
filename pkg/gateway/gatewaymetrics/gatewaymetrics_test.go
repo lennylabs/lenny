@@ -634,6 +634,47 @@ func TestIncErasureJobFailed_spec_12_8_cmp_026(t *testing.T) {
 	}
 }
 
+// spec: §12.8 line 768 — erasure throughput / SLA metrics. The
+// in-progress gauge, the per-job duration histogram, and the overdue
+// age/deadline gauges the §16.5 ErasureJobOverdue alert reads.
+func TestErasureJobSLAMetrics_spec_12_8_768(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncErasureJobsActive()
+	m.IncErasureJobsActive()
+	m.DecErasureJobsActive()
+	m.ObserveErasureJobDuration(42)
+	m.SetErasureJobDeadlineSeconds((72 * 3600))
+	m.SetErasureJobAge("acme", "erasure_abc", 1234)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_erasure_jobs_active 1`,
+		`lenny_erasure_job_duration_seconds_count 1`,
+		`lenny_erasure_job_deadline_seconds 259200`,
+		`lenny_erasure_job_age_seconds{job_id="erasure_abc",tenant_id="acme"} 1234`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+
+	// A cleared job age series disappears from /metrics.
+	m.ClearErasureJobAge("acme", "erasure_abc")
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if strings.Contains(rr.Body.String(), `job_id="erasure_abc"`) {
+		t.Error("ClearErasureJobAge must remove the age series")
+	}
+}
+
 // spec: §11.7 / §16.1 — the wired OCSF translator increments
 // lenny_audit_ocsf_translation_failed_total labeled by event_type and
 // error_class on each per-row translation failure. F-11.7.1 / F-11.7.15.

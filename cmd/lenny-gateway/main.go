@@ -3601,6 +3601,18 @@ func main() {
 		erasureJobs := erasurejob.NewMemory()
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
+			// spec: §12.8 line 768 — emit the in-progress gauge and
+			// per-job duration histogram for erasure-throughput / SLA
+			// monitoring.
+			WithLifecycleMetrics(gwMetrics).
+			// spec: §12.8 line 768 / §12.9 — record the tier-specific SLA
+			// deadline on each job (T4 Restricted 1h, otherwise 72h).
+			WithDeadlineResolver(func(ctx context.Context, tenantID string) time.Duration {
+				if t, err := tenants.Get(ctx, tenantID); err == nil && t.WorkspaceTier == tenantkms.WorkspaceTierT4 {
+					return time.Hour
+				}
+				return 72 * time.Hour
+			}).
 			// §12.5 line 317: on completion, trigger an immediate
 			// tenant-scoped GC sweep for a `gcPriority: high` tenant.
 			WithCompletionHook(func(ctx context.Context, tenantID, _ string) {
@@ -3632,6 +3644,15 @@ func main() {
 			erasureRunner = erasureRunner.WithBilling(erasurejob.NewBillingEraser(be, tenants))
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
+		// spec: §12.8 line 768 — publish the erasure-SLA gauges
+		// (lenny_erasure_job_age_seconds, lenny_erasure_job_deadline_seconds)
+		// on a periodic tick so the §16.5 ErasureJobOverdue alert can detect
+		// a stalled job before its deadline breaches. The Runner cannot
+		// advance a job's age while blocked inside a slow DeleteByUser, so a
+		// separate sampler reads the registry. Default deadline is the §12.9
+		// T3 72h bound the alert's scalar() compares against.
+		erasureSampler := erasurejob.NewSampler(erasureJobs, gwMetrics, 72*time.Hour, clockinject.Now)
+		go erasureSampler.Run(context.Background(), 30*time.Second)
 	}
 	if pgPool != nil {
 		// §13.3 operator-initiated token revocation, durable in the

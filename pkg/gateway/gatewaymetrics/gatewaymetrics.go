@@ -107,6 +107,10 @@ type Metrics struct {
 	evalScore                   *prometheus.HistogramVec
 	noEnvPolicyAllowAll         *prometheus.CounterVec
 	erasureJobFailed            *prometheus.CounterVec
+	erasureJobsActive           prometheus.Gauge
+	erasureJobDuration          prometheus.Observer
+	erasureJobDeadlineSeconds   prometheus.Gauge
+	erasureJobAgeSeconds        *prometheus.GaugeVec
 	gcPauseP99Ms                prometheus.Gauge
 	// replayBufferUtilization is the §16.1
 	// lenny_event_bus_replay_buffer_utilization gauge — ratio of the
@@ -1058,6 +1062,42 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §12.8 line 768 — erasure throughput / SLA signals.
+	// lenny_erasure_jobs_active tracks in-progress jobs;
+	// lenny_erasure_job_duration_seconds tracks completion time;
+	// lenny_erasure_job_age_seconds and lenny_erasure_job_deadline_seconds
+	// feed the §16.5 ErasureJobOverdue alert
+	// (age_seconds > scalar(deadline_seconds)).
+	erasureJobsActive, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_erasure_jobs_active",
+		Help: "§12.8 user-level erasure jobs currently in progress on this replica.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	erasureJobDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name: "lenny_erasure_job_duration_seconds",
+		Help: "§12.8 user-level erasure job wall-clock duration (initiation to terminal phase).",
+		// Erasure spans seconds (in-memory) to the T3 72h SLA bound.
+		Buckets: []float64{1, 5, 30, 60, 300, 1800, 3600, 21600, 86400, 259200},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	erasureJobDeadlineSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_erasure_job_deadline_seconds",
+		Help: "§12.8 line 768 erasure SLA deadline (seconds) the §16.5 ErasureJobOverdue alert compares against.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	erasureJobAgeSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_erasure_job_age_seconds",
+		Help: "§12.8 age (seconds) of an in-progress user-level erasure job, by tenant and job.",
+	}, []string{"tenant_id", "job_id"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.3 line 211 / §16.5 TokenServiceUnavailable alert reads this
 	// gauge. 0 = closed, 1 = half-open, 2 = open. spec: §4.3 line 211.
 	tokenServiceCircuitState, err := metrics.NewGauge(prometheus.GaugeOpts{
@@ -1969,7 +2009,9 @@ func New() (*Metrics, error) {
 		experimentIsoRej,
 		experimentTargetingDur, experimentTargetingErr, experimentStickyInval, experimentTargetingCircuit,
 		sessionTotal, sessionError, sessionDuration, evalScore,
-		noEnvPolicyAllowAll, erasureJobFailed, tokenServiceCircuitState,
+		noEnvPolicyAllowAll, erasureJobFailed,
+		erasureJobsActive, erasureJobDuration, erasureJobDeadlineSeconds, erasureJobAgeSeconds,
+		tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
@@ -2011,6 +2053,9 @@ func New() (*Metrics, error) {
 		memoryStoreRecordCount, memoryStoreUserOverThreshold,
 		timeDriftGauge)
 	gauge := activeSessions.WithLabelValues()
+	erasureActive := erasureJobsActive.WithLabelValues()
+	erasureDuration := erasureJobDuration.WithLabelValues()
+	erasureDeadline := erasureJobDeadlineSeconds.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
 	rejections := rejectionRate.WithLabelValues()
@@ -2127,6 +2172,10 @@ func New() (*Metrics, error) {
 		evalScore:                            evalScore,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		erasureJobFailed:                     erasureJobFailed,
+		erasureJobsActive:                    erasureActive,
+		erasureJobDuration:                   erasureDuration,
+		erasureJobDeadlineSeconds:            erasureDeadline,
+		erasureJobAgeSeconds:                 erasureJobAgeSeconds,
 		gcPauseP99Ms:                         gcPause,
 		replayBufferUtilization:              replayBufferUtilizationChild,
 		pdbBlockedEvictions:                  pdbBlockedEvictions,
@@ -3403,6 +3452,39 @@ func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score flo
 // increase. spec: §12.8 CMP-026 / §16.1 line 262.
 func (m *Metrics) IncErasureJobFailed(tenantID, failurePhase string) {
 	m.erasureJobFailed.WithLabelValues(tenantID, failurePhase).Inc()
+}
+
+// IncErasureJobsActive increments the §12.8 line 768 in-progress
+// erasure-job gauge when a job begins execution.
+func (m *Metrics) IncErasureJobsActive() { m.erasureJobsActive.Inc() }
+
+// DecErasureJobsActive decrements the in-progress erasure-job gauge when
+// a job reaches a terminal phase.
+func (m *Metrics) DecErasureJobsActive() { m.erasureJobsActive.Dec() }
+
+// ObserveErasureJobDuration records a completed (or failed) erasure
+// job's wall-clock duration in the §12.8 line 768 histogram.
+func (m *Metrics) ObserveErasureJobDuration(seconds float64) {
+	m.erasureJobDuration.Observe(seconds)
+}
+
+// SetErasureJobDeadlineSeconds publishes the §12.8 line 768 erasure SLA
+// deadline the §16.5 ErasureJobOverdue alert compares against.
+func (m *Metrics) SetErasureJobDeadlineSeconds(seconds float64) {
+	m.erasureJobDeadlineSeconds.Set(seconds)
+}
+
+// SetErasureJobAge publishes the age of an in-progress erasure job so
+// the §16.5 ErasureJobOverdue alert can detect a stalled job before the
+// SLA breaches. spec: §12.8 line 768.
+func (m *Metrics) SetErasureJobAge(tenantID, jobID string, ageSeconds float64) {
+	m.erasureJobAgeSeconds.WithLabelValues(tenantID, jobID).Set(ageSeconds)
+}
+
+// ClearErasureJobAge removes the age series for a terminal job so a
+// completed erasure no longer reads as in-progress.
+func (m *Metrics) ClearErasureJobAge(tenantID, jobID string) {
+	m.erasureJobAgeSeconds.DeleteLabelValues(tenantID, jobID)
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6

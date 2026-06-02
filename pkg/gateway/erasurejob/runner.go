@@ -29,7 +29,19 @@ type Runner struct {
 	memoryPreflight func(context.Context) error
 	onFailure       func(tenantID, failurePhase string)
 	onComplete      func(ctx context.Context, tenantID, userID string)
+	lifecycle       LifecycleMetrics
+	deadlineFor     func(ctx context.Context, tenantID string) time.Duration
 	clock           func() time.Time
+}
+
+// LifecycleMetrics receives the §12.8 line 768 erasure throughput
+// signals: the in-progress gauge bracket (IncActive/DecActive) and the
+// per-job duration observation. *gatewaymetrics.Metrics satisfies it via
+// IncErasureJobsActive / DecErasureJobsActive / ObserveErasureJobDuration.
+type LifecycleMetrics interface {
+	IncErasureJobsActive()
+	DecErasureJobsActive()
+	ObserveErasureJobDuration(seconds float64)
 }
 
 // FailurePhase labels for the §12.8 CMP-026 lenny_erasure_job_failed_total
@@ -86,6 +98,26 @@ func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Run
 // observer disables emission. Returns the Runner for call chaining.
 func (r *Runner) WithFailureObserver(obs func(tenantID, failurePhase string)) *Runner {
 	r.onFailure = obs
+	return r
+}
+
+// WithLifecycleMetrics attaches the §12.8 line 768 erasure throughput
+// metrics. Run brackets each executing job with IncErasureJobsActive /
+// DecErasureJobsActive and observes the job's wall-clock duration on
+// termination. A nil m disables emission. Returns the Runner for call
+// chaining.
+func (r *Runner) WithLifecycleMetrics(m LifecycleMetrics) *Runner {
+	r.lifecycle = m
+	return r
+}
+
+// WithDeadlineResolver attaches the §12.8 line 768 tier-specific SLA
+// resolver. Start stamps the resolved deadline (T3 72h, T4 1h) onto the
+// job so the overdue sampler and the completion receipt can present it. A
+// nil resolver leaves Job.Deadline zero. Returns the Runner for call
+// chaining.
+func (r *Runner) WithDeadlineResolver(f func(ctx context.Context, tenantID string) time.Duration) *Runner {
+	r.deadlineFor = f
 	return r
 }
 
@@ -159,12 +191,17 @@ func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause err
 func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, error) {
 	id := NewID()
 	now := r.clock()
+	var deadline time.Duration
+	if r.deadlineFor != nil {
+		deadline = r.deadlineFor(ctx, tenantID)
+	}
 	if err := r.jobs.Create(ctx, Job{
 		ID:        id,
 		TenantID:  tenantID,
 		UserID:    userID,
 		Phase:     PhaseInitiated,
 		StartedAt: now,
+		Deadline:  deadline,
 		PhaseLog:  []PhaseTransition{{Phase: PhaseInitiated, At: now}},
 	}); err != nil {
 		return "", err
@@ -194,6 +231,19 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	}
 	if job.Phase.Terminal() {
 		return nil
+	}
+
+	// §12.8 line 768 throughput metrics: bracket the executing job with
+	// the in-progress gauge and observe its wall-clock duration on
+	// termination (success or failure), so operators can monitor erasure
+	// throughput and detect stalled jobs before they breach the SLA.
+	if r.lifecycle != nil {
+		started := job.StartedAt
+		r.lifecycle.IncErasureJobsActive()
+		defer func() {
+			r.lifecycle.DecErasureJobsActive()
+			r.lifecycle.ObserveErasureJobDuration(r.clock().Sub(started).Seconds())
+		}()
 	}
 
 	// §12.8 per-job MemoryStore erasure preflight (defense-in-depth layer
