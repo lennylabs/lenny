@@ -50,6 +50,20 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Env = cloneMetadata(req.Env)
 	}
 
+	// spec: §14 line 311 / §15.1 line 598 — copy the client labels onto
+	// the row so the list endpoint can filter on them. Keys must be
+	// non-empty so the on-row selector set stays well-formed. F-15.1.15.
+	if len(req.Labels) > 0 {
+		for key := range req.Labels {
+			if key == "" {
+				s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+					"label keys must be non-empty", map[string]any{"field": "labels"})
+				return nil, false
+			}
+		}
+		row.Labels = cloneMetadata(req.Labels)
+	}
+
 	row.Pool = req.Pool
 
 	// spec: §14 line 154 — per-session timeouts are non-negative and

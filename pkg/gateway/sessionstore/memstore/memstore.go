@@ -172,10 +172,32 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 		if f.UserID != "" && row.UserID != f.UserID {
 			continue
 		}
+		// spec: §15.1 line 598 — labels filter is AND-containment over
+		// the row's §14 Labels map. F-15.1.15.
+		if !labelsContain(row.Labels, f.Labels) {
+			continue
+		}
+		// spec: §15.1 lines 652, 661 — `?includeDeriveFailures=false`
+		// drops the audit-only derive_failure rows. F-15.1.14.
+		if f.ExcludeDeriveFailures && row.FailureClass == session.FailureClassDeriveFailure {
+			continue
+		}
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+// labelsContain reports whether have contains every key=value pair in
+// want (AND-containment). An empty want matches every row. spec: §15.1
+// line 598. F-15.1.15.
+func labelsContain(have, want map[string]string) bool {
+	for k, v := range want {
+		if hv, ok := have[k]; !ok || hv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // ListByRoot implements Store — every row whose RootSessionID equals

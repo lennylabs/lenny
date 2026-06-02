@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -369,6 +370,24 @@ type Server struct {
 	// posture. spec: §7.1 line 92.
 	deriveLock derivelock.Lock
 
+	// persistDeriveFailureRows is the §7.1 derive rule 2 opt-in
+	// (`gateway.persistDeriveFailureRows`, default false). When true, a
+	// `POST /v1/sessions/{id}/derive` that fails after the workspace copy
+	// is attempted persists a terminal `failed` Session row with
+	// `failureClass = derive_failure` for audit, reachable per the §15.1
+	// derive-failure reachability table. When false the gateway writes
+	// nothing on failure (the default roll-back-without-persist posture).
+	// spec: §7.1 derive rule 2; §15.1 lines 647-663. F-15.1.14.
+	persistDeriveFailureRows bool
+
+	// incDeriveFailureAudit, when set, increments the §16.1
+	// `lenny_session_derive_failure_audit_total{outcome}` counter for each
+	// derive-failure audit write attempt. Outcome is "persisted" when the
+	// row was written, "fenced" when a coordinator handoff fenced the
+	// write out, or "error" when the INSERT failed. Nil disables the
+	// emission. spec: §7.1 derive rule 2; §16.1. F-15.1.14.
+	incDeriveFailureAudit func(outcome string)
+
 	// defaultRetention is the §7.1 line 77 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
@@ -605,6 +624,21 @@ type Options struct {
 	// contention the handler returns 429 DERIVE_LOCK_CONTENTION.
 	// spec: §7.1 line 92.
 	DeriveLock derivelock.Lock
+
+	// PersistDeriveFailureRows is the §7.1 derive rule 2 opt-in. When
+	// true, a derive that fails after the workspace copy is attempted
+	// persists a terminal `failed` Session row with
+	// `failureClass = derive_failure` for audit (reachable per the §15.1
+	// derive-failure reachability table). Default false keeps the
+	// roll-back-without-persist posture. Wired from
+	// `gateway.persistDeriveFailureRows`. spec: §7.1 derive rule 2;
+	// §15.1 lines 647-663. F-15.1.14.
+	PersistDeriveFailureRows bool
+
+	// IncDeriveFailureAudit, when set, increments the §16.1
+	// `lenny_session_derive_failure_audit_total{outcome}` counter for each
+	// derive-failure audit write. spec: §16.1. F-15.1.14.
+	IncDeriveFailureAudit func(outcome string)
 
 	// LifecycleAuditSink, when set, receives the §7.1 / §16.6 session
 	// lifecycle audit events (session.created and the terminal
@@ -1198,6 +1232,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		idFn:                     opts.IDFunc,
 		deriveAuditSink:          opts.DeriveAuditSink,
 		deriveLock:               opts.DeriveLock,
+		persistDeriveFailureRows: opts.PersistDeriveFailureRows,
+		incDeriveFailureAudit:    opts.IncDeriveFailureAudit,
 		uploadIssuer:             opts.UploadTokenIssuer,
 		uploadVerifier:           opts.UploadTokenVerifier,
 		blobs:                    opts.Blobs,
@@ -1444,6 +1480,13 @@ type CreateSessionRequest struct {
 	// metadata)".
 	Metadata map[string]string `json:"metadata,omitempty"`
 
+	// Labels is the §14 line 311 client-supplied session label set — a
+	// flat string→string map of caller tags the `GET /v1/sessions` list
+	// endpoint filters on (§15.1 line 598). Keys must be non-empty. The
+	// §15.1 GET envelope echoes them back. F-15.1.15.
+	// spec: §14 line 311; §15.1 line 598.
+	Labels map[string]string `json:"labels,omitempty"`
+
 	// RetryPolicy is the §7.3 client-supplied retry policy. The gateway
 	// clamps each field against the deployer caps (RetryPolicyCaps) at
 	// admission so a client cannot grow its budget past the platform
@@ -1563,6 +1606,12 @@ type SessionResponse struct {
 	// client submitted no metadata. F-7.3.20.
 	// spec: §7.1 line 6.
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// Labels echoes the §14 line 311 client-supplied session labels the
+	// session was created with. Omitted when the client submitted none.
+	// These are the values the `GET /v1/sessions?label=k=v` filter matches
+	// against. spec: §14 line 311; §15.1 line 598. F-15.1.15.
+	Labels map[string]string `json:"labels,omitempty"`
 
 	// RetryPolicy echoes the §7.3 effective retry policy resolved at
 	// session creation (the client-supplied object after clamp). Omitted
@@ -2173,11 +2222,31 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // handleList implements GET /v1/sessions. Supports the §15.1 ?state=
 // and ?runtime= filters in their basic form.
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// spec: §15.1 line 598 — a platform-admin may scope the listing to a
+	// specific tenant via `?tenant=<id>`. A non-admin's `?tenant=` is
+	// ignored: their listing stays bound to their own tenant (and the
+	// Postgres RLS context enforces that regardless). F-15.1.15.
 	tenantID := s.resolveTenant(r)
+	if want := q.Get("tenant"); want != "" {
+		if p, ok := getPrincipal(r); ok && p.HasRole(auth.RolePlatformAdmin) {
+			if err := authValidateTenantID(want); err == nil {
+				tenantID = want
+			}
+		}
+	}
 	filter := sessionstore.ListFilter{
-		State:        session.State(r.URL.Query().Get("state")),
-		RuntimeRef:   r.URL.Query().Get("runtime"),
-		FailureClass: session.FailureClass(r.URL.Query().Get("failureClass")),
+		State:        session.State(q.Get("state")),
+		RuntimeRef:   q.Get("runtime"),
+		FailureClass: session.FailureClass(q.Get("failureClass")),
+		Labels:       parseLabelFilter(q["label"]),
+	}
+	// spec: §15.1 lines 652, 661 — derive_failure audit rows are included
+	// by default; `?includeDeriveFailures=false` excludes them. Any other
+	// value (absent, "true") preserves the default audit visibility.
+	// F-15.1.14.
+	if q.Get("includeDeriveFailures") == "false" {
+		filter.ExcludeDeriveFailures = true
 	}
 	rows, err := s.store.List(r.Context(), tenantID, filter)
 	if err != nil {
@@ -2191,6 +2260,28 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": out})
+}
+
+// parseLabelFilter turns the repeatable `?label=key=value` query values
+// into the AND-containment map the store List honours. A value with no
+// `=` is treated as a key match against an empty value; an empty key is
+// skipped. spec: §15.1 line 598 — "filterable by ... labels". F-15.1.15.
+func parseLabelFilter(raw []string) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for _, item := range raw {
+		key, value, _ := strings.Cut(item, "=")
+		if key == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // handleDelete implements DELETE /v1/sessions/{id} per §15.1: every
@@ -2516,6 +2607,11 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	// F-7.3.20.
 	if len(row.Metadata) > 0 {
 		out.Metadata = cloneMetadata(row.Metadata)
+	}
+	// spec: §14 line 311 / §15.1 line 598 — echo the client labels so a
+	// caller can confirm the filterable selector set on the row. F-15.1.15.
+	if len(row.Labels) > 0 {
+		out.Labels = cloneMetadata(row.Labels)
 	}
 	// spec: §7.3 lines 377-393 — echo the effective retry policy so a
 	// client can confirm what was clamped. F-7.3.1.

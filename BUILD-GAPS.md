@@ -24920,7 +24920,9 @@ HTTP routes have no Go handler at all; the wired routes mostly miss the
 shared mechanics (ETag/`If-Match`, `?dryRun=true`, canonical pagination,
 rate-limit headers, correlation headers).
 
-### - [ ] F-15.1.1 — MUST / correctness / security [High] — OPEN
+### - [x] F-15.1.1 — MUST / correctness / security [High] — CLOSED
+
+**Resolution:** Section-marker heading with no actionable body; the individual MUST-class §15.1 findings are tracked at F-15.1.2 through F-15.1.15. Closed as a placeholder heading (same disposition as F-15.1.16).
 
 ### - [ ] F-15.1.2 — ETag-based optimistic concurrency is entirely missing [High] — OPEN
 Spec (§15.1 "ETag-based optimistic concurrency", lines 1207–1224) requires
@@ -25244,7 +25246,7 @@ Same OpenAPI-generator break as H11 / H12.
 
 **Resolution (commit ddf6035a):** The credential rotate/revoke/delete routes now use `{credential_ref}` per §15.1 lines 711-715, and the handlers read `PathValue("credential_ref")`. The full-routing `credentialserver_test` PUT exercises the corrected template.
 
-### - [ ] F-15.1.14 — Derive-failure audit row reachability rules are silently dropped [High] — OPEN
+### - [x] F-15.1.14 — Derive-failure audit row reachability rules are silently dropped [High] — CLOSED
 Spec lines 647–663 mandate a precise reachability matrix for
 `failureClass = "derive_failure"` rows: `GET /v1/sessions/{id}` returns
 200; `GET /v1/sessions` includes them by default (with
@@ -25260,12 +25262,44 @@ defers the derive_failure persistence path. The list handler
 the rest of the matrix (404 on event-stream, 409 on action endpoints) is
 not implemented.
 
-### - [ ] F-15.1.15 — List filter coverage on `GET /v1/sessions` is narrow [High] — OPEN
+**Resolution (commit <pending>):** Built the deferred §7.1 derive rule 2
+opt-in persistence and wired the reachability matrix. New
+`Options.PersistDeriveFailureRows` (`gateway.persistDeriveFailureRows`
+flag / `LENNY_PERSIST_DERIVE_FAILURE_ROWS`, default off): a `/derive`
+that fails at the copy stage (`DERIVE_SNAPSHOT_UNAVAILABLE` or an I/O copy
+failure, both post-copy-attempt) now calls `Server.persistDeriveFailure`,
+which writes a terminal `failed` row directly (no visible `created`
+state) with `failureClass = derive_failure`, `parentSessionId`, and the
+intended target isolation profile. The write is guarded by a §10.1
+coordination_generation CAS fence (re-reads the source; a changed
+generation = coordinator handoff → skip, no orphan row), and emits the
+previously-unproduced §16.1 `lenny_session_derive_failure_audit_total{outcome}`
+counter (`persisted` | `fenced` | `error`). `handleList` now honours
+`?includeDeriveFailures=false` via the new `ListFilter.ExcludeDeriveFailures`
+(applied in both memstore and pgstore), keeping these rows included by
+default per spec. The 409-on-terminal action endpoints and the
+deriving-from-a-snapshotless-row 400 are satisfied by the existing
+precondition / snapshot-resolution paths; verified by the matrix test.
+
+### - [x] F-15.1.15 — List filter coverage on `GET /v1/sessions` is narrow [High] — CLOSED
 Spec line 598 documents filters by "status, runtime, tenant, labels".
 Impl (`sessionserver.go:795-800`) supports `state`, `runtime`,
 `failureClass` only. There is no `tenant` filter
 (`platform-admin` can list across tenants per spec but impl only reads
 the request tenant), no `labels` filter, and no `includeDeriveFailures`.
+
+**Resolution (commit <pending>):** `handleList` now parses all three
+missing filters. `?tenant=<id>` re-scopes the listing when the caller
+holds `platform-admin` (validated tenant id; a non-admin's `?tenant=` is
+ignored and the Postgres RLS context enforces own-tenant regardless).
+A new persisted `Session.Labels` field (`CreateSessionRequest.labels`,
+copied onto the row in `validateRequestEnvelope`, riding the §14.1
+request-envelope JSONB bundle so it needs no migration) backs the
+repeatable `?label=key=value` AND-containment filter
+(`ListFilter.Labels`, applied in memstore by map-containment and in
+pgstore via `request_envelope->'labels' @> $n::jsonb`). The labels echo
+back on the §15.1 GET / list envelope. `?includeDeriveFailures=false`
+shares the `ListFilter.ExcludeDeriveFailures` mechanism from F-15.1.14.
 
 ### - [x] F-15.1.16 — SHOULD / capability unimplemented [Medium] — CLOSED
 

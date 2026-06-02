@@ -332,12 +332,18 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 			// store interface rather than trusted from the constructed URI.
 			scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
 			if err := scoped.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
+				// spec: §7.1 derive rule 2 — the copy was attempted, so
+				// under the opt-in this failure persists a terminal
+				// derive_failure audit row before the error is returned.
+				// F-15.1.14.
 				if errors.Is(err, blobstore.ErrNotFound) {
+					s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
 					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 						"parent workspace snapshot object is absent in storage",
 						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
 					return
 				}
+				s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
 				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 					"workspace snapshot copy failed: "+err.Error(), nil)
 				return
@@ -459,4 +465,63 @@ func parseDeriveURIs(parentRef, derivedRef, tenantID, sourceSessionID, derivedSe
 // derive idempotent under retry.
 func derivedSnapshotPart(sourceSessionID string) string {
 	return "derived-from-" + sourceSessionID
+}
+
+// persistDeriveFailure writes the §7.1 derive rule 2 opt-in
+// derive_failure audit row. It is a no-op unless
+// `gateway.persistDeriveFailureRows` is enabled. The row is created
+// directly in the terminal `failed` state (no intermediate visible
+// `created` state) carrying `failureClass = derive_failure`,
+// `parentSessionId = source.ID`, and the intended target isolation
+// profile; no workspace snapshot, pod, or credential lease is recorded
+// because none ever existed.
+//
+// The write is guarded by a §10.1 coordinator-handoff CAS fence: the
+// source's `coordination_generation` is re-read and compared against the
+// stamp captured at derive admission (the generation on the `source` row
+// the handler already holds). If a replacement coordinator has
+// incremented it (replica crash or Postgres failover mid-copy), the
+// stale replica skips the write so no orphan `failed` row becomes
+// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1 lines
+// 647-663 (reachability). F-15.1.14.
+func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
+	if !s.persistDeriveFailureRows {
+		return
+	}
+	// CAS fence: re-read the source and confirm the coordinator that
+	// admitted this derive is still authoritative. A changed generation
+	// means a handoff occurred; the stale replica must not write.
+	cur, err := s.store.Get(ctx, source.TenantID, source.ID)
+	if err != nil || cur.CoordinationGeneration != source.CoordinationGeneration {
+		s.recordDeriveFailureAudit("fenced")
+		return
+	}
+	now := s.clock()
+	row := sessionstore.Session{
+		ID:               derivedID,
+		TenantID:         source.TenantID,
+		UserID:           source.UserID,
+		State:            session.StateFailed,
+		FailureClass:     session.FailureClassDeriveFailure,
+		FailureReason:    reason,
+		RuntimeRef:       source.RuntimeRef,
+		IsolationProfile: target,
+		ParentSessionID:  source.ID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.store.Create(ctx, row); err != nil {
+		s.recordDeriveFailureAudit("error")
+		return
+	}
+	s.recordDeriveFailureAudit("persisted")
+}
+
+// recordDeriveFailureAudit bumps the §16.1
+// lenny_session_derive_failure_audit_total{outcome} counter when wired.
+// F-15.1.14.
+func (s *Server) recordDeriveFailureAudit(outcome string) {
+	if s.incDeriveFailureAudit != nil {
+		s.incDeriveFailureAudit(outcome)
+	}
 }

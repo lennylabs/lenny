@@ -432,6 +432,23 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 		args = append(args, filter.UserID)
 		q += fmt.Sprintf(" AND user_id = $%d", len(args))
 	}
+	// spec: §15.1 line 598 — labels filter is AND-containment over the
+	// §14 Labels map, which rides the request_envelope JSONB bundle under
+	// the `labels` key. The `@>` containment matches a row whose stored
+	// labels include every requested pair. F-15.1.15.
+	if len(filter.Labels) > 0 {
+		want, err := json.Marshal(filter.Labels)
+		if err == nil {
+			args = append(args, string(want))
+			q += fmt.Sprintf(" AND request_envelope -> 'labels' @> $%d::jsonb", len(args))
+		}
+	}
+	// spec: §15.1 lines 652, 661 — `?includeDeriveFailures=false` drops
+	// the audit-only derive_failure rows. F-15.1.14.
+	if filter.ExcludeDeriveFailures {
+		args = append(args, string(session.FailureClassDeriveFailure))
+		q += fmt.Sprintf(" AND failure_class IS DISTINCT FROM $%d", len(args))
+	}
 	q += ` ORDER BY created_at DESC, id`
 
 	var out []sessionstore.Session
@@ -991,6 +1008,12 @@ type storedEnvelope struct {
 	// keeps the label durable across replicas without a migration.
 	// F-27.6.8.
 	Origin string `json:"origin,omitempty"`
+	// Labels carries the §14 line 311 client-supplied session labels. They
+	// ride the envelope bundle so the §15.1 list label filter
+	// (`request_envelope->'labels' @> $n`) has a durable, indexable target
+	// without a dedicated column. spec: §14 line 311; §15.1 line 598.
+	// F-15.1.15.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // requestEnvelopeArg renders the §14.1 request-envelope bundle for a
@@ -1005,9 +1028,11 @@ func requestEnvelopeArg(sess sessionstore.Session) any {
 		DelegationLease:  sess.DelegationLeaseRequest,
 		RuntimeOptions:   sess.RuntimeOptions,
 		Origin:           sess.Origin,
+		Labels:           sess.Labels,
 	}
 	if env.Pool == "" && env.Timeouts == nil && env.CredentialPolicy == nil &&
-		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 && env.Origin == "" {
+		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 && env.Origin == "" &&
+		len(env.Labels) == 0 {
 		return nil
 	}
 	b, err := json.Marshal(env)
@@ -1034,6 +1059,9 @@ func applyStoredEnvelope(s *sessionstore.Session, raw []byte) {
 		s.RuntimeOptions = env.RuntimeOptions
 	}
 	s.Origin = env.Origin
+	if len(env.Labels) > 0 {
+		s.Labels = env.Labels
+	}
 }
 
 // decodeMetadata parses the JSONB payload back into a string→string

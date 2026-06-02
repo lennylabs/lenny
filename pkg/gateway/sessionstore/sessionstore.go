@@ -291,6 +291,17 @@ type Session struct {
 	// metadata)"; §15.1 GET /v1/sessions/{id} surface.
 	Metadata map[string]string
 
+	// Labels is the §14 line 311 client-supplied CreateSessionRequest
+	// `labels` map — a flat string→string set of caller tags the
+	// `GET /v1/sessions` list endpoint filters on (§15.1 line 598). Nil
+	// when the caller submitted no labels, in which case the field is
+	// omitted from the GET envelope. Distinct from Metadata: labels are
+	// the filterable selector set, metadata is opaque annotation. Rides
+	// the §14.1 request-envelope JSONB bundle in the Postgres store so it
+	// needs no dedicated column. spec: §14 line 311; §15.1 line 598.
+	// F-15.1.15.
+	Labels map[string]string
+
 	// RetryPolicy is the §7.3 client-supplied retry policy, clamped at
 	// admission against the deployer caps. Nil when the caller did not
 	// override the deployer defaults; the watchdog and retry-evaluator
@@ -869,6 +880,19 @@ type ListFilter struct {
 	RuntimeRef   string
 	FailureClass session.FailureClass
 	UserID       string
+
+	// Labels narrows to rows whose §14 Labels map contains every
+	// key=value pair listed here (AND-containment). Empty means no label
+	// filter. spec: §15.1 line 598 — "filterable by ... labels".
+	// F-15.1.15.
+	Labels map[string]string
+
+	// ExcludeDeriveFailures drops terminal `failed` rows whose
+	// FailureClass is `derive_failure` from the result. The §15.1 list
+	// includes these audit rows by default; the `?includeDeriveFailures=false`
+	// query param sets this flag. spec: §15.1 lines 652, 661 (derive-failure
+	// reachability). F-15.1.14.
+	ExcludeDeriveFailures bool
 }
 
 // Sentinel errors. The sessionserver maps these to the §15.1 error

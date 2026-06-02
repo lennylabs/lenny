@@ -92,6 +92,23 @@ func TestRequestEnvelopeOriginOnly_spec_27_6(t *testing.T) {
 	}
 }
 
+// spec: §14 line 311 / §15.1 line 598 — the client labels ride the
+// request-envelope bundle so the §15.1 list label filter has a durable
+// JSONB target without a dedicated column; they round-trip back onto the
+// Session's Labels field. F-15.1.15.
+func TestRequestEnvelopeLabelsRoundTrip_spec_15_1_598(t *testing.T) {
+	in := sessionstore.Session{Labels: map[string]string{"team": "payments", "env": "staging"}}
+	arg, ok := requestEnvelopeArg(in).(string)
+	if !ok {
+		t.Fatalf("requestEnvelopeArg(labels-only) = %T, want non-nil string", requestEnvelopeArg(in))
+	}
+	var out sessionstore.Session
+	applyStoredEnvelope(&out, []byte(arg))
+	if !reflect.DeepEqual(out.Labels, in.Labels) {
+		t.Errorf("Labels: got %v, want %v", out.Labels, in.Labels)
+	}
+}
+
 // applyStoredEnvelope must tolerate a malformed payload (the gateway
 // validates the bundle at admission, so a stored value is by-construction
 // well-formed; a corrupt one must not panic). F-14.1.14.

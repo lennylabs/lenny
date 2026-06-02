@@ -134,6 +134,75 @@ func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
 	}
 }
 
+// TestListFiltersByLabels asserts the §15.1 line 598 labels filter is
+// AND-containment: a row matches only when its Labels map contains every
+// requested key=value pair. F-15.1.15.
+func TestListFiltersByLabels_spec_15_1_598(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "m1", TenantID: "acme", State: session.StateRunning, Labels: map[string]string{"team": "payments", "tier": "gold"}})
+	_ = s.Create(ctx, sessionstore.Session{ID: "m2", TenantID: "acme", State: session.StateRunning, Labels: map[string]string{"team": "payments", "tier": "silver"}})
+	_ = s.Create(ctx, sessionstore.Session{ID: "m3", TenantID: "acme", State: session.StateRunning, Labels: map[string]string{"team": "search"}})
+	_ = s.Create(ctx, sessionstore.Session{ID: "m4", TenantID: "acme", State: session.StateRunning})
+
+	// Single-key match returns both payments rows.
+	got, _ := s.List(ctx, "acme", sessionstore.ListFilter{Labels: map[string]string{"team": "payments"}})
+	if len(got) != 2 {
+		t.Fatalf("single-label filter: want 2 rows, got %d (%v)", len(got), ids(got))
+	}
+	// Two-key AND-containment narrows to the single gold row.
+	got, _ = s.List(ctx, "acme", sessionstore.ListFilter{Labels: map[string]string{"team": "payments", "tier": "gold"}})
+	if len(got) != 1 || got[0].ID != "m1" {
+		t.Errorf("AND-containment filter: want [m1], got %v", ids(got))
+	}
+	// A value mismatch matches nothing.
+	got, _ = s.List(ctx, "acme", sessionstore.ListFilter{Labels: map[string]string{"team": "payments", "tier": "bronze"}})
+	if len(got) != 0 {
+		t.Errorf("value-mismatch filter: want 0 rows, got %v", ids(got))
+	}
+	// An empty label filter matches every row.
+	got, _ = s.List(ctx, "acme", sessionstore.ListFilter{})
+	if len(got) != 4 {
+		t.Errorf("no-label filter: want 4 rows, got %d", len(got))
+	}
+}
+
+// TestListExcludeDeriveFailures asserts the §15.1 lines 652/661
+// `?includeDeriveFailures=false` behaviour: derive_failure audit rows are
+// returned by default and dropped only when the flag is set. F-15.1.14.
+func TestListExcludeDeriveFailures_spec_15_1_652(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "live", TenantID: "acme", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "df", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassDeriveFailure})
+	_ = s.Create(ctx, sessionstore.Session{ID: "rf", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassRuntime})
+
+	// Default: derive_failure row included.
+	got, _ := s.List(ctx, "acme", sessionstore.ListFilter{})
+	if len(got) != 3 {
+		t.Fatalf("default list: want 3 rows (incl derive_failure), got %d (%v)", len(got), ids(got))
+	}
+	// ExcludeDeriveFailures drops only the derive_failure row, keeping the
+	// runtime_failure row.
+	got, _ = s.List(ctx, "acme", sessionstore.ListFilter{ExcludeDeriveFailures: true})
+	if len(got) != 2 {
+		t.Fatalf("exclude list: want 2 rows, got %d (%v)", len(got), ids(got))
+	}
+	for _, row := range got {
+		if row.FailureClass == session.FailureClassDeriveFailure {
+			t.Errorf("derive_failure row leaked past ExcludeDeriveFailures: %s", row.ID)
+		}
+	}
+}
+
+func ids(rows []sessionstore.Session) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.ID
+	}
+	return out
+}
+
 func TestListExcludesForeignTenant(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()

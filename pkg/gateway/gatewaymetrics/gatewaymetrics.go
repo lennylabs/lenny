@@ -210,6 +210,11 @@ type Metrics struct {
 	// the counter; the failure_class label echoes the row's §7.1
 	// FailureClass at retry time. F-7.3.10.
 	sessionRetryTotal *prometheus.CounterVec
+	// deriveFailureAudit is the §16.1
+	// `lenny_session_derive_failure_audit_total{outcome}` counter: one bump
+	// per §7.1 derive rule 2 opt-in derive_failure audit-row write, labelled
+	// by outcome (persisted | fenced | error). F-15.1.14.
+	deriveFailureAudit *prometheus.CounterVec
 	// sessionResumeAttempts counts the §16.1 / §7.3
 	// `lenny_session_resume_attempts_total{pool, outcome}` counter:
 	// every POST /v1/sessions/{id}/resume that passes the precondition
@@ -1319,6 +1324,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §7.1 derive rule 2 / §16.1 — `lenny_session_derive_failure_audit_total{outcome}`
+	// counts derive_failure audit-row writes under the
+	// `gateway.persistDeriveFailureRows` opt-in. F-15.1.14.
+	deriveFailureAudit, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_derive_failure_audit_total",
+		Help: "Derive-failure audit rows written by outcome (§7.1 derive rule 2, §16.1).",
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 / §7.3 — `lenny_session_resume_attempts_total{pool, outcome}`
 	// counts every POST /v1/sessions/{id}/resume call that passes the
 	// precondition gate. Outcome is "success" when the row transitions
@@ -2294,6 +2309,7 @@ func New() (*Metrics, error) {
 		sessionTimeToFirstToken:              sessionTimeToFirstToken,
 		warmpoolClaims:                       warmpoolClaims,
 		sessionRetryTotal:                    sessionRetryTotal,
+		deriveFailureAudit:                   deriveFailureAudit,
 		sessionResumeAttempts:                sessionResumeAttempts,
 		warmpoolWarmupFailure:                warmpoolWarmupFailure,
 		checkpointStorageFailure:             checkpointStorageFailure,
@@ -2723,6 +2739,18 @@ func (m *Metrics) IncSessionRetry(failureClass string) {
 		return
 	}
 	m.sessionRetryTotal.WithLabelValues(failureClass).Inc()
+}
+
+// IncDeriveFailureAudit increments the §16.1
+// `lenny_session_derive_failure_audit_total{outcome}` counter for one
+// §7.1 derive rule 2 derive_failure audit-row write. Outcome is
+// "persisted", "fenced" (a coordinator handoff fenced the write out), or
+// "error". spec: §7.1 derive rule 2, §16.1. F-15.1.14.
+func (m *Metrics) IncDeriveFailureAudit(outcome string) {
+	if m == nil {
+		return
+	}
+	m.deriveFailureAudit.WithLabelValues(outcome).Inc()
 }
 
 // IncSessionResumeAttempt increments the §16.1 / §7.3

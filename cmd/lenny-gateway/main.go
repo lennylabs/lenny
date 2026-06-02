@@ -715,6 +715,14 @@ func main() {
 	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
 		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
 		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
+	// spec: §7.1 derive rule 2 — gateway.persistDeriveFailureRows (default
+	// false). When true, a /derive that fails after the workspace copy is
+	// attempted persists a terminal failed row with
+	// failureClass=derive_failure for audit, reachable per the §15.1
+	// derive-failure reachability table. F-15.1.14.
+	persistDeriveFailureRows := flag.Bool("persist-derive-failure-rows",
+		envFlag("LENNY_PERSIST_DERIVE_FAILURE_ROWS"),
+		"§7.1 derive rule 2 gateway.persistDeriveFailureRows: when true, a POST /v1/sessions/{id}/derive that fails after the workspace copy is attempted persists a terminal failed Session row with failureClass=derive_failure for audit (reachable per §15.1). Default false keeps roll-back-without-persist. Override via LENNY_PERSIST_DERIVE_FAILURE_ROWS.")
 	// spec: §12.5 line 317 — gc.cycleIntervalSeconds (default 900, min 60).
 	// Drives both the §7.1 retention sweep and the §12.5 line 341 hard-prune
 	// sweep cadence. A value below the floor is clamped up to 60s.
@@ -3005,6 +3013,11 @@ func main() {
 		// derivelock.Memory backs the minimal-gateway and single-replica
 		// posture. F-7.1.12.
 		DeriveLock: defaultDeriveLock(concernRedis.For(storerouter.RedisConcernCoordination)),
+		// §7.1 derive rule 2 — opt-in derive_failure audit-row persistence
+		// (default off). When on, a copy-stage derive failure persists a
+		// CAS-fenced terminal failed row reachable per §15.1. F-15.1.14.
+		PersistDeriveFailureRows: *persistDeriveFailureRows,
+		IncDeriveFailureAudit:    gwMetrics.IncDeriveFailureAudit,
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
