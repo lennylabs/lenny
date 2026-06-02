@@ -785,6 +785,25 @@ postgres:
   # class. F-12.3.8.
   writeCeilingIops: 200
 
+# storeRouter configures the §12.6 StoreRouter scatter-gather execution
+# bounds (lines 556-558). v1 is single-shard, so AllSessionShards /
+# AllAuditShards return one shard and the bounds are trivially satisfied;
+# they are surfaced here so the first multi-shard deployment tunes them
+# without rebuilding the binary, and so the §16 ScatterGatherSlowQuery
+# alert has data behind it. The gateway reads these via LENNY_SCATTER_*.
+# F-12.6.18.
+storeRouter:
+  # maxScatterGatherConcurrency caps how many shards a single fan-out
+  # queries in parallel (§12.6 line 556).
+  maxScatterGatherConcurrency: 16
+  # scatterGatherPerShardTimeoutSeconds bounds each shard query (§12.6
+  # line 557). A timed-out shard is dropped for read paths (partial
+  # result) and retried twice for write paths.
+  scatterGatherPerShardTimeoutSeconds: 10
+  # scatterGatherAggregateTimeoutSeconds bounds the whole fan-out (§12.6
+  # line 558), capping worst-case latency when many shards are slow.
+  scatterGatherAggregateTimeoutSeconds: 120
+
 # billing configures the §11.2.1 billing-event publisher sink. The v1
 # default writes events synchronously to Postgres with a Redis stream
 # failover buffer ([§11.2.1 Postgres / Redis-stream failover path]).

@@ -445,10 +445,10 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	// idFn is left nil unless a test overrides the child-id generator.
+	// With no override the production path mints the child id from the
+	// root session's routing prefix (session.NewChildID); see newChildID.
 	idFn := opts.IDFunc
-	if idFn == nil {
-		idFn = randomChildID
-	}
 	mode := opts.CycleMode
 	if mode == "" {
 		mode = cycle.ModeEnforce
@@ -941,7 +941,10 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// failure (validation, scan REJECT, persistence) aborts the
 	// delegation before any child row exists, so there is no partially
 	// materialized child workspace. F-8.7.1 / F-8.7.5 / F-8.7.6.
-	childID := s.idFn()
+	childID, err := s.newChildID(rootSessionID)
+	if err != nil {
+		return Result{}, err
+	}
 	var childPlan json.RawMessage
 	if len(req.FileExport) > 0 {
 		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, effectivePolicy, haveEffectivePolicy)
@@ -1591,8 +1594,14 @@ func stampLeasePolicy(dl *sessionstore.DelegationLease, delegationPolicyRef stri
 	return dl
 }
 
-// randomChildID returns a fresh §12.6 UUIDv8 session identifier for a
-// delegated child session.
-func randomChildID() string {
-	return session.NewID()
+// newChildID mints the §12.6 session id for a delegated child. A test
+// override (Options.IDFunc) takes precedence and returns its fixed id
+// verbatim. Otherwise the child id copies the routing prefix from
+// rootSessionID (session.NewChildID) so every session in the delegation
+// tree co-locates on the same shard. spec: §12.6 line 577. F-12.6.13.
+func (s *Service) newChildID(rootSessionID string) (string, error) {
+	if s.idFn != nil {
+		return s.idFn(), nil
+	}
+	return session.NewChildID(rootSessionID)
 }

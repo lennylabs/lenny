@@ -586,10 +586,12 @@ tests:
       #   F-10.1.3)
       # + LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT (§11.7 item 4,
       #   F-11.7.16) + LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS /
-      #   _MAX_ATTEMPTS / _BATCH_SIZE (§11.7 Wire Format, F-11.7.1) = 50.
+      #   _MAX_ATTEMPTS / _BATCH_SIZE (§11.7 Wire Format, F-11.7.1)
+      # + LENNY_SCATTER_MAX_CONCURRENCY / _PER_SHARD_TIMEOUT_SECONDS /
+      #   _AGGREGATE_TIMEOUT_SECONDS (§12.6 lines 556-558, F-12.6.18) = 53.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 50
+          count: 53
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -651,6 +653,23 @@ tests:
           content:
             name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS
             value: "2000"
+      # §12.6 lines 556-558 / F-12.6.18 — storeRouter scatter-gather
+      # execution bounds render at their documented defaults.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SCATTER_MAX_CONCURRENCY
+            value: "16"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS
+            value: "10"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS
+            value: "120"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:

@@ -21,21 +21,82 @@ package session
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // NewID returns a fresh §12.6 session identifier: a UUIDv8 (RFC 9562)
-// whose first 32 bits are the shard routing prefix. A root session
-// gets a fully random prefix; in a single-shard v1 deployment the
-// prefix is not yet load-bearing, so child and derived sessions also
-// receive a fresh random identifier here. The version nibble is 8 and
-// the variant bits are 10, per the §12.6 bit layout.
+// whose first 32 bits are the shard routing prefix. A root session gets a
+// fully random prefix (the prefix the whole delegation tree inherits via
+// NewChildID). Derived sessions are new independent roots, so they also
+// use NewID. The version nibble is 8 and the variant bits are 10, per the
+// §12.6 bit layout.
+//
+// spec: §12.6 line 576 — root session creation generates a UUIDv8 with a
+// fully random routing prefix.
 func NewID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	b[6] = (b[6] & 0x0f) | 0x80
 	b[8] = (b[8] & 0x3f) | 0x80
+	return formatUUID(b)
+}
+
+// NewChildID returns a §12.6 child session identifier whose first 32 bits
+// (the shard routing prefix) are copied from rootID and whose remaining
+// bits are random. This guarantees every session in a delegation tree
+// shares the same routing prefix and lands on the same shard, so the
+// single-shard tree traversal, cascade cancellation, and delegation
+// lineage queries the spec relies on hold the moment a multi-shard router
+// is deployed. rootID must be a session id produced by NewID or
+// NewChildID; a malformed routing prefix returns an error.
+//
+// spec: §12.6 line 577 — "the gateway copies the first 32 bits from the
+// root session's UUID into the child's UUID. The remaining bits are
+// random."
+func NewChildID(rootID string) (string, error) {
+	prefix, err := routingPrefix(rootID)
+	if err != nil {
+		return "", err
+	}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	copy(b[0:4], prefix[:])
+	b[6] = (b[6] & 0x0f) | 0x80
+	b[8] = (b[8] & 0x3f) | 0x80
+	return formatUUID(b), nil
+}
+
+// RoutingPrefix returns the §12.6 shard routing prefix of a session id:
+// the first 32 bits, rendered as the leading 8 hex characters. Two ids
+// with the same RoutingPrefix consistent-hash to the same session shard,
+// so a delegation tree co-locates. It returns an error for an id whose
+// leading group is not 8 hex characters.
+func RoutingPrefix(id string) (string, error) {
+	p, err := routingPrefix(id)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(p[:]), nil
+}
+
+// routingPrefix extracts the first 32 bits (4 bytes) of a §12.6 session id
+// — the hyphen-delimited leading group of a UUIDv8.
+func routingPrefix(id string) ([4]byte, error) {
+	var p [4]byte
+	if strings.IndexByte(id, '-') != 8 {
+		return p, fmt.Errorf("session: %q is not a routable §12.6 session id", id)
+	}
+	if _, err := hex.Decode(p[:], []byte(id[:8])); err != nil {
+		return p, fmt.Errorf("session: %q has a malformed routing prefix: %w", id, err)
+	}
+	return p, nil
+}
+
+// formatUUID renders the 16-byte array in the canonical 8-4-4-4-12 form.
+func formatUUID(b [16]byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 

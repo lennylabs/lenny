@@ -305,6 +305,12 @@ func main() {
 	// be applied on the separate instance. F-12.3.5.
 	billingAuditDSN := flag.String("postgres-billing-audit-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DSN"),
 		"§12.3 line 103 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
+	scatterMaxConcurrency := flag.Int("scatter-max-concurrency", envInt("LENNY_SCATTER_MAX_CONCURRENCY", 16),
+		"§12.6 line 556 storeRouter.maxScatterGatherConcurrency: at most this many shards are queried in parallel by a scatter-gather fan-out (list-sessions, GDPR erasure, tenant deletion). v1 is single-shard so the bound is inert; it becomes load-bearing under a multi-shard router. Override via LENNY_SCATTER_MAX_CONCURRENCY. F-12.6.18.")
+	scatterPerShardTimeoutSeconds := flag.Int("scatter-per-shard-timeout-seconds", envInt("LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS", 10),
+		"§12.6 line 557 storeRouter.scatterGatherPerShardTimeoutSeconds: per-shard query deadline. A timed-out shard is dropped (reads, partial result) or retried twice (writes). Override via LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS. F-12.6.18.")
+	scatterAggregateTimeoutSeconds := flag.Int("scatter-aggregate-timeout-seconds", envInt("LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS", 120),
+		"§12.6 line 558 storeRouter.scatterGatherAggregateTimeoutSeconds: total scatter-gather deadline, capping worst-case latency when many shards are slow. Override via LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS. F-12.6.18.")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used. Mutually exclusive with --redis-sentinel-addrs.")
 	redisSentinelAddrs := flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
@@ -1238,17 +1244,28 @@ func main() {
 	// is a real *redis.Client — a typed-nil would defeat the nil check in
 	// NewSingleShardRouter, matching the securityBus guard below.
 	// F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.6.2 / F-12.7.1.
+	// §12.6 lines 556-558 scatter-gather execution bounds, resolved from
+	// the storeRouter.* Helm values. The single-shard v1 router satisfies
+	// them trivially; the bounds and the §12.6 line 560 metrics are wired
+	// now so a later multi-shard split needs no retrofit. F-12.6.18.
+	scatterCfg := storerouter.ScatterConfig{
+		MaxConcurrency:   *scatterMaxConcurrency,
+		PerShardTimeout:  time.Duration(*scatterPerShardTimeoutSeconds) * time.Second,
+		AggregateTimeout: time.Duration(*scatterAggregateTimeoutSeconds) * time.Second,
+	}
+	var scatterRouter *storerouter.SingleShardRouter
 	var storeRouter storerouter.StoreRouter
 	if pgPool != nil {
 		var routerRedis redis.UniversalClient
 		if redisClient != nil {
 			routerRedis = redisClient
 		}
-		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, BillingAuditPostgres: billingAuditPool, Redis: routerRedis})
+		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, BillingAuditPostgres: billingAuditPool, Redis: routerRedis, Scatter: scatterCfg})
 		if err != nil {
 			log.Fatalf("lenny-gateway: store router: %v", err)
 		}
 		storeRouter = r
+		scatterRouter = r
 		billing = billingpg.New(r)
 	}
 
@@ -1890,6 +1907,17 @@ func main() {
 	// transitions land on `lenny_gateway_kms_signing_errors_total` and
 	// `lenny_gateway_kms_signing_circuit_state`. F-10.2.6.
 	kmsBreakerObs.SetMetrics(gwMetrics)
+	// spec: §12.6 line 560 — register the scatter-gather duration histogram
+	// and shard-count gauge and attach them to the store router so the §16
+	// ScatterGatherSlowQuery alert has a series. The router is built before
+	// the metrics registerer, so the collector is wired here. F-12.6.18.
+	if scatterRouter != nil {
+		scatterMetrics, err := storerouter.NewScatterMetrics(gwMetrics.Registerer())
+		if err != nil {
+			log.Fatalf("lenny-gateway: scatter-gather metrics: %v", err)
+		}
+		scatterRouter.SetScatterMetrics(scatterMetrics)
+	}
 	// spec: §13.3 line 595 — NTP drift self-monitor. The source returns
 	// the clockinject-injected offset for v1 (zero in production unless
 	// an operator wires a real adjtimex/chrony probe). /healthz and any

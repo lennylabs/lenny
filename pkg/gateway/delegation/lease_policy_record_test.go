@@ -52,6 +52,7 @@ func TestDelegatePersistsLeasePolicyRecord_spec_8_10_1044(t *testing.T) {
 		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Runtimes: runtimes,
 		Policies: policies,
+		IDFunc:   func() string { return "sess_child" },
 	})
 
 	res, err := svc.Delegate(ctx, "acme", delegation.Request{
@@ -115,6 +116,7 @@ func TestDelegateLeaseRecordPersistsWithoutResourceSlice_spec_8_10_1044(t *testi
 		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Runtimes: runtimes,
 		Policies: policies,
+		IDFunc:   func() string { return "sess_child" },
 	})
 
 	res, err := svc.Delegate(ctx, "acme", delegation.Request{
@@ -153,6 +155,7 @@ func TestDelegateNoPolicyLeavesLeaseNil_spec_8_10_1044(t *testing.T) {
 		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Runtimes: runtimes,
 		Policies: policies,
+		IDFunc:   func() string { return "sess_child" },
 	})
 
 	res, err := svc.Delegate(ctx, "acme", delegation.Request{

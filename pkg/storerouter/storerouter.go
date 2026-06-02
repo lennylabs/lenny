@@ -146,11 +146,13 @@ var (
 // pool directly — the BillingShard and AuditShard methods are the
 // only billing/audit accessors.
 type SingleShardRouter struct {
-	pg         *pgxpool.Pool
-	billingPG  *pgxpool.Pool
-	rdb        redis.UniversalClient
-	defaultID  ShardID
-	platformID ShardID
+	pg             *pgxpool.Pool
+	billingPG      *pgxpool.Pool
+	rdb            redis.UniversalClient
+	defaultID      ShardID
+	platformID     ShardID
+	scatterCfg     ScatterConfig
+	scatterMetrics ScatterMetrics
 }
 
 // Config configures NewSingleShardRouter.
@@ -182,6 +184,17 @@ type Config struct {
 	// returned by AllSessionShards and AllAuditShards. A zero value
 	// defaults to "default".
 	DefaultShardID ShardID
+	// Scatter pins the §12.6 lines 556-558 scatter-gather execution
+	// bounds the ScatterRead / ScatterWrite helpers observe. A zero
+	// value resolves to DefaultScatterConfig. v1 is single-shard so the
+	// bounds are trivially satisfied; they become load-bearing the first
+	// time a multi-shard router is deployed.
+	Scatter ScatterConfig
+	// ScatterMetrics receives the §12.6 line 560 scatter-gather metrics.
+	// nil disables emission. The gateway may also attach it after
+	// construction via SetScatterMetrics (the production registerer is
+	// built after the router).
+	ScatterMetrics ScatterMetrics
 }
 
 // NewSingleShardRouter constructs a SingleShardRouter against the
@@ -203,13 +216,30 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 		cfg.Redis.AddHook(rediskeys.NewGuard())
 	}
 	return &SingleShardRouter{
-		pg:         cfg.Postgres,
-		billingPG:  cfg.BillingAuditPostgres,
-		rdb:        cfg.Redis,
-		defaultID:  id,
-		platformID: id,
+		pg:             cfg.Postgres,
+		billingPG:      cfg.BillingAuditPostgres,
+		rdb:            cfg.Redis,
+		defaultID:      id,
+		platformID:     id,
+		scatterCfg:     cfg.Scatter.withDefaults(),
+		scatterMetrics: cfg.ScatterMetrics,
 	}, nil
 }
+
+// ScatterConfig returns the §12.6 lines 556-558 scatter-gather bounds the
+// router was configured with. A scatter-gather caller passes it to
+// ScatterRead / ScatterWrite. The zero Config value resolves to
+// DefaultScatterConfig.
+func (r *SingleShardRouter) ScatterConfig() ScatterConfig { return r.scatterCfg }
+
+// ScatterMetrics returns the §12.6 line 560 scatter-gather metrics sink
+// the router was configured with, or nil when none is wired.
+func (r *SingleShardRouter) ScatterMetrics() ScatterMetrics { return r.scatterMetrics }
+
+// SetScatterMetrics attaches the scatter-gather metrics sink after
+// construction. The production registerer is built after the router, so
+// the gateway wires the collector here once it exists.
+func (r *SingleShardRouter) SetScatterMetrics(m ScatterMetrics) { r.scatterMetrics = m }
 
 // billingAuditPool returns the dedicated billing/audit pool when the
 // §12.3 LENNY_PG_BILLING_AUDIT_DSN separate instance is configured,

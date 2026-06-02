@@ -760,6 +760,24 @@ spec:
             - name: LENNY_POSTGRES_WRITE_CEILING_IOPS
               value: {{ .Values.postgres.writeCeilingIops | quote }}
             {{- end }}
+            # §12.6 lines 556-558 storeRouter.* — scatter-gather execution
+            # bounds. v1 is single-shard so these are inert; surfaced so a
+            # multi-shard deployment tunes them and the §16
+            # ScatterGatherSlowQuery alert has a series. F-12.6.18.
+            {{- if .Values.storeRouter }}
+            {{- if hasKey .Values.storeRouter "maxScatterGatherConcurrency" }}
+            - name: LENNY_SCATTER_MAX_CONCURRENCY
+              value: {{ .Values.storeRouter.maxScatterGatherConcurrency | quote }}
+            {{- end }}
+            {{- if hasKey .Values.storeRouter "scatterGatherPerShardTimeoutSeconds" }}
+            - name: LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS
+              value: {{ .Values.storeRouter.scatterGatherPerShardTimeoutSeconds | quote }}
+            {{- end }}
+            {{- if hasKey .Values.storeRouter "scatterGatherAggregateTimeoutSeconds" }}
+            - name: LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS
+              value: {{ .Values.storeRouter.scatterGatherAggregateTimeoutSeconds | quote }}
+            {{- end }}
+            {{- end }}
             # §12.3 line 101 audit.startupChainCheckEntries — the
             # most-recent N audit rows per tenant re-verified by the
             # startup chain-continuity check. F-12.3.9.
