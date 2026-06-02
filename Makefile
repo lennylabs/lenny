@@ -106,6 +106,18 @@ coverage: install ## Report Go and spec coverage
 clean: ## Remove ./bin and the test results directory
 	@rm -rf bin tests/results
 
+.PHONY: upgrade
+upgrade: ## §10.5 CRD-aware upgrade: preflight, diff/apply CRDs, then helm upgrade. RELEASE= NAMESPACE= VALUES= [NON_INTERACTIVE=true]
+	@if [ -z "$(RELEASE)" ] || [ -z "$(VALUES)" ]; then \
+		echo "usage: make upgrade RELEASE=<version> VALUES=<values.yaml> [NAMESPACE=<ns>] [NON_INTERACTIVE=true]" >&2; \
+		exit 2; \
+	fi
+	@scripts/lenny-upgrade.sh \
+		--release "$(RELEASE)" \
+		--values "$(VALUES)" \
+		$(if $(NAMESPACE),--namespace "$(NAMESPACE)",) \
+		$(if $(filter true,$(NON_INTERACTIVE)),--non-interactive,)
+
 .PHONY: run
 run: ## Native-process dev loop: gateway + in-memory stores + echo runtime
 	@mkdir -p bin

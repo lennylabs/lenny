@@ -1,0 +1,73 @@
+suite: §10.5 line 408 lenny-migrate pre-deploy schema-migration Job
+templates:
+  - migrate-job.yaml
+tests:
+  # spec: §10.5 line 408 / F-10.5.2 — the Job renders only when an
+  # external Postgres DSN is configured; a stock in-memory install has
+  # no schema to migrate.
+  - it: renders nothing when postgres.dsn is unset (in-memory install)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the migrate Job as a pre-install/pre-upgrade hook before the gateway
+    set:
+      postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-migrate
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      # weight -5 runs after the lenny-preflight Job (-10).
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "-5"
+      - equal:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+          value: before-hook-creation,hook-succeeded
+
+  - it: runs `lenny-migrate up` with the DSN wired into the env
+    set:
+      postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - up
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: LENNY_POSTGRES_DSN
+      - equal:
+          path: spec.template.spec.containers[0].env[0].value
+          value: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+
+  - it: applies the restricted pod security posture
+    set:
+      postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: omits the Job when migrate.enabled is false even with a DSN set
+    set:
+      postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+      migrate.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

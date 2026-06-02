@@ -136,6 +136,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// shells out to helm. It is dispatched here so it shares the
 		// global-flag parsing but ignores the gateway client.
 		return cmdInstall(rest[1:], os.Stdin, stdout, stderr)
+	case "preflight":
+		// preflight runs the §10.5 step-1 CRD-currency check against the
+		// ambient-kubeconfig cluster, not the gateway API, so it ignores
+		// the gateway client.
+		return cmdPreflight(ctx, rest[1:], stdout, stderr)
 	case "runtime":
 		// runtime init and validate are local; runtime publish reaches
 		// the gateway. The group is dispatched with the gateway client
@@ -207,6 +212,7 @@ Gateway commands:
   bootstrap --from-values <f> [--wait-timeout <secs>]
                                         Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
   install [--answer-file <f>]           Run the installation wizard (§17.6)
+  preflight [--config <values.yaml>]    Assert installed CRD schema-version currency before helm upgrade (§10.5)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
   runtime validate [<path>]             Statically validate a runtime repo
   runtime publish <name> --image <ref>  Push and register a runtime

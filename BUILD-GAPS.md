@@ -12629,7 +12629,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution:** Evidence is stale. `charts/lenny/templates/token-service-deployment.yaml:52-93` already mounts the `lenny-token-service-tls` Secret at `/etc/lenny/mtls/` and passes `--tls-cert` / `--tls-key` / `--tls-ca` to the binary when `mtls.enabled` (default true). Gateway↔Token-Service SAN pinning hardness is tracked under F-10.3.1 / F-10.3.2 (handshake-time SAN validation, separate from chart wiring).
 
-### - [ ] F-10.3.12 — 10.3-G12. cert-manager Helm dependency, version check, and `certmanager.enabled` value all missing [High] — OPEN
+### - [x] F-10.3.12 — 10.3-G12. cert-manager Helm dependency, version check, and `certmanager.enabled` value all missing [High] — CLOSED
 
 **Spec lines:** 304 ("**cert-manager minimum version: v1.12.0** ... checks the cert-manager version via `kubectl get deployment cert-manager -n cert-manager -o jsonpath='{...}'` and fails if the version is below `v1.12.0`. cert-manager is declared as an optional Helm dependency (`condition: certmanager.enabled`, default `true`)").
 **Evidence:**
@@ -12640,6 +12640,27 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - The repo grep `grep -rn "v1.12.0\|cert-manager image\|certmanager.*version"` against `pkg/preflight/` and `charts/` returns no hits.
 
 **Impact:** A cluster running cert-manager `<v1.12.0` (where `CertificateRequest` approval and `Certificate` webhook behaviour are unstable) installs Lenny with no warning, and a missing-cert-manager cluster fails at first `Certificate`-resource creation rather than at preflight.
+
+**Resolution:** New `pkg/preflight.CertManagerVersionCheck` (with an
+injectable `CertManagerProber`) implements the §10.3 line 304 version
+floor: when the cert-manager-backed PKI is enabled it fails the install
+fail-closed if cert-manager is absent or below `v1.12.0`, surfaces a
+non-blocking WARNING when the version cannot be determined (the
+volume-encryption precedent), and is a no-op when disabled. The
+lenny-preflight Job wires a prober that reads the installed version from
+the `certificates.cert-manager.io` CRD's `app.kubernetes.io/version`
+label — a cluster-scoped CRD read already covered by the preflight RBAC,
+so the check needs no cross-namespace Deployment read in the
+operator-owned cert-manager namespace (the F-10.3.25 RBAC objection).
+The `certmanager.enabled` value (default true) gates it via a new
+`--certmanager-enabled` flag on the Job. The literal `dependencies:`
+subchart block is intentionally not added: cert-manager is a
+cluster-wide, CRD-owning operator that jetstack recommends installing
+separately (an always-on application subchart causes CRD-ownership
+conflicts on chart upgrades), so `certmanager.enabled` is the spec's
+`condition` knob and the preflight version check delivers the finding's
+defensive intent (silent install on a stale/missing cert-manager now
+aborts at preflight). Closed by this batch.
 
 ### - [x] F-10.3.13 — 10.3-G13. Gateway and adapter never log `pod_identity_mismatch` / `interceptor_identity_mismatch` [High] — CLOSED
 
@@ -13001,7 +13022,7 @@ at 10 events/s).
 
 **Resolution:** `--session-event-replay-buffer-depth` (env: `LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH`) is wired in `cmd/lenny-gateway/main.go` with default 512 and `[64, 4096]` range validation (fatal startup error outside the envelope); the value flows into `sessionevents.NewBus(*sessionEventReplayBufferDepth)`. The chart adds `gateway.sessionEventReplayBufferDepth: 512` to `values.yaml` and renders the flag in `gateway-deployment.yaml`.
 
-### - [ ] F-10.4.6 — 06  Liveness/readiness probe target does not reflect dependent backend health [High] — OPEN
+### - [x] F-10.4.6 — 06  Liveness/readiness probe target does not reflect dependent backend health [High] — CLOSED
 
 **Spec:** §10.4 line 386 — "Readiness probes remove unhealthy replicas
 from traffic."
@@ -13024,6 +13045,23 @@ backend health checks against `/healthz`) is the missing wiring.
 **Why High:** The mechanism is enumerated in §10.4 as a reliability
 mechanism. A static `/healthz` does not satisfy "remove unhealthy
 replicas from traffic" — only "remove crashed replicas from traffic."
+
+**Resolution:** The `/readyz` handler (already split from `/healthz` by
+F-10.1.6: liveness on `/healthz`, readiness on `/readyz`, chart probes
+updated) now reflects the hard backend dependency. A new
+`health.Aggregator.HardDependencyStatus(names...)` returns the worst
+status across the named backend checkers; the gateway passes the
+session-truth store (`postgres`) and a new `readinessVerdict` helper
+returns 503 (`backend_unavailable`) when it is `StatusUnhealthy`. Redis
+is deliberately excluded (the §12.4 advisory-lock lease fallback keeps a
+Redis-down replica functional) and the §11.7 SIEM checker stays
+non-gating, so neither pulls a replica on its own. The
+dual-store-both-down case is exempted (`dsMonitor.Unavailable()` keeps
+the replica ready so it can serve the §10.1 503 `PLATFORM_DEGRADED`
+instead of vanishing from the Service); draining and NTP-drift take
+precedence as before. The chart's `readinessProbe.timeoutSeconds` is set
+to 3 to fit the cached 2s backend probe. Closed by this batch (readiness
+helper + `HardDependencyStatus` + chart timeout).
 
 ### - [x] F-10.4.7 — 07  Graceful shutdown leaves SSE streams and in-flight session work unhandled [High] — CLOSED
 
@@ -13289,7 +13327,7 @@ The `runtime-upgrade-stuck` runbook (`docs/runbooks/runtime-upgrade-stuck.md`) t
 
 The §10.5 manual rotation procedure on lines 537–542 is labeled "reference only" and is not the primary mechanism; the spec is explicit that the state machine is required for production. The platform therefore has no normative path to upgrade a runtime pool in v1.
 
-### - [ ] F-10.5.2 — 02  No production migration runner: Helm chart has no pre-upgrade `lenny-migrate` Job; expand-contract gating absent [High] — OPEN
+### - [x] F-10.5.2 — 02  No production migration runner: Helm chart has no pre-upgrade `lenny-migrate` Job; expand-contract gating absent [High] — CLOSED
 
 Spec (line 408): "Migrations run as a Kubernetes Job (init container or pre-deploy hook) before the gateway Deployment rolls out. The Job acquires a Postgres advisory lock to prevent concurrent migration runs."
 
@@ -13303,6 +13341,28 @@ Cross-cutting: the §10.5 expand-contract discipline (Phases 1/2/3 with the PL/p
 - `grep -l "DROP COLUMN" migrations/*.up.sql` returns no results, so no Phase 3 migration exists yet. That fact alone is fine for v1, but the runner has no schema-aware policy to refuse a Phase 3 file lacking a `DO $$` preflight, no `gate-index:` comment lint (line 417 specifies an explicit declaration), and no automated check that a Phase 3 file uses `DROP COLUMN IF EXISTS` (idempotency requirement on line 430).
 - `scripts/lint-migrations.sh` lints rollback presence and test references; it does not lint Phase 3 gate blocks or nullability of Phase 1 columns.
 - No `Phase 3 gate failed` string anywhere under `migrations/`, `cmd/lenny-migrate/`, or `tests/tier2_component/migrations/`. The §10.5 normative rule "The runner ... aborts the migration with a non-zero exit code if the result is nonzero" has no implementation in the current `lenny-migrate run()` (`cmd/lenny-migrate/main.go:42–121`) — `m.Up()` simply runs the embedded SQL.
+
+**Resolution:** New `charts/lenny/templates/migrate-job.yaml` renders the
+§10.5 line 408 schema-migration Job as a pre-install/pre-upgrade hook at
+weight -5 (after the lenny-preflight Job at -10, before the gateway
+Deployment), running `lenny-migrate up`. golang-migrate's internal
+Postgres advisory lock serializes concurrent runs and `ErrNoChange`
+makes a re-applied hook a no-op (§10.5 "Locking"). The Job renders only
+when `postgres.dsn` is set and is gated by a new `migrate.enabled` value
+(default true) for operators who run migrations out-of-band; the DSN is
+rendered into the hook's env directly (a pre-* hook runs before the
+normal `lenny-datastore-conn` Secret exists, matching the project's e2e
+and cloud-load migrate Jobs). The Phase 3 gate is encoded in the
+migration SQL as a PL/pgSQL `DO $$` block that golang-migrate runs
+transactionally, so the runner needs no special logic; the gating that
+was missing is now a lint: `scripts/lint-migrations.sh` Pass 5 flags any
+Phase 3 `.up.sql` (one that `DROP`s a column) that lacks a `DO $$`
+preflight gate or uses a non-idempotent `DROP COLUMN` (no `IF EXISTS`),
+and warns on a missing `-- gate-index:` declaration. A tier-1 Go scanner
+(`tests/tier2_component/migrations/phase3_gate_test.go`) mirrors the rule
+so the defense runs in `go test` (the tree currently has no Phase 3
+migration, so both are forward-looking guards). The Phase 1 nullability
+half was already added by F-10.5.8. Closed by this batch.
 
 ### - [x] F-10.5.3 — 03  `lenny-ctl migrate status` and `lenny-ctl migrate down` are unimplemented [High] — CLOSED
 
@@ -13319,7 +13379,7 @@ Concrete consequence: an operator cannot determine the expand-contract phase of 
 
 **Resolution (1a2a5ecb):** Added `lenny-ctl migrate status` / `migrate down --version N --confirm` and the `GET /v1/admin/schema/migrations/status` + `POST /v1/admin/schema/migrations/{version}/down` admin endpoints (platform-admin), backed by `pkg/schemamigrate` over the embedded migrations. The down path requires `{confirm:true}` (422 otherwise), reverses the current version (409 mismatch otherwise), clears the dirty flag, and emits `platform.schema_migration_rolled_back`. v1 migrations are single-file, so `status` reports applied migrations as `phase: complete` / `gateCheckResult: not_run` truthfully; the richer expand-contract phase data (`phase1_applied`…) and its storage remain tracked under F-24.13.4. Closes F-24.13.1, F-24.13.2, F-24.13.3, F-24.13.6.
 
-### - [ ] F-10.5.4 — 04  CRD upgrade procedure is undefended: no schema-version annotation, no `lenny-ctl preflight`, no `scripts/lenny-upgrade.sh`, no `make upgrade` target [High] — OPEN
+### - [x] F-10.5.4 — 04  CRD upgrade procedure is undefended: no schema-version annotation, no `lenny-ctl preflight`, no `scripts/lenny-upgrade.sh`, no `make upgrade` target [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.6.4 — Both report the CRD upgrade-safety machinery (schema-version annotation, preflight check, upgrade/validate jobs) is absent.
 
@@ -13339,6 +13399,24 @@ Implementation:
 - No controller code reads a CRD's `lenny.dev/schema-version` annotation at startup; `grep -rn "schema-version\|lenny.dev/schema-version" pkg/ cmd/` returns no matches. The "FATAL" hard-stop behavior promised on line 439 cannot occur.
 
 The CRDs ship only at `v1alpha1` today, so there is no live mismatch. The promised hard stop, however, is the only mechanism the spec describes for catching a stale-CRD `helm upgrade` (line 437 calls it "the key safety rule"), and none of the four required components (annotation, controller check, preflight check, driver script) is built.
+
+**Resolution:** The first three components were already built (evidence
+stale): the `lenny.dev/schema-version` annotation on every CRD, the
+controller startup self-check (`assertCRDSchemaVersion` in
+`cmd/lenny-controller`), and the preflight CRD-currency check
+(`preflight.CRDSchemaVersionCheck`) all landed under F-15.5.12 /
+F-17.6.4 (dup). This batch adds the missing operator-facing surface:
+(1) `scripts/lenny-upgrade.sh` implements the §10.5 5-step procedure
+(preflight → diff CRDs → apply CRDs → wait `Established` → `helm
+upgrade`) with `--release`/`--namespace`/`--values`/`--non-interactive`;
+(2) a `make upgrade RELEASE= NAMESPACE= VALUES= [NON_INTERACTIVE=true]`
+target wraps it; (3) `lenny-ctl preflight --config <values.yaml>` runs
+the step-1 CRD-currency assertion in-process against the
+ambient-kubeconfig cluster (the spec names it equivalent to the
+`lenny-preflight` Job; the script prefers it and falls back to the Job
+binary). Tested: `runPreflightCRDCheck` over a fake client
+(pass/stale/missing), script syntax + arg validation, make-target arg
+validation. Closed by this batch.
 
 ### - [ ] F-10.5.5 — 05  Platform-upgrade audit events are catalogued but never emitted [High] — OPEN
 

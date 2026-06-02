@@ -1,0 +1,74 @@
+{{- /*
+lenny-migrate pre-install/pre-upgrade Job (§10.5 line 408). Applies the
+embedded Postgres schema migrations before the gateway and controller
+Deployments roll out, so the schema the binaries expect is in place when
+they start. `lenny-migrate up` is idempotent (golang-migrate ErrNoChange
+is a no-op) and acquires a Postgres advisory lock internally, so
+concurrent runs across replicas or a re-applied hook are safe (§10.5
+"Locking").
+
+The Job runs as a pre-install/pre-upgrade hook at weight -5, after the
+lenny-preflight Job (-10) so a stale-CRD / failed-precondition install
+aborts before any migration runs, and before the gateway Deployment (a
+normal resource, applied after all pre-* hooks complete). This is the
+spec's "pre-deploy hook" option; the expand-contract discipline (§10.5)
+keeps a Phase-1 migration backward-compatible so old replicas coexist
+with the new schema during the rolling deploy.
+
+The Job renders only when postgres.dsn is set ($hasPg). A stock install
+with no DSN runs the gateway against in-memory stores, where there is no
+schema to migrate. The DSN is rendered into the hook's env from
+postgres.dsn directly (matching the project's e2e and cloud-load migrate
+Jobs): a pre-* hook runs before the normal lenny-datastore-conn Secret
+exists, so a secretKeyRef cannot resolve at hook time.
+*/ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- $m := .Values.migrate -}}
+{{- if and $m.enabled $hasPg }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ int $m.backoffLimit }}
+  # Keep the pod briefly after a successful run for log inspection, then
+  # let the TTL controller reap it.
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "{{ $m.image.repository }}:{{ $m.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ $m.image.pullPolicy }}
+          args:
+            - up
+          env:
+            - name: LENNY_POSTGRES_DSN
+              value: {{ $pg.dsn | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml $m.resources | nindent 12 }}
+{{- end }}
