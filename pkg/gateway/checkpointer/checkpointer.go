@@ -56,15 +56,15 @@ type DurationObserver interface {
 // Retention persists the §4.4 line 234 / §12.5 latest-2 rotation
 // catalog. The checkpointer records a row for every successful
 // snapshot and runs Rotate immediately after so the table never
-// holds more than RetainedCount active rows per session. Best-
-// effort: a failure logs and discards rather than fail the
+// holds more than RetainedCount active rows per (session, slot).
+// Best-effort: a failure logs and discards rather than fail the
 // snapshot — the catalog is observability for the §12.5 GC sweep,
 // not a §4.4 correctness gate.
 //
-// spec: §4.4 line 234.
+// spec: §4.4 line 234; §12.5 lines 313, 326.
 type Retention interface {
 	Insert(ctx context.Context, r checkpointretention.Record) error
-	Rotate(ctx context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error)
+	Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error)
 }
 
 // Checkpointer takes §4.4 checkpoints of running sessions and records
@@ -250,7 +250,12 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return fmt.Errorf("checkpointer: checkpoint session %s: %w", sessionID, err)
 	}
 	now := c.now()
+	var legalHold bool
 	if _, err := c.Sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		// §12.5 line 313 — a session under legal hold is exempt from
+		// the latest-2 rotation; capture the flag inside the update so
+		// the post-snapshot rotation observes the committed state.
+		legalHold = row.LegalHold
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
 			Ref:       result.CheckpointID,
 			Source:    source,
@@ -274,8 +279,11 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return fmt.Errorf("checkpointer: record snapshot for session %s: %w", sessionID, err)
 	}
 	// §4.4 line 234 / §12.5 latest-2 rotation. Best-effort: a catalog
-	// or rotation failure does not unwind the successful snapshot.
-	c.recordRetention(ctx, tenantID, sessionID, result.CheckpointID)
+	// or rotation failure does not unwind the successful snapshot. The
+	// rotation is per (session, slot) — binding.SlotID is the empty
+	// string for the single-workspace path and the bound slot id for
+	// concurrent-workspace pods.
+	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, result.CheckpointID, legalHold)
 	return nil
 }
 
@@ -293,28 +301,36 @@ func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float
 }
 
 // recordRetention inserts the catalog row for the new checkpoint and
-// runs Rotate to soft-delete any row past the §12.5 latest-2 cap.
-// Best-effort: a failure logs and discards rather than fail the
-// snapshot.
-// spec: §4.4 line 234 / §12.5 latest-2 retention.
-func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, ref string) {
+// runs Rotate to soft-delete any row past the §12.5 latest-2 cap for
+// the (session, slot) pair. A session under legal hold is exempt from
+// rotation (§12.5 line 313): the row is still catalogued so the
+// §12.8 reconciler can observe it, but Rotate is skipped so every
+// checkpoint is retained until the hold is lifted. Best-effort: a
+// failure logs and discards rather than fail the snapshot.
+// spec: §4.4 line 234 / §12.5 lines 313, 326.
+func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, slotID, ref string, legalHold bool) {
 	if c.Retention == nil || ref == "" {
 		return
 	}
 	if err := c.Retention.Insert(ctx, checkpointretention.Record{
 		TenantID:  tenantID,
 		SessionID: sessionID,
+		SlotID:    slotID,
 		Ref:       ref,
 	}); err != nil && !errors.Is(err, checkpointretention.ErrDuplicate) {
-		log.Printf("checkpointer: retention insert tenant=%s session=%s ref=%s: %v",
-			tenantID, sessionID, ref, err)
+		log.Printf("checkpointer: retention insert tenant=%s session=%s slot=%s ref=%s: %v",
+			tenantID, sessionID, slotID, ref, err)
 		// Skip Rotate so the cap is not enforced against an unwritten
 		// row; the next successful checkpoint will rotate the catalog.
 		return
 	}
-	if _, err := c.Retention.Rotate(ctx, tenantID, sessionID); err != nil {
-		log.Printf("checkpointer: retention rotate tenant=%s session=%s: %v",
-			tenantID, sessionID, err)
+	if legalHold {
+		// §12.5 line 313 — held sessions retain all checkpoints.
+		return
+	}
+	if _, err := c.Retention.Rotate(ctx, tenantID, sessionID, slotID); err != nil {
+		log.Printf("checkpointer: retention rotate tenant=%s session=%s slot=%s: %v",
+			tenantID, sessionID, slotID, err)
 	}
 }
 

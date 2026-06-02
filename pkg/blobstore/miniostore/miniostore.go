@@ -817,6 +817,20 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 	return count
 }
 
+// HardDeleteObject implements blobstore.Tombstoner. It RemoveObject's
+// the single object named by u. RemoveObject is idempotent on an
+// absent key, so a missing object is a no-op.
+//
+// spec: §12.5 line 320 — catalog-driven targeted prune.
+func (s *Store) HardDeleteObject(u blobstore.URI) error {
+	ctx := context.Background()
+	key := objectKey(u)
+	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil && !isNotFound(err) {
+		return fmt.Errorf("miniostore: HardDeleteObject %s: %w", key, err)
+	}
+	return nil
+}
+
 // isTombstoned reports whether the object at key carries the §12.5
 // lenny-deleted-at tag.
 func (s *Store) isTombstoned(ctx context.Context, key string) (bool, error) {

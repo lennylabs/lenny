@@ -472,6 +472,22 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 	return count
 }
 
+// HardDeleteObject implements blobstore.Tombstoner. It DeleteObject's
+// the single object named by u; a missing object is a no-op (S3
+// DeleteObject is idempotent and NoSuchKey is treated as success).
+//
+// spec: §12.5 line 320 — catalog-driven targeted prune.
+func (s *Store) HardDeleteObject(u blobstore.URI) error {
+	ctx := context.Background()
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: awssdk.String(s.bucket),
+		Key:    awssdk.String(objectKey(u)),
+	}); err != nil && !isNoSuchKey(err) {
+		return fmt.Errorf("blobstore/s3: HardDeleteObject: %w", err)
+	}
+	return nil
+}
+
 // DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
 // is session-scoped (§12.8 step 7), so this whole-user call is a no-op
 // returning (0, nil).

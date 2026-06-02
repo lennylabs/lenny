@@ -552,21 +552,23 @@ type fakeRetention struct {
 type retInsert struct {
 	tenantID  string
 	sessionID string
+	slotID    string
 	ref       string
 }
 
 type retRotate struct {
 	tenantID  string
 	sessionID string
+	slotID    string
 }
 
 func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) error {
-	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.Ref})
+	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.SlotID, r.Ref})
 	return nil
 }
 
-func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
-	f.rotates = append(f.rotates, retRotate{tenantID, sessionID})
+func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
+	f.rotates = append(f.rotates, retRotate{tenantID, sessionID, slotID})
 	return nil, nil
 }
 
@@ -617,5 +619,64 @@ func TestFailedCheckpointDoesNotRecordRetention(t *testing.T) {
 	}
 	if len(ret.rotates) != 0 {
 		t.Fatalf("Rotate: want 0 calls on failure, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 line 313 — a session under legal hold is exempt from
+// the latest-2 rotation. The checkpoint is still catalogued (so the
+// §12.8 reconciler can see it) but Rotate is not run, so every
+// checkpoint is retained until the hold is lifted.
+func TestLegalHoldSessionSkipsRotation(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "held", stubSink{id: "ckpt-hold"})
+	// Place the session under legal hold.
+	if _, err := store.Update(context.Background(), "acme", "held", func(row *sessionstore.Session) error {
+		row.LegalHold = true
+		return nil
+	}); err != nil {
+		t.Fatalf("set legal hold: %v", err)
+	}
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "held"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 {
+		t.Fatalf("Insert: want 1 call (catalogued), got %d", len(ret.inserts))
+	}
+	if len(ret.rotates) != 0 {
+		t.Fatalf("Rotate: held session must not rotate, got %d calls", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 lines 313, 326 — in concurrent-workspace mode the
+// rotation operates on (session_id, slot_id) pairs. The bound slot id
+// flows into both the catalog Insert and the Rotate call.
+func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	srv := adapter.New("checkpointer-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = stubRuntime{}
+	srv.Checkpoints = stubSink{id: "ckpt-slot"}
+	client := dialAdapter(t, srv)
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: "cw", Runtime: "echo"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	registry.Put(&podsession.BindResult{SessionID: "cw", TenantID: "acme", SlotID: "slot-3", Adapter: client})
+	runningSession(t, store, "acme", "cw")
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "cw"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 || ret.inserts[0].slotID != "slot-3" {
+		t.Fatalf("Insert slot: got %+v, want slotID slot-3", ret.inserts)
+	}
+	if len(ret.rotates) != 1 || ret.rotates[0].slotID != "slot-3" {
+		t.Fatalf("Rotate slot: got %+v, want slotID slot-3", ret.rotates)
 	}
 }

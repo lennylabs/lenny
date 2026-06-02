@@ -38,6 +38,12 @@ func (r *recordingCatalog) Tombstone(context.Context, string) error             
 func (r *recordingCatalog) HardPruneExpired(context.Context, time.Time) (int, error) {
 	return 0, nil
 }
+func (r *recordingCatalog) ListPrunable(context.Context, time.Time) ([]string, error) {
+	return nil, nil
+}
+func (r *recordingCatalog) HardPruneURIs(context.Context, []string) (int, error) {
+	return 0, nil
+}
 func (r *recordingCatalog) ListBySession(context.Context, string, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }

@@ -98,6 +98,13 @@ type Store interface {
 	SoftDelete(ctx context.Context, uri string, deadline time.Time) error
 	Tombstone(ctx context.Context, uri string) error
 	HardPruneExpired(ctx context.Context, now time.Time) (int, error)
+	// ListPrunable returns the URIs HardPruneExpired would delete; the
+	// §12.5 catalog-driven sweep deletes those bucket objects then
+	// drops the rows via HardPruneURIs. spec: §12.5 line 320.
+	ListPrunable(ctx context.Context, now time.Time) ([]string, error)
+	// HardPruneURIs deletes the named non-live, non-held rows and
+	// returns the count removed. spec: §12.5 lines 320, 341.
+	HardPruneURIs(ctx context.Context, uris []string) (int, error)
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error)
 	SetLegalHold(ctx context.Context, uri string, hold bool) error
 	// IsLegalHeldAt reports whether any row scoped to (tenant, session)
@@ -313,6 +320,66 @@ func (s *PgStore) HardPruneExpired(ctx context.Context, now time.Time) (int, err
 		   AND tombstone_deadline <= $1
 		   AND legal_hold = false`,
 		now.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ListPrunable returns the URIs of every row HardPruneExpired would
+// delete: non-live, past its tombstone deadline, and not under a
+// legal hold. The §12.5 catalog-driven sweep deletes exactly these
+// bucket objects (blobstore.Tombstoner.HardDeleteObject) before
+// dropping the rows (HardPruneURIs), so the per-cycle cost scales
+// with this Postgres-supplied set rather than with the bucket-wide
+// object count.
+//
+// spec: §12.5 line 320 — the GC job queries Postgres for artifacts
+// past their TTL and deletes exactly that set.
+func (s *PgStore) ListPrunable(ctx context.Context, now time.Time) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT uri FROM artifact_store
+		 WHERE state <> 'live'
+		   AND tombstone_deadline IS NOT NULL
+		   AND tombstone_deadline <= $1
+		   AND legal_hold = false
+		 ORDER BY uri`, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var uri string
+		if err := rows.Scan(&uri); err != nil {
+			return nil, err
+		}
+		out = append(out, uri)
+	}
+	return out, rows.Err()
+}
+
+// HardPruneURIs deletes the catalog rows named by uris that are still
+// non-live and not under a legal hold, returning the count removed.
+// It is the row-side companion to ListPrunable + HardDeleteObject:
+// the sweep deletes the bucket object first, then drops the row, so a
+// crash or per-object delete failure between the two leaves the row
+// for the next cycle rather than orphaning a bucket object. The
+// `state <> 'live' AND legal_hold = false` guard makes a second pass
+// over the same uri a safe no-op even if the row's state changed
+// between ListPrunable and this delete.
+//
+// spec: §12.5 lines 320, 341 — delete the object, then the row.
+func (s *PgStore) HardPruneURIs(ctx context.Context, uris []string) (int, error) {
+	if len(uris) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM artifact_store
+		 WHERE uri = ANY($1)
+		   AND state <> 'live'
+		   AND legal_hold = false`,
+		uris)
 	if err != nil {
 		return 0, err
 	}

@@ -19969,7 +19969,7 @@ retention/gc track. Tests: `gatewaymetrics` labeled-counter assertion for both
 tables; `hardPrunePartialManifests` unit test (active/not-yet-expired rows
 survive, expired rows pruned, boundary cutoff no-op). Commit `71ac44e4`.
 
-### - [ ] F-12.5.12 — checkpoint "latest 2 per session / per-slot" rotation rule is not implemented (§12.5 lines 313, 326) [High] — OPEN
+### - [x] F-12.5.12 — checkpoint "latest 2 per session / per-slot" rotation rule is not implemented (§12.5 lines 313, 326) [High] — CLOSED
 
 Line 313: "Keep only the latest 2 checkpoints per active session…
 In concurrent-workspace mode, checkpoints are per-slot — the 'latest 2' limit
@@ -19991,6 +19991,8 @@ Consequence: checkpoint storage grows unbounded per session, blowing the
 `storageQuotaBytes` budget faster than the predictive alert
 `LegalHoldCheckpointAccumulationProjectedBreach`
 (`pkg/alerting/rules/rules.go:1000-1004`) anticipates.
+
+**Resolution (`<PENDING>`):** The per-session "latest 2" rotation had landed since this finding was filed (`checkpointretention` catalog + `Rotate`, wired into `checkpointer.recordRetention`); the residual gaps were the §12.5 line 313 legal-hold exemption and the line 313/326 per-slot dimension. Both are now implemented: (1) `checkpointer.snapshot` captures the session's `legal_hold` inside the update transaction and skips `Rotate` when held, so a held session retains every checkpoint (the row is still catalogued for the §12.8 reconciler); (2) migration 0112 adds `slot_id` to `session_checkpoints` and re-points the rotation index to `(tenant_id, session_id, slot_id, created_at DESC)`, `Rotate`/`List` are keyed by `(tenant, session, slot)`, and `checkpointer.snapshot` threads `binding.SlotID` (empty for single-workspace, the bound slot for concurrent-workspace pods), so the "latest 2" cap applies independently per slot per §12.5 line 326.
 
 ### - [x] F-12.5.13 — partial-manifest schema and backstop sweep are absent (§12.5 lines 316, 337) [High] — CLOSED (schema + cleanup landed; §12.5 backstop sweep follow-on)
 
@@ -20225,7 +20227,7 @@ session-level flag, `pkg/gateway/retentiongc/retentiongc.go:89-93`), but a
 per-blob hold across a checkpoint that should be kept while other blobs in the
 same session rotate cannot be expressed and is not durable.
 
-### - [ ] F-12.5.23 — HardPrune in S3/GCS/Azure adapters performs full bucket `ListObjects` on every cycle (§12.5 line 320) [Medium] — OPEN
+### - [x] F-12.5.23 — HardPrune in S3/GCS/Azure adapters performs full bucket `ListObjects` on every cycle (§12.5 line 320) [Medium] — CLOSED
 
 Line 320 expects the GC job to be driven from Postgres
 (`it queries Postgres for artifacts past their TTL`). The current
@@ -20246,6 +20248,8 @@ gap above), the per-cycle cost grows linearly with bucket-wide object count
 because the adapter ignores the Postgres-supplied object set. At Tier 4
 fleet sizes (millions of artifacts per tenant) this dominates GC duration and
 contradicts the catalog-driven, bounded-set guarantee §12.5 line 320 implies.
+
+**Resolution (`<PENDING>`):** The §12.5 hard-prune is now catalog-driven. The catalog (`artifactcatalog.PgStore`) gained `ListPrunable(now)` (returns the URIs of rows past their tombstone deadline, the exact set `HardPruneExpired` would remove) and `HardPruneURIs(uris)` (drops named non-live, non-held rows). `blobstore.Tombstoner` gained `HardDeleteObject(URI)`, a targeted single-object delete implemented by every backend (s3, gcs, azureblob, miniostore, in-memory). `cataloging.HardPrune` now lists the prunable URIs from Postgres, deletes exactly those bucket objects via `HardDeleteObject`, then drops the rows whose object delete succeeded — object-first per §12.5 line 341, so a crash or per-object failure leaves the row for the next cycle rather than orphaning an object. The prior per-cycle bucket-wide `ListObjectsV2` + per-object `GetObjectTagging` scan (`tomb.HardPrune(now, 0)`) is no longer called; the backend `HardPrune(now, retention)` full-scan remains only as a defense-in-depth out-of-band ghost sweep. Per-cycle cost now scales with the Postgres set, not the bucket-wide object count.
 
 ### - [x] F-12.5.24 — `artifact_store.id` referenced by the GC concurrency model does not exist (§12.5 lines 333, 335) [Medium] — CLOSED
 

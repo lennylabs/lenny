@@ -304,9 +304,25 @@ type Tombstoner interface {
 
 	// HardPrune removes tombstoned entries whose `deleted_at` is at
 	// or before `now - retention`. Returns the count of entries
-	// physically removed. Callers run HardPrune periodically as the
-	// §12.5 tombstone hard-prune sweep.
+	// physically removed. HardPrune is the out-of-band ghost sweep: it
+	// lists the bucket and removes objects whose tombstone tag has
+	// aged out. The routine §12.5 hard-prune is catalog-driven
+	// (HardDeleteObject below) so it does not pay the bucket-wide list
+	// per cycle; HardPrune remains as a defense-in-depth path for
+	// objects whose catalog row was lost.
 	HardPrune(now time.Time, retention time.Duration) int
+
+	// HardDeleteObject physically removes the single object named by
+	// its URI, regardless of tombstone tag or retention window.
+	// Deleting an absent object is a no-op (idempotent). The §12.5
+	// catalog-driven hard-prune sweep calls it for each object whose
+	// catalog row is past its tombstone deadline, so the sweep cost
+	// scales with the Postgres-supplied set rather than with the
+	// bucket-wide object count.
+	//
+	// spec: §12.5 line 320 — the GC job queries Postgres for artifacts
+	// past their TTL and deletes exactly that set.
+	HardDeleteObject(u URI) error
 
 	// StatIncludingTombstones returns the blob's metadata and its
 	// lifecycle State (Active, SoftDeleted, NotFound). Unlike Stat,
@@ -533,6 +549,16 @@ func (s *MemoryStore) HardPrune(now time.Time, retention time.Duration) int {
 		}
 	}
 	return removed
+}
+
+// HardDeleteObject implements Tombstoner. It physically removes the
+// single object named by u, whether live or tombstoned. A missing
+// object is a no-op. spec: §12.5 line 320.
+func (s *MemoryStore) HardDeleteObject(u URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.blobs, s.key(u))
+	return nil
 }
 
 // StatIncludingTombstones implements Tombstoner. It returns the blob's

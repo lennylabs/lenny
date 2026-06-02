@@ -232,6 +232,69 @@ func TestArtifactCatalogContract(t *testing.T) {
 		}
 	})
 
+	// F-12.5.23: the catalog-driven hard-prune sweep lists the URIs
+	// past their TTL (so the GC deletes exactly those bucket objects)
+	// then drops the rows by URI. ListPrunable must report the same set
+	// HardPruneExpired would remove, and skip future-deadline / live /
+	// legal-held rows. spec: §12.5 lines 320, 341.
+	t.Run("ListPrunable + HardPruneURIs drive a targeted catalog-driven prune", func(t *testing.T) {
+		ripe := "lenny-blob://acme/sess_lp_ripe/p"
+		future := "lenny-blob://acme/sess_lp_future/p"
+		live := "lenny-blob://acme/sess_lp_live/p"
+		held := "lenny-blob://acme/sess_lp_held/p"
+		for _, uri := range []string{ripe, future, live, held} {
+			if err := cat.Insert(ctx, artifactcatalog.Record{
+				URI: uri, TenantID: "acme", SessionID: uri, PartID: "p",
+			}); err != nil {
+				t.Fatalf("Insert %s: %v", uri, err)
+			}
+		}
+		past := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		later := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+		if err := cat.SoftDelete(ctx, ripe, past); err != nil {
+			t.Fatalf("SoftDelete ripe: %v", err)
+		}
+		if err := cat.SoftDelete(ctx, future, later); err != nil {
+			t.Fatalf("SoftDelete future: %v", err)
+		}
+		_ = cat.SoftDelete(ctx, held, past)
+		if err := cat.SetLegalHold(ctx, held, true); err != nil {
+			t.Fatalf("SetLegalHold: %v", err)
+		}
+		// live is left in the live state.
+
+		now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+		uris, err := cat.ListPrunable(ctx, now)
+		if err != nil {
+			t.Fatalf("ListPrunable: %v", err)
+		}
+		if len(uris) != 1 || uris[0] != ripe {
+			t.Fatalf("ListPrunable = %v, want [%s]", uris, ripe)
+		}
+
+		// Dropping the reported URI removes the ripe row.
+		n, err := cat.HardPruneURIs(ctx, uris)
+		if err != nil {
+			t.Fatalf("HardPruneURIs: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("HardPruneURIs = %d, want 1", n)
+		}
+		if _, err := cat.Get(ctx, ripe); !errors.Is(err, artifactcatalog.ErrNotFound) {
+			t.Errorf("ripe row survived prune: %v", err)
+		}
+		// The live, future, and held rows all survive.
+		for _, uri := range []string{future, live, held} {
+			if _, err := cat.Get(ctx, uri); err != nil {
+				t.Errorf("row %s removed unexpectedly: %v", uri, err)
+			}
+		}
+		// HardPruneURIs will not drop a live row even if named.
+		if n, err := cat.HardPruneURIs(ctx, []string{live}); err != nil || n != 0 {
+			t.Errorf("HardPruneURIs(live) = (%d, %v), want (0, nil)", n, err)
+		}
+	})
+
 	t.Run("ListBySession returns the session's rows in URI order", func(t *testing.T) {
 		tenant := "acme"
 		session := "sess_list"

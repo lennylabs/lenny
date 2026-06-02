@@ -42,6 +42,15 @@ type Record struct {
 	// belongs to. Both are required on Insert.
 	TenantID  string
 	SessionID string
+	// SlotID is the §5.2 concurrent-mode slot the checkpoint belongs
+	// to. The single-workspace (session / task / stateless) path
+	// writes the empty string, keeping its rotation per-session; the
+	// concurrent-workspace path writes the bound slot id so the
+	// "latest 2" cap applies independently per slot.
+	//
+	// spec: §12.5 lines 313, 326 — rotation operates on
+	// (session_id, slot_id) pairs.
+	SlotID string
 	// Ref is the MinIO object reference for the checkpoint snapshot.
 	// The (tenant, session, ref) tuple is the catalog's composite
 	// key; a second Insert for the same triple is rejected with
@@ -69,18 +78,24 @@ type Store interface {
 	Insert(ctx context.Context, r Record) error
 
 	// Rotate enforces the §12.5 latest-2 retention policy for the
-	// supplied (tenantID, sessionID): the two most-recent active
-	// rows keep Retained=true; every other active row is marked
-	// Retained=false with DeletedAt=now(). Returns the slice of
-	// rows whose Retained transitioned from true to false in this
-	// call, in CreatedAt-ascending order (oldest first), so the
-	// caller can correlate with MinIO deletes.
-	Rotate(ctx context.Context, tenantID, sessionID string) ([]Record, error)
+	// supplied (tenantID, sessionID, slotID): the two most-recent
+	// active rows for that slot keep Retained=true; every other
+	// active row in the slot is marked Retained=false with
+	// DeletedAt=now(). slotID is the empty string for the
+	// single-workspace path, so a session's whole-session rotation
+	// is the slotID="" case. Returns the slice of rows whose
+	// Retained transitioned from true to false in this call, in
+	// CreatedAt-ascending order (oldest first), so the caller can
+	// correlate with MinIO deletes.
+	//
+	// spec: §12.5 lines 313, 326 — per-slot "latest 2".
+	Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]Record, error)
 
-	// List returns every row for (tenantID, sessionID), retained
-	// and soft-deleted alike, in CreatedAt-descending order. Tests
-	// and ops queries use this to verify the rotation state.
-	List(ctx context.Context, tenantID, sessionID string) ([]Record, error)
+	// List returns every row for (tenantID, sessionID, slotID),
+	// retained and soft-deleted alike, in CreatedAt-descending
+	// order. Tests and ops queries use this to verify the rotation
+	// state.
+	List(ctx context.Context, tenantID, sessionID, slotID string) ([]Record, error)
 
 	// ListSoftDeletedBefore returns every row whose DeletedAt is
 	// older than cutoff. The §12.5 hard-prune sweep walks the
@@ -90,7 +105,7 @@ type Store interface {
 	// HardDelete removes the row entirely. Called by the §12.5
 	// backstop sweep on rows whose DeletedAt is older than the
 	// tombstone retention window.
-	HardDelete(ctx context.Context, tenantID, sessionID, ref string) error
+	HardDelete(ctx context.Context, tenantID, sessionID, slotID, ref string) error
 
 	// DeleteByUser removes every row in tenantID whose session_id
 	// is in sessionIDs. Called by the §12.8 erasure orchestrator.
@@ -115,7 +130,9 @@ type MemoryStore struct {
 	now  func() time.Time
 }
 
-// recordKey is the in-memory composite key.
+// recordKey is the in-memory composite key. ref is unique per
+// checkpoint, so it alone disambiguates a row; slotID is carried on
+// the Record value and used by Rotate / List to scope a single slot.
 type recordKey struct {
 	tenantID  string
 	sessionID string
@@ -152,14 +169,15 @@ func (m *MemoryStore) Insert(_ context.Context, r Record) error {
 	return nil
 }
 
-// Rotate enforces the §12.5 latest-2 retention policy.
-func (m *MemoryStore) Rotate(_ context.Context, tenantID, sessionID string) ([]Record, error) {
+// Rotate enforces the §12.5 latest-2 retention policy for a single
+// (tenant, session, slot) pair.
+func (m *MemoryStore) Rotate(_ context.Context, tenantID, sessionID, slotID string) ([]Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Collect every active row for (tenant, session).
+	// Collect every active row for (tenant, session, slot).
 	var active []Record
 	for _, row := range m.rows {
-		if row.TenantID != tenantID || row.SessionID != sessionID {
+		if row.TenantID != tenantID || row.SessionID != sessionID || row.SlotID != slotID {
 			continue
 		}
 		if !row.DeletedAt.IsZero() {
@@ -192,14 +210,14 @@ func (m *MemoryStore) Rotate(_ context.Context, tenantID, sessionID string) ([]R
 	return transitioned, nil
 }
 
-// List returns every row for the session in CreatedAt-descending
-// order.
-func (m *MemoryStore) List(_ context.Context, tenantID, sessionID string) ([]Record, error) {
+// List returns every row for the (session, slot) in
+// CreatedAt-descending order.
+func (m *MemoryStore) List(_ context.Context, tenantID, sessionID, slotID string) ([]Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Record
 	for _, row := range m.rows {
-		if row.TenantID != tenantID || row.SessionID != sessionID {
+		if row.TenantID != tenantID || row.SessionID != sessionID || row.SlotID != slotID {
 			continue
 		}
 		out = append(out, row)
@@ -227,8 +245,10 @@ func (m *MemoryStore) ListSoftDeletedBefore(_ context.Context, cutoff time.Time)
 	return out, nil
 }
 
-// HardDelete removes the row.
-func (m *MemoryStore) HardDelete(_ context.Context, tenantID, sessionID, ref string) error {
+// HardDelete removes the row. The ref alone identifies the row;
+// slotID is accepted for interface symmetry with the per-slot
+// rotation surface.
+func (m *MemoryStore) HardDelete(_ context.Context, tenantID, sessionID, _ /* slotID */, ref string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.rows, recordKey{tenantID, sessionID, ref})

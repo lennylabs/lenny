@@ -374,6 +374,19 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 	return count
 }
 
+// HardDeleteObject implements blobstore.Tombstoner. It Delete's the
+// single object named by u; a missing object (ErrObjectNotExist) is a
+// no-op.
+//
+// spec: §12.5 line 320 — catalog-driven targeted prune.
+func (s *Store) HardDeleteObject(u blobstore.URI) error {
+	ctx := context.Background()
+	if err := s.client.Delete(ctx, objectKey(u)); err != nil && !errors.Is(err, storage.ErrObjectNotExist) {
+		return fmt.Errorf("blobstore/gcs: HardDeleteObject: %w", err)
+	}
+	return nil
+}
+
 // DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
 // is session-scoped (§12.8 step 7), so this whole-user call is a no-op
 // returning (0, nil).

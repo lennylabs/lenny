@@ -351,35 +351,55 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	return deleted, nil
 }
 
-// HardPrune drives the §12.5 ll. 341 hard-prune sweep: the catalog
-// returns the rows whose tombstone deadline has elapsed, the
-// decorator removes the matching bucket objects, and the catalog row
-// is then deleted. Returns the count of rows pruned end-to-end.
+// HardPrune drives the §12.5 line 320/341 hard-prune sweep, catalog-
+// first: it queries Postgres for the artifacts past their tombstone
+// deadline (ListPrunable), deletes exactly those bucket objects via
+// the inner store's targeted HardDeleteObject, then drops the catalog
+// rows whose object delete succeeded (HardPruneURIs). Returns the
+// count of rows pruned end-to-end.
 //
-// HardPrune is a background sweep — per-row failures are skipped
+// This replaces the prior per-cycle bucket-wide ListObjects + per-
+// object GetObjectTagging scan: the cost now scales with the Postgres-
+// supplied set rather than with the total object count in the bucket,
+// which dominated GC duration at large fleet sizes (F-12.5.23). The
+// object is deleted before its row so a crash or per-object delete
+// failure between the two leaves the row for the next cycle rather
+// than orphaning a bucket object.
+//
+// HardPrune is a background sweep — per-object failures are skipped
 // (the next cycle picks them up); a catalog query failure short-
-// circuits and returns the count completed so far plus the error.
+// circuits and returns the error.
 //
-// spec: §12.5 ll. 341 — tombstone hard-prune.
+// spec: §12.5 line 320 (catalog-driven), line 341 (delete object then
+// row).
 func (s *Store) HardPrune(ctx context.Context, now time.Time) (int, error) {
-	tomb, _ := s.inner.(blobstore.Tombstoner)
-	// HardPruneExpired removes the catalog row directly; for symmetry
-	// we delete the bucket object first if the underlying store
-	// implements Tombstoner. The S3 / MinIO HardPrune surfaces a count
-	// of removed bucket objects independently of the catalog count
-	// returned here, so a deployment that ran the bucket HardPrune
-	// out-of-band is still consistent.
-	if tomb != nil {
-		// Best-effort tombstone-prune of bucket-side ghosts (objects
-		// whose lenny-deleted-at tag is past the retention window).
-		// The number returned by HardPrune is a side metric — the
-		// authoritative count is the catalog rows actually deleted
-		// below.
-		_ = tomb.HardPrune(now, 0)
-	}
-	count, err := s.catalog.HardPruneExpired(ctx, now)
+	uris, err := s.catalog.ListPrunable(ctx, now)
 	if err != nil {
-		return count, fmt.Errorf("cataloging: hard-prune catalog: %w", err)
+		return 0, fmt.Errorf("cataloging: list prunable: %w", err)
+	}
+	if len(uris) == 0 {
+		return 0, nil
+	}
+	tomb, hasTomb := s.inner.(blobstore.Tombstoner)
+	deleted := make([]string, 0, len(uris))
+	for _, raw := range uris {
+		if hasTomb {
+			u, perr := blobstore.ParseURI(raw)
+			if perr != nil {
+				// A malformed uri cannot be mapped to a bucket object;
+				// leave the row so an operator can inspect it.
+				continue
+			}
+			if derr := tomb.HardDeleteObject(u); derr != nil {
+				// Best-effort: leave the row for the next cycle.
+				continue
+			}
+		}
+		deleted = append(deleted, raw)
+	}
+	count, err := s.catalog.HardPruneURIs(ctx, deleted)
+	if err != nil {
+		return count, fmt.Errorf("cataloging: hard-prune catalog rows: %w", err)
 	}
 	return count, nil
 }

@@ -106,6 +106,34 @@ func (f *fakeCatalog) HardPruneExpired(_ context.Context, now time.Time) (int, e
 	return count, nil
 }
 
+func (f *fakeCatalog) ListPrunable(_ context.Context, now time.Time) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for uri, r := range f.rows {
+		if r.State != artifactcatalog.StateLive && !r.TombstoneDeadline.IsZero() &&
+			!r.TombstoneDeadline.After(now) && !r.LegalHold {
+			out = append(out, uri)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeCatalog) HardPruneURIs(_ context.Context, uris []string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, uri := range uris {
+		r, ok := f.rows[uri]
+		if !ok || r.State == artifactcatalog.StateLive || r.LegalHold {
+			continue
+		}
+		delete(f.rows, uri)
+		count++
+	}
+	return count, nil
+}
+
 func (f *fakeCatalog) ListBySession(_ context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -413,6 +441,96 @@ func TestHardPruneRemovesExpiredRows(t *testing.T) {
 	}
 	if _, err := cat.Get(context.Background(), u.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
 		t.Errorf("catalog Get post-HardPrune: %v, want ErrNotFound", err)
+	}
+}
+
+// spyTomb wraps an in-memory store to record the catalog-driven
+// targeted hard-deletes the §12.5 line 320 sweep issues and to fail a
+// configured URI on demand. F-12.5.23.
+type spyTomb struct {
+	*blobstore.MemoryStore
+	deleted []string
+	failKey string
+}
+
+func (s *spyTomb) HardDeleteObject(u blobstore.URI) error {
+	if u.String() == s.failKey {
+		return errors.New("simulated object delete failure")
+	}
+	s.deleted = append(s.deleted, u.String())
+	return s.MemoryStore.HardDeleteObject(u)
+}
+
+// spec: §12.5 line 320 — the catalog-driven hard-prune deletes exactly
+// the bucket objects Postgres reports past their TTL and leaves live
+// objects untouched. It does not scan the bucket. F-12.5.23.
+func TestHardPruneDeletesOnlyPrunableObjects(t *testing.T) {
+	inner := &spyTomb{MemoryStore: blobstore.NewMemoryStore(nil)}
+	cat := newFakeCatalog()
+	clock := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
+	store := New(inner, cat, Options{Now: func() time.Time { return clock }})
+
+	live := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "live", PartID: "p", TTL: time.Hour}
+	stale := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "stale", PartID: "p", TTL: time.Hour}
+	for _, u := range []blobstore.URI{live, stale} {
+		if _, err := store.Put(u, "application/gzip", strings.NewReader("body")); err != nil {
+			t.Fatalf("Put %s: %v", u.SessionID, err)
+		}
+	}
+	if err := store.SoftDelete(stale, time.Minute); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	count, err := store.HardPrune(context.Background(), clock.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("HardPrune: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("HardPrune count = %d, want 1", count)
+	}
+	// Only the stale object was targeted for deletion.
+	if len(inner.deleted) != 1 || inner.deleted[0] != stale.String() {
+		t.Fatalf("targeted deletes = %v, want [%s]", inner.deleted, stale.String())
+	}
+	// The live object and its catalog row survive.
+	if _, body, err := store.Get(live); err != nil {
+		t.Errorf("live object Get post-prune: %v, want nil", err)
+	} else {
+		_ = body.Close()
+	}
+	if _, err := cat.Get(context.Background(), live.String()); err != nil {
+		t.Errorf("live catalog row removed unexpectedly: %v", err)
+	}
+}
+
+// spec: §12.5 line 341 — the sweep deletes the object before the row,
+// so a failed object delete leaves the catalog row for the next cycle
+// rather than orphaning a bucket object. F-12.5.23.
+func TestHardPruneKeepsRowWhenObjectDeleteFails(t *testing.T) {
+	inner := &spyTomb{MemoryStore: blobstore.NewMemoryStore(nil)}
+	cat := newFakeCatalog()
+	clock := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
+	store := New(inner, cat, Options{Now: func() time.Time { return clock }})
+
+	u := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "s", PartID: "p", TTL: time.Hour}
+	if _, err := store.Put(u, "application/gzip", strings.NewReader("body")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.SoftDelete(u, time.Minute); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	inner.failKey = u.String()
+
+	count, err := store.HardPrune(context.Background(), clock.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("HardPrune: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("HardPrune count = %d, want 0 (object delete failed)", count)
+	}
+	// The catalog row survives so the next cycle retries it.
+	if _, err := cat.Get(context.Background(), u.String()); err != nil {
+		t.Errorf("catalog row removed despite failed object delete: %v", err)
 	}
 }
 

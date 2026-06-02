@@ -292,6 +292,32 @@ func TestMemoryStoreHardPrunePreservesLiveBlobs(t *testing.T) {
 	}
 }
 
+// spec: §12.5 line 320 — HardDeleteObject physically removes exactly
+// the named object and is idempotent on an absent object. F-12.5.23.
+func TestMemoryStoreHardDeleteObject(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	keep := blobstore.URI{TenantID: "acme", SessionID: "keep", PartID: "p", TTL: time.Hour}
+	drop := blobstore.URI{TenantID: "acme", SessionID: "drop", PartID: "p", TTL: time.Hour}
+	for _, u := range []blobstore.URI{keep, drop} {
+		if _, err := s.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %s: %v", u.SessionID, err)
+		}
+	}
+	if err := s.HardDeleteObject(drop); err != nil {
+		t.Fatalf("HardDeleteObject: %v", err)
+	}
+	if _, _, err := s.Get(drop); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("dropped object Get: %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Get(keep); err != nil {
+		t.Errorf("kept object lost: %v", err)
+	}
+	// Idempotent: deleting an absent object is a no-op.
+	if err := s.HardDeleteObject(drop); err != nil {
+		t.Errorf("HardDeleteObject on absent object: %v, want nil", err)
+	}
+}
+
 // spec: §12.5 ll. 333-339 — StatIncludingTombstones distinguishes a
 // soft-deleted (still discoverable) blob from one that is absent.
 // Stat collapses both into ErrNotFound; this surface lets the GC

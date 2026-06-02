@@ -37,7 +37,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 var _ checkpointretention.Store = (*Store)(nil)
 
-const selectList = `tenant_id, session_id, ref, created_at, retained, deleted_at`
+const selectList = `tenant_id, session_id, slot_id, ref, created_at, retained, deleted_at`
 
 // Insert records a new checkpoint row. A duplicate (tenant, session,
 // ref) returns checkpointretention.ErrDuplicate.
@@ -51,10 +51,10 @@ func (s *Store) Insert(ctx context.Context, r checkpointretention.Record) error 
 	return pgtenant.InTx(ctx, s.pool, r.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO session_checkpoints (
-				tenant_id, session_id, ref,
+				tenant_id, session_id, slot_id, ref,
 				created_at, retained, deleted_at)
-			VALUES ($1, $2, $3, $4, TRUE, NULL)`,
-			r.TenantID, r.SessionID, r.Ref, s.now())
+			VALUES ($1, $2, $3, $4, $5, TRUE, NULL)`,
+			r.TenantID, r.SessionID, r.SlotID, r.Ref, s.now())
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -73,15 +73,15 @@ func (s *Store) Insert(ctx context.Context, r checkpointretention.Record) error 
 // rows whose retention transitioned to false are returned in
 // CreatedAt-ascending order (oldest first) so the caller can
 // correlate with MinIO deletions.
-func (s *Store) Rotate(ctx context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
+func (s *Store) Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
 	var transitioned []checkpointretention.Record
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT `+selectList+` FROM session_checkpoints
-				WHERE tenant_id = $1 AND session_id = $2
+				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
 					AND deleted_at IS NULL
 				ORDER BY created_at DESC`,
-			tenantID, sessionID)
+			tenantID, sessionID, slotID)
 		if err != nil {
 			return err
 		}
@@ -131,16 +131,16 @@ func (s *Store) Rotate(ctx context.Context, tenantID, sessionID string) ([]check
 	return transitioned, nil
 }
 
-// List returns every row for (tenantID, sessionID) in
+// List returns every row for (tenantID, sessionID, slotID) in
 // CreatedAt-descending order.
-func (s *Store) List(ctx context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
+func (s *Store) List(ctx context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
 	var out []checkpointretention.Record
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT `+selectList+` FROM session_checkpoints
-				WHERE tenant_id = $1 AND session_id = $2
+				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
 				ORDER BY created_at DESC`,
-			tenantID, sessionID)
+			tenantID, sessionID, slotID)
 		if err != nil {
 			return err
 		}
@@ -188,8 +188,10 @@ func (s *Store) ListSoftDeletedBefore(ctx context.Context, cutoff time.Time) ([]
 	return out, nil
 }
 
-// HardDelete removes the row entirely.
-func (s *Store) HardDelete(ctx context.Context, tenantID, sessionID, ref string) error {
+// HardDelete removes the row entirely. The ref is unique per
+// checkpoint, so it alone identifies the row; slotID is accepted for
+// interface symmetry with the per-slot rotation surface.
+func (s *Store) HardDelete(ctx context.Context, tenantID, sessionID, _ /* slotID */, ref string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`DELETE FROM session_checkpoints
@@ -230,7 +232,7 @@ func scanRow(row pgx.Row) (checkpointretention.Record, error) {
 		deletedAt *time.Time
 	)
 	if err := row.Scan(
-		&r.TenantID, &r.SessionID, &r.Ref,
+		&r.TenantID, &r.SessionID, &r.SlotID, &r.Ref,
 		&r.CreatedAt, &r.Retained, &deletedAt,
 	); err != nil {
 		return checkpointretention.Record{}, err
