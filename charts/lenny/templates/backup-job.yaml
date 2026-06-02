@@ -1,0 +1,189 @@
+{{- /*
+The lenny-backup ServiceAccount, its RBAC envelope, and the opt-in
+on-demand backup Job (§17.1 row 17; §25.11 "Job Pod Specification"; §25
+lines 3992-3998).
+
+lenny-ops creates transient lenny-backup Jobs on demand to run Postgres
+and MinIO backup, restore, and verification (§25.11). Those Jobs run
+under the dedicated lenny-backup-sa ServiceAccount, distinct from
+lenny-ops-sa: §25 narrows its K8s API access to get/list on CRDs in the
+cluster and get on ConfigMaps in the release namespace, with no Pod,
+Deployment, or Secret read access. The ServiceAccount and its bindings
+are part of the §17.8.5 mandatory core inventory, so they render in
+every install regardless of tier; the core_deployment_inventory test
+fail-closes on their absence.
+
+The Job itself is opt-in via backups.onDemand.enabled so a stock render
+emits no Job (a chart-rendered Job runs on every helm upgrade, which a
+backup must not). When enabled, it runs the lenny-backup image with the
+§25.11 Job Pod Specification: restartPolicy Never, backoffLimit 3,
+ttlSecondsAfterFinished 3600 (one hour for kubectl describe), and
+activeDeadlineSeconds 7200 (two-hour hard deadline). lenny-ops remains
+the production Job factory for scheduled runs against ops_backup_schedule;
+this template is the operator-triggerable on-demand form with the same
+identity and pod security posture.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-backup-sa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+---
+{{- /*
+The cluster-scoped read on CRDs: the backup flow exports the CRD
+manifests and the lenny.dev custom resources (runtimes, pools, tenants)
+as part of the platform-configuration snapshot (§25.11 backup flow steps
+2-3). get/list only — no write, and no access to Pods, Deployments, or
+Secrets.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-backup
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-backup
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-backup
+subjects:
+  - kind: ServiceAccount
+    name: lenny-backup-sa
+    namespace: {{ .Release.Namespace }}
+---
+{{- /*
+The release-namespace ConfigMap read (§25 line 3997: "get on ConfigMaps
+in lenny-system"). The release namespace is lenny-system by default; the
+Role is scoped to it so the backup resolves platform configuration from
+the bundled ConfigMaps without any Secret access.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-backup
+subjects:
+  - kind: ServiceAccount
+    name: lenny-backup-sa
+    namespace: {{ .Release.Namespace }}
+{{- with .Values.backups.onDemand }}
+{{- if .enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-backup
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: backup
+spec:
+  # §25.11 Job Pod Specification — Job-level retry, post-mortem TTL, and
+  # the two-hour hard deadline.
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" $ | nindent 8 }}
+        lenny.dev/component: backup
+    spec:
+      serviceAccountName: lenny-backup-sa
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backup
+          image: "{{ $.Values.backups.image.repository }}:{{ $.Values.backups.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.backups.image.pullPolicy }}
+          args:
+            - --mode={{ .mode | default "full" }}
+            - --backup-id=$(LENNY_BACKUP_ID)
+            {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") }}
+            - --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+            {{- end }}
+            {{- range .extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: LENNY_BACKUP_ID
+              value: {{ .backupID | default "ondemand" | quote }}
+            - name: LENNY_BACKUP_MINIO_ENDPOINT
+              value: {{ .minioEndpoint | quote }}
+            - name: LENNY_BACKUP_MINIO_BUCKET
+              value: {{ .minioBucket | quote }}
+            - name: LENNY_BACKUP_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-postgres
+                  key: postgres-dsn
+            - name: LENNY_BACKUP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-minio
+                  key: minio-access-key
+            - name: LENNY_BACKUP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-minio
+                  key: minio-secret-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+      volumes:
+        # §25.11 Job Pod Specification — /tmp is writable via emptyDir for
+        # staging the archive while the root filesystem stays read-only.
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- end }}

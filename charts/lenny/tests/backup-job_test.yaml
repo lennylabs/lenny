@@ -1,0 +1,119 @@
+suite: lenny-backup ServiceAccount, RBAC, and on-demand Job (F-17.1.5, spec §17.1 row 17 / §25.11)
+templates:
+  - backup-job.yaml
+tests:
+  - it: renders the mandatory SA and RBAC unconditionally, no Job by default (§17.8.5 core inventory)
+    # Exactly five documents (SA, ClusterRole, ClusterRoleBinding, Role,
+    # RoleBinding) and no Job: the Job is opt-in via backups.onDemand.
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: provisions the lenny-backup-sa ServiceAccount distinct from lenny-ops-sa
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: lenny-backup-sa
+
+  - it: grants cluster-scoped get/list on CRDs and lenny.dev resources only (§25 line 3997)
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.name
+          value: lenny-backup
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["*"]
+            verbs: ["get", "list"]
+      # §25 narrows the envelope: no Pod, Deployment, or Secret read access.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list"]
+
+  - it: binds the ClusterRole to lenny-backup-sa
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: subjects[0].name
+          value: lenny-backup-sa
+
+  - it: grants get on ConfigMaps in the release namespace, nothing else
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: rules[0].resources
+          value: ["configmaps"]
+      - equal:
+          path: rules[0].verbs
+          value: ["get"]
+
+  - it: renders the on-demand Job with the §25.11 Job Pod Specification when enabled
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.minioBucket: lenny-backups
+    documentIndex: 5
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-backup
+      - equal:
+          path: spec.backoffLimit
+          value: 3
+      - equal:
+          path: spec.ttlSecondsAfterFinished
+          value: 3600
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 7200
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-backup-sa
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: lenny-backup
+
+  - it: sources backup credentials from the lenny-backup Secrets, never inlined
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[3].valueFrom.secretKeyRef.name
+          value: lenny-backup-postgres
+      - equal:
+          path: spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.name
+          value: lenny-backup-minio

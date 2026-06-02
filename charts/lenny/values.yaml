@@ -2781,6 +2781,36 @@ backups:
     # preRestoreRetainDays is the §25.11 shorter retention window for
     # the pre-restore safety backups restore/execute creates.
     preRestoreRetainDays: 7
+  # onDemand gates the opt-in chart-rendered lenny-backup Job (§17.1 row
+  # 17; §25.11 "Job Pod Specification"). lenny-ops is the production Job
+  # factory for scheduled runs against ops_backup_schedule; this Job is
+  # the operator-triggerable on-demand form, rendered only when enabled
+  # so a stock render (and every helm upgrade) does not run a backup. The
+  # lenny-backup-sa ServiceAccount and its RBAC render unconditionally as
+  # part of the §17.8.5 mandatory core inventory, independent of this
+  # flag.
+  onDemand:
+    enabled: false
+    # mode selects the run: full, postgres, or config (retention is the
+    # cron path, not the on-demand path).
+    mode: "full"
+    # backupID is the ops_backups row id this run writes to.
+    backupID: "ondemand"
+    # minioEndpoint and minioBucket point the run at the backup bucket;
+    # the access keys come from the lenny-backup-minio Secret and the
+    # Postgres shard DSN from lenny-backup-postgres.
+    minioEndpoint: ""
+    minioBucket: ""
+    # extraArgs appends additional lenny-backup flags (extra shards,
+    # exclude-table entries, kms-key-id, report-dsn) verbatim.
+    extraArgs: []
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   # verification configures the §25.11 backup verification path.
   verification:
     # artifactSampleSize is the §25.11 backups.verification.-
