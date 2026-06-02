@@ -194,6 +194,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -325,6 +326,23 @@ func main() {
 		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel topology back into TLS. Override via LENNY_REDIS_TLS.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
+	redisClusterAddrs := flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
+		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient — the Tier 2→3 migration topology for the Quota/Rate Limiting instance. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
+	// spec: §12.4 lines 237-245 — "Logical separation of Redis concerns".
+	// Each per-concern URL routes one §12.4 store role to a dedicated
+	// Redis instance (separate connection string per role); an empty
+	// value keeps that concern on the base --redis-url / Sentinel /
+	// Cluster client, so the single Tier 1/2 topology needs none of these.
+	redisCoordinationURL := flag.String("redis-coordination-url", os.Getenv("LENNY_REDIS_COORDINATION_URL"),
+		"§12.4 dedicated Redis URL for the Coordination concern (session leases, derive locks, pod slot counters). Empty uses the base Redis client. Override via LENNY_REDIS_COORDINATION_URL.")
+	redisQuotaURL := flag.String("redis-quota-url", os.Getenv("LENNY_REDIS_QUOTA_URL"),
+		"§12.4 dedicated Redis URL for the Quota/Rate Limiting concern (token/rate counters, sliding windows, storage quota, billing stream). Empty uses the base Redis client. Override via LENNY_REDIS_QUOTA_URL.")
+	redisCachePubSubURL := flag.String("redis-cache-pubsub-url", os.Getenv("LENNY_REDIS_CACHE_PUBSUB_URL"),
+		"§12.4 dedicated Redis URL for the Cache/Pub-Sub concern (circuit breakers, event relay, semantic cache, connector state, security bus, playground). Empty uses the base Redis client. Override via LENNY_REDIS_CACHE_PUBSUB_URL.")
+	redisSessionDataURL := flag.String("redis-session-data-url", os.Getenv("LENNY_REDIS_SESSION_DATA_URL"),
+		"§12.4 dedicated Redis URL for the Session-data concern (durable inbox, DLQ). Empty uses the base Redis client. Override via LENNY_REDIS_SESSION_DATA_URL.")
+	redisDelegationURL := flag.String("redis-delegation-url", os.Getenv("LENNY_REDIS_DELEGATION_URL"),
+		"§12.4 dedicated Redis URL for the Delegation concern (tree budget keys {root_session_id}:dlg:*). Empty uses the base Redis client. Override via LENNY_REDIS_DELEGATION_URL.")
 	// spec: §10.3 line 359 — gateway startup TLS probe. When an endpoint
 	// host:port is set the gateway verifies a TLS handshake succeeds and a
 	// plaintext connection is refused before it becomes ready, converting a
@@ -1175,17 +1193,27 @@ func main() {
 	var (
 		breakers       breakerRegistry
 		breakerCache   *cachingstore.Store
-		redisClient    *redis.Client
+		redisClient    redis.UniversalClient
+		concernRedis   *redistopology.Clients
 		coordinator    *coordination.Sweeper
 		storageCounter storagequota.Counter = storagequota.NewMemory()
 		rateLimiter    ratelimit.Counter    = ratelimit.NewMemory()
 	)
-	if *redisURL != "" || *redisSentinelAddrs != "" {
+	if *redisURL != "" || *redisSentinelAddrs != "" || *redisClusterAddrs != "" {
 		if *redisURL != "" && *redisSentinelAddrs != "" {
 			log.Fatalf("lenny-gateway: --redis-url and --redis-sentinel-addrs are mutually exclusive")
 		}
 		var rcfg redisconn.Config
 		switch {
+		case *redisClusterAddrs != "":
+			// §12.4 lines 260-264: Cluster mode is the CLUSTER KEYSLOT-aware
+			// topology and takes precedence over the direct/Sentinel fields.
+			rcfg = redisconn.Config{
+				ClusterAddrs:  splitAndTrim(*redisClusterAddrs),
+				Password:      *redisPassword,
+				TLS:           *redisTLS,
+				AllowInsecure: *redisAllowInsecure,
+			}
 		case *redisURL != "":
 			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword, AllowInsecure: *redisAllowInsecure}
 		default:
@@ -1198,7 +1226,7 @@ func main() {
 				AllowInsecure:    *redisAllowInsecure,
 			}
 		}
-		client, err := redisconn.NewClient(rcfg)
+		client, err := redisconn.NewUniversalClient(rcfg)
 		if err != nil {
 			log.Fatalf("lenny-gateway: redis client: %v", err)
 		}
@@ -1206,27 +1234,49 @@ func main() {
 		if err := redisconn.PingWithTimeout(redisClient, 5*time.Second); err != nil {
 			log.Fatalf("lenny-gateway: redis: %v", err)
 		}
-		// The §11.6 breaker registry lives in Redis; the cachingstore
-		// keeps a local open-breaker snapshot so the request-path check
-		// never round-trips to Redis and survives a Redis outage.
-		breakerCache = cachingstore.New(redisstore.New(redisClient), redisClient)
+		// §12.4 lines 237-245: build the per-concern client split. A
+		// concern with no dedicated URL falls back to the base client, so
+		// the single Tier 1/2 topology resolves every concern to
+		// redisClient unchanged. The auth/TLS template carries the base
+		// password and allow-insecure posture to each per-concern URL.
+		concernRedis, err = redistopology.Build(redisClient, map[storerouter.RedisConcern]string{
+			storerouter.RedisConcernCoordination: *redisCoordinationURL,
+			storerouter.RedisConcernQuota:        *redisQuotaURL,
+			storerouter.RedisConcernCachePubSub:  *redisCachePubSubURL,
+			storerouter.RedisConcernSessionData:  *redisSessionDataURL,
+			storerouter.RedisConcernDelegation:   *redisDelegationURL,
+		}, redisconn.Config{Password: *redisPassword, AllowInsecure: *redisAllowInsecure})
+		if err != nil {
+			log.Fatalf("lenny-gateway: redis concern split: %v", err)
+		}
+		// The §11.6 breaker registry lives in Redis (Cache/Pub-Sub
+		// concern); the cachingstore keeps a local open-breaker snapshot
+		// so the request-path check never round-trips to Redis and
+		// survives a Redis outage.
+		cacheClient := concernRedis.For(storerouter.RedisConcernCachePubSub)
+		breakerCache = cachingstore.New(redisstore.New(cacheClient), cacheClient)
 		breakers = breakerCache
+		// §12.4 Coordination concern: session leases.
 		coordinator = coordination.NewSweeper(
-			tenantsLister{tenants}, sessions, leasestore.New(redisClient),
+			tenantsLister{tenants}, sessions, leasestore.New(concernRedis.For(storerouter.RedisConcernCoordination)),
 			coordination.Options{ReplicaID: replica, Interval: *coordInterval},
 		)
-		// The §11.2 storage-quota counter lives in Redis so the quota
-		// holds across replicas; its reserve is Lua-atomic.
-		storageCounter = storagequotaredis.New(redisClient)
-		// The §11.1 rate-limit counter is Redis-backed so requests-per-
-		// minute limits hold across replicas.
-		rateLimiter = ratelimitredis.New(redisClient)
+		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
+		// lives in Redis so the quota holds across replicas; its reserve
+		// is Lua-atomic.
+		storageCounter = storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
+		// §12.4 Quota/Rate Limiting concern: the §11.1 rate-limit counter
+		// is Redis-backed so requests-per-minute limits hold across replicas.
+		rateLimiter = ratelimitredis.New(concernRedis.For(storerouter.RedisConcernQuota))
 		switch {
+		case *redisClusterAddrs != "":
+			log.Printf("lenny-gateway: Redis via Cluster nodes=%d split=%t; coordination replica %s",
+				len(splitAndTrim(*redisClusterAddrs)), concernRedis.Split(), replica)
 		case *redisSentinelAddrs != "":
-			log.Printf("lenny-gateway: Redis via Sentinel master=%q sentinels=%d; coordination replica %s",
-				*redisSentinelMaster, len(splitAndTrim(*redisSentinelAddrs)), replica)
+			log.Printf("lenny-gateway: Redis via Sentinel master=%q sentinels=%d split=%t; coordination replica %s",
+				*redisSentinelMaster, len(splitAndTrim(*redisSentinelAddrs)), concernRedis.Split(), replica)
 		default:
-			log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
+			log.Printf("lenny-gateway: circuit-breaker state in Redis split=%t; coordination replica %s", concernRedis.Split(), replica)
 		}
 	} else {
 		breakers = breakerstore.NewMemory()
@@ -1256,11 +1306,20 @@ func main() {
 	var scatterRouter *storerouter.SingleShardRouter
 	var storeRouter storerouter.StoreRouter
 	if pgPool != nil {
-		var routerRedis redis.UniversalClient
-		if redisClient != nil {
-			routerRedis = redisClient
-		}
-		r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: pgPool, BillingAuditPostgres: billingAuditPool, Redis: routerRedis, Scatter: scatterCfg})
+		// §12.4 lines 237-245: the router resolves each RedisConcern to
+		// its own client when an operator has split concerns onto separate
+		// instances; concernRedis.ByConcern() is nil for the single Tier
+		// 1/2 topology, so RedisShard falls back to the base client.
+		// PlatformRedis (pod slot counters, circuit breakers) rides on the
+		// Coordination instance per the §12.4 table.
+		r, err := storerouter.NewSingleShardRouter(storerouter.Config{
+			Postgres:             pgPool,
+			BillingAuditPostgres: billingAuditPool,
+			Redis:                redisClient,
+			RedisByConcern:       concernRedis.ByConcern(),
+			PlatformRedisClient:  concernRedis.For(storerouter.RedisConcernCoordination),
+			Scatter:              scatterCfg,
+		})
 		if err != nil {
 			log.Fatalf("lenny-gateway: store router: %v", err)
 		}
@@ -1304,14 +1363,14 @@ func main() {
 	// over Redis pub/sub so a revocation takes effect fleet-wide. With
 	// no Redis the Bus stays nil, which the propagators treat as the
 	// single-replica mode: every cache stays local and nothing is
-	// published. The Bus is constructed only when redisClient is a real
-	// client — a nil *redis.Client passed through the UniversalClient
-	// interface is a non-nil typed-nil interface, so pubsub.New cannot
-	// detect it; the guard here is the gateway's, matching the
-	// breakerstore cachingstore wiring.
+	// published. redisClient is a redis.UniversalClient set only on the
+	// Redis-configured path, so its nil is a genuine interface nil the
+	// guard below detects; the per-concern client resolves through the
+	// same nil base when no split is configured.
 	var securityBus *pubsub.Bus
 	if redisClient != nil {
-		securityBus = pubsub.New(redisClient)
+		// §12.4 Cache/Pub-Sub concern: revocation fan-out is event pub/sub.
+		securityBus = pubsub.New(concernRedis.For(storerouter.RedisConcernCachePubSub))
 		log.Printf("lenny-gateway: security caches converge across replicas over Redis pub/sub")
 	}
 
@@ -1328,7 +1387,8 @@ func main() {
 	var billingTier *redisstream.Tier
 	if pgStore, ok := billing.(*billingpg.Store); ok && redisClient != nil {
 		tier, err := redisstream.New(redisstream.Options{
-			Client:       redisClient,
+			// §12.4 Quota/Rate Limiting concern: billing stream.
+			Client:       concernRedis.For(storerouter.RedisConcernQuota),
 			ConsumerName: replica,
 			Inserter:     pgStore,
 		})
@@ -1715,7 +1775,7 @@ func main() {
 			// slot reservation on each concurrent-mode pod re-seeds the
 			// pod's active_slots counter from GetActiveSlotsByPod before
 			// any new slot is allowed, closing the over-commit race.
-			slotCounter = slotcounter.New(redisClient, slotcounter.WithSlotSource(sessions))
+			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination), slotcounter.WithSlotSource(sessions))
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
@@ -1786,7 +1846,8 @@ func main() {
 	// reconnect contract). Single-replica dev mode keeps the Bus's
 	// in-memory-only behaviour.
 	if redisClient != nil {
-		eventBus = eventBus.WithRedisRelay(sessionevents.NewRedisRelay(redisClient))
+		// §12.4 Cache/Pub-Sub concern: session-event relay.
+		eventBus = eventBus.WithRedisRelay(sessionevents.NewRedisRelay(concernRedis.For(storerouter.RedisConcernCachePubSub)))
 		log.Printf("lenny-gateway: §4.4 session SSE event bus relay attached to Redis (cross-replica replay enabled)")
 	}
 	// spec: §7.3 line 397 — wire the durable last_seq writer + the
@@ -1807,15 +1868,17 @@ func main() {
 	// durableInbox is set (§7.2 line 286). F-7.2.4, F-12.4.6, F-7.3.12.
 	var messagingCoord *sessioninbox.Coordinator
 	if redisClient != nil {
+		// §12.4 Session-data concern: durable inbox + DLQ.
+		sessionDataClient := concernRedis.For(storerouter.RedisConcernSessionData)
 		var inbox sessioninbox.Inbox
 		if *messagingDurableInbox {
-			inbox = sessioninbox.NewRedisInbox(redisClient, *messagingMaxInboxSize)
+			inbox = sessioninbox.NewRedisInbox(sessionDataClient, *messagingMaxInboxSize)
 		} else {
 			inbox = sessioninbox.NewMemoryInbox(*messagingMaxInboxSize)
 		}
 		messagingCoord = sessioninbox.NewCoordinator(sessioninbox.Config{
 			Inbox:   inbox,
-			DLQ:     sessioninbox.NewDLQ(redisClient, *messagingMaxDLQSize),
+			DLQ:     sessioninbox.NewDLQ(sessionDataClient, *messagingMaxDLQSize),
 			Emitter: sessionserver.NewBusEmitter(eventBus, clockinject.Now),
 			Now:     clockinject.Now,
 			Durable: *messagingDurableInbox,
@@ -1848,7 +1911,8 @@ func main() {
 	// avoided. F-8.9.6.
 	var hwmReader sessionserver.DelegationHighWatermarkReader
 	if redisClient != nil {
-		r := treebudget.New(redisClient, 0)
+		// §12.4 Delegation concern: tree-budget keys {root_session_id}:dlg:*.
+		r := treebudget.New(concernRedis.For(storerouter.RedisConcernDelegation), 0)
 		treeBudgetReserver = r
 		hwmReader = r
 	}
@@ -2337,7 +2401,8 @@ func main() {
 	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replica)
 	if redisClient != nil {
 		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
-			Client:    redisClient,
+			// §12.4 Cache/Pub-Sub concern: ops event stream fan-out.
+			Client:    concernRedis.For(storerouter.RedisConcernCachePubSub),
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/gateway/" + replica,
 			ReplicaID: replica,
@@ -2419,7 +2484,7 @@ func main() {
 	var quotaCounter *quotastore.Counter
 	var tenantLimits *policy.TenantStoreLimits
 	if redisClient != nil {
-		quotaCounter = quotastore.New(redisClient)
+		quotaCounter = quotastore.New(concernRedis.For(storerouter.RedisConcernQuota))
 		tenantLimits = policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
 			GlobalTokenQuotaPerWindow: *globalTokenQuota,
 			UserTokenQuotaPerWindow:   *userTokenQuota,
@@ -2648,7 +2713,7 @@ func main() {
 		// available (cross-replica serialization); a process-local
 		// derivelock.Memory backs the minimal-gateway and single-replica
 		// posture. F-7.1.12.
-		DeriveLock: defaultDeriveLock(redisClient),
+		DeriveLock: defaultDeriveLock(concernRedis.For(storerouter.RedisConcernCoordination)),
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
@@ -2781,7 +2846,7 @@ func main() {
 		// group (Redis relies on native key expiry). F-9.3.16.
 		var connectorStateBacking connectoroauth.StateStore
 		if redisClient != nil {
-			connectorStateBacking = connectoroauth.NewRedisStateStore(redisClient)
+			connectorStateBacking = connectoroauth.NewRedisStateStore(concernRedis.For(storerouter.RedisConcernCachePubSub))
 			log.Printf("lenny-gateway: §9.3 connector OAuth state backed by Redis (TTL=10m, cross-replica)")
 		} else {
 			connectorStateStore = connectoroauth.NewMemoryStateStore()
@@ -3556,7 +3621,7 @@ func main() {
 		// bearer fleet-wide, in-process otherwise (single-replica).
 		var pgSessions playground.SessionStore
 		if redisClient != nil {
-			redisSessions := playground.NewRedisSessionStore(redisClient).WithMetrics(pgMetrics)
+			redisSessions := playground.NewRedisSessionStore(concernRedis.For(storerouter.RedisConcernCachePubSub)).WithMetrics(pgMetrics)
 			pgSessions = redisSessions
 			// §27.3.1 / §27.6 line 204 pub/sub: a single PSUBSCRIBE on
 			// t:*:pg:revocations subscribes this replica to every tenant's
@@ -4933,6 +4998,9 @@ func main() {
 	if redisClient != nil {
 		_ = redisClient.Close()
 	}
+	// §12.4: close the per-concern split clients (no-op when no split is
+	// configured; the base client closed above is left untouched).
+	_ = concernRedis.Close()
 }
 
 // breakerRegistry is the breaker-store surface the gateway wires: the
@@ -6607,7 +6675,7 @@ func splitAndTrim(s string) []string {
 // single-replica deployments (the in-memory store mutex inside
 // derive.go is the only other serialization path in v1, and it
 // serializes by accident — not by spec). F-7.1.12.
-func defaultDeriveLock(client *redis.Client) derivelock.Lock {
+func defaultDeriveLock(client redis.UniversalClient) derivelock.Lock {
 	if client != nil {
 		return derivelock.NewRedis(client)
 	}

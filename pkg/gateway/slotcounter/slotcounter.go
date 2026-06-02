@@ -98,7 +98,7 @@ const (
 // Counter serves every concurrent-mode pod in the cluster — the pod
 // identifier is part of the Redis key.
 type Counter struct {
-	client *redis.Client
+	client redis.UniversalClient
 
 	// source seeds a pod's counter from Postgres on first access after
 	// a Redis restart (§5.2 rehydration). Nil disables Postgres-backed
@@ -140,7 +140,7 @@ func WithRehydrationTimeout(d time.Duration) Option {
 
 // New constructs a Counter against the given Redis client. The
 // caller owns the client.
-func New(client *redis.Client, opts ...Option) *Counter {
+func New(client redis.UniversalClient, opts ...Option) *Counter {
 	c := &Counter{
 		client:             client,
 		rehydrationTimeout: DefaultRehydrationTimeout,

@@ -1610,6 +1610,53 @@ tests:
                 name: lenny-datastore-conn
                 key: redis-url
 
+  # spec: §12.4 lines 260-264 — Redis Cluster seed nodes render as a
+  # plain env var. F-12.4.13.
+  - it: wires LENNY_REDIS_CLUSTER_ADDRS from redis.cluster.addrs
+    set:
+      redis.cluster.addrs: "10.0.0.1:6379,10.0.0.2:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CLUSTER_ADDRS
+            value: "10.0.0.1:6379,10.0.0.2:6379"
+
+  # spec: §12.4 lines 237-245 — per-concern Redis URLs render from the
+  # datastore Secret; an unset concern wires no env var. F-12.4.16.
+  - it: wires per-concern Redis URL env from the datastore Secret
+    set:
+      redis.concerns.quotaUrl: "rediss://:pw@quota.svc:6380/0"
+      redis.concerns.sessionDataUrl: "rediss://:pw@sess.svc:6380/0"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_QUOTA_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-quota-url
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SESSION_DATA_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-session-data-url
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_DELEGATION_URL
+          any: true
+
   - it: wires the MinIO env from values and Secret when minio.endpoint is set
     set:
       backends: "embedded"

@@ -182,7 +182,7 @@ func tryLock(lk *sync.Mutex) bool {
 // a Lua compare-and-delete so an expired holder cannot accidentally
 // release the next acquirer's lock.
 type Redis struct {
-	client *redis.Client
+	client redis.UniversalClient
 	ttl    time.Duration
 	wait   time.Duration
 
@@ -227,7 +227,7 @@ func WithKeyPrefix(p string) RedisOption {
 }
 
 // NewRedis constructs a Redis-backed Lock.
-func NewRedis(client *redis.Client, opts ...RedisOption) *Redis {
+func NewRedis(client redis.UniversalClient, opts ...RedisOption) *Redis {
 	r := &Redis{
 		client:    client,
 		ttl:       DefaultTTL,

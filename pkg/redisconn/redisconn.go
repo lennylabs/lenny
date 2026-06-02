@@ -37,6 +37,20 @@ type Config struct {
 	// master via these sentinels.
 	SentinelAddrs []string
 
+	// ClusterAddrs is the list of `host:port` seed nodes for a Redis
+	// Cluster topology. When non-empty, NewUniversalClient builds a
+	// go-redis ClusterClient — the `CLUSTER KEYSLOT`-aware client the
+	// §12.4 Tier 2→3 migration pre-plan requires for the Quota/Rate
+	// Limiting instance. Cluster mode takes precedence over the URL and
+	// Sentinel fields; NewClient (which returns a concrete *redis.Client)
+	// ignores it, so a caller that needs cluster support must use
+	// NewUniversalClient.
+	//
+	// spec: §12.4 line 264 — "The QuotaStore and rate limiter
+	// implementations must use CLUSTER KEYSLOT-aware client libraries
+	// (e.g., go-redis/v9 with cluster mode)".
+	ClusterAddrs []string
+
 	// MasterName is the Sentinel monitor name (e.g., `lenny-master`).
 	// Required when SentinelAddrs is set.
 	MasterName string
@@ -178,11 +192,44 @@ func pinTLSFloor(c *tls.Config) {
 	}
 }
 
+// NewUniversalClient returns a redis.UniversalClient built from cfg.
+// When ClusterAddrs is set it builds a §12.4 Redis Cluster client;
+// otherwise it delegates to NewClient for the direct-URL / Sentinel
+// paths. The returned client is closed by the caller. Cluster mode is
+// the only path that produces a CLUSTER KEYSLOT-aware client, so the
+// §12.4 Tier 2→3 migration of the Quota/Rate Limiting instance must
+// route through here rather than NewClient.
+//
+// spec: §12.4 lines 260-264 — Redis Cluster migration pre-plan.
+func NewUniversalClient(cfg Config) (redis.UniversalClient, error) {
+	if len(cfg.ClusterAddrs) == 0 {
+		return NewClient(cfg)
+	}
+	// §12.4 AUTH-and-TLS invariant on the Cluster path mirrors the
+	// direct and Sentinel paths: production fails closed when a password
+	// or TLS is absent. A dev cluster opts out via AllowInsecure.
+	if !cfg.AllowInsecure && cfg.Password == "" {
+		return nil, ErrAuthRequired
+	}
+	var tlsCfg *tls.Config
+	if cfg.TLS || !cfg.AllowInsecure {
+		tlsCfg = &tls.Config{MinVersion: minTLSVersion}
+	}
+	return redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:     cfg.ClusterAddrs,
+		Password:  cfg.Password,
+		TLSConfig: tlsCfg,
+	}), nil
+}
+
 // PingWithTimeout pings the client with the supplied deadline. It is
 // a convenience for the main-binary boot path: the gateway and
 // lenny-ops both ping after constructing the client to surface a
 // configuration error at startup rather than on the first request.
-func PingWithTimeout(client *redis.Client, timeout time.Duration) error {
+// It accepts the redis.UniversalClient surface so a Cluster client
+// (NewUniversalClient) pings through the same boot path as a direct
+// *redis.Client.
+func PingWithTimeout(client redis.UniversalClient, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return client.Ping(ctx).Err()

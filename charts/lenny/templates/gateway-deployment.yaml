@@ -40,6 +40,14 @@ only the env vars it can satisfy.
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- $hasBillingAuditPg := and $pg (hasKey $pg "billingAuditDSN") (ne $pg.billingAuditDSN "") -}}
 {{- $hasRedis := and $redis $redis.url (ne $redis.url "") -}}
+{{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
+{{- $hasRedisCluster := and $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
+{{- $hasCoordRedis := and $concerns (hasKey $concerns "coordinationUrl") (ne ($concerns.coordinationUrl | toString) "") -}}
+{{- $hasQuotaRedis := and $concerns (hasKey $concerns "quotaUrl") (ne ($concerns.quotaUrl | toString) "") -}}
+{{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
+{{- $hasSessRedis := and $concerns (hasKey $concerns "sessionDataUrl") (ne ($concerns.sessionDataUrl | toString) "") -}}
+{{- $hasDlgRedis := and $concerns (hasKey $concerns "delegationUrl") (ne ($concerns.delegationUrl | toString) "") -}}
 {{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
 {{- /* §12.5 line 279 — TLS-mandate posture. tls.enabled selects HTTPS
    to the MinIO endpoint. The spec requires `true` on every
@@ -914,6 +922,50 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: redis-url
+            {{- end }}
+            {{- /* §12.4 lines 260-264 — Redis Cluster seed nodes (plain
+                   env; addresses are not secret). */}}
+            {{- if $hasRedisCluster }}
+            - name: LENNY_REDIS_CLUSTER_ADDRS
+              value: {{ $redisCluster.addrs | quote }}
+            {{- end }}
+            {{- /* §12.4 lines 237-245 — per-concern Redis URLs (logical
+                   separation of concerns); each read from the datastore
+                   Secret so credentials never land in the pod spec. */}}
+            {{- if $hasCoordRedis }}
+            - name: LENNY_REDIS_COORDINATION_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-coordination-url
+            {{- end }}
+            {{- if $hasQuotaRedis }}
+            - name: LENNY_REDIS_QUOTA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-quota-url
+            {{- end }}
+            {{- if $hasCacheRedis }}
+            - name: LENNY_REDIS_CACHE_PUBSUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-cache-pubsub-url
+            {{- end }}
+            {{- if $hasSessRedis }}
+            - name: LENNY_REDIS_SESSION_DATA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-session-data-url
+            {{- end }}
+            {{- if $hasDlgRedis }}
+            - name: LENNY_REDIS_DELEGATION_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-delegation-url
             {{- end }}
             {{- if $hasMinio }}
             - name: LENNY_MINIO_ENDPOINT

@@ -297,6 +297,35 @@ redis:
   # TLS port; managed Redis uses 6379 (rediss://) for ElastiCache and
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
+  # cluster.addrs is a comma-separated list of §12.4 Redis Cluster seed
+  # nodes (host:port). When set the gateway base Redis client is a
+  # CLUSTER KEYSLOT-aware ClusterClient — the Tier 2→3 migration topology
+  # for the high-write Quota/Rate Limiting instance. It takes precedence
+  # over url and the Sentinel fields. Empty keeps the single-instance
+  # topology. The addresses are not secret, so they render as a plain env
+  # var (LENNY_REDIS_CLUSTER_ADDRS).
+  cluster:
+    addrs: ""
+  # concerns implements the §12.4 "Logical separation of Redis concerns"
+  # deployment-time split. Each value is a dedicated Redis connection URL
+  # for one store role; an empty value keeps that concern on the base
+  # url / Sentinel / cluster client, so the single Tier 1/2 topology
+  # leaves all of these empty. The URLs carry credentials, so each
+  # non-empty value renders into the lenny-datastore-conn Secret and is
+  # read by the gateway via secretKeyRef. Same §12.4 AUTH/TLS invariant
+  # as url: use rediss:// with an AUTH credential unless
+  # --redis-allow-insecure is set.
+  concerns:
+    # Coordination: session leases, derive locks, pod slot counters.
+    coordinationUrl: ""
+    # Quota/Rate Limiting: token/rate counters, storage quota, billing stream.
+    quotaUrl: ""
+    # Cache/Pub-Sub: circuit breakers, event relay, semantic cache, connector state.
+    cachePubSubUrl: ""
+    # Session data: durable inbox, DLQ.
+    sessionDataUrl: ""
+    # Delegation: tree-budget keys {root_session_id}:dlg:*.
+    delegationUrl: ""
 
 # backends selects the §17.4 / §17.9 deployment topology. The
 # `embedded` value is the `lenny up` developer mode; every other value

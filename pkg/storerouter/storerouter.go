@@ -149,6 +149,8 @@ type SingleShardRouter struct {
 	pg             *pgxpool.Pool
 	billingPG      *pgxpool.Pool
 	rdb            redis.UniversalClient
+	redisByConcern map[RedisConcern]redis.UniversalClient
+	platformRedis  redis.UniversalClient
 	defaultID      ShardID
 	platformID     ShardID
 	scatterCfg     ScatterConfig
@@ -179,7 +181,33 @@ type Config struct {
 	// route only Postgres shards, so a Postgres-only deployment (and
 	// the billing/audit store component tests) can wire the router
 	// without a Redis instance.
+	//
+	// When RedisByConcern (below) is set, Redis is the fallback for any
+	// concern the map omits.
 	Redis redis.UniversalClient
+
+	// RedisByConcern optionally maps a RedisConcern to its own Redis
+	// instance, implementing the §12.4 "Logical separation of Redis
+	// concerns" deployment-time split: an operator supplies a separate
+	// connection string per store role (Coordination, Quota/Rate
+	// Limiting, Cache/Pub-Sub, ...) and the router hands each concern its
+	// dedicated client. A concern absent from the map falls back to
+	// Redis. When the map is nil every concern resolves to Redis (the
+	// single-instance Tier 1/2 topology). NewSingleShardRouter installs
+	// the §12.4 line 195 tenant-key Guard hook on every distinct client.
+	//
+	// spec: §12.4 lines 237-245 — "separate connection strings per store
+	// role — no code changes are required because each store role already
+	// has its own interface".
+	RedisByConcern map[RedisConcern]redis.UniversalClient
+
+	// PlatformRedisClient optionally overrides the Redis instance
+	// PlatformRedis returns for platform-scoped keys (pod slot counters,
+	// circuit breakers). When nil PlatformRedis returns Redis. The §12.4
+	// table places coordination-class platform keys on the Coordination
+	// instance, so an operator that splits concerns typically points this
+	// at the same client as RedisByConcern[RedisConcernCoordination].
+	PlatformRedisClient redis.UniversalClient
 	// DefaultShardID is the ShardID assigned to the single shard
 	// returned by AllSessionShards and AllAuditShards. A zero value
 	// defaults to "default".
@@ -208,17 +236,34 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 		id = "default"
 	}
 	// spec §12.4 line 195: tenant-key isolation is enforced in the Redis
-	// wrapper layer. Installing the Guard hook on the shared client makes
-	// every concern returned by RedisShard validate keys against the
+	// wrapper layer. Installing the Guard hook on each distinct client
+	// makes every concern returned by RedisShard validate keys against the
 	// per-request scope (rediskeys.WithScope) before the command is issued.
-	// In Postgres-only mode (Redis nil) there is no client to guard.
-	if cfg.Redis != nil {
-		cfg.Redis.AddHook(rediskeys.NewGuard())
+	// When concerns are split across separate instances each instance gets
+	// its own Guard. A client shared across concerns (or shared with the
+	// Redis fallback / PlatformRedisClient) is guarded once — AddHook
+	// appends to the client's hook chain, so a double install would run the
+	// validation twice. In Postgres-only mode (Redis nil and no per-concern
+	// clients) there is nothing to guard.
+	guarded := map[redis.UniversalClient]bool{}
+	guard := func(c redis.UniversalClient) {
+		if c == nil || guarded[c] {
+			return
+		}
+		guarded[c] = true
+		c.AddHook(rediskeys.NewGuard())
 	}
+	guard(cfg.Redis)
+	for _, c := range cfg.RedisByConcern {
+		guard(c)
+	}
+	guard(cfg.PlatformRedisClient)
 	return &SingleShardRouter{
 		pg:             cfg.Postgres,
 		billingPG:      cfg.BillingAuditPostgres,
 		rdb:            cfg.Redis,
+		redisByConcern: cfg.RedisByConcern,
+		platformRedis:  cfg.PlatformRedisClient,
 		defaultID:      id,
 		platformID:     id,
 		scatterCfg:     cfg.Scatter.withDefaults(),
@@ -297,9 +342,11 @@ func (r *SingleShardRouter) AuditShard(_ context.Context, tenantID TenantID) (*p
 	return r.billingAuditPool(), nil
 }
 
-// RedisShard returns the sole Redis client. The concern is
-// validated against the documented set so an unknown concern at the
-// call site fails fast.
+// RedisShard returns the Redis client for a concern. When the router
+// was built with a per-concern split (RedisByConcern) the concern's
+// dedicated client is returned; otherwise every concern resolves to the
+// single Redis client. The concern is validated against the documented
+// set so an unknown concern at the call site fails fast.
 func (r *SingleShardRouter) RedisShard(_ context.Context, tenantID TenantID, concern RedisConcern) (redis.UniversalClient, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
@@ -307,15 +354,22 @@ func (r *SingleShardRouter) RedisShard(_ context.Context, tenantID TenantID, con
 	if !validConcern(concern) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownRedisConcern, concern)
 	}
+	if c, ok := r.redisByConcern[concern]; ok && c != nil {
+		return c, nil
+	}
 	if r.rdb == nil {
 		return nil, ErrRedisUnavailable
 	}
 	return r.rdb, nil
 }
 
-// PlatformRedis returns the sole Redis client, or ErrRedisUnavailable
-// when the router runs in Postgres-only mode.
+// PlatformRedis returns the platform-scoped Redis client
+// (PlatformRedisClient when set, else the single Redis client), or
+// ErrRedisUnavailable when the router runs in Postgres-only mode.
 func (r *SingleShardRouter) PlatformRedis(_ context.Context) (redis.UniversalClient, error) {
+	if r.platformRedis != nil {
+		return r.platformRedis, nil
+	}
 	if r.rdb == nil {
 		return nil, ErrRedisUnavailable
 	}
