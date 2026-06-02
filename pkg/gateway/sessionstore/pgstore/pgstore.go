@@ -1014,6 +1014,17 @@ type storedEnvelope struct {
 	// without a dedicated column. spec: §14 line 311; §15.1 line 598.
 	// F-15.1.15.
 	Labels map[string]string `json:"labels,omitempty"`
+	// Callback carries the §14 session-terminal webhook fields: the
+	// validated callbackUrl, its DNS-pinned IP, the KMS-envelope-sealed
+	// callbackSecret (opaque ciphertext), and any undelivered events. They
+	// ride the bundle so the §14 callback survives a coordinator handoff
+	// without a dedicated migration column; the sealed secret stays opaque
+	// to the lenny_app role exactly as a dedicated ciphertext column would.
+	// spec: §14 lines 108-150. F-14.1.11.
+	CallbackURL      string                            `json:"callbackUrl,omitempty"`
+	CallbackPinnedIP string                            `json:"callbackPinnedIp,omitempty"`
+	CallbackSecret   []byte                            `json:"callbackSecret,omitempty"`
+	WebhookEvents    []sessionstore.WebhookEventRecord `json:"webhookEvents,omitempty"`
 }
 
 // requestEnvelopeArg renders the §14.1 request-envelope bundle for a
@@ -1029,10 +1040,15 @@ func requestEnvelopeArg(sess sessionstore.Session) any {
 		RuntimeOptions:   sess.RuntimeOptions,
 		Origin:           sess.Origin,
 		Labels:           sess.Labels,
+		CallbackURL:      sess.CallbackURL,
+		CallbackPinnedIP: sess.CallbackPinnedIP,
+		CallbackSecret:   sess.CallbackSecret,
+		WebhookEvents:    sess.WebhookEvents,
 	}
 	if env.Pool == "" && env.Timeouts == nil && env.CredentialPolicy == nil &&
 		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 && env.Origin == "" &&
-		len(env.Labels) == 0 {
+		len(env.Labels) == 0 && env.CallbackURL == "" && env.CallbackPinnedIP == "" &&
+		len(env.CallbackSecret) == 0 && len(env.WebhookEvents) == 0 {
 		return nil
 	}
 	b, err := json.Marshal(env)
@@ -1062,6 +1078,10 @@ func applyStoredEnvelope(s *sessionstore.Session, raw []byte) {
 	if len(env.Labels) > 0 {
 		s.Labels = env.Labels
 	}
+	s.CallbackURL = env.CallbackURL
+	s.CallbackPinnedIP = env.CallbackPinnedIP
+	s.CallbackSecret = env.CallbackSecret
+	s.WebhookEvents = env.WebhookEvents
 }
 
 // decodeMetadata parses the JSONB payload back into a string→string

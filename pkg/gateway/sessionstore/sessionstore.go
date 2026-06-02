@@ -406,6 +406,52 @@ type Session struct {
 	// RuntimeOptionsUnschematized warning. Nil when the client supplied
 	// none. spec: §14 line 155. F-14.1.14 / F-14.1.15.
 	RuntimeOptions json.RawMessage
+
+	// CallbackURL is the §14 client-supplied session-terminal webhook
+	// endpoint. The gateway validated it against the §14 SSRF mitigations
+	// at admission, so a stored value is HTTPS, resolves to a public IP,
+	// and (when a deployer allowlist is set) matches it. Empty when the
+	// client supplied none. spec: §14 lines 73, 108-112. F-14.1.11.
+	CallbackURL string
+
+	// CallbackPinnedIP is the §14 line 110 DNS-pinned IP the gateway
+	// resolved for CallbackURL at admission. The delivery transport dials
+	// this address directly so a hostname that re-resolves to an internal
+	// IP between admission and delivery cannot redirect the callback.
+	// Empty when no CallbackURL was supplied. spec: §14 line 110. F-14.1.11.
+	CallbackPinnedIP string
+
+	// CallbackSecret is the §14 callbackSecret in its KMS-envelope-sealed
+	// form (pkg/kms/envelope.Encode output). It is opaque ciphertext: the
+	// lenny_app role can read it but only the gateway with KMS Decrypt can
+	// recover the plaintext. The gateway clears it (SQL NULL) once the
+	// session reaches a terminal state and every delivery attempt has
+	// succeeded or been exhausted. The plaintext is never returned by any
+	// API. spec: §14 line 139 (T3, KMS-envelope storage, write-only,
+	// NULL-on-terminal). F-14.1.11.
+	CallbackSecret []byte
+
+	// WebhookEvents holds the §14 line 150 undelivered callback events
+	// after the retry budget is spent, surfaced by
+	// GET /v1/sessions/{id}/webhook-events. Nil when no delivery has
+	// exhausted its retries. spec: §14 line 150; §15.1 line 678. F-14.1.11.
+	WebhookEvents []WebhookEventRecord
+}
+
+// WebhookEventRecord is one §14 callback event that exhausted its
+// delivery retry budget. It mirrors the dispatcher's delivery record so
+// GET /v1/sessions/{id}/webhook-events can report the undelivered event,
+// its CloudEvents id, and the last failure. spec: §14 line 150; §15.1
+// line 678. F-14.1.11.
+type WebhookEventRecord struct {
+	EventID     string    `json:"eventId"`
+	EventType   string    `json:"eventType"`
+	CallbackURL string    `json:"callbackUrl"`
+	Body        []byte    `json:"body,omitempty"`
+	Attempts    int       `json:"attempts"`
+	LastError   string    `json:"lastError,omitempty"`
+	LastStatus  int       `json:"lastStatus,omitempty"`
+	FailedAt    time.Time `json:"failedAt"`
 }
 
 // SessionTimeouts is the §14 per-session timeouts envelope: the

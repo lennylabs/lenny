@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -135,7 +137,61 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return nil, false
 	}
+
+	// spec: §14 lines 108-139 — validate the callbackUrl against the SSRF
+	// mitigations and KMS-seal the callbackSecret. F-14.1.11.
+	if !s.validateCallback(w, r, req.CallbackURL, req.CallbackSecret, tenantID, row) {
+		return nil, false
+	}
 	return warnings, true
+}
+
+// validateCallback applies the §14 callbackUrl SSRF mitigations and, when
+// a callbackSecret is supplied, KMS-envelope-seals it onto the row. An
+// empty callbackURL is a no-op (a bare callbackSecret is rejected). It
+// returns ok=false after writing the §15.1 INVALID_CALLBACK_URL (or
+// VALIDATION_ERROR) envelope on rejection. spec: §14 lines 108-139; §15.1
+// line 1097. F-14.1.11 / F-15.1.11.
+func (s *Server) validateCallback(w http.ResponseWriter, r *http.Request, callbackURL, callbackSecret, tenantID string, row *sessionstore.Session) bool {
+	if callbackURL == "" {
+		if callbackSecret != "" {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"callbackSecret requires callbackUrl", map[string]any{"field": "callbackSecret"})
+			return false
+		}
+		return true
+	}
+	res, err := s.callbackValidator.Validate(r.Context(), callbackURL)
+	if err != nil {
+		reason := sessioncallback.ReasonInvalidURL
+		var ve *sessioncallback.ValidationError
+		if errors.As(err, &ve) {
+			reason = ve.Reason
+		}
+		s.writeError(w, http.StatusBadRequest, "INVALID_CALLBACK_URL", err.Error(),
+			map[string]any{"field": "callbackUrl", "reason": reason})
+		return false
+	}
+	row.CallbackURL = res.URL
+	row.CallbackPinnedIP = res.PinnedIP.String()
+	// spec: §14 line 139 — the callbackSecret is KMS-envelope-encrypted at
+	// admission; the gateway never persists or returns the plaintext.
+	if callbackSecret != "" {
+		if s.callbackSeal == nil {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"callbackSecret is not accepted: no KMS backend is configured for session callbacks",
+				map[string]any{"field": "callbackSecret"})
+			return false
+		}
+		sealed, serr := s.callbackSeal(r.Context(), tenantID, []byte(callbackSecret))
+		if serr != nil {
+			s.writeError(w, http.StatusServiceUnavailable, "INTERNAL",
+				"could not secure callbackSecret", nil)
+			return false
+		}
+		row.CallbackSecret = sealed
+	}
+	return true
 }
 
 // runtimeMaxSessionAge returns the resolved runtime's

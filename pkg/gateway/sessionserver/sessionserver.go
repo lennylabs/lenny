@@ -58,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -345,6 +346,23 @@ type Server struct {
 	// the walker still truncates the cycle so the response remains
 	// well-formed. spec: §8.9 line 1003; F-8.9.10.
 	treeCycleObserver TreeCycleObserver
+
+	// callbackValidator enforces the §14 callbackUrl SSRF mitigations at
+	// admission (HTTPS-only, IP-literal / private-range rejection, DNS
+	// pinning, optional deployer domain allowlist). Never nil after New
+	// (defaults to a validator with no domain allowlist). spec: §14 lines
+	// 108-112. F-14.1.11.
+	callbackValidator *sessioncallback.Validator
+	// callbackSeal KMS-envelope-encrypts a client callbackSecret under the
+	// session tenant's KEK at admission. Nil disables callbackSecret
+	// acceptance (a callbackUrl without a secret still delivers, unsigned).
+	// spec: §14 line 139. F-14.1.11.
+	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
+	// callbackDispatcher delivers validated §14 callbacks from an isolated
+	// worker pool with the §14 retry budget. Nil leaves callbacks validated
+	// and persisted but undelivered (the dev/test posture). spec: §14 lines
+	// 111, 150. F-14.1.11.
+	callbackDispatcher *sessioncallback.Dispatcher
 
 	// inputWaits, when set, makes the REST POST /v1/sessions/{id}/messages
 	// handler honor §7.2 path 1: a request body whose `inReplyTo`
@@ -671,6 +689,21 @@ type Options struct {
 	// disables the emission and the walker still truncates the cycle.
 	// spec: §8.9 line 1003; F-8.9.10.
 	TreeCycleObserver TreeCycleObserver
+
+	// CallbackValidator validates client callbackUrls against the §14 SSRF
+	// mitigations. Nil installs a default validator with no deployer
+	// domain allowlist. spec: §14 lines 108-112. F-14.1.11.
+	CallbackValidator *sessioncallback.Validator
+	// CallbackSeal KMS-envelope-encrypts a client callbackSecret under the
+	// session tenant's KEK at admission. Nil disables callbackSecret
+	// acceptance (a callbackUrl with no secret still delivers, unsigned).
+	// spec: §14 line 139. F-14.1.11.
+	CallbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
+	// CallbackDispatcher delivers validated §14 callbacks. Nil leaves
+	// callbacks validated and persisted but undelivered (the dev/test
+	// posture); the cmd wires a real dispatcher. spec: §14 lines 111, 150.
+	// F-14.1.11.
+	CallbackDispatcher *sessioncallback.Dispatcher
 
 	// InputWaits is the shared §8.5 `lenny/request_input` pending-call
 	// registry. When set, the REST POST /v1/sessions/{id}/messages
@@ -1311,6 +1344,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interactionAudit:         opts.InteractionAuditSink,
 		toolApprovalWaits:        opts.ToolApprovalWaits,
 		treeCycleObserver:        opts.TreeCycleObserver,
+		callbackValidator:        opts.CallbackValidator,
+		callbackSeal:             opts.CallbackSeal,
+		callbackDispatcher:       opts.CallbackDispatcher,
 		inputWaits:               opts.InputWaits,
 		defaultRetention:         opts.DefaultRetention,
 		retryPolicyCaps:          opts.RetryPolicyCaps,
@@ -1325,6 +1361,12 @@ func New(store sessionstore.Store, opts Options) *Server {
 			opts.MaxConcurrentUploadsGlobal,
 			opts.MaxUploadBytesPerSession,
 		),
+	}
+	if s.callbackValidator == nil {
+		// spec: §14 lines 108-112 — the SSRF validator needs no external
+		// config; default it so callbackUrl validation always runs even
+		// when a deployer configured no domain allowlist.
+		s.callbackValidator = sessioncallback.NewValidator(nil, nil)
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -1441,6 +1483,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
+	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", manage(s.handleElicitationRespond))
@@ -1531,6 +1574,19 @@ type CreateSessionRequest struct {
 	// a RuntimeOptionsUnschematized warning is emitted. spec: §14 line
 	// 155. F-14.1.14 / F-14.1.15.
 	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
+
+	// CallbackURL is the §14 optional session-terminal webhook. The
+	// gateway validates it against the §14 SSRF mitigations at admission
+	// (HTTPS-only, IP-literal/private-range rejection, DNS pinning, and
+	// the optional deployer domain allowlist) and rejects a failing URL
+	// with 400 INVALID_CALLBACK_URL. spec: §14 lines 73, 108-112. F-14.1.11.
+	CallbackURL string `json:"callbackUrl,omitempty"`
+
+	// CallbackSecret is the §14 HMAC signing secret for callback
+	// deliveries. It is write-only: the gateway KMS-envelope-encrypts it
+	// at admission and never returns the plaintext on any API. spec: §14
+	// line 139. F-14.1.11.
+	CallbackSecret string `json:"callbackSecret,omitempty"`
 }
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.

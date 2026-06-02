@@ -109,6 +109,37 @@ func TestRequestEnvelopeLabelsRoundTrip_spec_15_1_598(t *testing.T) {
 	}
 }
 
+// spec: §14 lines 108-150 — the §14 callback fields (callbackUrl, the
+// DNS-pinned IP, the KMS-sealed secret, and undelivered events) ride the
+// request-envelope bundle and round-trip back onto the Session. A session
+// carrying only a callbackUrl still serializes the bundle. F-14.1.11.
+func TestRequestEnvelopeCallbackRoundTrip_spec_14_108(t *testing.T) {
+	in := sessionstore.Session{
+		CallbackURL:      "https://hooks.example.com/lenny",
+		CallbackPinnedIP: "93.184.216.34",
+		CallbackSecret:   []byte("sealed-ciphertext-bytes"),
+		WebhookEvents: []sessionstore.WebhookEventRecord{{
+			EventID: "evt_1", EventType: "dev.lenny.session_completed",
+			CallbackURL: "https://hooks.example.com/lenny", Attempts: 5, LastStatus: 500,
+		}},
+	}
+	arg, ok := requestEnvelopeArg(in).(string)
+	if !ok {
+		t.Fatalf("requestEnvelopeArg(callback) = %T, want non-nil string", requestEnvelopeArg(in))
+	}
+	var out sessionstore.Session
+	applyStoredEnvelope(&out, []byte(arg))
+	if out.CallbackURL != in.CallbackURL || out.CallbackPinnedIP != in.CallbackPinnedIP {
+		t.Errorf("callback url/pin: got %q/%q", out.CallbackURL, out.CallbackPinnedIP)
+	}
+	if string(out.CallbackSecret) != string(in.CallbackSecret) {
+		t.Errorf("CallbackSecret: got %q, want %q", out.CallbackSecret, in.CallbackSecret)
+	}
+	if !reflect.DeepEqual(out.WebhookEvents, in.WebhookEvents) {
+		t.Errorf("WebhookEvents: got %+v, want %+v", out.WebhookEvents, in.WebhookEvents)
+	}
+}
+
 // applyStoredEnvelope must tolerate a malformed payload (the gateway
 // validates the bundle at admission, so a stored value is by-construction
 // well-formed; a corrupt one must not panic). F-14.1.14.

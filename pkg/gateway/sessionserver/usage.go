@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -16,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
@@ -141,6 +143,74 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 	}
 }
 
+// enqueueTerminalCallback schedules the §14 session-completion webhook
+// when the session carried a client callbackUrl. The CloudEvents type and
+// data are derived from the terminal state per the §14 line 142-146 data
+// schemas. A session with no dispatcher, no callbackUrl, an unparseable
+// pinned IP, or a non-terminal state is a no-op. spec: §14 lines 108-150.
+// F-14.1.11.
+func (s *Server) enqueueTerminalCallback(sess sessionstore.Session) {
+	if s.callbackDispatcher == nil || sess.CallbackURL == "" {
+		return
+	}
+	shortName, data, ok := terminalCallbackEvent(sess)
+	if !ok {
+		return
+	}
+	pinned, err := netip.ParseAddr(sess.CallbackPinnedIP)
+	if err != nil {
+		// spec: §14 line 110 — without a stored pin the gateway cannot
+		// dial the registration-time IP, so it does not deliver rather
+		// than re-resolve and risk a rebind to an internal address.
+		return
+	}
+	s.callbackDispatcher.Enqueue(sessioncallback.Job{
+		TenantID:      sess.TenantID,
+		SessionID:     sess.ID,
+		RootSessionID: sess.RootSessionID,
+		CallbackURL:   sess.CallbackURL,
+		PinnedIP:      pinned,
+		SealedSecret:  sess.CallbackSecret,
+		ShortName:     shortName,
+		Subject:       "session/" + sess.ID,
+		Data:          data,
+	})
+}
+
+// terminalCallbackEvent maps a terminal session state to its §14 webhook
+// CloudEvents short name and data payload. ok is false for a non-terminal
+// state. spec: §14 lines 142-146. F-14.1.11.
+func terminalCallbackEvent(sess sessionstore.Session) (string, json.RawMessage, bool) {
+	info := sessioncallback.SessionInfo{SessionID: sess.ID}
+	switch sess.State {
+	case session.StateCompleted:
+		return sessioncallback.EventSessionCompleted, sessioncallback.CompletedData(info), true
+	case session.StateFailed:
+		info.ErrorCode = string(sess.FailureClass)
+		info.ErrorMessage = sess.FailureReason
+		return sessioncallback.EventSessionFailed, sessioncallback.FailedData(info), true
+	case session.StateCancelled:
+		info.Reason = sess.FailureReason
+		return sessioncallback.EventSessionCancelled, sessioncallback.CancelledData(info), true
+	case session.StateExpired:
+		info.ExpiryReason = expiryReasonForState(sess)
+		return sessioncallback.EventSessionExpired, sessioncallback.ExpiredData(info), true
+	default:
+		return "", nil, false
+	}
+}
+
+// expiryReasonForState maps a §6.2 expiry to the §14 line 146
+// expiryReason enum (max_session_age|max_idle_time). The failure reason
+// carries the discriminator; an idle-timeout reason maps to max_idle_time
+// and everything else to max_session_age. spec: §14 line 146. F-14.1.11.
+func expiryReasonForState(sess sessionstore.Session) string {
+	if strings.Contains(strings.ToLower(sess.FailureReason), "idle") {
+		return "max_idle_time"
+	}
+	return "max_session_age"
+}
+
 // terminalSessionEvent maps a terminal session state to its §16.6
 // operational-event type and severity. ok is false for a non-terminal
 // state. Terminate is modeled as StateCompleted, so no session state
@@ -253,6 +323,12 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 			})
 		}
 	}
+	// spec: §14 lines 108-150 — POST the §14 CloudEvents callback to the
+	// client-supplied callbackUrl when the session reaches a terminal
+	// state. Best-effort: the isolated dispatcher runs the retry budget
+	// off the transition path and clears the sealed secret when the
+	// delivery settles. F-14.1.11.
+	s.enqueueTerminalCallback(sess)
 	// §7.2 lines 137, 141 / §11.7 / §7.1 line 77: the client- and
 	// audit-visible terminal signals (status_change, session_complete,
 	// the lifecycle audit event, and the retention-window roll). Shared

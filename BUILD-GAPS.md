@@ -24753,10 +24753,12 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 **Resolution:** Closed by F-7.5.6 (this batch). `SetupTimeoutDefault` removed; an omitted per-command timeout inherits only the §5.1 aggregate cap or the parent ctx.
 
-### - [ ] F-14.1.11 — Session-scope `callbackUrl` / `callbackSecret` are unimplemented [Medium] — OPEN
+### - [x] F-14.1.11 — Session-scope `callbackUrl` / `callbackSecret` are unimplemented [Medium] — CLOSED
 - **Spec §14 lines 73-74, 108-152 (callbackUrl, callbackSecret, Webhook Delivery Model):** Defines the CloudEvents v1.0.2 webhook envelope, HMAC-SHA256 signing, replay-window enforcement, retry schedule (10s/30s/60s/300s/900s), the storage and erasure of `callbackSecret` (T3 KMS-envelope-encrypted), the SSRF mitigations (URL validation, DNS pinning, isolated callback worker, optional domain allowlist), and the per-event `data` schemas.
 - **Evidence:** `pkg/gateway/sessionserver/sessionserver.go:495-510` (CreateSessionRequest) carries only `RuntimeRef`, `UserID`, `WorkspacePlan`, `Environment`, `IsolationProfile`. No `CallbackURL` or `CallbackSecret` field. `grep -rn "callbackUrl" pkg/` finds only the §25 ops-event-subscription path; the session terminal callback is absent. The `sessions` table has no column for the encrypted callback secret.
 - **Impact:** Every session-terminal-event consumer that depends on the §14 callback contract (CI/CD hooks, audit pipelines, third-party orchestration) is unsupported. Migration 0008 ships the `workspace_plan` column but nothing for callback secret storage.
+
+**Resolution:** Built the §14 session-completion webhook subsystem. `CreateSessionRequest` (and the §15.1 `POST /v1/sessions/start` body) now carry `callbackUrl` + write-only `callbackSecret`. New `pkg/gateway/sessioncallback` enforces the §14 SSRF mitigations at admission (HTTPS-only, IP-literal/localhost/metadata-host rejection, DNS resolution with private/reserved-range rejection per `net/netip` plus RFC 6598, IP pinning, optional `callbackUrlAllowedDomains` exact/`*.suffix` allowlist) and rejects a failing URL with `400 INVALID_CALLBACK_URL` (`details.reason`). The `callbackSecret` is KMS-envelope-encrypted under the same per-tenant `tenant:{id}` KEK alias as credential pool secrets and persisted as opaque ciphertext on the session row (riding the existing `request_envelope` JSONB bundle; never returned by any API). On a terminal transition `recordSessionCompleted` enqueues the matching `dev.lenny.session_{completed,failed,cancelled,expired}` event built via the shared `eventbus` CloudEvents builder; the dispatcher delivers from an isolated worker pool with a pinned-IP `http.Client` (5 s connect, no redirects), signs each attempt with `pkg/webhooksig` (fresh `t`, fixed CloudEvents `time`), and applies the §14 5-attempt retry budget. On success or exhaustion it clears the sealed secret (NULL-on-terminal) and records exhausted events for `GET /v1/sessions/{id}/webhook-events`. Wired in `cmd/lenny-gateway` behind the new `--callback-url-allowed-domains` flag. Closed this batch.
 
 ### - [x] F-14.1.12 — `env` field and the deployer-configured env blocklist are unimplemented [Medium] — CLOSED
 - **Spec §14 lines 47-50, 105:** Defines `env` (key-value env vars), the deployer blocklist with both exact names and `*` glob patterns, the platform-default blocklist that "operators can extend but not reduce in multi-tenant mode," and the `400 ENV_VAR_BLOCKLISTED` error identifying the offending key and matching pattern.
@@ -25238,7 +25240,7 @@ lenny-ops metrics findings (F-25.4.18 / F-16.8.1), not this gateway
 admin-API finding. 7 tier-1 tests cover the audit + ops-event
 propagation.
 
-### - [ ] F-15.1.11 — `POST /v1/sessions/start` lacks the spec-required `callbackUrl` [High] — OPEN
+### - [x] F-15.1.11 — `POST /v1/sessions/start` lacks the spec-required `callbackUrl` [High] — CLOSED
 Spec async-job table (lines 686–692): `POST /v1/sessions/start`
 "Accepts optional `callbackUrl` for completion notification".
 
@@ -25248,6 +25250,16 @@ Implementation: `pkg/gateway/sessionserver/start.go:24-31` only carries
 SSRF validation (the `INVALID_CALLBACK_URL` error code at line 1097 is
 in the catalog but unreachable). Clients that depend on the documented
 async-completion path get no notification.
+
+**Resolution:** Closed alongside F-14.1.11. `CreateAndStartRequest`
+(`pkg/gateway/sessionserver/start.go`) now carries `callbackUrl` +
+`callbackSecret`; `handleCreateAndStart` runs the shared
+`validateCallback` SSRF gate before any pod side effects, rejecting a
+failing URL with the now-reachable `400 INVALID_CALLBACK_URL`
+(`details.reason`) and persisting the validated URL, DNS-pinned IP, and
+KMS-sealed secret onto the session row so the §14 terminal-state
+dispatcher delivers the completion notification. Tier-1 tests cover the
+start-path accept and reject paths.
 
 ### - [x] F-15.1.12 — `GET /v1/admin/connectors/{id}` path-param mismatch [High] — CLOSED
 

@@ -214,6 +214,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -242,6 +243,7 @@ import (
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
@@ -605,6 +607,8 @@ func main() {
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	envVarBlocklistCSV := flag.String("env-var-blocklist", os.Getenv("LENNY_ENV_VAR_BLOCKLIST"),
 		"§14 line 105 deployer extension to the env-var blocklist applied to a CreateSessionRequest's `env` field, a comma-separated list of exact names or `*` globs (e.g. AWS_SECRET_ACCESS_KEY,*_TOKEN). The platform default blocklist is always merged in first, so an operator can extend but not reduce it. Override via LENNY_ENV_VAR_BLOCKLIST.")
+	callbackURLAllowedDomains := flag.String("callback-url-allowed-domains", os.Getenv("LENNY_CALLBACK_URL_ALLOWED_DOMAINS"),
+		"§14 line 112 callbackUrlAllowedDomains: a comma-separated allowlist of hostnames (exact or `*.suffix` wildcard) a session callbackUrl may target. When set, only matching hosts are accepted; when empty, the §14 public-DNS / private-range SSRF validation applies. Override via LENNY_CALLBACK_URL_ALLOWED_DOMAINS.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
 		envInt("LENNY_MAX_RESUME_PENDING_SECONDS", watchdog.DefaultMaxResumePendingSeconds),
 		"§6.2 line 292 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
@@ -2927,6 +2931,63 @@ func main() {
 		adminStickyFlusher = stickyCache
 	}
 
+	// spec: §14 lines 108-150 — the session-completion webhook subsystem.
+	// The SSRF validator enforces the §14 callbackUrl rules at admission;
+	// the seal/open closures KMS-envelope-encrypt the callbackSecret under
+	// the same per-tenant KEK alias ("tenant:{id}") as credential pool
+	// secrets; the dispatcher delivers from an isolated worker pool with
+	// the §14 retry budget and clears the sealed secret when a delivery
+	// settles. F-14.1.11 / F-15.1.11.
+	callbackValidator := sessioncallback.NewValidator(splitCSV(*callbackURLAllowedDomains), nil)
+	callbackSeal := func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error) {
+		c, err := envelope.New(kmsProvider, "tenant:"+tenantID)
+		if err != nil {
+			return nil, err
+		}
+		sealed, err := c.Seal(ctx, plaintext)
+		if err != nil {
+			return nil, err
+		}
+		return envelope.Encode(sealed)
+	}
+	callbackOpener := func(ctx context.Context, tenantID string, sealed []byte) ([]byte, error) {
+		c, err := envelope.New(kmsProvider, "tenant:"+tenantID)
+		if err != nil {
+			return nil, err
+		}
+		s, err := envelope.Decode(sealed)
+		if err != nil {
+			return nil, err
+		}
+		return c.Open(ctx, s)
+	}
+	callbackFinalize := func(ctx context.Context, tenantID, sessionID string, undelivered *sessioncallback.DeliveryRecord) error {
+		_, err := sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+			// spec: §14 line 139 — clear the sealed secret once the
+			// session is terminal and the delivery has settled.
+			row.CallbackSecret = nil
+			if undelivered != nil {
+				row.WebhookEvents = append(row.WebhookEvents, sessionstore.WebhookEventRecord{
+					EventID:     undelivered.EventID,
+					EventType:   undelivered.EventType,
+					CallbackURL: undelivered.CallbackURL,
+					Body:        undelivered.Body,
+					Attempts:    undelivered.Attempts,
+					LastError:   undelivered.LastError,
+					LastStatus:  undelivered.LastStatus,
+					FailedAt:    undelivered.FailedAt,
+				})
+			}
+			return nil
+		})
+		return err
+	}
+	callbackDispatcher := sessioncallback.NewDispatcher(sessioncallback.Config{
+		GatewayID: replica,
+		Opener:    callbackOpener,
+		Finalizer: callbackFinalize,
+	})
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
@@ -3113,6 +3174,11 @@ func main() {
 		// counter when a §7.5 setup command fails on the warm-pool side
 		// of a bind.
 		IncWarmpoolWarmupFailure: gwMetrics.IncWarmpoolWarmupFailure,
+		// §14 lines 108-150 — the session-completion webhook subsystem.
+		// F-14.1.11 / F-15.1.11.
+		CallbackValidator:  callbackValidator,
+		CallbackSeal:       callbackSeal,
+		CallbackDispatcher: callbackDispatcher,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

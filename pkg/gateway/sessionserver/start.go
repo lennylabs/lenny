@@ -243,6 +243,15 @@ type CreateAndStartRequest struct {
 	WorkspacePlan    json.RawMessage   `json:"workspacePlan,omitempty"`
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 	Environment      string            `json:"environment,omitempty"`
+
+	// CallbackURL is the §15.1 line 690 optional completion-notification
+	// webhook. It is validated against the §14 SSRF mitigations at
+	// admission and rejected with 400 INVALID_CALLBACK_URL on failure.
+	// spec: §15.1 line 690; §14 lines 108-112. F-15.1.11.
+	CallbackURL string `json:"callbackUrl,omitempty"`
+	// CallbackSecret is the §14 write-only HMAC signing secret for the
+	// callback. spec: §14 line 139. F-15.1.11.
+	CallbackSecret string `json:"callbackSecret,omitempty"`
 }
 
 // CreateAndStartResponse is the convenience reply. Mirrors the
@@ -355,6 +364,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
+	// spec: §15.1 line 690 / §14 lines 108-139 — validate the optional
+	// completion-notification callbackUrl against the SSRF mitigations and
+	// seal the callbackSecret before any pod side effects. F-15.1.11.
+	if !s.validateCallback(w, r, req.CallbackURL, req.CallbackSecret, tenantID, &row) {
+		return
+	}
 	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
 	// artifact-retention deadline at create (mirrors the plain create path)
 	// so the GC can reclaim this session's artifacts; the terminal
