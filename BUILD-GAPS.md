@@ -37475,7 +37475,7 @@ invalid-scope state.
 
 ### Findings
 
-### - [ ] F-24.8.1 — 001 — `lenny-ctl admin external-adapters validate` is not implemented [High] — OPEN
+### - [x] F-24.8.1 — 001 — `lenny-ctl admin external-adapters validate` is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.8.5 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
@@ -37491,7 +37491,9 @@ invalid-scope state.
 
 **Required fix:** Add `cmdExternalAdapters` to `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go` (alongside `cmdCircuitBreakers`) that issues `POST /v1/admin/external-adapters/{name}/validate` against the gateway, prints the validation report, and exits non-zero on `validation_failed`. The wire-side handler must exist first (see HIGH-002).
 
-### - [ ] F-24.8.2 — 002 — `POST /v1/admin/external-adapters/{name}/validate` admin endpoint is not implemented [High] — OPEN
+**Resolution:** Closed by 18f26e04. `cmdExternalAdapters` is wired into `cmdAdmin`: `validate --name <name>` posts to the validate endpoint and, on the 422 `ADAPTER_VALIDATION_FAILED` response, fetches the record so the operator sees the per-test report before the command exits non-zero. The group also implements `list`, `get`, `register`, `update`, and `delete` (§15.1 CRUD).
+
+### - [x] F-24.8.2 — 002 — `POST /v1/admin/external-adapters/{name}/validate` admin endpoint is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.8.6 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
@@ -37507,7 +37509,9 @@ invalid-scope state.
 
 **Required fix:** Add an `externaladapterstore` package (mirroring the pattern of `connectorstore`, `environmentstore`, etc.), wire the CRUD endpoints from §15.1 lines 850–855 onto `Router.Handler`, and implement the validate handler that (1) loads the registered adapter, (2) drives the `RegisterAdapterUnderTest` compliance suite against it server-side per §15.2.1 rule 5, (3) atomically transitions `status` to `active` or `validation_failed`, and (4) returns the per-test report. Until the registration CRUD exists, even an `If-None-Match`-style stub of the validate handler has no resource to act on.
 
-### - [ ] F-24.8.3 — 003 — `pkg/compliance.RegisterAdapterUnderTest` is a Go test helper and does not satisfy the wire-side §24.8 / §15.1 contract [High] — OPEN
+**Resolution:** Closed by 18f26e04. New `pkg/gateway/externaladapterstore` (platform-global, name-keyed, in-memory with Postgres as the documented seam) backs `pkg/gateway/admin/external_adapters.go`: the validate handler loads the record, drives the suite through an injected `AdapterValidator` (production `ComplianceValidator` calls `compliance.RunSuite`), transitions `pending_validation`→`active` on a passing run or →`validation_failed` (with per-test details) on failure (422), and leaves the adapter untouched with a 503 when the harness cannot run. Routes registered on `Router.Handler` and wired in `cmd/lenny-gateway`. The §15.1 CRUD half is F-24.8.6. `If-Match` enforcement on PUT follows the platform-wide ETag work tracked by F-15.1.2 (no ETag infrastructure exists anywhere yet).
+
+### - [x] F-24.8.3 — 003 — `pkg/compliance.RegisterAdapterUnderTest` is a Go test helper and does not satisfy the wire-side §24.8 / §15.1 contract [High] — CLOSED
 
 **Spec:** §24.8 line 113 (validate runs the `RegisterAdapterUnderTest` compliance suite); §15 line 1414 (sandboxed environment, per-test failure details, status transition).
 **Evidence:**
@@ -37520,7 +37524,9 @@ invalid-scope state.
 
 **Required fix:** Refactor `pkg/compliance/compliance.go` to split the suite-driver from its testing-package assertions: expose `RunSuite(ctx, adapter) (Report, error)` that does not depend on `*testing.T`, then keep the `RegisterAdapterUnderTest(t *testing.T, ...)` wrapper for the existing tier-10 use site. The admin handler from HIGH-002 calls `RunSuite` and translates the `Report` into the wire response.
 
-### - [ ] F-24.8.4 — MED-001 — Spec advertises a schema-driven validation report citing `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and `schemas/outputpart.schema.json`; no implementation generates assertions from those artifacts [Medium] — OPEN
+**Resolution:** Closed by 18f26e04. `pkg/compliance.RunSuite(ctx, Adapter, Options) (Report, error)` is the non-testing core: it drives the `lenny-compliance` harness as a subprocess (the §15 line 1414 sandboxed seam) and returns the parsed report. A non-zero failure count is not an error; the new `ErrHarnessNotFound` sentinel distinguishes "cannot validate here" from a conformance failure. `RegisterAdapterUnderTest` is now a thin wrapper over `RunSuite` that translates the report into `t.Errorf`/`t.Skip`; the tier-10 `TestThirdPartyRegistration` still passes unchanged. The §24.8 validate handler calls `RunSuite` via the `ComplianceValidator`.
+
+### - [ ] F-24.8.4 — MED-001 — Spec advertises a schema-driven validation report citing `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and `schemas/outputpart.schema.json`; no implementation generates assertions from those artifacts [Medium] — DEFERRED
 
 **Spec:** §24.8 line 113 ("The suite is schema-driven: assertions are generated from the published `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and `schemas/outputpart.schema.json` artifacts").
 **Evidence:**
@@ -37530,7 +37536,9 @@ invalid-scope state.
 
 **Why Medium:** When HIGH-002/HIGH-003 are addressed, the §24.8 wording binds the implementation to a specific schema-driven assertion model. Implementing the validate endpoint against hand-coded checks (which is what `lenny-compliance` currently does) leaves the spec promise unmet even though the wire surface would superficially comply. Mark as Medium because the gap is conditional on HIGH-002/003 landing first.
 
-### - [ ] F-24.8.5 — MED-002 — `lenny-ctl admin external-adapters validate` is documented to operators in `docs/operator-guide/lenny-ctl.md` but the CLI rejects the invocation [Medium] — OPEN
+**Deferred (18f26e04):** Its prerequisites F-24.8.2 and F-24.8.3 are now closed — the validate endpoint runs the suite end-to-end via `compliance.RunSuite`. The remaining gap is narrow and orthogonal to the wire surface: the `cmd/lenny-compliance` battery hard-codes its checks rather than generating assertions from the three published artifacts (`schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, `schemas/outputpart.schema.json`). Generating assertions from a proto descriptor plus two JSON Schemas (and validating adapter frames against them with the santhosh-tekuri validator already in the tree) is a dedicated codegen task scoped to the harness; deferred to its own batch rather than bundled here.
+
+### - [x] F-24.8.5 — MED-002 — `lenny-ctl admin external-adapters validate` is documented to operators in `docs/operator-guide/lenny-ctl.md` but the CLI rejects the invocation [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.8.1 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
@@ -37539,7 +37547,9 @@ invalid-scope state.
 
 **Why Medium:** This is a doc-vs-implementation drift that a real operator would hit on first attempt. The fix is either implementation (HIGH-001) or, until then, removing the row from `docs/operator-guide/lenny-ctl.md` and adding the §24.8 entry to `BUILD-GAPS.md` so the gap is acknowledged in tree.
 
-### - [ ] F-24.8.6 — MED-003 — §15.1 lines 850–855 declare the full external-adapter CRUD surface as in-scope for the admin API; none is implemented [Medium] — OPEN
+**Resolution:** Closed by 18f26e04 via the implementation path (F-24.8.1). The operator-guide row at `docs/operator-guide/lenny-ctl.md:347` (`lenny-ctl admin external-adapters validate --name <name>`) now matches the CLI exactly; the command no longer exits with `unknown admin resource`.
+
+### - [x] F-24.8.6 — MED-003 — §15.1 lines 850–855 declare the full external-adapter CRUD surface as in-scope for the admin API; none is implemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.8.2 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
@@ -37549,6 +37559,8 @@ invalid-scope state.
 **Why Medium:** §24.8 itself names only the validate row, so the upstream CRUD gap is one level removed from the §24.8 audit boundary. It is included because the validate command is operationally meaningless without these endpoints (no record exists to validate), and because `BUILD-PROGRESS.md` line 37 currently asserts the ExternalAdapterRegistry phase is complete in a way that elides the missing CRUD.
 
 **Required fix:** Add the §15.1 lines 850–855 CRUD endpoints alongside HIGH-002, backed by an `externaladapterstore` package and Postgres persistence (per the same pattern as `connectorstore`, `environmentstore`). Update `BUILD-PROGRESS.md` line 37 to reflect what is actually built versus what remains.
+
+**Resolution:** Closed by 18f26e04. The full POST/GET-list/GET-by-name/PUT/DELETE surface from §15.1 lines 850–855 is registered on `Router.Handler` (platform-admin gated) and present in the OpenAPI document (`pkg/gateway/openapi/openapi.json`). Backed by the new `externaladapterstore` (in-memory; Postgres is the documented seam, matching the runtimestore pattern for platform-global config). Persistent Postgres backing is the same forward-looking seam noted for several other platform-global registries; the wire surface and in-memory store satisfy the §15.1 contract and unblock the validate gate.
 
 ### - [x] F-24.8.7 — 001 — `BUILD-PROGRESS.md` and `BUILD-GAPS.md` do not currently acknowledge the §24.8 / §15.1-external-adapter gaps [Info] — CLOSED
 
