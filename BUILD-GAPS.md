@@ -34677,7 +34677,7 @@ choice is buried in deployer-written values overlays.
 - `/Users/joan/projects/lenny/charts/lenny/answers/README.md`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:38-80` (installAnswers struct lacks cluster/backends/isolationProfile)
 
-**Resolution (`1542c152`):** The §17.9.2 catalog now ships as nine curated
+**Resolution (`c4b98190`):** The §17.9.2 catalog now ships as nine curated
 Helm values fragments under `charts/lenny/answers/catalog/` (`laptop`,
 `docker-compose`, `eks-small-team`, `eks-production`, `gke-production`,
 `aks-production`, `openshift-self-managed`, `bare-metal-self-managed`,
@@ -35049,7 +35049,7 @@ label, `node.kubernetes.io/instance-type` patterns, the
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:54-57`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:561-602` (no detection)
 
-**Resolution (`1542c152`):** `install_detect.go` now infers the §17.9.1
+**Resolution (`c4b98190`):** `install_detect.go` now infers the §17.9.1
 cluster-type dimension (`detectClusterType`): it reads the node providerID
 prefixes (`aws://` → eks, `gce://` → gke, `azure://` → aks, `kind://`/`k3s://`
 → laptop), checks the OpenShift API surface (`clusterversions.config.openshift.io`,
