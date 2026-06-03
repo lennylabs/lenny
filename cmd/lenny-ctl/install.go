@@ -30,9 +30,9 @@ import (
 //
 // Two input modes are supported:
 //
-//   - Interactive: with no --answer-file, the wizard prompts for each
+//   - Interactive: with no --answers, the wizard prompts for each
 //     answer on stdin, showing the default in brackets.
-//   - Non-interactive: with --answer-file <path>, the wizard reads a
+//   - Non-interactive: with --answers <path>, the wizard reads a
 //     YAML answer file instead of prompting. This path is pure and
 //     repeatable, which is what CI and IaC pipelines use.
 //
@@ -41,7 +41,7 @@ import (
 
 // installAnswers is the §17.6 answer-file schema. Every field maps to
 // one wizard question. The YAML tags define the on-disk answer-file
-// keys; --answer-file decodes this struct and --save-answers re-encodes
+// keys; --answers decodes this struct and --save-answers re-encodes
 // it, so an interactive run can be captured once and replayed.
 type installAnswers struct {
 	// Release is the Helm release name and target namespace.
@@ -165,6 +165,7 @@ type installConfig struct {
 	nonInteract  bool
 	dryRun       bool
 	offline      bool
+	skipSmoke    bool
 }
 
 // knownTiers is the set of capacity tiers the wizard accepts. It
@@ -231,7 +232,7 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	} else {
 		if cfg.nonInteract {
-			fmt.Fprintln(stderr, "lenny-ctl: --non-interactive requires --answer-file <path>")
+			fmt.Fprintln(stderr, "lenny-ctl: --non-interactive requires --answers <path>")
 			return 2
 		}
 		// Detection phase (§17.6 lines 671-697): probe the target cluster
@@ -357,7 +358,17 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "lenny-ctl: release %q installed in namespace %q\n",
 		answers.Release.Name, answers.Release.Namespace)
-	return 0
+
+	// Smoke-test phase (§24.20 line 295/299: ... → helm install → bootstrap
+	// seed → smoke test). The wizard probes /healthz and exercises the chat
+	// reference runtime so a broken install surfaces here rather than on the
+	// operator's first session. --skip-smoke-test opts out. F-24.20.4.
+	if cfg.skipSmoke {
+		fmt.Fprintln(stdout, "# Smoke test: skipped (--skip-smoke-test)")
+		return 0
+	}
+	rb := rollbackInfo{release: answers.Release.Name, namespace: answers.Release.Namespace}
+	return runSmokeTest(context.Background(), &httpSmokeTester{}, smokeTargetFromAnswers(answers), rb, stdout, stderr)
 }
 
 // parseInstallFlags parses the `install` flag set.
@@ -365,9 +376,9 @@ func parseInstallFlags(args []string) (installConfig, error) {
 	cfg := installConfig{chartDir: "charts/lenny"}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		// --answer-file is the build-plan spelling; --answers is the
-		// §24.20 spelling. Both name the same input.
-		case "--answer-file", "--answers":
+		// --answers is the sole §24.20 spelling of the answer-file flag
+		// (§24.20 lines 300, 304). F-24.20.7.
+		case "--answers":
 			if i+1 >= len(args) {
 				return cfg, fmt.Errorf("%s requires a path", args[i])
 			}
@@ -399,7 +410,7 @@ func parseInstallFlags(args []string) (installConfig, error) {
 			cfg.namespace, i = args[i+1], i+1
 		// --context overrides the kubeconfig context the detection phase
 		// probes (§17.6 line 673). It has no effect under --offline or
-		// --answer-file (neither runs detection).
+		// --answers (neither runs detection).
 		case "--context":
 			if i+1 >= len(args) {
 				return cfg, fmt.Errorf("--context requires a name")
@@ -415,6 +426,10 @@ func parseInstallFlags(args []string) (installConfig, error) {
 		// interactive path.
 		case "--offline":
 			cfg.offline = true
+		// --skip-smoke-test opts out of the post-install smoke-test phase
+		// (§24.20 line 299). F-24.20.4.
+		case "--skip-smoke-test":
+			cfg.skipSmoke = true
 		default:
 			return cfg, fmt.Errorf("unknown install flag %q", args[i])
 		}
@@ -1012,13 +1027,13 @@ const installUsage = `lenny-ctl install — Lenny installation wizard (§17.6, �
 Usage:
   lenny-ctl install [flags]
 
-Without --answer-file the wizard prompts interactively on stdin. With
---answer-file it reads a YAML answer file and runs non-interactively,
+Without --answers the wizard prompts interactively on stdin. With
+--answers it reads a YAML answer file and runs non-interactively,
 which is the repeatable path for CI and IaC.
 
 Flags:
-  --answer-file <path>   Read answers from a YAML file (alias: --answers)
-  --non-interactive      Require --answer-file; never prompt
+  --answers <path>       Read answers from a YAML file
+  --non-interactive      Require --answers; never prompt
   --save-answers <path>  Write the resolved answers back to a YAML file
   --output-values <path> Write the composed Helm values to a file
   --chart <path>         Chart directory (default charts/lenny)
@@ -1026,6 +1041,7 @@ Flags:
   --namespace <ns>       Override the release namespace from the answer file
   --context <name>       kubeconfig context for the detection phase
   --offline              Skip the cluster detection phase
+  --skip-smoke-test      Skip the post-install smoke test against the chat runtime
   --dry-run              Print the composed values and helm command; do not run helm
 
 Answer-file keys:

@@ -237,18 +237,17 @@ func cmdEventSubscriptions(ctx context.Context, flags globalFlags, gateway *ctl.
 }
 
 // cmdUpgrade implements the §24.15 `upgrade` group and the §24.20
-// answer-file replay. With --answers/--answer-file it replays an answer
-// file against an existing install (preflight → values diff → `helm
-// upgrade`, F-24.20.2). Otherwise it drives the platform-upgrade state
-// machine on lenny-ops (check/preflight/start/proceed/pause/rollback/
-// status/verify, F-24.15.4). spec: §24.15 line 185; §24.20 line 304;
-// §25 lines 4967-4974.
+// answer-file replay. With --answers it replays an answer file against an
+// existing install (preflight → values diff → `helm upgrade`, F-24.20.2).
+// Otherwise it drives the platform-upgrade state machine on lenny-ops
+// (check/preflight/start/proceed/pause/rollback/status/verify,
+// F-24.15.4). spec: §24.15 line 185; §24.20 line 304; §25 lines 4967-4974.
 func cmdUpgrade(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	// §24.20 line 304 — `upgrade --answers <file>` is the chart-level
 	// replay, distinct from the platform state-machine subcommands. It is
 	// selected by the presence of the answer-file flag rather than a
 	// subcommand verb.
-	if hasFlag(args, "--answers") || hasFlag(args, "--answer-file") {
+	if hasFlag(args, "--answers") {
 		return cmdUpgradeReplay(args, stdout, stderr)
 	}
 	if len(args) == 0 {

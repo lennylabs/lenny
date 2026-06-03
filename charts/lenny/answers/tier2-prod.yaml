@@ -1,4 +1,4 @@
-# Answer file for `lenny-ctl install --answer-file` — Tier 2, prod.
+# Answer file for `lenny-ctl install --answers` — Tier 2, prod.
 #
 # This drives a Tier 2 production install. The wizard layers
 # presets/values-tier2.yaml under the per-question overrides composed
@@ -6,7 +6,7 @@
 #
 # Run:
 #   export LENNY_PG_DSN=...   LENNY_REDIS_URL=...
-#   lenny-ctl install --answer-file charts/lenny/answers/tier2-prod.yaml
+#   lenny-ctl install --answers charts/lenny/answers/tier2-prod.yaml
 #
 # The ${VAR} references below are resolved against the process
 # environment at read time, so connection secrets are not committed in

@@ -1,4 +1,4 @@
-# Answer file for `lenny-ctl install --answer-file` — Tier 3, prod.
+# Answer file for `lenny-ctl install --answers` — Tier 3, prod.
 #
 # This drives a Tier 3 production install, the largest published
 # capacity envelope. The wizard layers presets/values-tier3.yaml under
@@ -6,7 +6,7 @@
 #
 # Run:
 #   export LENNY_PG_DSN=...   LENNY_REDIS_URL=...
-#   lenny-ctl install --answer-file charts/lenny/answers/tier3-prod.yaml
+#   lenny-ctl install --answers charts/lenny/answers/tier3-prod.yaml
 #
 # The ${VAR} references below are resolved against the process
 # environment at read time. The answer-file schema is documented in

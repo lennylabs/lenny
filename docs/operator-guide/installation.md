@@ -53,7 +53,7 @@ For production installs, the `lenny-ctl install` wizard collects a set of instal
 lenny-ctl install
 ```
 
-With no `--answer-file` flag the wizard prompts for each answer on standard input, showing each default in brackets. It asks for the release name and namespace, the target environment, the capacity tier, the gateway domain and TLS strategy, the data-store connection details, the auth mode, the agent namespaces, and the optional admission-webhook feature flags. After collecting the answers, the wizard validates them, prints the composed values and the `helm install` command, and then runs Helm.
+With no `--answers` flag the wizard prompts for each answer on standard input, showing each default in brackets. It asks for the release name and namespace, the target environment, the capacity tier, the gateway domain and TLS strategy, the data-store connection details, the auth mode, the agent namespaces, and the optional admission-webhook feature flags. After collecting the answers, the wizard validates them, prints the composed values and the `helm install` command, and then runs Helm.
 
 The same preflight Job, schema migrations, and bootstrap Job described in [Helm Chart Installation](#helm-chart-installation) run as Helm hooks during the `helm install` the wizard invokes.
 
@@ -68,7 +68,7 @@ lenny-ctl install --save-answers ./answers.yaml
 The saved file is plain YAML. Replay it non-interactively in CI with `--non-interactive`:
 
 ```bash
-lenny-ctl install --non-interactive --answer-file ./answers.yaml
+lenny-ctl install --non-interactive --answers ./answers.yaml
 ```
 
 The chart ships answer files under `charts/lenny/answers/`, one per capacity tier: `tier1-local.yaml`, `tier2-prod.yaml`, and `tier3-prod.yaml`. Use one directly, or copy it as a starting point. To hand-write values instead, skip the wizard and run `helm install -f presets/values-<tier>.yaml -f overrides.yaml`.

@@ -31,7 +31,7 @@
 //	lenny-ctl health
 //	lenny-ctl version          (local CLI build; offline)
 //	lenny-ctl bootstrap --from-values <file>
-//	lenny-ctl install [--answer-file <file>]
+//	lenny-ctl install [--answers <file>]
 //
 // Auth: pass --bearer <token> for a clustered gateway, or rely on
 // the dev-header path (--dev-tenant / --dev-roles) for Embedded
@@ -257,7 +257,7 @@ Gateway commands:
   version                               Print the local CLI build version (offline)
   bootstrap --from-values <f> [--wait-timeout <secs>]
                                         Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
-  install [--answer-file <f>]           Run the installation wizard (§17.6)
+  install [--answers <f>]               Run the installation wizard (§17.6)
   preflight [--config <values.yaml>]    Assert installed CRD schema-version currency before helm upgrade (§10.5)
   values validate --config <values.yaml>  Validate a values.yaml against the chart's values.schema.json (§17.6, §24.20)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo

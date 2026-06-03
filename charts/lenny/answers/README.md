@@ -1,13 +1,13 @@
 # Installation answer files
 
-This directory holds answer files for `lenny-ctl install --answer-file`
+This directory holds answer files for `lenny-ctl install --answers`
 and the documented schema those files follow.
 
 An answer file is a YAML mapping of installation question IDs to
-answers. `lenny-ctl install --answer-file <path>` reads the file,
+answers. `lenny-ctl install --answers <path>` reads the file,
 composes a Helm values document from it, layers the matching capacity
 tier preset under that document, and runs `helm install`. The same
-flow runs interactively when `--answer-file` is omitted; an interactive
+flow runs interactively when `--answers` is omitted; an interactive
 run can be captured with `--save-answers <path>` and replayed later, so
 answer files make installs repeatable in CI and IaC pipelines.
 

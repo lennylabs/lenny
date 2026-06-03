@@ -20,7 +20,7 @@ evaluation and direct Helm, see [Installation](installation.html).
 
 ## Interactive wizard
 
-Run `lenny-ctl install` with no `--answer-file` flag to start the interactive
+Run `lenny-ctl install` with no `--answers` flag to start the interactive
 wizard:
 
 ```bash
@@ -59,15 +59,15 @@ lenny-ctl install --save-answers ./answers.yaml
 
 ## Non-interactive answer-file path
 
-`--answer-file <path>` reads a YAML answer file instead of prompting. This path
+`--answers <path>` reads a YAML answer file instead of prompting. This path
 performs no terminal interaction, so it is repeatable for CI and
 infrastructure-as-code pipelines:
 
 ```bash
-lenny-ctl install --answer-file ./answers.yaml
+lenny-ctl install --answers ./answers.yaml
 ```
 
-`--non-interactive` requires `--answer-file` and never prompts; the install
+`--non-interactive` requires `--answers` and never prompts; the install
 fails fast when no answer file is supplied. The values composition and the
 `helm install` command are identical to the interactive path. Only answer
 collection differs.
@@ -132,7 +132,7 @@ variables before running the install:
 ```bash
 export LENNY_PG_DSN="postgres://lenny:...@pg.acme.com:5432/lenny"
 export LENNY_REDIS_URL="rediss://:...@redis.acme.com:6380"
-lenny-ctl install --answer-file charts/lenny/answers/tier2-prod.yaml
+lenny-ctl install --answers charts/lenny/answers/tier2-prod.yaml
 ```
 
 ---
@@ -169,20 +169,38 @@ restore model.
 
 | Flag | Effect |
 |---|---|
-| `--answer-file <path>` | Read answers from a YAML file. The alias `--answers` names the same input. |
-| `--non-interactive` | Require `--answer-file`; never prompt. |
+| `--answers <path>` | Read answers from a YAML file. |
+| `--non-interactive` | Require `--answers`; never prompt. |
 | `--save-answers <path>` | Write the resolved answers back to a YAML file. |
 | `--output-values <path>` | Write the composed Helm values to a file. |
 | `--chart <path>` | Chart directory. The default is `charts/lenny`. |
 | `--release <name>` | Override the release name from the answer file. |
 | `--namespace <ns>` | Override the release namespace from the answer file. |
 | `--offline` | Skip cluster-reachability detection probes. |
+| `--skip-smoke-test` | Skip the post-install smoke test against the `chat` reference runtime. |
 | `--dry-run` | Print the composed values and the `helm install` command without running Helm. |
 
 The `--release` and `--namespace` flags override the answer file's release
 coordinates, so one answer file can be reused across releases. `helm install`
 runs as a subprocess; the install fails with a clear message when `helm` is not
 on the `PATH`.
+
+---
+
+## Smoke test
+
+After `helm install` succeeds, the wizard runs a smoke test against the `chat`
+reference runtime. It polls the gateway `/healthz` endpoint for up to 120
+seconds, then issues a `lenny/create_session` MCP round-trip when an admin
+token is available. The wizard resolves the gateway URL from `LENNY_API_URL`,
+falling back to `https://<domain>` when the answer file sets a gateway domain,
+and resolves the token from `LENNY_API_TOKEN`. When no token is set the smoke
+test stops after the health probe and reports the round-trip as skipped. When
+no gateway URL can be determined the smoke test is skipped entirely.
+
+A smoke-test failure prints the rollback procedure (`helm uninstall`) and exits
+non-zero so a broken install is not reported as successful. Pass
+`--skip-smoke-test` to omit the phase.
 
 ---
 

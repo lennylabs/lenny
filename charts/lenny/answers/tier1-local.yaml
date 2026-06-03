@@ -1,11 +1,11 @@
-# Answer file for `lenny-ctl install --answer-file` — Tier 1, local.
+# Answer file for `lenny-ctl install --answers` — Tier 1, local.
 #
 # This drives a Tier 1 install for a local cluster or a development
 # environment. The wizard layers presets/values-tier1.yaml under the
 # per-question overrides composed from this file.
 #
 # Run:
-#   lenny-ctl install --answer-file charts/lenny/answers/tier1-local.yaml
+#   lenny-ctl install --answers charts/lenny/answers/tier1-local.yaml
 #
 # The answer-file schema is documented in charts/lenny/answers/README.md.
 

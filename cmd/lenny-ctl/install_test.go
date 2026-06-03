@@ -28,7 +28,7 @@ func writeAnswerFile(t *testing.T, name, content string) string {
 
 func TestParseInstallFlags(t *testing.T) {
 	cfg, err := parseInstallFlags([]string{
-		"--answer-file", "a.yaml",
+		"--answers", "a.yaml",
 		"--output-values", "v.yaml",
 		"--release", "rel",
 		"--namespace", "ns",
@@ -51,14 +51,23 @@ func TestParseInstallFlags(t *testing.T) {
 	}
 }
 
-func TestParseInstallFlagsAnswersAlias(t *testing.T) {
-	// --answers is the §24.20 spelling of --answer-file.
+func TestParseInstallFlagsAnswers(t *testing.T) {
+	// --answers is the sole §24.20 spelling of the answer-file flag.
 	cfg, err := parseInstallFlags([]string{"--answers", "a.yaml"})
 	if err != nil {
 		t.Fatalf("parseInstallFlags: %v", err)
 	}
 	if cfg.answerFile != "a.yaml" {
 		t.Errorf("--answers should set answerFile: %q", cfg.answerFile)
+	}
+}
+
+// TestParseInstallFlagsRejectsAnswerFileAlias asserts the removed
+// --answer-file alias is no longer accepted; the spec uses --answers only.
+// spec: §24.20 lines 300, 304. F-24.20.7.
+func TestParseInstallFlagsRejectsAnswerFileAlias(t *testing.T) {
+	if _, err := parseInstallFlags([]string{"--answer-file", "a.yaml"}); err == nil {
+		t.Error("--answer-file should be rejected as an unknown flag")
 	}
 }
 
@@ -69,8 +78,44 @@ func TestParseInstallFlagsUnknownFlag(t *testing.T) {
 }
 
 func TestParseInstallFlagsMissingValue(t *testing.T) {
-	if _, err := parseInstallFlags([]string{"--answer-file"}); err == nil {
-		t.Error("--answer-file without a value should error")
+	if _, err := parseInstallFlags([]string{"--answers"}); err == nil {
+		t.Error("--answers without a value should error")
+	}
+}
+
+// TestParseInstallFlagsOfflineAndSkipSmoke asserts the boolean phase-gating
+// flags parse. spec: §24.20 lines 299, 302. F-24.20.4 / F-24.20.6.
+func TestParseInstallFlagsOfflineAndSkipSmoke(t *testing.T) {
+	cfg, err := parseInstallFlags([]string{"--offline", "--skip-smoke-test"})
+	if err != nil {
+		t.Fatalf("parseInstallFlags: %v", err)
+	}
+	if !cfg.offline {
+		t.Error("--offline should set cfg.offline")
+	}
+	if !cfg.skipSmoke {
+		t.Error("--skip-smoke-test should set cfg.skipSmoke")
+	}
+}
+
+// TestCmdInstallOfflineSkipsDetection asserts --offline skips the cluster
+// detection phase: the wizard prints the offline-skip summary instead of a
+// cluster-capability probe. The detection phase is the cluster-reachability
+// probe (§17.6), so skipping it satisfies §24.20 line 302. F-24.20.6.
+func TestCmdInstallOfflineSkipsDetection(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	// Interactive path (no --answers) with all-default answers from stdin;
+	// --offline avoids the kubectl probe, --dry-run stops before helm.
+	stdin := strings.NewReader(strings.Repeat("\n", 40))
+	code := cmdInstall([]string{"--offline", "--dry-run"}, stdin, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Detection phase skipped (--offline)") {
+		t.Errorf("--offline should skip detection: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "cluster capability summary") {
+		t.Errorf("--offline should not run the cluster probe: %s", stdout.String())
 	}
 }
 
@@ -586,7 +631,7 @@ postgres:
   dsn: postgres://lenny@db:5432/lenny
 `)
 	var stdout, stderr bytes.Buffer
-	code := cmdInstall([]string{"--answer-file", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
+	code := cmdInstall([]string{"--answers", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code: got %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -614,7 +659,7 @@ postgres:
   dsn: "${LENNY_TEST_PG_DSN}"
 `)
 	var stdout, stderr bytes.Buffer
-	code := cmdInstall([]string{"--answer-file", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
+	code := cmdInstall([]string{"--answers", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code: got %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -626,7 +671,7 @@ postgres:
 func TestCmdInstallRejectsInvalidAnswerFile(t *testing.T) {
 	path := writeAnswerFile(t, "answers.yaml", "environment: prod\ntier: tier9\nauth:\n  mode: oidc\n")
 	var stdout, stderr bytes.Buffer
-	code := cmdInstall([]string{"--answer-file", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
+	code := cmdInstall([]string{"--answers", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code: got %d, want 1", code)
 	}
@@ -638,7 +683,7 @@ func TestCmdInstallRejectsInvalidAnswerFile(t *testing.T) {
 func TestCmdInstallRejectsMalformedAnswerFile(t *testing.T) {
 	path := writeAnswerFile(t, "answers.yaml", "environment: [unterminated")
 	var stdout, stderr bytes.Buffer
-	code := cmdInstall([]string{"--answer-file", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
+	code := cmdInstall([]string{"--answers", path, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("malformed answer file: exit code %d, want 1", code)
 	}
@@ -646,7 +691,7 @@ func TestCmdInstallRejectsMalformedAnswerFile(t *testing.T) {
 
 func TestCmdInstallMissingAnswerFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := cmdInstall([]string{"--answer-file", "/nonexistent/answers.yaml", "--dry-run"},
+	code := cmdInstall([]string{"--answers", "/nonexistent/answers.yaml", "--dry-run"},
 		strings.NewReader(""), &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("missing answer file: exit code %d, want 1", code)
@@ -657,7 +702,7 @@ func TestCmdInstallNonInteractiveRequiresAnswerFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := cmdInstall([]string{"--non-interactive"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 {
-		t.Errorf("--non-interactive without --answer-file: exit code %d, want 2", code)
+		t.Errorf("--non-interactive without --answers: exit code %d, want 2", code)
 	}
 }
 
@@ -672,7 +717,7 @@ auth:
 `)
 	var stdout, stderr bytes.Buffer
 	code := cmdInstall(
-		[]string{"--answer-file", path, "--release", "from-flag", "--namespace", "ns-from-flag", "--dry-run"},
+		[]string{"--answers", path, "--release", "from-flag", "--namespace", "ns-from-flag", "--dry-run"},
 		strings.NewReader(""), &stdout, &stderr,
 	)
 	if code != 0 {
@@ -686,12 +731,16 @@ auth:
 	}
 }
 
+// TestCmdInstallSaveAnswers asserts --save-answers composes with --dry-run:
+// the answer file is written and helm is not invoked (the dry-run gate
+// short-circuits before the preflight/helm phases). spec: §24.20 line 301
+// ("Does not run `helm install` when combined with --dry-run"). F-24.20.5.
 func TestCmdInstallSaveAnswers(t *testing.T) {
 	path := writeAnswerFile(t, "answers.yaml", "environment: local\ntier: tier1\nauth:\n  mode: dev\n")
 	saved := filepath.Join(t.TempDir(), "saved.yaml")
 	var stdout, stderr bytes.Buffer
 	code := cmdInstall(
-		[]string{"--answer-file", path, "--save-answers", saved, "--dry-run"},
+		[]string{"--answers", path, "--save-answers", saved, "--dry-run"},
 		strings.NewReader(""), &stdout, &stderr,
 	)
 	if code != 0 {
@@ -709,6 +758,14 @@ func TestCmdInstallSaveAnswers(t *testing.T) {
 	if a.Environment != "local" || a.Tier != "tier1" {
 		t.Errorf("saved answers lost fields: %+v", a)
 	}
+	// The dry-run gate must short-circuit before helm so --save-answers
+	// captures answers without applying. F-24.20.5.
+	if !strings.Contains(stderr.String(), "--dry-run set; not invoking helm") {
+		t.Errorf("--save-answers + --dry-run should not invoke helm: stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "answers written to") {
+		t.Errorf("--save-answers should report the written file: stderr=%s", stderr.String())
+	}
 }
 
 func TestCmdInstallOutputValues(t *testing.T) {
@@ -724,7 +781,7 @@ redis:
 	outValues := filepath.Join(t.TempDir(), "composed.yaml")
 	var stdout, stderr bytes.Buffer
 	code := cmdInstall(
-		[]string{"--answer-file", path, "--output-values", outValues, "--dry-run"},
+		[]string{"--answers", path, "--output-values", outValues, "--dry-run"},
 		strings.NewReader(""), &stdout, &stderr,
 	)
 	if code != 0 {

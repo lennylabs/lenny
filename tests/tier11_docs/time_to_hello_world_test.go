@@ -298,7 +298,7 @@ func TestOperatorInstallNonInteractive(t *testing.T) {
 	lennyCtl := buildBinary(t, "./cmd/lenny-ctl", "lenny-ctl")
 
 	t.Run("install_with_answers_file", func(t *testing.T) {
-		// `lenny-ctl install --non-interactive --answer-file <f>` reads
+		// `lenny-ctl install --non-interactive --answers <f>` reads
 		// a YAML answer file and composes the Helm values (§17.6 /
 		// §24.20). --dry-run stops before invoking helm, so this step
 		// asserts the composition path — the part a CI pipeline depends
@@ -320,7 +320,7 @@ func TestOperatorInstallNonInteractive(t *testing.T) {
 
 		var sb strings.Builder
 		install := exec.Command(lennyCtl, "install",
-			"--non-interactive", "--answer-file", answerFile, "--dry-run")
+			"--non-interactive", "--answers", answerFile, "--dry-run")
 		install.Dir = repoRoot(t)
 		install.Stdout = &sb
 		install.Stderr = &sb
@@ -357,7 +357,7 @@ func TestOperatorInstallNonInteractive(t *testing.T) {
 		}
 		var sb strings.Builder
 		install := exec.Command(lennyCtl, "install",
-			"--non-interactive", "--answer-file", answerFile, "--dry-run")
+			"--non-interactive", "--answers", answerFile, "--dry-run")
 		install.Dir = repoRoot(t)
 		install.Stdout = &sb
 		install.Stderr = &sb
