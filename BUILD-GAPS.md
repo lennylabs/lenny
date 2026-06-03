@@ -32027,7 +32027,7 @@ in either direction.
 
 **Deferred:** Confirmed duplicate of F-24.0.1; deferred for the same reason. Unifying `cmd/lenny` and `cmd/lenny-ctl` into one binary that exposes every subcommand under both names is a dedicated refactor batch.
 
-### - [ ] F-17.4.10 — `lenny session` covers only `new`; spec §24.17 lists eight verbs [High] — OPEN
+### - [x] F-17.4.10 — `lenny session` covers only `new`; spec §24.17 lists eight verbs [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.17.2 — Both report lenny session implements only the new verb and the other §24.17 subcommands (attach/send/interrupt/cancel/list/get/logs) are missing in cmd/lenny/session.go.
 
@@ -32045,6 +32045,8 @@ interrupt, or cancel a session.
 The spec example workflow on line 150 (`lenny session new --runtime=chat --attach
 "hello"    # Ready to use in < 60s`) is therefore unrunnable in any sense matching the
 spec.
+
+**Resolution:** Closed by F-24.17.2 (commit 2458e503). `pkg/embedded/localcli/session.go` now implements `new`/`send`/`interrupt`/`cancel`/`list`/`get`/`logs`; `attach` is the lone remaining verb, deferred under F-24.17.4 pending the §15.1 MCP SSE channel.
 
 ---
 
@@ -38292,13 +38294,15 @@ Impl: `cmd/lenny-ctl/`, `cmd/lenny/`, `pkg/gateway/sessionserver/`, `pkg/gateway
 
 ### Findings
 
-### - [ ] F-24.17.1 — `lenny-ctl session` subcommand tree not wired [High] — OPEN
+### - [x] F-24.17.1 — `lenny-ctl session` subcommand tree not wired [High] — CLOSED
 
 The lenny-ctl dispatcher (`/Users/joan/projects/lenny/cmd/lenny-ctl/main.go` lines 73-122) routes `health`, `version`, `bootstrap`, `install`, `runtime`, `admin`, `runbooks`, `locks`, `escalations`, `diagnose`, `drift`, and `help`. There is no `case "session":` arm. The usage string (lines 124-169) lists no `session` commands. `lenny-ctl session new ...` exits with `lenny-ctl: unknown command "session"` and return code 2.
 
 §24, line 6 makes the `lenny-ctl session` form normative ("preferred in operator runbooks"). The dispatcher omission breaks that contract entirely; operators in clustered installs (the primary lenny-ctl audience) have no path to session operations.
 
-### - [ ] F-24.17.2 — Seven of the eight subcommands are unimplemented [High] — OPEN
+**Resolution:** Verify-closed. `lenny-ctl session …` is already wired: `localcli.Local("session")` returns true and `cmd/lenny-ctl/main.go` delegates every Embedded Mode local command to the shared `pkg/embedded/localcli` dispatcher (commit baf5384e), so the §24.17 session tree is reachable under both binary names. Regression test `TestSessionDelegatesToLocalCLI` pins it (commit 2458e503).
+
+### - [x] F-24.17.2 — Seven of the eight subcommands are unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.4.10 — Both report lenny session implements only the new verb and the other §24.17 subcommands (attach/send/interrupt/cancel/list/get/logs) are missing in cmd/lenny/session.go.
 
@@ -38325,7 +38329,9 @@ Missing entirely:
 
 This is the bulk of §24.17. Eight rows in the spec table; one is implemented and only for the short binary name.
 
-### - [ ] F-24.17.3 — `session new` uses REST `POST /v1/sessions/start`, not MCP `lenny/create_session` [High] — OPEN
+**Resolution:** Closed by commit 2458e503. `pkg/embedded/localcli/session.go` now implements `send`, `interrupt`, `cancel`, `list`, `get`, and `logs` alongside `new`; only `attach` remains, deferred under F-24.17.4 (it needs the §15.1 MCP SSE channel). Closes the duplicate F-17.4.10.
+
+### - [x] F-24.17.3 — `session new` uses REST `POST /v1/sessions/start`, not MCP `lenny/create_session` [High] — CLOSED
 
 §24.17 line 209 is unambiguous: "Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses." Line 213 maps `session new` to "MCP `lenny/create_session` + stream."
 
@@ -38340,7 +38346,9 @@ The REST `POST /v1/sessions/start` handler is registered at `/Users/joan/project
 
 Consequence: the §15.2.1 REST↔MCP parity contract is not exercised by the CLI, no MCP stream is opened, and the `--attach` flag described in line 213 ("opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline") has no transport to attach to.
 
-### - [ ] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — OPEN
+**Resolution:** Closed by commit 2458e503. `session new` now drives the §15.2 MCP `lenny/create_session` tool through the Lenny Go client SDK's `MCPClient.CreateSession`, replacing the REST `POST /v1/sessions/start` call (§24.17 line 209). `TestSessionNewRoutesThroughMCP_spec_24_17_209` pins the MCP path.
+
+### - [x] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — DEFERRED
 
 The spec signature is `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...`. The `cmdSessionNew` flag parser (`/Users/joan/projects/lenny/cmd/lenny/session.go` lines 46-54) accepts only `--runtime`:
 
@@ -38355,31 +38363,45 @@ for i := 0; i < len(args); i++ {
 
 Spec also requires `--attach` to default ON in interactive TTYs (line 213). No TTY detection, no streaming attach path, no workspace materialization, no file upload.
 
-### - [ ] F-24.17.5 — MCP server registers no `lenny/interrupt` or `lenny/cancel_session` tools [High] — OPEN
+**Resolution:** DEFERRED. `--attach` is now accepted and reports its deferral, pointing the operator at `session logs <id>` for output. Inline streaming requires the §15.1 Streamable-HTTP SSE channel on `/mcp`, which is unbuilt (F-9.1.7 OPEN); `--workspace` / `--file` require the §7.4 mid-session upload pipeline (F-7.4.1 / F-7.4.6 OPEN). Re-attempt once those land.
+
+### - [x] F-24.17.5 — MCP server registers no `lenny/interrupt` or `lenny/cancel_session` tools [High] — CLOSED
 
 §24.17 lines 216-217 map `session interrupt` to MCP `lenny/interrupt` and `session cancel` to MCP `lenny/cancel_session`. The MCP tool catalog in `/Users/joan/projects/lenny/pkg/gateway/mcptools/mcptools.go` registers (per `grep -n "Name:.*\"lenny/"`): `create_session`, `send_message`, `get_task_tree`, `cancel_child`, `await_children`, `set_tracing_context`, `output`, `request_input`, `request_elicitation`, `discover_agents`, `list_runtimes`, `delegate_task`, `memory_write`, `memory_query`. Neither `lenny/interrupt` nor `lenny/cancel_session` is registered. (`cancel_child` is a §8 delegation tool, not the §24.17 session-level cancel.)
 
 REST equivalents exist (`POST /v1/sessions/{id}/interrupt`, `POST /v1/sessions/{id}/terminate` — see `sessionserver.go:464-467`). The MCP surface is missing the corresponding tools that §24.17 names as the CLI mapping targets.
 
-### - [ ] F-24.17.6 — No `GET /v1/sessions/{id}/logs` endpoint [High] — OPEN
+**Resolution:** Verify-closed (stale evidence) plus client wiring (commit 5ae141d8). Both tools are in fact registered on the gateway MCP surface: `lenny/interrupt_session` (the canonical §15.2 line 1295 catalog name — §24.17's `lenny/interrupt` is shorthand for the same tool) and `lenny/cancel_session` (exact). The client side is now wired through SDK `MCPClient.InterruptSession` / `CancelSession`, which the `session interrupt` / `session cancel` verbs call.
+
+### - [x] F-24.17.6 — No `GET /v1/sessions/{id}/logs` endpoint [High] — CLOSED
 
 §24.17 line 220 maps `session logs` to `GET /v1/sessions/{id}/logs`, "paginated, streamable via SSE." The session-server mux (`/Users/joan/projects/lenny/pkg/gateway/sessionserver/sessionserver.go:452-486`) registers no `/logs` route. The closest existing endpoints are `GET /v1/sessions/{id}/transcript` (line 478) and `GET /v1/sessions/{id}/events` (line 482). Neither is the spec-named target, and neither is referenced from a `session logs` CLI command (which itself does not exist; see F2).
 
-### - [ ] F-24.17.7 — No Lenny Go client SDK [High] — OPEN
+**Resolution:** Closed by commit 197bf971. Added `GET /v1/sessions/{id}/logs` (§15.1 line 673) in `pkg/gateway/sessionserver/logs.go`, sourced from the durable session event store, content-negotiated SSE / JSON-envelope with the §24.17 `--since` filter and §15.1 line 1228 pagination; 404 on a missing/cross-tenant session. SDK `Client.SessionLogs` and the `session logs` verb (commits 5ae141d8, 2458e503) consume it.
+
+### - [x] F-24.17.7 — No Lenny Go client SDK [High] — CLOSED
 
 §24, line 6 and §24.17, line 209 require the CLI to use "the Lenny Go client SDK" (§15.6). No package matching `pkg/sdk`, `pkg/client`, or comparable exists; the only client packages are `pkg/ctl` (admin REST), `pkg/gateway/adapterclient` (gateway→runtime), `pkg/gateway/credassign` (intra-gateway), and `pkg/adapter/mcp` (runtime→gateway MCP, server side). The user-facing Go client SDK that §24.17 mandates as the CLI's transport is absent, which forecloses any compliant implementation of attach/send/interrupt/cancel/logs streaming.
 
-### - [ ] F-24.17.8 — `session new` output is a bare session id, not the streamed/elicitation/lifecycle output the spec describes [Medium] — OPEN
+**Resolution:** Verify-closed (stale). The Lenny Go client SDK exists at `sdks/client/go/lenny` (the §15.6 deliverable): the full §15.1 REST surface, the §15.2 MCP client (`MCPClient`), streaming, retries with backoff, and webhook verification. This batch extended it with `MCPClient.InterruptSession` / `CancelSession` and `Client.SessionLogs` (commit 5ae141d8); the §24.17 CLI now embeds it (commit 2458e503).
+
+### - [x] F-24.17.8 — `session new` output is a bare session id, not the streamed/elicitation/lifecycle output the spec describes [Medium] — DEFERRED
 
 `cmdSessionNew` line 120 prints only `created.ID` on stdout and exits. Spec line 213 describes a CLI that "renders the session's output, elicitation prompts, and lifecycle transitions inline until the session terminates" when attached. Even when `--attach` is omitted (non-interactive), the CLI is expected to support the attach path for interactive use; the current implementation has no rendering loop at all.
 
-### - [ ] F-24.17.9 — `lenny session` falls back to running stack discovery, not `--api-url` / `LENNY_API_URL` [Medium] — OPEN
+**Resolution:** DEFERRED with F-24.17.4. The inline output / elicitation / lifecycle render loop needs the §15.1 Streamable-HTTP SSE channel on `/mcp` (F-9.1.7 OPEN). `session logs <id>` is the available follow path today; `session new` prints the created id and (with `--attach`) a notice pointing there.
+
+### - [x] F-24.17.9 — `lenny session` falls back to running stack discovery, not `--api-url` / `LENNY_API_URL` [Medium] — CLOSED
 
 §24.17 line 222 states `lenny session` commands "honor the same `--api-url` / `LENNY_API_URL` discovery rules as admin commands." `cmdSessionNew` (lines 60-68) calls `stack.RunningGateway("")` against the Embedded Mode state directory and refuses to run if no stack is recorded ("no running stack; run 'lenny up' first"). It accepts neither `--api-url` nor `LENNY_API_URL`. This rules out using the short-form binary against a remote/clustered gateway, which §24.17 explicitly permits.
 
-### - [ ] F-24.17.10 — Auth uses Embedded OIDC key, not the bearer-token discovery rules of §24 [Medium] — OPEN
+**Resolution:** Closed by commit 2458e503. Session commands now resolve the gateway via `--api-url`, then `LENNY_API_URL`, then the Embedded Mode stack (§24.17 line 222), so the binary reaches a remote/clustered gateway. `TestSessionDiscoversAPIURLFromEnv_spec_24_17_9` covers the env path.
+
+### - [x] F-24.17.10 — Auth uses Embedded OIDC key, not the bearer-token discovery rules of §24 [Medium] — CLOSED
 
 §24 line 8 requires `LENNY_API_TOKEN` or `--token`. `cmdSessionNew` lines 70-86 mints a token from the persisted embedded OIDC key (`paths.OIDCKeyFile()`); there is no `--token` / `LENNY_API_TOKEN` path. Coupled with F9, this means the CLI cannot authenticate against any non-Embedded gateway.
+
+**Resolution:** Closed by commit 2458e503. Session commands now resolve the bearer via `--token`, then `LENNY_API_TOKEN`, then the embedded OIDC key (§24 line 8), so the CLI authenticates against a non-Embedded gateway. `TestSessionListPassesBearer_spec_24_17_10` asserts the bearer reaches the gateway.
 
 ### - [x] F-24.17.11 — `session new` ignores `--output json` / `--quiet` global flags [Low] — CLOSED
 
