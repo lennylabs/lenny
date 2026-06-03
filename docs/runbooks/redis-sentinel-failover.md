@@ -32,23 +32,41 @@ Redis Sentinel promoted a replica to master after the previous master became unr
 
 ## Diagnosis
 
-1. Identify the new master.
+### Step 1 — Identify the new master
 
-       kubectl exec -n lenny-system statefulset/lenny-redis-sentinel -- \
-         redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl exec -n lenny-system statefulset/lenny-redis-sentinel -- \
+  redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+```
 
-2. Confirm the gateway is using it.
+### Step 2 — Confirm the gateway is using the new master
 
-       kubectl exec -n lenny-system deployment/lenny-gateway -- \
-         curl -s localhost:9090/metrics | grep lenny_redis_current_master
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl exec -n lenny-system deployment/lenny-gateway -- \
+  curl -s localhost:9090/metrics | grep lenny_redis_current_master
+```
 
-3. Inspect the previous master's logs for the failure cause (OOM, network partition, replication lag).
+### Step 3 — Inspect the previous master's logs for the failure cause
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl logs -n lenny-system statefulset/lenny-redis --previous
+```
+
+Look for an out-of-memory kill, a network partition, or replication lag on the demoted master.
 
 ## Remediation
 
-1. Once the failure cause is resolved, restart the demoted master so it rejoins as a replica.
-2. If the §11.2 MAX-rule reconciliation did not catch up, run `lenny-ctl admin quota reconcile --tenant <id>` to force a checkpoint reload.
-3. If repeated failovers occur within an hour, see the Redis Sentinel documentation for split-brain mitigation and add a third Sentinel node.
+### Step 4 — Force a quota checkpoint reload if reconciliation lagged
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin quota reconcile --tenant <id>
+```
+
+Once the failure cause is resolved, restart the demoted master so it rejoins as a replica. If the §11.2 MAX-rule reconciliation did not catch up, the command above forces a checkpoint reload. If repeated failovers occur within an hour, see the Redis Sentinel documentation for split-brain mitigation and add a third Sentinel node.
 
 ## Verification
 

@@ -24,14 +24,41 @@ The `CredentialRotationFailed` alert fires when the §16.5 condition documented 
 
 ## Diagnosis
 
-1. Inspect the firing alert's labels for the affected component and tenant.
-2. Correlate with the gateway and component logs for the same time window.
-3. Check the §16.5 dashboards for upstream and downstream signals.
+### Step 1 — Read the firing alert and its labels
+
+<!-- access: api method=GET path=/v1/admin/events -->
+```
+GET /v1/admin/events?type=dev.lenny.alert_fired
+```
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl events list --type alert_fired
+```
+
+Identify the firing alert and read its labels for the affected component and tenant.
+
+### Step 2 — Correlate the gateway and component logs
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl logs -n lenny-system deployment/lenny-gateway --since=15m
+```
+
+Correlate the gateway and component logs for the same time window, and check the §16.5 dashboards for upstream and downstream signals.
+
+### Step 3 — Confirm the component health row
+
+<!-- access: api method=GET path=/v1/admin/health -->
+```
+GET /v1/admin/health
+```
+
+Confirm which §16.5 health component the alert maps to and whether it reports `degraded` or `unhealthy`.
 
 ## Remediation
 
-1. Apply the documented remediation for the named alert: see the chaos test mapped to this runbook in `tests/tier8_chaos/runbook-map.yaml` for the failure shape and the recovery path the platform exercises.
-2. If the alert persists after the documented remediation, escalate per the Escalation section.
+Apply the documented remediation for the named alert. The chaos test mapped to this runbook in `tests/tier8_chaos/runbook-map.yaml` records the failure mode and the recovery path the platform exercises. If the alert persists after the documented remediation, escalate per the Escalation section.
 
 ## Verification
 

@@ -44,78 +44,118 @@ The `lenny-tier-promote` CLI runs the gate set in `pkg/tierpromotion` against th
 
 The pre-promotion gates verify that the source posture is healthy and that the target posture is reachable. Each check below maps to one `lenny-tier-promote` rule; a `FAIL` identifies the offending resource. The CLI takes `--from` and `--to` directly; it has no `validate` subcommand.
 
-1. Confirm the cluster context and namespace.
+### Step 1 — Confirm the cluster context and namespace
 
-       kubectl config current-context
-       kubectl get ns lenny-system
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl config current-context
+kubectl get ns lenny-system
+```
 
-2. Run the promotion gates against the current release.
+### Step 2 — Run the promotion gates against the current release
 
-       lenny-tier-promote \
-         --from tier1 \
-         --to tier2 \
-         --namespace lenny-system
+<!-- access: cluster requires=helm-cli -->
+```bash
+lenny-tier-promote \
+  --from tier1 \
+  --to tier2 \
+  --namespace lenny-system
+```
 
-   The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, §13.1/§13.2 admission-webhook coverage, the autoscaling provider (§17.8.3 line 1285), the SCL-036 burst-absorption floor (§17.8.2 line 950), and the Phase 13.5 attestations required by §17.8.3 (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration). A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
+The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, §13.1/§13.2 admission-webhook coverage, the autoscaling provider (§17.8.3 line 1285), the SCL-036 burst-absorption floor (§17.8.2 line 950), and the Phase 13.5 attestations required by §17.8.3 (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration). A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
 
-3. Take a fresh backup via `POST /v1/admin/backups` (see [backup-and-restore.md](backup-and-restore.md)). Record the backup id; the promotion procedure rolls back to this snapshot on a Phase 4 failure.
+### Step 3 — Take a fresh backup
+
+<!-- access: api method=POST path=/v1/admin/backups -->
+```
+POST /v1/admin/backups
+```
+
+Take a fresh backup (see [backup-and-restore.md](backup-and-restore.md)). Record the backup id; the promotion procedure rolls back to this snapshot on a Phase 4 failure.
 
 ## Remediation
 
 The upgrade applies the target tier preset, waits for the rolling restart, and re-runs the gates to confirm the promoted posture. A failed post-check rolls back to the pre-promotion release.
 
-### Upgrade
+### Step 4 — Apply the target tier's preset values file
 
-4. Apply the target tier's preset values file.
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm upgrade lenny charts/lenny \
+  --namespace lenny-system \
+  --values charts/lenny/presets/values-tier2.yaml \
+  --wait --timeout 10m
+```
 
-       helm upgrade lenny charts/lenny \
-         --namespace lenny-system \
-         --values charts/lenny/presets/values-tier2.yaml \
-         --wait --timeout 10m
+The chart's pre-install Job (`lenny-preflight`) runs the §17.9 admission-plane checks before the upgrade proceeds. A non-zero exit from the Job aborts the upgrade with the rendered manifests un-applied.
 
-   The chart's pre-install Job (`lenny-preflight`) runs the §17.9 admission-plane checks before the upgrade proceeds. A non-zero exit from the Job aborts the upgrade with the rendered manifests un-applied.
+### Step 5 — Wait for the rolling restart to complete
 
-5. Wait for the rolling restart to complete.
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl rollout status -n lenny-system deployment/lenny-gateway
+kubectl rollout status -n lenny-system deployment/lenny-ops
+```
 
-       kubectl rollout status -n lenny-system deployment/lenny-gateway
-       kubectl rollout status -n lenny-system deployment/lenny-ops
+### Step 6 — Re-run the gate against the promoted release
 
-### Post-checks (run after the upgrade)
+<!-- access: cluster requires=helm-cli -->
+```bash
+lenny-tier-promote \
+  --from tier1 \
+  --to tier2 \
+  --namespace lenny-system
+```
 
-6. Re-run the same gate against the promoted release. The gate reads the live cluster, so running it after the upgrade confirms that the replica counts, the admission-webhook inventory, the storage class, and the §17.8.3 attestations now match the target tier.
+The gate reads the live cluster, so running it after the upgrade confirms that the replica counts, the admission-webhook inventory, the storage class, and the §17.8.3 attestations now match the target tier.
 
-       lenny-tier-promote \
-         --from tier1 \
-         --to tier2 \
-         --namespace lenny-system
+### Step 7 — Smoke-test the admin API and an end-to-end session
 
-7. Smoke-test the admin API and an end-to-end session.
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin tenants list
+```
 
-       lenny-ctl admin tenants list
-       curl -fsS -X POST https://<gateway-host>/v1/sessions \
-         -H "Authorization: Bearer <token>" \
-         -d '{"runtimeRef":"echo","tenantId":"default"}'
+<!-- access: api method=POST path=/v1/sessions -->
+```bash
+curl -fsS -X POST https://<gateway-host>/v1/sessions \
+  -H "Authorization: Bearer <token>" \
+  -d '{"runtimeRef":"echo","tenantId":"default"}'
+```
 
-8. Confirm the new alert posture is wired by checking that the Prometheus rules for the target tier are loaded.
+### Step 8 — Confirm the new alert posture is wired
 
-       kubectl get prometheusrule -n lenny-system
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl get prometheusrule -n lenny-system
+```
 
-### Rollback
+Confirm that the Prometheus rules for the target tier are loaded.
 
-If a post-check fails, roll back to the pre-promotion release.
+### Step 9 — Roll back on a failed post-check
 
-9. Revert the chart values.
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm rollback lenny --namespace lenny-system
+```
 
-       helm rollback lenny --namespace lenny-system
+If a post-check fails, revert the chart values with the command above.
 
-10. Verify the rollback restored the prior posture. The promotion gate validates promotions only and rejects a target tier below the source, so confirm the revert directly against the cluster rather than re-running the gate in the demotion direction.
+### Step 10 — Verify the rollback restored the prior posture
 
-        kubectl get deployment -n lenny-system \
-          -l app.kubernetes.io/part-of=lenny \
-          -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
-        helm get values lenny -n lenny-system
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl get deployment -n lenny-system \
+  -l app.kubernetes.io/part-of=lenny \
+  -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
+```
 
-11. If the underlying Postgres or admission-plane state is inconsistent after a rollback, restore from the backup recorded in step 3 (see [backup-and-restore.md](backup-and-restore.md)).
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm get values lenny -n lenny-system
+```
+
+The promotion gate validates promotions only and rejects a target tier below the source, so confirm the revert directly against the cluster rather than re-running the gate in the demotion direction. If the underlying Postgres or admission-plane state is inconsistent after a rollback, restore from the backup recorded in Step 3 (see [backup-and-restore.md](backup-and-restore.md)).
 
 ## Notes
 

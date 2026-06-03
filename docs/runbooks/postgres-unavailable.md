@@ -34,16 +34,29 @@ The `PostgresUnavailable` alert fires when `lenny_postgres_unhealthy` is 1 for m
 
 ## Diagnosis
 
-1. Confirm the gateway sees Postgres as unhealthy.
+### Step 1 — Confirm the gateway sees Postgres as unhealthy
 
-       kubectl exec -n lenny-system deployment/lenny-gateway -- \
-         curl -s localhost:9090/metrics | grep lenny_postgres
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl exec -n lenny-system deployment/lenny-gateway -- \
+  curl -s localhost:9090/metrics | grep lenny_postgres
+```
 
-2. Probe Postgres directly.
+### Step 2 — Probe Postgres directly
 
-       kubectl exec -n lenny-system statefulset/lenny-postgres -- pg_isready
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl exec -n lenny-system statefulset/lenny-postgres -- pg_isready
+```
 
-3. Inspect the Postgres logs for connection refusals, disk-full errors, or replication failures.
+### Step 3 — Inspect the Postgres logs
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl logs -n lenny-system statefulset/lenny-postgres --tail=200
+```
+
+Look for connection refusals, disk-full errors, or replication failures.
 
 ## Remediation
 

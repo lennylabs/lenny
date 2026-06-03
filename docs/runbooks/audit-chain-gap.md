@@ -30,41 +30,43 @@ The `AuditChainGap` alert fires when the §16.5 condition documented in the aler
 
 ## Diagnosis
 
-The chain verifier reports per-row state via the `chainIntegrity` field with the §11.7 enumeration: `verified`, `broken`, `unchecked`, `rechained_post_outage`, `gap_suspected`, and `redacted_gdpr`. Resolve which verdict is present before remediating, because only `broken` and unreceipted `redacted_gdpr` are genuine tamper signals.
+The chain verifier reports per-row state via the `chainIntegrity` field with the §11.7 enumeration: `verified`, `broken`, `unchecked`, `rechained_post_outage`, `gap_suspected`, and `redacted_gdpr`. Resolve which verdict is present before remediating, because only `broken` and unreceipted `redacted_gdpr` are genuine tamper signals. Identify the affected tenant and the row range from the firing alert's labels and the gateway logs for the same window.
 
-1. Identify the affected tenant and the row range from the firing alert's labels and the gateway logs for the same window.
+### Step 1 — Query the audit trail and read the chain-integrity verdict
 
-2. Query the audit trail for the tenant. The paginated response carries a `chainIntegrityReport` envelope tallying the per-row verdicts, so a single query classifies the discontinuity.
+The paginated response carries a `chainIntegrityReport` envelope tallying the per-row verdicts, so a single query classifies the discontinuity.
 
 <!-- access: api method=GET path=/v1/admin/audit-events -->
 ```
 GET /v1/admin/audit-events?tenantId=<tenant>&from=<rfc3339>&to=<rfc3339>&limit=500
 ```
 
-3. Read the `chainIntegrityReport.summary` counts and the per-row `chainIntegrity` values to determine the verdict:
+Read the `chainIntegrityReport.summary` counts and the per-row `chainIntegrity` values to determine the verdict:
 
-   - **`rechained_post_outage`** — the range was rewritten by the §25.9 reconciliation pass after a Postgres outage. This is an expected, authorized discontinuity. Confirm an outage covered the range by cross-referencing `ops_postgres_outage_log`.
-   - **`gap_suspected`** — a `sequence_number` gap was detected. Cross-reference `ops_postgres_outage_log` for an outage boundary that explains the gap before treating it as tampering.
-   - **`redacted_gdpr`** — a row was rewritten in place by the §12.8 `DeleteByUser` PII redaction step under GDPR Article 17. This is authorized only when the corresponding signed `RedactionReceipt` is present and its signature verifies; the verifier raises `broken` otherwise.
-   - **`broken`** — a mismatch not attributable to a known outage or a receipted redaction. Treat this as a potential tamper event and escalate.
+- **`rechained_post_outage`** — the range was rewritten by the §25.9 reconciliation pass after a Postgres outage. This is an expected, authorized discontinuity. Confirm an outage covered the range by cross-referencing `ops_postgres_outage_log`.
+- **`gap_suspected`** — a `sequence_number` gap was detected. Cross-reference `ops_postgres_outage_log` for an outage boundary that explains the gap before treating it as tampering.
+- **`redacted_gdpr`** — a row was rewritten in place by the §12.8 `DeleteByUser` PII redaction step under GDPR Article 17. This is authorized only when the corresponding signed `RedactionReceipt` is present and its signature verifies; the verifier raises `broken` otherwise.
+- **`broken`** — a mismatch not attributable to a known outage or a receipted redaction. Treat this as a potential tamper event and escalate.
 
-4. For a `gap_suspected` or `rechained_post_outage` verdict, confirm the outage boundary.
+### Step 2 — Confirm the outage boundary for a gap or rechain verdict
 
 <!-- access: api method=GET path=/v1/admin/audit-events/summary -->
 ```
 GET /v1/admin/audit-events/summary?tenantId=<tenant>&from=<rfc3339>&to=<rfc3339>
 ```
 
-   The summary groups counts by chain verdict so the operator can confirm the suspected range aligns with an `ops_postgres_outage_log` window. A gap whose bounds match an outage boundary is the expected `lenny-ops` deferred-write case rather than tampering.
+The summary groups counts by chain verdict so the operator can confirm the suspected range aligns with an `ops_postgres_outage_log` window. A gap whose bounds match an outage boundary is the expected `lenny-ops` deferred-write case rather than tampering.
 
-5. For a `broken` verdict, recompute the chain independently against the canonical Postgres tuple. The raw-canonical endpoint returns the exact field set Postgres hashed over, so an auditor can recompute `SHA-256(prev_hash || canonical_tuple)` without trusting the OCSF rendering. The endpoint requires the `audit:raw-canonical:read` scope.
+### Step 3 — Recompute the chain independently for a broken verdict
+
+For a `broken` verdict, recompute the chain against the canonical Postgres tuple. The raw-canonical endpoint returns the exact field set Postgres hashed over, so an auditor can recompute `SHA-256(prev_hash || canonical_tuple)` without trusting the OCSF rendering. The endpoint requires the `audit:raw-canonical:read` scope.
 
 <!-- access: api method=GET path=/v1/admin/audit-events/{seq} -->
 ```
 GET /v1/admin/audit-events/<sequence_number>?format=raw-canonical
 ```
 
-   Compare the recomputed hash against the stored `prev_hash` of the next row. If the platform has an external SIEM configured (`audit.siem.endpoint`), compare the Postgres rows against the independent SIEM copy: a database superuser can alter Postgres but cannot alter the SIEM stream, so a divergence localizes the tampered rows.
+Compare the recomputed hash against the stored `prev_hash` of the next row. If the platform has an external SIEM configured (`audit.siem.endpoint`), compare the Postgres rows against the independent SIEM copy: a database superuser can alter Postgres but cannot alter the SIEM stream, so a divergence localizes the tampered rows.
 
 ## Remediation
 

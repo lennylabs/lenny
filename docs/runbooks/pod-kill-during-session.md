@@ -38,20 +38,29 @@ The `AgentPodKilledDuringActiveSession` alert fires when:
 
 ## Diagnosis
 
-1. Identify the affected sandbox and session.
+### Step 1 — Identify the affected sandbox and session
 
-       kubectl get sandbox -n lenny-agents <sandbox-name>
-       kubectl logs -n lenny-system deployment/lenny-gateway --tail=200 | grep <session-id>
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl get sandbox -n lenny-agents <sandbox-name>
+kubectl logs -n lenny-system deployment/lenny-gateway --tail=200 | grep <session-id>
+```
 
-2. Determine the kill reason.
+### Step 2 — Determine the kill reason
 
-       kubectl get events -n lenny-agents --field-selector involvedObject.name=<pod-name> --sort-by=.lastTimestamp
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl get events -n lenny-agents --field-selector involvedObject.name=<pod-name> --sort-by=.lastTimestamp
+```
 
-   Look for `OOMKilled`, `Evicted`, `Killing` (preStop), or a node-drain notice.
+Look for `OOMKilled`, `Evicted`, `Killing` (preStop), or a node-drain notice.
 
-3. Confirm whether a §4.4 checkpoint completed before the kill.
+### Step 3 — Confirm whether a §4.4 checkpoint completed before the kill
 
-       lenny-ctl admin session get <session-id> --json | jq '.lastCheckpointAt'
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin session get <session-id> --json | jq '.lastCheckpointAt'
+```
 
 ## Remediation
 

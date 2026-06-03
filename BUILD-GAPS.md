@@ -33767,7 +33767,7 @@ runbook as a current deliverable.
 
 **Resolution.** `docs/runbooks/db-rollback.md` authored with the decision tree (down DDL / partial / full restore), step-by-step quiesce → safety-check → restore → re-apply → verify procedure, and the post-rollback drift-snapshot-refresh tail. Cross-linked from `schema-migration-failure.md:174`.
 
-### - [ ] F-17.7.7 — (Medium). 34 of 94 runbook files are stubs without `<!-- access: ... -->` markers; `/v1/admin/runbooks/{name}/steps` returns an empty step list for them [Medium] — OPEN
+### - [x] F-17.7.7 — (Medium). 34 of 94 runbook files are stubs without `<!-- access: ... -->` markers; `/v1/admin/runbooks/{name}/steps` returns an empty step list for them [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.7.6 — Both report that ~34-35 of 94 runbooks lack <!-- access: --> markers so steps.go returns empty /steps responses for them.
 
@@ -33804,6 +33804,8 @@ to free-text remediation, which the §25.7 design specifically tried to
 make optional. The audit-chain-gap stub is the live example: it
 documents a class of `AuditChainGapDetected` failures (§11.7 hash-chain
 break) without any executable remediation step.
+
+**Resolution.** Closed by F-25.7.6 (this batch). Every bundled runbook now carries `### ` step headings with `<!-- access: -->` markers, including the `audit-chain-gap.md` per-verdict diagnosis whose markers previously sat under the `## Diagnosis` level-2 heading and so produced no steps. Tier-11 `TestEveryRunbookProducesSteps_spec_25_7_3054` guards the catalogue against regressing to empty `/steps`.
 
 ### - [x] F-17.7.8 — (Medium). Spec lists `audit-chain` restoration as a normative §17.7 expectation; the runbook is a 42-line stub [Medium] — CLOSED
 
@@ -39900,11 +39902,13 @@ Spec lines 3236–3253 prescribe that an emitted `dev.lenny.alert_fired` event c
 
 **Resolution.** Closed by F-25.17.2 (confirmed duplicate). `EmitCallbacks` now emits `data.runbook` as the short slug via `Rule.RunbookSlug()` (derived from `RunbookShortName`, else the `RunbookURL` last segment) rather than the full annotation URL, resolving the line 3219/3251 inconsistency this finding called out. The `OnFired`-not-wired premise is stale: `evaluator.NewWithEmitter` already subscribes the firing edge to the shared EventEmitter in `cmd/lenny-ops/main.go`. Commit d7108545.
 
-### - [ ] F-25.7.6 — 35 of 94 runbooks lack the `<!-- access: -->` step markers, so their `/steps` responses are empty (Medium) [Medium] — OPEN
+### - [x] F-25.7.6 — 35 of 94 runbooks lack the `<!-- access: -->` step markers, so their `/steps` responses are empty (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.7.7 — Both report that ~34-35 of 94 runbooks lack <!-- access: --> markers so steps.go returns empty /steps responses for them.
 
 Spec lines 3032–3074 require each diagnosis and remediation step to carry one or more `<!-- access: -->` HTML comments naming the access path; the indexer extracts these into the `/steps` response. `pkg/ops/runbooks/steps.go:39–86` skips any `### `-prefixed heading that does not carry an access marker (`if cur != nil && len(cur.Paths) > 0` at line 57), so a runbook without markers returns `{"steps": []}`. 35 of the 94 bundled markdown files have no `<!-- access:` substring — examples include `certificate-expiry.md`, `agent-to-llm-partition.md`, `audit-chain-gap.md`, `cross-zone-partition.md`, `cred-guard-outage.md`, `crd-upgrade-immutable.md`, `delegation-budget-exhaustion.md`, `delegation-depth-deadlock.md`, `deny-list-under-redis-outage.md`, `double-claim-verification.md`, `elicitation-deadlock.md`, `emergency-credential-revocation.md`, `erasure-job-failure.md`, `gateway-to-pod-partition.md`, `kms-key-probe-stale.md`, `kms-unavailable.md`, `lease-extension-cool-off.md`, `legal-hold-override.md`, `minio-replication-lag.md`, `minio-unavailable.md`, `network-policy-config-drift.md`, `node-drain-during-minio-outage.md`, `parent-crash-await.md`, `pool-upgrade-rollback.md`, `redis-cluster-degraded.md`, `sandbox-claim-race.md`, `sandbox-finalizer-hang.md`, `schema-migration-dirty-flag.md`, `t3-t4-sla-breach.md`. An agent querying `/v1/admin/runbooks/<name>/steps` for any of these receives an empty list and falls back to LLM-parsing the markdown — which is acceptable as a graceful degradation but defeats the "machine consumers parse" promise at line 3054 for ~37 % of the bundled catalogue.
+
+**Resolution.** Every bundled runbook now exposes `### ` step headings carrying `<!-- access: -->` markers. The 30 byte-identical template stubs were converted to a uniform three-step diagnosis (read the firing alert via `GET /v1/admin/events` and `lenny-ctl events list`, correlate logs via `kubectl logs`, confirm the §16.5 health row via `GET /v1/admin/health`); the four runbooks with concrete commands (postgres-unavailable, redis-sentinel-failover, pod-kill-during-session, tier-promotion) and the previously marker-less `audit-chain-gap.md` were hand-converted into structured steps preserving their commands and prose. New tier-11 `TestEveryRunbookProducesSteps_spec_25_7_3054` walks `docs/runbooks/` and fails if any runbook parses to zero steps, so the catalogue stays machine-parseable. Closes duplicate F-17.7.7. Commit (this batch).
 
 ### - [x] F-25.7.7 — Public `RunbookIndex` Go interface and the `RunbookSummary`/`RunbookFilter` types are not exported in the spec's shape (Low) [Medium] — CLOSED
 
