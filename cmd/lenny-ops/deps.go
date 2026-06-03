@@ -55,8 +55,10 @@ type redisFanOutEmitter struct {
 // newRedisFanOutEmitter constructs an emitter that writes every event
 // to client and tees a copy through local.Publish so the local SSE
 // subscribers and polling cursor see it without depending on a
-// separate Redis consumer loop.
-func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Service, replicaID string) *redisFanOutEmitter {
+// separate Redis consumer loop. streamMaxLen is the §25.5
+// ops.events.streamMaxLen cap on the XADD MAXLEN-approximated stream; a
+// non-positive value uses the StreamEmitter Tier 1 default.
+func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Service, replicaID string, streamMaxLen int64) *redisFanOutEmitter {
 	stream := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client,
 		// The local buffer the StreamEmitter writes through is the same
@@ -66,7 +68,11 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 		// here only needs a private buffer to satisfy its non-nil
 		// requirement — the Publish below is the canonical local
 		// delivery.
-		Buffer:    events.NewEventBuffer(0),
+		Buffer: events.NewEventBuffer(0),
+		// spec: §25.5 — ops.events.streamMaxLen sizes the platform-scoped
+		// ops:events:stream so a Tier 3 install holds the larger catch-up
+		// window the spec mandates.
+		MaxLen:    streamMaxLen,
 		Source:    "//lenny.dev/ops/" + replicaID,
 		ReplicaID: replicaID,
 	})

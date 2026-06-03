@@ -15,6 +15,8 @@
 #   tokenService.replicas            — token service replica count
 #   ops.replicas                     — lenny-ops replica count
 #   ops.production                   — enables the §25.11 backup confirm guard
+#   ops.selfHealth.checkIntervalSeconds — §17.8.4 self-monitor cadence
+#   ops.events.streamMaxLen          — §17.8.4 ops:events:stream MAXLEN
 #   backups.retention.*              — backup retention policy
 #   backups.restoreTest.enabled      — periodic test-restore CronJob gate
 #
@@ -80,6 +82,14 @@ ops:
   # Tier 2 is a production posture. Enabling ops.production turns on the
   # §25.11 confirm:true requirement for full backups.
   production: true
+  # §25.4 line 903 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
+  # catch fast failure-and-recovery cycles.
+  selfHealth:
+    checkIntervalSeconds: 10
+  # §25.5 line 2598 / §17.8.4 — Tier 2 ops:events:stream MAXLEN of 50,000
+  # (~25 MB Redis budget) for a longer catch-up window at moderate rates.
+  events:
+    streamMaxLen: 50000
 
 # Backup retention at Tier 2 (§25.11): 30-day age floor, 10 backups
 # retained, 3 full backups kept.
@@ -99,6 +109,10 @@ backups:
 # applies the §25.13 example tier-2 row: queue depth 10/5m, p95 latency
 # 2s/5m, credential pool utilisation 70 percent. F-25.13.2.
 monitoring:
+  # §17.8.4 — at Tier 2/3 a missing Prometheus is a blocking
+  # configuration error: acknowledgeNoPrometheus stays false so the
+  # §17.6 preflight Prometheus-reachability check is not silenced.
+  acknowledgeNoPrometheus: false
   alertThresholds:
     gatewayQueueDepthHigh:
       value: 10

@@ -716,10 +716,15 @@ tests:
       #   LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
       #   (§12.4 lines 222-224, F-12.4.9)
       # + LENNY_LOG_LEVEL (§17.9.1 line 1350, F-17.9.9 — the default dev
-      #   environment renders the env var) = 65.
+      #   environment renders the env var)
+      # + LENNY_BILLING_REDIS_STREAM_MAX_LEN (§17.8.2 line 1203, F-17.8.5 —
+      #   base billing.redisStreamMaxLen=0 renders) + LENNY_CAPACITY_TIER
+      #   (§17.8.2, F-17.8.5/F-17.8.7 — always rendered;
+      #   LENNY_SINGLE_TENANT_REDIS_TOPOLOGY is empty by default and not
+      #   rendered) = 67.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 65
+          count: 67
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -2305,6 +2310,58 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: '§17.9.3: redis.provider must be "external", "sentinel", or "cluster", got "memcached"'
+
+  # spec: §17.8.2 / F-17.8.5, F-17.8.7 — the gateway carries the
+  # capacityPlanning.tier so it can size billingRedisStreamMaxLen and
+  # decide the RedisClusterRecommended startup warning.
+  - it: renders LENNY_CAPACITY_TIER and the billing-stream-maxlen env (defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_TIER
+            value: "tier1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
+            value: "0"
+      # singleTenantRedisTopology is empty by default, so no env is rendered.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SINGLE_TENANT_REDIS_TOPOLOGY
+            value: "sentinel"
+
+  # spec: §17.8.2 line 1164 / F-17.8.7 — setting singleTenantRedisTopology
+  # renders the env that suppresses the Tier 3 RedisClusterRecommended log.
+  - it: renders LENNY_SINGLE_TENANT_REDIS_TOPOLOGY when set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      capacityPlanning.tier: tier3
+      capacityPlanning.singleTenantRedisTopology: sentinel
+      billing.redisStreamMaxLen: 72000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_TIER
+            value: "tier3"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SINGLE_TENANT_REDIS_TOPOLOGY
+            value: "sentinel"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
+            value: "72000"
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

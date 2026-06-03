@@ -71,6 +71,17 @@ poolScalingController:
   # agentNamespace is the namespace the derived SandboxTemplate and
   # SandboxWarmPool CRDs are materialized in.
   agentNamespace: lenny-agents
+  # safetyFactor is the §17.8.2 line 1008 agent-type safety_factor the
+  # PoolScalingController applies to a pool that does not pin one. A
+  # positive value pins the factor for every pool; the default (unset /
+  # 0) lets the controller resolve the per-tier default from
+  # capacityPlanning.tier — 1.2 at Tier 3, 1.5 otherwise — so a Tier 3
+  # install picks up the normative 1.2 override automatically without an
+  # explicit setting. mcp-type pools whose normative default differs
+  # (2.0 at Tier 1/2, 1.5 at Tier 3) pin the per-pool value via the admin
+  # API. The §17.8.2 validation gate requires raising this universally
+  # (e.g. 1.3 or 1.5) when the failover-warm-serve SLO is not met.
+  safetyFactor: 0
   image:
     repository: ghcr.io/lennylabs/lenny-pool-scaling-controller
     # tag defaults to the chart appVersion when left empty.
@@ -1062,6 +1073,14 @@ billing:
   flushIntervalMs: 500
   flushBatchSize: 50
   flushMaxPending: 500
+  # §17.8.2 line 1203 billingRedisStreamMaxLen: the per-tenant MAXLEN of
+  # the §11.2.1 billing failover Redis stream that absorbs billing events
+  # during a Postgres outage. 0 (the default) lets the gateway resolve the
+  # per-tier default from capacityPlanning.tier — 72,000 at Tier 3 (sized
+  # for the outage-plus-recovery envelope per footnote ⁵), 50,000 at
+  # Tier 1/2. A positive value pins it. The value renders as
+  # LENNY_BILLING_REDIS_STREAM_MAX_LEN on the gateway. F-17.8.5.
+  redisStreamMaxLen: 0
 
 # audit configures the §11.7 / §12.3 audit-ledger integrity controls.
 audit:
@@ -2596,6 +2615,24 @@ ops:
     # The value renders as --drift-running-state-cache-ttl-seconds on
     # lenny-ops; clients can bypass the cache per-call with ?fresh=true.
     runningStateCacheTTLSeconds: 60
+  # selfHealth carries the §25.4 self-monitor cadence. checkIntervalSeconds
+  # (§25.4 line 903) is how often the background self-health goroutine
+  # runs; 10s is recommended at Tier 2/3 to catch fast failure-and-recovery
+  # cycles, and Tier 1 may raise it to 30s to reduce dev-cluster overhead.
+  # The value renders as --self-health-interval on lenny-ops. §17.8.4
+  # makes this a tier-preset-overridden field. F-17.8.1.
+  selfHealth:
+    checkIntervalSeconds: 10
+  # events carries the §25.5 operational-event stream tuning.
+  # streamMaxLen (§25.4 line 942 / §25.5 line 2598) is the MAXLEN of the
+  # platform-scoped ops:events:stream Redis stream. The Tier 1 default of
+  # 10,000 keeps the Redis memory budget under ~5 MB; tier presets raise
+  # it to 50,000 (Tier 2) and 100,000 (Tier 3) for a longer catch-up
+  # window at higher event rates. The value renders as
+  # --events-stream-max-len on lenny-ops. §17.8.4 makes this a
+  # tier-preset-overridden field. F-17.8.1.
+  events:
+    streamMaxLen: 10000
   image:
     repository: ghcr.io/lennylabs/lenny-ops
     # tag defaults to the chart appVersion when left empty.
@@ -2657,6 +2694,16 @@ capacityPlanning:
   # rendered ResourceQuota accommodates the tier's warm-pool and
   # active-session pod demand.
   tier: tier1
+  # §17.8.2 line 1164 singleTenantRedisTopology documents the operator's
+  # Redis topology intent at Tier 3. At Tier 3 single-tenant scale the
+  # total Redis ops/s is well below the single-threaded-primary ceiling,
+  # so a 3-4 node Sentinel topology is sufficient and simpler than Redis
+  # Cluster. Set this to "sentinel" to record that intent and suppress the
+  # gateway's "[WARN] RedisClusterRecommended" startup log, which
+  # otherwise fires at Tier 3 when the gateway runs a Sentinel topology.
+  # Empty (the default) leaves the warning enabled. The value renders as
+  # LENNY_SINGLE_TENANT_REDIS_TOPOLOGY on the gateway. F-17.8.7.
+  singleTenantRedisTopology: ""
   # §16.5 lines 590-601 workload-profile assumptions. The tier sizing
   # formulas (warm-pool sizing, Redis ops budgets, gateway replica
   # counts) depend on these. Operators with atypical workloads override

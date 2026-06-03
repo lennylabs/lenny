@@ -73,6 +73,7 @@ func main() {
 		syncInterval  time.Duration
 		capTier       string
 		capPlanning   poolscaling.CapacityPlanning
+		safetyFactor  float64
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -107,6 +108,13 @@ func main() {
 		"§16.5 line 598 capacityPlanning.avgWorkspaceSizeMB — average workspace size feeding checkpoint bandwidth budgets.")
 	flag.Float64Var(&capPlanning.SessionIdleFraction, "capacity-session-idle-fraction", envFloatOr("LENNY_CAPACITY_SESSION_IDLE_FRACTION", defCP.SessionIdleFraction),
 		"§16.5 line 599 capacityPlanning.sessionIdleFraction — fraction of active sessions idle (no active LLM call).")
+	// §17.8.2 line 1008 poolScaling.safetyFactor — the agent-type
+	// safety_factor applied to a pool that does not pin one. A non-positive
+	// value (the default) resolves the per-tier default from --capacity-tier
+	// (1.2 at Tier 3, 1.5 otherwise) so a Tier 3 deployment picks up the
+	// override automatically; a positive value pins it for every pool.
+	flag.Float64Var(&safetyFactor, "default-safety-factor", envFloatOr("LENNY_POOL_SCALING_SAFETY_FACTOR", 0),
+		"§17.8.2 line 1008 poolScaling.safetyFactor — the agent-type safety_factor applied to pools that do not pin one. 0 (default) resolves the per-tier default from --capacity-tier (1.2 at Tier 3, else 1.5).")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -161,9 +169,20 @@ func main() {
 	// a deployer supplies observed-demand metrics. The SDK-warm circuit
 	// breaker honors any state already persisted on a pool's status even
 	// without a DemotionRateSource.
+	// spec: §17.8.2 line 1008 — resolve the agent-type safety_factor a pool
+	// inherits when it does not pin one. An explicit --default-safety-factor
+	// pins it for every pool; 0 selects the per-tier default so a Tier 3
+	// deployment automatically applies the 1.2 override.
+	effectiveSafetyFactor := safetyFactor
+	if effectiveSafetyFactor <= 0 {
+		effectiveSafetyFactor = poolscaling.DefaultSafetyFactorForTier(capTier)
+	}
+	log.Printf("lenny-pool-scaling-controller: §17.8.2 agent-type default safety_factor=%.2f (capacity-tier=%s)", effectiveSafetyFactor, capTier)
+
 	reconciler := &poolscaling.Reconciler{
-		Client: mgr.GetClient(),
-		Source: source,
+		Client:              mgr.GetClient(),
+		Source:              source,
+		DefaultSafetyFactor: effectiveSafetyFactor,
 	}
 	if err := mgr.Add(&poolscaling.Runnable{Reconciler: reconciler, Interval: syncInterval}); err != nil {
 		log.Fatalf("lenny-pool-scaling-controller: add reconciler: %v", err)

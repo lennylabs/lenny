@@ -78,8 +78,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
-	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -104,6 +104,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/capacityplanning"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
@@ -145,7 +146,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -158,6 +158,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
+	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
@@ -214,8 +215,8 @@ import (
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -347,6 +348,10 @@ func main() {
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	redisClusterAddrs := flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
 		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient — the Tier 2→3 migration topology for the Quota/Rate Limiting instance. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
+	capacityTier := flag.String("capacity-tier", envOr("LENNY_CAPACITY_TIER", "tier1"),
+		"§17.8.2 capacityPlanning.tier (tier1, tier2, tier3) the deployment is sized for. Drives the billingRedisStreamMaxLen default and the §17.8.2 line 1164 RedisClusterRecommended startup warning. Override via LENNY_CAPACITY_TIER. F-17.8.5, F-17.8.7.")
+	singleTenantRedisTopology := flag.String("single-tenant-redis-topology", os.Getenv("LENNY_SINGLE_TENANT_REDIS_TOPOLOGY"),
+		"§17.8.2 line 1164 capacityPlanning.singleTenantRedisTopology. Set to \"sentinel\" to document that a Tier 3 deployment intentionally runs a single-tenant Redis Sentinel topology; this suppresses the RedisClusterRecommended startup warning. Override via LENNY_SINGLE_TENANT_REDIS_TOPOLOGY. F-17.8.7.")
 	// spec: §12.4 lines 237-245 — "Logical separation of Redis concerns".
 	// Each per-concern URL routes one §12.4 store role to a dedicated
 	// Redis instance (separate connection string per role); an empty
@@ -555,6 +560,9 @@ func main() {
 	billingFlushMaxPending := flag.Int("billing-flush-max-pending",
 		envInt("LENNY_BILLING_FLUSH_MAX_PENDING", failover.DefaultFlushMaxPending),
 		"§12.3 line 76 billingFlushMaxPending: once the Tier 2 write-ahead buffer grows past this many events, the gateway flushes immediately and emits the billing_flush_pressure metric. Default 500. Override via LENNY_BILLING_FLUSH_MAX_PENDING. F-12.3.13.")
+	billingRedisStreamMaxLen := flag.Int64("billing-redis-stream-max-len",
+		envInt64("LENNY_BILLING_REDIS_STREAM_MAX_LEN", 0),
+		"§17.8.2 line 1203 billingRedisStreamMaxLen: per-tenant MAXLEN of the §11.2.1 billing failover Redis stream. 0 (the default) resolves the per-tier default from --capacity-tier (72,000 at Tier 3, else 50,000); a positive value pins it. Override via LENNY_BILLING_REDIS_STREAM_MAX_LEN. F-17.8.5.")
 	postgresWriteCeilingIops := flag.Float64("postgres-write-ceiling-iops",
 		envFloat("LENNY_POSTGRES_WRITE_CEILING_IOPS", 200),
 		"§12.3 line 123 postgres.writeCeilingIops: the measured sustained write-IOPS ceiling for the primary Postgres instance. Emitted unlabelled on lenny_postgres_write_ceiling_iops so the §16.5 PostgresWriteSaturation alert reads scalar(lenny_postgres_write_ceiling_iops). Tier presets set 200/600/1600. Override via LENNY_POSTGRES_WRITE_CEILING_IOPS. F-12.3.8.")
@@ -1465,15 +1473,25 @@ func main() {
 		// §12.4 Quota/Rate Limiting concern: the §11.1 rate-limit counter
 		// is Redis-backed so requests-per-minute limits hold across replicas.
 		rateLimiter = ratelimitredis.New(concernRedis.For(storerouter.RedisConcernQuota))
+		redisTopology := capacityplanning.RedisTopologyStandalone
 		switch {
 		case *redisClusterAddrs != "":
+			redisTopology = capacityplanning.RedisTopologyCluster
 			log.Printf("lenny-gateway: Redis via Cluster nodes=%d split=%t; coordination replica %s",
 				len(splitAndTrim(*redisClusterAddrs)), concernRedis.Split(), replica)
 		case *redisSentinelAddrs != "":
+			redisTopology = capacityplanning.RedisTopologySentinel
 			log.Printf("lenny-gateway: Redis via Sentinel master=%q sentinels=%d split=%t; coordination replica %s",
 				*redisSentinelMaster, len(splitAndTrim(*redisSentinelAddrs)), concernRedis.Split(), replica)
 		default:
 			log.Printf("lenny-gateway: circuit-breaker state in Redis split=%t; coordination replica %s", concernRedis.Split(), replica)
+		}
+		// spec: §17.8.2 line 1164 — a Tier 3 deployment on a single-tenant
+		// Redis Sentinel topology gets the RedisClusterRecommended startup
+		// warning unless capacityPlanning.singleTenantRedisTopology=sentinel
+		// documents the operator's intent.
+		if capacityplanning.ShouldWarnRedisClusterRecommended(*capacityTier, redisTopology, *singleTenantRedisTopology) {
+			log.Printf("lenny-gateway: %s", capacityplanning.RedisClusterRecommendedWarning)
 		}
 	} else {
 		breakers = breakerstore.NewMemory()
@@ -1583,18 +1601,27 @@ func main() {
 	var billingStream failover.StreamTier
 	var billingTier *redisstream.Tier
 	if pgStore, ok := billing.(*billingpg.Store); ok && redisClient != nil {
+		// spec: §17.8.2 line 1203 — size the per-tenant billing stream MAXLEN.
+		// An explicit --billing-redis-stream-max-len pins it; 0 resolves the
+		// per-tier default so a Tier 3 install gets 72,000 rather than the
+		// Tier 1/2 floor of 50,000 (which fills in ~83s at the Tier 3 rate).
+		streamMaxLen := *billingRedisStreamMaxLen
+		if streamMaxLen <= 0 {
+			streamMaxLen = redisstream.StreamMaxLenForTier(*capacityTier)
+		}
 		tier, err := redisstream.New(redisstream.Options{
 			// §12.4 Quota/Rate Limiting concern: billing stream.
 			Client:       concernRedis.For(storerouter.RedisConcernQuota),
 			ConsumerName: replica,
 			Inserter:     pgStore,
+			StreamMaxLen: streamMaxLen,
 		})
 		if err != nil {
 			log.Fatalf("lenny-gateway: billing failover stream: %v", err)
 		}
 		billingStream = tier
 		billingTier = tier
-		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 backed by the Redis stream (consumer %s)", replica)
+		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 backed by the Redis stream (consumer %s, maxlen=%d, tier=%s)", replica, streamMaxLen, *capacityTier)
 	} else {
 		billingStream = failover.NewMemStream()
 	}

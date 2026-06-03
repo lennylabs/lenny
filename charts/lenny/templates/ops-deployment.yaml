@@ -123,6 +123,14 @@ spec:
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days={{ .Values.ops.drift.snapshotStaleWarningDays }}
             - --drift-running-state-cache-ttl-seconds={{ .Values.ops.drift.runningStateCacheTTLSeconds }}
+            # §25.4 line 903 / §17.8.4 ops.selfHealth.checkIntervalSeconds —
+            # self-monitor cadence (10s at Tier 2/3, 30s acceptable at
+            # Tier 1). Tier-preset overridden. F-17.8.1.
+            - --self-health-interval={{ .Values.ops.selfHealth.checkIntervalSeconds }}s
+            # §25.5 line 2598 / §17.8.4 ops.events.streamMaxLen — MAXLEN of
+            # the platform-scoped ops:events:stream (10k Tier 1, 50k Tier 2,
+            # 100k Tier 3). Tier-preset overridden. F-17.8.1.
+            - --events-stream-max-len={{ .Values.ops.events.streamMaxLen }}
             # §25.4 lines 1562-1564 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
             {{- if .Values.security.oidc.issuerUrl }}

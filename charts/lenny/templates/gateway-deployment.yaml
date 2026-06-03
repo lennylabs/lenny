@@ -821,6 +821,27 @@ spec:
             - name: LENNY_BILLING_FLUSH_MAX_PENDING
               value: {{ .Values.billing.flushMaxPending | quote }}
             {{- end }}
+            # §17.8.2 line 1203 billingRedisStreamMaxLen — per-tenant
+            # MAXLEN of the §11.2.1 billing failover Redis stream. 0 lets
+            # the gateway resolve the per-tier default from
+            # LENNY_CAPACITY_TIER (72,000 at Tier 3, else 50,000); a
+            # positive value pins it. F-17.8.5.
+            {{- if hasKey .Values.billing "redisStreamMaxLen" }}
+            - name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
+              value: {{ .Values.billing.redisStreamMaxLen | quote }}
+            {{- end }}
+            # §17.8.2 capacityPlanning.tier — drives the
+            # billingRedisStreamMaxLen default and the §17.8.2 line 1164
+            # RedisClusterRecommended startup warning. F-17.8.5, F-17.8.7.
+            - name: LENNY_CAPACITY_TIER
+              value: {{ .Values.capacityPlanning.tier | default "tier1" | quote }}
+            # §17.8.2 line 1164 capacityPlanning.singleTenantRedisTopology —
+            # set "sentinel" to suppress the Tier 3 RedisClusterRecommended
+            # startup warning. F-17.8.7.
+            {{- if .Values.capacityPlanning.singleTenantRedisTopology }}
+            - name: LENNY_SINGLE_TENANT_REDIS_TOPOLOGY
+              value: {{ .Values.capacityPlanning.singleTenantRedisTopology | quote }}
+            {{- end }}
             # §12.3 line 123 postgres.writeCeilingIops — emitted on
             # lenny_postgres_write_ceiling_iops for the §16.5
             # PostgresWriteSaturation alert. F-12.3.8.

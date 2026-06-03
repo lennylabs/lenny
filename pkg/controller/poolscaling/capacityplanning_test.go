@@ -81,3 +81,23 @@ func TestShouldWarnCapacityPlanningDefaults_spec_16_5_601(t *testing.T) {
 		})
 	}
 }
+
+// TestDefaultSafetyFactorForTier verifies the §17.8.2 normative agent-type
+// per-tier safety_factor default: 1.2 at Tier 3, 1.5 otherwise. spec:
+// spec/17_deployment-topology.md line 1008.
+func TestDefaultSafetyFactorForTier_spec_17_8_2_1008(t *testing.T) {
+	cases := map[string]float64{
+		"tier1":   1.5,
+		"tier2":   1.5,
+		"tier3":   1.2,
+		"":        1.5, // unknown tier falls back to the Tier 1/2 default
+		"unknown": 1.5,
+	}
+	for tier, want := range cases {
+		t.Run(tier, func(t *testing.T) {
+			if got := poolscaling.DefaultSafetyFactorForTier(tier); got != want {
+				t.Errorf("DefaultSafetyFactorForTier(%q) = %v, want %v", tier, got, want)
+			}
+		})
+	}
+}

@@ -111,3 +111,31 @@ tests:
           content:
             name: LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS
             value: "600"
+
+  # spec: §17.8.2 line 1008 / F-17.8.4 — poolScaling.safetyFactor renders
+  # as LENNY_POOL_SCALING_SAFETY_FACTOR. The base default 0 lets the
+  # controller resolve the per-tier default from LENNY_CAPACITY_TIER.
+  - it: renders the default safety_factor env (0 = auto from tier)
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOL_SCALING_SAFETY_FACTOR
+            value: "0"
+
+  # spec: §17.8.2 line 1010 / F-17.8.4 — an operator pins the safety
+  # factor universally (e.g. when the failover-warm-serve SLO is not met).
+  - it: renders an operator-pinned safety_factor
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      poolScalingController.safetyFactor: 1.3
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOL_SCALING_SAFETY_FACTOR
+            value: "1.3"

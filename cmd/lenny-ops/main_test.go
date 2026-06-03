@@ -79,7 +79,7 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	local := opsstream.New(opsstream.Options{})
 
-	em := newRedisFanOutEmitter(client, local, "ops-replica-1")
+	em := newRedisFanOutEmitter(client, local, "ops-replica-1", events.DefaultStreamMaxLen)
 	if err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.escalation_created", Severity: "critical",
 	}); err != nil {

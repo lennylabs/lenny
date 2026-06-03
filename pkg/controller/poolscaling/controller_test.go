@@ -226,6 +226,67 @@ func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 	}
 }
 
+// TestSyncAppliesTierDefaultSafetyFactor confirms a pool that does not pin
+// SafetyFactor inherits the Reconciler's tier-resolved default. With the
+// Tier 3 default of 1.2 (instead of the Tier 1/2 1.5) the formula yields
+// ceil(0.1 × 1.2 × 35 + 0.2 × 10) = ceil(4.2 + 2.0) = 7, one below the
+// Tier 1/2 result of 8. spec: spec/17_deployment-topology.md line 1008.
+func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.1,
+		BurstP99Claims: 0.2,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{
+		Client:              c,
+		Source:              src,
+		Demand:              demand,
+		DefaultSafetyFactor: poolscaling.DefaultSafetyFactorForTier("tier3"),
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+		t.Errorf("warm pool minWarm = %d, want 7 (Tier 3 safety_factor 1.2)", got)
+	}
+}
+
+// TestSyncPoolSafetyFactorOverridesTierDefault confirms a pool that pins
+// its own SafetyFactor ignores the Reconciler's tier default. With the
+// pool pinning 2.0 the formula yields ceil(0.1 × 2.0 × 35 + 0.2 × 10) =
+// ceil(7.0 + 2.0) = 9. spec: spec/17_deployment-topology.md line 1010.
+func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.SafetyFactor = 2.0
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.1,
+		BurstP99Claims: 0.2,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{
+		Client:              c,
+		Source:              src,
+		Demand:              demand,
+		DefaultSafetyFactor: poolscaling.DefaultSafetyFactorForTier("tier3"),
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 9 {
+		t.Errorf("warm pool minWarm = %d, want 9 (pool-pinned safety_factor 2.0)", got)
+	}
+}
+
 func TestSyncStaysAtBootstrapWithoutObservedDemand(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).Build()

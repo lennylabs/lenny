@@ -71,3 +71,31 @@ func ShouldWarnCapacityPlanningDefaults(c CapacityPlanning, tier string) bool {
 		return false
 	}
 }
+
+// agentTierDefaultSafetyFactor and agentTier3SafetyFactor are the §17.8.2
+// normative per-tier agent-type safety_factor defaults: 1.5 at Tier 1/2,
+// 1.2 at Tier 3. The Tier 3 override is applied because per-pool demand is
+// larger, allowing a thinner fractional buffer to achieve the same
+// absolute headroom. spec: spec/17_deployment-topology.md line 1008.
+const (
+	agentTierDefaultSafetyFactor = 1.5
+	agentTier3SafetyFactor       = 1.2
+)
+
+// DefaultSafetyFactorForTier returns the §17.8.2 normative agent-type
+// safety_factor default for the deployment tier: 1.2 at Tier 3, 1.5
+// otherwise. The PoolScalingController applies this automatically when
+// capacityPlanning.tier is set and the operator has not pinned
+// poolScaling.safetyFactor explicitly; a pinned value or a per-pool
+// SafetyFactor always wins. mcp-type pools whose normative default
+// differs (2.0 at Tier 1/2, 1.5 at Tier 3) set the per-pool SafetyFactor
+// explicitly — the controller applies one default value per deployment,
+// consistent with the §17.8.2 "the controller applies one safety_factor
+// value per pool" statement. spec: spec/17_deployment-topology.md lines
+// 1008, 1010; spec/04_system-components.md line 523.
+func DefaultSafetyFactorForTier(tier string) float64 {
+	if tier == "tier3" {
+		return agentTier3SafetyFactor
+	}
+	return agentTierDefaultSafetyFactor
+}

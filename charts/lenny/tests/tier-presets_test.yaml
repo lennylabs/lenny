@@ -200,6 +200,76 @@ tests:
           path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
           value: 100
 
+  # spec: §17.8.4 line 1319 / F-17.8.1 — each tier preset overrides the
+  # §25.4 ops self-health cadence and ops:events:stream MAXLEN. Tier 1
+  # relaxes the self-monitor to 30s; Tier 2/3 keep it at 10s and raise the
+  # stream MAXLEN to 50k / 100k.
+  - it: tier1 preset relaxes the ops self-health cadence and keeps the 10k stream
+    values:
+      - ../presets/values-tier1.yaml
+    template: ops-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=30s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=10000
+
+  - it: tier2 preset keeps the 10s cadence and raises the stream to 50k
+    values:
+      - ../presets/values-tier2.yaml
+    template: ops-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=10s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=50000
+
+  - it: tier3 preset keeps the 10s cadence and raises the stream to 100k
+    values:
+      - ../presets/values-tier3.yaml
+    template: ops-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=10s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=100000
+
+  # spec: §17.8.2 footnote ⁵ / F-17.8.5 — the tier3 preset sizes the
+  # billing failover stream MAXLEN to the Tier 3 outage envelope (72,000).
+  - it: tier3 preset sets the billing Redis stream MAXLEN to 72000
+    values:
+      - ../presets/values-tier3.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
+            value: "72000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_TIER
+            value: "tier3"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

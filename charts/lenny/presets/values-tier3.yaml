@@ -15,10 +15,17 @@
 #   tokenService.replicas            — token service replica count
 #   ops.replicas                     — lenny-ops replica count
 #   ops.production                   — enables the §25.11 backup confirm guard
+#   ops.selfHealth.checkIntervalSeconds — §17.8.4 self-monitor cadence
+#   ops.events.streamMaxLen          — §17.8.4 ops:events:stream MAXLEN
+#   billing.redisStreamMaxLen        — §17.8.2 footnote ⁵ Tier 3 default
 #   backups.retention.*              — backup retention policy
 #   backups.restoreTest.*            — periodic test-restore CronJob config
 #
-# Every other base value is left at its default.
+# Every other base value is left at its default. capacityPlanning.tier
+# also drives the gateway billingRedisStreamMaxLen default and the
+# PoolScalingController's per-tier agent-type safety_factor (1.2 at Tier
+# 3) automatically; this preset restates billing.redisStreamMaxLen for
+# explicitness.
 
 capacityPlanning:
   tier: tier3
@@ -117,6 +124,22 @@ ops:
   # Tier 3 is a production posture. Enabling ops.production turns on the
   # §25.11 confirm:true requirement for full backups.
   production: true
+  # §25.4 line 903 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
+  # catch fast failure-and-recovery cycles.
+  selfHealth:
+    checkIntervalSeconds: 10
+  # §25.5 line 2598 / §17.8.4 — Tier 3 ops:events:stream MAXLEN of
+  # 100,000 (~50 MB Redis budget) for a ~10-30 minute catch-up window at
+  # peak event rates.
+  events:
+    streamMaxLen: 100000
+
+# §17.8.2 footnote ⁵ — Tier 3 billingRedisStreamMaxLen of 72,000
+# (600 events/s × 60s outage-plus-recovery envelope × 2 safety factor).
+# The gateway also derives this from capacityPlanning.tier=tier3; the
+# explicit value documents the Tier 3 sizing. F-17.8.5.
+billing:
+  redisStreamMaxLen: 72000
 
 # Backup retention at Tier 3 (§25.11): 90-day age floor, 30 backups
 # retained, 7 full backups kept. The longer window supports forensics
@@ -141,6 +164,10 @@ backups:
 # Tier 2). Critical severity for replenishment-slow per §25.13.
 # F-25.13.2.
 monitoring:
+  # §17.8.4 — at Tier 2/3 a missing Prometheus is a blocking
+  # configuration error: acknowledgeNoPrometheus stays false so the
+  # §17.6 preflight Prometheus-reachability check is not silenced.
+  acknowledgeNoPrometheus: false
   alertThresholds:
     gatewayQueueDepthHigh:
       value: 5

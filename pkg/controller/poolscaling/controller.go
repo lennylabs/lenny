@@ -205,6 +205,15 @@ type Reconciler struct {
 	// uses DefaultAdmissionDeniedRetryCeiling.
 	AdmissionDeniedRetryCeiling int
 
+	// DefaultSafetyFactor is the §17.8.2 per-tier agent-type safety_factor
+	// applied to a pool whose PoolConfig leaves SafetyFactor unset. The
+	// binary resolves it from poolScaling.safetyFactor when set, otherwise
+	// from DefaultSafetyFactorForTier(capacityPlanning.tier) so a Tier 3
+	// deployment automatically picks up the 1.2 override. A non-positive
+	// value falls back to the agent-type Tier 1/2 default (1.5). spec:
+	// spec/17_deployment-topology.md line 1008.
+	DefaultSafetyFactor float64
+
 	// retryState is the lazily-constructed admission-retry tracker.
 	// It is initialized on the first Sync to honor a Reconciler
 	// constructed with the zero value.
@@ -623,8 +632,16 @@ func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, 
 	if in.PoolType == "" {
 		in.PoolType = strategy.PoolStandard
 	}
+	// spec: §17.8.2 line 1008 — a pool that does not pin SafetyFactor
+	// inherits the deployment's tier-resolved default. r.DefaultSafetyFactor
+	// carries poolScaling.safetyFactor (or DefaultSafetyFactorForTier of the
+	// configured tier); the const fallback keeps a zero-value Reconciler at
+	// the agent-type Tier 1/2 default.
 	if in.SafetyFactor <= 0 {
-		in.SafetyFactor = defaultSafetyFactor
+		in.SafetyFactor = r.DefaultSafetyFactor
+		if in.SafetyFactor <= 0 {
+			in.SafetyFactor = defaultSafetyFactor
+		}
 	}
 	if r.Demand != nil {
 		d, err := r.Demand.PoolDemand(ctx, cfg.Name)

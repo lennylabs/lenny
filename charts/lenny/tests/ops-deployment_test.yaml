@@ -420,3 +420,34 @@ tests:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+
+  # spec: §25.4 line 903 / §25.5 line 2598 / §17.8.4 — F-17.8.1. The base
+  # values render the Tier 1 self-monitor cadence (10s) and the Tier 1
+  # ops:events:stream MAXLEN (10,000) as lenny-ops flags.
+  - it: renders the self-health and events-stream-max-len flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=10s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=10000
+
+  # spec: §17.8.4 — operator overrides flow through to the rendered flags.
+  - it: renders operator-overridden self-health and events-stream-max-len
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.selfHealth.checkIntervalSeconds: 30
+      ops.events.streamMaxLen: 100000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=30s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=100000

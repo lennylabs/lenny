@@ -110,6 +110,8 @@ func main() {
 		"directory of §25.7 operational-runbook markdown files the runbook index serves")
 	selfHealthInterval := flag.Duration("self-health-interval", 10*time.Second,
 		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
+	eventsStreamMaxLen := flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", events.DefaultStreamMaxLen),
+		"§25.5 ops.events.streamMaxLen — MAXLEN of the platform-scoped ops:events:stream Redis stream. Tier 1 default 10,000; tier presets raise it (50,000 at Tier 2, 100,000 at Tier 3). Override via LENNY_OPS_EVENTS_STREAM_MAX_LEN. F-17.8.1.")
 	memoryLimitBytes := flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
@@ -370,8 +372,8 @@ func main() {
 	eventStream := opsstream.New(opsstream.Options{})
 	var opsEmitter events.EventEmitter = eventStream
 	if redisClient != nil {
-		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID)
-		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID, *eventsStreamMaxLen)
+		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", events.DefaultStreamKey, *eventsStreamMaxLen)
 	}
 
 	// The §25.5 webhook delivery worker. The §25.5 EventSource is the

@@ -87,6 +87,17 @@ spec:
             - name: LENNY_CAPACITY_SESSION_IDLE_FRACTION
               value: {{ .sessionIdleFraction | quote }}
             {{- end }}
+            # §17.8.2 line 1008 poolScaling.safetyFactor — the agent-type
+            # safety_factor a pool inherits when it does not pin one. When
+            # set to a positive value it pins the factor for every pool;
+            # 0 (the default) lets the controller resolve the per-tier
+            # default from LENNY_CAPACITY_TIER (1.2 at Tier 3, else 1.5),
+            # so a Tier 3 install picks up the override automatically.
+            # F-17.8.4.
+            {{- if hasKey .Values.poolScalingController "safetyFactor" }}
+            - name: LENNY_POOL_SCALING_SAFETY_FACTOR
+              value: {{ .Values.poolScalingController.safetyFactor | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080
