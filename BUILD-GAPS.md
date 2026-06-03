@@ -25297,7 +25297,7 @@ finds the doc/spec strings. The session-creation gate
 (`pkg/gateway/sessionserver/sessionserver.go::handleCreate`) never
 checks pool drain state.
 
-**Resolution (commit <PENDING>):** Built the full §15.1 line 797
+**Resolution (commit 8e31a8db):** Built the full §15.1 line 797
 contract. `poolstore.Pool` gained `DrainingSince` (migration 0120 adds
 the `draining_since` column; pgstore INSERT/UPDATE/scan + the Memory
 store carry it) plus `Phase()`/`IsDraining()`/`EstimatedDrainSeconds()`.
