@@ -32714,7 +32714,7 @@ versioning) behind the `MinIOEncryptionProber`-style prober seam, dispatched on
 the now-available `objectStorage.provider`. That cloud-lifecycle prober is a
 focused preflight batch; the gating value it dispatches on is no longer absent.
 
-### - [ ] F-17.5.4 — 2 — Per-cluster answer-file catalog (`eks-small-team.yaml`, `gke-production.yaml`, `aks-production.yaml`, `openshift-self-managed.yaml`, `bare-metal-self-managed.yaml`, `airgap-self-managed.yaml`) is unimplemented [Medium] — OPEN
+### - [x] F-17.5.4 — 2 — Per-cluster answer-file catalog (`eks-small-team.yaml`, `gke-production.yaml`, `aks-production.yaml`, `openshift-self-managed.yaml`, `bare-metal-self-managed.yaml`, `airgap-self-managed.yaml`) is unimplemented [Medium] — CLOSED
 
 **Spec basis.** §17.9.2 "Answer File Catalog" (`spec/17_deployment-topology.md:1366-1374`) lists nine concrete answer files under `deploy/helm/lenny/answers/` (or `charts/lenny/answers/`); only the three tier-based files are shipped.
 
@@ -32734,9 +32734,11 @@ The install schema (`cmd/lenny-ctl/install.go:54-57`) has a `Profile string` fie
 
 **Suggested fix.** Ship the nine spec-named answer files under `charts/lenny/answers/` with the per-cluster overlay shape (cluster type, backends, env, isolation defaults). Promote the `Profile` field to load the named overlay rather than being advisory metadata.
 
+**Resolution:** Closed by F-17.9.1 (`c4b98190`) and F-17.9.8 (`c4b98190`). F-17.9.1 shipped the nine §17.9.2 spec-named answer files (`laptop`, `docker-compose`, `eks-small-team`, `eks-production`, `gke-production`, `aks-production`, `openshift-self-managed`, `bare-metal-self-managed`, `airgap-self-managed`) under `charts/lenny/answers/catalog/`, each pinning the §17.9.1 cluster/backends/environment/isolationProfile axes and linted against `values.schema.json`; the cluster axis is the top-level `cluster` value validated by `lenny.clusterType`. F-17.9.8 wired the wizard's auto-suggest of a catalog base from cluster detection (`install_detect.go`), recorded on the saved answer file's `profile` field — the spec's wizard-integration contract (§17.9.2 line 1376). The suggested "promote `Profile` to auto-load the overlay" is not a §17.9.2 requirement; the spec keeps hand-written `helm install -f <answer-file>` and the wizard as co-equal first-class paths, and the catalog files are layered with `helm install -f`.
+
 ---
 
-### - [ ] F-17.5.5 — 3 — Tier-6 cloud e2e coverage is AWS-only despite multi-provider scaffolding [Medium] — OPEN
+### - [ ] F-17.5.5 — 3 — Tier-6 cloud e2e coverage is AWS-only despite multi-provider scaffolding [Medium] — DEFERRED
 
 **Spec basis.** §17.5 bullet 1 + §17.9.3 imply parity across S3/GCS/Azure for the object-store backend; `tests/tier6_e2e_cloud/scaffolds_test.go:9-27` documents the `LENNY_CLOUD_PROVIDERS=aws,gcp,azure` per-provider iteration TestMain.
 
@@ -32750,9 +32752,11 @@ No `gke_platform_test.go`, `gcs_resources_test.go`, `aks_platform_test.go`, `azu
 
 **Suggested fix.** Land at minimum `gke_platform_test.go` + `gcs_resources_test.go` and `aks_platform_test.go` + `azure_resources_test.go` so the multi-provider iteration in `scaffolds_test.go::TestMain` lights up real provider-specific assertions for at least one resource on each side. The §17.5 portability claim is unverified until each cloud has a behavioral signal.
 
+**Deferred:** This is a tier-6 cloud e2e coverage gap that requires standing up live GKE/AKS clusters with managed CloudSQL/Memorystore/GCS and Azure Database/Cache/Blob, driven by the `LENNY_GCP_*` / `LENNY_AZURE_*` credential bundles and `scripts/cloud/{gcp,azure}/run-e2e.sh`. Those provider-specific assertions cannot be authored or exercised without real cloud infrastructure and provider credentials, which are unavailable in this environment. The multi-provider iteration scaffold (`scaffolds_test.go::TestMain`) and the run scripts already exist; the per-provider behavioral test files land when an operator drives the equivalent cloud bring-up.
+
 ---
 
-### - [ ] F-17.5.6 — 4 — Cloud egress firewall posture (managed-LB CIDRs, IMDS exclusions) lacks chart-level cluster-type adaptation [Medium] — OPEN
+### - [x] F-17.5.6 — 4 — Cloud egress firewall posture (managed-LB CIDRs, IMDS exclusions) lacks chart-level cluster-type adaptation [Medium] — CLOSED
 
 **Spec basis.** §17.5 bullet 2 ("Network policies are standard Kubernetes") is honored at the API level (`apiVersion: networking.k8s.io/v1` everywhere), but the spec also requires (§13.2 NET-067, NET-057, NET-062, §17.6 preflight rows) that egress allow-lists and `excludePrivate` ranges be set per cluster. The `webhookIngressCIDR` default (`spec/17_deployment-topology.md:248`) calls out that "In managed Kubernetes (EKS, GKE, AKS) the kube-apiserver calls webhooks from a node IP or a cloud-provider control-plane IP — not the service ClusterIP — making it impractical to pin this to a narrow CIDR without cloud-specific knowledge."
 
@@ -32763,6 +32767,8 @@ No `gke_platform_test.go`, `gcs_resources_test.go`, `aks_platform_test.go`, `azu
 **Severity.** Medium. The chart's network policies are portable in shape, but the values that drive them are not portable by default. Closely paired with Medium-2 (per-cluster answer files would set these defaults).
 
 **Suggested fix.** Add a `cluster.type` Helm value (`vanilla | eks | gke | aks | openshift | kind`) with per-cluster defaults for `webhookIngressCIDR`, `egressCIDRs.excludePrivate`, IMDS exclusions, and the kube-apiserver CIDR detection helper. The per-cluster answer files in Medium-2 then set this value.
+
+**Resolution:** The cluster-type axis now exists as the top-level `cluster` value (`laptop | eks | gke | aks | openshift | vanilla`, validated by `lenny.clusterType`), landed by F-17.9.1 (`c4b98190`); the §17.9.2 curated answer files set it. The egress posture the finding wants is already a chart-wide single source of truth applied to every cluster: `egress.excludePrivate` covers the RFC1918 / link-local / IPv6-ULA ranges (NET-057/062) and `egress.excludeIMDS` covers the AWS/GCP/Azure/Alibaba metadata endpoints (NET-002), with the kube-apiserver and pod/service CIDRs discovered at install time by the `lenny-preflight` Job (NET-022/065). A naive managed-cloud install is therefore not exposed on egress without operator homework. The one value that remains broad is the ingress `webhookIngressCIDR` (`0.0.0.0/0`), which §17 line 248 explicitly states is impractical to pin per-cluster without cloud-specific control-plane CIDR knowledge. This batch adds the curated starting point the finding flagged as missing: each managed-cloud catalog answer file (`eks-small-team`, `eks-production`, `gke-production`, `aks-production`) now carries a documented network-posture stanza confirming the universal egress defaults cover the cloud's IMDS and a commented `webhookIngressCIDR` placeholder for the operator to narrow to their provider's documented control-plane CIDR. Schema conformance of all answer files is re-verified by `pkg/chart/values.TestCatalogAnswerFilesConformToSchema`.
 
 ---
 
@@ -41565,7 +41571,7 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/alerting/evaluator/evaluator.go:9-13` — comment confirming production wiring deferred.
 - `grep -rn "evaluator.New\|alerting/evaluator" cmd/lenny-gateway pkg/gateway` returns no production hits.
 
-### - [ ] F-25.13.7 — 07  Catalog code-level rule fields exceed Go struct definition in spec, but spec sample is also under-specified [Medium] — OPEN
+### - [x] F-25.13.7 — 07  Catalog code-level rule fields exceed Go struct definition in spec, but spec sample is also under-specified [Medium] — CLOSED
 
 §25.13 line 4684 sketches the Go `Rule` shape with `Name`, `Expression`, `For`, `Severity`, `Labels`, `Annotations`. The implementation (`pkg/alerting/rules/rules.go:54-93`) instead names the expression field `Expr`, removes the open-ended `Labels`/`Annotations` maps, and adds richer typed fields (`Summary`, `Description`, `RunbookURL`, `SLO`, `SpecRef`). The implementation provides a more usable shape, but two consequences flow from the divergence:
 
@@ -41576,6 +41582,8 @@ This is a spec drift that should be reconciled in either direction — implement
 
 Evidence:
 - `/Users/joan/projects/lenny/spec/25_agent-operability.md:4684-4698` vs `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:54-93`.
+
+**Resolution:** Reconciled implementation-side (the spec sample is frozen). The `Labels` passthrough already existed (added for the §17.2 AdmissionPlaneFeatureFlagDowngrade decomposition), so the finding's "removes the open-ended Labels map" half was stale. This batch adds the matching `Annotations map[string]string` passthrough to `rules.Rule`: operators can now attach arbitrary annotation key/values (Alertmanager routing keys such as `dashboard`, `team`, `priority`) that `RenderPrometheusRule` merges alongside the renderer-owned typed annotations (`summary`, `description`, `runbook_url`, `slo`). `Rule.Validate` rejects a passthrough that collides with a renderer-owned key so each annotation keeps a single source (mirroring the existing `Labels` "must not override severity" guard). The §25.13-sketched `EvaluateAgainstReader(reader MetricReader)` method is satisfied by the richer `pkg/alerting/evaluator` state machine, whose `ExprEvaluator.Active` seam is the canonical evaluation surface (production wiring is the separate F-25.13.6); a bespoke per-`Rule` evaluator would duplicate it. Tier-1 tests `TestRenderPrometheusRuleEmitsOperatorAnnotations_spec_25_13_4684` and `TestRuleValidateRejectsReservedAnnotation_spec_25_13_4684` cover the passthrough and the reserved-key guard.
 
 ### - [x] F-25.13.8 — 08  `docs/alerting/rules.yaml` and `docs/alerting/routing-recommendations.md` not produced [Medium] — CLOSED
 

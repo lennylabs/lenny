@@ -116,6 +116,65 @@ func TestPrometheusDuration(t *testing.T) {
 	}
 }
 
+// TestRenderPrometheusRuleEmitsOperatorAnnotations verifies a rule's
+// arbitrary Annotations passthrough lands on the rendered alert next to
+// the renderer-owned typed annotations (spec §25.13 line 4684 — the
+// open-ended Annotations map of the Go Rule shape, used for Alertmanager
+// routing keys).
+func TestRenderPrometheusRuleEmitsOperatorAnnotations_spec_25_13_4684(t *testing.T) {
+	in := []Rule{{
+		Name:     "RoutedAlert",
+		Expr:     "up == 0",
+		Severity: SeverityWarning,
+		Summary:  "a routed alert",
+		Annotations: map[string]string{
+			"dashboard": "https://grafana.example.com/d/abc",
+			"team":      "platform",
+		},
+	}}
+	out, err := RenderPrometheusRule("x", in)
+	if err != nil {
+		t.Fatalf("RenderPrometheusRule: %v", err)
+	}
+	var doc prometheusRule
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	got := doc.Spec.Groups[0].Rules[0].Annotations
+	if got["dashboard"] != "https://grafana.example.com/d/abc" {
+		t.Errorf("dashboard annotation = %q, want passthrough", got["dashboard"])
+	}
+	if got["team"] != "platform" {
+		t.Errorf("team annotation = %q, want passthrough", got["team"])
+	}
+	// The renderer-owned typed annotation is still present alongside the
+	// operator passthrough.
+	if got["summary"] != "a routed alert" {
+		t.Errorf("summary annotation = %q, want the typed Summary", got["summary"])
+	}
+}
+
+// TestRuleValidateRejectsReservedAnnotation verifies an operator cannot
+// shadow a renderer-owned annotation through the passthrough map, so each
+// annotation keeps a single source (spec §25.13 line 4684).
+func TestRuleValidateRejectsReservedAnnotation_spec_25_13_4684(t *testing.T) {
+	for _, key := range []string{"summary", "description", "runbook_url", "slo"} {
+		r := Rule{
+			Name:        "Reserved",
+			Expr:        "up == 0",
+			Severity:    SeverityWarning,
+			Summary:     "reserved-key probe",
+			Annotations: map[string]string{key: "operator override"},
+		}
+		if err := r.Validate(); err == nil {
+			t.Errorf("Annotations[%q] override must be rejected by Validate", key)
+		}
+		if _, err := RenderPrometheusRule("x", []Rule{r}); err == nil {
+			t.Errorf("rendering a rule that overrides the %q annotation must fail", key)
+		}
+	}
+}
+
 // TestRenderPrometheusRuleEmitsSLOAnnotation verifies the burn-rate
 // rules carry their §16.5 SLO as the "slo" annotation.
 func TestRenderPrometheusRuleEmitsSLOAnnotation(t *testing.T) {

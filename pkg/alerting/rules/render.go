@@ -51,11 +51,16 @@ func buildRuleGroup(groupName string, catalog []Rule) (promRuleGroup, error) {
 		for k, val := range r.Labels {
 			labels[k] = val
 		}
+		annotations := map[string]string{}
+		for k, val := range r.Annotations {
+			annotations[k] = val
+		}
+		annotations["summary"] = r.Summary
 		ar := promAlertRule{
 			Alert:       r.Name,
 			Expr:        r.Expr,
 			Labels:      labels,
-			Annotations: map[string]string{"summary": r.Summary},
+			Annotations: annotations,
 		}
 		if r.For > 0 {
 			ar.For = prometheusDuration(r.For)

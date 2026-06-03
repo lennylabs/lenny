@@ -122,6 +122,30 @@ type Rule struct {
 	// "severity"; the renderer rejects a catalogue that tries to override
 	// it.
 	Labels map[string]string
+
+	// Annotations are extra static annotation key/values stamped on
+	// every firing of this rule, merged with the typed annotations the
+	// renderer derives from Summary, Description, RunbookURL, and SLO.
+	// They carry arbitrary operator metadata the §25.13 spec sketch's
+	// open-ended `Annotations` map anchors — for example Alertmanager
+	// routing keys (`dashboard`, `team`, `priority`) that downstream
+	// receivers consume. A key here must not collide with a renderer-
+	// owned annotation (summary, description, runbook_url, slo); Validate
+	// rejects a catalogue that tries to override one so each annotation
+	// has a single source. Empty for the common alert.
+	// spec: §25.13 line 4684 (the Annotations field of the Go Rule shape).
+	Annotations map[string]string
+}
+
+// reservedAnnotationKeys are the annotation names RenderPrometheusRule
+// derives from a Rule's typed fields. An operator-supplied Annotations
+// map must not set these; the typed field is the single source.
+// spec: §25.13 line 4684.
+var reservedAnnotationKeys = map[string]struct{}{
+	"summary":     {},
+	"description": {},
+	"runbook_url": {},
+	"slo":         {},
 }
 
 // Validate reports the violations of a Rule's invariants. Returns nil
@@ -151,6 +175,11 @@ func (r Rule) Validate() error {
 	}
 	if _, ok := r.Labels["severity"]; ok {
 		v = append(v, "Labels must not override the reserved \"severity\" label")
+	}
+	for k := range r.Annotations {
+		if _, reserved := reservedAnnotationKeys[k]; reserved {
+			v = append(v, fmt.Sprintf("Annotations must not override the renderer-owned %q annotation", k))
+		}
 	}
 	if len(v) == 0 {
 		return nil

@@ -20,6 +20,15 @@ cluster: eks
 backends: cloud-managed
 environment: prod
 isolationProfile: sandboxed
+# Network posture (§13.2, §17.6). The chart's universal egress except-rules
+# block RFC1918 ranges and the cloud metadata endpoint (169.254.169.254,
+# the EC2/EKS IMDS) on every cluster (NET-002/057/062), so an eks install
+# needs no cluster-specific egress tightening here. webhookIngressCIDR stays
+# 0.0.0.0/0 by default because the EKS control plane calls admission webhooks
+# from a control-plane IP that is impractical to pin without cloud-specific
+# knowledge (§17.9). Narrow it to your account's documented control-plane
+# CIDR when your provider publishes one.
+# webhookIngressCIDR: "REPLACE-eks-control-plane-cidr"
 postgres:
   # external: an RDS Proxy fronts Postgres; the per-transaction
   # lenny_tenant_guard trigger is the RLS checkout defense (§12.3).
