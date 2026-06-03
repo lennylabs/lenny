@@ -36886,7 +36886,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### Findings
 
-### - [ ] F-24.5.1 — (High) — None of the eight §24.5 subcommands exist in the CLI [Medium] — OPEN
+### - [x] F-24.5.1 — (High) — None of the eight §24.5 subcommands exist in the CLI [Medium] — CLOSED
 
 **Spec (R1–R8):** §24.5 lists eight `lenny-ctl admin credential-pools …` subcommands (`list`, `get`, `add-credential`, `update-credential`, `remove-credential`, `revoke-credential`, `revoke-pool`, `re-enable`). The §24 preamble guarantees that every `/v1/admin/*` endpoint has a corresponding `lenny-ctl` command (line 5).
 
@@ -36898,9 +36898,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** The entire §24.5 surface is unreachable through the documented `lenny-ctl` entry point. Operators following the §4.9 Emergency Credential Revocation runbook (cited by §24.5 row 6 and 7) cannot execute the runbook through the CLI; they must hand-craft `curl` requests against `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` despite the runbook routing through `lenny-ctl admin credential-pools revoke-credential`. This is the canonical operator workflow for a compromised key and the worst gap to leave at the CLI layer.
 
+**Resolution (commit 13c8b71a):** Added the `lenny-ctl admin credential-pools` group (`cmdCredentialPools`) with all eight subcommands (`list`, `get`, `add-credential`, `update-credential`, `remove-credential`, `revoke-credential`, `revoke-pool`, `re-enable`), each mapping 1:1 to its §15.1 route and inheriting the §24.16 global flags. `--tenant <id>` renders the `?tenantId=` query a platform-admin uses to target a tenant's pools. Wired into `cmdAdmin` dispatch and the usage banner; covered by tier-1 CLI routing tests.
+
 ---
 
-### - [ ] F-24.5.2 — (High) — Server-side: six of the eight §24.5 endpoints are absent [Medium] — OPEN
+### - [x] F-24.5.2 — (High) — Server-side: six of the eight §24.5 endpoints are absent [Medium] — CLOSED
 
 **Spec (R3–R8 + §15.1:810-812, 876-878):** §15.1 normates eight admin endpoints; only four are CRUD on the pool itself (create/list/get/update/delete = five HTTP methods on two paths) and the remaining are per-credential subresource operations.
 
@@ -36919,6 +36921,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - No mechanism exists to fan out `RotateCredentials` RPCs to pods on revocation (per §4.9 line 1649). The lease-mint package at `pkg/credential/lease_mint.go` and the lease at `pkg/credential/lease.go:202-217` model a `Revoked` flag on the lease, but nothing flips it from an admin write path.
 
 **Impact:** Even if F1 were resolved and a CLI was wired, six of the eight §24.5 commands would terminate at the gateway with 404 because the admin handlers do not exist. The two emergency-revocation paths (R6, R7) — which the spec mandates as the operator response to a key compromise (§4.9 Emergency Credential Revocation runbook) — are wholly unimplemented. There is no audited path to revoke a compromised pool credential, force active lease rotation, or restore one after recovery. This is a security-critical correctness gap: a real-world compromise has no platform-supported remediation path, and any operator following the runbook will discover the missing endpoints only at the moment of compromise.
+
+**Resolution (commit 13c8b71a):** The revoke / revoke-pool / re-enable subresource handlers were already mounted by F-4.9.2/.3 (with the §4.9 deny-list + lease-termination fan-out wired via `poolCredentialRevoker` and the admin-time RBAC live-probe). This batch added the remaining three §15.1 routes — `POST .../credentials` (`handleAddCredential`), `PUT .../credentials/{credId}` (`handleUpdateCredentialEntry`, full-replace of the addressed credential preserving its revocation status), and `DELETE .../credentials/{credId}` (`handleRemoveCredential`, drop-and-fallback per §15.1 line 878). The add and secretRef-changing update paths run the §4.9 RBAC live-probe (`probeSecretRefs`); a duplicate id 409s, an absent credential 404s. All six subresource routes are now declared in the OpenAPI document with the four mandatory `x-lenny-*` extensions. The §15.1 line 877 `If-Match` precondition is tracked platform-wide under F-15.1.2 (ETag optimistic concurrency); the credential-pool resource exposes no ETag yet, so the precondition lands with that finding.
 
 ---
 
@@ -36940,7 +36944,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.4 — (Medium) — `get --pool <name>` response omits per-credential health scores and lease counts [Medium] — OPEN
+### - [x] F-24.5.4 — (Medium) — `get --pool <name>` response omits per-credential health scores and lease counts [Medium] — CLOSED
 
 **Spec (R2):** §24.5 row 2: `get --pool <name>` "Show credential pool details **including per-credential health scores and lease counts**".
 
@@ -36951,9 +36955,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** The §24.5 spec promise that operators can read per-credential health and lease counts on a single `get` invocation is unmet. Investigating which specific credential in a pool is exhausted or rate-limited requires a separate `diagnose credential-pool` call to the ops service, and even that does not name lease counts per credential — only the hot-key set. This breaks the §4.9 Emergency Credential Revocation runbook's first step (identify which credential is compromised by its lease activity), the most common admin investigation flow.
 
+**Resolution (commit 13c8b71a):** `CredentialEntryPayload` gains `health` and `leaseCount`, surfaced on `GET /v1/admin/credential-pools/{name}`. A new `PoolCredentialHealthReader` seam (gateway implementation `poolCredentialHealthReader`, backed by the same credential-lease store the revoker drains) supplies the per-credential active lease count; `health` derives from the persisted §4.9 credential status (`revoked` for a revoked credential, `healthy` otherwise). With no reader wired the GET still returns the status-derived `health` and omits `leaseCount`. The platform has no persisted numeric per-credential health score (assignment-time rate-limit/cooldown state lives in the leasing path, not a readable store), so the `health` indicator plus `leaseCount` is the authoritative admin-readable signal.
+
 ---
 
-### - [ ] F-24.5.5 — (Medium) — Admin tool catalog (`me.go`) omits all credential-pool operations [Medium] — OPEN
+### - [x] F-24.5.5 — (Medium) — Admin tool catalog (`me.go`) omits all credential-pool operations [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.3.3, F-24.4.4 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
 
@@ -36965,6 +36971,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The six subresource MCP tool names (`admin.add_credential_to_pool`, `admin.revoke_pool_credential`, `admin.re_enable_pool_credential`, etc.) are absent from both OpenAPI and `me.go`, because F2 has left the underlying endpoints unbuilt.
 
 **Impact:** A platform-admin or tenant-admin agent calling `/v1/admin/me/authorized-tools` (per §25.14) cannot discover any credential-pool operation, even the basic CRUD subset that does exist on the gateway. The §25.14 agent-operability contract — "the catalog is the source of truth for what an agent can do" — is broken for the credential-pool surface. An AI DevOps agent enumerating its tool set will not see the operations and cannot infer that `POST /v1/admin/credential-pools` is callable.
+
+**Resolution (commit 13c8b71a):** `adminToolCatalog()` gains all eleven credential-pool tools (the five CRUD tools the OpenAPI already declared plus the six subresource tools — `add_credential_to_pool`, `update_pool_credential`, `remove_pool_credential`, `revoke_pool_credential`, `revoke_credential_pool`, `re_enable_pool_credential`). The manage operations carry MinRole `tenant-admin` (the actual `manage_credential_pools` permission gate); `re_enable_pool_credential` is `platform-admin` per §15.1 line 811. A new test asserts the catalog mirrors the OpenAPI `x-lenny-mcp-tool` declarations so every advertised tool resolves to a real route.
 
 ---
 
@@ -36985,7 +36993,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.7 — (Medium) — `revoke` server actions cannot terminate active leases or emit `RotateCredentials` RPCs [Medium] — OPEN
+### - [ ] F-24.5.7 — (Medium) — `revoke` server actions cannot terminate active leases or emit `RotateCredentials` RPCs [Medium] — DEFERRED
 
 **Spec (R11):** §4.9 lines 1421, 1649, 1683 mandate that revocation (operator-initiated, `emergency_revocation`) terminates active leases for the credential, fans out `RotateCredentials` RPCs to every pod holding such a lease, and forces lease re-acquisition. §4.9 line 1743 mandates a `credential.re_enabled` audit event on re-enable.
 
@@ -36997,6 +37005,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
   - No `credential.re_enabled` audit-event emitter is present; `grep -rn "credential.re_enabled\|credential_re_enabled" pkg/ cmd/` returns zero matches.
 
 **Impact:** Even if F2 were resolved by mounting endpoints, the behavior on revocation would be incomplete: the pool's `revoked` state in Postgres might toggle, but active leases would continue operating against the compromised credential until natural TTL expiry. The §4.9 line 1683 guarantee — "leases are revocable" with "immediate termination" — does not hold. The §4.9 line 1649 lease-rotation contract is unmet. For direct-mode pools where the materialized key has already been read by the agent pod (per §4.9 line 1649's residual-risk note), the absence of a `RotateCredentials` fan-out means Lenny's revocation action achieves nothing observable from the pod's side until the underlying TTL expires.
+
+**Partial resolution + deferral (as of commit 13c8b71a):** The lease-termination half of this finding is now wired in production. F-4.9.2/.3 added the `poolCredentialRevoker` (deny-list write propagated across replicas via the credential-renewal propagator + drop of this replica's leases against the credential), and `cmd/lenny-gateway/main.go` wires it onto the admin router via `WithPoolCredentialRevocation`. The revoke / revoke-pool handlers call it and report `leasesTerminated`; the §4.9 step-4 proxy-mode path (deny list → `CREDENTIAL_REVOKED` on the next upstream request) delivers immediate termination, and `credential.re_enabled` audits emit. The residual is §4.9 step 5 (direct-delivery mode only): the gateway does not yet send a `RotateCredentials` RPC to pods holding leases against the revoked credential, so a direct-mode pod is not proactively pushed off the key (it relies on the deny list / renewal-fallback rather than an active push). That fan-out overlaps the gateway→pod RPC machinery tracked under F-11.4.3 (cross-replica pod-Terminate fan-out) and is deferred until that pod-fanout path lands; the deny-list approach already prevents the revoked key from reaching the provider through the gateway proxy.
 
 ---
 
