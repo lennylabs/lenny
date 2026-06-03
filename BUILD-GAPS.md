@@ -31991,9 +31991,11 @@ implementation honors it, deviates from it, or omits it entirely.
 
 ---
 
-### - [ ] F-17.4.1 — MUST / correctness / security [High] — OPEN
+### - [x] F-17.4.1 — MUST / correctness / security [High] — CLOSED
 
-### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — OPEN
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 MUST cluster lives in the sibling F-17.4.2..F-17.4.10 entries.
+
+### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — DEFERRED
 
 Spec lines 199–202 enumerate the Source Mode substitutions: **Embedded SQLite** for
 session and metadata storage, **in-memory caches** for pub/sub and ephemeral state,
@@ -32014,6 +32016,14 @@ when `--redis-url` is empty.
 - No controller-sim process; `lenny-gateway` runs alone and uses the in-process executor.
 - `LENNY_AGENT_BINARY=/path/to/...` (spec line 323) is unimplemented. The Makefile
   hard-codes `--runtime-bin ./bin/echo` with no environment override.
+
+**Deferred:** Two substitutions are now wired — local-filesystem artifact storage
+(`blobstore.FilesystemStore`, F-17.4.8) and the `LENNY_AGENT_BINARY` / `--runtime-bin`
+override, which `make run` now passes through (defaulting to the built-in in-process
+echo runtime when unset; F-17.4.15). The two remaining substitutions are dedicated
+batches: an **embedded SQLite** session/metadata store (no SQLite backend exists in the
+tree — every store interface would need a new implementation), and the in-process
+**controller-sim** goroutine. Deferred until the SQLite store lands.
 
 ### - [ ] F-17.4.3 — Compose Mode (`docker compose up`) bundle does not exist [High] — OPEN
 
@@ -32198,7 +32208,9 @@ spec.
 
 ---
 
-### - [ ] F-17.4.11 — SHOULD / unimplemented capability [Medium] — OPEN
+### - [x] F-17.4.11 — SHOULD / unimplemented capability [Medium] — CLOSED
+
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 SHOULD cluster lives in the sibling F-17.4.12..F-17.4.18 entries.
 
 ### - [ ] F-17.4.12 — Gateway does not use the embedded k3s cluster for session placement [Medium] — OPEN
 
@@ -32242,7 +32254,7 @@ Spec line 179: "Tails merged logs or filters to one component (`gateway`, `contr
 
 **Resolution:** `pkg/embedded/stack/logs.go` `RunLogs` now accepts a `Follow` option that polls every `FollowInterval` (default 250ms) until ctx cancels, draining new lines through a per-component `logTailer`. `logComponents` expanded to `gateway, controller, ops, postgres, redis, kms, oidc, k3s, supervisor`; `resolveLogComponents` accepts both the literal `runtime` alias (expands to every `runtime-*.log`) and explicit `runtime-<name>` filters. `cmd/lenny/main.go` `cmdLogs` parses `--follow` / `-f`, threads ctx, and the usage banner lists the expanded component set. Tier-1 tests `TestRunLogsAcceptsExpandedComponentList_spec_24_19_263`, `TestRunLogsAcceptsRuntimeNameComponent_spec_24_19_263`, `TestRunLogsFollowStreamsAppendedLines_spec_24_19_263` exercise the new surface.
 
-### - [ ] F-17.4.14 — The smoke-test contract has no implementation [Medium] — OPEN
+### - [x] F-17.4.14 — The smoke-test contract has no implementation [Medium] — CLOSED
 
 Spec lines 274–276: "Both Source Mode and Compose Mode include a built-in smoke test:
 `make test-smoke` (Source Mode) or `docker compose run smoke-test` (Compose Mode)
@@ -32254,7 +32266,18 @@ exits."
 - `compose/default.yml` has no `smoke-test` service (`grep -n "smoke" compose/*.yml`
   returns nothing).
 
-### - [ ] F-17.4.15 — Zero-credential mode env-var selector is unimplemented [Medium] — OPEN
+**Resolution:** New `make test-smoke` target runs the `smoke`-tagged
+`TestSourceModeSmoke_spec_17_4_276` (`tests/tier4_integration/source_mode_smoke_test.go`):
+it boots the real `cmd/lenny-gateway` binary in dev mode with the built-in echo runtime
+(`--agent-runtime echo`), bootstraps the tenant + echo runtime, creates a session via
+`POST /v1/sessions/start`, sends a prompt through `POST /v1/sessions/{id}/messages`,
+asserts the echo response reflects the prompt, and terminates — validating the
+gateway + session pipeline + echo executor compose end-to-end through one native
+process (~8s, within the spec's under-10s target). The Compose Mode counterpart
+(`docker compose run smoke-test`) ships with the Compose bundle tracked under
+**F-17.4.3** (no top-level `docker-compose.yml` exists yet).
+
+### - [x] F-17.4.15 — Zero-credential mode env-var selector is unimplemented [Medium] — CLOSED
 
 Spec lines 260–262: "In both Source Mode and Compose Mode, the gateway can operate
 without LLM provider credentials by using a built-in echo/mock agent runtime … This
@@ -32263,6 +32286,19 @@ via `LENNY_AGENT_RUNTIME=echo`."
 
 `grep -rn "LENNY_AGENT_RUNTIME" --include="*.go" --include="Makefile*"
 --include="*.yml" .` returns nothing. The env var is documented but unread.
+
+**Resolution:** `cmd/lenny-gateway` now reads the §17.4 runtime selectors. A new
+`--agent-runtime` flag (default `LENNY_AGENT_RUNTIME`) and the `--runtime-bin` flag
+(now defaulting to `LENNY_AGENT_BINARY`) feed `resolveExecutor`
+(`cmd/lenny-gateway/runtime_select.go`): `LENNY_AGENT_RUNTIME=echo` forces the built-in
+in-process echo executor (zero-credential mode, line 262) and wins over a runtime
+binary; a non-empty binary dispatches to the §15.4.1 child-process adapter (line 323);
+the default is the echo executor. The only built-in runtime name is `echo`; any other
+non-empty value fails closed at startup. `make run` passes `--agent-runtime echo` by
+default and threads `LENNY_AGENT_BINARY` through when set. Tier-1 tests
+(`runtime_select_test.go`) cover the echo-wins precedence, the binary path, the default,
+case-insensitivity, and the unknown-runtime fail-closed; the F-17.4.14 smoke test
+exercises `--agent-runtime echo` end-to-end.
 
 ### - [x] F-17.4.16 — Embedded OIDC provider does not verify the audience the gateway accepts [Medium] — CLOSED
 

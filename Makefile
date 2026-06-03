@@ -119,7 +119,7 @@ upgrade: ## §10.5 CRD-aware upgrade: preflight, diff/apply CRDs, then helm upgr
 		$(if $(filter true,$(NON_INTERACTIVE)),--non-interactive,)
 
 .PHONY: run
-run: ## Native-process dev loop: gateway + in-memory stores + echo runtime
+run: ## §17.4 Source Mode: gateway + in-memory stores + built-in echo runtime. LENNY_AGENT_BINARY=<path> swaps in a custom runtime binary.
 	@mkdir -p bin
 	@echo "  build echo runtime"
 	@go build -o bin/echo ./cmd/runtimes/echo
@@ -128,4 +128,9 @@ run: ## Native-process dev loop: gateway + in-memory stores + echo runtime
 	@echo "  starting gateway on :8080 (dev mode, echo runtime, in-memory stores)"
 	@echo "  POST http://localhost:8080/v1/sessions/start to drive a session;"
 	@echo "  GET  http://localhost:8080/healthz for liveness; Ctrl-C to stop."
-	@./bin/lenny-gateway --addr :8080 --dev-mode --runtime-bin ./bin/echo
+	@LENNY_AGENT_BINARY="$(LENNY_AGENT_BINARY)" ./bin/lenny-gateway --addr :8080 --dev-mode \
+		$(if $(LENNY_AGENT_BINARY),,--agent-runtime echo)
+
+.PHONY: test-smoke
+test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
+	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...

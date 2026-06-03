@@ -318,8 +318,10 @@ func main() {
 		"§10.2 line 237 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
 	jwksPublish := flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
 		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
-	runtimeBin := flag.String("runtime-bin", "",
-		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
+	runtimeBin := flag.String("runtime-bin", os.Getenv("LENNY_AGENT_BINARY"),
+		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor. §17.4 line 323 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
+	agentRuntime := flag.String("agent-runtime", os.Getenv("LENNY_AGENT_RUNTIME"),
+		"§17.4 line 262 zero-credential runtime selector. \"echo\" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is \"echo\"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
 	// spec: §12.3 line 103 — optional dedicated Postgres instance for the
@@ -1886,14 +1888,18 @@ func main() {
 	// spec: §4.3 line 193 "Canonical token endpoint" / F-4.3.12.
 
 	// ----- Session API + Executor -----
-	// Default: the in-process echo executor. With --runtime-bin, the
-	// gateway dispatches to a child process speaking the §15.4.1
-	// adapter protocol — the `make run` developer loop.
-	var exec executor.Executor = executor.NewEchoExecutor()
-	if *runtimeBin != "" {
-		exec = executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: *runtimeBin})
-		log.Printf("lenny-gateway: dispatching sessions to runtime binary %s", *runtimeBin)
+	// §17.4 local-dev runtime selection: LENNY_AGENT_RUNTIME=echo forces
+	// the built-in echo executor (zero-credential mode), --runtime-bin /
+	// LENNY_AGENT_BINARY dispatches to a child process speaking the
+	// §15.4.1 adapter protocol, and the default is the in-process echo
+	// executor. The --agent-namespace branch below replaces this with a
+	// PodExecutor when the gateway places sessions on warm pods.
+	// F-17.4.15.
+	exec, execDesc, err := resolveExecutor(*runtimeBin, *agentRuntime)
+	if err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
 	}
+	log.Printf("lenny-gateway: %s", execDesc)
 
 	// ----- §4.9 credential-assignment service -----
 	// credCache is the §4.9 upstream-credential cache. The §4.7 binder's
