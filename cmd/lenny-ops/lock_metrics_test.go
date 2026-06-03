@@ -4,13 +4,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 )
 
 // spec: §25.4 line 2332 — lenny_ops_lock_store_active{store} is 1 for the
@@ -65,28 +69,58 @@ func (c *capturingEmitter) Emit(_ context.Context, e events.OperationalEvent) er
 	return nil
 }
 
-// spec: §25.4 lines 2338-2340 — the lock audit emitter routes the lock
-// lifecycle events onto the operational-event stream; lock_extended has no
-// operational-event counterpart and is dropped.
+// capturingAppender records every durable audit append so a test can
+// assert the §11.7 platform rows the lock emitter committed.
+type capturingAppender struct{ events []string }
+
+func (c *capturingAppender) Append(_ context.Context, _, eventType string, _ json.RawMessage, _ time.Time) (audit.Row, error) {
+	c.events = append(c.events, eventType)
+	return audit.Row{}, nil
+}
+
+// spec: §25.4 lines 2338-2340 + §11.7 line 435 — the lock audit emitter
+// routes the lock lifecycle events onto the operational-event stream and
+// commits a durable §11.7 platform-audit row for every event. lock_extended
+// has no operational-event counterpart so it reaches only the durable chain.
 func TestLockAuditEmitter_spec_25_4(t *testing.T) {
 	cap := &capturingEmitter{}
-	em := lockAuditEmitter{emitter: cap, source: "//lenny.dev/ops/r1"}
+	appender := &capturingAppender{}
+	em := lockAuditEmitter{
+		emitter:  cap,
+		recorder: opsaudit.New(appender),
+		source:   "//lenny.dev/ops/r1",
+	}
 	lock := coordination.Lock{ID: "lock-1", Scope: "pool:p", AcquiredBy: "alice"}
 
 	em.LockEvent(context.Background(), coordination.AuditLockAcquired, lock, nil)
 	em.LockEvent(context.Background(), coordination.AuditLockStolen, lock, map[string]any{"stolenFrom": "bob"})
-	em.LockEvent(context.Background(), coordination.AuditLockExtended, lock, nil) // dropped
+	em.LockEvent(context.Background(), coordination.AuditLockExtended, lock, nil) // stream-dropped
 
 	want := []string{
 		events.EventRemediationLockAcquired.CloudEventsType(),
 		events.EventRemediationLockStolen.CloudEventsType(),
 	}
 	if len(cap.types) != len(want) {
-		t.Fatalf("emitted %v, want %v (lock_extended dropped)", cap.types, want)
+		t.Fatalf("emitted %v, want %v (lock_extended dropped from stream)", cap.types, want)
 	}
 	for i := range want {
 		if cap.types[i] != want[i] {
 			t.Errorf("event[%d] = %q, want %q", i, cap.types[i], want[i])
+		}
+	}
+
+	// Every event, including lock_extended, lands on the durable chain.
+	wantDurable := []string{
+		coordination.AuditLockAcquired,
+		coordination.AuditLockStolen,
+		coordination.AuditLockExtended,
+	}
+	if len(appender.events) != len(wantDurable) {
+		t.Fatalf("durable rows = %v, want %v", appender.events, wantDurable)
+	}
+	for i := range wantDurable {
+		if appender.events[i] != wantDurable[i] {
+			t.Errorf("durable[%d] = %q, want %q", i, appender.events[i], wantDurable[i])
 		}
 	}
 }

@@ -403,6 +403,19 @@ func main() {
 		redisClient = client
 	}
 
+	// §12.6 StoreRouter + §11.7 durable platform-audit recorder. lenny-ops
+	// accesses platform Postgres/Redis through the single-shard router so
+	// the §12.3 R-03 audit-write path routes via AuditShard(); the recorder
+	// commits every ops_event.* audit event (remediation-lock lifecycle,
+	// escalation flush, self-health transitions, identity discovery,
+	// operations-inventory queries, plus the §25.6/§25.10/§25.11/§25.8
+	// diagnostics/drift/backup/upgrade events) to the platform §11.7 hash
+	// chain. Without Postgres both degrade gracefully: the router is nil and
+	// the recorder logs each event so single-process dev stays observable.
+	// F-25.4.14, F-25.4.22.
+	storeRouter := buildStoreRouter(pgPool, redisClient)
+	auditRecorder := buildPlatformAuditRecorder(storeRouter)
+
 	// Kubernetes API: the §25.4 required dependency for diagnostics,
 	// upgrade orchestration, backup Jobs, and leader election. When no
 	// cluster connection is available lenny-ops still serves the HTTP
@@ -655,7 +668,7 @@ func main() {
 	// the service. The HTTP layer applies the §25.4 scope-based
 	// authorization control before the service. F-25.4.6.
 	lockSvc := buildLockService(pgPool, redisClient, lockCoordination,
-		prometheus.DefaultRegisterer, opsEmitter, replicaID)
+		prometheus.DefaultRegisterer, opsEmitter, auditRecorder, replicaID)
 
 	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
 	// Kubernetes Jobs through it. The Postgres-backed ops_backups store,
@@ -680,6 +693,7 @@ func main() {
 		Pool:            pgPool,
 		Clientset:       backupClientset,
 		Locks:           lockSvc,
+		Recorder:        auditRecorder,
 		Namespace:       envOr("POD_NAMESPACE", *leaderElectNS),
 		LauncherImage:   *backupImage,
 		MinIOEndpoint:   *backupMinIOEndpoint,
@@ -697,6 +711,7 @@ func main() {
 	// them; the durable backing stores are documented seams.
 	escalationSvc := buildEscalationService(
 		newStreamEscalationEmitter(opsEmitter, replicaID), pgPool, redisClient,
+		auditRecorder,
 		escalationConfig{
 			RequireDurable:                *escalationRequireDurable,
 			ReconciliationWritesPerSecond: *escalationReconcileWPS,
@@ -704,7 +719,7 @@ func main() {
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
-	}, pgPool, opsEmitter)
+	}, pgPool, opsEmitter, auditRecorder)
 	diagnosticSvc := buildDiagnosticService()
 
 	// The §25.8 release-channel manifest publisher. Loaded from the
@@ -730,8 +745,8 @@ func main() {
 	// completion into it, and the Operations Inventory reads it to derive
 	// the historical_p50 ETA. F-25.2.7.
 	baselineStore := buildBaselineStore(pgPool)
-	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter, baselineStore)
-	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter)
+	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter, baselineStore, auditRecorder)
+	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter, auditRecorder)
 	// §25.8 live upgrade gauges (phase + duration): a collector that reads
 	// the orchestrator's singleton at scrape time so the gauges advance
 	// without a background goroutine. Registered on the default registry
@@ -895,12 +910,16 @@ func main() {
 			// failure) per the §25.5 buffer-fallback model.
 			log.Printf("lenny-ops: self-health %s -> %s (replica %s)",
 				prev.StatusText, next.StatusText, replicaID)
-			payload, _ := json.Marshal(map[string]any{
+			fields := map[string]any{
 				"replicaId":  replicaID,
 				"previous":   prev.StatusText,
 				"current":    next.StatusText,
 				"transition": prev.StatusText + " -> " + next.StatusText,
-			})
+			}
+			// §11.7: commit the durable ops_health_status_changed audit row
+			// (logged only in the degraded no-Postgres mode). F-25.4.22.
+			auditRecorder.Record(string(events.EventOpsHealthStatusChanged), fields, time.Now())
+			payload, _ := json.Marshal(fields)
 			if err := opsEmitter.Emit(ctx, events.OperationalEvent{
 				Type:            events.EventOpsHealthStatusChanged.CloudEventsType(),
 				Subject:         "ops/" + replicaID,
@@ -1023,11 +1042,12 @@ func main() {
 		},
 	}
 
-	// §25.4 audit recorder for identity.discovered + operations.inventory_-
-	// queried. Logged today; the durable audit-store sink lands with
-	// F-25.4.22, matching the lock/escalation/backup audit posture.
+	// §25.4 audit recorder for identity.discovered (line 1641) +
+	// operations.inventory_queried (line 1779). Each emits a durable §11.7
+	// platform-audit row through auditRecorder (logged only in the degraded
+	// no-Postgres mode). F-25.4.22.
 	opsAudit := opsserver.LogAuditRecorder{Sink: func(event string, fields map[string]any) {
-		log.Printf("lenny-ops: audit %s %v", event, fields)
+		auditRecorder.Record(event, fields, time.Time{})
 	}}
 	opsHandler := opsserver.New(opsserver.Options{
 		Probes:             probes,
@@ -1052,7 +1072,7 @@ func main() {
 		PlatformConfig:       platformConfigSvc,
 		PodLogs:              podLogs,
 		Production:           *production,
-		DiagnosticsAudit:     buildDiagnosticsAudit(*diagnosticsAuditRate),
+		DiagnosticsAudit:     buildDiagnosticsAudit(*diagnosticsAuditRate, auditRecorder),
 		Auth:                 authCfg,
 		Idempotency:          idemStore,
 		Inventory:            inventory,

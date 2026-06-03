@@ -42,7 +42,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
+	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
+	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -363,6 +365,12 @@ type backupDeps struct {
 	// coordinates across replicas.
 	Locks coordination.RemediationLockService
 
+	// Recorder is the durable §11.7 platform-audit recorder every
+	// backup/restore/retention transition is committed to (§25.11 line
+	// 4343). Never nil — main builds the degraded log-only recorder when
+	// no Postgres is wired.
+	Recorder *opsaudit.Recorder
+
 	Namespace       string
 	LauncherImage   string
 	MinIOEndpoint   string
@@ -392,12 +400,10 @@ type backupDeps struct {
 func buildBackupService(production bool, deps backupDeps) (*backup.Service, []opsservice.ScheduledJob) {
 	cfg := backup.Config{
 		// §25.11 line 4343: every backup/restore/retention transition is
-		// audited. The orchestrator emits to this sink; the durable
-		// audit-append destination is a documented seam (lenny-ops has no
-		// audit-store client in this single-process mode), so the sink
-		// logs the event until that path lands, matching the escalation
-		// logEmitter posture.
-		Audit: logAuditSink,
+		// audited. The orchestrator emits to this sink, which commits the
+		// durable §11.7 platform-audit row through deps.Recorder (logged
+		// only in the degraded no-Postgres mode).
+		Audit: backupAuditSink(deps.Recorder),
 		// §12.8 line 936: the lenny_data_residency_violation_total counter
 		// the fail-closed BACKUP_REGION_UNRESOLVABLE abort increments.
 		Residency: backupResidencyMetrics{},
@@ -785,13 +791,17 @@ var diagnosticsAuditRateLimited = func() *prometheus.CounterVec {
 // mirroring logAuditSink until the audit-store client lands) and a
 // dropped event bumps lenny_audit_rate_limited_total so operators can
 // detect rate-limited diagnostics. F-25.9.15.
-func buildDiagnosticsAudit(ratePerMinute int) *opsserver.DiagnosticsAuditConfig {
+func buildDiagnosticsAudit(ratePerMinute int, recorder *opsaudit.Recorder) *opsserver.DiagnosticsAuditConfig {
 	return &opsserver.DiagnosticsAuditConfig{
 		RatePerMinute: ratePerMinute,
 		Emit: func(ev auditrate.Event) {
-			log.Printf("lenny-ops: audit %s resource=%s/%s invocationCount=%d service_account=%s operation_id=%s — "+
-				"audit-append destination pending the audit-store wiring",
-				ev.EventType, ev.ResourceType, ev.ResourceID, ev.InvocationCount, ev.ServiceAccount, ev.OperationID)
+			recorder.Record(ev.EventType, map[string]any{
+				"resourceType":    ev.ResourceType,
+				"resourceId":      ev.ResourceID,
+				"invocationCount": ev.InvocationCount,
+				"serviceAccount":  ev.ServiceAccount,
+				"operationId":     ev.OperationID,
+			}, ev.FirstAt)
 		},
 		RateLimited: func(eventType, serviceAccount string) {
 			if diagnosticsAuditRateLimited != nil {
@@ -818,21 +828,24 @@ func bundleRulesReconciler(mx *alertingmetrics.Metrics, formats []string, overri
 	}
 }
 
-// logAuditSink is the §25.11 backup/restore AuditSink used until the
-// lenny-ops audit-append path is wired. The orchestrator emits an audit
-// event on every state transition it owns (§25.11 line 4343); with no
-// audit-store client in this single-process mode the event is logged so
-// the emission is observable, matching the escalation logEmitter
-// posture. A future commit that wires the audit-append client swaps
-// this sink for one that writes the §11.7 append-only row.
-func logAuditSink(ev backup.AuditEvent) {
-	outcome := ev.Outcome
-	if outcome == "" {
-		outcome = "success"
+// backupAuditSink is the §25.11 backup/restore AuditSink. The orchestrator
+// emits an audit event on every state transition it owns (§25.11 line
+// 4343); the sink commits the durable §11.7 platform-audit row through the
+// recorder (logged only in the degraded no-Postgres mode). F-25.4.22.
+func backupAuditSink(recorder *opsaudit.Recorder) func(backup.AuditEvent) {
+	return func(ev backup.AuditEvent) {
+		outcome := ev.Outcome
+		if outcome == "" {
+			outcome = "success"
+		}
+		recorder.Record(ev.Type, map[string]any{
+			"backupId":  ev.BackupID,
+			"restoreId": ev.RestoreID,
+			"actor":     ev.Actor,
+			"outcome":   outcome,
+			"detail":    ev.Detail,
+		}, time.Now())
 	}
-	log.Printf("lenny-ops: audit %s outcome=%s backup=%s restore=%s actor=%s — "+
-		"audit-append destination pending the audit-store wiring",
-		ev.Type, outcome, ev.BackupID, ev.RestoreID, ev.Actor)
 }
 
 // scheduledBackupsDisabled reports whether the persisted §25.11
@@ -945,7 +958,7 @@ type escalationConfig struct {
 // recovers.
 //
 // spec: §25.4 lines 2376-2455.
-func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, redisClient redis.UniversalClient, cfg escalationConfig) *escalation.Service {
+func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, redisClient redis.UniversalClient, recorder *opsaudit.Recorder, cfg escalationConfig) *escalation.Service {
 	var durable []escalation.Store
 	if pgPool != nil {
 		durable = append(durable, escpgstore.New(pgPool))
@@ -956,24 +969,25 @@ func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, re
 	return escalation.NewWithStores(escalation.Options{
 		Durable:                       durable,
 		Emitter:                       emitter,
-		Audit:                         escalationAuditSink{},
+		Audit:                         escalationAuditSink{recorder: recorder},
 		RequireDurable:                cfg.RequireDurable,
 		ReconciliationWritesPerSecond: cfg.ReconciliationWritesPerSecond,
 	})
 }
 
 // escalationAuditSink is the §25.4 line 2415 escalation-flush audit sink.
-// lenny-ops has no audit-store client in this single-process mode, so the
-// remediation.escalation_persisted event is logged until that path lands,
-// matching the backup logAuditSink and the drift / diagnostics-audit
-// posture. A future commit that wires the audit-append client swaps this
-// for one that writes the §11.7 append-only row. F-25.4.22.
-type escalationAuditSink struct{}
+// Each successful tier flush commits a durable remediation.escalation_-
+// persisted row to the §11.7 platform chain through the recorder (logged
+// only in the degraded no-Postgres mode). F-25.4.22.
+type escalationAuditSink struct{ recorder *opsaudit.Recorder }
 
-func (escalationAuditSink) EscalationPersisted(_ context.Context, id, sourceTier, destTier string, durationMS int64) {
-	log.Printf("lenny-ops: audit remediation.escalation_persisted escalation=%s %s->%s duration_ms=%d — "+
-		"audit-append destination pending the audit-store wiring",
-		id, sourceTier, destTier, durationMS)
+func (s escalationAuditSink) EscalationPersisted(_ context.Context, id, sourceTier, destTier string, durationMS int64) {
+	s.recorder.Record(obsaudit.EventRemediationEscalationPersisted.String(), map[string]any{
+		"escalationId": id,
+		"sourceTier":   sourceTier,
+		"destTier":     destTier,
+		"durationMs":   durationMS,
+	}, time.Now())
 }
 
 // buildIdempotencyStore returns the §25.4 idempotency store. When a
@@ -1025,7 +1039,7 @@ type driftServiceConfig struct {
 // MemRunningStateCache. A non-positive TTL disables caching, matching
 // the §25.10 line 3824 "0 disables" posture. F-25.10.2, F-25.10.3,
 // F-25.10.5, F-25.10.7, F-25.10.9.
-func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, emitter events.EventEmitter) *driftservice.Service {
+func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *driftservice.Service {
 	var store driftservice.SnapshotStore = driftservice.NewMemSnapshotStore()
 	if pgPool != nil {
 		store = driftpgstore.New(pgPool)
@@ -1037,7 +1051,7 @@ func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, emitter eve
 			time.Duration(cfg.RunningStateCacheTTLSec) * time.Second))
 	}
 	svc.SetMetrics(driftPromMetrics{})
-	svc.SetAuditSink(driftAuditSink{})
+	svc.SetAuditSink(driftAuditSink{recorder: recorder})
 	if emitter != nil {
 		svc.SetProgressEmitter(driftProgressEmitter{emitter: emitter})
 	}
@@ -1089,18 +1103,17 @@ func (driftPromMetrics) Reconciled(resourceType, outcome string) {
 	}
 }
 
-// driftAuditSink is the §25.10 line 3871 drift audit sink. lenny-ops has
-// no audit-store client in this single-process mode, so the event is
-// logged until that path lands, matching the backup logAuditSink and the
-// diagnostics-audit posture. A future commit that wires the audit-append
-// client swaps this for one that writes the §16.7 append-only row.
-// F-25.10.2.
-type driftAuditSink struct{}
+// driftAuditSink is the §25.10 line 3871 drift audit sink. Each event is
+// committed to the §11.7 platform chain through the recorder (logged only
+// in the degraded no-Postgres mode). F-25.10.2, F-25.4.22.
+type driftAuditSink struct{ recorder *opsaudit.Recorder }
 
-func (driftAuditSink) Emit(ev driftservice.AuditEvent) {
-	log.Printf("lenny-ops: audit %s actor=%s details=%v — "+
-		"audit-append destination pending the audit-store wiring",
-		ev.Type, ev.Actor, ev.Details)
+func (s driftAuditSink) Emit(ev driftservice.AuditEvent) {
+	fields := map[string]any{"actor": ev.Actor}
+	for k, v := range ev.Details {
+		fields[k] = v
+	}
+	s.recorder.Record(ev.Type, fields, time.Now())
 }
 
 // driftProgressEmitter emits the §25.10 line 3844 operation_progressed
@@ -1400,14 +1413,20 @@ func setPlatformUpgradeAvailable(available bool) {
 	platformUpgradeAvailable.WithLabelValues().Set(v)
 }
 
-// upgradeAuditSink is the §16.7 platform-upgrade AuditSink used until
-// the audit-store client lands. It logs each lifecycle transition so the
-// upgrade is observable in the lenny-ops log, mirroring logAuditSink
-// (backup) and driftAuditSink (drift). The events fire and are
-// observable; only the durable §11.7 destination is the documented seam.
-func upgradeAuditSink(ev upgradeservice.AuditEvent) {
-	log.Printf("lenny-ops: audit %s op=%s actor=%s phase=%s->%s target=%s detail=%q",
-		ev.Type, ev.OperationID, ev.Actor, ev.OldPhase, ev.NewPhase, ev.TargetVersion, ev.Detail)
+// upgradeAuditSink is the §16.7 platform-upgrade AuditSink. Each lifecycle
+// transition is committed to the §11.7 platform chain through the recorder
+// (logged only in the degraded no-Postgres mode). F-25.4.22.
+func upgradeAuditSink(recorder *opsaudit.Recorder) func(upgradeservice.AuditEvent) {
+	return func(ev upgradeservice.AuditEvent) {
+		recorder.Record(ev.Type, map[string]any{
+			"operationId":   ev.OperationID,
+			"actor":         ev.Actor,
+			"oldPhase":      ev.OldPhase,
+			"newPhase":      ev.NewPhase,
+			"targetVersion": ev.TargetVersion,
+			"detail":        ev.Detail,
+		}, ev.At)
+	}
 }
 
 // buildUpgradeService constructs the §25.8 platform-upgrade orchestrator.
@@ -1424,7 +1443,7 @@ func upgradeAuditSink(ev upgradeservice.AuditEvent) {
 //
 // spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
 // consumer).
-func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter, baselines operations.BaselineStore) *upgradeservice.Service {
+func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter, baselines operations.BaselineStore, recorder *opsaudit.Recorder) *upgradeservice.Service {
 	var store upgradeservice.Store = upgradeservice.NewMemoryStore()
 	if pool != nil {
 		store = upgradepg.New(pool)
@@ -1432,7 +1451,7 @@ func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitte
 	opts := upgradeservice.Options{
 		Store:   store,
 		Emitter: emitter,
-		Audit:   upgradeAuditSink,
+		Audit:   upgradeAuditSink(recorder),
 		// §25.2 line 393: fold the upgrade's completion duration into the
 		// historical baseline table so a later upgrade gets a historical_p50
 		// ETA.
@@ -1453,7 +1472,7 @@ func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitte
 // GET /v1/admin/platform/upgrade-check reports the channel disabled.
 //
 // spec: §25.8 Upgrade Check, Air-Gapped Support.
-func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool, emitter events.EventEmitter) *upgradeservice.Checker {
+func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *upgradeservice.Checker {
 	var source releasechannel.Source
 	if manifestPath != "" {
 		manifestBytes, err := os.ReadFile(manifestPath)
@@ -1479,7 +1498,7 @@ func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool
 		Source:         source,
 		CurrentVersion: currentVersion,
 		Emitter:        emitter,
-		Audit:          upgradeAuditSink,
+		Audit:          upgradeAuditSink(recorder),
 		Gauge:          setPlatformUpgradeAvailable,
 		Cache:          cache,
 	})

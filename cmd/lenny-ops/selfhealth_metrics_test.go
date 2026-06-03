@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
@@ -21,7 +22,7 @@ func TestDiagnosticsAuditRateLimitedIncrementsCounter_spec_16_8_4(t *testing.T) 
 	if diagnosticsAuditRateLimited == nil {
 		t.Fatal("lenny_audit_rate_limited_total counter failed to register")
 	}
-	cfg := buildDiagnosticsAudit(60)
+	cfg := buildDiagnosticsAudit(60, opsaudit.New(nil))
 	if cfg.RateLimited == nil {
 		t.Fatal("buildDiagnosticsAudit did not wire the RateLimited callback")
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -15,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/redisstore"
+	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 )
 
 // buildLockService constructs the §25.4 tiered remediation-lock service:
@@ -29,11 +31,11 @@ import (
 // spec: §25.4 lines 2083-2271.
 func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 	gate *coordination.CoordinationGate, reg prometheus.Registerer,
-	emitter events.EventEmitter, replicaID string) *coordination.Service {
+	emitter events.EventEmitter, recorder *opsaudit.Recorder, replicaID string) *coordination.Service {
 	opts := coordination.ServiceOptions{
 		Gate:    gate,
 		Metrics: newLockMetrics(reg),
-		Audit:   lockAuditEmitter{emitter: emitter, source: "//lenny.dev/ops/" + replicaID},
+		Audit:   lockAuditEmitter{emitter: emitter, recorder: recorder, source: "//lenny.dev/ops/" + replicaID},
 	}
 	if pgPool != nil {
 		opts.Postgres = pgstore.New(pgPool)
@@ -118,20 +120,38 @@ func (m *lockMetrics) SplitBrainDetected(pattern string)   { m.splitBrain.WithLa
 func (m *lockMetrics) StealDone(pattern string)            { m.steal.WithLabelValues(pattern).Inc() }
 func (m *lockMetrics) SetClockSkew(pair string, s float64) { m.clockSkew.WithLabelValues(pair).Set(s) }
 
-// lockAuditEmitter routes the §25.4 remediation-lock audit events onto the
-// operational-event stream (the durable audit-store sink is the
-// cross-cutting lenny-ops audit-store seam, consistent with the escalation
-// and health emitters). A lock_extended event has no operational-event
-// counterpart in the §25.5 catalog and is dropped here; the durable audit
-// trail for it lands with the dedicated audit-store wiring.
+// lockAuditEmitter routes the §25.4 remediation-lock audit events onto two
+// destinations: the durable §11.7 platform audit chain (via recorder, the
+// audit trail the §25.9 query API reads — "which platform-admin stole
+// which lock when?") and the operational-event stream (for SSE subscribers
+// and webhook delivery). Every lock event is committed durably, including
+// remediation.lock_extended, which has no operational-event counterpart in
+// the §25.5 catalog and so reaches only the durable chain.
 //
-// spec: §25.4 lines 2338-2340.
+// spec: §25.4 lines 2338-2340 (audit events); §11.7 line 435 (ops_event.*
+// route to the platform tenant).
 type lockAuditEmitter struct {
-	emitter events.EventEmitter
-	source  string
+	emitter  events.EventEmitter
+	recorder *opsaudit.Recorder
+	source   string
 }
 
 func (e lockAuditEmitter) LockEvent(ctx context.Context, event string, lock coordination.Lock, detail map[string]any) {
+	payload := map[string]any{
+		"event":      event,
+		"lockId":     lock.ID,
+		"scope":      lock.Scope,
+		"acquiredBy": lock.AcquiredBy,
+		"epoch":      lock.Epoch,
+	}
+	for k, v := range detail {
+		payload[k] = v
+	}
+	// §11.7: commit the durable audit row for every lock event, including
+	// remediation.lock_extended, which the §25.5 operational-event stream
+	// below does not carry.
+	e.recorder.Record(event, payload, time.Now())
+
 	var et events.EventType
 	switch event {
 	case coordination.AuditLockAcquired:
@@ -146,16 +166,6 @@ func (e lockAuditEmitter) LockEvent(ctx context.Context, event string, lock coor
 		et = events.EventRemediationLockSplitBrainDetected
 	default:
 		return
-	}
-	payload := map[string]any{
-		"event":      event,
-		"lockId":     lock.ID,
-		"scope":      lock.Scope,
-		"acquiredBy": lock.AcquiredBy,
-		"epoch":      lock.Epoch,
-	}
-	for k, v := range detail {
-		payload[k] = v
 	}
 	blob, err := json.Marshal(payload)
 	if err != nil {
