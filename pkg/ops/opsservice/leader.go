@@ -51,15 +51,42 @@ type LeaseElector struct {
 	isLeader atomic.Bool
 }
 
+// LeaseTimings carries the §25.4 ops.leaderElection.{leaseDurationSeconds,
+// renewDeadlineSeconds,retryPeriodSeconds} overrides. A zero field keeps
+// the built-in default (15s / 10s / 2s). The window must satisfy
+// client-go's LeaseDuration > RenewDeadline > RetryPeriod invariant; the
+// chart defaults do, and withDefaults only substitutes built-ins for
+// omitted fields rather than re-deriving the others. spec: §25.4 ops.leaderElection.
+type LeaseTimings struct {
+	LeaseDuration time.Duration
+	RenewDeadline time.Duration
+	RetryPeriod   time.Duration
+}
+
+func (t LeaseTimings) withDefaults() LeaseTimings {
+	if t.LeaseDuration <= 0 {
+		t.LeaseDuration = LeaseDuration
+	}
+	if t.RenewDeadline <= 0 {
+		t.RenewDeadline = RenewDeadline
+	}
+	if t.RetryPeriod <= 0 {
+		t.RetryPeriod = RetryPeriod
+	}
+	return t
+}
+
 // NewLeaseElector builds the §25.4 Lease-based Elector. namespace is
 // the release namespace that holds the lenny-ops-leader Lease, and
-// identity is the unique holder identity (the pod name). The
-// coordination and core clients come from the in-cluster client-go
-// clientset.
+// identity is the unique holder identity (the pod name). timings carries
+// the ops.leaderElection duration overrides (zero fields take the
+// built-in defaults). The coordination and core clients come from the
+// in-cluster client-go clientset.
 func NewLeaseElector(
 	namespace, identity string,
 	coreClient corev1client.CoreV1Interface,
 	coordinationClient coordinationv1client.CoordinationV1Interface,
+	timings LeaseTimings,
 ) (*LeaseElector, error) {
 	lock, err := resourcelock.New(
 		resourcelock.LeasesResourceLock,
@@ -72,12 +99,13 @@ func NewLeaseElector(
 	if err != nil {
 		return nil, err
 	}
+	t := timings.withDefaults()
 	e := &LeaseElector{}
 	e.config = leaderelection.LeaderElectionConfig{
 		Lock:          lock,
-		LeaseDuration: LeaseDuration,
-		RenewDeadline: RenewDeadline,
-		RetryPeriod:   RetryPeriod,
+		LeaseDuration: t.LeaseDuration,
+		RenewDeadline: t.RenewDeadline,
+		RetryPeriod:   t.RetryPeriod,
 		// Release the lease on a clean shutdown so the surviving replica
 		// becomes leader without waiting out the full lease duration.
 		ReleaseOnCancel: true,

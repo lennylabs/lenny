@@ -186,6 +186,12 @@ type webhookDeliveryDeps struct {
 	TrackingMode         webhookdelivery.TrackingMode
 	Retention            opsservice.RetentionPolicy
 	OnAvailabilityChange func(available bool)
+	// SSRF is the §25.5 callback-URL validator built from the
+	// ops.webhooks.{allowHTTP,blockedCIDRs,domainAllowlist} policy. When
+	// non-nil it gates subscription create/update (via the Service) and
+	// every delivery attempt (via the transport guard). Nil applies the
+	// strict default (HTTPS-only, no allowlist). F-25.4.9.
+	SSRF *eventsubscription.SSRFValidator
 }
 
 // webhookDelivery bundles the wired §25.5 webhook delivery components the
@@ -218,6 +224,12 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 	svc := eventsubscription.NewService(store)
 	if deps.Audit != nil {
 		svc.SetAuditSink(deps.Audit)
+	}
+	// §25.5 lines 2735-2745: the ops.webhooks SSRF policy validates the
+	// callback URL at create/update. A nil validator leaves the Service on
+	// its strict default. F-25.4.9.
+	if deps.SSRF != nil {
+		svc.SSRF = deps.SSRF
 	}
 
 	// §25.5 lines 2715-2733: the worker recovers each subscription's
@@ -273,7 +285,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 		recorder = opsservice.NewStoreDeliveryRecorder(store, deps.Retention, nil)
 	}
 
-	worker := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
+	workerCfg := opsservice.WebhookWorkerConfig{
 		Events:        deps.Source,
 		Subscriptions: cache,
 		Recorder:      recorder,
@@ -297,7 +309,16 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 				log.Printf("lenny-ops: emit event_delivery_failed: %v", err)
 			}
 		},
-	})
+	}
+	// §25.5 lines 2735-2745: re-run the SSRF/DNS-rebinding guard on every
+	// delivery attempt (not only at subscription create), so a DNS rebind
+	// after registration cannot reach a blocked target. Set the transport
+	// only when a validator is configured so the nil case still falls back
+	// to the worker's default HTTP transport. F-25.4.9.
+	if deps.SSRF != nil {
+		workerCfg.Transport = webhookdelivery.NewTransport(10 * time.Second).WithSSRFGuard(deps.SSRF.Validate)
+	}
+	worker := opsservice.NewWebhookWorker(workerCfg)
 
 	return webhookDelivery{Worker: worker, Subscriptions: svc, Cache: cache, Store: store, InvalidateToken: token}
 }

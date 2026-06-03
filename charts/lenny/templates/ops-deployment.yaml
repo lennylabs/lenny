@@ -188,6 +188,35 @@ spec:
             # lenny-ops Service Endpoints to reject uncoordinated acquires in
             # multi-replica deployments. F-25.4.26.
             - --locks-memory-tier={{ .Values.ops.locks.memoryTier }}
+            # §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds} —
+            # the deployment-wide remediation-lock TTL policy applied across
+            # every tier. F-25.4.9.
+            - --locks-min-ttl-seconds={{ .Values.ops.locks.minTTLSeconds }}
+            - --locks-default-ttl-seconds={{ .Values.ops.locks.defaultTTLSeconds }}
+            - --locks-max-ttl-seconds={{ .Values.ops.locks.maxTTLSeconds }}
+            # §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds} —
+            # idempotency-record lifetimes for the standard and long-running
+            # endpoint classes. F-25.4.9.
+            - --idempotency-key-ttl-seconds={{ .Values.ops.idempotency.keyTTLSeconds }}
+            - --idempotency-long-running-key-ttl-seconds={{ .Values.ops.idempotency.longRunningKeyTTLSeconds }}
+            # §25.4 ops.leaderElection.{leaseDurationSeconds,renewDeadlineSeconds,
+            # retryPeriodSeconds} — client-go leader-election lease timings for
+            # the lenny-ops-leader Lease. F-25.4.9.
+            - --leader-lease-duration-seconds={{ .Values.ops.leaderElection.leaseDurationSeconds }}
+            - --leader-renew-deadline-seconds={{ .Values.ops.leaderElection.renewDeadlineSeconds }}
+            - --leader-retry-period-seconds={{ .Values.ops.leaderElection.retryPeriodSeconds }}
+            # §25.9 ops.audit.diagnosticsRatePerMinute — per-service-account cap
+            # on distinct diagnostic-audit events per minute. F-25.4.9.
+            - --diagnostics-audit-rate-per-minute={{ .Values.ops.audit.diagnosticsRatePerMinute }}
+            # §25.5 ops.webhooks SSRF policy applied at subscription create and
+            # on every delivery attempt. F-25.4.9.
+            - --webhook-allow-http={{ .Values.ops.webhooks.allowHTTP }}
+            {{- with .Values.ops.webhooks.blockedCIDRs }}
+            - --webhook-blocked-cidrs={{ join "," . }}
+            {{- end }}
+            {{- with .Values.ops.webhooks.domainAllowlist }}
+            - --webhook-domain-allowlist={{ join "," . }}
+            {{- end }}
             - --ops-service-name=lenny-ops
             # §25.4 line 1339 / §25.13 lines 4833-4834 — the leader-only
             # bundleRules reconciler re-stamps the bundled-rules observability

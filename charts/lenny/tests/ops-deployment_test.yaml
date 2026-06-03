@@ -632,3 +632,126 @@ tests:
               items:
                 - key: ca.crt
                   path: ca.crt
+
+  # spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds} —
+  # F-25.4.9. The deployment-wide remediation-lock TTL policy renders the
+  # three bound flags from the spec defaults (0/300/3600).
+  - it: renders the §25.4 lock TTL policy args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-min-ttl-seconds=0
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-default-ttl-seconds=300
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-max-ttl-seconds=3600
+
+  - it: honors ops.locks TTL overrides per §25.4
+    set:
+      ops:
+        locks:
+          minTTLSeconds: 30
+          defaultTTLSeconds: 600
+          maxTTLSeconds: 7200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-min-ttl-seconds=30
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-default-ttl-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-max-ttl-seconds=7200
+
+  # spec: §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds} —
+  # F-25.4.9. The standard (24h) and long-running (7d) record lifetimes.
+  - it: renders the §25.4 idempotency TTL args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --idempotency-key-ttl-seconds=86400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --idempotency-long-running-key-ttl-seconds=604800
+
+  # spec: §25.4 ops.leaderElection.{leaseDurationSeconds,renewDeadlineSeconds,
+  # retryPeriodSeconds} — F-25.4.9. The client-go lease timings (15/10/2).
+  - it: renders the §25.4 leader-election timing args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-lease-duration-seconds=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-renew-deadline-seconds=10
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-retry-period-seconds=2
+
+  # spec: §25.9 ops.audit.diagnosticsRatePerMinute — F-25.4.9. The
+  # per-service-account diagnostic-audit rate cap (default 60).
+  - it: renders the §25.9 diagnostics-audit-rate arg with the spec default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --diagnostics-audit-rate-per-minute=60
+
+  # spec: §25.5 ops.webhooks SSRF policy — F-25.4.9. allowHTTP renders
+  # always; blockedCIDRs and domainAllowlist render only when non-empty.
+  - it: renders the §25.5 webhook SSRF allowHTTP arg and omits the empty list flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-allow-http=false
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-blocked-cidrs=
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-domain-allowlist=
+
+  - it: renders the §25.5 webhook SSRF list flags joined when configured
+    set:
+      ops:
+        webhooks:
+          allowHTTP: true
+          blockedCIDRs:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+          domainAllowlist:
+            - hooks.acme.com
+            - "*.acme.com"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-allow-http=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-blocked-cidrs=10.0.0.0/8,172.16.0.0/12
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-domain-allowlist=hooks.acme.com,*.acme.com

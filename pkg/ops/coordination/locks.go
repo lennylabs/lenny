@@ -147,13 +147,69 @@ type RemediationLockService interface {
 	Steal(ctx context.Context, lockID string, req StealRequest) (*Lock, error)
 }
 
-// defaultTTLSeconds is the §25.4 lock TTL applied when a request omits
-// ttlSeconds; maxTTLSeconds is the documented ceiling (ops.locks.-
-// maxTTLSeconds).
+// Built-in §25.4 lock TTL bounds. defaultTTLSeconds is applied when a
+// request omits ttlSeconds; maxTTLSeconds is the documented ceiling
+// (ops.locks.maxTTLSeconds); minTTLSeconds is the documented floor
+// (ops.locks.minTTLSeconds, 0 = no floor). They seed the package TTL
+// policy and remain the defaults when an operator supplies no override.
 const (
 	defaultTTLSeconds = 300
 	maxTTLSeconds     = 3600
+	minTTLSeconds     = 0
 )
+
+// ttlPolicy holds the active §25.4 lock TTL bounds. lenny-ops is a
+// single process and ops.locks.{minTTLSeconds,defaultTTLSeconds,-
+// maxTTLSeconds} is a deployment-wide policy, so the bounds are
+// process-global: SetTTLBounds configures them once at boot before the
+// Service is built, and every tier store (mem, pgstore, redisstore)
+// reaches them through NormalizeTTL so all tiers clamp identically.
+// spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds}.
+var ttlPolicy = struct {
+	mu               sync.RWMutex
+	min, def, max    int
+}{min: minTTLSeconds, def: defaultTTLSeconds, max: maxTTLSeconds}
+
+// SetTTLBounds configures the process-wide §25.4 lock TTL policy from the
+// ops.locks Helm values. A non-positive value resets that bound to its
+// built-in default, so the call is idempotent and a zero flag reproduces
+// the built-in (0 / 300 / 3600). The default is clamped into [min,max]
+// and max is raised to at least the default so the policy is always
+// self-consistent. Called once from cmd/lenny-ops before the lock Service
+// is constructed.
+func SetTTLBounds(minSeconds, defaultSeconds, maxSeconds int) {
+	ttlPolicy.mu.Lock()
+	defer ttlPolicy.mu.Unlock()
+	ttlPolicy.min, ttlPolicy.def, ttlPolicy.max = minTTLSeconds, defaultTTLSeconds, maxTTLSeconds
+	if minSeconds > 0 {
+		ttlPolicy.min = minSeconds
+	}
+	if defaultSeconds > 0 {
+		ttlPolicy.def = defaultSeconds
+	}
+	if maxSeconds > 0 {
+		ttlPolicy.max = maxSeconds
+	}
+	// Keep the policy self-consistent: the default must sit within the
+	// [min,max] window, and max must be at least the floor.
+	if ttlPolicy.max < ttlPolicy.min {
+		ttlPolicy.max = ttlPolicy.min
+	}
+	if ttlPolicy.def < ttlPolicy.min {
+		ttlPolicy.def = ttlPolicy.min
+	}
+	if ttlPolicy.def > ttlPolicy.max {
+		ttlPolicy.def = ttlPolicy.max
+	}
+}
+
+// TTLBounds returns the active §25.4 lock TTL policy (min, default, max
+// in seconds). Exposed for diagnostics and tests.
+func TTLBounds() (minSeconds, defaultSeconds, maxSeconds int) {
+	ttlPolicy.mu.RLock()
+	defer ttlPolicy.mu.RUnlock()
+	return ttlPolicy.min, ttlPolicy.def, ttlPolicy.max
+}
 
 // MemStore is the §25.4 Tier 3 in-memory remediation-lock store. It is
 // a compare-and-set registry keyed by scope: Acquire fails closed when
@@ -194,13 +250,21 @@ func NormalizeTTL(ttlSeconds int) int { return normalizeTTL(ttlSeconds) }
 // durable tier stores reuse it so ids share one format across tiers.
 func NewLockID() string { return newLockID() }
 
-// normalizeTTL clamps a requested TTL to the §25.4 default and ceiling.
+// normalizeTTL clamps a requested TTL to the active §25.4 policy: an
+// omitted (<=0) TTL takes the configured default, a request below the
+// floor is raised to the floor, and a request above the ceiling is
+// clamped to the ceiling.
 func normalizeTTL(ttlSeconds int) int {
+	ttlPolicy.mu.RLock()
+	min, def, max := ttlPolicy.min, ttlPolicy.def, ttlPolicy.max
+	ttlPolicy.mu.RUnlock()
 	switch {
 	case ttlSeconds <= 0:
-		return defaultTTLSeconds
-	case ttlSeconds > maxTTLSeconds:
-		return maxTTLSeconds
+		return def
+	case ttlSeconds < min:
+		return min
+	case ttlSeconds > max:
+		return max
 	default:
 		return ttlSeconds
 	}

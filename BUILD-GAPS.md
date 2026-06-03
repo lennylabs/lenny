@@ -39789,11 +39789,53 @@ Implementation: `find /Users/joan/projects/lenny -path '*/ops/gateway*' -type f`
 
 **Resolution:** The original "no `pkg/ops/gateway` package" evidence was stale — `pkg/ops/gateway` (`Client` + `HeadlessDiscovery`) and `pkg/ops/metrics` (`PrometheusClient` + `PrometheusWithFallback` + `FanOutScraper` + cached `Reader`) already shipped the ClusterIP/headless routing and Prometheus-with-fan-out-fallback seams. This batch completes and wires the remaining §25.4 pieces: a `gateway.RefreshingTokenSource` (projected-SA-token `FileTokenLoader`, pre-emptive refresh `tokenRefreshBeforeExpirySeconds` before expiry, `minTokenTTLSeconds` startup floor, 401-triggered `MarkRevoked`, `lenny_ops_gateway_auth_token_refresh_total{status}`), a per-replica `gateway.CircuitBreaker` (`ops.gateway.fanOutCircuitBreaker.{failureThreshold,resetAfter}`; a tripped replica is skipped with `ErrCircuitOpen` so the §25.2 "N of M replicas" envelope counts it), the `lenny_ops_admin_api_tls_handshake_total{result}` instrument on every request (F-25.4.19), and a `metrics.QueryMetrics` seam for `lenny_prometheus_query_duration_seconds{kind}`. `cmd/lenny-ops` now builds the client (`buildGatewayClient` — TLS-posture URL, headless discovery, breaker, CA-bundle-augmented transport) and consumes it through a new `gateway_auth` self-health check (`opsservice.GatewayAuthCheck`), the §25.4-named consumer that exercises the NET-070 link each tick and classifies a token-mint failure (`TokenError` → unhealthy) vs gateway unreachability (degraded). Chart `ops.gateway.{headlessService,fanOutTimeoutSeconds,fanOutCircuitBreaker.*}` values + deployment args + projected SA-token volume render end-to-end. The remaining consumers — the Prometheus-primary health/recommendation aggregation *endpoints* (`GetHealthFromAllReplicas`/`GetRecommendationsFromAllReplicas` callers) and the Prometheus-backed `ExprEvaluator` that drives `PrometheusWithFallback` — ride on F-25.4.3 (me/recommendations) and the alert-evaluator backend swap noted in `main.go`. Tests: tier-1 token (refresh/floor/revoke/no-exp/loader-error/file-loader), breaker (threshold/reset/success/nil/defaults), client (plaintext/tls/tls_error handshake, 401-revoke, fan-out breaker-skip), metrics query-duration, `GatewayAuthCheck` matrix, and cmd adapters/probe; tier-2 helm-unittest deployment args + projected volume.
 
-### - [ ] F-25.4.9 — Spec'd Helm value surface is largely missing from `charts/lenny/values.yaml` and `templates/ops-deployment.yaml`. (High) [Medium] — OPEN
+### - [x] F-25.4.9 — Spec'd Helm value surface is largely missing from `charts/lenny/values.yaml` and `templates/ops-deployment.yaml`. (High) [Medium] — CLOSED
 
 Spec: lines 794–908 prescribes the `ops` block including `gateway.{url, headlessService, timeoutSeconds, fanOutTimeoutSeconds, fanOutCircuitBreaker.{failureThreshold, resetAfter}}`, `prometheus.{url, queryTimeoutSeconds, unreachableThreshold}`, `ingress.{host, tlsSecretName, selfSigned, className, annotations, idleTimeoutSeconds}`, `sessionAffinity`, `rateLimiting.{requestsPerSecond, burst}`, `tls.{internalEnabled, certSecretName, clientCertSecretName}`, `acknowledgePlaintextAdminAPI`, `leaderElection.{backend, leaseName, leaseDurationSeconds, renewDeadlineSeconds, retryPeriodSeconds}`, `selfHealth.checkIntervalSeconds`, `webhooks.{subscriptionCacheTTLSeconds, generationBasedInvalidation, allowHTTP, blockedCIDRs, domainAllowlist, deliveryRetentionDays, deliveryTrackingMode, failuresOnlyRetentionDays}`, `idempotency.{keyTTLSeconds, longRunningKeyTTLSeconds, bindToCaller}`, `locks.{postgresTier, redisTier, memoryTier, minTTLSeconds, maxTTLSeconds, defaultTTLSeconds}`, `escalation.{requireDurable, reconciliationWritesPerSecond}`, `events.streamMaxLen`, `recommendations.disableOnPrometheusOutage`, `drift.{runningStateCacheTTLSeconds, snapshotStaleWarningDays}`, `audit.{diagnosticsRatePerMinute, scatterGatherCacheEnabled, scatterGatherMaxConcurrency, retention.diagnosticsRetainDays}`, plus `monitoring.{prometheusRule, configMap, alertThresholds, alertOverrides, acknowledgeNoPrometheus}`, `backups.{schedule, retention, verification, encryption, regions, erasureReconciler, contentPolicy}` keys driving `lenny-ops` behavior, and `platform.{releaseChannel.publicKeyPath, upgrade.{opsRollTimeoutSeconds, gatewayRollTimeoutSeconds, controllerRollTimeoutSeconds}, recommendations.disabledRules}`, `security.oidc.{issuerUrl, tokenRefreshBeforeExpirySeconds, minTokenTTLSeconds}`.
 
 Implementation: `/Users/joan/projects/lenny/charts/lenny/values.yaml` lines 748–774 (`ops:`) exposes only `replicas`, `httpPort`, `metricsPort`, `production`, `image.{repository,tag,pullPolicy}`, `resources`. The entire `ops.gateway`, `ops.prometheus`, `ops.ingress`, `ops.tls`, `ops.acknowledgePlaintextAdminAPI`, `ops.leaderElection`, `ops.selfHealth`, `ops.webhooks`, `ops.idempotency`, `ops.locks`, `ops.escalation`, `ops.events`, `ops.recommendations`, `ops.drift`, `ops.audit`, and `ops.sessionAffinity`/`ops.rateLimiting` subtrees are absent. `grep -nE "^\s+leaderElection|^\s+gateway:|^\s+prometheus:|^\s+ingress:|^\s+sessionAffinity|^\s+rateLimiting|^\s+tls:|^\s+acknowledgePlaintextAdminAPI" /Users/joan/projects/lenny/charts/lenny/values.yaml` under the `ops:` block returns nothing. `charts/lenny/templates/ops-deployment.yaml` lines 65–167 wires only the few exposed knobs. `monitoring.acknowledgeNoPrometheus`, `ops.tls.*`, and the SSE-aware `ops.ingress.idleTimeoutSeconds` are absent. Consequence: operators cannot configure rate limits, lock TTL ceilings, webhook subscriber settings, prometheus URL, ingress host/TLS, internal mTLS, leader-election durations, or any of the safety opt-outs documented in §25.4. Tier-specific defaults (`ops.locks.memoryTier` flipping in multi-replica, `ops.recommendations.disableOnPrometheusOutage`) cannot be selected.
+
+**Resolution:** The original "lines 748–774 exposes only replicas/httpPort/…"
+evidence was stale: F-25.4.10–.21 already added `ops.{tls, gateway,
+prometheus, ingress, networkPolicy, rateLimiting, locks.memoryTier,
+selfHealth, events, webhooks.{deliveryTrackingMode, deliveryRetentionDays,
+failuresOnlyRetentionDays}, escalation, recommendations, drift, service,
+acknowledgePlaintextAdminAPI}`, `monitoring.*`, and `security.oidc.*`. This
+batch closed the residual behavior-bearing operator knobs the finding names
+as gaps, each wired end-to-end (Helm value → lenny-ops flag → consuming
+subsystem) with helm-unittest + Go coverage:
+
+- **Lock TTL ceilings** — `ops.locks.{minTTLSeconds, defaultTTLSeconds,
+  maxTTLSeconds}` → `--locks-*-ttl-seconds` → new `coordination.SetTTLBounds`,
+  a process-wide policy the shared `normalizeTTL` reads so every tier
+  (Postgres, Redis, in-memory) clamps identically.
+- **Idempotency lifetimes** — `ops.idempotency.{keyTTLSeconds,
+  longRunningKeyTTLSeconds}` → new `opsserver.Options.Idempotency{Standard,
+  LongRunning}TTL` → `opsidem.Config`.
+- **Leader-election durations** — `ops.leaderElection.{leaseDurationSeconds,
+  renewDeadlineSeconds, retryPeriodSeconds}` → `--leader-*` → new
+  `opsservice.LeaseTimings` on `NewLeaseElector` (zero fields keep the
+  built-in 15/10/2).
+- **Webhook subscriber/SSRF settings** — `ops.webhooks.{allowHTTP,
+  blockedCIDRs, domainAllowlist}` → `--webhook-*` → `eventsubscription.
+  SSRFConfig`, applied both on the subscription `Service` (create/update) and
+  as the per-delivery transport guard.
+- **Diagnostics-audit rate** — `ops.audit.diagnosticsRatePerMinute` now
+  renders the pre-existing `--diagnostics-audit-rate-per-minute` flag.
+
+Forward-declared keys with no v1 consumer were intentionally not added as
+dead config: `prometheus.{queryTimeoutSeconds, unreachableThreshold}`,
+`gateway.{url, timeoutSeconds}` (per-request timeout has a fixed 10s),
+`ingress.selfSigned` (cert issuance flows through the `certManager` block),
+`webhooks.{subscriptionCacheTTLSeconds, generationBasedInvalidation}` (the
+cache uses synchronous invalidate + periodic refresh), `idempotency.
+bindToCaller` (records are always (key, caller_id)-scoped),
+`locks.{postgresTier, redisTier}` (the tier is auto-selected by client
+availability, not a toggle), `leaderElection.{backend, leaseName}` (always
+the fixed `lenny-ops-leader` Lease), and `audit.{scatterGatherCacheEnabled,
+scatterGatherMaxConcurrency, retention.diagnosticsRetainDays}`. Every
+operator-facing gap the finding's Consequence paragraph names is now
+configurable.
 
 ### - [x] F-25.4.10 — Helm chart does not render an `Ingress`, a `PodDisruptionBudget`, `topologySpreadConstraints`, or the `lenny-gateway-pods` headless Service; readiness probe is non-strict. (High) [Medium] — CLOSED
 

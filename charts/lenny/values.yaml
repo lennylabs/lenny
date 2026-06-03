@@ -2684,8 +2684,44 @@ ops:
   #   - "never": disable Tier 3 entirely; every dual-outage acquisition is
   #     rejected. The most conservative option.
   # The value renders as --locks-memory-tier on lenny-ops. F-25.4.26.
+  #
+  # minTTLSeconds / defaultTTLSeconds / maxTTLSeconds are the §25.4
+  # deployment-wide remediation-lock TTL policy. A lock request that omits
+  # ttlSeconds takes defaultTTLSeconds; one below minTTLSeconds is raised to
+  # the floor; one above maxTTLSeconds is clamped to the ceiling. Every tier
+  # (Postgres, Redis, in-memory) clamps identically. The built-in policy is
+  # 0/300/3600; the values render as --locks-min-ttl-seconds /
+  # --locks-default-ttl-seconds / --locks-max-ttl-seconds. F-25.4.9.
   locks:
     memoryTier: "single-replica-only"
+    minTTLSeconds: 0
+    defaultTTLSeconds: 300
+    maxTTLSeconds: 3600
+  # idempotency carries the §25.4 idempotency-record lifetimes. keyTTLSeconds
+  # (default 24h) is the standard single-request-mutation class; long-
+  # RunningKeyTTLSeconds (default 7d) is the multi-phase class for upgrade and
+  # restore where the agent may pause between steps. The values render as
+  # --idempotency-key-ttl-seconds / --idempotency-long-running-key-ttl-seconds
+  # on lenny-ops. F-25.4.9.
+  idempotency:
+    keyTTLSeconds: 86400
+    longRunningKeyTTLSeconds: 604800
+  # leaderElection carries the §25.4 client-go leader-election lease timings
+  # for the lenny-ops-leader Lease. The window must satisfy
+  # leaseDurationSeconds > renewDeadlineSeconds > retryPeriodSeconds; the
+  # defaults (15/10/2) do. The values render as --leader-lease-duration-seconds
+  # / --leader-renew-deadline-seconds / --leader-retry-period-seconds. F-25.4.9.
+  leaderElection:
+    leaseDurationSeconds: 15
+    renewDeadlineSeconds: 10
+    retryPeriodSeconds: 2
+  # audit carries the §25.9 diagnostics-audit rate limit.
+  # diagnosticsRatePerMinute caps the distinct (resource) diagnostic-audit
+  # events one service account emits per minute, coalescing the rest so a
+  # poller does not flood the §11.7 audit chain. The value renders as
+  # --diagnostics-audit-rate-per-minute on lenny-ops. F-25.4.9.
+  audit:
+    diagnosticsRatePerMinute: 60
   # drift carries the §25.10 configuration-drift-detection knobs the
   # spec exposes for per-deployment tuning. The values render as
   # lenny-ops flags so the binary's defaults match an operator-supplied
@@ -2738,6 +2774,19 @@ ops:
     deliveryTrackingMode: full
     deliveryRetentionDays: 7
     failuresOnlyRetentionDays: 0
+    # SSRF/DNS-rebinding policy for webhook callback URLs (§25.5 lines
+    # 2735-2745). The validator runs at subscription create/update and on
+    # every delivery attempt. allowHTTP permits http:// callbacks (off
+    # requires HTTPS). blockedCIDRs lists ranges rejected in addition to the
+    # built-in private/reserved set — set it to the cluster pod and service
+    # CIDRs to stop a callback from reaching in-cluster services.
+    # domainAllowlist, when non-empty, restricts callbacks to hosts that
+    # match an entry by exact name or "*.suffix". The values render as
+    # --webhook-allow-http / --webhook-blocked-cidrs / --webhook-domain-
+    # allowlist on lenny-ops. F-25.4.9.
+    allowHTTP: false
+    blockedCIDRs: []
+    domainAllowlist: []
   # escalation carries the §25.4 escalation-durability knobs. The
   # escalation create path is tiered Postgres -> Redis -> in-memory so a
   # structured escalation can always be recorded, including during the

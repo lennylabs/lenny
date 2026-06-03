@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
@@ -279,6 +280,43 @@ func main() {
 	opsServiceName := flag.String("ops-service-name", envOr("LENNY_OPS_SERVICE_NAME", "lenny-ops"),
 		"§25.4 line 2208: name of the lenny-ops Service whose Endpoints the single-replica-only "+
 			"lock policy reads to count ready replicas. Override via LENNY_OPS_SERVICE_NAME.")
+	// spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds} —
+	// the deployment-wide remediation-lock TTL policy. A request omitting
+	// ttlSeconds takes the default; one below the floor is raised, one above
+	// the ceiling is clamped. Every tier (Postgres, Redis, in-memory) clamps
+	// identically through coordination.SetTTLBounds. F-25.4.9.
+	locksMinTTL := flag.Int("locks-min-ttl-seconds", envInt("LENNY_OPS_LOCKS_MIN_TTL_SECONDS", 0),
+		"§25.4 ops.locks.minTTLSeconds: floor a requested remediation-lock TTL is raised to. 0 = no floor.")
+	locksDefaultTTL := flag.Int("locks-default-ttl-seconds", envInt("LENNY_OPS_LOCKS_DEFAULT_TTL_SECONDS", 0),
+		"§25.4 ops.locks.defaultTTLSeconds: TTL applied when a lock request omits ttlSeconds. 0 = built-in 300s.")
+	locksMaxTTL := flag.Int("locks-max-ttl-seconds", envInt("LENNY_OPS_LOCKS_MAX_TTL_SECONDS", 0),
+		"§25.4 ops.locks.maxTTLSeconds: ceiling a requested remediation-lock TTL is clamped to. 0 = built-in 3600s.")
+	// spec: §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds} —
+	// the lifetime of a stored idempotency record. The standard class covers
+	// single-request mutations (24h default); the long-running class covers
+	// multi-phase operations such as upgrade and restore (7d default). F-25.4.9.
+	idempotencyKeyTTL := flag.Int("idempotency-key-ttl-seconds", envInt("LENNY_OPS_IDEMPOTENCY_KEY_TTL_SECONDS", 0),
+		"§25.4 ops.idempotency.keyTTLSeconds: standard idempotency-key lifetime. 0 = built-in 24h.")
+	idempotencyLongRunningTTL := flag.Int("idempotency-long-running-key-ttl-seconds", envInt("LENNY_OPS_IDEMPOTENCY_LONG_RUNNING_KEY_TTL_SECONDS", 0),
+		"§25.4 ops.idempotency.longRunningKeyTTLSeconds: long-running idempotency-key lifetime. 0 = built-in 7d.")
+	// spec: §25.4 ops.leaderElection.{leaseDurationSeconds,renewDeadlineSeconds,
+	// retryPeriodSeconds} — the client-go leader-election lease timings for the
+	// lenny-ops-leader Lease. F-25.4.9.
+	leaderLeaseDuration := flag.Int("leader-lease-duration-seconds", envInt("LENNY_OPS_LEADER_LEASE_DURATION_SECONDS", 0),
+		"§25.4 ops.leaderElection.leaseDurationSeconds: leader-election lease duration. 0 = built-in 15s.")
+	leaderRenewDeadline := flag.Int("leader-renew-deadline-seconds", envInt("LENNY_OPS_LEADER_RENEW_DEADLINE_SECONDS", 0),
+		"§25.4 ops.leaderElection.renewDeadlineSeconds: leader renew deadline. 0 = built-in 10s.")
+	leaderRetryPeriod := flag.Int("leader-retry-period-seconds", envInt("LENNY_OPS_LEADER_RETRY_PERIOD_SECONDS", 0),
+		"§25.4 ops.leaderElection.retryPeriodSeconds: leader-election retry period. 0 = built-in 2s.")
+	// spec: §25.5 lines 2735-2745 ops.webhooks.{allowHTTP,blockedCIDRs,
+	// domainAllowlist} — the callback-URL SSRF policy the subscription
+	// validator enforces at create/update and at each delivery. F-25.4.9.
+	webhookAllowHTTP := flag.Bool("webhook-allow-http", envBool("LENNY_OPS_WEBHOOK_ALLOW_HTTP", false),
+		"§25.5 ops.webhooks.allowHTTP: permit http:// callback URLs. Off requires HTTPS.")
+	webhookBlockedCIDRs := flag.String("webhook-blocked-cidrs", os.Getenv("LENNY_OPS_WEBHOOK_BLOCKED_CIDRS"),
+		"§25.5 ops.webhooks.blockedCIDRs: comma-separated CIDRs rejected in addition to the built-in private/reserved set (e.g. the cluster pod/service CIDRs).")
+	webhookDomainAllowlist := flag.String("webhook-domain-allowlist", os.Getenv("LENNY_OPS_WEBHOOK_DOMAIN_ALLOWLIST"),
+		"§25.5 ops.webhooks.domainAllowlist: comma-separated hosts (exact or *.suffix) callbacks are restricted to. Empty allows any non-blocked host.")
 	// spec: §25.4 lines 1596-1601 — the GET /v1/admin/me platform context.
 	// installationId is the stable per-install UUID; tier is the §25.16
 	// deployment tier; opsServiceURL is the external lenny-ops entry point.
@@ -320,6 +358,12 @@ func main() {
 	alertingOverrideCount := flag.Int("alerting-override-count", envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
 		"§25.13 line 4834 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules. The §25.4 bundleRules reconciler re-stamps lenny_alerting_rule_overrides from it. Override via LENNY_ALERTING_OVERRIDE_COUNT.")
 	flag.Parse()
+
+	// spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds}.
+	// Configure the deployment-wide remediation-lock TTL policy once, before
+	// the lock Service (and its tier stores) is built, so every tier clamps
+	// requested TTLs identically. A zero value keeps the built-in bound. F-25.4.9.
+	coordination.SetTTLBounds(*locksMinTTL, *locksDefaultTTL, *locksMaxTTL)
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
 	// the downward API), falling back to the hostname.
@@ -474,7 +518,14 @@ func main() {
 	var elector opsservice.Elector = noopElector{}
 	if clientset != nil {
 		le, err := opsservice.NewLeaseElector(*leaderElectNS, replicaID,
-			clientset.CoreV1(), clientset.CoordinationV1())
+			clientset.CoreV1(), clientset.CoordinationV1(),
+			// spec: §25.4 ops.leaderElection.{leaseDurationSeconds,renewDeadlineSeconds,
+			// retryPeriodSeconds}. Zero fields keep the built-in 15s/10s/2s. F-25.4.9.
+			opsservice.LeaseTimings{
+				LeaseDuration: time.Duration(*leaderLeaseDuration) * time.Second,
+				RenewDeadline: time.Duration(*leaderRenewDeadline) * time.Second,
+				RetryPeriod:   time.Duration(*leaderRetryPeriod) * time.Second,
+			})
 		if err != nil {
 			log.Fatalf("lenny-ops: build leader elector: %v", err)
 		}
@@ -554,11 +605,15 @@ func main() {
 	if i := strings.LastIndex(*addr, ":"); i >= 0 {
 		adminPort, _ = strconv.Atoi((*addr)[i+1:])
 	}
+	// §25.5 lines 2735-2745 ops.webhooks SSRF policy. The validator gates
+	// subscription create/update and every delivery attempt. F-25.4.9.
+	webhookSSRF := buildWebhookSSRF(*webhookAllowHTTP, *webhookBlockedCIDRs, *webhookDomainAllowlist)
 	delivery := buildWebhookDelivery(ctx, webhookDeliveryDeps{
 		Pool:         pgPool,
 		Clientset:    clientset,
 		Source:       eventSource,
 		Emitter:      opsEmitter,
+		SSRF:         webhookSSRF,
 		Audit:        subscriptionAuditFunc(func(ev eventsubscription.AuditEvent) { log.Printf("lenny-ops: audit %s %v", ev.Type, ev.Details) }),
 		SharedKey:    webhookSharedKey,
 		Namespace:    envOr("POD_NAMESPACE", *leaderElectNS),
@@ -1075,7 +1130,11 @@ func main() {
 		DiagnosticsAudit:     buildDiagnosticsAudit(*diagnosticsAuditRate, auditRecorder),
 		Auth:                 authCfg,
 		Idempotency:          idemStore,
-		Inventory:            inventory,
+		// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}: a
+		// zero value keeps the opsidem built-in (24h/7d). F-25.4.9.
+		IdempotencyStandardTTL:    time.Duration(*idempotencyKeyTTL) * time.Second,
+		IdempotencyLongRunningTTL: time.Duration(*idempotencyLongRunningTTL) * time.Second,
+		Inventory:                 inventory,
 		Me:                   meConfig,
 		Audit:                opsAudit,
 		// §16.8 / §16.9: expose every instrument registered on the process
@@ -1237,6 +1296,40 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// buildWebhookSSRF assembles the §25.5 callback-URL SSRF validator from
+// the ops.webhooks.{allowHTTP,blockedCIDRs,domainAllowlist} Helm values.
+// blockedCIDRs and domainAllowlist are comma-separated; a malformed CIDR
+// entry is logged and skipped so one typo does not disable the whole
+// policy. spec: §25.5 lines 2735-2745. F-25.4.9.
+func buildWebhookSSRF(allowHTTP bool, blockedCIDRs, domainAllowlist string) *eventsubscription.SSRFValidator {
+	cfg := eventsubscription.SSRFConfig{
+		AllowHTTP:       allowHTTP,
+		DomainAllowlist: splitCSV(domainAllowlist),
+	}
+	for _, raw := range splitCSV(blockedCIDRs) {
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			log.Printf("lenny-ops: ignoring malformed ops.webhooks.blockedCIDRs entry %q: %v", raw, err)
+			continue
+		}
+		cfg.BlockedCIDRs = append(cfg.BlockedCIDRs, p)
+	}
+	return eventsubscription.NewSSRFValidator(cfg)
+}
+
+// splitCSV splits a comma-separated flag value into trimmed, non-empty
+// tokens. An empty input yields nil so the caller's zero-policy default
+// (no allowlist, no extra CIDRs) holds.
+func splitCSV(s string) []string {
+	var out []string
+	for _, tok := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(tok); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // envInt64 parses the named environment variable as an int64, falling

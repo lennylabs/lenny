@@ -246,6 +246,13 @@ type Options struct {
 	// resolves from the verified principal.
 	Idempotency opsidem.Store
 
+	// IdempotencyStandardTTL and IdempotencyLongRunningTTL override the
+	// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}
+	// idempotency-record lifetimes. A zero value keeps the opsidem
+	// built-in (24h standard, 7d long-running). F-25.4.9.
+	IdempotencyStandardTTL    time.Duration
+	IdempotencyLongRunningTTL time.Duration
+
 	// Inventory backs the §25.4 Operations Inventory endpoints
 	// (GET /v1/admin/operations, /operations/{id}) and the
 	// /v1/admin/me/operations alias. A nil inventory leaves the
@@ -324,6 +331,10 @@ func New(opts Options) *Server {
 		s.idem = opsidem.New(opts.Idempotency, opsidem.Config{
 			CallerID:   callerIdentity,
 			Production: opts.Production,
+			// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}:
+			// a zero value lets opsidem.New apply the built-in 24h/7d. F-25.4.9.
+			StandardTTL:    opts.IdempotencyStandardTTL,
+			LongRunningTTL: opts.IdempotencyLongRunningTTL,
 		})
 	}
 	// §25.9 diagnostics-audit rate limiting: when configured, the §25.6
