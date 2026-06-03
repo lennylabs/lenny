@@ -50,7 +50,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -185,6 +187,24 @@ func s3LifecycleProber(region string) preflight.CloudObjectStorageLifecycleProbe
 		}
 		return status, nil
 	})
+}
+
+// discoverServerVersion reads the API server GitVersion via the
+// discovery client for the §17.6 line 503 minimum-version gate. A
+// discovery failure returns an empty string, which the check treats as
+// advisory (a transient discovery error must not block an install).
+//
+// spec: §17.6 line 503. F-17.6.1.
+func discoverServerVersion(cfg *rest.Config) string {
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return ""
+	}
+	info, err := dc.ServerVersion()
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.GitVersion
 }
 
 // cloudLifecycleProber selects the §17.9.4 lifecycle prober for the
@@ -493,6 +513,8 @@ func main() {
 		"value of the objectStorage.bucket chart value for the §17.9.4 cloud lifecycle audit.")
 	objectStorageRegion := flag.String("object-storage-region", "",
 		"value of the objectStorage.region chart value (AWS region) for the §17.9.4 cloud lifecycle audit.")
+	siemEndpoint := flag.String("siem-endpoint", "",
+		"value of the audit.siem.endpoint chart value for the §17.6 line 517 SIEM advisory. Empty in a production environment emits a non-blocking warning.")
 	redisURL := flag.String("redis-url", "",
 		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
@@ -587,6 +609,12 @@ func main() {
 		log.Fatalf("lenny-preflight: build cluster client: %v", err)
 	}
 
+	// §17.6 line 503 — read the API server version via the discovery
+	// client for the minimum-version gate. A discovery error degrades to
+	// an empty version, which the check treats as advisory rather than
+	// blocking the install. F-17.6.1.
+	kubernetesVersion := discoverServerVersion(cfg)
+
 	// §17.6 post-upgrade CRD validation hook (F-17.6.4). In this mode the
 	// binary runs only the CRD schema-version check and exits, so the
 	// lenny-crd-validate Job does not re-run the full admission-plane
@@ -627,6 +655,8 @@ func main() {
 			Bucket:   *objectStorageBucket,
 		},
 		CloudObjectStorageLifecycleProber: cloudLifecycleProber(*objectStorageProvider, *objectStorageRegion),
+		KubernetesVersion:                 kubernetesVersion,
+		SIEMEndpoint:                      *siemEndpoint,
 		RedisConfigProber:                 redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 		ClusterCIDR: preflight.ClusterCIDRConfig{

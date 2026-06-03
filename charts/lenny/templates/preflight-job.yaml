@@ -87,6 +87,17 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxtemplates"]
     verbs: ["list"]
+  # §17.6 lines 501-502 namespace-resourcequota / namespace-limitrange
+  # checks read each agent namespace and its ResourceQuota / LimitRange
+  # objects. The namespace `get` distinguishes a not-yet-created
+  # namespace (fresh install) from an existing one missing governance.
+  # F-17.6.1.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -286,6 +297,10 @@ spec:
             - --object-storage-provider={{ .Values.objectStorage.provider | default "minio" }}
             - --object-storage-bucket={{ .Values.objectStorage.bucket | default "" }}
             - --object-storage-region={{ .Values.objectStorage.region | default "" }}
+            {{- /* §17.6 line 517 — a production install with no SIEM
+            endpoint configured gets a non-blocking audit-integrity
+            warning. F-17.6.1. */}}
+            - --siem-endpoint={{ .Values.audit.siem.endpoint | default "" }}
             {{- if $checkRedis }}
             # §12.4 — verify the BYO Redis enforces maxmemory-policy=noeviction
             # so the billing stream and per-tenant counters cannot evict.

@@ -496,6 +496,38 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--object-storage-region=us-east-1"
 
+  # spec: §17.6 line 517 — the SIEM-endpoint advisory input. F-17.6.1.
+  - it: passes the §17.6 SIEM endpoint (configured)
+    set:
+      audit.siem.endpoint: "https://siem.acme:443"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--siem-endpoint=https://siem.acme:443"
+
+  # spec: §17.6 lines 501-502 — the preflight SA can read each agent
+  # namespace and its ResourceQuota / LimitRange. F-17.6.1.
+  - it: grants the preflight SA namespace + ResourceQuota/LimitRange read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["resourcequotas", "limitranges"]
+            verbs: ["list"]
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

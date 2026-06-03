@@ -188,6 +188,45 @@ type Config struct {
 	// provider whose SDK reader is not wired) routes the check through
 	// the advisory path. F-17.9.3.
 	CloudObjectStorageLifecycleProber CloudObjectStorageLifecycleProber
+	// KubernetesVersion is the API server GitVersion the binary read via
+	// the discovery client. Empty skips the §17.6 line 503 minimum-version
+	// gate. F-17.6.1.
+	KubernetesVersion string
+	// Environment is reused by the §17.6 line 517 SIEM advisory (already
+	// defined above for the cosign-production advisory).
+	//
+	// SIEMEndpoint is the audit.siem.endpoint chart value. Empty in a
+	// production environment triggers the non-blocking SIEM advisory.
+	// F-17.6.1.
+	SIEMEndpoint string
+	// StorageRouterRegions are the §12.6 data-residency regions the chart
+	// declares, each with its configured backends. Empty skips the §17.6
+	// line 504 region-coverage audit. F-17.6.1.
+	StorageRouterRegions []StorageRouterRegion
+	// LegalHold carries the §17.6 line 505 legal-hold per-region escrow
+	// inputs. Disabled skips the check. F-17.6.1.
+	LegalHold LegalHoldConfig
+	// PgBouncerConfigProber, when non-nil, runs the §17.6 lines 487-488
+	// PgBouncer pool_mode / connect_query audit against the live PgBouncer
+	// admin console. Nil skips the check. F-17.6.1.
+	PgBouncerConfigProber PgBouncerConfigProber
+	// BillingTriggerProber, when non-nil, runs the §17.6 line 489
+	// billing/audit integrity-trigger audit. Nil skips the check.
+	// F-17.6.1.
+	BillingTriggerProber BillingTriggerProber
+}
+
+// LegalHoldConfig carries the §17.6 line 505 legal-hold per-region
+// escrow chart values the legal-hold-escrow check evaluates.
+//
+// spec: §17.6 line 505; §12.8 Phase 3.5. F-17.6.1.
+type LegalHoldConfig struct {
+	// Enabled is the legalHold.enabled chart value.
+	Enabled bool
+	// Regions is the full set of declared StorageRouter region names.
+	Regions []string
+	// EscrowRegions is the set of region names that declare an escrow KEK.
+	EscrowRegions map[string]bool
 }
 
 // ObjectStorageConfig carries the §17.9.4 chart objectStorage.* values
@@ -619,6 +658,77 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Prober:   cfg.VolumeEncryptionProber,
 		}.Decide(ctx),
 	})
+
+	// §17.6 line 503 — the API server must be >= 1.27. The binary reads
+	// the version via the discovery client; an empty/unparseable value is
+	// non-blocking. F-17.6.1.
+	report = append(report, CheckResult{
+		Name:     "kubernetes-version",
+		Decision: KubernetesVersionCheck{Version: cfg.KubernetesVersion}.Decide(),
+	})
+
+	// §17.6 line 517 — non-blocking SIEM-endpoint advisory: a production
+	// install with no audit.siem.endpoint stores audit logs in Postgres
+	// only, which is below the compliance-grade integrity bar. F-17.6.1.
+	report = append(report, CheckResult{
+		Name:     "siem-endpoint",
+		Decision: SIEMEndpointCheck{Environment: cfg.Environment, SIEMEndpoint: cfg.SIEMEndpoint}.Decide(),
+	})
+
+	// §17.6 line 504 — every declared StorageRouter region must carry a
+	// Postgres and an object-storage backend. Empty region set skips.
+	// F-17.6.1.
+	report = append(report, CheckResult{
+		Name:     "storagerouter-region-coverage",
+		Decision: StorageRouterRegionCoverageCheck{Regions: cfg.StorageRouterRegions}.Decide(),
+	})
+
+	// §17.6 line 505 — when legal hold is enabled every region must have
+	// a region-scoped escrow KEK (§12.8 Phase 3.5). Disabled skips.
+	// F-17.6.1.
+	report = append(report, CheckResult{
+		Name: "legal-hold-escrow",
+		Decision: LegalHoldEscrowCheck{
+			Enabled:       cfg.LegalHold.Enabled,
+			Regions:       cfg.LegalHold.Regions,
+			EscrowRegions: cfg.LegalHold.EscrowRegions,
+		}.Decide(),
+	})
+
+	// §17.6 lines 487-488 — PgBouncer pool_mode==transaction + tenant
+	// sentinel connect_query. Runs only when a live PgBouncer admin
+	// connection is wired (nil prober skips). F-17.6.1.
+	report = append(report, CheckResult{
+		Name:     "pgbouncer-config",
+		Decision: PgBouncerConfigCheck{Prober: cfg.PgBouncerConfigProber}.Decide(ctx),
+	})
+
+	// §17.6 line 489 — billing/audit integrity triggers enabled. Runs
+	// only when a billing-database connection is wired (nil prober skips).
+	// F-17.6.1.
+	report = append(report, CheckResult{
+		Name:     "billing-audit-trigger",
+		Decision: BillingTriggerCheck{Prober: cfg.BillingTriggerProber}.Decide(ctx),
+	})
+
+	// §17.6 lines 501-502 — every existing agent namespace must carry a
+	// ResourceQuota and a LimitRange. Not-yet-created namespaces (fresh
+	// install, chart applies them in the main phase) are skipped.
+	// F-17.6.1.
+	if len(cfg.AgentNamespaces) > 0 {
+		if statuses, err := gatherNamespaceGovernance(ctx, reader, cfg.AgentNamespaces); err != nil {
+			report = append(report,
+				CheckResult{Name: "namespace-resourcequota", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
+				CheckResult{Name: "namespace-limitrange", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
+			)
+		} else {
+			report = append(report,
+				CheckResult{Name: "namespace-resourcequota", Decision: CheckNamespaceResourceQuotas(statuses)},
+				CheckResult{Name: "namespace-limitrange", Decision: CheckNamespaceLimitRanges(statuses)},
+			)
+		}
+	}
+
 	return report
 }
 
