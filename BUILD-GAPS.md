@@ -20608,7 +20608,7 @@ Evidence:
 - The chart's post-install hooks (`charts/lenny/templates/bootstrap-job.yaml`)
   perform bootstrap RBAC / database migration, not bucket ILM rule application.
 
-### - [ ] F-12.5.27 — `RegionConfig.SourceBucket` (replication) and per-region bucket creation are unwired (§25.11 cross-ref, §12.5 line 278) [Medium] — OPEN
+### - [x] F-12.5.27 — `RegionConfig.SourceBucket` (replication) and per-region bucket creation are unwired (§25.11 cross-ref, §12.5 line 278) [Medium] — CLOSED
 
 The replication `Driver` interface
 (`pkg/blobstore/replication/driver.go`) declares
@@ -20626,6 +20626,22 @@ Evidence:
 Consequence: the spec line 278 cannot be honoured even if the controller were
 wired, because no concrete driver translates the controller's calls into MinIO
 / S3 / GCS / Azure replication API calls.
+
+**Resolution:** Verify-closed; the core evidence ("no production driver
+implementation") is stale. `replication.MinIODriver`
+(`pkg/blobstore/replication/driver.go`) is the production `Driver`: its
+`ConfigureReplication` adds the source-bucket replication rule keyed on
+`RegionConfig.SourceBucket` via the minio-go bucket-replication API,
+`ProbeJurisdiction` runs the `s3:GetBucketTagging` residency probe, and
+`MeasureReplication` (added by F-17.3.7) reads the bucket's replication
+metrics. `cmd/lenny-gateway`'s `newReplicationDriver` builds it from the
+gateway's source MinIO client and a Secret-resolving destination-client
+factory; F-12.5.20 wired the `Controller` over it and F-25.11.9 delivers the
+`SourceBucket` (and per-region) config from Helm. Per-region source-bucket
+provisioning remains a bring-your-own concern: operators provision each
+region's MinIO cluster and bucket out of band, consistent with the
+`minio.endpoint` BYO posture documented in `values.yaml` (F-12.5.30).
+Closed by F-12.5.20 + F-17.3.7 + F-25.11.9.
 
 ### - [x] F-12.5.28 — `Tombstoner.HardPrune` retention-window cutoff ignores `deletedAt.Equal(cutoff)` (§12.5 line 341) [Low] — CLOSED
 
@@ -31256,7 +31272,7 @@ but cannot surface from a real restore path.
 
 ---
 
-### - [ ] F-17.3.7 — 3.6 — ArtifactStore replication controller is not wired into lenny-ops [High] — OPEN
+### - [x] F-17.3.7 — 3.6 — ArtifactStore replication controller is not wired into lenny-ops [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
@@ -31335,6 +31351,20 @@ relevant artifacts (legal hold attachments, erasure receipts).
   `lenny_minio_replication_lag_seconds` / `lenny_minio_replication_failed_total`
   gauges, which require scraping the source MinIO cluster's replication
   metrics (a surface the residency controller does not measure).
+
+**Resolution (b4e3f0b0):** The final residual — the object-level
+`lenny_minio_replication_lag_seconds` / `lenny_minio_replication_failed_total`
+gauges — is now emitted. A new `Driver.MeasureReplication` reads the source
+bucket's replication metrics (`MinIODriver` via the minio-go
+`GetBucketReplicationMetricsV2` API; lag estimated from queue depth /
+throughput by the pure `deriveLagSeconds`, failures from the cumulative
+object-level error total). `Controller.MeasureAll` samples every enabled
+region with a declared target and reports onto a new `LagObserver` seam; the
+gateway registers the two collectors and a delta-tracking lag adapter drives
+them from the replication loop on the residency tick. The controller wiring
+(F-12.5.20), admin endpoints (F-25.11.1), residency-violation counter, and
+audit events were already complete; this closes the metric surface §17.3
+line 130 / §25.11 line 4085 name.
 
 ---
 
@@ -41151,7 +41181,7 @@ pre-existing `backups.regions` block is paired with a new
 `backups.encryption.kmsKeyId` / `backups.contentPolicy` evidence is also
 stale — both already exist in `values.yaml`. (this batch)
 
-### - [ ] F-25.11.9 — Helm `minio.artifactBackup` block missing; replication subsystem not wired [High] — OPEN
+### - [x] F-25.11.9 — Helm `minio.artifactBackup` block missing; replication subsystem not wired [High] — CLOSED
 
 Spec lines 4043–4076 (Required Helm values) define `minio.artifactBackup.{enabled,target,versioning,replicationLagRpoSeconds,residencyCheckIntervalSeconds,residencyAuditSamplingWindowSeconds}` (single-region) and `minio.regions.<region>.artifactBackup.*` (per-region). The Controller MUST run before every batch and on a periodic tick.
 
@@ -41160,6 +41190,24 @@ Implementation status:
 - `pkg/blobstore/replication/controller.go:152-177` (`Configure`) is fully implemented and ready, but no caller in `cmd/lenny-ops` or `cmd/lenny-gateway` ever invokes `NewController` or `PreflightAll`. Search for `replication.NewController`, `replication.Controller`, or `replication.Config{` outside the package returns zero hits (only the package's own tests reference these symbols).
 - `Controller.ResidencyTickInterval()` exists to feed a loop runner; no loop runner exists.
 - Therefore the entire ArtifactStore residency-preflight pipeline (the security control the spec calls "second-layer compliance") is dark in any built deployment. `ArtifactReplicationResidencyViolation`/`MinIOArtifactReplicationLagHigh` alerts can never fire because the controller that updates the underlying metrics never runs.
+
+**Resolution (8a9235ba):** The Helm value surface and its wiring now exist.
+`charts/lenny/values.yaml` carries the §25.11 single-region
+`minio.artifactBackup.{enabled,target,versioning,replicationLagRpoSeconds,
+residencyCheckIntervalSeconds,residencyAuditSamplingWindowSeconds,
+replicationRoleArn}` block and the per-region `minio.regions.<region>.{sourceBucket,
+artifactBackup.target.*,artifactBackup.allowedDestinationCidrs}` block. The new
+`lenny.artifactReplicationConfigJSON` helper renders them into the gateway's
+`--artifact-replication-config` JSON (`LENNY_ARTIFACT_REPLICATION_CONFIG`):
+per-region entries take precedence and set `dataResidencyRegion` to the region
+key (cross-region replication is prohibited), the single-region block becomes
+one residency-less `default` region. Enabling replication without
+`minio.endpoint` (the source cluster) fails the render fail-closed. The
+controller-instantiation half (`NewController`/`PreflightAll`/`ResidencyTickInterval`)
+was wired into `cmd/lenny-gateway` by F-12.5.20; this finding's residual was the
+Helm-config delivery, now closed. A `parseReplicationConfig` chart-shape test
+guards the chart↔binary `DisallowUnknownFields` contract; five helm-unittest
+cases cover the render paths.
 
 ### - [x] F-25.11.10 — Post-restore GDPR erasure reconciler not implemented [High] — CLOSED
 
