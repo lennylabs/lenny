@@ -221,6 +221,13 @@ type Router struct {
 	// the endpoint unregistered.
 	leaseDenials LeaseDenialClearer
 
+	// quotaReconciler backs the §15.1 line 879 POST
+	// /v1/admin/quota/reconcile endpoint. The route is always registered
+	// so the §24.6 CLI command reaches a real endpoint; a nil reconciler
+	// (the default until F-11.2.4 wires the Postgres token-usage
+	// checkpoint store) answers 503 QUOTA_RECONCILE_UNAVAILABLE.
+	quotaReconciler QuotaReconciler
+
 	// devMode mirrors Options.DevMode; it selects the §5.3 line 677
 	// dev-mode isolation default for pools and runtimes that omit
 	// isolationProfile.
@@ -477,6 +484,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("POST /v1/admin/sessions/{id}/force-terminate",
 			r.requireAdmin(http.HandlerFunc(r.handleForceTerminateSession)))
 	}
+	// §15.1 line 879 / §24.6 line 99 — quota-counter re-aggregation. The
+	// route is registered unconditionally so the `lenny-ctl admin quota
+	// reconcile` command always reaches a real endpoint; the handler
+	// answers 503 QUOTA_RECONCILE_UNAVAILABLE when the reconciler seam is
+	// unwired (the default until the F-11.2.4 Postgres checkpoint lands).
+	mux.Handle("POST /v1/admin/quota/reconcile",
+		r.requireAdmin(http.HandlerFunc(r.handleQuotaReconcile)))
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))
 		mux.Handle("GET /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleListUsers)))

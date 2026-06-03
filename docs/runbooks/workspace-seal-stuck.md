@@ -91,11 +91,11 @@ If the pod itself is unhealthy and cannot stream the archive:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin sessions fail-sealed <session-id> \
-  --reason "workspace_seal_failed" --retain-partial-upload
+lenny-ctl admin sessions force-terminate <session-id> \
+  --reason "workspace_seal_failed"
 ```
 
-Marks the session as failed; any partial upload is retained for forensic review.
+The session transitions to `failed` and its pod is released to the pool (§24.11). The platform retains any partial upload under the object-store forensic-retention policy; do not delete the partial object until the seal failure is diagnosed.
 
 ### Step 4 — Credential
 

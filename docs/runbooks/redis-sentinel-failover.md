@@ -54,7 +54,7 @@ Redis Sentinel promoted a replica to master after the previous master became unr
 
 - `redis-cli -p 26379 SENTINEL replicas mymaster` lists the demoted node as a healthy replica.
 - `lenny_redis_master_changed_total` no longer advances.
-- A test write through the gateway succeeds: `lenny-ctl admin quota check --tenant <id>`.
+- A test session start through the gateway succeeds and `lenny_quota_redis_fallback_total` stops advancing, confirming quota enforcement reads Redis again rather than the fail-open path.
 
 ## Escalation
 

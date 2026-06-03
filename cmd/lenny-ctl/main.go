@@ -8,7 +8,9 @@
 //
 //	lenny-ctl admin tenants list|get|create
 //	lenny-ctl admin runtimes list|get
+//	lenny-ctl admin pools list|get|set-warm-count|...
 //	lenny-ctl admin sessions get|force-terminate
+//	lenny-ctl admin quota reconcile
 //	lenny-ctl admin circuit-breakers list|open|close
 //
 // The §25.14 / §24.15 operability groups wrap the gateway or lenny-ops API:
@@ -258,9 +260,13 @@ Gateway commands:
   admin pools drain <name>              Drain a pool (no new assignments)
   admin pools sync-status <name>        Show Postgres↔CRD reconciliation state
   admin pools resume-reconciliation <name>  Clear PoolScalingAdmissionStuck state
+  admin pools set-warm-count --pool <name> --min <N> [--dry-run]
+                                        Override a pool's minWarm for emergency scaling (§24.4)
   admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
   admin sessions force-terminate <id> [--reason <text>]
                                         Force a stuck session to failed and release its pod (§24.11)
+  admin quota reconcile (--all-tenants | --tenant <id>)
+                                        Re-aggregate quota counters from Postgres into Redis after a Redis recovery (§24.6)
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
@@ -462,7 +468,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|circuit-breakers|erasure-jobs)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|quota|circuit-breakers|erasure-jobs)")
 		return 2
 	}
 	switch args[0] {
@@ -474,6 +480,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdPools(ctx, c, args[1:], stdout, stderr)
 	case "sessions":
 		return cmdSessions(ctx, c, args[1:], stdout, stderr)
+	case "quota":
+		return cmdQuota(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breakers":
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
 	case "erasure-jobs":
@@ -1028,8 +1036,83 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 			return 1
 		}
 		printJSON(stdout, out)
+	case "set-warm-count":
+		// spec: §24.4 line 63 — `admin pools set-warm-count --pool <name>
+		// --min <N>` maps to PUT /v1/admin/pools/{name}/warm-count with the
+		// operability `{minWarm, confirm}` body (§25.17 lines 5232-5239).
+		// The warm-pool-exhaustion / sdk-connect-timeout / pool-bootstrap-
+		// mode / coordinator-handoff-slow runbooks invoke this for
+		// emergency scaling. The operator's explicit invocation confirms
+		// the mutation; --dry-run returns the §25.2 preview instead.
+		fs := flag.NewFlagSet("pools set-warm-count", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		min := fs.Int("min", -1, "new minWarm count (required, >= 0)")
+		dryRun := fs.Bool("dry-run", false, "return the scaling preview without applying it")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --pool <name>")
+			return 2
+		}
+		if *min < 0 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --min <N> (>= 0)")
+			return 2
+		}
+		body := map[string]any{"minWarm": *min, "confirm": !*dryRun}
+		var out map[string]any
+		if err := c.Do(ctx, "PUT", "/v1/admin/pools/"+url.PathEscape(*pool)+"/warm-count", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown pools subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// cmdQuota implements the §24.6 quota-operations group. `quota reconcile`
+// re-aggregates in-flight session usage from the Postgres checkpoint into
+// Redis after a Redis recovery, mapping to POST /v1/admin/quota/reconcile.
+// The redis-failure runbook uses the platform-wide `--all-tenants` form;
+// the redis-sentinel-failover runbook reloads one tenant via `--tenant
+// <id>`. spec: §24.6 line 99; §15.1 line 879.
+func cmdQuota(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: quota requires a subcommand (reconcile)")
+		return 2
+	}
+	switch args[0] {
+	case "reconcile":
+		fs := flag.NewFlagSet("quota reconcile", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		allTenants := fs.Bool("all-tenants", false, "reconcile every tenant's quota counters")
+		tenant := fs.String("tenant", "", "reconcile a single tenant's quota counters")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *allTenants == (*tenant != "") {
+			// Either neither or both scopes were supplied.
+			fmt.Fprintln(stderr, "lenny-ctl: quota reconcile requires exactly one of --all-tenants or --tenant <id>")
+			return 2
+		}
+		body := map[string]any{}
+		if *allTenants {
+			body["allTenants"] = true
+		} else {
+			body["tenantId"] = *tenant
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/quota/reconcile", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown quota subcommand %q\n", args[0])
 		return 2
 	}
 	return 0
