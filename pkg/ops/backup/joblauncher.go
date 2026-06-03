@@ -21,6 +21,11 @@ const (
 	// JobRestore runs the lenny-backup image in restore mode: pg_restore
 	// against each shard.
 	JobRestore JobKind = "restore"
+	// JobRetention runs the lenny-backup image in retention mode: the
+	// §25.11 daily 03:30 UTC sweep that deletes expired backups from both
+	// MinIO and Postgres in a coordinated sequence (lines 4108-4111). It
+	// carries no BackupID — it operates over every expired row.
+	JobRetention JobKind = "retention"
 )
 
 // JobSpec describes one §25.11 Kubernetes Job the orchestrator asks the

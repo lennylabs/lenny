@@ -26,6 +26,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
+	backupk8slauncher "github.com/lennylabs/lenny/pkg/ops/backup/k8slauncher"
+	backuppgstore "github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
@@ -151,21 +154,43 @@ func selfHealthEventSeverity(statusText string) string {
 	}
 }
 
+// backupDeps carries the production backing seams buildBackupService
+// selects over its in-memory fallbacks. Each field is optional: a nil or
+// zero field keeps the corresponding fake so the §25.11 endpoints still
+// serve in a single-process degraded mode.
+type backupDeps struct {
+	// Pool, when non-nil, selects the Postgres-backed ops_backups store
+	// over backup.MemStore so backups, schedule edits, restores, and the
+	// reconciler survive a lenny-ops restart and coordinate across replicas.
+	Pool *pgxpool.Pool
+	// Clientset, when non-nil, plus a non-empty LauncherImage selects the
+	// Kubernetes JobLauncher over backup.FakeLauncher so backup/restore Jobs
+	// actually run.
+	Clientset kubernetes.Interface
+	// Locks, when non-nil, selects the §25.4-remediation-lock-backed
+	// RestoreLocker over backup.MemLocker so the restore:platform lock
+	// coordinates across replicas.
+	Locks coordination.RemediationLockService
+
+	Namespace       string
+	LauncherImage   string
+	MinIOEndpoint   string
+	MinIOBucket     string
+	KMSKeyID        string
+	ReportDSNSecret string
+}
+
 // buildBackupService constructs the §25.11 BackupService and the
 // scheduled-backup cron jobs the §25.4 cron evaluator runs.
 //
-// The §25.11 ops_backups Postgres store and the Kubernetes Job launcher
-// are documented seams: the schema migration and the client-go Job
-// launcher are wired as those land. Until then lenny-ops runs the
-// in-memory store and launcher, so the §25.11 endpoints serve and an
-// agent can exercise the API surface in a single-process degraded
-// mode. The scheduled-backup loop runs only on the leader replica.
-func buildBackupService(production bool) (*backup.Service, []opsservice.ScheduledJob) {
-	store := backup.NewMemStore()
-	svc, err := backup.NewService(backup.Config{
-		Store:    store,
-		Launcher: backup.NewFakeLauncher(),
-		Locker:   backup.NewMemLocker(),
+// It selects the Postgres-backed ops_backups store, the Kubernetes Job
+// launcher, and the §25.4-remediation-lock-backed RestoreLocker from deps
+// when those seams are wired; otherwise it falls back to the in-memory
+// store, the fake launcher, and the in-memory locker so the §25.11
+// endpoints still serve in a single-process degraded mode. The
+// scheduled-backup loop runs only on the leader replica.
+func buildBackupService(production bool, deps backupDeps) (*backup.Service, []opsservice.ScheduledJob) {
+	cfg := backup.Config{
 		// §25.11 line 4343: every backup/restore/retention transition is
 		// audited. The orchestrator emits to this sink; the durable
 		// audit-append destination is a documented seam (lenny-ops has no
@@ -173,7 +198,50 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		// logs the event until that path lands, matching the escalation
 		// logEmitter posture.
 		Audit: logAuditSink,
-	})
+	}
+
+	// §25.11 / F-25.11.3: the durable ops_backups store when Postgres is
+	// wired, else the in-memory store.
+	if deps.Pool != nil {
+		cfg.Store = backuppgstore.New(deps.Pool)
+		log.Printf("lenny-ops: §25.11 backup store: Postgres (ops_backups)")
+	} else {
+		cfg.Store = backup.NewMemStore()
+	}
+
+	// §25.11 / F-25.11.4: the Kubernetes Job launcher when a cluster
+	// connection and a lenny-backup image are configured, else the fake
+	// launcher.
+	realLauncher := false
+	if deps.Clientset != nil && deps.LauncherImage != "" {
+		launcher, err := backupk8slauncher.New(backupk8slauncher.Config{
+			Clientset:       deps.Clientset,
+			Namespace:       deps.Namespace,
+			Image:           deps.LauncherImage,
+			MinIOEndpoint:   deps.MinIOEndpoint,
+			MinIOBucket:     deps.MinIOBucket,
+			KMSKeyID:        deps.KMSKeyID,
+			ReportDSNSecret: deps.ReportDSNSecret,
+		})
+		if err != nil {
+			log.Fatalf("lenny-ops: build backup Job launcher: %v", err)
+		}
+		cfg.Launcher = launcher
+		realLauncher = true
+		log.Printf("lenny-ops: §25.11 backup launcher: Kubernetes Jobs (image %s)", deps.LauncherImage)
+	} else {
+		cfg.Launcher = backup.NewFakeLauncher()
+	}
+
+	// §25.11 / F-17.3.4: the §25.4-remediation-lock-backed restore:platform
+	// lock when the lock service is wired, else the in-memory locker.
+	if deps.Locks != nil {
+		cfg.Locker = newRestoreLocker(deps.Locks)
+	} else {
+		cfg.Locker = backup.NewMemLocker()
+	}
+
+	svc, err := backup.NewService(cfg)
 	if err != nil {
 		// NewService fails only on a missing dependency, all supplied
 		// here; a failure is a programming error.
@@ -232,9 +300,24 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 			},
 		},
 		{
+			// spec: §25.11 lines 4108-4111 — the daily 03:30 UTC retention
+			// sweep deletes expired backups from both MinIO and Postgres. When
+			// a real Kubernetes launcher is wired, lenny-ops orchestrates a
+			// lenny-backup --mode=retention Job (the Job mounts the MinIO
+			// credentials and performs the object deletes lenny-ops itself
+			// cannot); without one it runs the in-process planner, which marks
+			// rows expired in the store and deletes objects via the
+			// ObjectDeleter seam when configured. F-17.3.9.
 			Name:       "backup-retention",
 			Expression: "30 3 * * *",
 			Run: func(ctx context.Context) error {
+				if realLauncher {
+					jobID, err := svc.LaunchRetentionJob(ctx)
+					if err == nil {
+						log.Printf("lenny-ops: retention enforcement Job %s launched", jobID)
+					}
+					return err
+				}
 				pruned, err := svc.EnforceRetention(ctx)
 				if err == nil && len(pruned) > 0 {
 					log.Printf("lenny-ops: retention enforcement pruned %d backups", len(pruned))

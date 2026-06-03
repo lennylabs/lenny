@@ -81,6 +81,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
+	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
@@ -5219,9 +5220,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: §25.11 artifact replication: %v", err)
 		}
+		// §25.11 / F-25.11.3: persist the per-region replication state to
+		// ops_artifact_replication_state (migration 0126) when Postgres is
+		// wired, so a fail-closed residency suspension survives a restart
+		// rather than silently re-enabling from an empty in-memory map.
+		var replState replication.StateStore
+		if pgPool != nil {
+			replState = replicationpgstore.New(pgPool)
+		}
 		replCtrl, err := replication.NewController(replication.ControllerConfig{
 			Config:  replCfg,
 			Driver:  driver,
+			State:   replState,
 			Audit:   replicationAuditSink{appender: auditAppender}.emit,
 			Metrics: replicationMetricsAdapter{m: gwMetrics},
 		})

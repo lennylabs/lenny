@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
@@ -14,7 +17,7 @@ import (
 // backups via PUT /v1/admin/backups/schedule, subsequent cron fires
 // MUST become no-ops without waiting for a lenny-ops restart.
 func TestScheduledBackupsRespectScheduleEnabled_spec_25_11(t *testing.T) {
-	svc, jobs := buildBackupService(false)
+	svc, jobs := buildBackupService(false, backupDeps{})
 	if len(jobs) < 2 {
 		t.Fatalf("buildBackupService returned %d jobs; want backup-full + backup-postgres + retention", len(jobs))
 	}
@@ -71,11 +74,56 @@ func TestScheduledBackupsRespectScheduleEnabled_spec_25_11(t *testing.T) {
 	}
 }
 
+// spec: §25.11 lines 4108-4111 — when a Kubernetes launcher is wired, the
+// daily retention sweep orchestrates a lenny-backup --mode=retention Job
+// (which deletes expired objects from MinIO with the credentials the Job
+// pod mounts) rather than running retention in-process. F-17.3.9.
+func TestRetentionCronLaunchesJobWithRealLauncher_spec_25_11(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	_, jobs := buildBackupService(false, backupDeps{
+		Clientset:     cs,
+		Namespace:     "lenny-system",
+		LauncherImage: "registry.example/lenny-backup:v1",
+		MinIOEndpoint: "minio:9000",
+		MinIOBucket:   "lenny-backups",
+	})
+	ctx := context.Background()
+	var retention func(context.Context) error
+	for _, j := range jobs {
+		if j.Name == "backup-retention" {
+			retention = j.Run
+		}
+	}
+	if retention == nil {
+		t.Fatal("no backup-retention job registered")
+	}
+	if err := retention(ctx); err != nil {
+		t.Fatalf("retention run: %v", err)
+	}
+	list, err := cs.BatchV1().Jobs("lenny-system").List(ctx, metav1.ListOptions{
+		LabelSelector: "app=lenny-backup",
+	})
+	if err != nil {
+		t.Fatalf("list Jobs: %v", err)
+	}
+	var retentionJobs int
+	for i := range list.Items {
+		for _, a := range list.Items[i].Spec.Template.Spec.Containers[0].Args {
+			if a == "--mode=retention" {
+				retentionJobs++
+			}
+		}
+	}
+	if retentionJobs != 1 {
+		t.Fatalf("retention cron created %d --mode=retention Jobs, want 1", retentionJobs)
+	}
+}
+
 // spec: §25.11 lines 4146-4149 — the leader-only restore-completion
 // reconciler (steps 5-8) is registered as an every-minute cron job and
 // runs without error when no restore is in flight. F-17.3.5 / F-25.11.10.
 func TestRestoreCompleteJobWired_spec_25_11(t *testing.T) {
-	_, jobs := buildBackupService(false)
+	_, jobs := buildBackupService(false, backupDeps{})
 	var found *struct {
 		expr string
 		run  func(context.Context) error
@@ -105,7 +153,7 @@ func TestRestoreCompleteJobWired_spec_25_11(t *testing.T) {
 // jobs expose ExpressionFunc so the evaluator fires on the stored cron,
 // reflecting an edit without a restart. F-25.11.5.
 func TestScheduledBackupCronReflectsRuntimeEdit_spec_25_11(t *testing.T) {
-	svc, jobs := buildBackupService(false)
+	svc, jobs := buildBackupService(false, backupDeps{})
 
 	byName := map[string]func() string{}
 	for _, j := range jobs {

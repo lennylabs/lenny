@@ -859,16 +859,42 @@ func (s *Service) EnforceRetention(ctx context.Context) ([]string, error) {
 	return pruned, nil
 }
 
+// LaunchRetentionJob creates the §25.11 retention-enforcement Kubernetes
+// Job (lines 4108-4111): the lenny-backup image in retention mode reads
+// the ops_retention_policy, computes the prune set, and deletes each
+// expired backup from MinIO and Postgres in a coordinated sequence. This
+// is the production path for the daily 03:30 UTC sweep — lenny-ops
+// orchestrates a Job rather than running retention in-process, so the
+// MinIO object deletion (which requires the backup MinIO credentials the
+// Job pod mounts, not lenny-ops) actually runs. It returns the Job name.
+func (s *Service) LaunchRetentionJob(ctx context.Context) (string, error) {
+	launched, err := s.launcher.Launch(ctx, JobSpec{Kind: JobRetention})
+	if err != nil {
+		return "", codedError(ErrCodeJobCreationFailed, "create retention Job: %v", err)
+	}
+	s.emitAudit(AuditEvent{
+		Type:   string(audit.EventBackupDeletedByRetention),
+		Actor:  scheduler,
+		Fields: map[string]any{"jobId": launched.JobID, "mode": "retention"},
+	})
+	return launched.JobID, nil
+}
+
 // ReconcilePending implements the §25.11 reconciler step that fails
 // ops_backups rows stuck in status:pending: a row older than two
 // minutes never had its Kubernetes Job created. It is invoked by the
 // lenny-ops reconciler goroutine every 60s. It returns the IDs it
 // failed.
 func (s *Service) ReconcilePending(ctx context.Context) ([]string, error) {
+	if pr, ok := s.store.(PendingReconciler); ok {
+		// A durable store reconciles server-side in one statement (the
+		// Postgres path).
+		return pr.FailStalePending(ctx, s.now().Add(-pendingReconcileAge))
+	}
 	ms, ok := s.store.(*MemStore)
 	if !ok {
-		// A non-MemStore reconciler is the Postgres store's responsibility;
-		// it runs the equivalent query server-side.
+		// A store that is neither the in-memory store nor a PendingReconciler
+		// has no in-process reconcile.
 		return nil, nil
 	}
 	cutoff := s.now().Add(-pendingReconcileAge)

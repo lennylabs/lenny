@@ -67,6 +67,19 @@ type RestoreFilter struct {
 	Status string
 }
 
+// PendingReconciler is the optional §25.11 lines 3976-3977 reconcile
+// capability a durable Store implements: failing ops_backups rows stuck
+// in status:pending past the cutoff (their Kubernetes Job creation never
+// happened). A Postgres-backed store runs the sweep as one server-side
+// UPDATE; the in-memory store is reconciled in-process by the Service.
+// When the configured Store implements this interface, ReconcilePending
+// delegates to it instead of the in-memory path.
+type PendingReconciler interface {
+	// FailStalePending marks every status:pending row older than cutoff as
+	// failed with error JOB_CREATE_FAILED and returns the failed IDs.
+	FailStalePending(ctx context.Context, cutoff time.Time) ([]string, error)
+}
+
 // MemStore is the in-memory §25.11 Store. It backs the unit tests and a
 // Postgres-less local deployment. It is goroutine-safe.
 type MemStore struct {

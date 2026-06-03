@@ -63,10 +63,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsinventory"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -110,6 +110,19 @@ func main() {
 		"namespace that holds the §25.4 lenny-ops-leader Lease")
 	runbookDir := flag.String("runbook-dir", envOr("LENNY_RUNBOOK_DIR", "docs/runbooks"),
 		"directory of §25.7 operational-runbook markdown files the runbook index serves")
+	backupImage := flag.String("backup-image", os.Getenv("LENNY_BACKUP_IMAGE"),
+		"§25.11 lenny-backup image ({platform.registry.url}/lenny-backup:{version}) the "+
+			"Kubernetes JobLauncher runs. Empty (with no cluster) keeps the in-process fake "+
+			"launcher; set it to orchestrate real backup/restore Jobs. Override via LENNY_BACKUP_IMAGE.")
+	backupMinIOEndpoint := flag.String("backup-minio-endpoint", os.Getenv("LENNY_BACKUP_MINIO_ENDPOINT"),
+		"§25.11 MinIO endpoint (host:port) the backup Job uploads archives to")
+	backupMinIOBucket := flag.String("backup-minio-bucket", envOr("LENNY_BACKUP_MINIO_BUCKET", "lenny-backups"),
+		"§25.11 MinIO backup bucket")
+	backupKMSKeyID := flag.String("backup-kms-key-id", os.Getenv("LENNY_BACKUP_KMS_KEY_ID"),
+		"§12.9 SSE-KMS key for the backup upload; empty selects SSE-S3")
+	backupReportDSNSecret := flag.String("backup-report-dsn-secret", os.Getenv("LENNY_BACKUP_REPORT_DSN_SECRET"),
+		"name of the Secret whose report-dsn key holds the lenny-ops DSN the backup Job uses for "+
+			"the §25.11 step-8 ops_backups update; empty leaves it unset")
 	selfHealthInterval := flag.Duration("self-health-interval", 10*time.Second,
 		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
 	eventsStreamMaxLen := flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", events.DefaultStreamMaxLen),
@@ -492,13 +505,6 @@ func main() {
 		opsservice.CheckGatewayAuth:    opsservice.GatewayAuthCheck(gatewayAuthProbe(gwClient)),
 	}
 
-	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
-	// Kubernetes Jobs through it. The Postgres-backed ops_backups store
-	// and the Kubernetes Job launcher are wired as those seams land; the
-	// in-memory store and launcher keep the §25.11 endpoints serving in
-	// a single-process degraded mode so an agent can exercise them.
-	backupSvc, backupJobs := buildBackupService(*production)
-
 	// §25.4 lines 2206-2212: the in-memory (Tier-3) lock policy. The mode
 	// is validated at startup so an operator typo fails fast rather than
 	// silently selecting an unintended safety posture. Under the
@@ -537,6 +543,29 @@ func main() {
 	// authorization control before the service. F-25.4.6.
 	lockSvc := buildLockService(pgPool, redisClient, lockCoordination,
 		prometheus.DefaultRegisterer, opsEmitter, replicaID)
+
+	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
+	// Kubernetes Jobs through it. The Postgres-backed ops_backups store,
+	// the client-go Job launcher, and the §25.4-remediation-lock-backed
+	// restore:platform lock are selected when those seams are wired; the
+	// in-memory store, fake launcher, and in-memory locker keep the §25.11
+	// endpoints serving in a single-process degraded mode. Built after
+	// lockSvc so the restore lock can adapt it. F-17.3.4 / F-25.11.3/.4.
+	var backupClientset kubernetes.Interface
+	if clientset != nil {
+		backupClientset = clientset
+	}
+	backupSvc, backupJobs := buildBackupService(*production, backupDeps{
+		Pool:            pgPool,
+		Clientset:       backupClientset,
+		Locks:           lockSvc,
+		Namespace:       envOr("POD_NAMESPACE", *leaderElectNS),
+		LauncherImage:   *backupImage,
+		MinIOEndpoint:   *backupMinIOEndpoint,
+		MinIOBucket:     *backupMinIOBucket,
+		KMSKeyID:        *backupKMSKeyID,
+		ReportDSNSecret: *backupReportDSNSecret,
+	})
 
 	// The §25.4 escalation service, the §25.10 configuration-drift
 	// service, and the §25.6 DiagnosticService. Each runs against an
