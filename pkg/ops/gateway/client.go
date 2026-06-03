@@ -50,6 +50,42 @@ type StaticToken string
 // Token returns the wrapped string.
 func (s StaticToken) Token(context.Context) (string, error) { return string(s), nil }
 
+// TLSMetrics records the §25.4 NET-070 admin-API transport posture on
+// every GatewayClient request attempt. The production adapter
+// increments lenny_ops_admin_api_tls_handshake_total{result}; the
+// OpsAdminAPIPlaintextDetected alert (§16.5) fires on a "plaintext"
+// result. Tests pass a recording stub or the Noop.
+//
+// spec: §25.4 lines 2538-2546.
+type TLSMetrics interface {
+	// Handshake records one connection attempt. result is "plaintext"
+	// when the admin-API URL is http://, "tls" on a completed HTTPS
+	// request, and "tls_error" when an HTTPS request fails at the
+	// transport layer.
+	Handshake(result string)
+}
+
+// NoopTLSMetrics discards handshake results.
+type NoopTLSMetrics struct{}
+
+// Handshake implements TLSMetrics.
+func (NoopTLSMetrics) Handshake(string) {}
+
+// Revoker is the optional capability a TokenSource implements when it
+// can drop a cached token on a 401, the §25.4 revocation-detection
+// path. The Client calls MarkRevoked so the next request reloads the
+// service-account token.
+type Revoker interface {
+	MarkRevoked()
+}
+
+// Handshake result labels.
+const (
+	handshakePlaintext = "plaintext"
+	handshakeTLS       = "tls"
+	handshakeTLSError  = "tls_error"
+)
+
 // Config configures a Client.
 type Config struct {
 	// BaseURL is the gateway admin API base, normally the ClusterIP
@@ -72,6 +108,13 @@ type Config struct {
 	// FanOutTimeout bounds each per-replica request inside a fan-out
 	// query. §25.4 ops.gateway.fanOutTimeoutSeconds default is 2s.
 	FanOutTimeout time.Duration
+	// Breaker is the §25.4 per-replica circuit breaker for the fan-out
+	// path. A nil breaker disables circuit breaking (every replica is
+	// always attempted).
+	Breaker *CircuitBreaker
+	// TLSMetrics records the §25.4 NET-070 admin-API transport posture
+	// on each request. A nil value uses NoopTLSMetrics.
+	TLSMetrics TLSMetrics
 }
 
 // Client is the §25.4 gateway-admin client.
@@ -81,6 +124,8 @@ type Client struct {
 	http          *http.Client
 	discovery     ReplicaDiscovery
 	fanOutTimeout time.Duration
+	breaker       *CircuitBreaker
+	tlsMetrics    TLSMetrics
 }
 
 // NewClient validates cfg and returns a Client. An empty BaseURL is
@@ -106,12 +151,18 @@ func NewClient(cfg Config) (*Client, error) {
 	if fanOut <= 0 {
 		fanOut = 2 * time.Second
 	}
+	tlsMetrics := cfg.TLSMetrics
+	if tlsMetrics == nil {
+		tlsMetrics = NoopTLSMetrics{}
+	}
 	return &Client{
 		baseURL:       cfg.BaseURL,
 		token:         cfg.Token,
 		http:          hc,
 		discovery:     cfg.Discovery,
 		fanOutTimeout: fanOut,
+		breaker:       cfg.Breaker,
+		tlsMetrics:    tlsMetrics,
 	}, nil
 }
 
@@ -166,18 +217,45 @@ func (c *Client) do(ctx context.Context, method, base, path string, body, out an
 		}
 	}
 	resp, err := c.http.Do(req)
+	c.recordHandshake(req.URL.Scheme, err)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusUnauthorized {
+			c.markRevoked()
+		}
 		return &HTTPError{Status: resp.StatusCode, Body: raw, URL: req.URL.String()}
 	}
 	if out == nil {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// recordHandshake reports the §25.4 NET-070 transport posture for one
+// request attempt. An http:// scheme is always "plaintext"; an https://
+// request is "tls" when it completed at the transport layer and
+// "tls_error" when it failed before a response.
+func (c *Client) recordHandshake(scheme string, transportErr error) {
+	switch {
+	case scheme == "http":
+		c.tlsMetrics.Handshake(handshakePlaintext)
+	case transportErr != nil:
+		c.tlsMetrics.Handshake(handshakeTLSError)
+	default:
+		c.tlsMetrics.Handshake(handshakeTLS)
+	}
+}
+
+// markRevoked flags the token source for reload on the next request
+// when it supports revocation. The §25.4 401-triggered revocation path.
+func (c *Client) markRevoked() {
+	if r, ok := c.token.(Revoker); ok {
+		r.MarkRevoked()
+	}
 }
 
 // HTTPError reports a non-2xx response from the gateway admin API.
@@ -254,23 +332,56 @@ func (c *Client) fanOut(ctx context.Context, path string, decodeJSON bool) ([]Re
 	results := make([]ReplicaResult, len(endpoints))
 	var wg sync.WaitGroup
 	for i, ep := range endpoints {
+		// §25.4 per-replica circuit breaker: skip a replica whose
+		// breaker is open so one struggling replica does not slow the
+		// aggregation. The skip lands as a ReplicaResult with
+		// ErrCircuitOpen so the caller counts it toward the §25.2
+		// "based on N of M replicas" degradation envelope.
+		if !c.breaker.Allow(ep) {
+			results[i] = ReplicaResult{Endpoint: ep, Err: ErrCircuitOpen}
+			continue
+		}
 		wg.Add(1)
 		go func(i int, base string) {
 			defer wg.Done()
 			cctx, cancel := context.WithTimeout(ctx, c.fanOutTimeout)
 			defer cancel()
+			var rerr error
 			if decodeJSON {
 				var raw json.RawMessage
-				err := c.do(cctx, http.MethodGet, base, path, nil, &raw)
-				results[i] = ReplicaResult{Endpoint: base, Body: raw, Err: err}
-				return
+				rerr = c.do(cctx, http.MethodGet, base, path, nil, &raw)
+				results[i] = ReplicaResult{Endpoint: base, Body: raw, Err: rerr}
+			} else {
+				body, derr := c.doRaw(cctx, http.MethodGet, base, path)
+				rerr = derr
+				results[i] = ReplicaResult{Endpoint: base, Body: body, Err: derr}
 			}
-			body, derr := c.doRaw(cctx, http.MethodGet, base, path)
-			results[i] = ReplicaResult{Endpoint: base, Body: body, Err: derr}
+			c.recordReplicaOutcome(base, rerr)
 		}(i, ep)
 	}
 	wg.Wait()
 	return results, nil
+}
+
+// recordReplicaOutcome feeds the per-replica circuit breaker. A nil
+// error or a 4xx (the replica responded; the request was malformed or
+// unauthorized, not a replica-health problem) counts as a success; a
+// transport error or a 5xx counts as a consecutive failure that can
+// trip the breaker.
+func (c *Client) recordReplicaOutcome(endpoint string, err error) {
+	if c.breaker == nil {
+		return
+	}
+	if err == nil {
+		c.breaker.RecordSuccess(endpoint)
+		return
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && httpErr.Status < 500 {
+		c.breaker.RecordSuccess(endpoint)
+		return
+	}
+	c.breaker.RecordFailure(endpoint)
 }
 
 // doRaw is the JSON-free sibling of `do`. It returns the response body
@@ -291,6 +402,7 @@ func (c *Client) doRaw(ctx context.Context, method, base, path string) ([]byte, 
 		}
 	}
 	resp, err := c.http.Do(req)
+	c.recordHandshake(req.URL.Scheme, err)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +412,9 @@ func (c *Client) doRaw(ctx context.Context, method, base, path string) ([]byte, 
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			c.markRevoked()
+		}
 		return nil, &HTTPError{Status: resp.StatusCode, Body: body, URL: req.URL.String()}
 	}
 	return body, nil

@@ -63,7 +63,33 @@ type PrometheusClient struct {
 	baseURL string
 	http    *http.Client
 	timeout time.Duration
+	metrics QueryMetrics
+	now     func() time.Time
 }
+
+// QueryMetrics records the §25.4 Prometheus query latency. The
+// production adapter observes lenny_prometheus_query_duration_seconds
+// {kind}; tests pass a recording stub or the Noop.
+//
+// spec: §25.4 lines 1914-1916.
+type QueryMetrics interface {
+	// ObserveQuery records the wall-clock duration of one query. kind
+	// is one of "instant", "range", or "alerts".
+	ObserveQuery(kind string, seconds float64)
+}
+
+// NoopQueryMetrics discards query latencies.
+type NoopQueryMetrics struct{}
+
+// ObserveQuery implements QueryMetrics.
+func (NoopQueryMetrics) ObserveQuery(string, float64) {}
+
+// Query kind labels for lenny_prometheus_query_duration_seconds.
+const (
+	QueryKindInstant = "instant"
+	QueryKindRange   = "range"
+	QueryKindAlerts  = "alerts"
+)
 
 // PrometheusConfig configures a PrometheusClient.
 type PrometheusConfig struct {
@@ -75,6 +101,10 @@ type PrometheusConfig struct {
 	// QueryTimeout bounds each query. §25.4
 	// ops.prometheus.queryTimeoutSeconds default is 15s.
 	QueryTimeout time.Duration
+	// Metrics records query latency. Nil uses NoopQueryMetrics.
+	Metrics QueryMetrics
+	// Now overrides the clock used to time queries. Nil uses time.Now.
+	Now func() time.Time
 }
 
 // NewPrometheusClient validates cfg and returns a client.
@@ -93,11 +123,28 @@ func NewPrometheusClient(cfg PrometheusConfig) (*PrometheusClient, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: timeout + time.Second}
 	}
+	m := cfg.Metrics
+	if m == nil {
+		m = NoopQueryMetrics{}
+	}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &PrometheusClient{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		http:    hc,
 		timeout: timeout,
+		metrics: m,
+		now:     now,
 	}, nil
+}
+
+// observe records the wall-clock latency of a query of the given kind
+// against lenny_prometheus_query_duration_seconds{kind}. It is called
+// with a deferred closure capturing the start time.
+func (c *PrometheusClient) observe(kind string, start time.Time) {
+	c.metrics.ObserveQuery(kind, c.now().Sub(start).Seconds())
 }
 
 // promResponse is the Prometheus HTTP API common envelope.
@@ -110,6 +157,7 @@ type promResponse struct {
 
 // Query implements MetricSource.Query.
 func (c *PrometheusClient) Query(ctx context.Context, q string) (float64, error) {
+	defer c.observe(QueryKindInstant, c.now())
 	params := url.Values{}
 	params.Set("query", q)
 	params.Set("timeout", strconv.FormatFloat(c.timeout.Seconds(), 'f', -1, 64)+"s")
@@ -129,7 +177,7 @@ func (c *PrometheusClient) Query(ctx context.Context, q string) (float64, error)
 		// scalar: [timestamp, "value"]
 		var pair [2]json.RawMessage
 		if err := json.Unmarshal(data, &struct {
-			ResultType string             `json:"resultType"`
+			ResultType string              `json:"resultType"`
 			Result     *[2]json.RawMessage `json:"result"`
 		}{Result: &pair}); err != nil {
 			return 0, fmt.Errorf("prometheus: decode scalar: %w", err)
@@ -140,7 +188,7 @@ func (c *PrometheusClient) Query(ctx context.Context, q string) (float64, error)
 			return 0, nil
 		}
 		var entry struct {
-			Metric map[string]string `json:"metric"`
+			Metric map[string]string  `json:"metric"`
 			Value  [2]json.RawMessage `json:"value"`
 		}
 		if err := json.Unmarshal(inst.Result[0], &entry); err != nil {
@@ -154,6 +202,7 @@ func (c *PrometheusClient) Query(ctx context.Context, q string) (float64, error)
 
 // QueryRange implements MetricSource.QueryRange.
 func (c *PrometheusClient) QueryRange(ctx context.Context, q string, start, end time.Time, step time.Duration) ([]DataPoint, error) {
+	defer c.observe(QueryKindRange, c.now())
 	params := url.Values{}
 	params.Set("query", q)
 	params.Set("start", strconv.FormatFloat(float64(start.UnixNano())/1e9, 'f', -1, 64))

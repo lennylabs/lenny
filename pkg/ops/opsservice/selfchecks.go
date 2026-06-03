@@ -4,6 +4,7 @@ package opsservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -20,6 +21,7 @@ const (
 	CheckWebhookBacklog = "webhook_backlog"
 	CheckK8sAPI         = "k8s_api"
 	CheckMemoryPressure = "memory_pressure"
+	CheckGatewayAuth    = "gateway_auth"
 )
 
 // §25.4 self-health thresholds. The table in §25.4 "Self-Health
@@ -180,6 +182,62 @@ func MemoryPressureCheck(limitBytes int64) SelfCheck {
 			res.Status = StatusDegraded
 			res.Detail = fmt.Sprintf("memory %d%% of limit", int(fraction*100))
 		}
+		return res
+	}
+}
+
+// gatewayAuthProbeTimeout bounds the §25.4 gateway-auth self-health
+// probe so a hung gateway admin API does not stall the self-monitor.
+const gatewayAuthProbeTimeout = 3 * time.Second
+
+// GatewayAuthProbe attempts one authenticated round-trip to the gateway
+// admin API. It returns a TokenError when the service-account token
+// cannot be minted (the gateway-auth path is broken) and any other
+// error when the gateway is reachable but the call did not succeed.
+type GatewayAuthProbe func(ctx context.Context) error
+
+// TokenError marks a GatewayAuthProbe failure that originates in the
+// service-account token lifecycle (refresh failed, token below the TTL
+// floor, projection missing) rather than in gateway reachability. The
+// §25.4 gateway-auth check treats it as unhealthy; a plain reachability
+// error is degraded.
+type TokenError struct{ Err error }
+
+// Error implements error.
+func (e *TokenError) Error() string { return "gateway-auth token error: " + e.Err.Error() }
+
+// Unwrap exposes the wrapped error.
+func (e *TokenError) Unwrap() error { return e.Err }
+
+// GatewayAuthCheck returns the §25.4 gateway-auth self-health check. It
+// is unhealthy when the service-account token cannot be minted (a
+// TokenError from the probe), degraded when the gateway admin API is
+// unreachable or returns an error, and healthy on a successful probe. A
+// nil probe (single-process dev without a wired gateway client) reports
+// healthy, matching the treatment of an unconfigured optional
+// dependency.
+//
+// spec: §25.4 lines 1956-1971 (the gateway-auth self-health component).
+func GatewayAuthCheck(probe GatewayAuthProbe) SelfCheck {
+	return func() CheckResult {
+		res := CheckResult{Name: CheckGatewayAuth, Status: StatusHealthy}
+		if probe == nil {
+			return res
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), gatewayAuthProbeTimeout)
+		defer cancel()
+		err := probe(ctx)
+		if err == nil {
+			return res
+		}
+		var tokErr *TokenError
+		if errors.As(err, &tokErr) {
+			res.Status = StatusUnhealthy
+			res.Detail = fmt.Sprintf("service-account token unavailable: %v", tokErr.Err)
+			return res
+		}
+		res.Status = StatusDegraded
+		res.Detail = fmt.Sprintf("gateway admin API auth probe failed: %v", err)
 		return res
 	}
 }

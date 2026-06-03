@@ -245,6 +245,32 @@ func main() {
 	opsServiceName := flag.String("ops-service-name", envOr("LENNY_OPS_SERVICE_NAME", "lenny-ops"),
 		"§25.4 line 2208: name of the lenny-ops Service whose Endpoints the single-replica-only "+
 			"lock policy reads to count ready replicas. Override via LENNY_OPS_SERVICE_NAME.")
+	// spec: §25.4 lines 1740-1974 ("Calling the Gateway" + GatewayClient).
+	// The headless Service and TLS posture drive the per-replica fan-out
+	// discovery and the NET-070 admin-API transport; the breaker and
+	// fan-out timeout bound the §25.4 fallback path. F-25.4.8.
+	gatewayInternalTLS := flag.Bool("gateway-internal-tls", envBool("LENNY_OPS_GATEWAY_INTERNAL_TLS", false),
+		"§25.4 ops.tls.internalEnabled: when true the gateway admin-API link uses HTTPS on the gateway internal-TLS port (NET-070).")
+	gatewayHeadlessSvc := flag.String("gateway-headless-service", envOr("LENNY_OPS_GATEWAY_HEADLESS_SERVICE", ""),
+		"§25.4 ops.gateway.headlessService: the lenny-gateway-pods headless Service the per-replica fan-out resolves. Empty disables fan-out.")
+	gatewayTLSPort := flag.Int("gateway-internal-tls-port", envInt("LENNY_OPS_GATEWAY_INTERNAL_TLS_PORT", 8443),
+		"§25.4 gateway internal-TLS port the fan-out dials when --gateway-internal-tls is set.")
+	gatewayPlaintextPort := flag.Int("gateway-internal-port", envInt("LENNY_OPS_GATEWAY_INTERNAL_PORT", 8080),
+		"§25.4 gateway internal plaintext port the fan-out dials when --gateway-internal-tls is unset.")
+	gatewayFanOutTimeout := flag.Duration("gateway-fanout-timeout", 2*time.Second,
+		"§25.4 ops.gateway.fanOutTimeoutSeconds: per-replica fan-out request timeout.")
+	gatewayBreakerThreshold := flag.Int("gateway-fanout-breaker-failure-threshold", envInt("LENNY_OPS_GATEWAY_FANOUT_BREAKER_THRESHOLD", 3),
+		"§25.4 ops.gateway.fanOutCircuitBreaker.failureThreshold: consecutive per-replica failures before the breaker opens.")
+	gatewayBreakerResetAfter := flag.Duration("gateway-fanout-breaker-reset-after", 60*time.Second,
+		"§25.4 ops.gateway.fanOutCircuitBreaker.resetAfter: how long a tripped per-replica breaker stays open.")
+	gatewaySATokenFile := flag.String("gateway-sa-token-file", envOr("LENNY_OPS_GATEWAY_SA_TOKEN_FILE", "/var/run/secrets/lenny/gateway/token"),
+		"§25.4 projected ServiceAccount token volume the GatewayClient presents to the gateway admin API. Absent → dev-headers path.")
+	gatewayTokenRefreshBefore := flag.Duration("gateway-token-refresh-before-expiry", durationOrDefault(envInt("LENNY_OPS_GATEWAY_TOKEN_REFRESH_BEFORE_EXPIRY_SECONDS", 0), 5*time.Minute),
+		"§25.4 security.oidc.tokenRefreshBeforeExpirySeconds: pre-emptive token-refresh lead time.")
+	gatewayTokenMinTTL := flag.Duration("gateway-token-min-ttl", durationOrDefault(envInt("LENNY_OPS_GATEWAY_TOKEN_MIN_TTL_SECONDS", 0), 0),
+		"§25.4 security.oidc.minTokenTTLSeconds: reject a startup token whose remaining lifetime is below this floor. 0 disables.")
+	gatewayCABundleFile := flag.String("gateway-ca-bundle-file", envOr("LENNY_OPS_GATEWAY_CA_BUNDLE_FILE", ""),
+		"§25.4 ops.tls.caBundleConfigMap: PEM CA bundle augmenting the system trust store for the gateway admin-API TLS link. Empty uses system roots.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -414,6 +440,32 @@ func main() {
 		HTTPTimeout:   10 * time.Second,
 	})
 
+	// The §25.4 gateway admin-API client (F-25.4.8). It refreshes the
+	// service-account OIDC token, routes per-replica fan-out through the
+	// headless Service with circuit breakers, and emits the NET-070
+	// handshake metric (F-25.4.19) on every request. The gateway-auth
+	// self-health check is its in-process consumer; the per-replica
+	// health/recommendation aggregation endpoints consume the same client
+	// as they land (F-25.4.3).
+	gwClient, err := buildGatewayClient(gatewayClientConfig{
+		gatewayURL:          *gatewayURL,
+		headlessService:     *gatewayHeadlessSvc,
+		namespace:           envOr("POD_NAMESPACE", *leaderElectNS),
+		internalTLS:         *gatewayInternalTLS,
+		internalTLSPort:     *gatewayTLSPort,
+		plaintextPort:       *gatewayPlaintextPort,
+		fanOutTimeout:       *gatewayFanOutTimeout,
+		breakerThreshold:    *gatewayBreakerThreshold,
+		breakerResetAfter:   *gatewayBreakerResetAfter,
+		saTokenPath:         *gatewaySATokenFile,
+		refreshBeforeExpiry: *gatewayTokenRefreshBefore,
+		minTokenTTL:         *gatewayTokenMinTTL,
+		caBundlePath:        *gatewayCABundleFile,
+	}, prometheus.DefaultRegisterer)
+	if err != nil {
+		log.Fatalf("lenny-ops: build gateway client: %v", err)
+	}
+
 	// The §25.4 self-health checks every replica runs.
 	var disc discovery.DiscoveryInterface
 	if clientset != nil {
@@ -425,6 +477,7 @@ func main() {
 		opsservice.CheckWebhookBacklog: opsservice.WebhookBacklogCheck(webhook.Backlog),
 		opsservice.CheckK8sAPI:         opsservice.K8sAPICheck(disc),
 		opsservice.CheckMemoryPressure: opsservice.MemoryPressureCheck(*memoryLimitBytes),
+		opsservice.CheckGatewayAuth:    opsservice.GatewayAuthCheck(gatewayAuthProbe(gwClient)),
 	}
 
 	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
@@ -854,6 +907,17 @@ func envInt(name string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// durationOrDefault converts a seconds count to a Duration, returning def
+// when seconds is non-positive. The §25.4 ops.security.oidc values arrive
+// from the chart as seconds; this keeps the flag defaults expressed as a
+// single source of truth.
+func durationOrDefault(seconds int, def time.Duration) time.Duration {
+	if seconds <= 0 {
+		return def
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // buildAuthConfig assembles the §25.4 lines 1562-1564 OIDC
