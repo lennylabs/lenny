@@ -63,8 +63,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/opsinventory"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -245,6 +247,16 @@ func main() {
 	opsServiceName := flag.String("ops-service-name", envOr("LENNY_OPS_SERVICE_NAME", "lenny-ops"),
 		"§25.4 line 2208: name of the lenny-ops Service whose Endpoints the single-replica-only "+
 			"lock policy reads to count ready replicas. Override via LENNY_OPS_SERVICE_NAME.")
+	// spec: §25.4 lines 1596-1601 — the GET /v1/admin/me platform context.
+	// installationId is the stable per-install UUID; tier is the §25.16
+	// deployment tier; opsServiceURL is the external lenny-ops entry point.
+	// F-25.4.2.
+	installationID := flag.String("installation-id", os.Getenv("LENNY_INSTALLATION_ID"),
+		"§25.4: stable installation UUID surfaced in GET /v1/admin/me.platform.installationId. Override via LENNY_INSTALLATION_ID.")
+	platformTier := flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", ""),
+		"§25.16 deployment tier (tier1/tier2/tier3) surfaced in GET /v1/admin/me.platform.tier. Override via LENNY_PLATFORM_TIER.")
+	opsServiceURL := flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
+		"§25.4: external lenny-ops URL surfaced in GET /v1/admin/me.platform.opsServiceURL. Override via LENNY_OPS_SERVICE_URL.")
 	// spec: §25.4 lines 1740-1974 ("Calling the Gateway" + GatewayClient).
 	// The headless Service and TLS posture drive the per-replica fan-out
 	// discovery and the NET-070 admin-API transport; the breaker and
@@ -732,6 +744,54 @@ func main() {
 	if clientset != nil {
 		podLogs = k8sPodLogReader{pods: clientset.CoreV1()}
 	}
+
+	// §25.4 Operations Inventory: a scatter-gather view over the wired
+	// subsystem sources. The lock, escalation, and platform-upgrade
+	// adapters project their live records; the §25.10 drift reconcile
+	// tracker is already an operations.Source. The backup/restore,
+	// idempotency, and webhook-delivery kinds plug in as their subsystems
+	// expose enumeration. F-25.4.3.
+	inventory := operations.New(
+		opsinventory.NewLockSource(lockSvc),
+		opsinventory.NewEscalationSource(escalationSvc),
+		opsinventory.NewUpgradeSource(upgradeSvc),
+		driftSvc.ReconcileSource(),
+	)
+
+	// §25.4 GET /v1/admin/me platform context + capabilities snapshot. The
+	// capabilities reflect the actual wired state; opsReplicas reads the
+	// live Endpoints count. F-25.4.2.
+	meConfig := &opsserver.MeConfig{
+		InstallationID:           *installationID,
+		Version:                  buildVersion,
+		Tier:                     *platformTier,
+		Namespace:                envOr("POD_NAMESPACE", *leaderElectNS),
+		OpsServiceURL:            *opsServiceURL,
+		GatewayURL:               *gatewayURL,
+		Issuer:                   *oidcIssuerURL,
+		TokenRefreshBeforeExpiry: gatewayTokenRefreshBefore.String(),
+		Capabilities: opsserver.Capabilities{
+			PrometheusAvailable:     *prometheusURL != "",
+			OpsReplicas:             1,
+			MtlsInternal:            *gatewayInternalTLS,
+			LockMemoryTier:          *locksMemoryTier,
+			TenantFiltering:         *authMultiTenant,
+			HeadlessServiceFallback: *gatewayHeadlessSvc != "",
+		},
+		LiveOpsReplicas: func() int {
+			if replicaCounter != nil {
+				return replicaCounter.ReplicaCount()
+			}
+			return 1
+		},
+	}
+
+	// §25.4 audit recorder for identity.discovered + operations.inventory_-
+	// queried. Logged today; the durable audit-store sink lands with
+	// F-25.4.22, matching the lock/escalation/backup audit posture.
+	opsAudit := opsserver.LogAuditRecorder{Sink: func(event string, fields map[string]any) {
+		log.Printf("lenny-ops: audit %s %v", event, fields)
+	}}
 	opsHandler := opsserver.New(opsserver.Options{
 		Probes:            probes,
 		Runbooks:          runbookSource,
@@ -753,6 +813,9 @@ func main() {
 		DiagnosticsAudit:  buildDiagnosticsAudit(*diagnosticsAuditRate),
 		Auth:              authCfg,
 		Idempotency:       idemStore,
+		Inventory:         inventory,
+		Me:                meConfig,
+		Audit:             opsAudit,
 		// §16.8 / §16.9: expose every instrument registered on the process
 		// default registry (self-health, backup, drift, rate-limit,
 		// diagnostics) on the mandatory lenny-ops scrape target.

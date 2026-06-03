@@ -15,6 +15,7 @@ package opsserver
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -84,6 +85,25 @@ type Server struct {
 	versionAggregator  *upgradeservice.VersionAggregator
 	podLogs            PodLogReader
 	production         bool
+
+	// inventory backs the §25.4 Operations Inventory read endpoints
+	// (/v1/admin/operations + /operations/{id}) and the /me/operations
+	// alias. A nil inventory leaves those routes unmapped.
+	inventory OperationsInventory
+	// me carries the §25.4 GET /v1/admin/me platform context and
+	// capabilities snapshot. A nil config degrades the platform and
+	// capabilities blocks to their zero values.
+	me *MeConfig
+	// rateLimiter is the per-sub token-bucket limiter (also wrapped into
+	// the auth chain). The me endpoint reads it to surface the caller's
+	// current token balance. Nil when no rate limiting is configured.
+	rateLimiter *RateLimiter
+	// audit records the §25.4 me/operations audit events
+	// (identity.discovered, operations.inventory_queried). Nil drops them.
+	audit AuditRecorder
+	// identitySeen deduplicates the §25.4 identity.discovered audit event
+	// so it is emitted at most once per caller subject per process.
+	identitySeen sync.Map
 
 	// idem applies the §25.4 idempotency middleware to mutating routes
 	// when an Idempotency store is configured; nil leaves the surface
@@ -204,6 +224,24 @@ type Options struct {
 	// resolves from the verified principal.
 	Idempotency opsidem.Store
 
+	// Inventory backs the §25.4 Operations Inventory endpoints
+	// (GET /v1/admin/operations, /operations/{id}) and the
+	// /v1/admin/me/operations alias. A nil inventory leaves the
+	// operations endpoints unmapped (404); the /me/operations alias then
+	// returns an empty page.
+	Inventory OperationsInventory
+
+	// Me carries the §25.4 GET /v1/admin/me platform context and
+	// install-state capabilities. A nil config leaves the platform and
+	// capabilities blocks at their zero values; the me endpoints still
+	// register and serve identity/authorization derived from the request.
+	Me *MeConfig
+
+	// Audit records the §25.4 me/operations audit events
+	// (identity.discovered, operations.inventory_queried). A nil recorder
+	// drops them.
+	Audit AuditRecorder
+
 	// Metrics, when non-nil, is served at GET /metrics as the §16.8 / §16.9
 	// Prometheus scrape surface. lenny-ops registers its instruments (the
 	// §16.8 self-health, backup, drift, rate-limit, and diagnostics series)
@@ -243,7 +281,15 @@ func New(opts Options) *Server {
 		versionAggregator:  opts.VersionAggregator,
 		podLogs:            opts.PodLogs,
 		production:         opts.Production,
+		inventory:          opts.Inventory,
+		me:                 opts.Me,
+		audit:              opts.Audit,
 		diagAuditCfg:       opts.DiagnosticsAudit,
+	}
+	// The me endpoint surfaces the caller's rate-limit balance from the
+	// same limiter the auth chain enforces.
+	if opts.Auth != nil {
+		s.rateLimiter = opts.Auth.RateLimiter
 	}
 	// §25.4 idempotency: caller_id is the verified principal's OIDC sub
 	// (callerIdentity), and Production reports the Tier 2/3 required-key
@@ -291,6 +337,8 @@ func New(opts Options) *Server {
 	s.registerEventSubscriptionRoutes()
 	s.registerReleaseChannelRoutes()
 	s.registerPlatformUpgradeRoutes()
+	s.registerOperationsRoutes()
+	s.registerMeRoutes()
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.

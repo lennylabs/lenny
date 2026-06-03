@@ -77,6 +77,16 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 	}
 }
 
+// Snapshot reports the §25.4 line 1611 rateLimits block for sub: the
+// current token-bucket balance, the configured rps, and the burst. The
+// GET /v1/admin/me endpoint surfaces tokens so an agent can self-pace
+// precisely. Reading the balance creates the bucket on first use (so a
+// caller that has never been rate-limited still sees a full bucket).
+func (rl *RateLimiter) Snapshot(sub string) (tokens, rps float64, burst int) {
+	l := rl.limiterFor(sub)
+	return l.TokensAt(rl.now()), float64(rl.rps), rl.burst
+}
+
 // limiterFor returns the token bucket for sub, creating it on first use.
 func (rl *RateLimiter) limiterFor(sub string) *rate.Limiter {
 	rl.mu.Lock()
