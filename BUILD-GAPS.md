@@ -30641,25 +30641,29 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.7 — 2-7  Fail-closed chart render-time downgrade guard absent (spec layer 2) [High] — OPEN
+### - [x] F-17.2.7 — 2-7  Fail-closed chart render-time downgrade guard absent (spec layer 2) [High] — CLOSED
 **Spec requirement** (§17.2 lines 76, "Fail-closed chart render-time validation"): On every `helm install`/`helm upgrade`, a pre-render template function reads the phase-stamp ConfigMap via `lookup` and fails the render with error `PHASE_STAMP_FEATURE_FLAG_DOWNGRADE` if any flag recorded with `enabled: true` is being rendered as `false`.
 
 **Implementation:** `grep -rn "PHASE_STAMP_FEATURE_FLAG_DOWNGRADE"` against `/Users/joan/projects/lenny/charts` returns nothing. The chart's phase-stamp template (`/Users/joan/projects/lenny/charts/lenny/templates/phase-stamp-configmap.yaml`) reads the existing ConfigMap via `lookup` (line 19) only to preserve `enabledAt` timestamps; it never compares the prior `enabled: true` state against the incoming render values, and never raises a `fail` action.
 
 **Impact:** Layer 2 of the four-layer downgrade defense is missing entirely. In the `helm install`/`helm upgrade` code path the spec relies on this layer as the first fail-closed gate; without it the preflight Job (layer 3) is the only gate, and the spec's "render-time fail-closed gate before the upgrade reaches the cluster" guarantee is unmet.
 
+**Resolution:** Closed by commit 26732665. `phase-stamp-configmap.yaml` (the pre-install/pre-upgrade hook that already reads the live ConfigMap via `lookup`) now compares each recorded-enabled admission-plane flag (`llmProxy`, `drainReadiness`, `compliance`) against the incoming `features.<flag>` render value and calls `fail "PHASE_STAMP_FEATURE_FLAG_DOWNGRADE: …"` when a recorded-enabled flag is being disabled without `acceptFeatureFlagDowngrade.<flag>=true`. The acknowledgement override matches the layer-3 `pkg/preflight.CheckPhaseStamp` semantics so an acknowledged downgrade passes both gates. Because Helm `lookup` returns nil under `helm template`/helm-unittest, the layer-2 fail path cannot be driven without a live cluster; its identical comparison semantics are tested by the layer-3 Go check, and the no-prior render no-op is asserted in `phase-stamp-configmap_test.yaml`.
+
 ---
 
-### - [ ] F-17.2.8 — 2-8  Acknowledged-downgrade audit event never emitted [High] — OPEN
+### - [ ] F-17.2.8 — 2-8  Acknowledged-downgrade audit event never emitted [High] — DEFERRED
 **Spec requirement** (§17.2 line 76, line 86): An operator who sets `acceptFeatureFlagDowngrade.<flag>=true` must trigger the `deployment.feature_flag_downgrade_acknowledged` audit event ([§16.7]). Floor changes must emit `platform.elicitation_content_integrity_floor_changed` per render, and a floor that raises one or more tenants must emit one `tenant.elicitation_content_integrity_floor_clamp` per affected tenant.
 
 **Implementation:** The event constants are defined at `/Users/joan/projects/lenny/pkg/observability/audit/catalog.go` lines 61–62, 75. No source path emits them; `grep -rn "EventDeploymentFeatureFlagDowngradeAcknowledged\|EventPlatformElicitationContentIntegrityFloorChanged"` outside `catalog_test.go` and `catalog.go` returns no matches.
 
 **Impact:** The spec's "audit-traceable" promise for downgrade acknowledgement and floor posture changes is not met; the audit trail cannot distinguish an intentional downgrade from drift, defeating the layer-4 runbook ("determine via audit log whether the flag-flip was an intentional, acknowledged downgrade").
 
+**Deferred:** the three events split across two emitters that do not yet exist. `deployment.feature_flag_downgrade_acknowledged` is an install-time concept (the operator sets `acceptFeatureFlagDowngrade` at `helm upgrade`), but the layer-3 preflight Job (`cmd/lenny-preflight`) is a short-lived pre-hook with no durable §16.7 audit-store client, and the platform Postgres audit chain is not yet up at that point; emitting it durably needs an audit sink the preflight binary does not have. The two floor events (`platform.elicitation_content_integrity_floor_changed`, `tenant.elicitation_content_integrity_floor_clamp`) are emitted at the moment the gateway observes a floor change, which depends on F-17.2.9 (runtime ConfigMap read/watch) landing first. Re-attempt once F-17.2.9 builds the floor-change observation point and an install-time audit emitter exists.
+
 ---
 
-### - [ ] F-17.2.9 — 2-9  Gateway does not source elicitation-content-integrity floor from the phase-stamp ConfigMap [High] — OPEN
+### - [ ] F-17.2.9 — 2-9  Gateway does not source elicitation-content-integrity floor from the phase-stamp ConfigMap [High] — DEFERRED
 **Spec requirement** (§17.2 line 86): "The gateway reads this key at startup and on ConfigMap change events and applies it as the lower bound of every tenant's effective enforcement mode: `effective_mode = max(floor, tenant_stored_mode)`."
 
 **Implementation:**
@@ -30668,6 +30672,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 - `grep -rn "lenny-deployment-phase-stamp\|deployment-phase-stamp" /Users/joan/projects/lenny/pkg/gateway/` returns no matches. The gateway never reads the ConfigMap at runtime, never watches ConfigMap change events, and never reconciles a floor change without a Pod restart.
 
 **Impact:** The spec's runtime floor-change behavior (operator updates the ConfigMap; gateway clamps every tenant's effective mode) does not work. Lowering or raising the floor requires a `helm upgrade` that restarts the gateway Pod. The `ElicitationContentIntegrityWeakened` alert (spec'd at §17.2 line 86) still fires, but operator action on the runtime ConfigMap value is silently ignored.
+
+**Deferred:** the floor is currently threaded as an immutable `string` (`*elicitationFloor`) through three startup-time consumption sites — the per-request `ElicitationModeResolver` closure (`cmd/lenny-gateway/main.go:3459`), the admin `Router` which stores a copy via `WithElicitationFloor` (`pkg/gateway/admin/tenants.go:349`, read in `elicitation_integrity.go` at three sites), and the periodic `exportElicitationIntegrityWeakened` gauge export (`main.go:5453`). Making the floor reconcile at runtime requires a dynamic floor provider replacing all three reads plus a ConfigMap watch on `lenny-deployment-phase-stamp`. The gateway has a controller-runtime `client.Client` but no informer/cache, so an event-driven watch (the spec wording "on ConfigMap change events") is its own infra increment; a poll-based reconcile would be a weaker reading of the contract. This is a dedicated feature batch that also unblocks the F-17.2.8 floor events; deferred rather than shipping a poll approximation.
 
 ---
 
@@ -30696,12 +30702,14 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.12 — 2-12  Implementation baseline contains `lenny-pod-security`, not listed in §17.2 inventory [Medium] — OPEN
+### - [x] F-17.2.12 — 2-12  Implementation baseline contains `lenny-pod-security`, not listed in §17.2 inventory [Medium] — CLOSED
 **Spec requirement** (§17.2 lines 42–54): The thirteen-item enumeration under `templates/admission-policies/` is the "canonical enumeration for every admission gate shipped by Lenny." Chart authors "must cross-check this list against the rendered manifests." The Phase 3.5 baseline (line 82) is exactly: `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`.
 
 **Implementation:** `/Users/joan/projects/lenny/pkg/preflight/webhooks.go` lines 15–21 declares the baseline as `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-ephemeral-container-cred-guard`, **`lenny-pod-security`** (replacing the missing `lenny-crd-conversion`). `lenny-pod-security` and `lenny-registry-digest` are also rendered (the former unconditionally, the latter under `platform.registry.requireDigest`) but are not listed in §17.2 items 1–13. `lenny-cosign-verify` is also rendered under `imageVerification.cosign.enabled` and tracked in the preflight expected set, but it is not catalogued in §17.2 either.
 
 **Impact:** The spec's "single source of truth" cross-check is broken in three directions — the spec enumerates a baseline item (`lenny-crd-conversion`) the chart does not deploy (Finding 17.2-4); the chart deploys baseline items (`lenny-pod-security`) and conditional items (`lenny-registry-digest`, `lenny-cosign-verify`) the spec does not enumerate; and the preflight's baseline set diverges from §17.2's baseline set. §17.2 needs to either acknowledge these implementation-only webhooks or the preflight inventory needs to track the spec catalogue.
+
+**Resolution:** Closed by commit 26732665. The spec cannot be edited, so the preflight inventory now tracks the §17.2 catalogue explicitly and machine-checks the cross-check the spec mandates (§17.2 line 40). `pkg/preflight/webhooks.go` adds `Spec17_2ValidatingWebhooks` (the §17.2 items 5-11 and 13 `ValidatingAdmissionWebhook` resources), a documented `implementationOnlyValidatingWebhooks` set (`lenny-pod-security`, `lenny-cosign-verify`, `lenny-registry-digest`, each with the rationale for its absence from the §17.2 enumeration), and `CatalogueCoverage`, which returns any §17.2 webhook missing from the inventory and any inventory webhook that is neither catalogued nor declared implementation-only. The new test `TestCatalogueCoverageInventoryMatchesSpec17_2` asserts both are empty, so a future implementation-only webhook cannot enter the preflight set silently. `lenny-crd-conversion` (item 12) is excluded from the catalogue as a CRD conversion endpoint verified by `CheckConversionWebhook`, asserted by `TestSpec17_2CatalogueExcludesConversionWebhook`.
 
 ---
 
@@ -30716,16 +30724,18 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.14 — 2-14  lenny-direct-mode-isolation scopes only to sandboxtemplates, spec mentions "pools/pods" [Medium] — OPEN
+### - [x] F-17.2.14 — 2-14  lenny-direct-mode-isolation scopes only to sandboxtemplates, spec mentions "pools/pods" [Medium] — CLOSED
 **Spec requirement** (§17.2 line 47, item 6): The webhook "rejects pools/pods whose configuration combines either (a) `deliveryMode: direct` with `isolationProfile: standard`, or (b) `deliveryMode: proxy` with `spiffeBinding: disabled`, when `tenancy.mode: multi` is set."
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/direct-mode-isolation-webhook.yaml` lines 33–38 scopes only to `apiGroups: ["lenny.dev"]`, `resources: ["sandboxtemplates"]`. `SandboxWarmPool` (the "pool") and `Pod` are not in the resource list. The decision logic (`/Users/joan/projects/lenny/pkg/admission/direct_mode_isolation/guard.go`) is generic enough to apply to either, and the package comment (line 7) says it covers "SandboxTemplate and CredentialPool resources" — but the chart wires only sandboxtemplates.
 
 **Impact:** A pool definition (`SandboxWarmPool`) or a credential pool that combines the forbidden settings can bypass the webhook because the chart's rule does not match those resources. Spec's "pools/pods" promise is partially met (templates only).
 
+**Resolution:** Verify-closed by commit 26732665 (no bypass exists; the proposed fix would be inert, so it was not applied — rule O). The credential-delivery fields the guard inspects (`deliveryMode`, `isolationProfile`, `spiffeBinding`, `egressProfile`) are authored only on `SandboxTemplateSpec`. `SandboxWarmPoolSpec` carries none of them — it references a template by name via `templateRef` (`pkg/apis/lenny/v1/sandboxwarmpool_types.go:123`), and there is no `CredentialPool` CRD admitted by this webhook. The per-session `Sandbox` CR carries `deliveryMode`/`isolationProfile` only as a controller-produced copy-down from an already-validated template (created by `pkg/controller/sandbox`, `pkg/podregistry`, `pkg/gateway/podclaim` — never by an operator). Core Pods carry no `lenny.dev` delivery fields. So `SandboxTemplate` is the only admitted resource that can carry a forbidden combination; adding `SandboxWarmPool` or `Pod` to the rule list would create rules with no fields to inspect. The stale guard package comment (`pkg/admission/direct_mode_isolation/guard.go`) that claimed "SandboxTemplate and CredentialPool resources" and feature-flag gating was corrected to document why the sandboxtemplates-only scope is complete.
+
 ---
 
-### - [ ] F-17.2.15 — 2-15  Required integration test suites are absent [Medium] — OPEN
+### - [ ] F-17.2.15 — 2-15  Required integration test suites are absent [Medium] — DEFERRED
 **Spec requirement** (§17.2 lines 76, 84):
 
 - `tests/integration/phase_stamp_downgrade_test.go` — parameterises every `(from, to)` flag combination, asserts render-time fail-closed gate behavior and audit emission.
@@ -30736,6 +30746,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 **Implementation:** `find /Users/joan/projects/lenny -name "phase_stamp*" -o -name "admission_webhook_inventory*" -o -name "admission_policy*" -o -name "core_deployment_inventory*"` returns nothing. No file at `/Users/joan/projects/lenny/tests/integration/` exists; the directory itself is absent. Some related coverage exists under `/Users/joan/projects/lenny/charts/lenny/tests/` (helm-unittest renders) and `/Users/joan/projects/lenny/tests/tier4_integration/`, but none of the four named files exist.
 
 **Impact:** The spec's "regression in either direction is caught in CI" guarantee is unenforced. Drift between the chart's rendered webhooks and the preflight's expected set, between phase-stamp behavior under each `(from, to)` combination, and between controller pod specs and deployed admission rules can ship without test failures.
+
+**Deferred:** the four named suites live at `tests/integration/` and require a live-cluster (`helm install` against a real kube-apiserver) harness that this repo does not yet host; the established render-regression pattern here is helm-unittest plus pure-Go decision tests. Two of the four are now partially covered without the named files: the webhook-inventory drift the `admission_webhook_inventory_test.go` suite would catch is machine-checked by `pkg/preflight.CatalogueCoverage` + `TestCatalogueCoverageInventoryMatchesSpec17_2` (F-17.2.12), and the phase-stamp downgrade decision the `phase_stamp_downgrade_test.go` suite parameterises is exercised by `pkg/preflight.CheckPhaseStamp` (the layer-3 semantics shared with the F-17.2.7 layer-2 guard). The render-time fail-closed behavior (needs `lookup`-backed prior state → a live cluster) and the controller-pod-spec-vs-admission and core-deployment-inventory suites need the integration harness. Re-attempt when a `tests/integration` cluster harness is stood up.
 
 ---
 
