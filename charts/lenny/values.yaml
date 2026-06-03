@@ -646,6 +646,7 @@ kms:
   # alias=<full CryptoKey resource>. Azure: alias=<keyName>@<version>.
   # The chart renders the value into --kms-alias on both binaries.
   # Example: platform:token-service-signing=alias/lenny/token-service,
+  # platform:credential-leases=alias/lenny/credential-leases,
   # tenant:acme=alias/lenny/tenant-acme.
   aliases: ""
   # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint

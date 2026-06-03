@@ -21912,7 +21912,7 @@ microvm pool otherwise clears the existing isolation gate). The webhook
 no longer needs an out-of-band Runtime lookup; the tier rides the pool
 CR it already validates. (commit `1e7de66f`)
 
-### - [ ] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — OPEN
+### - [ ] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — DEFERRED
 
 Spec line 1048: "Each store method receives the applicable tier as
 context and applies the corresponding controls. Tier mismatches (e.g.,
@@ -21944,6 +21944,21 @@ Evidence:
   fallback when resolver returns false).
 - `pkg/blobstore/blobstore.go` (`Store` interface has no tier
   argument).
+
+**Deferred:** spec line 1048 requires that "each store method receives
+the applicable tier as context and applies the corresponding controls",
+rejecting a tier mismatch at write time. That is a cross-cutting change
+to the `blobstore.Store` interface (and the session / credential stores)
+plus every call site, threading the tenant's `workspaceTier` through to
+the storage boundary so a store-not-configured-for-envelope-encryption
+write fails with `tier_store_mismatch`. The MinIO fail-closed half — a T4
+tenant whose per-tenant SSE-KMS key is unavailable — is already covered
+by F-12.9.10 (it rejects with `CLASSIFICATION_CONTROL_VIOLATION` /
+`kms_unavailable` via the resolver's `requireKey=true` path). The
+residual `tier_store_mismatch` reason needs the tier-on-method interface
+change, which is scoped to its own batch rather than bundled with the
+narrower §12.9 credential-lease encryption work (F-12.9.11) this batch
+carried.
 
 ### - [x] F-12.9.7 — 9-06 — Gateway policy engine does not validate tenant classification at session creation [High] — CLOSED
 - **Resolution:** New `policy.ValidateTenantClassification` (`pkg/gateway/policy/classification.go`) returns a `ClassificationError` for a tenant whose `workspaceTier` is not a recognized §12.9 tier. The session-creation path calls it through `sessionserver.requireTenantClassification` (`pkg/gateway/sessionserver/quota.go`), wired into `handleCreateAndStart` ahead of the quota and interceptor chain: a misconfigured tier rejects the create with 422 `CLASSIFICATION_CONTROL_VIOLATION` carrying `details.reason = invalid_workspace_tier`, instead of deferring the violation to a runtime write the happy path may never reach. Unknown/unwired tenants admit (the §10.2 tenant-claim path governs them). (commit `d625cbe2`)
@@ -22033,7 +22048,7 @@ Evidence:
 - `pkg/blobstore/miniostore/miniostore.go:127-149` (silent fallback;
   no reject).
 
-### - [ ] F-12.9.11 — 9-09 — `credential_leases` table is Postgres-backed and stored as plaintext JSONB; spec lists "Credential leases" under T4 — Restricted, Redis (encrypted) [Medium] — OPEN
+### - [x] F-12.9.11 — 9-09 — `credential_leases` table is Postgres-backed and stored as plaintext JSONB; spec lists "Credential leases" under T4 — Restricted, Redis (encrypted) [Medium] — CLOSED
 
 The §12.9 default-mapping table lists Credential leases as
 "T4 — Restricted, Redis (encrypted)". The implementation
@@ -22064,6 +22079,27 @@ Evidence:
 - `pkg/gateway/credleasestore/pgstore/pgstore.go:1-13`
 - spec §12.9 default-mapping table row "Credential leases — T4 —
   Redis (encrypted)"
+
+**Resolution (commit `<this batch>`):** The Postgres-backed lease store
+now meets the §12.9 T4 — Restricted encryption-at-rest control, the same
+posture migration 0039 gave the T4 credential-secret registry (the
+established precedent in this codebase for storing T4 material in
+Postgres). Migration 0129 converts `credential_leases.lease` from
+plaintext JSONB to a `pkg/kms/envelope` AES-256-GCM ciphertext BYTEA blob
+wrapped under the platform `platform:credential-leases` KEK, adds
+`lease_key_version` (the §4.9.1 KEK version), and replaces the plaintext
+`lease_token` column with `lease_token_hash` (the SHA-256 digest) so the
+bearer capability is never persisted in cleartext — GetByToken resolves a
+presented token by hashing it. The non-secret routing identifiers the
+§11.4 full_revoke / §7.1 teardown / §4.9 emergency-revocation lookups
+query by (session_id and the source-aware credential key) move to
+dedicated plaintext columns so those lookups stay indexed without
+decrypting every row. `pgstore.New` now requires a non-nil `kms.Provider`
+and the gateway wires `kmsProvider` into it. The Redis-vs-Postgres store
+choice remains the documented deviation the package already carried; this
+batch closes the cleartext-capability exposure the finding flagged. The
+default-mapping table's "Redis (encrypted)" wording is left to a spec
+edit (out of scope here; the spec is the source of truth). F-12.9.11.
 
 ### - [x] F-12.9.12 — 9-10 — Preflight Job does not validate Postgres / Redis volume encryption; the T2 attestation flag is not implemented [Medium] — CLOSED
 

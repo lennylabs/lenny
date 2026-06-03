@@ -1916,7 +1916,14 @@ func main() {
 	// configured, otherwise the in-memory per-replica working set.
 	var llmLeases credleasestore.LeaseStore = credleasestore.New()
 	if pgPool != nil {
-		llmLeases = credleasepg.New(pgPool)
+		// §12.9 classifies a credential lease as T4 — Restricted, so the
+		// Postgres-backed store envelope-encrypts the lease body under
+		// the platform "platform:credential-leases" KEK.
+		pgLeases, lerr := credleasepg.New(pgPool, kmsProvider)
+		if lerr != nil {
+			log.Fatalf("lenny-gateway: construct credential-lease store: %v", lerr)
+		}
+		llmLeases = pgLeases
 	}
 	// credAssign mints a session's §4.9 credential leases. It is one of
 	// two implementations:
