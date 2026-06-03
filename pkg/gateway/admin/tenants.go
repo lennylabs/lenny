@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -135,6 +136,10 @@ type Router struct {
 	pools          poolstore.Store
 	breakers       breakerstore.Store
 	connectors     connectorstore.Store
+	// externalAdapters / adapterValidator back the §15.1 / §24.8
+	// external-protocol adapter registry CRUD and validate gate.
+	externalAdapters externaladapterstore.Store
+	adapterValidator AdapterValidator
 	connectorOAuth *ConnectorOAuth
 	// connectorTester / connectorCreds / connectorTestLimiter back the
 	// §15.1 `POST /v1/admin/connectors/{name}/test` live-connectivity
@@ -684,6 +689,18 @@ func (r *Router) Handler() http.Handler {
 			mux.Handle("POST /v1/admin/connectors/{name}/oauth/authorize",
 				http.HandlerFunc(r.handleAuthorizeConnector))
 		}
+	}
+	if r.externalAdapters != nil {
+		// spec: §15.1 lines 850-855 — external-protocol adapter CRUD plus
+		// the §24.8 line 113 validate gate. All require platform-admin
+		// (§24.8 grants `platform-admin`). The literal `validate` segment
+		// takes precedence over the `{name}` wildcard in Go's ServeMux.
+		mux.Handle("POST /v1/admin/external-adapters", r.requireAdmin(http.HandlerFunc(r.handleCreateExternalAdapter)))
+		mux.Handle("GET /v1/admin/external-adapters", r.requireAdmin(http.HandlerFunc(r.handleListExternalAdapters)))
+		mux.Handle("GET /v1/admin/external-adapters/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetExternalAdapter)))
+		mux.Handle("PUT /v1/admin/external-adapters/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateExternalAdapter)))
+		mux.Handle("DELETE /v1/admin/external-adapters/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteExternalAdapter)))
+		mux.Handle("POST /v1/admin/external-adapters/{name}/validate", r.requireAdmin(http.HandlerFunc(r.handleValidateExternalAdapter)))
 	}
 	if r.delegationPolicies != nil {
 		// §10.2: the matrix grants `tenant-admin` "Manage delegation

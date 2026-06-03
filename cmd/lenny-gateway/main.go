@@ -147,6 +147,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
@@ -580,6 +581,9 @@ func main() {
 	auditHardFailOnDrift := flag.Bool("audit-hard-fail-on-drift",
 		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
+	externalAdapterHarnessPath := flag.String("external-adapter-harness-path",
+		os.Getenv("LENNY_EXTERNAL_ADAPTER_HARNESS_PATH"),
+		"§24.8 / §15 line 1414 — path to the lenny-compliance harness binary the external-adapter validate gate drives. When empty the gateway resolves `lenny-compliance` on $PATH; when the harness is absent, POST /v1/admin/external-adapters/{name}/validate returns 503 ADAPTER_VALIDATION_UNAVAILABLE and the adapter stays pending_validation. Override via LENNY_EXTERNAL_ADAPTER_HARNESS_PATH. F-24.8.2.")
 	auditSIEMEndpoint := flag.String("audit-siem-endpoint",
 		os.Getenv("LENNY_AUDIT_SIEM_ENDPOINT"),
 		"§11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When empty, the §11.7 compliance gate rejects creating or updating a tenant to a regulated complianceProfile (soc2, fedramp, hipaa), and creating an environment under one, with COMPLIANCE_SIEM_REQUIRED; in production a regulated tenant with no endpoint is a fatal startup error. When set, the gateway validates SIEM connectivity at startup (a test event must be acknowledged or the gateway refuses to start) and runs the §11.7 OCSF translator → SIEM forwarder pipeline. Override via LENNY_AUDIT_SIEM_ENDPOINT. F-11.7.1 / F-11.7.2.")
@@ -3704,6 +3708,11 @@ func main() {
 		WithPools(pools).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
+		// §15.1 / §24.8 external-protocol adapter registry. The registry is
+		// platform-global config (no tenant_id, like runtimes); the
+		// in-memory store is the v1 backing, with Postgres as the documented
+		// seam. The validate gate drives the lenny-compliance harness.
+		WithExternalAdapters(externaladapterstore.NewMemory(), admin.ComplianceValidator{HarnessPath: *externalAdapterHarnessPath}).
 		WithConnectorOAuth(connectorOAuth).
 		// §15.1 connector live-connectivity test. The outbound MCP
 		// client dials untrusted external endpoints, so it carries a

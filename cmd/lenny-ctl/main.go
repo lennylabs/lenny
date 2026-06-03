@@ -290,6 +290,13 @@ Gateway commands:
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
+  admin external-adapters validate --name <name>
+                                        Run the conformance suite against a registered external adapter (§24.8); exits non-zero on validation_failed
+  admin external-adapters list          List registered external protocol adapters
+  admin external-adapters get <name>    Get a specific external adapter
+  admin external-adapters register --name <name> --binary-path <path> --level <basic|standard|full> [--protocol <p>] [--path-prefix <p>] [--display-name <s>]
+  admin external-adapters update --name <name> [--binary-path <path>] [--level <l>] [--protocol <p>] [--path-prefix <p>] [--display-name <s>]
+  admin external-adapters delete <name> Delete an external adapter
   migrate status                        Show the expand-contract phase of every active schema migration (§24.13)
   migrate down --version <N> --confirm [--reason <text>]
                                         Roll back the most recently applied migration at version N (§24.13)
@@ -503,7 +510,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|quota|circuit-breakers|erasure-jobs)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|quota|circuit-breakers|erasure-jobs|external-adapters)")
 		return 2
 	}
 	switch args[0] {
@@ -521,6 +528,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
 	case "erasure-jobs":
 		return cmdErasureJobs(ctx, c, args[1:], stdout, stderr)
+	case "external-adapters":
+		return cmdExternalAdapters(ctx, c, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown admin resource %q\n", args[0])
 		return 2
@@ -1199,6 +1208,138 @@ func cmdCircuitBreakers(ctx context.Context, c *ctl.Client, args []string, stdou
 		return 2
 	}
 	return 0
+}
+
+// cmdExternalAdapters implements the §24.8 external-protocol adapter
+// group: the normative `validate` command (§24.8 line 113) plus the
+// §15.1 lines 850-855 CRUD subcommands. `validate` exits non-zero when
+// the adapter fails the conformance suite (status validation_failed) so
+// CI gates can branch on it.
+func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: external-adapters requires a subcommand (validate|list|get|register|update|delete)")
+		return 2
+	}
+	switch args[0] {
+	case "validate":
+		name := flagValue(args[1:], "--name")
+		if name == "" && len(args) >= 2 && !strings.HasPrefix(args[1], "-") {
+			name = args[1]
+		}
+		if name == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: external-adapters validate requires --name <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/external-adapters/"+url.PathEscape(name)+"/validate", nil, &out); err != nil {
+			// On a failing run the gate returns 422 ADAPTER_VALIDATION_FAILED;
+			// fetch the record so the operator sees the per-test report, then
+			// exit non-zero.
+			fmt.Fprintln(stderr, err)
+			var rec map[string]any
+			if gerr := c.Do(ctx, "GET", "/v1/admin/external-adapters/"+url.PathEscape(name), nil, &rec); gerr == nil {
+				printJSON(stdout, rec)
+			}
+			return 1
+		}
+		printJSON(stdout, out)
+	case "list":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/external-adapters", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: external-adapters get requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/external-adapters/"+url.PathEscape(args[1]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "register", "update":
+		body, name, err := parseExternalAdapter(args[1:])
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 2
+		}
+		var out map[string]any
+		if args[0] == "register" {
+			if err := c.Do(ctx, "POST", "/v1/admin/external-adapters", body, &out); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		} else {
+			if name == "" {
+				fmt.Fprintln(stderr, "lenny-ctl: external-adapters update requires --name <name>")
+				return 2
+			}
+			if err := c.Do(ctx, "PUT", "/v1/admin/external-adapters/"+url.PathEscape(name), body, &out); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
+		printJSON(stdout, out)
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: external-adapters delete requires <name>")
+			return 2
+		}
+		if err := c.Do(ctx, "DELETE", "/v1/admin/external-adapters/"+url.PathEscape(args[1]), nil, nil); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "external adapter %q deleted\n", args[1])
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown external-adapters subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// parseExternalAdapter builds the §15.1 external-adapter register/update
+// request body from the --name, --binary-path, --level, --protocol,
+// --path-prefix, and --display-name flags. Returns the resolved name so
+// the update path can target the right record.
+func parseExternalAdapter(args []string) (map[string]any, string, error) {
+	body := map[string]any{}
+	var name string
+	for i := 0; i < len(args); i++ {
+		key := args[i]
+		next := func() (string, error) {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", key)
+			}
+			i++
+			return args[i], nil
+		}
+		v, err := next()
+		if err != nil {
+			return nil, "", err
+		}
+		switch key {
+		case "--name":
+			name = v
+			body["name"] = v
+		case "--binary-path":
+			body["binaryPath"] = v
+		case "--level":
+			body["level"] = v
+		case "--protocol":
+			body["protocol"] = v
+		case "--path-prefix":
+			body["pathPrefix"] = v
+		case "--display-name":
+			body["displayName"] = v
+		default:
+			return nil, "", fmt.Errorf("unknown flag %q", key)
+		}
+	}
+	return body, name, nil
 }
 
 // parseOpenBreaker builds the §15.1 open-breaker request body from the

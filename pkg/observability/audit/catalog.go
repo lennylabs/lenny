@@ -145,6 +145,21 @@ const (
 	EventConnectorOAuthCredentialStored     EventType = "connector.oauth.credential_stored"
 )
 
+// §15.1 / §24.8 external-protocol adapter registry lifecycle. The admin
+// CRUD endpoints at `/v1/admin/external-adapters` and the validate
+// registration gate emit these through the §11.7 audit path. §16.7 does
+// not enumerate them (it predates the registry-gate audit surface), so
+// they are recognized by IsKnownEventType via auxKnownEventTypes but
+// excluded from Catalog(). spec: §15 line 1414 (machine-enforceable
+// registration gate); §24.8 line 113. F-24.8.2.
+const (
+	EventAdminExternalAdapterRegistered      EventType = "admin.external_adapter.registered"
+	EventAdminExternalAdapterUpdated         EventType = "admin.external_adapter.updated"
+	EventAdminExternalAdapterDeleted         EventType = "admin.external_adapter.deleted"
+	EventAdminExternalAdapterValidated       EventType = "admin.external_adapter.validated"
+	EventAdminExternalAdapterValidationFailed EventType = "admin.external_adapter.validation_failed"
+)
+
 // The §16.7 / §25.4 lenny-ops remediation-lock and escalation audit
 // events.
 const (
@@ -377,6 +392,15 @@ var auxKnownEventTypes = []EventType{
 	// session lifecycle terminals but not this operator-driven force, so it
 	// is recognized by IsKnownEventType yet excluded from Catalog(). F-24.11.3.
 	EventSessionForceTerminated,
+	// §15.1 / §24.8 external-adapter registry lifecycle. Emitted through the
+	// §11.7 audit path by the admin CRUD endpoints and the validate gate;
+	// §16.7 does not enumerate them, so they are recognized by
+	// IsKnownEventType yet excluded from Catalog(). F-24.8.2.
+	EventAdminExternalAdapterRegistered,
+	EventAdminExternalAdapterUpdated,
+	EventAdminExternalAdapterDeleted,
+	EventAdminExternalAdapterValidated,
+	EventAdminExternalAdapterValidationFailed,
 }
 
 // Catalog returns the §16.7 catalog of §25 audit event types. The

@@ -14,11 +14,25 @@
 package compliance
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"testing"
 )
+
+// ErrHarnessNotFound is returned by RunSuite when the lenny-compliance
+// harness binary cannot be located (Options.HarnessPath unset and the
+// binary is not on $PATH). Callers that drive the suite outside of a
+// test — notably the gateway's §24.8 validate handler — match this
+// sentinel to distinguish "the validation gate cannot run here" (which
+// must leave the adapter in pending_validation rather than fail it)
+// from a genuine conformance failure.
+//
+// spec: §24.8 line 113; §15 line 1414 (the registration gate runs the
+// suite in a sandboxed environment).
+var ErrHarnessNotFound = errors.New("compliance: lenny-compliance harness not found")
 
 // Level is the §15.4 integration level the adapter declares.
 type Level string
@@ -89,36 +103,43 @@ type Summary struct {
 	Failed int `json:"failed"`
 }
 
-// RegisterAdapterUnderTest drives the conformance harness against
-// the supplied Adapter and asserts every check at the declared
-// level passes. A failure is reported through t.Errorf so the test
-// surfaces every diagnostic, not only the first one.
+// RunSuite drives the conformance harness against the supplied Adapter
+// and returns the parsed Report. It does not depend on the testing
+// package, so it is the entry point the gateway's §24.8
+// `POST /v1/admin/external-adapters/{name}/validate` handler uses to
+// run the suite server-side and translate the Report into the wire
+// response. A non-zero failure count in the returned Report is NOT an
+// error: it is a passing run that found conformance violations. RunSuite
+// returns a non-nil error only when the suite could not be executed at
+// all (adapter unusable, harness missing, harness produced no report).
 //
 // The harness binary path resolves as: opts.HarnessPath when set,
-// otherwise `lenny-compliance` on $PATH. The harness is skipped
-// (t.Skip) when the binary cannot be located; this is the same
-// degradation pattern the other testinfra helpers use, so a
-// third-party CI without lenny-compliance on PATH skips cleanly
-// instead of failing.
-func RegisterAdapterUnderTest(t *testing.T, a Adapter, opts Options) Report {
-	t.Helper()
+// otherwise `lenny-compliance` on $PATH. When the binary cannot be
+// located RunSuite returns ErrHarnessNotFound (wrapped) so callers can
+// distinguish "cannot validate here" from "validation failed".
+//
+// spec: §24.8 line 113 (the validate command runs the
+// RegisterAdapterUnderTest compliance suite); §15 line 1414 (the
+// registration gate runs the suite in a sandboxed environment and
+// transitions status on the result).
+func RunSuite(ctx context.Context, a Adapter, opts Options) (Report, error) {
 	if a == nil {
-		t.Fatal("compliance.RegisterAdapterUnderTest: adapter is nil")
+		return Report{}, errors.New("compliance.RunSuite: adapter is nil")
 	}
 	binary := a.BinaryPath()
 	if binary == "" {
-		t.Fatal("compliance.RegisterAdapterUnderTest: adapter BinaryPath is empty")
+		return Report{}, errors.New("compliance.RunSuite: adapter BinaryPath is empty")
 	}
 	level := a.DeclaredLevel()
-	if level != LevelBasic && level != LevelStandard && level != LevelFull {
-		t.Fatalf("compliance.RegisterAdapterUnderTest: adapter declared an unknown level %q", level)
+	if !level.IsValid() {
+		return Report{}, fmt.Errorf("compliance.RunSuite: adapter declared an unknown level %q", level)
 	}
 
 	harness := opts.HarnessPath
 	if harness == "" {
 		path, err := exec.LookPath("lenny-compliance")
 		if err != nil {
-			t.Skipf("compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install per TESTING.md §12.10 or set Options.HarnessPath", err)
+			return Report{}, fmt.Errorf("%w: %v", ErrHarnessNotFound, err)
 		}
 		harness = path
 	}
@@ -127,7 +148,7 @@ func RegisterAdapterUnderTest(t *testing.T, a Adapter, opts Options) Report {
 	if opts.Verbose {
 		args = append(args, "--verbose")
 	}
-	cmd := exec.Command(harness, args...)
+	cmd := exec.CommandContext(ctx, harness, args...)
 	out, runErr := cmd.Output()
 	// A non-zero exit signals "one or more checks failed"; the report
 	// body is still emitted, so a missing body is the real failure
@@ -135,17 +156,48 @@ func RegisterAdapterUnderTest(t *testing.T, a Adapter, opts Options) Report {
 	if len(out) == 0 {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
-			t.Fatalf("compliance.RegisterAdapterUnderTest: harness emitted no JSON (exit=%d): %s", exitErr.ExitCode(), exitErr.Stderr)
+			return Report{}, fmt.Errorf("compliance.RunSuite: harness emitted no JSON (exit=%d): %s", exitErr.ExitCode(), exitErr.Stderr)
 		}
-		t.Fatalf("compliance.RegisterAdapterUnderTest: harness emitted no JSON: %v", runErr)
+		return Report{}, fmt.Errorf("compliance.RunSuite: harness emitted no JSON: %w", runErr)
 	}
 	var report Report
 	if err := json.Unmarshal(out, &report); err != nil {
-		t.Fatalf("compliance.RegisterAdapterUnderTest: decode report: %v\nraw: %s", err, out)
+		return Report{}, fmt.Errorf("compliance.RunSuite: decode report: %w\nraw: %s", err, out)
 	}
 	if report.Summary.Passed+report.Summary.Failed != report.Summary.Total {
-		t.Errorf("compliance: report summary inconsistent: passed=%d failed=%d total=%d", report.Summary.Passed, report.Summary.Failed, report.Summary.Total)
+		return report, fmt.Errorf("compliance.RunSuite: report summary inconsistent: passed=%d failed=%d total=%d", report.Summary.Passed, report.Summary.Failed, report.Summary.Total)
 	}
+	return report, nil
+}
+
+// RegisterAdapterUnderTest drives the conformance harness against
+// the supplied Adapter and asserts every check at the declared
+// level passes. A failure is reported through t.Errorf so the test
+// surfaces every diagnostic, not only the first one. It is the thin
+// testing-package wrapper over RunSuite; the registration logic itself
+// lives in RunSuite so it can be reused outside of `go test`.
+//
+// The harness is skipped (t.Skip) when the binary cannot be located;
+// this is the same degradation pattern the other testinfra helpers use,
+// so a third-party CI without lenny-compliance on PATH skips cleanly
+// instead of failing.
+func RegisterAdapterUnderTest(t *testing.T, a Adapter, opts Options) Report {
+	t.Helper()
+	report, err := RunSuite(context.Background(), a, opts)
+	if err != nil {
+		if errors.Is(err, ErrHarnessNotFound) {
+			t.Skipf("compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install per TESTING.md §12.10 or set Options.HarnessPath", err)
+		}
+		// Summary-inconsistency surfaces both a non-nil error and a
+		// populated report; treat it as a hard failure here.
+		if report.Summary.Total != 0 {
+			t.Errorf("compliance: %v", err)
+		} else {
+			t.Fatalf("compliance.RegisterAdapterUnderTest: %v", err)
+		}
+	}
+	binary := a.BinaryPath()
+	level := a.DeclaredLevel()
 	if report.Summary.Failed != 0 {
 		for _, c := range report.Checks {
 			if !c.Pass {
