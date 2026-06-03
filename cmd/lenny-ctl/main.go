@@ -157,6 +157,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	case "migrate":
 		return cmdMigrate(ctx, client, rest[1:], stdout, stderr)
+	case "policy":
+		// §24.14 policy group: `audit-isolation` reports DelegationPolicy
+		// rule × pool combinations that fail the §8.3 isolation
+		// monotonicity check. Read-only, platform-admin, gateway admin
+		// API (client-side join). spec: §24.14 line 172.
+		return cmdPolicy(ctx, client, rest[1:], stdout, stderr)
 	case "operations":
 		// §24.15 operations group: list active long-running operations and
 		// fetch one by id. Targets the gateway admin API (the Operations
@@ -311,6 +317,7 @@ Gateway commands:
   migrate status                        Show the expand-contract phase of every active schema migration (§24.13)
   migrate down --version <N> --confirm [--reason <text>]
                                         Roll back the most recently applied migration at version N (§24.13)
+  policy audit-isolation                Report DelegationPolicy rule × pool isolation-monotonicity violations (§24.14)
   slo export [--format openslo] [--tier <tier1|tier2|tier3>]
                                         Print the §16.5 SLOs as OpenSLO v1 documents (offline, §16.10)
   operations list [--status <s>] [--kind <k>] [--actor <a>] [--tenant <id>] [--operation-id <id>] [--limit <n>]

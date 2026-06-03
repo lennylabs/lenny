@@ -8,12 +8,26 @@
 // Usage:
 //
 //	lenny-migrate up                 Apply every pending migration.
-//	lenny-migrate down               Roll every migration back.
-//	lenny-migrate goto <version>     Migrate to an exact version.
 //	lenny-migrate version            Print the current schema version.
+//	lenny-migrate down  --break-glass --confirm   Roll every migration back (break-glass).
+//	lenny-migrate goto <version> --break-glass --confirm   Migrate to an exact version (break-glass).
+//
+// `up` and `version` are the deploy-Job and diagnosis surface. The
+// destructive `down` and `goto` operations bypass the §24.13 / §10.5
+// expand-contract phase discipline (no phase tracking, no audit event,
+// no confirmation contract), so they are fenced behind `--break-glass`
+// + `--confirm` and are intended only for a DBA recovering a wedged
+// schema directly against the database. Routine, audited rollbacks go
+// through `lenny-ctl migrate down --version <N> --confirm`
+// (POST /v1/admin/schema/migrations/{version}/down), which records the
+// §16.8 `platform.schema_migration_rolled_back` audit event.
 //
 // The connection string comes from --postgres-dsn or the
 // LENNY_POSTGRES_DSN environment variable.
+//
+// spec: §24.13 lines 150-151 (operator surface is `migrate status` and
+// `migrate down --version <N> --confirm`); §10.5 (phase advancement via
+// Kubernetes Jobs, destructive path gated and audited).
 package main
 
 import (
@@ -44,8 +58,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dsn := fs.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string (or set LENNY_POSTGRES_DSN).")
+	// §24.13 / §10.5: down and goto bypass the audited expand-contract
+	// rollback path, so they are break-glass-only. Both flags are
+	// required to run either; up and version ignore them.
+	breakGlass := fs.Bool("break-glass", false,
+		"acknowledge the destructive down/goto bypasses the audited §24.13 rollback path (required for down/goto).")
+	confirm := fs.Bool("confirm", false,
+		"confirm a destructive down/goto operation (required for down/goto).")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: lenny-migrate [--postgres-dsn DSN] <up|down|goto VERSION|version>")
+		fmt.Fprintln(stderr, "usage: lenny-migrate [--postgres-dsn DSN] [--break-glass --confirm] <up|version|down|goto VERSION>")
+		fmt.Fprintln(stderr, "  (down and goto require --break-glass --confirm before the command; use `lenny-ctl migrate down` for audited rollbacks)")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -57,6 +79,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cmd := rest[0]
+	// §24.13 / §10.5: fence the destructive down/goto operations behind
+	// --break-glass --confirm before any database connection is opened,
+	// so a missing guard never touches the schema.
+	if cmd == "down" || cmd == "goto" {
+		if code := requireBreakGlass(cmd, *breakGlass, *confirm, stderr); code != 0 {
+			return code
+		}
+	}
 	if *dsn == "" {
 		fmt.Fprintln(stderr, "lenny-migrate: --postgres-dsn is required (or set LENNY_POSTGRES_DSN)")
 		return 2
@@ -118,6 +148,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return 0
+}
+
+// requireBreakGlass enforces the §24.13 / §10.5 fence on the
+// destructive down and goto operations: both --break-glass and --confirm
+// must be set before the command runs. It returns 0 when the guard is
+// satisfied and a non-zero process exit code otherwise, pointing the
+// operator at the audited admin-API rollback path.
+//
+// spec: §24.13 lines 150-151; §10.5 (rollbacks are audited).
+func requireBreakGlass(cmd string, breakGlass, confirm bool, stderr io.Writer) int {
+	if breakGlass && confirm {
+		return 0
+	}
+	fmt.Fprintf(stderr,
+		"lenny-migrate: %s bypasses the audited §24.13 rollback path and requires --break-glass --confirm (before the command).\n",
+		cmd)
+	fmt.Fprintln(stderr,
+		"lenny-migrate: for a routine, audited rollback use `lenny-ctl migrate down --version <N> --confirm`.")
+	return 2
 }
 
 // newMigrator builds a migrate.Migrate over the embedded migrations
