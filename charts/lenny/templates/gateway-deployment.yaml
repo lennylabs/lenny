@@ -1142,6 +1142,17 @@ spec:
             - name: LENNY_MINIO_USE_SSL
               value: {{ $minioUseSSL | quote }}
             {{- end }}
+            {{- if and .Values.ops.ingress.enabled .Values.ops.ingress.host }}
+            # spec: §25.16 line 5115 / §25.14 — advertise the externally
+            # reachable lenny-ops URL in GET /v1/admin/platform/version so
+            # lenny-ctl auto-discovers the ops endpoint. The lenny-ops
+            # Ingress (ops-ingress.yaml) terminates TLS, so the public URL
+            # is https://<ops.ingress.host>. The gateway binary reads this
+            # via the --ops-service-url flag's LENNY_OPS_SERVICE_URL
+            # default. F-25.16.1.
+            - name: LENNY_OPS_SERVICE_URL
+              value: {{ printf "https://%s" .Values.ops.ingress.host | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.internalPort }}

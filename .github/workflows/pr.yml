@@ -262,6 +262,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Install markdown-link-check
         run: npm install -g markdown-link-check@3.12.2
       - name: Check links in docs and spec
@@ -272,6 +276,14 @@ jobs:
             markdown-link-check "$f" -q --config .markdown-link-check.json 2>/dev/null || fail=1
           done
           exit $fail
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      # spec: §23.2 line 127 — "CI includes a TTHW smoke test that
+      # validates both paths on every merge." The docs tier runs
+      # tests/tier11_docs/..., which includes the time-to-hello-world
+      # gate (time_to_hello_world_test.go). F-23.2.2.
+      - name: TTHW + documentation gate (tier 11)
+        run: ./bin/lenny-test --tier docs --output github-annotations
 
   pr-summary:
     name: PR roll-up comment

@@ -35536,7 +35536,7 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 ### Findings
 
-### - [ ] F-23.2.1 — 2-1 — Root `CONTRIBUTING.md` is missing the §23.2-mandated early-development notice (Medium) [Medium] — OPEN
+### - [x] F-23.2.1 — 2-1 — Root `CONTRIBUTING.md` is missing the §23.2-mandated early-development notice (Medium) [Medium] — CLOSED
 
 **Spec claim.** §23.2 says: "The Phase 2 `CONTRIBUTING.md` must include a prominent early-development notice stating that the project is in active pre-release development and that unsolicited PRs will not be reviewed or merged until Phase 17a (community launch)." The spec verb is "must include".
 
@@ -35547,7 +35547,9 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 **Classification.** Medium. The notice exists, but the spec ties it to the root `CONTRIBUTING.md`, which is what a prospective contributor sees first. The current root file softens the message ("design feedback, not code") without naming Phase 17a or stating the no-merge-of-unsolicited-PRs policy. The remediation is to mirror the two sentences from `docs/about/contributing.md:34` into the root file (or to inline a single explicit sentence).
 
-### - [ ] F-23.2.2 — 2-2 — Tier-11 TTHW Go test is not invoked by any CI workflow (Medium) [Medium] — OPEN
+**Resolution:** Root `CONTRIBUTING.md` now carries a prominent blockquote notice immediately after the intro, stating the project is in active pre-release development, that unsolicited pull requests will not be reviewed or merged until Phase 17a (community launch), that bug reports and discussion are welcome at any phase, and that the notice is removed as part of the Phase 17a review — the verbatim §23.2 line 133 obligation. Closed this batch.
+
+### - [x] F-23.2.2 — 2-2 — Tier-11 TTHW Go test is not invoked by any CI workflow (Medium) [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-23.2.6 — F-23.2.2 reports the tier-11 TTHW test is not invoked by CI, while F-23.2.6 reports the named tier7b tthw.go benchmark file does not exist; related but different gaps.
 
@@ -35561,6 +35563,8 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 - BUILD-PROGRESS.md line 62 marks Phase 17a "Done", which is inconsistent with the missing TTHW load scenario.
 
 **Classification.** Medium. The Go-level TTHW assertion exists in-tree but is not part of any merge gate, and the spec-named benchmark file is absent. The §23.2 "every merge" claim is therefore unfulfilled.
+
+**Resolution:** The `docs` job in `.github/workflows/pr.yml` now sets up Go, builds `lenny-test`, and runs `./bin/lenny-test --tier docs`, which executes `tests/tier11_docs/...` including `time_to_hello_world_test.go`. The TTHW gate is therefore part of the per-PR merge gate (§23.2 line 127). Verified locally: `lenny-test --tier docs` passes in ~9s. The separate spec-named load benchmark `tests/tier7b_load_kind/scenarios/tthw.go` is F-23.2.6's scope (overlap noted) and remains its own item. Closed this batch.
 
 ### - [x] F-23.2.3 — 2-3 — Krew plugin manifest uses placeholder version `v0.0.0` and zero-hash SHA256 across all five platforms (Low) [Medium] — CLOSED
 
@@ -39013,13 +39017,15 @@ Spec: lines 169–170 — "Connects to: Postgres, Redis, K8s API, MinIO, Prometh
 
 Implementation: `cmd/lenny-ops/main.go` declares flags and wiring for Postgres (lines 58–60), Redis (lines 61–75), Kubernetes (lines 175–182), and gateway URL (lines 76–78) — but no MinIO client and no Prometheus client are constructed anywhere in `cmd/lenny-ops/`. The probe set (`main.go` lines 187–196) covers only `ProbePostgres`, `ProbeRedis`, `ProbeK8sAPI`, `ProbeGateway` (`pkg/ops/opsservice/probes.go` lines 20–23). No `ProbeMinIO` or `ProbePrometheus` constant exists (`grep -n 'ProbeMinIO\|ProbePrometheus' /Users/joan/projects/lenny/pkg/ops/`). The connectivity diagnostic (`pkg/ops/opsserver/opsserver.go` line 230) and the `DataSource.Connectivity` interface (`pkg/ops/diagnostics/service.go` lines 199–201) name MinIO in their doc comments but no production wiring supplies one. Consequence: the §25.6 connectivity report cannot report MinIO or Prometheus reachability; §25.11 cannot stream backups to MinIO from `lenny-ops` (the in-memory launcher in `cmd/lenny-ops/deps.go` lines 73–78 is the documented seam); §25.6 cannot query Prometheus for the diagnostic time-series the spec references in later sub-sections. The architecture overview's promise that `lenny-ops` brokers Prometheus and MinIO access is unfulfilled.
 
-### - [ ] F-25.2.11 — No Ingress template for `lenny-ops`; external-only access is documented but not rendered. (Medium) [Medium] — OPEN
+### - [x] F-25.2.11 — No Ingress template for `lenny-ops`; external-only access is documented but not rendered. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.3, F-25.16.1 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
 
 Spec: line 43 — "lenny-ops accepts only external traffic via an Ingress — no internal cluster traffic is permitted (Section 25.4, NetworkPolicy)." The architecture diagram at lines 155–171 places `lenny-ops` as a top-level Deployment reachable from outside the cluster.
 
 Implementation: `find /Users/joan/projects/lenny/charts/lenny/templates -name "*ingress*" -o -name "*Ingress*"` returns nothing. `grep -rn "kind: Ingress" /Users/joan/projects/lenny/charts/lenny/templates/` returns nothing. The `system-network-policies.yaml` `allow-ops` policy at lines 653–725 admits only the monitoring-namespace metrics scrape on `ops.metricsPort` — there is no admit rule for an Ingress controller, and the `policyTypes: [Ingress, Egress]` block leaves Ingress denied for all other peers. The chart values block at `values.yaml` line 748–774 has no `ops.ingress` configuration sub-object. Consequence: a default `helm install` exposes `lenny-ops` only through its ClusterIP `Service` (lines 173–190 of `ops-deployment.yaml`) with no path to reach it from outside the cluster. The spec's central "agents operate from outside the installation" stance (line 3) requires an Ingress that the chart does not render. The architecture diagram does not contradict an operator-supplied Ingress, but the absence of any Ingress template (when every other operator-facing surface — gateway, token-service — relies on operator-supplied Ingress as well) is consistent with the documented seam approach but means a stock chart install has no external reachability for `lenny-ops`.
+
+**Resolution:** Duplicate — closed by F-25.16.1. `charts/lenny/templates/ops-ingress.yaml` renders the opt-in `lenny-ops` Ingress (gated on `ops.ingress.enabled`, host/tlsSecretName/className/idleTimeoutSeconds), and `lenny-ops-allow-ingress-from-ingress-controller` (ops-network-policies.yaml, F-25.4.12) admits the controller pods to the http port. The remaining `LENNY_OPS_SERVICE_URL` discovery wiring landed this batch under F-25.16.1.
 
 ### - [x] F-25.2.12 — Terminology "thresholdSource" surfaces only on a stub field reference, not on actual health/recommendations endpoints. (Medium) [Medium] — CLOSED
 
@@ -41326,7 +41332,7 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5083–514
 
 ### Findings
 
-### - [ ] F-25.16.1 — 16-01 — Production `Ingress: ops.lenny.example.com → lenny-ops:8090 (TLS)` is not rendered by the chart [High] — OPEN
+### - [x] F-25.16.1 — 16-01 — Production `Ingress: ops.lenny.example.com → lenny-ops:8090 (TLS)` is not rendered by the chart [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.3, F-25.2.11 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
 
@@ -41347,9 +41353,11 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5083–514
 
 **Remediation sketch:** Render an `ops-ingress.yaml` template gated on `ops.ingress.enabled` with `ops.ingress.host`, `ops.ingress.tlsSecretName`, `ops.ingress.annotations`, and `ops.ingress.className`. Extend `allow-ops` to admit ingress-controller-namespace traffic on `ops.httpPort` (mirroring the `allow-gateway-ingress` peer on line 559). Wire `LENNY_OPS_SERVICE_URL=https://{{ .Values.ops.ingress.host }}` into the gateway Deployment so `GET /v1/admin/platform/version` advertises the discoverable URL.
 
+**Resolution:** All three remediation parts are now in place. The `lenny-ops` Ingress (`charts/lenny/templates/ops-ingress.yaml`, gated on `ops.ingress.enabled` with host/tlsSecretName/className/idleTimeoutSeconds/annotations) and the ingress-controller admit rule (`lenny-ops-allow-ingress-from-ingress-controller` in `ops-network-policies.yaml`) were rendered earlier by commit c08e1be1 (F-25.4.10 / F-25.4.12). This batch wired the final piece: `charts/lenny/templates/gateway-deployment.yaml` now sets `LENNY_OPS_SERVICE_URL=https://<ops.ingress.host>` on the gateway container when `ops.ingress.enabled` and `ops.ingress.host` are set, so `GET /v1/admin/platform/version` advertises the discoverable ops URL for §25.14 lenny-ctl auto-discovery. Two helm-unittest cases cover the enabled (URL present) and disabled (URL omitted) paths. Closes duplicate F-25.2.11.
+
 ---
 
-### - [ ] F-25.16.2 — 16-02 — Production `PodDisruptionBudget: minAvailable 1 (when replicas >= 2)` is not rendered for lenny-ops [High] — OPEN
+### - [x] F-25.16.2 — 16-02 — Production `PodDisruptionBudget: minAvailable 1 (when replicas >= 2)` is not rendered for lenny-ops [High] — CLOSED
 
 **Spec:** §25.16 Production block, line 5116:
 
@@ -41363,6 +41371,8 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5083–514
 **Impact:** Severity High. Voluntary disruptions (node drains for kernel patches, AKS/EKS upgrades, cluster autoscaler reclamation) can evict both lenny-ops replicas simultaneously, taking the entire §25 operability plane offline and preventing the watchdog from reaching the platform during the very maintenance window when its visibility matters most. The leader-elected design assumes at least one replica survives; the PDB is the mechanism that enforces this assumption against the cluster scheduler.
 
 **Remediation sketch:** Render a `PodDisruptionBudget` selecting `app: lenny-ops` with `minAvailable: 1`, gated on `.Values.ops.replicas >= 2`, in a new template (or appended to `ops-deployment.yaml`). Use the same pattern already in place for `token-service-deployment.yaml` line 107.
+
+**Resolution:** Verify-closed — resolved by commit c08e1be1 (F-25.4.10). `charts/lenny/templates/ops-ingress.yaml` renders an always-present `PodDisruptionBudget` named `lenny-ops` with `minAvailable: 1` selecting `app: lenny-ops`. The §25.4 line 1316 obligation ("PDB regardless of replica count") is stricter than this finding's "when replicas >= 2" framing, so the rendered PDB satisfies the requirement: at one replica it is a no-op, and at the §25.16 default `ops.replicas: 2` the budget caps voluntary disruptions during node drains. Covered by `charts/lenny/tests/ops-ingress_test.yaml` ("renders minAvailable 1 regardless of replica count").
 
 ---
 

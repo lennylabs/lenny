@@ -2,6 +2,8 @@
 
 Thanks for your interest in Lenny. This file is the canonical entry point; the long-form version lives at [`docs/about/contributing.md`](docs/about/contributing.md).
 
+> **Early-development notice.** Lenny is in active pre-release development. Unsolicited pull requests will not be reviewed or merged until Phase 17a (community launch). Bug reports and discussion through the [issue tracker](https://github.com/lennylabs/lenny/issues) are welcome at any phase. This notice is removed or replaced as part of the Phase 17a documentation and governance review.
+
 ## Where the project is right now
 
 Lenny is in the **design phase**. The [technical specification](spec/) is complete and drives implementation under a spec- and test-driven workflow. The [Implementation Status](docs/about/status.md) page tracks what's wired up today.

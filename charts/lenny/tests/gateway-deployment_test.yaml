@@ -2363,6 +2363,41 @@ tests:
             name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
             value: "72000"
 
+  # spec: §25.16 line 5115 / §25.14 — F-25.16.1. When the lenny-ops
+  # Ingress is enabled, the gateway advertises its public URL in
+  # GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops
+  # endpoint. The URL is https://<ops.ingress.host> (the Ingress
+  # terminates TLS).
+  - it: advertises LENNY_OPS_SERVICE_URL from ops.ingress.host when the ops Ingress is enabled
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops:
+        ingress:
+          enabled: true
+          host: ops.acme.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_OPS_SERVICE_URL
+            value: "https://ops.acme.com"
+
+  # F-25.16.1 — the env var is omitted when the ops Ingress is disabled
+  # (the stock dev render has no external ops entry point), so
+  # GET /v1/admin/platform/version advertises an empty opsServiceURL.
+  - it: omits LENNY_OPS_SERVICE_URL when the ops Ingress is disabled
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_OPS_SERVICE_URL
+          any: true
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.
