@@ -185,6 +185,15 @@ func (s *MemStore) SetClock(now func() time.Time) {
 	s.now = now
 }
 
+// NormalizeTTL clamps a requested TTL to the §25.4 default and ceiling.
+// The durable tier stores (pgstore, redisstore) reuse it so every tier
+// applies the identical ttlSeconds policy.
+func NormalizeTTL(ttlSeconds int) int { return normalizeTTL(ttlSeconds) }
+
+// NewLockID returns a fresh "lock-" + hex remediation-lock id. The
+// durable tier stores reuse it so ids share one format across tiers.
+func NewLockID() string { return newLockID() }
+
 // normalizeTTL clamps a requested TTL to the §25.4 default and ceiling.
 func normalizeTTL(ttlSeconds int) int {
 	switch {
@@ -389,15 +398,43 @@ func (s *MemStore) Epoch() uint64 {
 	return s.epoch
 }
 
+// SetEpoch raises the store's §25.4 outage epoch to v when v exceeds the
+// current value. The tiered Service syncs the Tier-3 store's epoch to the
+// current outage epoch before a fall-through acquire so an in-memory lock
+// carries the epoch under which it was granted. The epoch never moves
+// backward (§25.4 line 2230 MAX reconciliation).
+func (s *MemStore) SetEpoch(v uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v > s.epoch {
+		s.epoch = v
+	}
+}
+
 // Reap drops every expired lock. §25.4 has a periodic goroutine (every
 // 60s) clean up expired rows; this is that sweep for the in-memory
 // store. It returns the number of locks reaped.
 func (s *MemStore) Reap() int {
+	return len(s.ReapExpired())
+}
+
+// ReapExpired drops every expired lock and returns the removed records so
+// the tiered Service can emit a remediation.lock_expired audit event for
+// each. §25.4 line 2338 names lock_expired among the audited lifecycle
+// transitions.
+func (s *MemStore) ReapExpired() []Lock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	before := len(s.byScope)
-	s.reapLocked(s.now())
-	return before - len(s.byScope)
+	now := s.now()
+	var expiredLocks []Lock
+	for scope, l := range s.byScope {
+		if expired(l, now) {
+			expiredLocks = append(expiredLocks, *cloneLock(l))
+			delete(s.byScope, scope)
+			delete(s.byID, l.ID)
+		}
+	}
+	return expiredLocks
 }
 
 // callerKey is the context key carrying the §25.4 caller identity into

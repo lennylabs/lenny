@@ -434,13 +434,6 @@ func main() {
 	// a single-process degraded mode so an agent can exercise them.
 	backupSvc, backupJobs := buildBackupService(*production)
 
-	// The §25.4 remediation-lock service. v1 runs the in-memory Tier 3
-	// store; the Postgres and Redis tiers and the outage-epoch
-	// reconciliation are wired as those seams land. The HTTP layer
-	// applies the §25.4 scope-based authorization control before the
-	// store.
-	lockStore := coordination.NewMemStore()
-
 	// §25.4 lines 2206-2212: the in-memory (Tier-3) lock policy. The mode
 	// is validated at startup so an operator typo fails fast rather than
 	// silently selecting an unintended safety posture. Under the
@@ -468,6 +461,17 @@ func main() {
 	}
 	lockCoordination := coordination.NewCoordinationGate(memTier, replicaCounter)
 	log.Printf("lenny-ops: §25.4 remediation-lock memoryTier=%s", memTier)
+
+	// The §25.4 tiered remediation-lock service: the Postgres Tier 1 store
+	// (ops_remediation_locks, migration 0121) and the Redis Tier 2 store
+	// (ops:lock:{scope}) over the always-present in-memory Tier 3 store,
+	// with outage-epoch reconciliation and deterministic split-brain
+	// resolution. The gate enforces ops.locks.memoryTier on the Tier 3
+	// fall-through; the §25.4 lock metrics and audit events are emitted from
+	// the service. The HTTP layer applies the §25.4 scope-based
+	// authorization control before the service. F-25.4.6.
+	lockSvc := buildLockService(pgPool, redisClient, lockCoordination,
+		prometheus.DefaultRegisterer, opsEmitter, replicaID)
 
 	// The §25.4 escalation service, the §25.10 configuration-drift
 	// service, and the §25.6 DiagnosticService. Each runs against an
@@ -518,27 +522,69 @@ func main() {
 		envOr("POD_NAMESPACE", *leaderElectNS))
 	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator))
 
+	// §25.4 idempotency: durable when Postgres is available, in-memory in
+	// single-process degraded mode. Built before the service body so the
+	// leader-only idempotency-cleanup reconciler can drain it. Required-key
+	// endpoints (upgrade start, restore execute, full backup) reject a
+	// missing key and fail closed on a store outage at Tier 2/3.
+	idemStore := buildIdempotencyStore(pgPool)
+
 	// The §25.4 service body: leader election plus the background loops.
 	// The §25.11 scheduled-backup cron jobs and the §25.8
-	// platform-upgrade-check cron register here; the escalation loop is
-	// wired as that subsystem is built.
+	// platform-upgrade-check cron register here; the §25.4 leader-only
+	// reconciliation goroutines (escalation flush, idempotency cleanup,
+	// lock outage-epoch reconcile, drift snapshot validation) register via
+	// Reconcilers. F-25.4.16.
 	svc, err := opsservice.New(opsservice.Config{
 		ReplicaID: replicaID,
 		Elector:   elector,
 		Webhook:   webhook,
 		CronJobs:  cronJobs,
-		// §25.4 lines 2407-2415: the leader-only escalation-flush
-		// reconciliation loop promotes in-memory-buffered escalations up to
-		// a recovered durable tier (preserving the authoring timestamp and
-		// the emitted flag), draining the Tier 3 buffer once Postgres or
-		// Redis is reachable again. F-25.4.7, F-25.4.16.
+		// §25.4 line 1337: the leader-only reconciliation goroutines. Each
+		// runs only on the replica holding the lenny-ops-leader Lease, so a
+		// multi-replica deployment drives one flush/cleanup/reconcile loop,
+		// not one per replica.
 		Reconcilers: opsservice.Reconcilers{
+			// §25.4 lines 2407-2415: drain the in-memory escalation buffer up
+			// to a recovered durable tier (preserving the authoring timestamp
+			// and the emitted flag). F-25.4.7.
 			EscalationFlush: func(ctx context.Context) error {
 				n, err := escalationSvc.Flush(ctx)
 				if err == nil && n > 0 {
 					log.Printf("lenny-ops: escalation flush promoted %d buffered escalation(s) to durable storage", n)
 				}
 				return err
+			},
+			// §25.4 lines 2070-2072, 2127: remove idempotency keys past their
+			// TTL so the ops_idempotency_keys table does not grow unbounded.
+			IdempotencyCleanup: func(ctx context.Context) error {
+				n, err := idemStore.PruneExpired(ctx, time.Now().UTC())
+				if err == nil && n > 0 {
+					log.Printf("lenny-ops: idempotency cleanup removed %d expired key(s)", n)
+				}
+				return err
+			},
+			// §25.4 lines 2226-2267: resolve remediation locks orphaned by a
+			// storage outage — bring the Postgres epoch up to MAX, copy the
+			// Redis locks in, and apply the deterministic split-brain
+			// resolution rule. F-25.4.6.
+			LockEpochReconcile: func(ctx context.Context) error {
+				return lockSvc.Reconcile(ctx)
+			},
+			// §25.4 line 1337: validate that the stored desired-state snapshot
+			// is current, warning when it drifts past the staleness threshold.
+			DriftSnapshotValidate: func(ctx context.Context) error {
+				fresh, err := driftSvc.SnapshotFreshness(ctx)
+				if err != nil {
+					return err
+				}
+				switch {
+				case !fresh.Present:
+					log.Printf("lenny-ops: drift snapshot validation: no live bootstrap_seed_snapshot present")
+				case fresh.Stale:
+					log.Printf("lenny-ops: drift snapshot validation: live snapshot is stale (age %ds)", fresh.AgeSeconds)
+				}
+				return nil
 			},
 		},
 		SelfHealthChecks:   selfChecks,
@@ -625,11 +671,6 @@ func main() {
 	// self-health, remediation-lock, and escalation endpoints, the
 	// §25.10 drift endpoints, the §25.11 backup endpoints, and the
 	// §25.12 MCP management server.
-	// §25.4 idempotency: durable when Postgres is available, in-memory in
-	// single-process degraded mode. Required-key endpoints (upgrade start,
-	// restore execute, full backup) reject a missing key and fail closed
-	// on a store outage at Tier 2/3 (the --production posture).
-	idemStore := buildIdempotencyStore(pgPool)
 	// §25.4 lines 2528-2534: the pod-log proxy reads container logs via the
 	// Kubernetes API so agents do not need kubectl access. Wired only when a
 	// cluster connection is available; otherwise the endpoint reports the
@@ -646,7 +687,7 @@ func main() {
 		Backups:           backupSvc,
 		Diagnostics:       diagnosticSvc,
 		Drift:             driftSvc,
-		Locks:             lockStore,
+		Locks:             lockSvc,
 		LockCoordination:  lockCoordination,
 		Escalations:       escalationSvc,
 		EventStream:       eventStream,
@@ -687,23 +728,22 @@ func main() {
 		}
 	}()
 
-	// spec: §25.4 line 2127 — the retention backstop. Lazy cleanup on
-	// Claim removes a key's own expired row, but a key never re-claimed
-	// lingers; an hourly PruneExpired sweep DELETEs every expired row so
-	// the table does not grow unbounded. (The spec's daily 02:30 UTC
-	// schedule is the minimum; an hourly sweep is a tighter superset.)
+	// spec: §25.4 line 2193 — the remediation-lock reap. Expired locks are
+	// cleaned up lazily on acquire and by this 60s periodic sweep on every
+	// replica: the in-memory tier is replica-local so each replica reaps its
+	// own, and the durable-tier DELETE is idempotent across replicas. The
+	// sweep also emits the remediation.lock_expired audit event for each
+	// in-memory lock removed.
 	go func() {
-		ticker := time.NewTicker(time.Hour)
+		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case t := <-ticker.C:
-				if n, err := idemStore.PruneExpired(ctx, t.UTC()); err != nil {
-					log.Printf("lenny-ops: idempotency retention sweep: %v", err)
-				} else if n > 0 {
-					log.Printf("lenny-ops: idempotency retention sweep removed %d expired keys", n)
+			case <-ticker.C:
+				if n := lockSvc.Reap(ctx); n > 0 {
+					log.Printf("lenny-ops: remediation-lock reap removed %d expired lock(s)", n)
 				}
 			}
 		}

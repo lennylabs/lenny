@@ -151,12 +151,20 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	// single-replica-only default, an uncoordinated in-memory acquire fails
 	// closed with REMEDIATION_LOCK_NO_COORDINATION rather than granting two
 	// replicas conflicting locks on the same scope; the "always" mode grants
-	// the lock with a replica-local degradation warning. The v1 lock store
-	// always serves the in-memory tier, so the gate evaluates on every
-	// acquire; when the Postgres/Redis tiers land the handler will consult
-	// the active tier first.
+	// the lock with a replica-local degradation warning. The gate is
+	// consulted only when the in-memory tier is actually serving: a tiered
+	// lock service reports its active tier, so an acquire served from
+	// Postgres or Redis bypasses the gate. The bare in-memory store reports
+	// no active tier and so always serves Tier 3, keeping the gate on every
+	// acquire. The tiered service applies the same gate internally as the
+	// authoritative guard, closing the window where the active tier flips
+	// between this check and the acquire.
+	activeTier := coordination.StoreMemory
+	if reporter, ok := s.locks.(interface{ ActiveTier() string }); ok {
+		activeTier = reporter.ActiveTier()
+	}
 	var coordWarning string
-	if s.lockCoordination != nil {
+	if s.lockCoordination != nil && activeTier == coordination.StoreMemory {
 		switch dec := s.lockCoordination.Evaluate(); {
 		case dec.Reject:
 			conventions.WriteError(w, http.StatusServiceUnavailable,
@@ -189,7 +197,9 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	}
 	// §25.4 line 2209: the "always" mode grants the lock but signals that
 	// coordination is replica-local through the §25.2 degradation envelope.
-	if coordWarning != "" {
+	// The warning attaches only when the lock was actually granted at the
+	// in-memory tier.
+	if coordWarning != "" && lock.LockStore == coordination.StoreMemory {
 		writeJSON(w, http.StatusCreated, acquiredLockResponse{
 			Lock: lock,
 			Degradation: &conventions.Degradation{

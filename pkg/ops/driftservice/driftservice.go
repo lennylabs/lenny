@@ -506,6 +506,50 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 	return report, nil
 }
 
+// SnapshotFreshness is the §25.4 drift-snapshot-validation reconciler's
+// view of the stored live desired-state snapshot: whether one exists, its
+// age, and whether it is past the staleness threshold.
+//
+// spec: §25.4 line 1337 (drift snapshot validation reconciliation goroutine).
+type SnapshotFreshness struct {
+	// Present is false when no live bootstrap_seed_snapshot has been written.
+	Present bool
+	// Stale is true when the snapshot is older than StaleWarningDays.
+	Stale bool
+	// AgeSeconds is the snapshot's age in seconds (0 when absent).
+	AgeSeconds int
+	// WrittenAt is the snapshot's authoring timestamp (zero when absent).
+	WrittenAt time.Time
+}
+
+// SnapshotFreshness reports whether the live desired-state snapshot is
+// present and current. The §25.4 leader-only drift-snapshot-validation
+// reconciler calls it periodically so an operator is alerted when the
+// snapshot drifts past the staleness threshold. A snapshot-store outage
+// returns an error so the loop can log the degradation; the reconciler
+// treats that as transient rather than fatal.
+//
+// spec: §25.4 line 1337; §25.10 lines 3801-3809.
+func (s *Service) SnapshotFreshness(ctx context.Context) (SnapshotFreshness, error) {
+	snap, ok, err := s.snapshots.Get(ctx, SnapshotLive)
+	if err != nil {
+		return SnapshotFreshness{}, err
+	}
+	if !ok {
+		return SnapshotFreshness{Present: false}, nil
+	}
+	age := int(s.now().Sub(snap.WrittenAt).Seconds())
+	if age < 0 {
+		age = 0
+	}
+	return SnapshotFreshness{
+		Present:    true,
+		Stale:      drift.SnapshotStale(age, s.StaleWarningDays),
+		AgeSeconds: age,
+		WrittenAt:  snap.WrittenAt,
+	}, nil
+}
+
 // applyStaleness fills the §25.10 snapshot-staleness fields on the
 // report from the snapshot's written_at timestamp.
 func (s *Service) applyStaleness(report *DriftReport, snap Snapshot) {
