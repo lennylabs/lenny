@@ -16,8 +16,6 @@ isolationProfile: sandboxed
 postgres:
   connectionPooler: external
   dsn: "postgres://lenny@REPLACE-rds-proxy.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
-  # readDsn routes read-only queries at the provider reader endpoint.
-  readDsn: "postgres://lenny@REPLACE-rds-proxy-ro.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
 redis:
   provider: external
   url: "rediss://REPLACE-elasticache-primary.acme.cache.amazonaws.com:6379"
