@@ -185,6 +185,9 @@ var prodMigrationSchema = []struct {
 		"tenant_filter", "generation", "updated_at", "active",
 	}},
 	{migration: "0118", table: "ops_event_deliveries", create: true},
+	// 0120 adds the §15.1 line 797 draining_since timestamp to
+	// sandbox_warm_pools so the pool-drain phase persists (F-15.1.8).
+	{migration: "0120", table: "sandbox_warm_pools", columns: []string{"draining_since"}},
 }
 
 // spec: 12.2, 18.5

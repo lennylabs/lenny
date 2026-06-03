@@ -619,6 +619,38 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 	return count, nil
 }
 
+// PoolDrainStats implements Store — the §15.1 line 797 pool-drain
+// accounting. It counts live (non-terminal) sessions bound to poolRef
+// across every tenant and reports the oldest created_at among them so
+// the drain handler can derive the activeSessions count and the
+// Retry-After estimate. The query is pool-scoped rather than
+// tenant-scoped because drain is a platform-global pool operation; it
+// runs InAllTenants like GetActiveSlotsByPod. The non-terminal predicate
+// matches session.TerminalStates() verbatim. A pool with no live
+// sessions returns (0, time.Time{}, nil).
+// spec: §15.1 line 797.
+func (s *Store) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {
+	if poolRef == "" {
+		return 0, time.Time{}, nil
+	}
+	var count int
+	var oldest *time.Time
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*), min(created_at) FROM sessions
+			   WHERE pool_ref = $1
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			poolRef).Scan(&count, &oldest)
+	})
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("pgstore: pool drain stats for %s: %w", poolRef, err)
+	}
+	if oldest == nil {
+		return count, time.Time{}, nil
+	}
+	return count, *oldest, nil
+}
+
 // CountActiveSessions implements Store — the §11.2 per-tenant
 // concurrent-session quota count. It counts the tenant's live
 // (non-terminal) sessions with a COUNT query so the gateway's quota

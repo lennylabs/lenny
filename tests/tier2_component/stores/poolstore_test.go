@@ -216,6 +216,37 @@ func TestPoolStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §15.1 line 797 — the draining_since column persists the pool
+	// drain phase across a store round-trip so a restarted gateway still
+	// sees the pool as draining. F-15.1.8.
+	t.Run("draining_since round-trips", func(t *testing.T) {
+		name := poolName(t)
+		if err := store.Create(ctx, poolstore.Pool{Name: name, RuntimeRef: "claude"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		fresh, _ := store.Get(ctx, name)
+		if fresh.IsDraining() || fresh.Phase() != poolstore.PhaseActive {
+			t.Errorf("fresh pool reports draining: %+v", fresh)
+		}
+		when := time.Now().UTC().Truncate(time.Millisecond)
+		if _, err := store.Update(ctx, name, func(p *poolstore.Pool) error {
+			p.DrainingSince = when
+			return nil
+		}); err != nil {
+			t.Fatalf("Update drain: %v", err)
+		}
+		got, err := store.Get(ctx, name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.IsDraining() || got.Phase() != poolstore.PhaseDraining {
+			t.Errorf("pool not draining after Update: %+v", got)
+		}
+		if !got.DrainingSince.Equal(when) {
+			t.Errorf("DrainingSince = %v, want %v", got.DrainingSince, when)
+		}
+	})
+
 	t.Run("list filters, ordering, delete, and idempotency", func(t *testing.T) {
 		marker := newUUID(t)[:8]
 		ids := []string{marker + "-a", marker + "-b", marker + "-c"}

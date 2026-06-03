@@ -67,6 +67,7 @@ type Metrics struct {
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
 	circuitBreakerOpen        *prometheus.GaugeVec
+	poolDrainingSessions      *prometheus.GaugeVec
 	cbRejections              *prometheus.CounterVec
 	cbRejectionsSuppressed    *prometheus.CounterVec
 	cbCacheStale              prometheus.Gauge
@@ -890,6 +891,17 @@ func New() (*Metrics, error) {
 		Name: "lenny_circuit_breaker_open",
 		Help: "1 when the named §11.6 circuit breaker is open, 0 when closed.",
 	}, []string{"circuit_name"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §15.1 line 797 — in-flight (non-terminal) sessions on a pool
+	// while it drains, labelled by pool. Set when a pool enters the
+	// `draining` phase and refreshed on each admin GET until the drain
+	// converges to 0.
+	poolDrainingSessions, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pool_draining_sessions_total",
+		Help: "In-flight sessions during a §15.1 pool drain, labelled by pool.",
+	}, []string{"pool"})
 	if err != nil {
 		return nil, err
 	}
@@ -2162,6 +2174,7 @@ func New() (*Metrics, error) {
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
+		poolDrainingSessions,
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
 		elicitationTamperDetected, elicitationIntegrityWeakened,
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
@@ -2316,6 +2329,7 @@ func New() (*Metrics, error) {
 		storageQuotaUsed:                     storageQuotaUsed,
 		storageQuotaLimit:                    storageQuotaLimit,
 		circuitBreakerOpen:                   circuitBreakerOpen,
+		poolDrainingSessions:                 poolDrainingSessions,
 		cbRejections:                         cbRejections,
 		cbRejectionsSuppressed:               cbRejectionsSuppressed,
 		cbCacheStale:                         cbStale,
@@ -3739,6 +3753,14 @@ func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
 		v = 1
 	}
 	m.circuitBreakerOpen.WithLabelValues(name).Set(v)
+}
+
+// SetPoolDrainingSessions updates the §15.1 line 797
+// lenny_pool_draining_sessions_total gauge for a draining pool with the
+// current in-flight (non-terminal) session count. A count of 0 means
+// the drain has converged.
+func (m *Metrics) SetPoolDrainingSessions(pool string, count int) {
+	m.poolDrainingSessions.WithLabelValues(pool).Set(float64(count))
 }
 
 // RecordCircuitBreakerRejection increments the §11.6

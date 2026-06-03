@@ -209,6 +209,7 @@ type Router struct {
 	reconciliationResumer ReconciliationResumer
 	poolStatus            PoolStatusReader
 	crdGenerations        CRDGenerationReader
+	poolDrainMetrics      PoolDrainMetrics
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
@@ -632,6 +633,11 @@ func (r *Router) Handler() http.Handler {
 		// warm-count sub-route with the `minWarm` field. It runs on the same
 		// manage_pools gate as the §15.1 PUT it delegates to.
 		mux.Handle("PUT /v1/admin/pools/{name}/warm-count", poolManage(http.HandlerFunc(r.handleUpdatePoolWarmCount)))
+		// §15.1 line 797: drain a pool. Transitions the pool to `draining`
+		// so the gateway stops admitting new sessions to it and reports the
+		// in-flight count + estimated drain seconds. Runs on the same
+		// manage_pools gate as the PUT it shares the resource with.
+		mux.Handle("POST /v1/admin/pools/{name}/drain", poolManage(http.HandlerFunc(r.handleDrainPool)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 		// §4.6.2 item 3 (c): operator-initiated reset of a stuck pool's
 		// admission-denial backoff. Only registered when a

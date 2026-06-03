@@ -63,6 +63,9 @@ func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error)
 func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
 	panic("unused")
 }
+func (s *slowAncestorStore) PoolDrainStats(context.Context, string) (int, time.Time, error) {
+	panic("unused")
+}
 func (s *slowAncestorStore) CountActiveSessions(context.Context, string) (int, error) {
 	panic("unused")
 }

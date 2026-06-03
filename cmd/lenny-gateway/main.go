@@ -3706,6 +3706,9 @@ func main() {
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
+		// §15.1 line 797: the pool-drain endpoint updates the
+		// lenny_pool_draining_sessions_total gauge through gwMetrics.
+		WithPoolDrainMetrics(gwMetrics).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
 		// §15.1 / §24.8 external-protocol adapter registry. The registry is

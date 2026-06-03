@@ -108,6 +108,14 @@ type Pool struct {
 	// generations. spec: spec/04_system-components.md lines 558-560.
 	Generation int64
 
+	// DrainingSince records when the pool entered the §15.1 line 797
+	// `draining` phase. A zero value means the pool is `active`. While
+	// it is set the gateway stops admitting new sessions to the pool
+	// (POST /v1/admin/pools/{name}/drain → GET reports `phase: draining`),
+	// and session creation that would select the pool is rejected with
+	// 503 POOL_DRAINING. spec: §15.1 line 797.
+	DrainingSince time.Time
+
 	// TaskPolicy is the §5.2 task-mode policy block (lines 398-413). It
 	// is required when ExecutionMode is `task` and must be absent on
 	// session or concurrent pools — `ValidateTaskPolicy` enforces both
@@ -216,6 +224,47 @@ func (p *TaskPolicy) Clone() *TaskPolicy {
 
 // IsActive reports whether the pool has not been soft-deleted.
 func (p Pool) IsActive() bool { return p.DeletedAt.IsZero() }
+
+// Phase reports the §15.1 line 797 pool lifecycle phase the admin GET
+// surfaces: "draining" once DrainingSince is set, "active" otherwise.
+// Soft-deleted pools still report their drain phase; IsActive gates
+// deletion separately.
+func (p Pool) Phase() string {
+	if p.IsDraining() {
+		return PhaseDraining
+	}
+	return PhaseActive
+}
+
+// IsDraining reports whether the pool has entered the §15.1 line 797
+// draining phase and is therefore closed to new session admission.
+func (p Pool) IsDraining() bool { return !p.DrainingSince.IsZero() }
+
+// EstimatedDrainSeconds returns the §15.1 line 797 drain-completion
+// estimate for a draining pool given the longest active session age in
+// the pool (in seconds). The spec derives the estimate from the longest
+// active session age, capped at the pool's maxSessionAgeSeconds because
+// a session cannot outlive its lifetime cap. A pool with no lifetime cap
+// (maxSessionAgeSeconds == 0) returns the uncapped age. The value feeds
+// the Retry-After header on a POOL_DRAINING rejection; ages are whole
+// seconds so the ceil() the spec names is already satisfied. spec:
+// §15.1 line 797.
+func EstimatedDrainSeconds(p Pool, longestAgeSeconds int) int {
+	if longestAgeSeconds < 0 {
+		longestAgeSeconds = 0
+	}
+	if p.MaxSessionAgeSeconds > 0 && longestAgeSeconds > p.MaxSessionAgeSeconds {
+		return p.MaxSessionAgeSeconds
+	}
+	return longestAgeSeconds
+}
+
+// Pool lifecycle phases surfaced on the §15.1 admin GET. spec: §15.1
+// line 797.
+const (
+	PhaseActive   = "active"
+	PhaseDraining = "draining"
+)
 
 // ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
 type ConcurrencyStyle string

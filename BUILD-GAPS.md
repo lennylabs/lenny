@@ -25281,7 +25281,7 @@ under only per-user/per-tenant caps). Closed this batch; 9 tier-1 tests
 cover success/decrement/binding-scope/429/503-inject/503-preserve/omit
 cases.
 
-### - [ ] F-15.1.8 — Pool-drain backpressure contract is not implementable [High] — OPEN
+### - [x] F-15.1.8 — Pool-drain backpressure contract is not implementable [High] — CLOSED
 Spec (§15.1 line 797) is dense: `POST /v1/admin/pools/{name}/drain`
 must transition the pool to `draining`, must reject new
 `POST /v1/sessions` against the draining pool with `503 POOL_DRAINING`
@@ -25296,6 +25296,32 @@ emits it — `grep -rn POOL_DRAINING /Users/joan/projects/lenny/pkg/` only
 finds the doc/spec strings. The session-creation gate
 (`pkg/gateway/sessionserver/sessionserver.go::handleCreate`) never
 checks pool drain state.
+
+**Resolution (commit <PENDING>):** Built the full §15.1 line 797
+contract. `poolstore.Pool` gained `DrainingSince` (migration 0120 adds
+the `draining_since` column; pgstore INSERT/UPDATE/scan + the Memory
+store carry it) plus `Phase()`/`IsDraining()`/`EstimatedDrainSeconds()`.
+New `POST /v1/admin/pools/{name}/drain` (`pkg/gateway/admin/pool_drain.go`)
+transitions the pool to `draining` (idempotent — no generation churn on
+re-drain), returns `{status, activeSessions, estimatedDrainSeconds}`,
+sets the `lenny_pool_draining_sessions_total` gauge
+(`gatewaymetrics.SetPoolDrainingSessions`, wired via `WithPoolDrainMetrics`),
+and emits `admin.pool.drained`. GET surfaces `phase` always and
+`activeSessions` while draining. The sessionserver create gate
+(`requirePoolNotDraining`) resolves the same pool the session would bind
+to and rejects a draining-pool create with `503 POOL_DRAINING`,
+`Retry-After`, and `details.{pool, estimatedDrainSeconds}`; the estimate
+is the longest active session age capped at `maxSessionAgeSeconds`,
+read from a new `sessionstore.PoolDrainStats` (memstore + pgstore,
+cross-tenant like `GetActiveSlotsByPod`). Endpoint documented in
+openapi.json with the four `x-lenny-*` extensions and cataloged as
+`admin.drain_pool` in `me.go`. The MCP `create_session` half of the gate
+rides on F-15.2.4 (that path does no pool resolution today); the REST
+surface — the finding's substance — is complete. Tests: tier-1 poolstore
+phase/estimate/round-trip, memstore PoolDrainStats; tier-1 sessionserver
+gate (reject + 3 admit paths); tier-2 admin handler (transition/report,
+cap, live-only count, 404 missing/deleted, idempotent, GET phase);
+tier-2 component drain round-trip + prod-columns + migration text.
 
 ### - [ ] F-15.1.9 — `?dryRun=true` query parameter is not implemented [High] — OPEN
 Spec (§15.1 lines 1140–1206) defines `?dryRun=true` for "most admin

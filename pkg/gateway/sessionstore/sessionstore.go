@@ -880,6 +880,18 @@ type Store interface {
 	// spec: §5.2 line 521 (post-recovery rehydration; GetActiveSlotsByPod).
 	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
 
+	// PoolDrainStats returns the §15.1 line 797 pool-drain accounting for
+	// poolRef: the number of live (non-terminal) sessions bound to the
+	// pool across every tenant, and the create time of the longest-running
+	// such session (the oldest created_at). Drain is a platform-global
+	// pool operation, so the count crosses the tenant boundary like
+	// GetActiveSlotsByPod; §5.2 pins each pod's sessions to one tenant but
+	// a pool may warm pods for several tenants. The returned time is zero
+	// when the pool has no live sessions (active is then 0). An empty
+	// poolRef matches no session and returns (0, time.Time{}, nil).
+	// spec: §15.1 line 797 (drain backpressure, activeSessions, Retry-After).
+	PoolDrainStats(ctx context.Context, poolRef string) (active int, oldestCreatedAt time.Time, err error)
+
 	// CountActiveSessions returns the number of live (non-terminal)
 	// sessions belonging to tenantID. It backs the §11.2 per-tenant
 	// concurrent-session quota check on the session-creation path so the

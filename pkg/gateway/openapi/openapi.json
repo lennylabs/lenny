@@ -1545,6 +1545,36 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/pools/{name}/drain": {
+      "post": {
+        "summary": "Drain a pool (§15.1 line 797 — stop admitting new sessions, report in-flight count)",
+        "x-lenny-mcp-tool": "admin.drain_pool",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Pool transitioned to draining",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "activeSessions", "estimatedDrainSeconds"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["draining"] },
+                    "activeSessions": { "type": "integer" },
+                    "estimatedDrainSeconds": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Pool not found" }
+        }
+      }
+    },
     "/v1/admin/pools/{name}/tenant-access": {
       "post": {
         "summary": "Grant a tenant access to a pool",

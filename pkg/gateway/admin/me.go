@@ -141,6 +141,7 @@ func adminToolCatalog() []me.AuthorizedTool {
 		// (F-24.4.2); the catalog mirrors the OpenAPI document so a
 		// discovered tool resolves to a real route.
 		{Tool: "admin.set_pool_warm_count", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Override minWarm for emergency scaling"},
+		{Tool: "admin.drain_pool", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Drain a pool (§15.1 line 797): stop admitting new sessions and report the in-flight count"},
 		{Tool: "admin.pool_sync_status", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Show a pool's CRD reconciliation state"},
 		{Tool: "admin.resume_pool_reconciliation", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Clear a pool's admission-denial backoff"},
 		// spec: §15.1:802 — pool tenant-access management (the §24.3

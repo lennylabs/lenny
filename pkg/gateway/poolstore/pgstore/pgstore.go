@@ -47,7 +47,7 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	allow_standard_isolation, concurrency_style, max_concurrent,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
 	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-	pool_config_generation, task_policy, elicitation_policy`
+	pool_config_generation, task_policy, elicitation_policy, draining_since`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -223,14 +223,14 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		allow_standard_isolation, concurrency_style, max_concurrent,
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
 		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-		pool_config_generation, task_policy, elicitation_policy
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+		pool_config_generation, task_policy, elicitation_policy, draining_since
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON)
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -298,14 +298,14 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
 		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
 		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
-		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19
+		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON); err != nil {
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince)); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -384,6 +384,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		p                                                                poolstore.Pool
 		isolationProfile, executionMode, concurrencyStyle, egressProfile string
 		deletedAt                                                        *time.Time
+		drainingSince                                                    *time.Time
 		taskPolicy                                                       []byte
 		elicitationPolicy                                                []byte
 	)
@@ -393,7 +394,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.AllowStandardIsolation, &concurrencyStyle, &p.MaxConcurrent,
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
-		&p.Generation, &taskPolicy, &elicitationPolicy,
+		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}
@@ -403,6 +404,9 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	p.EgressProfile = egress.Profile(egressProfile)
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
+	}
+	if drainingSince != nil {
+		p.DrainingSince = *drainingSince
 	}
 	tp, err := decodeTaskPolicy(taskPolicy)
 	if err != nil {

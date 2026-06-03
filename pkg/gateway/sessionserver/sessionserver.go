@@ -155,6 +155,11 @@ type Server struct {
 	podBinder      *podsession.Binder
 	podRegistry    *podsession.Registry
 	agentNamespace string
+	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
+	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
+	// admission gate. It defaults to resolvePoolName (CRD-backed); tests
+	// override it to exercise the gate without a Kubernetes client.
+	poolNameResolver func(ctx context.Context, runtimeRef string, requested isolation.Profile) (string, bool)
 	// playgroundCaps resolves the §27.6 idle/duration caps for a
 	// §27.3 origin=playground session. Wired post-construction via
 	// SetPlaygroundCaps (the playground bootstrap runs after the session
@@ -1417,6 +1422,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.idFn == nil {
 		s.idFn = randomSessionID
 	}
+	if s.poolNameResolver == nil {
+		s.poolNameResolver = s.resolvePoolName
+	}
 	if s.maxOrphanTasks <= 0 {
 		s.maxOrphanTasks = DefaultMaxOrphanTasksPerTenant
 	}
@@ -1942,6 +1950,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			fmt.Sprintf("isolationProfile %q is not a recognised §5.3 profile", isoProf),
 			map[string]any{"fields": []map[string]string{{"field": "isolationProfile"}}})
+		return
+	}
+
+	// spec: §15.1 line 797 — reject a create that would select a pool in
+	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
+	// pod claim. The gate resolves the same pool the session would bind
+	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
+	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, isoProf) {
 		return
 	}
 

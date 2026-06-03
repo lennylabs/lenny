@@ -287,6 +287,30 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error
 	return count, nil
 }
 
+// PoolDrainStats implements the §15.1 line 797 pool-drain accounting:
+// the count of live (non-terminal) sessions bound to poolRef across
+// every tenant and the create time of the longest-running such session
+// (the oldest created_at). An empty poolRef matches no session.
+func (s *Store) PoolDrainStats(_ context.Context, poolRef string) (int, time.Time, error) {
+	if poolRef == "" {
+		return 0, time.Time{}, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	var oldest time.Time
+	for _, row := range s.sessions {
+		if row.PoolRef != poolRef || session.IsTerminal(row.State) {
+			continue
+		}
+		count++
+		if oldest.IsZero() || row.CreatedAt.Before(oldest) {
+			oldest = row.CreatedAt
+		}
+	}
+	return count, oldest, nil
+}
+
 // CountActiveSessions implements the §11.2 per-tenant concurrent-session
 // quota count: the number of live (non-terminal) sessions for tenantID.
 func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, error) {

@@ -449,6 +449,9 @@ func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (in
 func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
 }
+func (c *countingStore) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {
+	return c.inner.PoolDrainStats(ctx, poolRef)
+}
 func (c *countingStore) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
 	return c.inner.CountActiveSessions(ctx, tenantID)
 }

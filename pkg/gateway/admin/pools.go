@@ -100,6 +100,19 @@ type PoolPayload struct {
 	// spec: spec/04_system-components.md line 559.
 	SyncStatus string `json:"syncStatus,omitempty"`
 
+	// Phase is the §15.1 line 797 pool lifecycle phase: "active" or
+	// "draining". A pool reports "draining" after
+	// POST /v1/admin/pools/{name}/drain until its in-flight sessions
+	// complete. spec: §15.1 line 797.
+	Phase string `json:"phase,omitempty"`
+
+	// ActiveSessions is the count of live (non-terminal) sessions bound
+	// to the pool. It is populated on GET while the pool is draining so
+	// operators can watch the drain converge; it is a pointer so a
+	// legitimate count of 0 (drain complete) is emitted distinctly from
+	// an active pool that omits the field. spec: §15.1 line 797.
+	ActiveSessions *int `json:"activeSessions,omitempty"`
+
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal pool_config_generation. List and GET responses carry it so
 	// a client can supply it as the If-Match header on a later PUT.
@@ -224,6 +237,9 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		// spec: §15.1 line 1207 — the ETag is the quoted decimal
 		// pool_config_generation (the per-resource version column).
 		ETag: formatETag(p.Generation),
+		// spec: §15.1 line 797 — GET surfaces the pool lifecycle phase so
+		// a client can see a drain in progress.
+		Phase: p.Phase(),
 	}
 	if p.TaskPolicy != nil {
 		out.TaskPolicy = taskPolicyToWire(p.TaskPolicy)
@@ -568,6 +584,16 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	payload := fromPool(row)
 	r.attachPoolStatus(req.Context(), &payload)
 	payload.SyncStatus = r.resolveSyncStatus(req.Context(), row)
+	// spec: §15.1 line 797 — while a pool is draining, GET surfaces the
+	// live in-flight session count so operators can watch the drain
+	// converge, and the gauge is refreshed off the same read.
+	if row.IsDraining() {
+		active, _ := r.poolDrainStats(req.Context(), row)
+		payload.ActiveSessions = &active
+		if r.poolDrainMetrics != nil {
+			r.poolDrainMetrics.SetPoolDrainingSessions(row.Name, active)
+		}
+	}
 	// spec: §15.1 line 1209 — GET responses for an admin resource carry
 	// the ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Generation))
