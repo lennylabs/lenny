@@ -31713,7 +31713,7 @@ gateway today.
   acknowledgment the gateway exits with `LENNY_TLS_REQUIRED`. The chart
   renders `--tls-terminated-upstream` whenever `global.devMode` is false
   and `--dev-mode` otherwise; the tier-4 gateway harness sets the env so
-  the production-posture tests still start. Commit cited at F-17.4.6.
+  the production-posture tests still start. Resolved in commit `d6faa570`.
 
 ### - [x] F-17.4.6 — Dev-mode guard rail #2 — repeated 60-second WARN log not implemented [High] — CLOSED
 
@@ -31762,7 +31762,7 @@ on the next `lenny up` because the KEK rotates.
   / `LENNY_KMS_MASTER_KEY_FILE` flag; `Resolve` uses it for the local
   provider (still forbidden in prod). The embedded stack passes
   `paths.KMSMasterKey()` via `LENNY_KMS_MASTER_KEY_FILE`, so a DEK
-  wrapped before a restart unwraps after it. Closed with F-17.4.8.
+  wrapped before a restart unwraps after it. Resolved in commit `d6faa570`.
 
 ### - [x] F-17.4.8 — Object-storage backend is in-memory, not local-filesystem [High] — CLOSED
 
