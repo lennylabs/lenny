@@ -33926,7 +33926,7 @@ Implementation tree audited:
 
 ---
 
-### - [ ] F-17.8.1 — 8-01 — Tier preset files do not override the §17.8.4-enumerated fields [High] — OPEN
+### - [x] F-17.8.1 — 8-01 — Tier preset files do not override the §17.8.4-enumerated fields [High] — CLOSED
 
 Spec line 1319 states each tier preset overrides `monitoring.alertThresholds.*`, `backups.retention.*`, `ops.events.streamMaxLen`, `ops.selfHealth.checkIntervalSeconds` (10 s at Tier 2/3, 30 s acceptable at Tier 1), and `monitoring.acknowledgeNoPrometheus` (defaults `false` at Tier 2/3). Of these:
 
@@ -33944,6 +33944,18 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier3.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml`
 - `/Users/joan/projects/lenny/cmd/lenny-ops/main.go:83`
+
+**Resolution (f7b73ca9):** Partly stale — `monitoring.alertThresholds.*` and
+`monitoring.acknowledgeNoPrometheus` already existed and were gateway-wired
+(F-25.13.2); the §17.6 preset already overrode `backups.retention.*` and the
+alert thresholds. This batch closed the remaining two operability fields: added
+`ops.events.streamMaxLen` (Tier 1 default 10,000) and
+`ops.selfHealth.checkIntervalSeconds` (default 10) to `values.yaml`, rendered
+them as `--events-stream-max-len` / `--self-health-interval` on lenny-ops, and
+wired `streamMaxLen` into the lenny-ops `StreamEmitter.MaxLen`. All three tier
+presets now override the §17.8.4 surface explicitly: events 10k/50k/100k,
+self-health 30s/10s/10s, and `acknowledgeNoPrometheus: false` restated at
+Tier 2/3.
 
 ### - [ ] F-17.8.2 — 8-02 — `platform.registry.*` not used to assemble component image references [High] — OPEN
 
@@ -34005,7 +34017,7 @@ Evidence:
 
 ---
 
-### - [ ] F-17.8.4 — 8-01 — Tier 3 `safety_factor` override (1.2 / 1.5) is not applied automatically [Medium] — OPEN
+### - [x] F-17.8.4 — 8-01 — Tier 3 `safety_factor` override (1.2 / 1.5) is not applied automatically [Medium] — CLOSED
 
 Spec lines 1003–1010 declare Tier 3 normative per-tier `safety_factor` overrides (1.2 agent, 1.5 mcp) versus the §4.6.2 defaults (1.5 agent, 2.0 mcp), and state: "The PoolScalingController SHOULD apply the Tier 3 override automatically when `capacityPlanning.tier: 3` is configured; otherwise operators must set `poolScaling.safetyFactor` explicitly."
 
@@ -34016,7 +34028,19 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier3.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml` (no `poolScaling.safetyFactor` key)
 
-### - [ ] F-17.8.5 — 8-02 — Tier 3 `billingRedisStreamMaxLen` not applied via tier selection [Medium] — OPEN
+**Resolution (f7b73ca9):** Added `DefaultSafetyFactorForTier` (1.2 at Tier 3,
+1.5 otherwise) and a `Reconciler.DefaultSafetyFactor` field that replaces the
+unconditional `defaultSafetyFactor` const fallback; a pool that pins its own
+`SafetyFactor` still wins. The pool-scaling-controller binary gains a
+`--default-safety-factor` flag / `LENNY_POOL_SCALING_SAFETY_FACTOR` env that
+defaults to 0, in which case it resolves the per-tier default from
+`--capacity-tier`, so a Tier 3 install picks up 1.2 automatically. Chart
+exposes `poolScalingController.safetyFactor` (default 0) rendered as the env.
+Per §17.8.2 line 1010 the controller applies one default per deployment; an
+mcp-type pool whose normative default differs pins its own SafetyFactor via the
+admin API.
+
+### - [x] F-17.8.5 — 8-02 — Tier 3 `billingRedisStreamMaxLen` not applied via tier selection [Medium] — CLOSED
 
 §17.8.1 line 909 and §17.8.2 line 1203 give the per-tier defaults: 50,000 at Tier 1/2, 72,000 at Tier 3 (with footnote ⁵ deriving 72,000 from the Tier 3 outage envelope). The default in `pkg/gateway/billingstore/failover/redisstream/redisstream.go:54` is `DefaultStreamMaxLen = 50_000`, which is documented as "the Tier 1/2 default" in the comment at line 52. Nothing reads the tier and bumps the default to 72,000 at Tier 3:
 
@@ -34031,6 +34055,15 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier3.yaml`
 
+**Resolution (f7b73ca9):** Added `redisstream.StreamMaxLenForTier` (72,000 at
+Tier 3, 50,000 otherwise) and `Tier3StreamMaxLen` const. The gateway gains a
+`--billing-redis-stream-max-len` flag / `LENNY_BILLING_REDIS_STREAM_MAX_LEN`
+env (default 0) and a `--capacity-tier` flag; when the maxlen is unset the
+gateway resolves the per-tier default from the tier and passes it to
+`redisstream.Options.StreamMaxLen` so a Tier 3 install is sized for the
+outage-plus-recovery envelope. Chart exposes `billing.redisStreamMaxLen`
+(default 0) and the tier3 preset restates 72,000 explicitly.
+
 ### - [ ] F-17.8.6 — 8-03 — Controller tuning table is largely unrendered [Medium] — OPEN
 
 §17.8.2 "Controller tuning" table (spec lines 1110–1124) lists per-tier values for: pod-creation rate limiter (QPS/burst), status-update rate limiter (QPS/burst), `--max-concurrent-reconciles`, work queue max depth, initial fill grace period, controller replicas, controller pod anti-affinity (`--controller-anti-affinity`, `required` at Tier 2/3), `statusUpdateDeduplicationWindow` (`--status-update-dedup-window`, 500ms / 250ms), and etcd compaction/defrag/quota parameters.
@@ -34044,7 +34077,7 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/controller-deployment.yaml:43–53`
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier3.yaml`
 
-### - [ ] F-17.8.7 — 8-04 — `singleTenantRedisTopology` value and `RedisClusterRecommended` startup log are unimplemented [Medium] — OPEN
+### - [x] F-17.8.7 — 8-04 — `singleTenantRedisTopology` value and `RedisClusterRecommended` startup log are unimplemented [Medium] — CLOSED
 
 §17.8.2 "Single-tenant Redis topology note" (spec line 1164) declares the `capacityPlanning.singleTenantRedisTopology: sentinel` Helm value that documents operator intent and "suppresses the `[WARN] RedisClusterRecommended` gateway startup log that fires at Tier 3 startup when the topology appears to be single-tenant Sentinel".
 
@@ -34053,6 +34086,16 @@ Evidence:
 Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:790–800`
 - (No occurrence of either identifier anywhere in the tree.)
+
+**Resolution (f7b73ca9):** Added `pkg/gateway/capacityplanning` with
+`RedisClusterRecommendedWarning` and `ShouldWarnRedisClusterRecommended(tier,
+topology, singleTenant)`: the warning fires at Tier 3 when the resolved Redis
+topology is Sentinel and `singleTenantRedisTopology != "sentinel"`. The gateway
+gains `--capacity-tier` and `--single-tenant-redis-topology` flags; it resolves
+the live topology in the existing Redis-topology switch and emits the verbatim
+`[WARN] RedisClusterRecommended` startup log when warranted. Chart exposes
+`capacityPlanning.singleTenantRedisTopology` (default empty) rendered as
+`LENNY_SINGLE_TENANT_REDIS_TOPOLOGY`.
 
 ### - [x] F-17.8.8 — 8-05 — `lenny_pdb_blocked_evictions_total` metric is never emitted [Medium] — CLOSED
 
