@@ -43,6 +43,11 @@ type Driver interface {
 	// ResolveEndpointIPs resolves the destination endpoint hostname to
 	// its IP addresses, for the §25.11 DNS-rebinding guard.
 	ResolveEndpointIPs(ctx context.Context, endpoint string) ([]net.IP, error)
+	// MeasureReplication samples the source bucket's replication health:
+	// the §25.11 / §17.3 lenny_minio_replication_lag_seconds and
+	// lenny_minio_replication_failed_total signals. The Controller's
+	// MeasureAll calls it on each measurement tick.
+	MeasureReplication(ctx context.Context, rc RegionConfig) (Measurement, error)
 }
 
 // MinIODriver is the production §25.11 Driver. It configures
@@ -207,6 +212,28 @@ func (d *MinIODriver) ResolveEndpointIPs(ctx context.Context, endpoint string) (
 	return ips, nil
 }
 
+// MeasureReplication implements Driver: it reads the source bucket's
+// replication metrics via the MinIO V2 replication-metrics API and
+// derives the §25.11 / §17.3 lag-seconds and cumulative failure count.
+// Lag is estimated from the replication queue depth and observed
+// throughput (deriveLagSeconds); the failure count is the source
+// cluster's cumulative object-level replication-error total.
+func (d *MinIODriver) MeasureReplication(ctx context.Context, rc RegionConfig) (Measurement, error) {
+	mv, err := d.source.GetBucketReplicationMetricsV2(ctx, rc.SourceBucket)
+	if err != nil {
+		return Measurement{}, fmt.Errorf("replication: read replication metrics for %s: %w", rc.SourceBucket, err)
+	}
+	cur := mv.CurrentStats
+	var bandwidth float64
+	for _, t := range cur.Stats {
+		bandwidth += t.CurrentBandwidthInBytesPerSecond
+	}
+	return Measurement{
+		LagSeconds:  deriveLagSeconds(cur.QStats.Curr.Bytes, bandwidth),
+		FailedTotal: cur.Errors.Totals.Count,
+	}, nil
+}
+
 // arnForBucket renders a destination-bucket ARN minio-go's replication
 // API expects.
 func arnForBucket(bucket string) string {
@@ -247,6 +274,10 @@ type FakeDriver struct {
 	// resolvedIPs is the IP set ResolveEndpointIPs returns for an
 	// endpoint.
 	resolvedIPs map[string][]net.IP
+	// measurement is the Measurement MeasureReplication returns per region.
+	measurement map[string]Measurement
+	// measureErr, when set for a region, makes MeasureReplication fail.
+	measureErr map[string]error
 }
 
 var _ Driver = (*FakeDriver)(nil)
@@ -260,6 +291,8 @@ func NewFakeDriver() *FakeDriver {
 		tagAbsent:       map[string]bool{},
 		probeErr:        map[string]error{},
 		resolvedIPs:     map[string][]net.IP{},
+		measurement:     map[string]Measurement{},
+		measureErr:      map[string]error{},
 	}
 }
 
@@ -313,6 +346,31 @@ func (f *FakeDriver) ResolveEndpointIPs(_ context.Context, endpoint string) ([]n
 		return []net.IP{net.ParseIP("127.0.0.1")}, nil
 	}
 	return ips, nil
+}
+
+// MeasureReplication implements Driver.
+func (f *FakeDriver) MeasureReplication(_ context.Context, rc RegionConfig) (Measurement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.measureErr[rc.Region]; err != nil {
+		return Measurement{}, err
+	}
+	return f.measurement[rc.Region], nil
+}
+
+// SetMeasurement sets the Measurement FakeDriver's MeasureReplication
+// returns for a region.
+func (f *FakeDriver) SetMeasurement(region string, m Measurement) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.measurement[region] = m
+}
+
+// SetMeasureError makes FakeDriver's MeasureReplication fail for a region.
+func (f *FakeDriver) SetMeasureError(region string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.measureErr[region] = err
 }
 
 // SetJurisdictionTag sets the tag FakeDriver's ProbeJurisdiction

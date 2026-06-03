@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -107,6 +108,48 @@ func (a replicationMetricsAdapter) ResidencyViolation(region string) {
 // event), so this is intentionally a no-op.
 func (a replicationMetricsAdapter) ReplicationVerified(string) {}
 
+// replicationLagAdapter bridges the §17.3 / §25.11 replication Controller's
+// MeasureAll signals onto the gateway's lenny_minio_replication_lag_seconds
+// gauge and lenny_minio_replication_failed_total counter. The source MinIO
+// cluster reports a cumulative replication-failure total, so the adapter
+// tracks the last-observed total per region and advances the counter by the
+// non-negative delta; a counter reset (the source process restarting) re-bases
+// from the new lower total. F-17.3.7.
+type replicationLagAdapter struct {
+	m  *gatewaymetrics.Metrics
+	mu sync.Mutex
+	// lastFailed records the last cumulative failure total observed per
+	// region, so ReplicationFailures emits monotonic counter increments.
+	lastFailed map[string]float64
+}
+
+func newReplicationLagAdapter(m *gatewaymetrics.Metrics) *replicationLagAdapter {
+	return &replicationLagAdapter{m: m, lastFailed: map[string]float64{}}
+}
+
+// ReplicationLag implements replication.LagObserver.
+func (a *replicationLagAdapter) ReplicationLag(region string, seconds float64) {
+	a.m.SetMinioReplicationLag(region, seconds)
+}
+
+// ReplicationFailures implements replication.LagObserver: it converts the
+// source cluster's cumulative failure total into a counter increment.
+func (a *replicationLagAdapter) ReplicationFailures(region string, totalFailed float64) {
+	a.mu.Lock()
+	last, ok := a.lastFailed[region]
+	a.lastFailed[region] = totalFailed
+	a.mu.Unlock()
+	delta := totalFailed
+	if ok && totalFailed >= last {
+		delta = totalFailed - last
+	} else if ok {
+		// The source counter dropped (a restart re-based it); re-base
+		// without emitting a spurious large increment.
+		delta = 0
+	}
+	a.m.AddMinioReplicationFailed(region, delta)
+}
+
 // newReplicationDriver builds the §25.11 production MinIODriver. The
 // source client is the gateway's own MinIO endpoint (the cluster holding
 // the ArtifactStore bucket). destClientFor resolves each destination's
@@ -181,6 +224,12 @@ func runReplicationController(ctx context.Context, ctrl *replication.Controller,
 	if err := ctrl.Configure(ctx); err != nil {
 		logf("lenny-gateway: §25.11 artifact replication initial configure: %v", err)
 	}
+	// §17.3 / §25.11: sample the replication-lag and failure gauges on the
+	// same cadence as the residency tick so the lag/failed metrics the
+	// residency preflight does not itself produce are emitted. F-17.3.7.
+	if err := ctrl.MeasureAll(ctx); err != nil {
+		logf("lenny-gateway: §25.11 artifact replication initial lag measure: %v", err)
+	}
 	tick := ctrl.ResidencyTickInterval()
 	t := time.NewTicker(tick)
 	defer t.Stop()
@@ -191,6 +240,9 @@ func runReplicationController(ctx context.Context, ctrl *replication.Controller,
 		case <-t.C:
 			if err := ctrl.PreflightAll(ctx); err != nil {
 				logf("lenny-gateway: §25.11 artifact replication residency preflight: %v", err)
+			}
+			if err := ctrl.MeasureAll(ctx); err != nil {
+				logf("lenny-gateway: §25.11 artifact replication lag measure: %v", err)
 			}
 		}
 	}

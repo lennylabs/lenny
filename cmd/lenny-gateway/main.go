@@ -5250,6 +5250,7 @@ func main() {
 			State:   replState,
 			Audit:   replicationAuditSink{appender: auditAppender}.emit,
 			Metrics: replicationMetricsAdapter{m: gwMetrics},
+			Lag:     newReplicationLagAdapter(gwMetrics),
 		})
 		if err != nil {
 			log.Fatalf("lenny-gateway: §25.11 artifact replication: %v", err)

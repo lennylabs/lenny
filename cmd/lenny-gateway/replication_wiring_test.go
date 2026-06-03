@@ -287,3 +287,71 @@ func violationEvents(calls []appendCall) int {
 	}
 	return n
 }
+
+// spec: §17.3 line 130 / §25.11 line 4085 — the lag adapter turns the
+// source cluster's cumulative replication-failure total into monotonic
+// counter increments and sets the lag gauge from the latest sample.
+// F-17.3.7.
+func TestReplicationLagAdapterDeltaTracking(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a := newReplicationLagAdapter(m)
+	a.ReplicationLag("eu-west-1", 15)
+	// Cumulative totals 4 then 9: the counter advances by 4 then 5.
+	a.ReplicationFailures("eu-west-1", 4)
+	a.ReplicationFailures("eu-west-1", 9)
+	// A counter reset (source restart re-bases to 2): no spurious increment.
+	a.ReplicationFailures("eu-west-1", 2)
+	a.ReplicationLag("eu-west-1", 21) // latest gauge sample wins
+
+	body := metricsBody(t, m)
+	for _, want := range []string{
+		`lenny_minio_replication_lag_seconds{region="eu-west-1"} 21`,
+		`lenny_minio_replication_failed_total{region="eu-west-1"} 9`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// MeasureAll runs in the controller loop: a wired adapter sees the
+// FakeDriver's measurement reflected on /metrics. spec: §25.11 line 4085.
+func TestRunReplicationControllerMeasuresLag(t *testing.T) {
+	fd := replication.NewFakeDriver()
+	fd.SetJurisdictionTag("lenny-artifacts-eu-backup", "eu-west-1")
+	fd.SetMeasurement("eu-west-1", replication.Measurement{LagSeconds: 33, FailedTotal: 6})
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctrl, err := replication.NewController(replication.ControllerConfig{
+		Config: replication.Config{Enabled: true, Regions: []replication.RegionConfig{{
+			Region:              "eu-west-1",
+			SourceBucket:        "lenny-artifacts-eu",
+			DataResidencyRegion: "eu-west-1",
+			Target: replication.Target{
+				Endpoint:               "https://artifact-backup.lenny-dr:9000",
+				Bucket:                 "lenny-artifacts-eu-backup",
+				AccessCredentialSecret: "s",
+			},
+		}}},
+		Driver: fd,
+		Lag:    newReplicationLagAdapter(m),
+	})
+	if err != nil {
+		t.Fatalf("NewController: %v", err)
+	}
+	// Run one cycle: cancel before the first tick so only the startup
+	// Configure + MeasureAll run.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runReplicationController(ctx, ctrl, func(string, ...any) {})
+
+	body := metricsBody(t, m)
+	if want := `lenny_minio_replication_lag_seconds{region="eu-west-1"} 33`; !strings.Contains(body, want) {
+		t.Errorf("/metrics missing %q\n---\n%s", want, body)
+	}
+}

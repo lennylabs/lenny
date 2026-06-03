@@ -57,4 +57,35 @@ func TestReplicationMetricNilSafe(t *testing.T) {
 	var m *gatewaymetrics.Metrics
 	m.IncMinioReplicationResidencyViolation("eu-west-1")
 	m.IncDataResidencyViolation("erasure")
+	m.SetMinioReplicationLag("eu-west-1", 12)
+	m.AddMinioReplicationFailed("eu-west-1", 3)
+}
+
+// spec: §17.3 line 130 / §25.11 line 4085 — MeasureAll sets the
+// per-region replication-lag gauge and advances the per-region
+// replication-failure counter. F-17.3.7.
+func TestMinioReplicationLagAndFailed(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetMinioReplicationLag("eu-west-1", 42)
+	m.SetMinioReplicationLag("eu-west-1", 30) // latest sample wins (gauge)
+	m.AddMinioReplicationFailed("eu-west-1", 2)
+	m.AddMinioReplicationFailed("eu-west-1", 5)
+	m.AddMinioReplicationFailed("eu-west-1", 0) // a zero delta is dropped
+	m.AddMinioReplicationFailed("us-east-1", -3) // a negative delta is dropped
+
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_minio_replication_lag_seconds{region="eu-west-1"} 30`,
+		`lenny_minio_replication_failed_total{region="eu-west-1"} 7`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `lenny_minio_replication_failed_total{region="us-east-1"}`) {
+		t.Error("a negative delta created a us-east-1 failure series")
+	}
 }

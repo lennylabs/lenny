@@ -94,6 +94,9 @@ type ControllerConfig struct {
 	Audit AuditSink
 	// Metrics receives the §25.11 metric signals; nil drops them.
 	Metrics Metrics
+	// Lag receives the §25.11 / §17.3 replication-lag and
+	// replication-failure signals MeasureAll samples; nil drops them.
+	Lag LagObserver
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 }
@@ -108,6 +111,7 @@ type Controller struct {
 	state   StateStore
 	audit   AuditSink
 	metrics Metrics
+	lag     LagObserver
 	now     func() time.Time
 
 	mu sync.Mutex
@@ -139,6 +143,7 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 		state:       cfg.State,
 		audit:       cfg.Audit,
 		metrics:     cfg.Metrics,
+		lag:         cfg.Lag,
 		now:         now,
 		inMem:       map[string]RegionState{},
 		lastAuditAt: map[string]time.Time{},

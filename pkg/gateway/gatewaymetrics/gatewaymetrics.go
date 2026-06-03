@@ -529,6 +529,19 @@ type Metrics struct {
 	// destination resolves outside the allowed CIDRs. spec: §25.11;
 	// §16.5 residency-violation alert. F-12.5.20 / F-16.7.2.
 	minioReplicationResidencyViolation *prometheus.CounterVec
+	// minioReplicationLagSeconds is the §17.3 / §25.11 ArtifactStore
+	// off-cluster replication lag in seconds, labeled by source region.
+	// The replication Controller's MeasureAll samples the source bucket's
+	// replication queue each tick and sets this gauge (via
+	// LagObserver.ReplicationLag); it drives MinIOArtifactReplicationLagHigh
+	// (1× RPO) and MinIOArtifactReplicationLagCritical (4× RPO). F-17.3.7.
+	minioReplicationLagSeconds *prometheus.GaugeVec
+	// minioReplicationFailed is the §25.11 ArtifactStore object-level
+	// replication-failure counter, labeled by source region. MeasureAll
+	// reports the source cluster's cumulative failure total and the
+	// reporter advances this counter by the observed delta; it drives
+	// MinIOArtifactReplicationFailed. F-17.3.7.
+	minioReplicationFailed *prometheus.CounterVec
 	// dataResidencyViolation is the shared §16.1
 	// lenny_data_residency_violation_total counter, labeled by the
 	// operation that observed the violation (e.g. "artifact_replication").
@@ -1992,6 +2005,23 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §17.3 line 130 / §25.11 line 4085 ArtifactStore replication-health
+	// surface — the replication Controller's MeasureAll wires these via
+	// LagObserver.ReplicationLag / ReplicationFailures. F-17.3.7.
+	minioReplicationLagSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_minio_replication_lag_seconds",
+		Help: "§25.11 ArtifactStore off-cluster replication lag in seconds by region.",
+	}, []string{"region"})
+	if err != nil {
+		return nil, err
+	}
+	minioReplicationFailed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_minio_replication_failed_total",
+		Help: "§25.11 ArtifactStore object-level replication failures by region.",
+	}, []string{"region"})
+	if err != nil {
+		return nil, err
+	}
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -2221,6 +2251,7 @@ func New() (*Metrics, error) {
 		auditQueryDuration, auditChainVerificationBroken, auditChainRechainedPostOutage,
 		auditRateLimited, auditScatterGatherShards,
 		minioReplicationResidencyViolation, dataResidencyViolation,
+		minioReplicationLagSeconds, minioReplicationFailed,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -2435,6 +2466,8 @@ func New() (*Metrics, error) {
 		auditRateLimited:                     auditRateLimited,
 		auditScatterGatherShards:             auditScatterGatherShards,
 		minioReplicationResidencyViolation:   minioReplicationResidencyViolation,
+		minioReplicationLagSeconds:           minioReplicationLagSeconds,
+		minioReplicationFailed:               minioReplicationFailed,
 		dataResidencyViolation:               dataResidencyViolation,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
@@ -4122,6 +4155,27 @@ func (m *Metrics) IncMinioReplicationResidencyViolation(region string) {
 	}
 	m.minioReplicationResidencyViolation.WithLabelValues(region).Inc()
 	m.dataResidencyViolation.WithLabelValues("artifact_replication").Inc()
+}
+
+// SetMinioReplicationLag sets the §17.3 / §25.11 ArtifactStore
+// replication-lag gauge for a source region. The replication Controller's
+// MeasureAll calls it each measurement tick. F-17.3.7.
+func (m *Metrics) SetMinioReplicationLag(region string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.minioReplicationLagSeconds.WithLabelValues(region).Set(seconds)
+}
+
+// AddMinioReplicationFailed advances the §25.11 ArtifactStore
+// replication-failure counter for a source region by delta. The caller
+// converts the source cluster's cumulative failure total into a
+// non-negative increment. F-17.3.7.
+func (m *Metrics) AddMinioReplicationFailed(region string, delta float64) {
+	if m == nil || delta <= 0 {
+		return
+	}
+	m.minioReplicationFailed.WithLabelValues(region).Add(delta)
 }
 
 // IncDataResidencyViolation records one §16.1 data-residency violation
