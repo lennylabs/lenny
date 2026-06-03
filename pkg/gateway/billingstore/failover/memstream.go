@@ -60,6 +60,27 @@ func (m *MemStream) SetUnavailable(err error) {
 	m.mu.Unlock()
 }
 
+// PurgeUser implements StreamTier. It drops every queued event for
+// userID within tenantID and returns the count removed — the §12.8
+// step-5 erasure of the in-process stream's staged events.
+//
+// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+func (m *MemStream) PurgeUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := make([]billingstore.Event, 0, len(m.events))
+	purged := 0
+	for _, e := range m.events {
+		if e.TenantID == tenantID && e.UserID == userID {
+			purged++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.events = kept
+	return purged, nil
+}
+
 // Drain replays every queued event into the primary store in
 // provisional-sequence order and removes the events it successfully
 // flushed. This models the §11.2.1 billing-flusher consumer group: on a

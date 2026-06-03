@@ -84,6 +84,17 @@ type StreamTier interface {
 	// that have not yet been flushed to the primary store. The pipeline
 	// surfaces this for the §11.2.1 BillingStreamBackpressure signal.
 	Pending(ctx context.Context) (int, error)
+
+	// PurgeUser removes every staged billing event for userID within
+	// tenantID from the stream and returns the count removed. It is the
+	// §12.8 step-5 erasure of the Tier 1 half of the billing write-ahead
+	// buffer: a staged event flushed after the user's durable billing
+	// rows were pseudonymized would re-insert the raw user_id into
+	// Postgres, so the GDPR erasure job purges the stream before
+	// completing.
+	//
+	// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+	PurgeUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 // Clock returns the current time. Production passes time.Now; tests
@@ -324,6 +335,36 @@ func (p *Pipeline) PseudonymizeUser(ctx context.Context, tenantID, userID string
 // spec: §12.1 line 5.
 func (p *Pipeline) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return p.primary.DeleteByUser(ctx, tenantID, userID)
+}
+
+// PurgeStagedByUser removes every staged billing event for userID within
+// tenantID from both the Tier 1 durable stream and the Tier 2 in-memory
+// write-ahead buffer, returning the total count removed across both. It
+// is the §12.8 step-5 erasure primitive: staged events flushed after the
+// user's durable billing rows were pseudonymized (the §12.8 step-15
+// PseudonymizeUser the erasure job runs in its pseudonymizing phase)
+// would re-insert the raw user_id into Postgres, so the GDPR erasure job
+// purges the buffer in its store-deleting phase, before pseudonymization.
+//
+// spec: §12.8 line 788 (Billing write-ahead buffer purge), step 5.
+func (p *Pipeline) PurgeStagedByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	streamPurged, err := p.stream.PurgeUser(ctx, tenantID, userID)
+	if err != nil {
+		return streamPurged, err
+	}
+	p.mu.Lock()
+	kept := make([]billingstore.Event, 0, len(p.buffer))
+	bufferPurged := 0
+	for _, e := range p.buffer {
+		if e.TenantID == tenantID && e.UserID == userID {
+			bufferPurged++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	p.buffer = kept
+	p.mu.Unlock()
+	return streamPurged + bufferPurged, nil
 }
 
 // DeleteByTenant implements billingstore.Store. It removes the tenant's

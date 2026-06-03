@@ -155,6 +155,37 @@ func (c *Cached) GetByNode(ctx context.Context, tenantID, nodeSessionID string) 
 	return n, nil
 }
 
+// DeleteBySession writes through to the inner store and evicts every
+// cached node belonging to the erased tree so a post-erasure read cannot
+// serve a stale settled-child result from memory. A write-through
+// failure leaves the cache untouched.
+func (c *Cached) DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error) {
+	n, err := c.inner.DeleteBySession(ctx, tenantID, rootSessionID)
+	if err != nil {
+		return 0, err
+	}
+	c.evictRoot(tenantID, rootSessionID)
+	return n, nil
+}
+
+// evictRoot drops every cached entry whose node belongs to the tree
+// rooted at rootSessionID within tenantID. The cache is keyed by
+// (tenant, node), so the eviction walks the LRU list and matches on the
+// node's RootSessionID rather than the cache key.
+func (c *Cached) evictRoot(tenantID, rootSessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.ll.Front(); el != nil; {
+		next := el.Next()
+		e := el.Value.(*entry)
+		if e.node.TenantID == tenantID && e.node.RootSessionID == rootSessionID {
+			c.ll.Remove(el)
+			delete(c.items, e.key)
+		}
+		el = next
+	}
+}
+
 // Len returns the number of entries currently cached. It exists for
 // tests that assert the LRU eviction bound.
 func (c *Cached) Len() int {

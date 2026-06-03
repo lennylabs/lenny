@@ -24,9 +24,15 @@ type countingStore struct {
 	getByNodes int
 	replays    int
 	archives   int
+	deletes    int
 }
 
 func newCountingStore() *countingStore { return &countingStore{inner: NewMemory()} }
+
+func (c *countingStore) DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error) {
+	c.deletes++
+	return c.inner.DeleteBySession(ctx, tenantID, rootSessionID)
+}
 
 func (c *countingStore) Archive(ctx context.Context, n ArchivedNode) error {
 	c.archives++

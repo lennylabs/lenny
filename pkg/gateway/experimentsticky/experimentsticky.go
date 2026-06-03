@@ -92,6 +92,13 @@ func flushPattern(tenantID, experimentID string) string {
 	return fmt.Sprintf("t:%s:exp:%s:sticky:*", tenantID, experimentID)
 }
 
+// userErasurePattern is the §12.8 step-4 per-user purge glob
+// `t:{tenant_id}:exp:*:sticky:{user_id}` — every experiment in which the
+// user holds a sticky variant assignment.
+func userErasurePattern(tenantID, userID string) string {
+	return fmt.Sprintf("t:%s:exp:*:sticky:%s", tenantID, userID)
+}
+
 // nonEmpty rejects an empty key component. An empty tenant, experiment, or
 // user id would produce a malformed key or a flush glob that matches more
 // than the intended experiment; callers must never reach Redis with one.
@@ -152,6 +159,22 @@ func (c *RedisCache) Flush(ctx context.Context, tenantID, experimentID, transiti
 		c.rec.RecordExperimentStickyCacheInvalidation(experimentID, transition)
 	}
 	return deleted, err
+}
+
+// DeleteByUser removes every experiment sticky assignment held for
+// userID across all of the tenant's experiments. It is the §12.8 step-4
+// erasure primitive: a sticky-assignment key carries the user_id and
+// constitutes personal data under GDPR, so a user-level erasure DELs
+// `t:{tenant_id}:exp:*:sticky:{user_id}` via the same cursor-based sweep
+// Flush uses. Returns the number of keys removed.
+//
+// spec: §12.8 line 786 (Experiment sticky assignment cache), step 4
+// ("delete all experiment sticky assignments for the user").
+func (c *RedisCache) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return 0, fmt.Errorf("experimentsticky: DeleteByUser requires a non-empty tenant_id and user_id")
+	}
+	return c.scanDelete(ctx, userErasurePattern(tenantID, userID))
 }
 
 // scanDelete SCANs the keyspace for pattern and deletes matched keys in

@@ -80,6 +80,18 @@ type Store interface {
 	// knowing its tree root. ErrNotFound is returned when no matching
 	// node exists.
 	GetByNode(ctx context.Context, tenantID, nodeSessionID string) (ArchivedNode, error)
+
+	// DeleteBySession removes every archived node of the tree rooted at
+	// rootSessionID within tenantID and returns the count removed. It is
+	// the §12.8 step-11 session_tree_archive erasure primitive: the GDPR
+	// erasure orchestrator calls it for each session the erased user
+	// owns, before SessionStore deletion — the FK
+	// session_tree_archive.root_session_id → sessions.id requires the
+	// archive rows to be removed first. A non-root session id matches no
+	// archive row, so the call is a no-op in that case.
+	//
+	// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+	DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation. The minimal gateway
@@ -147,4 +159,21 @@ func (m *Memory) GetByNode(_ context.Context, tenantID, nodeSessionID string) (A
 		}
 	}
 	return ArchivedNode{}, ErrNotFound
+}
+
+// DeleteBySession implements Store.
+func (m *Memory) DeleteBySession(_ context.Context, tenantID, rootSessionID string) (int, error) {
+	if tenantID == "" || rootSessionID == "" {
+		return 0, errors.New("treearchive: DeleteBySession requires non-empty tenant and root session ids")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, n := range m.nodes {
+		if n.TenantID == tenantID && n.RootSessionID == rootSessionID {
+			delete(m.nodes, k)
+			deleted++
+		}
+	}
+	return deleted, nil
 }

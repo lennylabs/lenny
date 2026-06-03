@@ -361,3 +361,46 @@ func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID strin
 	}
 	return v, true, nil
 }
+
+// PurgeRoot deletes every delegation tree-budget key for rootSessionID:
+// the tree-wide counters (`tokens`, `tree_size`, `tree_memory`), the
+// per-parent reservation keys (`parallel_children:*`,
+// `children_total:*`), and the parallel-children high-watermark. It is
+// the §12.8 step-16 erasure primitive: the GDPR erasure orchestrator
+// calls it for each root session the erased user owns, before
+// SessionStore deletion makes the root session ids irrecoverable. All
+// keys share the `{root_session_id}` hash tag, so a single slot-local
+// SCAN covers the whole tree. Returns the number of keys removed; a
+// non-root session id matches no keys and returns 0.
+//
+// spec: §12.8 line 831 (step 16 — "delete tree-wide keys ... and scan
+// for per-parent keys ... using slot-local SCAN").
+func (s *Reserver) PurgeRoot(ctx context.Context, rootSessionID string) (int, error) {
+	if rootSessionID == "" {
+		return 0, fmt.Errorf("treebudget: empty root session id")
+	}
+	pattern := "{" + rootSessionID + "}:dlg:*"
+	const delBatch = 256
+	var (
+		cursor  uint64
+		deleted int
+	)
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, pattern, delBatch).Result()
+		if err != nil {
+			return deleted, fmt.Errorf("treebudget: purge scan: %w", err)
+		}
+		if len(keys) > 0 {
+			n, err := s.client.Del(ctx, keys...).Result()
+			if err != nil {
+				return deleted, fmt.Errorf("treebudget: purge del: %w", err)
+			}
+			deleted += int(n)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return deleted, nil
+}

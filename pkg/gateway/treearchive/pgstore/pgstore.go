@@ -171,6 +171,37 @@ func (s *Store) GetByNode(ctx context.Context, tenantID, nodeSessionID string) (
 	return out, nil
 }
 
+// DeleteBySession removes every archived node of the tree rooted at
+// rootSessionID within tenantID and returns the count removed. It is the
+// §12.8 step-11 session_tree_archive erasure primitive: the migration
+// 0100 FK root_session_id → sessions(id) carries no ON DELETE action, so
+// the archive rows MUST be erased before SessionStore deletion or the
+// session row delete would violate the constraint. The RLS guard scopes
+// the delete to tenantID.
+//
+// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+func (s *Store) DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error) {
+	if tenantID == "" || rootSessionID == "" {
+		return 0, errors.New("treearchive: DeleteBySession requires non-empty tenant and root session ids")
+	}
+	var deleted int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM session_tree_archive
+				WHERE tenant_id = $1 AND root_session_id = $2::uuid`,
+			tenantID, rootSessionID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 // nullUUID returns nil for an empty id so pgx writes SQL NULL into the
 // nullable parent_session_id column; a non-empty id is cast to uuid in
 // the statement.

@@ -349,6 +349,49 @@ func (t *Tier) flushEntries(ctx context.Context, tenantID string, messages []red
 	return flushed, nil
 }
 
+// PurgeUser implements failover.StreamTier. It XRANGEs the tenant's
+// billing stream, decodes each entry, and XACK+XDELs every entry whose
+// billing event carries userID. It is the §12.8 step-5 erasure of the
+// Redis-stream half of the billing write-ahead buffer: a staged event
+// flushed after the user's durable billing rows were pseudonymized would
+// re-insert the raw user_id into Postgres. The XACK clears any
+// consumer-group pending-entry reference before the XDEL removes the
+// entry, so a concurrent flusher cannot re-deliver a purged event.
+// Returns the number of stream entries removed.
+//
+// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+func (t *Tier) PurgeUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, fmt.Errorf("redisstream: PurgeUser requires non-empty tenant_id and user_id")
+	}
+	key := streamKey(tenantID)
+	msgs, err := t.client.XRange(ctx, key, "-", "+").Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstream: purge xrange: %w", err)
+	}
+	purged := 0
+	for _, msg := range msgs {
+		e, derr := decodeEntry(msg)
+		if derr != nil {
+			// A malformed entry cannot be attributed to a user; leave it
+			// rather than abort the erasure sweep over decodable entries.
+			continue
+		}
+		if e.UserID != userID {
+			continue
+		}
+		// XACK is best-effort: the consumer group may not exist if no
+		// flusher ever ran for this tenant, in which case there is no PEL
+		// reference to clear and the XDEL alone suffices.
+		_ = t.client.XAck(ctx, key, consumerGroup, msg.ID).Err()
+		if err := t.client.XDel(ctx, key, msg.ID).Err(); err != nil {
+			return purged, fmt.Errorf("redisstream: purge xdel %s: %w", msg.ID, err)
+		}
+		purged++
+	}
+	return purged, nil
+}
+
 // ackAndDel XACKs then XDELs a flushed stream entry.
 func (t *Tier) ackAndDel(ctx context.Context, tenantID, entryID string) error {
 	key := streamKey(tenantID)

@@ -33,6 +33,53 @@ func TestValidateOrder_canonicalConfigPasses(t *testing.T) {
 	}
 }
 
+// The full §12.8 production wiring (every store the gateway erases once
+// the §12.8.13 / §12.8.15 coverage lands) validates: the FK children
+// precede SessionStore and the post-session stores (tokens,
+// credential_pool) follow it. This pins the gateway's orchestrator
+// wiring against the dependency contract.
+//
+// spec: §12.8 lines 792-836 (the 20-step DeleteByUser sequence).
+func TestValidateOrder_fullProductionWiringPasses_spec_12_8_792(t *testing.T) {
+	cfg := Config{
+		SessionScoped: []SessionEraser{
+			{Name: "transcripts", DeleteBySession: noopSession},
+			{Name: "artifacts", DeleteBySession: noopSession},
+			{Name: "eval_results", DeleteBySession: noopSession},
+			{Name: "session_tree_archive", DeleteBySession: noopSession},
+			{Name: "delegation_budget", DeleteBySession: noopSession},
+		},
+		UserScoped: []Eraser{
+			{Name: "leases", DeleteByUser: noopUser},
+			{Name: "experiment_sticky", DeleteByUser: noopUser},
+			{Name: "billing_buffer", DeleteByUser: noopUser},
+			{Name: "quota", DeleteByUser: noopUser},
+			{Name: "memory", DeleteByUser: noopUser},
+			{Name: "interactions", DeleteByUser: noopUser},
+			{Name: "sessions", DeleteByUser: noopUser},
+			{Name: "tokens", DeleteByUser: noopUser},
+			{Name: "credential_pool", DeleteByUser: noopUser},
+		},
+	}
+	if err := ValidateOrder(cfg); err != nil {
+		t.Fatalf("full production wiring must validate: %v", err)
+	}
+}
+
+// session_tree_archive erased after SessionStore is an FK violation
+// (migration 0100 root_session_id → sessions(id), no ON DELETE action).
+func TestValidateOrder_treeArchiveAfterSessionsRejected_spec_12_8_826(t *testing.T) {
+	cfg := Config{
+		UserScoped: []Eraser{
+			{Name: "sessions", DeleteByUser: noopUser},
+			{Name: "session_tree_archive", DeleteByUser: noopUser},
+		},
+	}
+	if err := ValidateOrder(cfg); err == nil {
+		t.Fatal("session_tree_archive after sessions must be rejected (FK)")
+	}
+}
+
 // A user-scoped wiring that erases SessionStore before its FK child
 // (interactions) is rejected.
 func TestValidateOrder_sessionsBeforeChildRejected(t *testing.T) {

@@ -1376,6 +1376,10 @@ func main() {
 		coordinator    *coordination.Sweeper
 		storageCounter storagequota.Counter = storagequota.NewMemory()
 		rateLimiter    ratelimit.Counter    = ratelimit.NewMemory()
+		// erasureLeaseStore captures the concrete §12.4 lease store for
+		// the §12.8 step-1 LeaseStore erasure wiring (the store is built
+		// inside the Redis-available branch below; nil without Redis).
+		erasureLeaseStore leasestore.LeaseStore
 
 		// storageRecoveryReconciler drives the §12.4 line 210 write-back of
 		// storage-quota counters to Redis on a Redis-recovery edge. Set only
@@ -1456,6 +1460,9 @@ func main() {
 		if pgPool != nil {
 			leaseStore = leasestore.NewFailover(leaseStore, leasepg.New(pgPool), nil)
 		}
+		// §12.8 step 1: expose the lease store to the erasure orchestrator
+		// so a user erasure releases the user's active coordination leases.
+		erasureLeaseStore = leaseStore
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
 			coordination.Options{ReplicaID: replica, Interval: *coordInterval},
@@ -3104,6 +3111,10 @@ func main() {
 	var (
 		sessionStickyCache sessionserver.StickyCache
 		adminStickyFlusher admin.StickyFlusher
+		// erasureSticky captures the concrete sticky cache for the §12.8
+		// step-4 experiment-sticky-assignment erasure wiring; nil without
+		// Redis (the cache itself is absent in that posture).
+		erasureSticky *experimentsticky.RedisCache
 	)
 	if redisClient != nil {
 		stickyCache := experimentsticky.NewRedis(
@@ -3115,6 +3126,7 @@ func main() {
 		// *RedisCache the consumers would call methods on).
 		sessionStickyCache = stickyCache
 		adminStickyFlusher = stickyCache
+		erasureSticky = stickyCache
 	}
 
 	// spec: §14 lines 108-150 — the session-completion webhook subsystem.
@@ -3955,6 +3967,78 @@ func main() {
 		}
 		sessionScoped = append(sessionScoped,
 			erasure.SessionEraser{Name: "eval_results", DeleteBySession: evals.DeleteBySession})
+		// §12.8 step 11: the session_tree_archive holds settled child
+		// TaskResults keyed by root_session_id with a Postgres FK into
+		// sessions(id) (migration 0100, no ON DELETE action), so it is
+		// erased per owned session before SessionStore. session_dlq_archive
+		// (step 10) is omitted deliberately: its FK is ON DELETE CASCADE
+		// (migration 0056), so the step-17 SessionStore delete cleans it up.
+		sessionScoped = append(sessionScoped,
+			erasure.SessionEraser{Name: "session_tree_archive", DeleteBySession: treeArchive.DeleteBySession})
+		// §12.8 step 16: purge the tree-wide Redis delegation-budget keys
+		// ({root_session_id}:dlg:*) for each of the user's root sessions
+		// before SessionStore deletion makes the root ids irrecoverable.
+		// The keys carry no tenant prefix (the {root} hash tag scopes
+		// them); PurgeRoot no-ops on a non-root session id.
+		if treeBudgetConcrete != nil {
+			tb := treeBudgetConcrete
+			sessionScoped = append(sessionScoped, erasure.SessionEraser{
+				Name: "delegation_budget",
+				DeleteBySession: func(ctx context.Context, _ string, sessionID string) (int, error) {
+					return tb.PurgeRoot(ctx, sessionID)
+				},
+			})
+		}
+
+		// §12.8 user-scoped stores, appended in dependency-rank order so
+		// the orchestrator runs them in the sequence ValidateOrder pins.
+		// Each store is wired only when its backend is present, so a
+		// no-Redis / no-Postgres posture erases the subset it can satisfy
+		// rather than dereferencing a nil store.
+		userScoped := []erasure.Eraser{}
+		if erasureLeaseStore != nil {
+			// step 1: release the user's active session-coordination leases.
+			userScoped = append(userScoped,
+				erasure.Eraser{Name: "leases", DeleteByUser: erasureLeaseStore.DeleteByUser})
+		}
+		if erasureSticky != nil {
+			// step 4: delete the user's experiment sticky assignments.
+			userScoped = append(userScoped,
+				erasure.Eraser{Name: "experiment_sticky", DeleteByUser: erasureSticky.DeleteByUser})
+		}
+		// step 5: purge staged billing events from the write-ahead buffer
+		// (Redis stream + in-memory) before the Runner's pseudonymizing
+		// phase, so a post-erasure flush cannot re-insert the raw user_id.
+		userScoped = append(userScoped,
+			erasure.Eraser{Name: "billing_buffer", DeleteByUser: billingPipeline.PurgeStagedByUser})
+		if quotaCounter != nil {
+			// step 6: delete the user's rate-limit and budget counters.
+			userScoped = append(userScoped,
+				erasure.Eraser{Name: "quota", DeleteByUser: quotaCounter.DeleteByUser})
+		}
+		userScoped = append(userScoped,
+			// step 8: §9.4 MemoryStore.DeleteByUser returns only an error;
+			// the orchestrator's adapter reports the count it cannot supply
+			// as 0. Memory and the session-keyed interaction rows precede
+			// SessionStore (step 17).
+			erasure.Eraser{Name: "memory", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
+				return 0, memories.DeleteByUser(ctx, tenantID, userID)
+			}},
+			erasure.Eraser{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
+			// step 17: SessionStore, the FK parent, after every child store.
+			erasure.Eraser{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
+		)
+		if pgPool != nil {
+			// step 18: TokenStore — delete the user's issued OAuth/refresh
+			// tokens (the §13.3 issued-token index keyed by sub).
+			userScoped = append(userScoped,
+				erasure.Eraser{Name: "tokens", DeleteByUser: issuedtokenstore.New(pgPool).DeleteByUser})
+		}
+		// step 19: CredentialPoolStore — drop credential lease assignments
+		// referencing the user.
+		userScoped = append(userScoped,
+			erasure.Eraser{Name: "credential_pool", DeleteByUser: credentialPools.DeleteByUser})
+
 		erasureCfg := erasure.Config{
 			Sessions: func(ctx context.Context, tenantID, userID string) ([]string, error) {
 				rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
@@ -3970,18 +4054,7 @@ func main() {
 				return ids, nil
 			},
 			SessionScoped: sessionScoped,
-			UserScoped: []erasure.Eraser{
-				// §12.8: MemoryStore (step 8) precedes the session-keyed
-				// interaction rows; both precede SessionStore (step 17).
-				{Name: "memory", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
-					// §9.4 MemoryStore.DeleteByUser returns only an error;
-					// the orchestrator's adapter reports the count it
-					// cannot supply as 0.
-					return 0, memories.DeleteByUser(ctx, tenantID, userID)
-				}},
-				{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
-				{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
-			},
+			UserScoped:    userScoped,
 		}
 		// spec: §12.8 lines 792-836 — fail closed if the wired erasure
 		// stores violate the dependency order (a foreign-key child erased
