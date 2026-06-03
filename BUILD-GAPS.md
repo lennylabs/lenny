@@ -15706,7 +15706,7 @@ The rolling-window quota the spec table lists ("Token limits (LLM tokens) … pe
 
 **Resolution:** `QuotaEvaluator.Intercept` now branches on the resolved reset period: `quota.ResetRolling` reads through `quotastore.Counter.SlidingUsageHierarchical` at the tenant's rolling-window length (`TenantLimits.RollingWindow`, defaulting to `policy.DefaultRollingWindow` = 1h, operator-tunable via `--quota-rolling-window-seconds` / `LENNY_QUOTA_ROLLING_WINDOW_SECONDS`), while the fixed-interval periods keep the bucketed read. The proxy usage recorder mirrors the branch on the write side (`SlidingAddHierarchical`), so a tenant configured with `QuotaResetPeriod="rolling"` accumulates and enforces against the sliding window instead of erroring closed on `windowKey`. Resolved by `323c1b3a`; closed alongside F-11.2.2 / F-11.2.7.
 
-### - [ ] F-11.2.4 — Postgres reconciliation / checkpoint of token counters is absent [High] — OPEN
+### - [x] F-11.2.4 — Postgres reconciliation / checkpoint of token counters is absent [High] — CLOSED
 
 Spec §11.2: "Postgres is updated periodically at a configurable sync interval (`quotaSyncIntervalSeconds`, default: 30s, minimum: 10s) as a durable checkpoint, and on session completion as final reconciliation."
 
@@ -15728,6 +15728,32 @@ answers 503 `QUOTA_RECONCILE_UNAVAILABLE`. The checkpoint table, the
 `quotaSyncIntervalSeconds`-driven checkpoint goroutine, the session-
 completion final write, and `lenny_gateway_token_usage_anomaly_total`
 remain unbuilt — this finding stays OPEN.
+
+**Resolution (this batch).** Migration `0119` adds the
+`token_usage_checkpoint` table (per-(tenant, scope, subject, period,
+window) durable totals, §12.3 tenant-guard + RLS). New
+`pkg/gateway/quotacheckpoint` is the §11.2 durability layer over the
+Redis quota counter: the `Reconciler` runs on the existing
+`quotaSyncIntervalSeconds` cadence — while Redis is reachable it
+checkpoints every active (tenant, user) window total and the per-tenant
+rollup (`Service.Checkpoint`, subjects derived from the SessionStore,
+period from the §11.2 tenant-limits lookup), and on a Redis-recovery edge
+it restores each still-current counter to
+`MAX(redis_current, postgres_checkpoint)` (`Service.Reconcile`, backed by
+new `quotastore.RestoreUserWindow`/`RestoreTenantRollupWindow` Lua MAX
+writes). The §11.2 line 44 "final reconciliation on session completion"
+is wired through a new sessionserver `QuotaFinalCheckpointer` seam
+(`recordSessionCompleted` writes the final window total). The same
+`Service` backs the §24.6 operator reconcile via `AdminReconciler`
+(closing F-24.6.3). `lenny_quota_checkpoint_reconcile_total{outcome}`
+records restored/skipped counters. Wired in `cmd/lenny-gateway` whenever
+the Redis quota counter, the Postgres pool, and the SessionStore are all
+present. Rolling-window counters are deliberately not checkpointed
+(sliding sums have no single restorable window; documented in the package
+and the migration). Residual: the direct-mode
+`lenny_gateway_token_usage_anomaly_total` anomaly detector needs the
+`ReportUsage` delta stream, which has no production poller until F-15.3.7;
+carved to that finding rather than shipped inert (rule O). Commit `3ceac244`.
 
 ### - [x] F-11.2.5 — `delegation_tree_budget` Postgres table and the §11.2 crash-recovery reconstruction loop are not implemented [High] — CLOSED
 
@@ -19739,6 +19765,8 @@ There is no `QuotaEnforcementMode` enum or `quotaEnforcementMode` Helm value (`g
 
 **Re-verified (commit `ea041787`):** Half-unblocked — F-11.2.5 (the `delegation_tree_budget` Postgres table + checkpoint/reconstruction) has now landed, but the token-usage half (F-11.2.4: the `quota_usage_checkpoint` table and the per-replica Postgres slice the in-memory mode draws from) is still OPEN, and there is still no request-time token-budget enforcement runtime to host the in-memory slice. Remains DEFERRED on F-11.2.4.
 
+**Re-verified (this batch):** F-11.2.4 has now landed (the `token_usage_checkpoint` table + `pkg/gateway/quotacheckpoint` periodic checkpoint/recovery reconcile), so the Postgres token-budget *source* the in-memory mode draws from now exists. The residual is the `quotaEnforcementMode: in_memory_reconciled` mechanism itself: the `QuotaEnforcementMode` enum + Helm value and the per-replica in-memory budget-slice path (draw a slice from Postgres on startup, decrement locally per request, reconcile every 30s) that the QuotaEvaluator would switch to in this mode. That request-time enforcement runtime is still unbuilt, so adding only the config knob remains hollow. Remains DEFERRED on the in-memory enforcement-mode runtime (the Postgres-source half is now unblocked).
+
 ### - [x] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — CLOSED
 
 Spec §12.4 lists the billing stream and per-tenant counters as keys that must not silently evict (the alerting rule `BillingStreamEvictionPolicyDrift` is catalogued at `pkg/alerting/rules/rules.go` for the cloud path). The cloud Terraform sets `maxmemory_policy = noeviction` for AWS / Azure / GCP managed Redis (`deploy/terraform/cloud/aws/managed-services.tf:235`, `azure/managed-services.tf:177`, `gcp/managed-services.tf:177`).
@@ -19796,6 +19824,8 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 **Deferred:** the MAX rule reconciles two sources — (1) the last Postgres checkpoint and (2) the in-memory counter accumulated during the fail-open window. Neither exists for token/session quota counters: the in-memory fail-open accumulator is F-12.4.9 (OPEN — the rate-limit middleware fails closed with no time-bounded fail-open window or per-replica counter) and the Postgres token-usage checkpoint is F-11.2.4 (OPEN). A recovery reconciler wired now would have nothing to MAX. (The storage-quota recovery write-back — a distinct counter with an authoritative Postgres `SUM(artifact_size_bytes)` source — *is* now built as `storagequota.RecoveryReconciler` under F-12.4.11.) Gated on F-12.4.9 + F-11.2.4.
 
 **Re-verified (commit `a0882fd4`):** Still gated. F-12.4.9 has now closed, but the in-memory accumulator it built is a per-replica **request**-rate backstop in `pkg/gateway/failopen` (the §12.4 line 220 emergency request counter), not the per-(tenant, user) **token** accumulator the MAX rule's source (2) requires — that token-side in-memory accumulation lives in the proxy-mode usage-recording path during a Redis outage, which is unbuilt. Source (1), the Postgres token-usage checkpoint (F-11.2.4), is also still OPEN. The recovery edge detection now exists (the `failopen.Controller.Exit` hook fires on the Redis-recovery transition), so once both F-11.2.4 and the token in-memory accumulator land, this becomes a thin wiring of `quota.ReconcileMax` onto that edge. Remains DEFERRED on F-11.2.4 + the token in-memory accumulator.
+
+**Re-verified (this batch):** Source (1) is now built and a recovery reconciler exists — F-11.2.4's `pkg/gateway/quotacheckpoint.Reconciler` runs the §12.4 two-source MAX rule on the Redis-recovery edge, restoring each still-current counter to `MAX(redis_current, postgres_checkpoint)` across active (tenant, user) windows and the per-tenant rollup. The remaining divergence from the spec text is source (2): the reconciler uses the live Redis value as the second input, not the per-(tenant, user) **token** accumulator the gateway would keep in-memory during a fail-open window (that proxy-mode token accumulation during a Redis outage is still unbuilt — distinct from the `failopen` request-rate backstop). When Redis is merely restarted (empty) the MAX rule already restores from the checkpoint correctly; the gap is only the fail-open-window-usage contribution. Remains DEFERRED on the in-memory fail-open token accumulator (source 2); the Postgres-checkpoint half and the recovery-edge reconciler are now built.
 
 ### - [x] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — CLOSED
 
@@ -37110,7 +37140,7 @@ session/tenant counter set, and there is no on-demand operator path.
 
 ### Findings
 
-### - [ ] F-24.6.1 — 6-1 — `lenny-ctl admin quota reconcile --all-tenants` is unimplemented (the only command in §24.6 is missing) [Medium] — OPEN
+### - [x] F-24.6.1 — 6-1 — `lenny-ctl admin quota reconcile --all-tenants` is unimplemented (the only command in §24.6 is missing) [Medium] — CLOSED
 - Severity: High
 - Spec: `spec/24_lenny-ctl-command-reference.md:99` (the sole row of §24.6).
 - Evidence:
@@ -37127,8 +37157,15 @@ session/tenant counter set, and there is no on-demand operator path.
   it, the §11.2 fail-open / MAX-rule recovery posture has no operator escape hatch.
   Correctness impact (silently inaccurate per-tenant quota counters after a Redis
   outage) places this above a pure capability gap.
+- **Resolution (verify-close, commit `725c5e6c` / F-17.7.5).** Stale
+  evidence: `cmd/lenny-ctl/main.go` `cmdQuota` implements `admin quota
+  reconcile (--all-tenants | --tenant <id>)`, POSTing to
+  `/v1/admin/quota/reconcile`; `cmd/lenny-ctl/quota_pools_cli_test.go`
+  covers all-tenants/single-tenant/exactly-one-scope/unknown-subcommand.
+  The endpoint now reconciles for real (this batch's F-11.2.4 /
+  F-24.6.3 checkpoint store) rather than answering 503.
 
-### - [ ] F-24.6.2 — 6-2 — `POST /v1/admin/quota/reconcile` is not registered on the gateway admin router [Medium] — OPEN
+### - [x] F-24.6.2 — 6-2 — `POST /v1/admin/quota/reconcile` is not registered on the gateway admin router [Medium] — CLOSED
 - Severity: High
 - Spec: `spec/24_lenny-ctl-command-reference.md:99` (the "API Mapping" column);
   also `spec/15_external-api-surface.md:879`.
@@ -37145,8 +37182,15 @@ session/tenant counter set, and there is no on-demand operator path.
   wrapper, but the API endpoint is independently load-bearing for operators who
   scripts directly against the admin surface (also documented in
   `docs/api/admin.md:785` and exercised by the runbook).
+- **Resolution (verify-close, commit `725c5e6c`; reconciler wired this
+  batch).** `pkg/gateway/admin/quota.go` registers `POST
+  /v1/admin/quota/reconcile` on the admin Router behind the
+  `QuotaReconciler` seam. This batch wires the production seam
+  (`quotacheckpoint.AdminReconciler`) in `cmd/lenny-gateway`, so the
+  route now applies the §11.2 MAX rule against the Postgres token-usage
+  checkpoint instead of answering 503 `QUOTA_RECONCILE_UNAVAILABLE`.
 
-### - [ ] F-24.6.3 — 6-3 — No bulk quota-counter rebuild primitive on `quotastore.Counter` [Medium] — OPEN
+### - [x] F-24.6.3 — 6-3 — No bulk quota-counter rebuild primitive on `quotastore.Counter` [Medium] — CLOSED
 - Severity: Medium
 - Spec: implied by §24.6 row 1 and `spec/11_policy-and-controls.md:44`
   (the MAX rule on Redis recovery, applied "for each active session and tenant
@@ -37166,6 +37210,18 @@ session/tenant counter set, and there is no on-demand operator path.
   because even with the route and CLI wired, a no-op handler would still leave
   the spec promise unmet — the behaviour ("Re-aggregate in-flight session usage
   from Postgres into Redis") is the substantive requirement.
+- **Resolution (this batch).** Built by F-11.2.4's `pkg/gateway/quotacheckpoint`.
+  `Service.Reconcile(scope)` is the rebuild primitive: it reads the durable
+  `token_usage_checkpoint` rows (all-tenants or one tenant via the store's
+  `ListActive`/`ListByTenant`) and, for each counter whose window is still
+  current, restores the Redis value to `MAX(redis_current, postgres_checkpoint)`
+  via the new `quotastore.RestoreUserWindow`/`RestoreTenantRollupWindow` Lua MAX
+  writes. The §11.2 line 48 "for each active session and tenant scope" coverage is
+  the per-user and per-tenant-rollup scopes; the result reports the per-counter
+  MAX inputs (checkpoint / live / written) so an operator confirms the rebuild.
+  `AdminReconciler` exposes it through the §24.6 endpoint; the reconcile result is
+  the JSON the `lenny-ctl admin quota reconcile` CLI prints. Stale-window rows are
+  skipped rather than reviving a rolled-over bucket.
 
 ### - [x] F-24.6.4 — 6-4 — BUILD-GAPS does not track §24.6 as open [Medium] — CLOSED
 
