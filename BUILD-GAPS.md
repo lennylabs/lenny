@@ -33041,7 +33041,7 @@ cluster detection and no preflight invocation.
 
 ---
 
-### - [ ] F-17.6.1 — `lenny-preflight` Job implements only six checks out of the ~35 listed in §17.6 [High] — OPEN
+### - [x] F-17.6.1 — `lenny-preflight` Job implements only six checks out of the ~35 listed in §17.6 [High] — CLOSED
 
 **Spec:** §17.6 lines 478–525 enumerate the preflight Job's "Checks performed"
 table: Postgres connectivity/version, PgBouncer pool mode and `connect_query`
@@ -33096,6 +33096,14 @@ and the failure surfaces only after the gateway is in `CrashLoopBackOff`.
 - `/Users/joan/projects/lenny/pkg/preflight/run.go` (orchestrator; only six check families)
 - `/Users/joan/projects/lenny/charts/lenny/templates/preflight-job.yaml` (Job manifest)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:883-895` (values block lacks `enabled` and `timeoutSeconds`)
+
+**Resolution:** The "only six checks" evidence was badly stale — between this finding's review and now, the orchestrator (`pkg/preflight/run.go`) registers 42 distinct check names plus the 3 `pkg/preflight/infra` backend probes. This batch added the residual install-prerequisite rows the §17.6 table still lacked, so the preflight now covers essentially the full table:
+
+- **Already present (stale evidence)** — Postgres/Redis/MinIO connectivity (`pkg/preflight/infra`), MinIO SSE (`minio_sse.go`), RuntimeClass presence (`runtimeclass.go`), agent-sandbox CRD presence + schema version (`crdschema.go`), cert-manager (`certmanager.go`), conversion webhook (`conversionwebhook.go`), OTLP TLS (`otlp_tls.go`), ops admin-API TLS (`ops_admin_tls.go`), Redis maxmemory (`redis_maxmemory.go`), kube-apiserver CIDR + internet egress exclusions (`clustercidr_apiserver.go`), the four NetworkPolicy parity audits + ops-egress + cluster-CIDR symmetry (`networkpolicy_*.go`), node-disk encryption (`volume_encryption.go`), T4/drain-readiness webhooks + admission inventory (`webhooks.go`, `run.go`), phase-stamp consistency (`phasestamp.go`), Prometheus reachability (`prometheus_reachability.go`), pod-security baseline (`podsecurity.go`), cosign posture (`cosign_production.go`), Prometheus-Operator CRDs (`promoperator.go`), SPIFFE/SA-token uniqueness (`run.go`), and the playground-config gate (`playground.go`).
+- **Added this batch** — `kubernetes-version` (≥ 1.27, via discovery client; `install_prereqs.go`), `siem-endpoint` advisory (§17.6 line 517), `storagerouter-region-coverage` (§17.6 line 504), `legal-hold-escrow` per-region (§17.6 line 505), `pgbouncer-config` pool_mode/connect_query (§17.6 lines 487-488, prober seam), `billing-audit-trigger` immutability (§17.6 line 489, prober seam), `namespace-resourcequota` + `namespace-limitrange` (§17.6 lines 501-502, reader, skips not-yet-created namespaces), `cloud-object-storage-lifecycle` (§17.6 line 494, F-17.9.3), `ops-ingress-clusterissuer` advisory (§17.6 line 520), `monitoring-namespace` advisory (§17.6 line 521), and `lenny-ops-sa-rbac` (§17.6 line 519 / §25.4, SubjectAccessReview prober). The chart wires every new input as a Job flag and grants the preflight SA the namespace/resourcequota/limitrange/subjectaccessreview/clusterissuer reads.
+- **Deferred residual (3 rows)** — `CNI NetworkPolicy support` (the §17.6 "create and delete a test NetworkPolicy" probe is a cluster-mutating operation the read-only preflight Job does not perform in v1), `etcd Secret encryption` warning (requires etcd / node access the Job is not granted), and the `Postgres version` server-version minimum (the `postgres-connectivity` infra probe reads connectivity + applied schema version; the server-version gate is a follow-up on that probe). These are tracked as the §17.6 preflight residual.
+
+Tested: ~30 tier-1 cases across `install_prereqs_test.go`, `namespace_governance_test.go`, `ops_readiness_test.go`, and `cloud_object_storage_test.go`; helm-unittest renders for every new Job flag + RBAC rule. Commits `6c6367e7`, `b9a85116`, `d528e0a6`.
 
 ---
 

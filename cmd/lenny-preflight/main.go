@@ -46,11 +46,14 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -186,6 +189,49 @@ func s3LifecycleProber(region string) preflight.CloudObjectStorageLifecycleProbe
 			}
 		}
 		return status, nil
+	})
+}
+
+// opsSARProbeFunc adapts a function to preflight.OpsSARBACProber.
+type opsSARProbeFunc func(ctx context.Context, sa string, rule preflight.OpsSARBACRule) (bool, error)
+
+// CanI calls f.
+func (f opsSARProbeFunc) CanI(ctx context.Context, sa string, rule preflight.OpsSARBACRule) (bool, error) {
+	return f(ctx, sa, rule)
+}
+
+// opsSARProber builds an OpsSARBACProber that runs a SubjectAccessReview
+// for the lenny-ops ServiceAccount against each canonical §25.4 rule.
+// A clientset build failure returns nil so the check skips (the chart
+// Role/ClusterRole templates remain the source of truth). The preflight
+// SA needs `create subjectaccessreviews.authorization.k8s.io`.
+//
+// spec: §17.6 line 519; §25.4. F-17.6.1.
+func opsSARProber(cfg *rest.Config, serviceAccount string) preflight.OpsSARBACProber {
+	if strings.TrimSpace(serviceAccount) == "" {
+		return nil
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil
+	}
+	return opsSARProbeFunc(func(ctx context.Context, sa string, rule preflight.OpsSARBACRule) (bool, error) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: sa,
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: rule.Namespace,
+					Group:     rule.Group,
+					Resource:  rule.Resource,
+					Verb:      rule.Verb,
+				},
+			},
+		}
+		out, err := cs.AuthorizationV1().SubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+		if err != nil {
+			return false, err
+		}
+		return out.Status.Allowed, nil
 	})
 }
 
@@ -515,6 +561,14 @@ func main() {
 		"value of the objectStorage.region chart value (AWS region) for the §17.9.4 cloud lifecycle audit.")
 	siemEndpoint := flag.String("siem-endpoint", "",
 		"value of the audit.siem.endpoint chart value for the §17.6 line 517 SIEM advisory. Empty in a production environment emits a non-blocking warning.")
+	opsIngressClusterIssuer := flag.String("ops-ingress-cluster-issuer", "",
+		"the cert-manager.io/cluster-issuer annotation on ops.ingress for the §17.6 line 520 advisory. Empty skips the check.")
+	monitoringNamespace := flag.String("monitoring-namespace", "",
+		"value of the monitoring.namespace chart value for the §17.6 line 521 advisory.")
+	monitoringPodLabel := flag.String("monitoring-pod-label", "",
+		"value of the monitoring.podLabel chart value (key=value) the Prometheus pod must carry for the §17.6 line 521 advisory.")
+	opsServiceAccount := flag.String("ops-service-account", "",
+		"the fully-qualified lenny-ops SA username (system:serviceaccount:<ns>:lenny-ops-sa) for the §17.6 line 519 RBAC audit. Empty skips the check.")
 	redisURL := flag.String("redis-url", "",
 		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
@@ -657,7 +711,14 @@ func main() {
 		CloudObjectStorageLifecycleProber: cloudLifecycleProber(*objectStorageProvider, *objectStorageRegion),
 		KubernetesVersion:                 kubernetesVersion,
 		SIEMEndpoint:                      *siemEndpoint,
-		RedisConfigProber:                 redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
+		OpsIngressClusterIssuer:           *opsIngressClusterIssuer,
+		Monitoring: preflight.MonitoringConfig{
+			Namespace: *monitoringNamespace,
+			PodLabel:  *monitoringPodLabel,
+		},
+		OpsServiceAccount: *opsServiceAccount,
+		OpsSARBACProber:   opsSARProber(cfg, *opsServiceAccount),
+		RedisConfigProber: redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 		ClusterCIDR: preflight.ClusterCIDRConfig{
 			KubeAPIServerCIDR:         *kubeAPIServerCIDR,

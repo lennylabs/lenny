@@ -214,6 +214,32 @@ type Config struct {
 	// billing/audit integrity-trigger audit. Nil skips the check.
 	// F-17.6.1.
 	BillingTriggerProber BillingTriggerProber
+	// OpsIngressClusterIssuer is the cert-manager.io/cluster-issuer
+	// annotation value on ops.ingress. When set, the §17.6 line 520
+	// advisory verifies the ClusterIssuer exists. Empty skips it.
+	// F-17.6.1.
+	OpsIngressClusterIssuer string
+	// Monitoring carries the §17.6 line 521 monitoring-namespace advisory
+	// inputs. F-17.6.1.
+	Monitoring MonitoringConfig
+	// OpsServiceAccount is the fully-qualified lenny-ops SA username
+	// (system:serviceaccount:<ns>:lenny-ops-sa) the §17.6 line 519 RBAC
+	// audit reviews. F-17.6.1.
+	OpsServiceAccount string
+	// OpsSARBACProber, when non-nil, runs the §17.6 line 519 lenny-ops-sa
+	// SubjectAccessReview audit. Nil skips the check. F-17.6.1.
+	OpsSARBACProber OpsSARBACProber
+}
+
+// MonitoringConfig carries the §17.6 line 521 monitoring.* chart values
+// the monitoring-namespace advisory evaluates.
+//
+// spec: §17.6 line 521. F-17.6.1.
+type MonitoringConfig struct {
+	// Namespace is the monitoring.namespace value.
+	Namespace string
+	// PodLabel is the monitoring.podLabel selector (key=value).
+	PodLabel string
 }
 
 // LegalHoldConfig carries the §17.6 line 505 legal-hold per-region
@@ -728,6 +754,50 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			)
 		}
 	}
+
+	// §17.6 line 520 — non-blocking ops.ingress ClusterIssuer advisory.
+	// Runs only when the annotation names an issuer. F-17.6.1.
+	if cfg.OpsIngressClusterIssuer != "" {
+		exists, err := clusterIssuerExists(ctx, reader, cfg.OpsIngressClusterIssuer)
+		if err != nil {
+			report = append(report, CheckResult{Name: "ops-ingress-clusterissuer", Decision: Decision{Reason: "read ClusterIssuer: " + err.Error()}})
+		} else {
+			report = append(report, CheckResult{
+				Name:     "ops-ingress-clusterissuer",
+				Decision: OpsIngressClusterIssuerCheck{IssuerName: cfg.OpsIngressClusterIssuer, Exists: exists}.Decide(),
+			})
+		}
+	}
+
+	// §17.6 line 521 — non-blocking monitoring-namespace advisory. Runs
+	// only when both a monitoring namespace and a pod label are
+	// configured. F-17.6.1.
+	if cfg.Monitoring.Namespace != "" && cfg.Monitoring.PodLabel != "" {
+		hasPod, err := monitoringPodPresent(ctx, reader, cfg.Monitoring.Namespace, cfg.Monitoring.PodLabel)
+		if err != nil {
+			report = append(report, CheckResult{Name: "monitoring-namespace", Decision: Decision{Reason: "list monitoring pods: " + err.Error()}})
+		} else {
+			report = append(report, CheckResult{
+				Name: "monitoring-namespace",
+				Decision: MonitoringNamespaceCheck{
+					Namespace:      cfg.Monitoring.Namespace,
+					PodLabel:       cfg.Monitoring.PodLabel,
+					HasMatchingPod: hasPod,
+				}.Decide(),
+			})
+		}
+	}
+
+	// §17.6 line 519 — lenny-ops-sa RBAC audit. Runs only when a
+	// SubjectAccessReview prober is wired (nil skips). F-17.6.1.
+	report = append(report, CheckResult{
+		Name: "lenny-ops-sa-rbac",
+		Decision: OpsSARBACCheck{
+			ServiceAccount: cfg.OpsServiceAccount,
+			Rules:          CanonicalOpsSARBACRules(cfg.Namespace),
+			Prober:         cfg.OpsSARBACProber,
+		}.Decide(ctx),
+	})
 
 	return report
 }

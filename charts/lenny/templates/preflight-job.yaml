@@ -98,6 +98,18 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges"]
     verbs: ["list"]
+  # §17.6 line 519 lenny-ops-sa RBAC audit runs a SubjectAccessReview for
+  # the lenny-ops SA against each canonical §25.4 rule. F-17.6.1.
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+  # §17.6 line 520 ops.ingress ClusterIssuer advisory reads the
+  # cert-manager ClusterIssuer named by the ops.ingress annotation. The
+  # rule is harmless when cert-manager is absent (the read 404s and the
+  # advisory fires). F-17.6.1.
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -301,6 +313,14 @@ spec:
             endpoint configured gets a non-blocking audit-integrity
             warning. F-17.6.1. */}}
             - --siem-endpoint={{ .Values.audit.siem.endpoint | default "" }}
+            {{- /* §17.6 lines 519-521 — lenny-ops-sa RBAC audit, the
+            ops.ingress ClusterIssuer advisory, and the monitoring-namespace
+            advisory. The monitoring pod label reuses the existing
+            ops.networkPolicy.prometheusPodLabel (key=value). F-17.6.1. */}}
+            - --ops-service-account=system:serviceaccount:{{ .Release.Namespace }}:lenny-ops-sa
+            - --ops-ingress-cluster-issuer={{ index (.Values.ops.ingress.annotations | default dict) "cert-manager.io/cluster-issuer" | default "" }}
+            - --monitoring-namespace={{ .Values.monitoring.namespace | default "" }}
+            - --monitoring-pod-label={{ .Values.ops.networkPolicy.prometheusPodLabel.key }}={{ .Values.ops.networkPolicy.prometheusPodLabel.value }}
             {{- if $checkRedis }}
             # §12.4 — verify the BYO Redis enforces maxmemory-policy=noeviction
             # so the billing stream and per-tenant counters cannot evict.

@@ -528,6 +528,56 @@ tests:
             resources: ["resourcequotas", "limitranges"]
             verbs: ["list"]
 
+  # spec: §17.6 lines 519-521 — the preflight Job feeds the lenny-ops-sa
+  # RBAC audit, the ops.ingress ClusterIssuer advisory, and the
+  # monitoring-namespace advisory their inputs. F-17.6.1.
+  - it: passes the §17.6 ops-readiness advisory inputs
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ops-service-account=system:serviceaccount:NAMESPACE:lenny-ops-sa"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-namespace=monitoring"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-pod-label=app=prometheus"
+
+  - it: renders the ops.ingress ClusterIssuer annotation into the audit flag
+    set:
+      ops.ingress.annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ops-ingress-cluster-issuer=letsencrypt-prod"
+
+  # spec: §17.6 lines 519-520 — the preflight SA can run SubjectAccessReviews
+  # and read cert-manager ClusterIssuers. F-17.6.1.
+  - it: grants the preflight SA SubjectAccessReview + ClusterIssuer read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["authorization.k8s.io"]
+            resources: ["subjectaccessreviews"]
+            verbs: ["create"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cert-manager.io"]
+            resources: ["clusterissuers"]
+            verbs: ["get"]
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.
