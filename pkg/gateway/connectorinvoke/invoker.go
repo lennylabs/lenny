@@ -140,6 +140,84 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 	return result, err
 }
 
+// ListTools resolves the connector identified by connectorID for the
+// calling session and returns its tool catalog (the external endpoint's
+// tools/list), filtered to the tools the calling session's §10.6
+// environment connectorSelector capability filter admits. The connector
+// must be registered and active, and the §9.3 line 164 connector-access
+// boundary is enforced before any outbound dial: a connector the calling
+// session's effective delegation policy does not permit is rejected
+// without contacting the external endpoint, mirroring CallTool. A tool
+// the environment filter denies is dropped from the catalog so a
+// type:agent runtime never sees an external tool it could not call.
+//
+// spec: §9.3 lines 142-164; §10.6 line 607.
+func (iv *Invoker) ListTools(ctx context.Context, tenantID, sessionID, connectorID, userID, environment string) ([]ToolDescriptor, error) {
+	conn, err := iv.connectors.Get(ctx, tenantID, connectorID)
+	if err != nil {
+		return nil, err
+	}
+	if !conn.IsActive() {
+		return nil, ErrConnectorInactive
+	}
+	// spec: §9.3 line 164 — the gateway validates the connector against the
+	// calling session's effective delegation policy before any outbound
+	// dial, so a denied connector is never reached even for discovery.
+	if iv.authz != nil {
+		if err := iv.authz.AuthorizeConnector(ctx, tenantID, sessionID, connectorID, conn.Labels); err != nil {
+			return nil, err
+		}
+	}
+
+	var span trace.Span
+	if iv.tracer != nil {
+		ctx, span = iv.tracer.Start(ctx, tracing.SpanMCPExternalToolCall)
+		span.SetAttributes(
+			attribute.String("connector.id", conn.ID),
+			attribute.String("connector.tenant_id", conn.TenantID),
+			attribute.String("mcp.method", "tools/list"),
+		)
+		defer span.End()
+	}
+
+	bearer := iv.bearerFor(ctx, conn, userID, environment)
+	sess, _, err := iv.client.Initialize(ctx, conn.MCPServerURL, bearer)
+	if err != nil {
+		if span != nil {
+			tracing.RecordError(span, err)
+		}
+		return nil, fmt.Errorf("connectorinvoke: initialize %q: %w", connectorID, err)
+	}
+	tools, err := sess.ListTools(ctx)
+	if err != nil {
+		if span != nil {
+			tracing.RecordError(span, err)
+		}
+		return nil, fmt.Errorf("connectorinvoke: list tools %q: %w", connectorID, err)
+	}
+	// spec: §10.6 line 607 — drop the tools the environment connectorSelector
+	// capability filter denies so the intra-pod tools/list advertises only
+	// callable tools. A filter error (other than a per-tool denial) is
+	// propagated; a denied tool is silently filtered out.
+	admitted := make([]ToolDescriptor, 0, len(tools))
+	for _, t := range tools {
+		cerr := iv.enforceConnectorCapabilities(ctx, tenantID, environment, conn, t.Name)
+		if cerr == nil {
+			admitted = append(admitted, t)
+			continue
+		}
+		var denied *CapabilityDeniedError
+		if errors.As(cerr, &denied) {
+			continue
+		}
+		if span != nil {
+			tracing.RecordError(span, cerr)
+		}
+		return nil, cerr
+	}
+	return admitted, nil
+}
+
 // bearerFor returns the stored access token for the connector's
 // four-tuple, or empty for a public connector or a connector whose
 // credential has not yet been obtained.

@@ -96,6 +96,10 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
+	// §9.3 line 142: re-resolve the session's permitted connectors so the
+	// restored runtime gets the same per-connector MCP servers it had
+	// before the resume. Best-effort.
+	connectors := s.sessionConnectors(ctx, sessionID)
 	// §15.4: re-deliver the manifest so the restored runtime reads the
 	// same §4.7 / §8.3 fields as before the resume.
 	nonce, err := s.writeSessionManifest(manifestInputs{
@@ -105,6 +109,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),
 		minPlatformVersion: req.GetMinPlatformVersion(),
+		connectors:         connectors,
 	})
 	if err != nil {
 		s.releaseSession()
@@ -115,6 +120,8 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 	}
+	// §9.3 lines 142-164: re-open the per-connector MCP servers. F-9.1.2.
+	s.startConnectorMCPServers(sessionID, nonce, connectors)
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)

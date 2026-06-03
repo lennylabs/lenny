@@ -84,6 +84,12 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		return nil, err
 	}
 
+	// §9.3 line 142: resolve the connectors this session's effective
+	// delegation policy permits so the manifest can list one per-connector
+	// MCP server and the adapter can open each socket. Best-effort: a
+	// resolution failure leaves the session with no connector servers
+	// rather than failing the start.
+	connectors := s.sessionConnectors(ctx, sessionID)
 	// §15.4: write the adapter manifest the runtime reads at startup.
 	nonce, err := s.writeSessionManifest(manifestInputs{
 		sessionID:          sessionID,
@@ -92,6 +98,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),
 		minPlatformVersion: req.GetMinPlatformVersion(),
+		connectors:         connectors,
 	})
 	if err != nil {
 		s.releaseSession()
@@ -107,6 +114,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 			s.releaseSession()
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
+		// §9.3 lines 142-164: open one intra-pod MCP server per permitted
+		// connector, forwarding tools/list and tools/call to the gateway.
+		// Best-effort per connector. F-9.1.2.
+		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
@@ -239,11 +250,19 @@ func (s *Server) releaseSession() {
 	s.sessionID = ""
 	cancel := s.mcpCancel
 	s.mcpCancel = nil
+	// §9.3: stop every per-connector MCP server started for the session so
+	// the connector sockets are released alongside the platform socket.
+	// F-9.1.2.
+	connectorCancels := s.connectorCancels
+	s.connectorCancels = nil
 	// §4.9 line 1149: drop the direct-mode expiry timers so a stale lease
 	// cannot fire AUTH_EXPIRED against a session that has already ended.
 	s.cancelAllExpiryTimers()
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	for _, c := range connectorCancels {
+		c()
 	}
 }

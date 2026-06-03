@@ -371,6 +371,13 @@ type Service struct {
 	// the gateway platform tool surface. Nil leaves CallPlatformTool and
 	// ListPlatformTools returning codes.Unimplemented. F-9.1.1.
 	platformTools PlatformToolService
+
+	// connectorTools forwards the §9.3 per-connector external tool calls a
+	// type:agent runtime makes against its pod's intra-pod
+	// @lenny-connector-<id> MCP servers to the gateway connector-invocation
+	// surface. Nil leaves ListSessionConnectors, ListConnectorTools, and
+	// CallConnectorTool returning codes.Unimplemented. F-9.1.2.
+	connectorTools ConnectorToolService
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
@@ -607,6 +614,13 @@ type Options struct {
 	// returning codes.Unimplemented (the §8.6-only GatewayControl
 	// deployment). F-9.1.1.
 	PlatformTools PlatformToolService
+
+	// ConnectorTools backs the §9.3 per-connector forwarding RPCs
+	// (ListSessionConnectors / ListConnectorTools / CallConnectorTool): a
+	// type:agent runtime's tools/call on its pod's @lenny-connector-<id>
+	// socket reaches the gateway connector-invocation surface through it.
+	// Nil leaves the three RPCs returning codes.Unimplemented. F-9.1.2.
+	ConnectorTools ConnectorToolService
 }
 
 // NewService returns a §8.6 ExtendLease Service.
@@ -645,6 +659,7 @@ func NewService(opts Options) (*Service, error) {
 	svc.autoLimiter = newAutoExtensionLimiter(opts.AutoExtensionCounter)
 	svc.defaultAutoMaxPerMinute = opts.DefaultAutoMaxPerMinute
 	svc.platformTools = opts.PlatformTools
+	svc.connectorTools = opts.ConnectorTools
 	return svc, nil
 }
 

@@ -210,6 +210,35 @@ service GatewayControl {
   // MCP tool result; a tool-level failure is an is_error result rather
   // than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
   rpc CallPlatformTool(CallPlatformToolRequest) returns (CallPlatformToolResponse) {}
+
+  // ListSessionConnectors returns the §9.3 connectors a session's
+  // effective delegation policy permits. The adapter opens one intra-pod
+  // MCP server (the @lenny-connector-<id> socket) per returned connector
+  // and lists them in the manifest connectorServers array, so a
+  // type:agent runtime can reach every external tool its policy admits.
+  // The gateway filters the tenant's connector registry by the calling
+  // session's delegation policy, so a connector the policy denies is
+  // never advertised to the pod. spec: §9.3 line 142.
+  rpc ListSessionConnectors(ListSessionConnectorsRequest) returns (ListSessionConnectorsResponse) {}
+
+  // ListConnectorTools returns the tool catalog a single §9.3 connector
+  // exposes, for the adapter's intra-pod per-connector MCP server to
+  // advertise on tools/list. The gateway acts as the MCP client to the
+  // external endpoint (the connector's mcpServerUrl), using the
+  // gateway-held OAuth credential — the credential never transits the
+  // pod. A connector the calling session's policy denies is rejected.
+  // spec: §9.3 lines 142-164.
+  rpc ListConnectorTools(ListConnectorToolsRequest) returns (ListConnectorToolsResponse) {}
+
+  // CallConnectorTool forwards one §9.3 external tool call a type:agent
+  // runtime made against the adapter's intra-pod @lenny-connector-<id>
+  // socket to the gateway, which validates the connector_id against the
+  // calling pod's effective delegation policy (line 164) and proxies the
+  // tools/call to the external MCP endpoint with the gateway-held
+  // credential. The response carries the JSON-encoded MCP tool result; a
+  // tool-level failure is an is_error result rather than a gRPC error.
+  // spec: §9.3 lines 142-164.
+  rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
 }
 
 // ListPlatformToolsRequest asks the gateway for the §9.1 platform tool
@@ -252,6 +281,61 @@ message CallPlatformToolRequest {
 // or authorization failure (unknown session, unregistered tool) is a
 // gRPC status error instead.
 message CallPlatformToolResponse {
+  bytes result = 1;
+  bool is_error = 2;
+}
+
+// ListSessionConnectorsRequest asks the gateway which §9.3 connectors
+// session_id's effective delegation policy permits.
+message ListSessionConnectorsRequest {
+  SessionId session_id = 1;
+}
+
+// SessionConnector is one §9.3 connector the calling session may use:
+// its registry id (e.g. `github`) and human-facing display name. The
+// adapter derives the intra-pod socket name from the id.
+message SessionConnector {
+  string id = 1;
+  string display_name = 2;
+}
+
+// ListSessionConnectorsResponse carries the policy-filtered connector
+// list the adapter renders into the manifest connectorServers array.
+message ListSessionConnectorsResponse {
+  repeated SessionConnector connectors = 1;
+}
+
+// ListConnectorToolsRequest asks the gateway for the tool catalog one
+// §9.3 connector exposes, scoped to the calling session.
+message ListConnectorToolsRequest {
+  SessionId session_id = 1;
+  string connector_id = 2;
+}
+
+// ListConnectorToolsResponse carries the connector's tool catalog,
+// reusing PlatformTool (name, description, JSON-Schema) since the
+// intra-pod tools/list wire entry is identical for platform and
+// connector tools.
+message ListConnectorToolsResponse {
+  repeated PlatformTool tools = 1;
+}
+
+// CallConnectorToolRequest forwards one §9.3 external tool call to the
+// gateway on behalf of session_id. arguments is the raw JSON `arguments`
+// object from the runtime's MCP tools/call request.
+message CallConnectorToolRequest {
+  SessionId session_id = 1;
+  string connector_id = 2;
+  string tool_name = 3;
+  bytes arguments = 4;
+}
+
+// CallConnectorToolResponse carries the §15.2 MCP tool result of the
+// external tool call. result is the JSON-encoded MCP result object; the
+// adapter relays it verbatim to the runtime. is_error mirrors the
+// result's isError flag. A policy or transport failure (denied
+// connector, unknown session, dial failure) is a gRPC status instead.
+message CallConnectorToolResponse {
   bytes result = 1;
   bool is_error = 2;
 }

@@ -121,6 +121,16 @@ type Server struct {
 	// serving an empty catalog (the dev path with no gateway link).
 	// *gatewaycontrol.Client satisfies it. spec: §9.1 lines 14-31. F-9.1.1.
 	PlatformForwarder PlatformToolForwarder
+	// ConnectorForwarder forwards the §9.3 per-connector tool calls a
+	// type:agent runtime makes against the intra-pod @lenny-connector-<id>
+	// MCP servers to the gateway over GatewayControl. When set, StartSession
+	// resolves the session's permitted connectors (ListSessionConnectors),
+	// lists them in the manifest connectorServers array, and opens one MCP
+	// server per connector whose tools/list and tools/call forward to the
+	// gateway. Nil leaves the manifest connectorServers array empty (the dev
+	// path with no gateway link). *gatewaycontrol.Client satisfies it.
+	// spec: §9.3 lines 142-164. F-9.1.2.
+	ConnectorForwarder ConnectorToolForwarder
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
@@ -241,6 +251,10 @@ type Server struct {
 	// mcpCancel stops the platform MCP server started for the current
 	// session. Nil when no platform MCP server is running.
 	mcpCancel context.CancelFunc
+	// connectorCancels stops the §9.3 per-connector MCP servers started
+	// for the current session, one cancel per connector socket. Reset to
+	// nil by releaseSession after every server is stopped. F-9.1.2.
+	connectorCancels []context.CancelFunc
 	// credSessionID is the session the current credential leases were
 	// assigned for, empty when none are assigned.
 	credSessionID string

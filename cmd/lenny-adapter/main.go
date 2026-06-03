@@ -267,6 +267,12 @@ func main() {
 		}
 		defer func() { _ = gwClient.Close() }()
 		adapterSrv.PlatformForwarder = gwClient
+		// §9.3 lines 142-164 — the same gateway-control channel forwards a
+		// type:agent runtime's per-connector tool calls (against the
+		// intra-pod @lenny-connector-<id> sockets) to the gateway, which
+		// dials the external endpoint with the gateway-held credential.
+		// F-9.1.2.
+		adapterSrv.ConnectorForwarder = gwClient
 		log.Printf("lenny-adapter: §9.1 platform tool forwarding to gateway at %s", *gatewayGRPCAddr)
 	}
 	adapterSrv.CredentialsDir = *credentialsDir

@@ -115,6 +115,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
@@ -4932,7 +4933,13 @@ func main() {
 	// platform tool surface the gateway-edge /mcp endpoint serves,
 	// scoped to the calling session. F-9.1.1.
 	platformToolBridge := platformtools.New(mcpSrv, sessions)
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, mtlsDeny)
+	// §9.3 lines 142-164 — the connector bridge resolves a session's
+	// policy-permitted connectors and forwards a type:agent runtime's
+	// intra-pod per-connector tool calls (over GatewayControl) to the
+	// connectorinvoke surface, which dials the external endpoint with the
+	// gateway-held credential. F-9.1.2.
+	connectorToolBridge := connectortools.New(sessions, connectors, connectorAuthorizer, connectorInvoker)
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -6284,7 +6291,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -6311,6 +6318,10 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		// platform tool calls (lenny/delegate_task, ...) to the gateway
 		// platform tool surface. F-9.1.1.
 		PlatformTools: platformTools,
+		// §9.3 lines 142-164 — forward a type:agent runtime's intra-pod
+		// per-connector tool calls (against @lenny-connector-<id> sockets)
+		// to the gateway connector-invocation surface. F-9.1.2.
+		ConnectorTools: connectorTools,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)

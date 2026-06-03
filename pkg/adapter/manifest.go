@@ -218,6 +218,11 @@ type manifestInputs struct {
 	tracingContext     map[string]string
 	agentInterface     []byte // opaque JSON; nil writes a null manifest field
 	minPlatformVersion string
+	// connectors are the §9.3 per-connector MCP servers the adapter opens
+	// for this session, rendered into the manifest connectorServers array
+	// so the runtime can dial each one. Empty leaves the array empty (never
+	// absent per §4.7). F-9.1.2.
+	connectors []sessionConnector
 }
 
 // writeSessionManifest writes the §15.4 adapter manifest for a session —
@@ -258,6 +263,12 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	}
 	if s.MCPSocket != "" {
 		m.PlatformMcpServer = &ManifestMCPServer{Socket: s.MCPSocket}
+	}
+	// §9.3 line 142 — render one connectorServers entry per connector the
+	// session's effective delegation policy permits, so the runtime can
+	// dial each connector's intra-pod MCP server. F-9.1.2.
+	for _, c := range in.connectors {
+		m.ConnectorServers = append(m.ConnectorServers, ManifestConnector{ID: c.ID, Socket: c.Socket})
 	}
 	if s.Lifecycle != nil {
 		m.LifecycleChannel = &ManifestLifecycleChannel{Socket: s.Lifecycle.SocketPath()}

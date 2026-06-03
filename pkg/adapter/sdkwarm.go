@@ -81,6 +81,10 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 		return nil, err
 	}
 	if fresh {
+		// §9.3 line 142: resolve the session's permitted connectors so the
+		// pre-connected runtime gets one per-connector MCP server per
+		// connector its policy admits. Best-effort.
+		connectors := s.sessionConnectors(ctx, sessionID)
 		// §15.4: write the adapter manifest the pre-connected runtime
 		// re-reads when pointed at the workspace, and start the platform
 		// MCP server keyed on the freshly written nonce.
@@ -88,6 +92,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			sessionID:         sessionID,
 			experimentContext: req.GetExperimentContext(),
 			tracingContext:    req.GetTracingContext(),
+			connectors:        connectors,
 		})
 		if err != nil {
 			s.releaseSession()
@@ -98,6 +103,8 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 				s.releaseSession()
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
+			// §9.3 lines 142-164: open the per-connector MCP servers. F-9.1.2.
+			s.startConnectorMCPServers(sessionID, nonce, connectors)
 		}
 	}
 

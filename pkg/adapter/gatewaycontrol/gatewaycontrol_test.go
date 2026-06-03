@@ -37,6 +37,17 @@ type stubGatewayControl struct {
 	callErr    error
 	gotListReq *adapterv1.ListPlatformToolsRequest
 	gotCallReq *adapterv1.CallPlatformToolRequest
+
+	// §9.3 per-connector tool forwarding stubs. F-9.1.2.
+	connListResp    *adapterv1.ListSessionConnectorsResponse
+	connListErr     error
+	connToolsResp   *adapterv1.ListConnectorToolsResponse
+	connToolsErr    error
+	connCallResp    *adapterv1.CallConnectorToolResponse
+	connCallErr     error
+	gotConnListReq  *adapterv1.ListSessionConnectorsRequest
+	gotConnToolsReq *adapterv1.ListConnectorToolsRequest
+	gotConnCallReq  *adapterv1.CallConnectorToolRequest
 }
 
 func (s *stubGatewayControl) ExtendLease(_ context.Context, req *adapterv1.ExtendLeaseRequest) (*adapterv1.ExtendLeaseResponse, error) {
@@ -61,6 +72,30 @@ func (s *stubGatewayControl) CallPlatformTool(_ context.Context, req *adapterv1.
 		return nil, s.callErr
 	}
 	return s.callResp, nil
+}
+
+func (s *stubGatewayControl) ListSessionConnectors(_ context.Context, req *adapterv1.ListSessionConnectorsRequest) (*adapterv1.ListSessionConnectorsResponse, error) {
+	s.gotConnListReq = req
+	if s.connListErr != nil {
+		return nil, s.connListErr
+	}
+	return s.connListResp, nil
+}
+
+func (s *stubGatewayControl) ListConnectorTools(_ context.Context, req *adapterv1.ListConnectorToolsRequest) (*adapterv1.ListConnectorToolsResponse, error) {
+	s.gotConnToolsReq = req
+	if s.connToolsErr != nil {
+		return nil, s.connToolsErr
+	}
+	return s.connToolsResp, nil
+}
+
+func (s *stubGatewayControl) CallConnectorTool(_ context.Context, req *adapterv1.CallConnectorToolRequest) (*adapterv1.CallConnectorToolResponse, error) {
+	s.gotConnCallReq = req
+	if s.connCallErr != nil {
+		return nil, s.connCallErr
+	}
+	return s.connCallResp, nil
 }
 
 // dialStub boots stub on an in-memory bufconn server and returns a

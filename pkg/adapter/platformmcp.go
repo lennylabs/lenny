@@ -4,8 +4,6 @@ package adapter
 
 import (
 	"context"
-	"fmt"
-	"net"
 
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
 )
@@ -19,19 +17,12 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	if s.MCPSocket == "" || nonce == "" {
 		return nil
 	}
-	lis, err := net.Listen("unix", s.MCPSocket)
+	// §4.7 / §13: when a runtime UID is configured, the shared listener
+	// helper rejects any MCP connection from a process not running as that
+	// UID.
+	serveLis, err := s.listenIntraPodMCP(s.MCPSocket)
 	if err != nil {
-		return fmt.Errorf("listen on MCP socket %s: %w", s.MCPSocket, err)
-	}
-	// §4.7 / §13: when a runtime UID is configured, reject any MCP
-	// connection from a process not running as that UID.
-	var serveLis net.Listener = lis
-	if s.RuntimeUID != 0 {
-		uid := s.RuntimeUID
-		serveLis = &peerCheckedListener{
-			Listener: lis,
-			check:    func(c net.Conn) error { return checkPeerUID(c, uid) },
-		}
+		return err
 	}
 	srv := mcp.NewServer()
 	// §4.7 lines 879-883: when SO_PEERCRED is disabled, the static nonce

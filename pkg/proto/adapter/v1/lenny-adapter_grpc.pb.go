@@ -1095,9 +1095,12 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	GatewayControl_ExtendLease_FullMethodName       = "/lenny.adapter.v1.GatewayControl/ExtendLease"
-	GatewayControl_ListPlatformTools_FullMethodName = "/lenny.adapter.v1.GatewayControl/ListPlatformTools"
-	GatewayControl_CallPlatformTool_FullMethodName  = "/lenny.adapter.v1.GatewayControl/CallPlatformTool"
+	GatewayControl_ExtendLease_FullMethodName           = "/lenny.adapter.v1.GatewayControl/ExtendLease"
+	GatewayControl_ListPlatformTools_FullMethodName     = "/lenny.adapter.v1.GatewayControl/ListPlatformTools"
+	GatewayControl_CallPlatformTool_FullMethodName      = "/lenny.adapter.v1.GatewayControl/CallPlatformTool"
+	GatewayControl_ListSessionConnectors_FullMethodName = "/lenny.adapter.v1.GatewayControl/ListSessionConnectors"
+	GatewayControl_ListConnectorTools_FullMethodName    = "/lenny.adapter.v1.GatewayControl/ListConnectorTools"
+	GatewayControl_CallConnectorTool_FullMethodName     = "/lenny.adapter.v1.GatewayControl/CallConnectorTool"
 )
 
 // GatewayControlClient is the client API for GatewayControl service.
@@ -1139,6 +1142,32 @@ type GatewayControlClient interface {
 	// MCP tool result; a tool-level failure is an is_error result rather
 	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
 	CallPlatformTool(ctx context.Context, in *CallPlatformToolRequest, opts ...grpc.CallOption) (*CallPlatformToolResponse, error)
+	// ListSessionConnectors returns the §9.3 connectors a session's
+	// effective delegation policy permits. The adapter opens one intra-pod
+	// MCP server (the @lenny-connector-<id> socket) per returned connector
+	// and lists them in the manifest connectorServers array, so a
+	// type:agent runtime can reach every external tool its policy admits.
+	// The gateway filters the tenant's connector registry by the calling
+	// session's delegation policy, so a connector the policy denies is
+	// never advertised to the pod. spec: §9.3 line 142.
+	ListSessionConnectors(ctx context.Context, in *ListSessionConnectorsRequest, opts ...grpc.CallOption) (*ListSessionConnectorsResponse, error)
+	// ListConnectorTools returns the tool catalog a single §9.3 connector
+	// exposes, for the adapter's intra-pod per-connector MCP server to
+	// advertise on tools/list. The gateway acts as the MCP client to the
+	// external endpoint (the connector's mcpServerUrl), using the
+	// gateway-held OAuth credential — the credential never transits the
+	// pod. A connector the calling session's policy denies is rejected.
+	// spec: §9.3 lines 142-164.
+	ListConnectorTools(ctx context.Context, in *ListConnectorToolsRequest, opts ...grpc.CallOption) (*ListConnectorToolsResponse, error)
+	// CallConnectorTool forwards one §9.3 external tool call a type:agent
+	// runtime made against the adapter's intra-pod @lenny-connector-<id>
+	// socket to the gateway, which validates the connector_id against the
+	// calling pod's effective delegation policy (line 164) and proxies the
+	// tools/call to the external MCP endpoint with the gateway-held
+	// credential. The response carries the JSON-encoded MCP tool result; a
+	// tool-level failure is an is_error result rather than a gRPC error.
+	// spec: §9.3 lines 142-164.
+	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
 }
 
 type gatewayControlClient struct {
@@ -1173,6 +1202,36 @@ func (c *gatewayControlClient) CallPlatformTool(ctx context.Context, in *CallPla
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CallPlatformToolResponse)
 	err := c.cc.Invoke(ctx, GatewayControl_CallPlatformTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) ListSessionConnectors(ctx context.Context, in *ListSessionConnectorsRequest, opts ...grpc.CallOption) (*ListSessionConnectorsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionConnectorsResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ListSessionConnectors_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) ListConnectorTools(ctx context.Context, in *ListConnectorToolsRequest, opts ...grpc.CallOption) (*ListConnectorToolsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListConnectorToolsResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ListConnectorTools_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CallConnectorToolResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_CallConnectorTool_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1218,6 +1277,32 @@ type GatewayControlServer interface {
 	// MCP tool result; a tool-level failure is an is_error result rather
 	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
 	CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error)
+	// ListSessionConnectors returns the §9.3 connectors a session's
+	// effective delegation policy permits. The adapter opens one intra-pod
+	// MCP server (the @lenny-connector-<id> socket) per returned connector
+	// and lists them in the manifest connectorServers array, so a
+	// type:agent runtime can reach every external tool its policy admits.
+	// The gateway filters the tenant's connector registry by the calling
+	// session's delegation policy, so a connector the policy denies is
+	// never advertised to the pod. spec: §9.3 line 142.
+	ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error)
+	// ListConnectorTools returns the tool catalog a single §9.3 connector
+	// exposes, for the adapter's intra-pod per-connector MCP server to
+	// advertise on tools/list. The gateway acts as the MCP client to the
+	// external endpoint (the connector's mcpServerUrl), using the
+	// gateway-held OAuth credential — the credential never transits the
+	// pod. A connector the calling session's policy denies is rejected.
+	// spec: §9.3 lines 142-164.
+	ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error)
+	// CallConnectorTool forwards one §9.3 external tool call a type:agent
+	// runtime made against the adapter's intra-pod @lenny-connector-<id>
+	// socket to the gateway, which validates the connector_id against the
+	// calling pod's effective delegation policy (line 164) and proxies the
+	// tools/call to the external MCP endpoint with the gateway-held
+	// credential. The response carries the JSON-encoded MCP tool result; a
+	// tool-level failure is an is_error result rather than a gRPC error.
+	// spec: §9.3 lines 142-164.
+	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
 }
 
 // UnimplementedGatewayControlServer should be embedded to have
@@ -1235,6 +1320,15 @@ func (UnimplementedGatewayControlServer) ListPlatformTools(context.Context, *Lis
 }
 func (UnimplementedGatewayControlServer) CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallPlatformTool not implemented")
+}
+func (UnimplementedGatewayControlServer) ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSessionConnectors not implemented")
+}
+func (UnimplementedGatewayControlServer) ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListConnectorTools not implemented")
+}
+func (UnimplementedGatewayControlServer) CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CallConnectorTool not implemented")
 }
 func (UnimplementedGatewayControlServer) testEmbeddedByValue() {}
 
@@ -1310,6 +1404,60 @@ func _GatewayControl_CallPlatformTool_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GatewayControl_ListSessionConnectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionConnectorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ListSessionConnectors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ListSessionConnectors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ListSessionConnectors(ctx, req.(*ListSessionConnectorsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GatewayControl_ListConnectorTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConnectorToolsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ListConnectorTools(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ListConnectorTools_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ListConnectorTools(ctx, req.(*ListConnectorToolsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GatewayControl_CallConnectorTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CallConnectorToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).CallConnectorTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_CallConnectorTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).CallConnectorTool(ctx, req.(*CallConnectorToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GatewayControl_ServiceDesc is the grpc.ServiceDesc for GatewayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1328,6 +1476,18 @@ var GatewayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CallPlatformTool",
 			Handler:    _GatewayControl_CallPlatformTool_Handler,
+		},
+		{
+			MethodName: "ListSessionConnectors",
+			Handler:    _GatewayControl_ListSessionConnectors_Handler,
+		},
+		{
+			MethodName: "ListConnectorTools",
+			Handler:    _GatewayControl_ListConnectorTools_Handler,
+		},
+		{
+			MethodName: "CallConnectorTool",
+			Handler:    _GatewayControl_CallConnectorTool_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
