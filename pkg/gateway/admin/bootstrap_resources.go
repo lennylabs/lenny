@@ -63,12 +63,6 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// spec: §26.2 line 38 — a coding-agent runtime cannot back a pool
-		// on standard (runc) isolation, regardless of allowStandardIsolation.
-		if err := poolstore.ValidateCodingAgentIsolation(pl, poolstore.IsCodingAgentRuntime(p.RuntimeRef)); err != nil {
-			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
-			continue
-		}
 		existing, err := r.pools.Get(req.Context(), p.Name)
 		if errors.Is(err, poolstore.ErrNotFound) {
 			if !opts.dryRun {

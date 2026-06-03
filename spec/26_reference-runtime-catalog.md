@@ -35,7 +35,7 @@ All reference runtimes are **`type: agent`** ([§5.1](05_runtime-registry-and-po
 
 The four coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`) share a common workspace shape. They differ only in: image, LLM provider credential, and the name of the shell command invoked inside the pod. This section defines the shared pattern so individual entries stay focused on the differences.
 
-**Isolation profile.** All coding-agent runtimes use `isolationProfile: sandboxed` (gVisor) by default. Agents execute untrusted shell commands on behalf of the user, so host-kernel isolation is mandatory. Operators requiring stronger isolation MAY configure a `microvm` (Kata) pool via `allowedResourceClasses` and pool-level overrides; `standard` (runc) is **not** supported for coding-agent runtimes and the gateway rejects pool definitions that pair any coding-agent runtime with `isolationProfile: standard`.
+**Isolation profile.** The reference coding-agent runtimes set `isolationProfile: sandboxed` (gVisor) as their runtime-level default ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), because agents execute untrusted shell commands on behalf of the user and gVisor provides host-kernel isolation. An operator can override the profile per pool. A `microvm` (Kata) pool provides stronger isolation, and `standard` (runc) is permitted under the generic [§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles) `allowStandardIsolation` opt-in. An operator that overrides the default accepts the resulting isolation tradeoff.
 
 **Workspace layout.** Per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), each session's workspace lives at `/workspace/current/`. Coding-agent runtimes add the following conventions:
 
