@@ -404,6 +404,43 @@ tests:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/lennylabs/lenny-gateway:0.1.0
 
+  # spec: §17.8.6 ImageResolver — the gateway resolves its image from the
+  # single-source platform.registry.*. F-17.8.2.
+  - it: resolves the gateway image from platform.registry.url
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.url: registry.acme.internal/lenny
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.acme.internal/lenny/lenny-gateway:0.1.0
+
+  - it: a platform.registry override wins over the gateway url default
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.overrides:
+        lenny-gateway: mirror.acme.internal/lenny-gateway@sha256:deadbeef
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: mirror.acme.internal/lenny-gateway@sha256:deadbeef
+
+  - it: propagates platform.registry.pullSecretName to the gateway pod
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.pullSecretName: acme-regcred
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: acme-regcred
+
   - it: exposes the HTTP and gRPC container ports
     documentSelector:
       path: kind

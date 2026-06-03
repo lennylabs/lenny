@@ -14,6 +14,95 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 
 {{/*
+lenny.componentImage composes a Lenny component image reference from the
+single-source platform.registry.* values (§17.8.6: "the gateway,
+lenny-ops, controllers, lenny-backup, and the warm-pool controller all
+honor the same registry configuration"). It mirrors the
+pkg/common/registry ImageResolver precedence so a chart render and a
+binary resolve the same way. Invoke with a dict carrying the root
+context, the component short name, and the per-component image block:
+
+  {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-gateway" "image" .Values.gateway.image) }}
+
+Precedence:
+  1. platform.registry.overrides[<name>] — a complete reference wins.
+  2. platform.registry.url + "/" + <name> + ":" + tag — the single source.
+  3. The component image.repository + ":" + tag when registry.url is empty,
+     so a registry-less custom values file still renders.
+The tag defaults to .Chart.AppVersion when the component pins none.
+*/}}
+{{- define "lenny.componentImage" -}}
+{{- $root := .root -}}
+{{- $name := .name -}}
+{{- $image := .image | default dict -}}
+{{- $reg := $root.Values.platform.registry -}}
+{{- $overrides := $reg.overrides | default dict -}}
+{{- $tag := $image.tag | default $root.Chart.AppVersion -}}
+{{- if hasKey $overrides $name -}}
+{{- index $overrides $name -}}
+{{- else -}}
+{{- $url := $reg.url | default "" | trimSuffix "/" -}}
+{{- if $url -}}
+{{- printf "%s/%s:%s" $url $name $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $image.repository $tag -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.imagePullSecrets renders the imagePullSecrets list for a Lenny
+component pod spec from platform.registry.pullSecretName (§17.8.6). It
+emits nothing when no pull secret is configured, so a public-registry
+install renders an unchanged pod spec. Invoke with the root context at
+the pod-spec indent, for example:
+
+  {{- include "lenny.imagePullSecrets" $ | nindent 6 }}
+*/}}
+{{- define "lenny.imagePullSecrets" -}}
+{{- with .Values.platform.registry.pullSecretName }}
+imagePullSecrets:
+  - name: {{ . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.controllerAntiAffinity renders the §17.8.2 controller-tuning
+"Controller pod anti-affinity" block so the WarmPoolController and
+PoolScalingController leaders schedule onto different nodes. The shared
+controller.antiAffinity value selects the mode:
+  - "preferred" (Tier 1, advisory): preferredDuringScheduling, weight 100.
+  - "required"  (Tier 2/3): requiredDuringScheduling — the two leaders
+    must not co-locate, bounding the simultaneous-failover blast radius.
+Invoke with a dict carrying the root context and the peer component the
+pod schedules away from:
+
+  {{- include "lenny.controllerAntiAffinity" (dict "root" . "peer" "pool-scaling-controller") | nindent 6 }}
+*/}}
+{{- define "lenny.controllerAntiAffinity" -}}
+{{- $root := .root -}}
+{{- $peer := .peer -}}
+{{- $mode := $root.Values.controller.antiAffinity | default "preferred" -}}
+affinity:
+  podAntiAffinity:
+{{- if eq $mode "required" }}
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            lenny.dev/component: {{ $peer }}
+        topologyKey: kubernetes.io/hostname
+{{- else }}
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: {{ $peer }}
+          topologyKey: kubernetes.io/hostname
+{{- end }}
+{{- end -}}
+
+{{/*
 lenny.autoscaling.metric.* templates are the §4.1 SCL-026 canonical
 HPA metric-role mapping. The gateway HPA and KEDA ScaledObject
 (autoscaling-gateway.yaml) reference every scale metric by its named

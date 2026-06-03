@@ -35,25 +35,20 @@ spec:
         lenny.dev/component: pool-scaling-controller
     spec:
       serviceAccountName: lenny-pool-scaling-controller
-      # §4.6.2: prefer scheduling away from the WarmPoolController so a
-      # single node failure does not force both controllers to fail over
-      # at once, bounding the simultaneous-failover blast radius.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    lenny.dev/component: controller
-                topologyKey: kubernetes.io/hostname
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
+      {{- /* spec: §4.6.2 / §17.8.2 controller-tuning table — schedule away
+             from the WarmPoolController so a single node failure does not
+             force both controllers to fail over at once. The shared
+             controller.antiAffinity knob selects preferred (Tier 1) vs
+             required (Tier 2/3). F-17.8.6. */}}
+      {{- include "lenny.controllerAntiAffinity" (dict "root" . "peer" "controller") | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: pool-scaling-controller
-          image: "{{ .Values.poolScalingController.image.repository }}:{{ .Values.poolScalingController.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-pool-scaling-controller" "image" .Values.poolScalingController.image) | quote }}
           imagePullPolicy: {{ .Values.poolScalingController.image.pullPolicy }}
           args:
             - --leader-elect

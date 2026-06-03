@@ -45,13 +45,20 @@ spec:
         lenny.dev/component: controller
     spec:
       serviceAccountName: lenny-controller
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
+      {{- /* spec: §17.8.2 controller-tuning table — "Controller pod
+             anti-affinity": the WarmPoolController and PoolScalingController
+             leaders must not share a node (required at Tier 2/3). The mode
+             is the shared controller.antiAffinity knob so both controller
+             Deployments agree. F-17.8.6. */}}
+      {{- include "lenny.controllerAntiAffinity" (dict "root" . "peer" "pool-scaling-controller") | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-controller" "image" .Values.controller.image) | quote }}
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           args:
             - --leader-elect
@@ -110,6 +117,37 @@ spec:
             {{- end }}
             {{- with $rcNames.microvm }}
             - --microvm-runtime-class={{ . }}
+            {{- end }}
+            {{- /* spec: §17.8.2 controller-tuning table — per-tier limiter,
+                   concurrency, queue, dedup, and grace knobs. The binary
+                   carries defaults for each, so the chart renders a flag
+                   only when the operator (or a tier preset) sets the value,
+                   keeping a stock render unchanged. F-17.8.6. */}}
+            {{- with .Values.controller.tuning }}
+            {{- with .podCreateQPS }}
+            - --create-qps={{ . }}
+            {{- end }}
+            {{- with .podCreateBurst }}
+            - --create-burst={{ . }}
+            {{- end }}
+            {{- with .statusUpdateQPS }}
+            - --status-qps={{ . }}
+            {{- end }}
+            {{- with .statusUpdateBurst }}
+            - --status-burst={{ . }}
+            {{- end }}
+            {{- with .maxConcurrentReconciles }}
+            - --max-concurrent-reconciles={{ . }}
+            {{- end }}
+            {{- with .workqueueMaxDepth }}
+            - --workqueue-max-depth={{ . }}
+            {{- end }}
+            {{- with .statusUpdateDedupWindow }}
+            - --status-update-dedup-window={{ . }}
+            {{- end }}
+            {{- with .initialFillGracePeriod }}
+            - --initial-fill-grace-period={{ . }}
+            {{- end }}
             {{- end }}
           {{- if $hasPg }}
           env:

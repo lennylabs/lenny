@@ -139,3 +139,60 @@ tests:
           content:
             name: LENNY_POOL_SCALING_SAFETY_FACTOR
             value: "1.3"
+
+  # spec: §17.8.6 ImageResolver — the PSC resolves its image from the
+  # single-source platform.registry.*. F-17.8.2.
+  - it: resolves the PSC image from platform.registry.url
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      platform.registry.url: registry.acme.internal/lenny
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.acme.internal/lenny/lenny-pool-scaling-controller:0.1.0
+
+  - it: propagates platform.registry.pullSecretName to the PSC pod
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      platform.registry.pullSecretName: acme-regcred
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: acme-regcred
+
+  # spec: §17.8.2 controller-tuning table — the PSC shares the
+  # controller.antiAffinity knob with the WPC so the two leaders schedule
+  # onto different nodes. F-17.8.6.
+  - it: defaults the PSC anti-affinity to preferred against the WPC
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+          content:
+            weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  lenny.dev/component: controller
+              topologyKey: kubernetes.io/hostname
+
+  - it: requires PSC/WPC anti-affinity when controller.antiAffinity is required
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      controller.antiAffinity: required
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: controller
+            topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution

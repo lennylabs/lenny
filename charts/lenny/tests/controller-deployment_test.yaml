@@ -272,3 +272,167 @@ tests:
       - equal:
           path: spec.strategy.rollingUpdate.maxSurge
           value: 2
+
+  # spec: §17.8.6 ImageResolver — the gateway, lenny-ops, controllers,
+  # lenny-backup, and the warm-pool controller resolve every image
+  # reference from platform.registry.*. F-17.8.2.
+  - it: resolves the controller image from platform.registry.url
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.url: registry.acme.internal/lenny
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.acme.internal/lenny/lenny-controller:0.1.0
+
+  - it: a platform.registry override wins over the url default
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.url: registry.acme.internal/lenny
+      platform.registry.overrides:
+        lenny-controller: mirror.acme.internal/lenny-controller@sha256:abc123
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: mirror.acme.internal/lenny-controller@sha256:abc123
+
+  - it: propagates platform.registry.pullSecretName to imagePullSecrets
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.pullSecretName: acme-regcred
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: acme-regcred
+
+  - it: renders no imagePullSecrets when no pull secret is configured
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - isNull:
+          path: spec.template.spec.imagePullSecrets
+
+  # spec: §17.8.2 controller-tuning table — F-17.8.6. A stock render
+  # leaves the limiter/concurrency/queue/dedup/grace flags to the binary
+  # defaults (which match the Tier 1 column).
+  - it: omits the controller-tuning flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=1
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --create-qps=20
+
+  - it: renders the controller-tuning flags when controller.tuning is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.tuning:
+        podCreateQPS: 80
+        podCreateBurst: 200
+        statusUpdateQPS: 120
+        statusUpdateBurst: 400
+        maxConcurrentReconciles: 15
+        workqueueMaxDepth: 10000
+        statusUpdateDedupWindow: 250ms
+        initialFillGracePeriod: 120s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --create-qps=80
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --create-burst=200
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-qps=120
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-burst=400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --workqueue-max-depth=10000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-update-dedup-window=250ms
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --initial-fill-grace-period=120s
+
+  # spec: §17.8.2 controller-tuning table — "Controller pod
+  # anti-affinity". F-17.8.6.
+  - it: renders a preferred anti-affinity against the PSC by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+          content:
+            weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  lenny.dev/component: pool-scaling-controller
+              topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+
+  - it: renders a required anti-affinity when controller.antiAffinity is required
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.antiAffinity: required
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: pool-scaling-controller
+            topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+
+  # spec: §17.8.2 controller-tuning table — the Tier 3 preset pins the
+  # Tier 3 column (15 reconciles, 250ms dedup) and required anti-affinity.
+  - it: applies the Tier 3 controller-tuning column from the tier-3 preset
+    documentSelector:
+      path: kind
+      value: Deployment
+    values:
+      - ../presets/values-tier3.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-update-dedup-window=250ms
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: pool-scaling-controller
+            topologyKey: kubernetes.io/hostname

@@ -34437,7 +34437,7 @@ presets now override the §17.8.4 surface explicitly: events 10k/50k/100k,
 self-health 30s/10s/10s, and `acknowledgeNoPrometheus: false` restated at
 Tier 2/3.
 
-### - [ ] F-17.8.2 — 8-02 — `platform.registry.*` not used to assemble component image references [High] — OPEN
+### - [x] F-17.8.2 — 8-02 — `platform.registry.*` not used to assemble component image references [High] — CLOSED
 
 §17.8.6 declares `platform.registry.*` "the single source for all Lenny component image references (gateway, `lenny-ops`, controllers, `lenny-backup`)" and the spec ends with: "The chart's `ImageResolver` shared package (`pkg/common/registry/resolver.go`) composes every image reference from `platform.registry.*`, ensuring the gateway, `lenny-ops`, controllers, `lenny-backup`, and the warm-pool controller all honor the same registry configuration."
 
@@ -34463,6 +34463,29 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/controller-deployment.yaml:43`
 - `/Users/joan/projects/lenny/charts/lenny/templates/ops-deployment.yaml:95`
 - `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/registry-digest-webhook.yaml:15`
+
+**Resolution:** New `_helpers.tpl` `lenny.componentImage` mirrors the
+`pkg/common/registry` ImageResolver precedence (override → `url/<name>:tag`)
+and now composes every Lenny component image reference: gateway, lenny-ops,
+WarmPoolController, PoolScalingController, lenny-token-service, lenny-backup
+(backup + restore-test), lenny-preflight (preflight + crd-validate),
+lenny-migrate, the bootstrap `lenny-ctl`, and the shared `lenny-webhook`
+admission image (`_webhook.tpl` + cosign-verify). Setting
+`platform.registry.url` now redirects all of them to one registry path;
+`platform.registry.overrides[<name>]` redirects a single component. New
+`lenny.imagePullSecrets` propagates `platform.registry.pullSecretName` to
+every Lenny component pod's `imagePullSecrets`. The default render is
+byte-identical (url defaults to `ghcr.io/lennylabs`, name = the binary
+basename), so the existing image assertions pass unchanged. Helm cannot
+import the Go resolver, so the deploy-time composition lives in the chart
+helper that mirrors its precedence; the Go package stays the binary-side
+primitive (the adapter/egress-capture images remain operator-supplied full
+references via `--adapter-image` / `--egress-capture-image`, the resolver's
+override rung). Third-party images (CoreDNS, PgBouncer, MinIO mc, OTel) and
+the §26 reference-runtime catalog keep their own registries. Closed this
+batch (commit pending); helm-unittest covers url propagation, override
+precedence, and pull-secret propagation on the gateway, PSC, controller, and
+webhook surfaces.
 
 ### - [ ] F-17.8.3 — 8-03 — Bootstrap-mode admin API and status signaling not implemented [High] — OPEN
 
@@ -34544,7 +34567,7 @@ gateway resolves the per-tier default from the tier and passes it to
 outage-plus-recovery envelope. Chart exposes `billing.redisStreamMaxLen`
 (default 0) and the tier3 preset restates 72,000 explicitly.
 
-### - [ ] F-17.8.6 — 8-03 — Controller tuning table is largely unrendered [Medium] — OPEN
+### - [x] F-17.8.6 — 8-03 — Controller tuning table is largely unrendered [Medium] — CLOSED
 
 §17.8.2 "Controller tuning" table (spec lines 1110–1124) lists per-tier values for: pod-creation rate limiter (QPS/burst), status-update rate limiter (QPS/burst), `--max-concurrent-reconciles`, work queue max depth, initial fill grace period, controller replicas, controller pod anti-affinity (`--controller-anti-affinity`, `required` at Tier 2/3), `statusUpdateDeduplicationWindow` (`--status-update-dedup-window`, 500ms / 250ms), and etcd compaction/defrag/quota parameters.
 
@@ -34556,6 +34579,29 @@ Evidence:
 - `/Users/joan/projects/lenny/cmd/lenny-controller/main.go:82–106`
 - `/Users/joan/projects/lenny/charts/lenny/templates/controller-deployment.yaml:43–53`
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier3.yaml`
+
+**Resolution:** The binary half was stale — `cmd/lenny-controller/main.go`
+already defines and consumes every tuning flag (`--create-qps`/`--create-burst`,
+`--status-qps`/`--status-burst`, `--max-concurrent-reconciles`,
+`--workqueue-max-depth`, `--status-update-dedup-window`,
+`--initial-fill-grace-period`). The real gap was the chart, now closed: a new
+`controller.tuning` value block renders each flag (only when set, so a stock
+render keeps the binary defaults — which already match the Tier 1 limiter,
+concurrency, queue, and dedup columns), and the tier presets pin the per-tier
+column (Tier 2: 40/100, 60/200, 5 reconciles, 2000 queue, 90s grace; Tier 3:
+80/200, 120/400, 15 reconciles, 10000 queue, 250ms dedup, 120s grace). The
+"Controller pod anti-affinity" row is realized as the shared
+`controller.antiAffinity` knob (a podSpec concern, not a binary flag): a new
+`lenny.controllerAntiAffinity` helper renders `preferred` (Tier 1 advisory) or
+`required` (Tier 2/3) anti-affinity on both the WarmPoolController Deployment
+(previously had none) and the PoolScalingController (its hardcoded `preferred`
+block now reads the same knob), so the two leaders never share a node at
+Tier 2/3. `controller.replicas` was already wired. The etcd
+compaction/defrag/quota rows are external-infra guidance for the operator's
+etcd cluster (the chart ships no etcd workload) and stay out of chart scope.
+Closed this batch (commit pending); helm-unittest covers the default
+(flags-omitted) render, an explicit tuning override, preferred/required
+anti-affinity on both controllers, and the Tier 3 preset column.
 
 ### - [x] F-17.8.7 — 8-04 — `singleTenantRedisTopology` value and `RedisClusterRecommended` startup log are unimplemented [Medium] — CLOSED
 

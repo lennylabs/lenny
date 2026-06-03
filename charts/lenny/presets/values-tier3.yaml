@@ -107,9 +107,22 @@ autoscaling:
 
 # Controllers run 3 replicas at Tier 3 (§17.8.2 controller tuning
 # table) so a controller node failure leaves a quorum for leader
-# election.
+# election. The tuning block pins the Tier 3 column (higher limiter
+# rates, 15 concurrent reconciles, 250ms status-update dedup window);
+# anti-affinity is required so the WPC and PSC leaders never share a
+# node.
 controller:
   replicas: 3
+  antiAffinity: required
+  tuning:
+    podCreateQPS: 80
+    podCreateBurst: 200
+    statusUpdateQPS: 120
+    statusUpdateBurst: 400
+    maxConcurrentReconciles: 15
+    workqueueMaxDepth: 10000
+    statusUpdateDedupWindow: 250ms
+    initialFillGracePeriod: 120s
 
 # Token service runs 4 replicas at Tier 3 (§17.8.2 operational defaults
 # table).

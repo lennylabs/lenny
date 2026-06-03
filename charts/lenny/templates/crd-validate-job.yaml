@@ -85,6 +85,7 @@ spec:
         {{- include "lenny.labels" . | nindent 8 }}
     spec:
       serviceAccountName: lenny-crd-validate
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       restartPolicy: Never
       securityContext:
         runAsNonRoot: true
@@ -92,7 +93,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: crd-validate
-          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-preflight" "image" .Values.preflight.image) | quote }}
           imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
           args:
             - --crd-validate

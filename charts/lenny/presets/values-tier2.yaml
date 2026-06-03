@@ -67,9 +67,21 @@ autoscaling:
     prometheusServerAddress: http://prometheus.monitoring.svc:9090
 
 # Controllers run 2 replicas with leader election at every tier
-# (§17.8.2 controller tuning table).
+# (§17.8.2 controller tuning table). The tuning block pins the Tier 2
+# column; anti-affinity is required so the WPC and PSC leaders never
+# share a node.
 controller:
   replicas: 2
+  antiAffinity: required
+  tuning:
+    podCreateQPS: 40
+    podCreateBurst: 100
+    statusUpdateQPS: 60
+    statusUpdateBurst: 200
+    maxConcurrentReconciles: 5
+    workqueueMaxDepth: 2000
+    statusUpdateDedupWindow: 500ms
+    initialFillGracePeriod: 90s
 
 # Token service runs 2 replicas at Tier 2 (§17.8.2 operational defaults
 # table).

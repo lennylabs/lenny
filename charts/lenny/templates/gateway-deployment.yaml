@@ -214,6 +214,7 @@ spec:
         lenny.dev/component: gateway
     spec:
       serviceAccountName: lenny-gateway
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -310,7 +311,7 @@ spec:
       {{- end }}
       containers:
         - name: gateway
-          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-gateway" "image" .Values.gateway.image) | quote }}
           imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
           args:
             - --addr=:{{ .Values.gateway.internalPort }}

@@ -98,13 +98,14 @@ spec:
         prometheus.io/path: /metrics
     spec:
       serviceAccountName: lenny-ops-sa
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: ops
-          image: "{{ .Values.ops.image.repository }}:{{ .Values.ops.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-ops" "image" .Values.ops.image) | quote }}
           imagePullPolicy: {{ .Values.ops.image.pullPolicy }}
           args:
             - --addr=:{{ .Values.ops.httpPort }}

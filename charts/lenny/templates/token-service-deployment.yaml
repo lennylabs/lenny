@@ -45,6 +45,7 @@ spec:
         lenny.dev/component: token-service
     spec:
       serviceAccountName: lenny-token-service
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -70,7 +71,7 @@ spec:
       {{- end }}
       containers:
         - name: token-service
-          image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-token-service" "image" .Values.tokenService.image) | quote }}
           imagePullPolicy: {{ .Values.tokenService.image.pullPolicy }}
           args:
             - --addr=:{{ .Values.tokenService.httpPort }}

@@ -46,6 +46,7 @@ spec:
         {{- include "lenny.labels" . | nindent 8 }}
         lenny.dev/component: bootstrap
     spec:
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       restartPolicy: Never
       securityContext:
         runAsNonRoot: true
@@ -53,7 +54,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: bootstrap
-          image: "{{ $b.image.repository }}:{{ $b.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-ctl" "image" $b.image) | quote }}
           imagePullPolicy: {{ $b.image.pullPolicy }}
           # The lenny-ctl image is distroless and has no shell, so the
           # container runs the binary directly. lenny-ctl bootstrap

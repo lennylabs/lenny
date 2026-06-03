@@ -54,9 +54,20 @@ autoscaling:
   queueDepthTarget: 15
 
 # Controllers run 2 replicas with leader election at every tier
-# (§17.8.2 controller tuning table).
+# (§17.8.2 controller tuning table). The tuning block pins the Tier 1
+# column; anti-affinity is advisory (preferred) at Tier 1.
 controller:
   replicas: 2
+  antiAffinity: preferred
+  tuning:
+    podCreateQPS: 20
+    podCreateBurst: 50
+    statusUpdateQPS: 30
+    statusUpdateBurst: 100
+    maxConcurrentReconciles: 1
+    workqueueMaxDepth: 500
+    statusUpdateDedupWindow: 500ms
+    initialFillGracePeriod: 60s
 
 # Token service runs 2 replicas at Tier 1 (§17.8.2 operational defaults
 # table).

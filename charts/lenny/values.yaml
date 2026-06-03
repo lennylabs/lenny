@@ -51,6 +51,30 @@ controller:
     # tag defaults to the chart appVersion when left empty.
     tag: ""
     pullPolicy: IfNotPresent
+  # tuning carries the §17.8.2 "Controller tuning" table knobs. Each
+  # maps to a lenny-controller flag; an unset key falls back to the
+  # binary default, which already matches the Tier 1 column for the
+  # rate limiters (20/50 create, 30/100 status), max concurrent
+  # reconciles (1), work-queue max depth (500), and status-update dedup
+  # window (500ms). The tier presets (presets/values-tier{1,2,3}.yaml)
+  # set the per-tier values; a stock render leaves them to the binary.
+  # F-17.8.6.
+  tuning: {}
+    # podCreateQPS: 20               # --create-qps (pod-creation rate limiter)
+    # podCreateBurst: 50             # --create-burst
+    # statusUpdateQPS: 30            # --status-qps (status-update rate limiter)
+    # statusUpdateBurst: 100         # --status-burst
+    # maxConcurrentReconciles: 1     # --max-concurrent-reconciles
+    # workqueueMaxDepth: 500         # --workqueue-max-depth
+    # statusUpdateDedupWindow: 500ms # --status-update-dedup-window
+    # initialFillGracePeriod: 60s    # --initial-fill-grace-period
+  # antiAffinity selects the §17.8.2 controller pod anti-affinity mode
+  # shared by the WarmPoolController (this Deployment) and the
+  # PoolScalingController so the two leaders schedule onto different
+  # nodes:
+  #   preferred — advisory (Tier 1 default).
+  #   required  — the two leaders must not co-locate (Tier 2 / Tier 3).
+  antiAffinity: preferred
   resources:
     requests:
       cpu: 100m

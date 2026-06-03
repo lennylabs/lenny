@@ -50,13 +50,14 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: lenny-webhook
+      {{- include "lenny.imagePullSecrets" $ | nindent 6 }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: webhook
-          image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag | default $.Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-webhook" "image" $cfg.image) | quote }}
           imagePullPolicy: {{ $cfg.image.pullPolicy }}
           args:
             - --addr=:8443

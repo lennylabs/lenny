@@ -49,6 +49,7 @@ spec:
         {{- include "lenny.labels" . | nindent 8 }}
         lenny.dev/component: migrate
     spec:
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       restartPolicy: Never
       securityContext:
         runAsNonRoot: true
@@ -56,7 +57,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: "{{ $m.image.repository }}:{{ $m.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-migrate" "image" $m.image) | quote }}
           imagePullPolicy: {{ $m.image.pullPolicy }}
           args:
             - up
