@@ -76,6 +76,98 @@ func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 	return expected
 }
 
+// Spec17_2ValidatingWebhooks enumerates the ValidatingAdmissionWebhook
+// resources named in the §17.2 admission-policies catalogue (items 5-11
+// and 13). Item 12 (lenny-crd-conversion) is a CRD conversion endpoint
+// rather than a ValidatingWebhookConfiguration, so it is verified by
+// CheckConversionWebhook rather than the inventory check; items 1-4 are
+// Restricted-PSS enforcement and namespace targeting, not standalone
+// ValidatingWebhookConfigurations. This slice is the §17.2 "canonical
+// enumeration" (line 40) the preflight inventory cross-checks against.
+// spec: §17.2 lines 46-54. F-17.2.12.
+var Spec17_2ValidatingWebhooks = []string{
+	"lenny-label-immutability",
+	"lenny-direct-mode-isolation",
+	"lenny-sandboxclaim-guard",
+	"lenny-data-residency-validator",
+	"lenny-pool-config-validator",
+	"lenny-t4-node-isolation",
+	"lenny-drain-readiness",
+	"lenny-ephemeral-container-cred-guard",
+}
+
+// implementationOnlyValidatingWebhooks are ValidatingWebhookConfigurations
+// the chart renders and the preflight inventory tracks that the §17.2
+// admission-policies catalogue does not enumerate by name. Naming them
+// here keeps the §17.2 "single source of truth" cross-check (line 40)
+// machine-checked: a new implementation-only webhook cannot enter the
+// preflight expected set without an explicit, reviewed entry, and
+// CatalogueCoverage fails the inventory check if one does.
+//   - lenny-pod-security realizes the §13.1 / §17.2 items 1-3 Restricted
+//     PSS baseline as an in-tree ValidatingAdmissionWebhook rather than
+//     the OPA/Gatekeeper or Kyverno engine the §17.2 catalogue names
+//     (F-17.2.2 tracks that enforcement-engine divergence). It renders
+//     unconditionally and is part of the baseline set.
+//   - lenny-cosign-verify is the §5.2 image-signature webhook, gated by
+//     imageVerification.cosign.enabled.
+//   - lenny-registry-digest is the §5.2 / §25.8 digest-pinning webhook,
+//     gated by platform.registry.requireDigest.
+// spec: §17.2 line 40. F-17.2.12.
+var implementationOnlyValidatingWebhooks = []string{
+	"lenny-pod-security",
+	"lenny-cosign-verify",
+	"lenny-registry-digest",
+}
+
+// CatalogueCoverage cross-checks the preflight inventory against the
+// §17.2 admission-policies catalogue, making the chart-author cross-check
+// the spec mandates (§17.2 line 40) machine-verifiable rather than a
+// manual review step. It returns two slices:
+//
+//   - missingFromInventory: §17.2-enumerated ValidatingAdmissionWebhooks
+//     that no feature-flag combination of ExpectedValidatingWebhooks
+//     tracks. A non-empty result is a preflight gap — a spec webhook the
+//     inventory would let ship absent.
+//   - undocumentedImplementationOnly: webhooks the inventory tracks that
+//     are neither in the §17.2 catalogue nor declared
+//     implementationOnlyValidatingWebhooks. A non-empty result is a
+//     silent divergence from the §17.2 catalogue.
+//
+// Both empty means the inventory and the §17.2 catalogue agree. The
+// inventory union is taken with every feature flag enabled, since each
+// catalogue webhook is reachable under some flag combination. spec:
+// §17.2 line 40. F-17.2.12.
+func CatalogueCoverage() (missingFromInventory, undocumentedImplementationOnly []string) {
+	inventory := ExpectedValidatingWebhooks(WebhookFeatureFlags{
+		LLMProxy:       true,
+		DrainReadiness: true,
+		Compliance:     true,
+		CosignVerify:   true,
+		RegistryDigest: true,
+	})
+	inventorySet := make(map[string]bool, len(inventory))
+	for _, w := range inventory {
+		inventorySet[w] = true
+	}
+	catalogueSet := make(map[string]bool, len(Spec17_2ValidatingWebhooks))
+	for _, w := range Spec17_2ValidatingWebhooks {
+		catalogueSet[w] = true
+		if !inventorySet[w] {
+			missingFromInventory = append(missingFromInventory, w)
+		}
+	}
+	implOnlySet := make(map[string]bool, len(implementationOnlyValidatingWebhooks))
+	for _, w := range implementationOnlyValidatingWebhooks {
+		implOnlySet[w] = true
+	}
+	for _, w := range inventory {
+		if !catalogueSet[w] && !implOnlySet[w] {
+			undocumentedImplementationOnly = append(undocumentedImplementationOnly, w)
+		}
+	}
+	return missingFromInventory, undocumentedImplementationOnly
+}
+
 // WebhookConfig is the inspected state of one deployed
 // ValidatingWebhookConfiguration.
 type WebhookConfig struct {

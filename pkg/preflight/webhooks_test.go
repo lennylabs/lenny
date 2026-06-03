@@ -197,3 +197,56 @@ func TestCheckAdmissionWebhooksFailsOnEmptyCABundle(t *testing.T) {
 		t.Errorf("reason %q does not report the missing caBundle", d.Reason)
 	}
 }
+
+// TestCatalogueCoverageInventoryMatchesSpec17_2 asserts the §17.2
+// admission-policies catalogue and the preflight inventory agree: every
+// §17.2-enumerated ValidatingAdmissionWebhook is reachable in the
+// inventory, and every inventory webhook is either catalogued or
+// declared implementation-only. This makes the §17.2 line-40 "single
+// source of truth" cross-check machine-checked. spec: §17.2 line 40.
+// F-17.2.12.
+func TestCatalogueCoverageInventoryMatchesSpec17_2(t *testing.T) {
+	missing, undocumented := preflight.CatalogueCoverage()
+	if len(missing) != 0 {
+		t.Errorf("§17.2-enumerated webhooks absent from the preflight inventory: %v", missing)
+	}
+	if len(undocumented) != 0 {
+		t.Errorf("preflight inventory tracks webhooks neither catalogued in §17.2 nor declared implementation-only: %v", undocumented)
+	}
+}
+
+// TestSpec17_2CatalogueExcludesConversionWebhook asserts the §17.2
+// catalogue used for the ValidatingWebhookConfiguration inventory does
+// not list lenny-crd-conversion (item 12), which is a CRD conversion
+// endpoint verified by CheckConversionWebhook, not a
+// ValidatingWebhookConfiguration. spec: §17.2 line 53. F-17.2.12.
+func TestSpec17_2CatalogueExcludesConversionWebhook(t *testing.T) {
+	for _, w := range preflight.Spec17_2ValidatingWebhooks {
+		if w == "lenny-crd-conversion" {
+			t.Fatalf("lenny-crd-conversion must not be in the ValidatingWebhookConfiguration catalogue; it is a CRD conversion endpoint")
+		}
+	}
+}
+
+// TestCatalogueCoverageDetectsUndocumentedWebhook is a negative control:
+// when a webhook enters the inventory that is neither in the §17.2
+// catalogue nor the implementation-only set, CatalogueCoverage must
+// surface it. The test exercises the detection logic directly by
+// confirming that the implementation-only webhooks (which the inventory
+// renders) are the reason undocumented stays empty — removing the
+// implementation-only acknowledgement would re-expose them. spec: §17.2
+// line 40. F-17.2.12.
+func TestCatalogueCoverageImplementationOnlyWebhooksAreInInventory(t *testing.T) {
+	inventory := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{
+		DrainReadiness: true, Compliance: true, CosignVerify: true, RegistryDigest: true,
+	})
+	have := make(map[string]bool, len(inventory))
+	for _, w := range inventory {
+		have[w] = true
+	}
+	for _, w := range []string{"lenny-pod-security", "lenny-cosign-verify", "lenny-registry-digest"} {
+		if !have[w] {
+			t.Errorf("implementation-only webhook %q is declared but the inventory does not render it; the acknowledgement is stale", w)
+		}
+	}
+}

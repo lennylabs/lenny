@@ -3,8 +3,17 @@
 // Package direct_mode_isolation implements the pure-decision logic of
 // the lenny-direct-mode-isolation ValidatingAdmissionWebhook per spec
 // §4.9 and §13.2. The webhook is deployed fail-closed in front of
-// SandboxTemplate and CredentialPool resources in agent namespaces and
-// is rendered only when the features.llmProxy chart flag is enabled.
+// SandboxTemplate resources in agent namespaces and renders
+// unconditionally (§13.2 line 440 step 2). The credential-delivery
+// fields it inspects (deliveryMode, isolationProfile, spiffeBinding,
+// egressProfile) are authored only on the SandboxTemplate spec. A
+// SandboxWarmPool references a template by name (templateRef) and
+// carries none of these fields, and the per-session Sandbox CR is a
+// controller-produced copy-down from an already-validated template, so
+// the SandboxTemplate is the only admitted resource that can carry a
+// forbidden combination. Scoping the chart rule to sandboxtemplates is
+// therefore complete; matching SandboxWarmPool or core Pods would add
+// rules with no fields to inspect. spec: §17.2 line 47. F-17.2.14.
 //
 // In a multi-tenant deployment two credential-delivery configurations
 // expose cross-tenant credential risk and are rejected:
