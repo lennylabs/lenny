@@ -42,7 +42,7 @@ The `lenny-tier-promote` CLI runs the gate set in `pkg/tierpromotion` against th
 
 ## Diagnosis
 
-The pre-promotion gates verify that the source posture is healthy and that the target posture is reachable. Each check below maps to one `lenny-tier-promote validate` rule; a `FAIL` identifies the offending resource.
+The pre-promotion gates verify that the source posture is healthy and that the target posture is reachable. Each check below maps to one `lenny-tier-promote` rule; a `FAIL` identifies the offending resource. The CLI takes `--from` and `--to` directly; it has no `validate` subcommand.
 
 1. Confirm the cluster context and namespace.
 
@@ -51,7 +51,7 @@ The pre-promotion gates verify that the source posture is healthy and that the t
 
 2. Run the promotion gates against the current release.
 
-       lenny-tier-promote validate \
+       lenny-tier-promote \
          --from tier1 \
          --to tier2 \
          --namespace lenny-system
@@ -82,20 +82,19 @@ The upgrade applies the target tier preset, waits for the rolling restart, and r
 
 ### Post-checks (run after the upgrade)
 
-6. Run the same gate set against the promoted release.
+6. Re-run the same gate against the promoted release. The gate reads the live cluster, so running it after the upgrade confirms that the replica counts, the admission-webhook inventory, the storage class, and the §17.8.3 attestations now match the target tier.
 
-       lenny-tier-promote validate \
+       lenny-tier-promote \
          --from tier1 \
          --to tier2 \
-         --namespace lenny-system \
-         --post-upgrade
-
-   The post-upgrade pass confirms the replica counts, the admission webhook inventory, and the storage class match the target tier.
+         --namespace lenny-system
 
 7. Smoke-test the admin API and an end-to-end session.
 
-       lenny-ctl tenants list
-       lenny-ctl session start --tenant default --runtime echo
+       lenny-ctl admin tenants list
+       curl -fsS -X POST https://<gateway-host>/v1/sessions \
+         -H "Authorization: Bearer <token>" \
+         -d '{"runtimeRef":"echo","tenantId":"default"}'
 
 8. Confirm the new alert posture is wired by checking that the Prometheus rules for the target tier are loaded.
 
@@ -109,19 +108,18 @@ If a post-check fails, roll back to the pre-promotion release.
 
        helm rollback lenny --namespace lenny-system
 
-10. Verify the rollback restored the prior posture.
+10. Verify the rollback restored the prior posture. The promotion gate validates promotions only and rejects a target tier below the source, so confirm the revert directly against the cluster rather than re-running the gate in the demotion direction.
 
-        lenny-tier-promote validate \
-          --from tier2 \
-          --to tier1 \
-          --namespace lenny-system \
-          --post-upgrade
+        kubectl get deployment -n lenny-system \
+          -l app.kubernetes.io/part-of=lenny \
+          -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
+        helm get values lenny -n lenny-system
 
 11. If the underlying Postgres or admission-plane state is inconsistent after a rollback, restore from the backup recorded in step 3 (see [backup-and-restore.md](backup-and-restore.md)).
 
 ## Notes
 
-The promotion is a one-way operation in the sense that tier 1's single-tenant defaults do not satisfy tier 2's multi-tenant invariants. A 2→1 demotion is supported by the same CLI for incident recovery but requires acknowledgment of the data-loss implications (`--acknowledge-demotion`).
+The promotion is a one-way operation in the sense that tier 1's single-tenant defaults do not satisfy tier 2's multi-tenant invariants. The promotion gate validates promotions only and rejects a request whose target tier is below the source (`pkg/tierpromotion` errors on a demotion). A tier-2-to-tier-1 demotion for incident recovery is handled by `helm rollback` to the prior release (step 9) followed by a restore from the backup recorded in step 3, not by the gate.
 
 Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwarder, and the §25.11 backup-retention extension to 90 days. The §17.8.3 line 1285 NO-GO criterion makes KEDA mandatory at Tier 3; the validator rejects a chart that still renders `autoscaling.provider: hpa`. Before invoking the Tier 3 gate, run the Phase 13.5 benchmark harness and attest each result on the CLI:
 

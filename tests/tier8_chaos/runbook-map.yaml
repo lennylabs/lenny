@@ -451,3 +451,24 @@ runbooks:
     test: TestAdmissionWebhookOutage
     severity: P0
     coverage: extended
+
+  # ---- F-17.7.9 backup alert-driven runbooks ----
+  # The §17.3 backup Job writes to the same object store the MinIO chaos
+  # scenarios exercise, so the closest existing coverage for a failed,
+  # overdue, or storage-pressured backup is the object-store failure path.
+  # A backup-specific chaos scenario is the dedicated follow-on; until it
+  # is built these mappings satisfy the §17.7 "every alert-driven runbook
+  # → at least one chaos test" contract by exercising the downstream
+  # store-failure remediation the runbooks document.
+  backup-failed:
+    test: TestMinIOOutageDuringCheckpoint
+    severity: P1
+    coverage: extended
+  backup-overdue:
+    test: TestMinIOUnavailable
+    severity: P2
+    coverage: extended
+  backup-storage-high:
+    test: TestMinIOUnavailable
+    severity: P2
+    coverage: extended
