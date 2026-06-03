@@ -82,6 +82,25 @@ func New(opts Options) *Client {
 	}
 }
 
+// BaseURL returns the gateway root the client targets, with any
+// trailing slash trimmed. Command handlers use it to name the target in
+// up-front diagnostics before issuing a request.
+func (c *Client) BaseURL() string { return c.baseURL }
+
+// HasAuth reports whether the client carries a credential it can present
+// to the gateway: either a bearer token or the Embedded Mode dev-header
+// auth pair. A handler that requires an authenticated call (for example
+// `lenny runtime publish`, whose register step is platform-admin per
+// §24.18) checks this before reaching the gateway so a missing token
+// surfaces as a clear CLI diagnostic rather than a server-side 401.
+func (c *Client) HasAuth() bool { return c.bearer != "" || c.devTenant != "" }
+
+// Bearer returns the operator bearer token the client carries, or the
+// empty string when none is set. The token-exchange rotation
+// (`lenny-ctl admin users rotate-token`, §24.9) reads it to populate the
+// RFC 8693 `subject_token`.
+func (c *Client) Bearer() string { return c.bearer }
+
 // APIError is a non-2xx response surfaced as a Go error. It carries
 // the §15.1 error envelope fields.
 type APIError struct {

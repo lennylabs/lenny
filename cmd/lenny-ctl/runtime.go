@@ -148,23 +148,37 @@ func cmdRuntimeInit(args []string, stdout, stderr io.Writer) int {
 }
 
 // cmdRuntimeValidate parses the `runtime validate` flag set and runs the
-// static validator (§24.18).
+// validator (§24.18). With --binary it runs the §15.4.6
+// declared-vs-observed conformance probe; with --report it writes a
+// machine-readable JSON report.
 func cmdRuntimeValidate(args []string, stdout, stderr io.Writer) int {
-	path := "."
+	opts := runtimescaffold.ValidateOptions{Path: "."}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-h", "--help":
 			fmt.Fprintln(stdout, runtimeValidateUsage)
 			return 0
+		case "--binary":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny runtime validate: --binary requires a path")
+				return runtimescaffold.ValidateUsage
+			}
+			opts.BinaryPath, i = args[i+1], i+1
+		case "--report":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny runtime validate: --report requires a path")
+				return runtimescaffold.ValidateUsage
+			}
+			opts.ReportPath, i = args[i+1], i+1
 		default:
 			if len(args[i]) > 0 && args[i][0] == '-' {
 				fmt.Fprintf(stderr, "lenny runtime validate: unknown flag %q\n", args[i])
 				return runtimescaffold.ValidateUsage
 			}
-			path = args[i]
+			opts.Path = args[i]
 		}
 	}
-	return runtimescaffold.Validate(path, stdout, stderr)
+	return runtimescaffold.Validate(opts, stdout, stderr)
 }
 
 // cmdRuntimePublish implements `lenny runtime publish` (§24.18). It
@@ -218,6 +232,18 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 	}
 	if image == "" {
 		fmt.Fprintln(stderr, "lenny runtime publish: --image <ref> is required")
+		return 2
+	}
+
+	// §24.18 line 232: publish requires --api-url and an admin token for
+	// the platform-admin register step. Fail fast with a CLI-side
+	// diagnostic naming the target gateway when no credential is loaded,
+	// rather than pushing the image and then taking a server-side 401.
+	if !c.HasAuth() {
+		fmt.Fprintf(stderr,
+			"lenny runtime publish: no admin token configured for --api-url %s; "+
+				"set --token (or LENNY_API_TOKEN) — the register step requires platform-admin\n",
+			c.BaseURL())
 		return 2
 	}
 
@@ -336,23 +362,31 @@ Exit codes:
   5  the Language x Template combination is not supported
   6  --language or --template was omitted`
 
-const runtimeValidateUsage = `lenny runtime validate — statically validate a runtime repository (§24.18)
+const runtimeValidateUsage = `lenny runtime validate — validate a runtime repository (§24.18)
 
 Usage:
-  lenny runtime validate [<path>]
+  lenny runtime validate [<path>] [--binary <adapter>] [--report <path>]
 
 Validates the runtime repository at <path> (default the current
 directory) against the §5.1 runtime.yaml contract and the §15.4 adapter
 specification's repository expectations.
 
-This is a static validator: it checks the runtime.yaml structure and the
-repository layout. It does not start the runtime, so it reports the
-declared integration level only. To reconcile declared against observed,
-register the runtime with a gateway and inspect the lifecycle handshake.
+When --binary names a locally-built adapter binary, the validator runs
+the §15.4.6 conformance battery against it and reconciles the declared
+integration level against the observed level (lifecycle-channel connect,
+MCP nonce handshake). It exits non-zero when the runtime under-performs
+its declared level and prints a WARN when it under-declares. Without
+--binary the validator runs static checks only and reports the observed
+level as "not probed". The probe requires the lenny-compliance harness on
+PATH.
+
+Flags:
+  --binary <adapter>  Locally-built adapter binary to probe (§15.4.6)
+  --report <path>     Write a machine-readable JSON report to <path>
 
 Exit codes:
-  0  the repository passed every static check
-  1  one or more static checks failed
+  0  the repository passed every check (and observed >= declared)
+  1  a static check failed, or the runtime under-performs its declared level
   2  the path argument could not be read`
 
 const runtimePublishUsage = `lenny runtime publish — push and register a runtime (§24.18)

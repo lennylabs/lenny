@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -275,23 +276,63 @@ func TestOpsAutoDiscoveryFromGateway(t *testing.T) {
 	}
 }
 
-// TestOpsAutoDiscoveryMissingURLErrors covers the §25.14 fallback: when
-// the gateway advertises no opsServiceURL and --ops-server is not
-// passed, lenny-ctl errors with a clear message.
-func TestOpsAutoDiscoveryMissingURLErrors(t *testing.T) {
+// TestOpsAutoDiscoveryMissingURLFallsBackToGateway covers the §24.16
+// routing rule 3: when the gateway advertises no opsServiceURL and
+// --ops-server is not passed, lenny-ctl falls back to the gateway host
+// (rather than aborting) and surfaces a warning. The ops call is routed
+// to the gateway host. spec: §24.16 line 201 rule 3.
+func TestOpsAutoDiscoveryMissingURLFallsBackToGateway(t *testing.T) {
+	got := &capturedRequest{}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/admin/platform/version" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"gatewayVersion":"dev"}`)) // no opsServiceURL.
+			return
+		}
+		got.method = r.Method
+		got.path = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"gatewayVersion":"dev"}`)) // no opsServiceURL.
+		_, _ = w.Write([]byte(`{"runbooks":[]}`))
 	}))
 	defer gateway.Close()
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--api-url", gateway.URL, "runbooks", "list"}, &stdout, &stderr)
-	if code != 2 {
-		t.Errorf("missing ops URL: exit code %d, want 2", code)
+	if code != 0 {
+		t.Fatalf("fallback: exit code %d, want 0 (stderr %s)", code, stderr.String())
 	}
-	if stderr.Len() == 0 {
-		t.Error("a missing ops URL should produce an error message on stderr")
+	if got.path != "/v1/admin/runbooks" {
+		t.Errorf("fallback did not route the ops call to the gateway host: gateway saw %q", got.path)
+	}
+	if !strings.Contains(stderr.String(), "WARN") || !strings.Contains(stderr.String(), "falling back to the gateway host") {
+		t.Errorf("fallback should warn on stderr, got %q", stderr.String())
+	}
+}
+
+// TestOpsAutoDiscoveryGatewayUnreachableFallsBack covers the rule-3
+// fallback when the version probe itself fails (gateway unreachable for
+// that path): the ops call is still attempted against the gateway host
+// with a warning, rather than aborting at exit 2. spec: §24.16 line 201.
+func TestOpsAutoDiscoveryGatewayUnreachableFallsBack(t *testing.T) {
+	got := &capturedRequest{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/admin/platform/version" {
+			w.WriteHeader(http.StatusInternalServerError) // discovery fails.
+			return
+		}
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"runbooks":[]}`))
+	}))
+	defer gateway.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", gateway.URL, "runbooks", "list"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("fallback on discovery failure: exit %d, want 0 (stderr %s)", code, stderr.String())
+	}
+	if got.path != "/v1/admin/runbooks" {
+		t.Errorf("fallback did not route to the gateway host: gateway saw %q", got.path)
 	}
 }
 

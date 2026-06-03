@@ -17,20 +17,33 @@ import (
 )
 
 // withOps resolves the §25.14 lenny-ops endpoint and runs fn against a
-// client pointed at it. The ops URL comes from the --ops-server flag
-// when set; otherwise lenny-ctl auto-discovers it from the gateway's
-// GET /v1/admin/platform/version response (the opsServiceURL field).
-// When neither is available, withOps reports a clear error and returns
-// exit code 2 without invoking fn.
+// client pointed at it. The §24.16 routing rule is applied in order:
+//
+//  1. --ops-server (or LENNY_OPS_URL) when set.
+//  2. Otherwise auto-discover from the gateway's
+//     GET /v1/admin/platform/version response (the opsServiceURL field).
+//  3. When auto-discovery fails (gateway unreachable, or opsServiceURL
+//     absent because the cluster is mid-upgrade), fall back to the
+//     gateway host on the assumption that its operability endpoints still
+//     serve the request, and surface a warning for the ops command.
+//
+// spec: §24.16 line 201 (routing rules 1-3).
 func withOps(ctx context.Context, flags globalFlags, gateway *ctl.Client, stderr io.Writer, fn func(*ctl.Client) int) int {
 	opsURL := flags.opsServer
 	if opsURL == "" {
 		discovered, err := discoverOpsURL(ctx, gateway)
 		if err != nil {
-			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
-			return 2
+			// spec: §24.16 line 201 routing rule 3 — auto-discovery failed,
+			// so fall back to the gateway host rather than aborting. The
+			// command proceeds against the gateway; the operator is warned
+			// that only gateway-hosted operability endpoints will answer.
+			opsURL = gateway.BaseURL()
+			fmt.Fprintf(stderr,
+				"lenny-ctl: WARN: %v; falling back to the gateway host %s — only gateway-hosted operability endpoints will answer\n",
+				err, opsURL)
+		} else {
+			opsURL = discovered
 		}
-		opsURL = discovered
 	}
 	if !looksLikeURL(opsURL) {
 		fmt.Fprintf(stderr, "lenny-ctl: ops server URL %q is not a valid URL\n", opsURL)
@@ -47,20 +60,21 @@ func withOps(ctx context.Context, flags globalFlags, gateway *ctl.Client, stderr
 	return fn(ops)
 }
 
-// discoverOpsURL implements the §25.14 auto-discovery: it reads the
-// gateway's GET /v1/admin/platform/version response and returns the
-// opsServiceURL field. When that field is empty — the deployment did
-// not configure an ops Ingress — it returns an error instructing the
-// operator to pass --ops-server explicitly.
+// discoverOpsURL implements the §24.16 rule-2 auto-discovery: it reads
+// the gateway's GET /v1/admin/platform/version response and returns the
+// opsServiceURL field. It returns an error when the gateway is
+// unreachable or the field is empty (no ops Ingress configured, or the
+// cluster is mid-upgrade); withOps applies the rule-3 gateway-host
+// fallback on that error.
 func discoverOpsURL(ctx context.Context, gateway *ctl.Client) (string, error) {
 	var v struct {
 		OpsServiceURL string `json:"opsServiceURL"`
 	}
 	if err := gateway.Do(ctx, "GET", "/v1/admin/platform/version", nil, &v); err != nil {
-		return "", fmt.Errorf("could not auto-discover the lenny-ops URL from the gateway: %w; pass --ops-server explicitly", err)
+		return "", fmt.Errorf("could not auto-discover the lenny-ops URL from the gateway: %w", err)
 	}
 	if v.OpsServiceURL == "" {
-		return "", fmt.Errorf("the gateway did not advertise an opsServiceURL (no ops Ingress configured); pass --ops-server explicitly")
+		return "", fmt.Errorf("the gateway did not advertise an opsServiceURL (no ops Ingress configured)")
 	}
 	return v.OpsServiceURL, nil
 }

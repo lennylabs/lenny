@@ -174,6 +174,47 @@ func TestRuntimeValidateRejectsBrokenRepo(t *testing.T) {
 	}
 }
 
+// TestRuntimeValidateReportFlagWritesFile checks that `runtime validate
+// --report <path>` writes the machine-readable JSON report (§15.4.6).
+func TestRuntimeValidateReportFlagWritesFile(t *testing.T) {
+	code, dir := runtimeInitInDir(t, "rr", "--language", "go", "--template", "minimal")
+	if code != 0 {
+		t.Fatalf("scaffold: exit %d", code)
+	}
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	var stdout, stderr bytes.Buffer
+	vc := run([]string{"runtime", "validate", filepath.Join(dir, "rr"), "--report", reportPath}, &stdout, &stderr)
+	if vc != 0 {
+		t.Fatalf("validate --report: exit %d, want 0\nstdout=%q", vc, stdout.String())
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("--report did not write the file: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Report written to") {
+		t.Errorf("validate --report: stdout should confirm the write:\n%s", stdout.String())
+	}
+}
+
+// TestRuntimeValidateBinaryRequiresValue checks the --binary flag rejects
+// a missing value with exit 2.
+func TestRuntimeValidateBinaryRequiresValue(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"runtime", "validate", ".", "--binary"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("validate --binary with no value: exit %d, want 2", code)
+	}
+}
+
+// TestRuntimeValidateUnknownFlag checks that an unknown validate flag is
+// a usage error.
+func TestRuntimeValidateUnknownFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"runtime", "validate", ".", "--nope"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("validate --nope: exit %d, want 2", code)
+	}
+}
+
 // TestRuntimeValidateMissingPathExit2 checks that an unreadable path
 // argument exits 2.
 func TestRuntimeValidateMissingPathExit2(t *testing.T) {
@@ -200,6 +241,7 @@ func TestRuntimePublishRequiresImage(t *testing.T) {
 // POST /v1/admin/runtimes.
 func TestRuntimePublishRegistersAgainstGateway(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"my-agent"}`,
+		"--token", "admin-tok",
 		"runtime", "publish", "my-agent",
 		"--image", "ghcr.io/acme/runtime-my-agent:1.0.0", "--skip-push")
 	if code != 0 {
@@ -219,6 +261,28 @@ func TestRuntimePublishRegistersAgainstGateway(t *testing.T) {
 	}
 }
 
+// TestRuntimePublishRequiresAdminToken checks the §24.18 line 232
+// requirement: publish fails fast with a CLI-side diagnostic when no
+// admin token is configured, before any docker push or gateway call.
+func TestRuntimePublishRequiresAdminToken(t *testing.T) {
+	clearCLIEnv(t)
+	var stdout, stderr bytes.Buffer
+	// No --token and no dev headers: the client carries no credential.
+	code := run([]string{"--api-url", "https://gw.example.com",
+		"runtime", "publish", "my-agent",
+		"--image", "ghcr.io/acme/runtime-my-agent:1.0.0", "--skip-push"},
+		&stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("publish without a token: exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "no admin token configured") {
+		t.Errorf("publish without a token: stderr %q, want the admin-token diagnostic", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "gw.example.com") {
+		t.Errorf("publish without a token: diagnostic should name the --api-url, got %q", stderr.String())
+	}
+}
+
 // TestRuntimePublishWithManifest checks that `runtime publish
 // --manifest` registers the runtime.yaml fields, with the name and
 // image arguments overriding the manifest.
@@ -229,6 +293,7 @@ type: agent
 integrationLevel: full
 `)
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"my-agent"}`,
+		"--token", "admin-tok",
 		"runtime", "publish", "my-agent",
 		"--image", "ghcr.io/acme/runtime-my-agent:2.0.0",
 		"--manifest", manifest, "--skip-push")

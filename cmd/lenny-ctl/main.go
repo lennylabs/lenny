@@ -261,7 +261,8 @@ Gateway commands:
   preflight [--config <values.yaml>]    Assert installed CRD schema-version currency before helm upgrade (§10.5)
   values validate --config <values.yaml>  Validate a values.yaml against the chart's values.schema.json (§17.6, §24.20)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
-  runtime validate [<path>]             Statically validate a runtime repo
+  runtime validate [<path>] [--binary <adapter>] [--report <f>]
+                                        Validate a runtime repo; --binary runs the §15.4.6 conformance probe
   runtime publish <name> --image <ref>  Push and register a runtime
   admin tenants list                    List tenants
   admin tenants get <id>                Get a tenant
@@ -293,6 +294,8 @@ Gateway commands:
   admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
   admin sessions force-terminate <id> [--reason <text>]
                                         Force a stuck session to failed and release its pod (§24.11)
+  admin users rotate-token --user <name> [--namespace <ns>]
+                                        Rotate the admin token (RFC 8693 token-exchange) and patch the lenny-admin-token Secret (§24.9)
   admin quota reconcile (--all-tenants | --tenant <id>)
                                         Re-aggregate quota counters from Postgres into Redis after a Redis recovery (§24.6)
   admin circuit-breakers list           List circuit breakers
@@ -518,12 +521,14 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|quota|circuit-breakers|erasure-jobs|external-adapters)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|users|quota|circuit-breakers|erasure-jobs|external-adapters)")
 		return 2
 	}
 	switch args[0] {
 	case "tenants":
 		return cmdTenants(ctx, c, args[1:], stdout, stderr)
+	case "users":
+		return cmdUsers(ctx, c, args[1:], stdout, stderr)
 	case "runtimes":
 		return cmdRuntimes(ctx, c, args[1:], stdout, stderr)
 	case "pools":

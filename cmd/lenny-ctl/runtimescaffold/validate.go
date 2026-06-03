@@ -3,13 +3,19 @@
 package runtimescaffold
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/lennylabs/lenny/pkg/compliance"
 )
 
 // ValidateExit codes for `lenny runtime validate` (§24.18).
@@ -48,19 +54,56 @@ var validRuntimeTypes = map[string]bool{
 	"agent": true, "mcp": true,
 }
 
-// Validate runs the static checks `lenny runtime validate` performs
-// against the runtime repository rooted at path. It returns one of the
-// Validate* codes.
+// ValidateOptions configures a `lenny runtime validate` run.
+type ValidateOptions struct {
+	// Path is the runtime repository root. Empty defaults to ".".
+	Path string
+
+	// BinaryPath, when set, names a locally-built adapter binary to run
+	// the §15.4.6 declared-vs-observed conformance probe against. When
+	// empty the validator runs static checks only and the observed level
+	// is reported as "not probed".
+	BinaryPath string
+
+	// ReportPath, when set, names a file to write the machine-readable
+	// JSON validation report to (§15.4.6 `--report <path>`).
+	ReportPath string
+
+	// HarnessPath overrides the lenny-compliance binary location for the
+	// observed-level probe. Empty resolves the harness from $PATH. It is
+	// an internal seam used by tests; the CLI does not expose it.
+	HarnessPath string
+}
+
+// ValidateReport is the machine-readable document `lenny runtime validate
+// --report` writes. It carries the static-validation result and, when a
+// binary probe ran, the §15.4.6 declared-vs-observed reconciliation and
+// the full conformance battery (the same document cmd/lenny-compliance
+// --json emits).
+type ValidateReport struct {
+	Repository       string             `json:"repository"`
+	ChecksPerformed  []string           `json:"checksPerformed"`
+	Findings         []string           `json:"findings"`
+	DeclaredLevel    string             `json:"declaredLevel"`
+	IntegrationLevel *ObservedResult    `json:"integrationLevel,omitempty"`
+	Conformance      *compliance.Report `json:"conformance,omitempty"`
+	Result           string             `json:"result"`
+}
+
+// Validate runs `lenny runtime validate`. It always runs the static
+// checks against the runtime.yaml contract (§5.1) and repository layout
+// (§15.4). When opts.BinaryPath names a locally-built adapter binary it
+// additionally runs the §15.4.6 declared-vs-observed probe: the full
+// conformance battery is executed, the observed level is derived from the
+// gating checks, and the command exits non-zero when the runtime
+// under-performs its declared level or fails a category at or below it.
 //
-// Scope. This is a static validator: it checks the runtime.yaml
-// structure against the §5.1 Runtime contract and the repository layout
-// against the §15.4 adapter-spec expectations. It does not start the
-// runtime, so it cannot observe the lifecycle-channel handshake; the
-// declared-vs-observed reconciliation in §24.18 is reported here as a
-// declared level only, with the observed-level probe documented as a
-// step the operator runs by standing the runtime up against a gateway.
-// The report states this explicitly.
-func Validate(path string, stdout, stderr io.Writer) int {
+// It returns one of the Validate* codes.
+//
+// spec: §24.18 line 231 (declared-vs-observed reconciliation); §15.4.6
+// (conformance categories and the observed-level algorithm).
+func Validate(opts ValidateOptions, stdout, stderr io.Writer) int {
+	path := opts.Path
 	if path == "" {
 		path = "."
 	}
@@ -98,34 +141,114 @@ func Validate(path string, stdout, stderr io.Writer) int {
 	if manifest != nil && manifest.IntegrationLevel != "" {
 		declared = manifest.IntegrationLevel
 	}
+	sort.Strings(findings)
 
-	// Report.
+	report := ValidateReport{
+		Repository:      path,
+		ChecksPerformed: checks,
+		Findings:        findings,
+		DeclaredLevel:   declared,
+	}
+	exit := ValidateOK
+	if len(findings) > 0 {
+		exit = ValidateFailed
+	}
+
+	// Static-validation section.
 	fmt.Fprintf(stdout, "Runtime repository: %s\n", path)
 	fmt.Fprintln(stdout, "Checks performed:")
 	for _, c := range checks {
 		fmt.Fprintf(stdout, "  - %s\n", c)
 	}
+	if len(findings) > 0 {
+		fmt.Fprintf(stdout, "Static issues (%d):\n", len(findings))
+		for _, f := range findings {
+			fmt.Fprintf(stdout, "  - %s\n", f)
+		}
+	}
 	if manifest != nil {
 		fmt.Fprintf(stdout, "Declared integration level: %s\n", declared)
-		fmt.Fprintln(stdout,
-			"Observed integration level: not probed. The static validator does "+
-				"not start the runtime. To reconcile declared against observed, "+
-				"register the runtime with a gateway and inspect the "+
-				"lifecycle_capabilities / lifecycle_support handshake; the gateway "+
-				"reports RUNTIME_LEVEL_UNDERPERFORMS when the observed level is "+
-				"below the declared level.")
 	}
 
-	if len(findings) == 0 {
-		fmt.Fprintln(stdout, "Result: pass — no static issues found.")
-		return ValidateOK
+	// Observed-level reconciliation (§15.4.6).
+	if opts.BinaryPath == "" {
+		fmt.Fprintln(stdout,
+			"Observed integration level: not probed. Pass --binary <path> to a "+
+				"locally-built adapter binary to run the §15.4.6 declared-vs-observed "+
+				"reconciliation.")
+	} else {
+		obs, perr := probeObservedLevel(context.Background(), opts.BinaryPath, declared, opts.HarnessPath)
+		switch {
+		case errors.Is(perr, compliance.ErrHarnessNotFound):
+			fmt.Fprintln(stdout,
+				"Observed integration level: not probed — the lenny-compliance harness "+
+					"was not found on PATH. Install it (TESTING.md) to run the §15.4.6 "+
+					"reconciliation.")
+		case perr != nil:
+			findings = append(findings, "observed-level probe failed: "+perr.Error())
+			report.Findings = findings
+			exit = ValidateFailed
+			fmt.Fprintf(stdout, "Observed integration level: probe error: %v\n", perr)
+		default:
+			rep := obs.Report
+			report.IntegrationLevel = &obs
+			report.Conformance = &rep
+			fmt.Fprintf(stdout, "Observed integration level: %s (declared %s) — %s\n",
+				obs.Observed, obs.Declared, obs.Status)
+			fmt.Fprintf(stdout, "Conformance: %d checks, %d passed, %d failed\n",
+				rep.Summary.Total, rep.Summary.Passed, rep.Summary.Failed)
+			switch obs.Status {
+			case StatusUnderperforms:
+				exit = ValidateFailed
+				fmt.Fprintf(stdout,
+					"ERROR: runtime_level_underperforms — declared %s, observed %s; missing capabilities: %s\n",
+					obs.Declared, obs.Observed, strings.Join(obs.Missing, ", "))
+			case StatusUnderdeclared:
+				fmt.Fprintf(stdout,
+					"WARN: runtime is underdeclared — declared %s, observed %s; raise integrationLevel in runtime.yaml to %s\n",
+					obs.Declared, obs.Observed, obs.Observed)
+			}
+			// A failure in a category at or below the declared level fails
+			// the command even when it does not change the observed gate
+			// (§15.4.6: "exits 0 on a full pass and non-zero otherwise").
+			if df := failuresAtOrBelow(rep.Checks, compliance.Level(declared)); len(df) > 0 {
+				exit = ValidateFailed
+				fmt.Fprintf(stdout,
+					"Failed conformance categories at or below declared level %s: %s\n",
+					declared, strings.Join(df, ", "))
+			}
+		}
 	}
-	sort.Strings(findings)
-	fmt.Fprintf(stdout, "Result: %d issue(s) found:\n", len(findings))
-	for _, f := range findings {
-		fmt.Fprintf(stdout, "  - %s\n", f)
+
+	if exit == ValidateOK {
+		report.Result = "pass"
+		fmt.Fprintln(stdout, "Result: pass")
+	} else {
+		report.Result = "fail"
+		fmt.Fprintln(stdout, "Result: fail")
 	}
-	return ValidateFailed
+
+	if opts.ReportPath != "" {
+		if err := writeValidateReport(opts.ReportPath, report); err != nil {
+			fmt.Fprintf(stderr, "lenny runtime validate: write report: %v\n", err)
+			if exit == ValidateOK {
+				exit = ValidateFailed
+			}
+		} else {
+			fmt.Fprintf(stdout, "Report written to %s\n", opts.ReportPath)
+		}
+	}
+	return exit
+}
+
+// writeValidateReport marshals the report as indented JSON and writes it
+// to path (§15.4.6 `--report <path>`).
+func writeValidateReport(path string, r ValidateReport) error {
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
 }
 
 // loadManifest reads and parses runtime.yaml. It returns the parsed
