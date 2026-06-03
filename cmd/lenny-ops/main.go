@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/discovery"
@@ -56,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
@@ -64,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
@@ -475,7 +478,18 @@ func main() {
 	// cron (§25.4 line 1338) runs leader-only alongside the backup jobs.
 	upgradeSvc := buildUpgradeService(opsEmitter)
 	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, opsEmitter)
-	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker))
+	// §25.8 live upgrade gauges (phase + duration): a collector that reads
+	// the orchestrator's singleton at scrape time so the gauges advance
+	// without a background goroutine. Registered on the default registry
+	// so the §16.9 /metrics exposition scrapes them.
+	metrics.MustRegister(prometheus.DefaultRegisterer, upgradeservice.NewMetricsCollector(upgradeSvc))
+	// §25.8 GET /v1/admin/platform/version/full aggregator over the
+	// component sources lenny-ops can reach; it also raises the
+	// lenny_platform_version_drift gauge on each aggregation.
+	versionAggregator := buildVersionAggregator(
+		buildVersion, *gatewayURL, gatewayHTTP, pgPool, clientset,
+		envOr("POD_NAMESPACE", *leaderElectNS))
+	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator))
 
 	// The §25.4 service body: leader election plus the background loops.
 	// The §25.11 scheduled-backup cron jobs and the §25.8
@@ -584,25 +598,26 @@ func main() {
 		podLogs = k8sPodLogReader{pods: clientset.CoreV1()}
 	}
 	opsHandler := opsserver.New(opsserver.Options{
-		Probes:           probes,
-		Runbooks:         runbookSource,
-		SelfHealth:       svc.Monitor(),
-		Leader:           svc,
-		Backups:          backupSvc,
-		Diagnostics:      diagnosticSvc,
-		Drift:            driftSvc,
-		Locks:            lockStore,
-		LockCoordination: lockCoordination,
-		Escalations:      escalationSvc,
-		EventStream:      eventStream,
-		ReleaseChannel:   releaseChannelPub,
-		Upgrade:          upgradeSvc,
-		UpgradeChecker:   upgradeChecker,
-		PodLogs:          podLogs,
-		Production:       *production,
-		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
-		Auth:             authCfg,
-		Idempotency:      idemStore,
+		Probes:            probes,
+		Runbooks:          runbookSource,
+		SelfHealth:        svc.Monitor(),
+		Leader:            svc,
+		Backups:           backupSvc,
+		Diagnostics:       diagnosticSvc,
+		Drift:             driftSvc,
+		Locks:             lockStore,
+		LockCoordination:  lockCoordination,
+		Escalations:       escalationSvc,
+		EventStream:       eventStream,
+		ReleaseChannel:    releaseChannelPub,
+		Upgrade:           upgradeSvc,
+		UpgradeChecker:    upgradeChecker,
+		VersionAggregator: versionAggregator,
+		PodLogs:           podLogs,
+		Production:        *production,
+		DiagnosticsAudit:  buildDiagnosticsAudit(*diagnosticsAuditRate),
+		Auth:              authCfg,
+		Idempotency:       idemStore,
 		// §16.8 / §16.9: expose every instrument registered on the process
 		// default registry (self-health, backup, drift, rate-limit,
 		// diagnostics) on the mandatory lenny-ops scrape target.

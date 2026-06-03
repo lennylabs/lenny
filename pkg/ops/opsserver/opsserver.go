@@ -81,6 +81,7 @@ type Server struct {
 	releaseChannel     *releasechannel.Publisher
 	upgrade            *upgradeservice.Service
 	upgradeChecker     *upgradeservice.Checker
+	versionAggregator  *upgradeservice.VersionAggregator
 	podLogs            PodLogReader
 	production         bool
 
@@ -165,6 +166,12 @@ type Options struct {
 	// When non-nil the Server registers GET
 	// /v1/admin/platform/upgrade-check; when nil the route is unmapped.
 	UpgradeChecker *upgradeservice.Checker
+	// VersionAggregator backs the §25.8 GET
+	// /v1/admin/platform/version/full report. When non-nil the Server
+	// registers the route; when nil the route is unmapped (404). The
+	// aggregator queries the per-component version sources lenny-ops can
+	// reach and flags drift from the running build.
+	VersionAggregator *upgradeservice.VersionAggregator
 	// PodLogs, when non-nil, backs the §25.4 GET
 	// /v1/admin/logs/pods/{namespace}/{name} log-proxy endpoint with the
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
@@ -233,6 +240,7 @@ func New(opts Options) *Server {
 		releaseChannel:     opts.ReleaseChannel,
 		upgrade:            opts.Upgrade,
 		upgradeChecker:     opts.UpgradeChecker,
+		versionAggregator:  opts.VersionAggregator,
 		podLogs:            opts.PodLogs,
 		production:         opts.Production,
 		diagAuditCfg:       opts.DiagnosticsAudit,

@@ -41,26 +41,32 @@ import (
 const PlatformScope = "platform"
 
 // Error codes for the §25.8 upgrade-orchestration envelope. The
-// opsserver handler maps each to an HTTP status.
+// opsserver handler maps each to an HTTP status. The canonical §25.8
+// error-code table (spec line 3629) is declared in full in codes.go;
+// the constants below are the subset the orchestrator state machine
+// returns, named to match the spec table verbatim.
 const (
 	// CodeUpgradeInProgress rejects a second start while an upgrade is
 	// active (§25.8: the platform_upgrade_state singleton holds one
-	// upgrade at a time).
-	CodeUpgradeInProgress = "UPGRADE_IN_PROGRESS"
+	// upgrade at a time). spec: §25.8 UPGRADE_ALREADY_IN_PROGRESS.
+	CodeUpgradeInProgress = CodeUpgradeAlreadyInProgress
 	// CodeNoUpgrade reports that no upgrade is active for a
-	// proceed/pause/rollback/verify/status call.
-	CodeNoUpgrade = "NO_ACTIVE_UPGRADE"
+	// proceed/pause/rollback/verify/status call. spec: §25.8
+	// UPGRADE_NOT_IN_PROGRESS.
+	CodeNoUpgrade = CodeUpgradeNotInProgress
 	// CodeUpgradeTerminal rejects an advance on a Complete or RolledBack
-	// upgrade.
+	// upgrade. This is an orchestrator extension to the §25.8 table; a
+	// terminal upgrade is neither "in progress" nor rollbackable.
 	CodeUpgradeTerminal = "UPGRADE_TERMINAL"
 	// CodeNotRollbackable rejects a rollback past the §25.8 point of no
-	// return (SchemaMigration onward).
-	CodeNotRollbackable = "UPGRADE_NOT_ROLLBACKABLE"
+	// return (SchemaMigration onward). spec: §25.8
+	// UPGRADE_ROLLBACK_UNAVAILABLE.
+	CodeNotRollbackable = CodeUpgradeRollbackUnavailable
 	// CodeNotVerifiable rejects a verify call outside the Verification
-	// phase.
+	// phase. Orchestrator extension to the §25.8 table.
 	CodeNotVerifiable = "UPGRADE_NOT_AT_VERIFICATION"
 	// CodeUnavailable reports the orchestrator is not configured (no
-	// store), the lenny-ops cold-start posture.
+	// store), the lenny-ops cold-start posture. Orchestrator extension.
 	CodeUnavailable = "UPGRADE_SERVICE_UNAVAILABLE"
 )
 
@@ -445,6 +451,56 @@ func (s *Service) Verify(ctx context.Context) (State, error) {
 // spec: §25.8 GET /v1/admin/platform/upgrade/status.
 func (s *Service) Status(ctx context.Context) (State, bool, error) {
 	return s.store.Load(ctx)
+}
+
+// MetricsSnapshot is the point-in-time data the §25.8 upgrade metrics
+// collector reports: the current phase encoded as an integer and the
+// elapsed time since the upgrade started.
+type MetricsSnapshot struct {
+	// Present is false when no upgrade has ever been recorded; the
+	// collector emits nothing in that case.
+	Present bool
+	// TargetVersion is the `target_version` label on both metrics.
+	TargetVersion string
+	// PhaseCode is the §25.8 lenny_platform_upgrade_phase value: the
+	// 1-based working-phase step (Preflight=1, Verification=7) and 0 for a
+	// terminal upgrade, so the PlatformUpgradeStuck alert (phase > 0) does
+	// not fire on a completed or rolled-back upgrade.
+	PhaseCode int
+	// DurationSeconds is lenny_platform_upgrade_duration_seconds: the time
+	// since the upgrade started. It grows while the upgrade is active and
+	// freezes at the terminal-transition time once the upgrade completes
+	// or rolls back.
+	DurationSeconds float64
+}
+
+// MetricsSnapshot reads the singleton and computes the §25.8 upgrade
+// metric values at call time. The collector calls it on every Prometheus
+// scrape so lenny_platform_upgrade_duration_seconds advances without a
+// background refresh.
+func (s *Service) MetricsSnapshot(ctx context.Context) (MetricsSnapshot, error) {
+	st, ok, err := s.store.Load(ctx)
+	if err != nil {
+		return MetricsSnapshot{}, err
+	}
+	if !ok {
+		return MetricsSnapshot{}, nil
+	}
+	code, _ := upgrade.StepNumber(st.Phase) // 0 for the terminal phases
+	end := s.now()
+	if upgrade.IsTerminal(st.Phase) {
+		end = st.UpdatedAt // freeze the duration at completion
+	}
+	dur := end.Sub(st.StartedAt).Seconds()
+	if dur < 0 {
+		dur = 0
+	}
+	return MetricsSnapshot{
+		Present:         true,
+		TargetVersion:   st.TargetVersion,
+		PhaseCode:       code,
+		DurationSeconds: dur,
+	}, nil
 }
 
 // transition loads the singleton, requires an active upgrade, applies

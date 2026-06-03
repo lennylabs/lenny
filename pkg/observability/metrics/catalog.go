@@ -434,6 +434,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_backup_reconcile_blocked_total", TypeCounter, "Backup reconciliations blocked, read by BackupReconcileBlocked"},
 	{"lenny_platform_upgrade_available", TypeGauge, "1 when a new platform release is available, read by PlatformUpgradeAvailable"},
 	{"lenny_platform_upgrade_phase", TypeGauge, "Current platform-upgrade phase (0 terminal), read by PlatformUpgradeStuck"},
+	{"lenny_platform_upgrade_duration_seconds", TypeGauge, "Seconds since the active platform upgrade started"},
 	{"lenny_platform_version_drift", TypeGauge, "Count of components whose version drifts from the active binary, read by PlatformVersionDrift"},
 	{"lenny_compliance_profile_decommissioned_total", TypeCounter, "Compliance-profile decommission events, read by CompliancePostureDecommissioned"},
 	{"lenny_gdpr_legal_hold_overridden_total", TypeCounter, "Legal-hold override uses, read by LegalHoldOverrideUsed"},

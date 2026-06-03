@@ -64,10 +64,15 @@ func NewPublisher(opts PublisherOptions) (*Publisher, error) {
 }
 
 // ServeHTTP implements §25.8 GET /v1/latest. It honors the
-// `?channel=stable|beta` query parameter; an unknown channel returns
-// 400. A channel with no advertised release returns 404. A signing or
-// encoding failure returns 503. Successful responses carry the
-// canonical JSON manifest and the X-Lenny-Release-Signature header.
+// `?channel=stable|beta` query parameter (an unknown channel returns
+// 400) and the `?currentVersion=` personalized filter: when the caller
+// supplies a current version below the advertised release's
+// `minUpgradeFrom` prerequisite, the publisher refuses to advertise the
+// newer release and returns 404, the same "no upgrade available to you"
+// signal the upgrade-check client treats as not-upgradeable. A channel
+// with no advertised release returns 404. A signing or encoding failure
+// returns 503. Successful responses carry the canonical JSON manifest
+// and the X-Lenny-Release-Signature header.
 func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed,
@@ -90,6 +95,16 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusServiceUnavailable,
 			"manifest source: "+err.Error())
+		return
+	}
+
+	// §25.8 line 3410: refuse to advertise a release the caller cannot
+	// upgrade to directly because its current version is below the
+	// release's hard minUpgradeFrom prerequisite.
+	if currentVersion := r.URL.Query().Get("currentVersion"); !manifest.MeetsMinUpgradeFrom(currentVersion) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf(
+			"release %s requires a current version of at least %s; %s is below the prerequisite",
+			manifest.Version, manifest.MinUpgradeFrom, currentVersion))
 		return
 	}
 

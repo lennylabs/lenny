@@ -22,6 +22,9 @@ func (s *Server) registerPlatformUpgradeRoutes() {
 	if s.upgradeChecker != nil {
 		s.mux.HandleFunc("GET /v1/admin/platform/upgrade-check", s.handleUpgradeCheck)
 	}
+	if s.versionAggregator != nil {
+		s.mux.HandleFunc("GET /v1/admin/platform/version/full", s.handleVersionFull)
+	}
 	if s.upgrade == nil {
 		return
 	}
@@ -148,6 +151,20 @@ func (s *Server) handleUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// handleVersionFull serves GET /v1/admin/platform/version/full: the
+// §25.8 aggregated version report across the components lenny-ops can
+// query, with per-component drift against the running build. Sources
+// that cannot be reached degrade their component to unavailable and add
+// a degradation warning rather than failing the report.
+func (s *Server) handleVersionFull(w http.ResponseWriter, r *http.Request) {
+	if s.versionAggregator == nil {
+		conventions.WriteError(w, http.StatusServiceUnavailable, upgradeservice.CodeUnavailable,
+			conventions.CategoryTransient, "the platform version aggregator is not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.versionAggregator.Aggregate(r.Context()))
+}
+
 // upgradeReason extracts the optional operator justification from a
 // pause/rollback body. A malformed body yields no reason rather than a
 // 400, since the field is optional.
@@ -184,10 +201,14 @@ func upgradeStatusBody(st upgradeservice.State) map[string]any {
 func (s *Server) writeUpgradeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, upgradeservice.ErrUpgradeInProgress):
+		// §25.8: UPGRADE_ALREADY_IN_PROGRESS is category POLICY, 409.
 		conventions.WriteError(w, http.StatusConflict, upgradeservice.CodeUpgradeInProgress,
-			conventions.CategoryPermanent, err.Error())
+			conventions.CategoryPolicy, err.Error())
 	case errors.Is(err, upgradeservice.ErrNoUpgrade):
-		conventions.WriteError(w, http.StatusNotFound, upgradeservice.CodeNoUpgrade,
+		// §25.8: UPGRADE_NOT_IN_PROGRESS is 409 PERMANENT for a mutating
+		// proceed/pause/rollback/verify with no active upgrade. (A GET
+		// /status with no upgrade is handled separately as a 404.)
+		conventions.WriteError(w, http.StatusConflict, upgradeservice.CodeNoUpgrade,
 			conventions.CategoryPermanent, err.Error())
 	case errors.Is(err, upgradeservice.ErrUpgradeTerminal):
 		conventions.WriteError(w, http.StatusConflict, upgradeservice.CodeUpgradeTerminal,

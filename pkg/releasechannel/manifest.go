@@ -31,6 +31,7 @@ package releasechannel
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 )
 
@@ -113,6 +114,66 @@ func ParseChannel(s string) (Channel, error) {
 		return "", errors.New("releasechannel: unknown channel " + s)
 	}
 	return c, nil
+}
+
+// MeetsMinUpgradeFrom reports whether currentVersion satisfies the
+// manifest's MinUpgradeFrom prerequisite. An empty currentVersion (the
+// caller did not pass ?currentVersion=) or an empty MinUpgradeFrom (the
+// release imposes no hard floor) both pass: the §25.8 personalized
+// filter is opt-in on both sides. Otherwise the release is advertised
+// only when currentVersion is at or above MinUpgradeFrom.
+//
+// spec: §25.8 line 3410 ("?currentVersion=1.4.3 (for personalized
+// minUpgradeFrom — the service may refuse to advertise a newer release
+// if the current version is below a hard prerequisite)").
+func (m Manifest) MeetsMinUpgradeFrom(currentVersion string) bool {
+	currentVersion = strings.TrimSpace(currentVersion)
+	if currentVersion == "" || strings.TrimSpace(m.MinUpgradeFrom) == "" {
+		return true
+	}
+	return compareSemver(currentVersion, m.MinUpgradeFrom) >= 0
+}
+
+// compareSemver compares two dotted version strings numerically,
+// returning -1 when a < b, 0 when equal, and +1 when a > b. A leading
+// "v" and any "-prerelease"/"+build" suffix are stripped before the
+// numeric component compare. The helper is the lower-layer twin of
+// upgradeservice.CompareSemver; releasechannel cannot import
+// upgradeservice (that package imports this one), so the minimal
+// "is this version at least that one" predicate is duplicated here.
+//
+// spec: §25.8 line 3410 (minUpgradeFrom prerequisite compare).
+func compareSemver(a, b string) int {
+	pa := parseSemver(a)
+	pb := parseSemver(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] < pb[i] {
+			return -1
+		}
+		if pa[i] > pb[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+// parseSemver splits a version into its [major, minor, patch] numeric
+// components, tolerating a leading "v" and trailing pre-release/build
+// metadata. A non-numeric component sorts as 0.
+func parseSemver(v string) [3]int {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	var out [3]int
+	for i, part := range strings.SplitN(v, ".", 3) {
+		if i >= 3 {
+			break
+		}
+		out[i], _ = strconv.Atoi(strings.TrimSpace(part))
+	}
+	return out
 }
 
 // Source is the read-only manifest store the publisher serves from.

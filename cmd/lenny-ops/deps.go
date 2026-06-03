@@ -11,12 +11,16 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
@@ -896,6 +900,148 @@ func buildUpgradeChecker(manifestPath, currentVersion string, emitter events.Eve
 	})
 }
 
+// platformVersionDrift is the §25.8 lenny_platform_version_drift gauge:
+// the count of platform components whose version differs from the
+// running lenny-ops build, read by the PlatformVersionDrift alert (§16.5
+// line 1587). It is registered on the process default registry so the
+// §16.9 /metrics exposition scrapes it (F-16.8.1).
+//
+// spec: §25.8 Metrics (line 3618), §16.5 PlatformVersionDrift.
+var platformVersionDrift = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_platform_version_drift",
+		Help: "§25.8 count of platform components whose version drifts from the running lenny-ops build.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// setPlatformVersionDrift is the upgradeservice.DriftGauge the §25.8
+// version aggregator calls after each aggregation.
+func setPlatformVersionDrift(count int) {
+	if platformVersionDrift == nil {
+		return
+	}
+	platformVersionDrift.WithLabelValues().Set(float64(count))
+}
+
+// buildVersionAggregator constructs the §25.8 GET
+// /v1/admin/platform/version/full aggregator over the component sources
+// lenny-ops can reach: the compiled-in lenny-ops build version (always),
+// the gateway binary version (over HTTP, F-25.8.4 GatewayClient.GetVersion
+// call site), the controller Deployment image tag (over the K8s API),
+// and the Postgres schema migration version (over the connection pool).
+// A source the deployment cannot reach degrades its component to
+// unavailable in the report rather than failing the whole aggregation
+// (the §25.8 partial-data degradation model). The CRD-version and
+// Helm-chart-version sources are the documented follow-on additions; the
+// aggregator accepts them as further VersionSource implementations.
+//
+// spec: §25.8 Version Aggregation (line 3364).
+func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, pool *pgxpool.Pool, clientset *kubernetes.Clientset, namespace string) *upgradeservice.VersionAggregator {
+	sources := []upgradeservice.VersionSource{
+		// lenny-ops is the reference: its current version is the required
+		// version, so it never drifts and anchors the report.
+		upgradeservice.NewFuncVersionSource("ops", buildVersion, func(context.Context) (string, error) {
+			return buildVersion, nil
+		}),
+	}
+	if gatewayURL != "" && gw != nil {
+		sources = append(sources, upgradeservice.NewFuncVersionSource(
+			"gateway", buildVersion, gatewayVersionFunc(gw, gatewayURL)))
+	}
+	if clientset != nil {
+		sources = append(sources, upgradeservice.NewFuncVersionSource(
+			"controllers", buildVersion, controllerVersionFunc(clientset, namespace)))
+	}
+	if pool != nil {
+		// The Postgres schema version is a migration counter, not the
+		// platform build version, so it carries no compiled-in required
+		// value yet (drift detection for it lands with the embedded
+		// required-schema constant). It is reported for introspection.
+		sources = append(sources, upgradeservice.NewFuncVersionSource(
+			"postgres-schema", "", schemaVersionFunc(pool)))
+	}
+	return upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
+		PlatformVersion: buildVersion,
+		Sources:         sources,
+		Gauge:           setPlatformVersionDrift,
+	})
+}
+
+// gatewayVersionFunc resolves the gateway binary version via the §25.3
+// GET /v1/admin/platform/version endpoint — the GatewayClient.GetVersion
+// call site §25.8 names.
+func gatewayVersionFunc(client *http.Client, gatewayURL string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			strings.TrimRight(gatewayURL, "/")+"/v1/admin/platform/version", nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("gateway version endpoint returned HTTP %d", resp.StatusCode)
+		}
+		var body struct {
+			GatewayVersion string `json:"gatewayVersion"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return "", fmt.Errorf("decode gateway version: %w", err)
+		}
+		if body.GatewayVersion == "" {
+			return "", errors.New("gateway reported an empty version")
+		}
+		return body.GatewayVersion, nil
+	}
+}
+
+// schemaVersionFunc resolves the Postgres schema version per §25.8 (the
+// value `SELECT version FROM schema_migrations ORDER BY version DESC
+// LIMIT 1` reports). The version column is cast to text so an integer
+// migration counter and a string version both scan cleanly.
+func schemaVersionFunc(pool *pgxpool.Pool) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		var v string
+		err := pool.QueryRow(ctx,
+			"SELECT version::text FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&v)
+		if err != nil {
+			return "", err
+		}
+		return v, nil
+	}
+}
+
+// controllerVersionFunc resolves the controller Deployment version from
+// the image tag of the `lenny-controller` Deployment's `controller`
+// container (the chart names them in charts/lenny/templates/controller-
+// deployment.yaml).
+func controllerVersionFunc(clientset *kubernetes.Clientset, namespace string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		dep, err := clientset.AppsV1().Deployments(namespace).Get(ctx, "lenny-controller", metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		for _, c := range dep.Spec.Template.Spec.Containers {
+			if c.Name != "controller" {
+				continue
+			}
+			if i := strings.LastIndex(c.Image, ":"); i >= 0 && i < len(c.Image)-1 {
+				return c.Image[i+1:], nil
+			}
+			return "", fmt.Errorf("controller image %q has no tag", c.Image)
+		}
+		return "", errors.New("lenny-controller Deployment has no controller container")
+	}
+}
+
 // upgradeCheckJob is the §25.8 / §25.4 line 1338 platform_upgrade_check
 // cron: the leader-only job that queries the release channel hourly and
 // raises the lenny_platform_upgrade_available gauge plus the
@@ -921,6 +1067,27 @@ func upgradeCheckJob(chk *upgradeservice.Checker) opsservice.ScheduledJob {
 			}
 			if res.UpgradeAvailable {
 				log.Printf("lenny-ops: platform upgrade available: %s -> %s", res.CurrentVersion, res.AvailableVersion)
+			}
+			return nil
+		},
+	}
+}
+
+// versionDriftJob is the leader-only cron that runs the §25.8 version
+// aggregator hourly so the lenny_platform_version_drift gauge reflects
+// the current component-version spread without waiting for an operator
+// to call GET /v1/admin/platform/version/full. Aggregate degrades
+// gracefully on a source failure, so the job never returns an error.
+//
+// spec: §25.8 Version Aggregation, Metrics (lenny_platform_version_drift).
+func versionDriftJob(agg *upgradeservice.VersionAggregator) opsservice.ScheduledJob {
+	return opsservice.ScheduledJob{
+		Name:       "platform-version-drift",
+		Expression: "0 * * * *", // hourly
+		Run: func(ctx context.Context) error {
+			report := agg.Aggregate(ctx)
+			if report.VersionDrift {
+				log.Printf("lenny-ops: platform version drift detected across %d component(s)", report.DriftCount)
 			}
 			return nil
 		},

@@ -87,6 +87,57 @@ func TestPublisherServesSignedStableManifest(t *testing.T) {
 	}
 }
 
+// spec: §25.8 line 3410 — currentVersion below minUpgradeFrom is refused.
+func TestPublisherRefusesBelowMinUpgradeFrom(t *testing.T) {
+	pub, _ := buildPublisher(t) // sampleManifest has minUpgradeFrom 1.3.0
+	req := httptest.NewRequest(http.MethodGet, "/v1/latest?currentVersion=1.2.0", nil)
+	w := httptest.NewRecorder()
+	pub.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (current below minUpgradeFrom)", w.Code)
+	}
+}
+
+// spec: §25.8 line 3410 — currentVersion at or above minUpgradeFrom is served.
+func TestPublisherServesAtOrAboveMinUpgradeFrom(t *testing.T) {
+	pub, _ := buildPublisher(t)
+	for _, cur := range []string{"1.3.0", "1.4.3", "2.0.0"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/latest?currentVersion="+cur, nil)
+		w := httptest.NewRecorder()
+		pub.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("currentVersion=%s status = %d, want 200", cur, w.Code)
+		}
+	}
+}
+
+// spec: §25.8 — an absent currentVersion is unfiltered (the filter is opt-in).
+func TestPublisherNoCurrentVersionUnfiltered(t *testing.T) {
+	pub, _ := buildPublisher(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/latest", nil)
+	w := httptest.NewRecorder()
+	pub.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (no currentVersion → unfiltered)", w.Code)
+	}
+}
+
+// spec: §25.8 — a release with no minUpgradeFrom floor advertises to any current.
+func TestPublisherNoFloorAdvertisesToAny(t *testing.T) {
+	k := generateKey(t, "key-1")
+	signer, _ := releasechannel.NewSigner(k, nil)
+	source := releasechannel.NewStaticSource(map[releasechannel.Channel]releasechannel.Manifest{
+		releasechannel.ChannelStable: {Version: "1.5.0"}, // no MinUpgradeFrom
+	})
+	pub, _ := releasechannel.NewPublisher(releasechannel.PublisherOptions{Source: source, Signer: signer})
+	req := httptest.NewRequest(http.MethodGet, "/v1/latest?currentVersion=0.1.0", nil)
+	w := httptest.NewRecorder()
+	pub.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (no floor)", w.Code)
+	}
+}
+
 func TestPublisherHonorsBetaChannel(t *testing.T) {
 	k := generateKey(t, "key-1")
 	signer, _ := releasechannel.NewSigner(k, nil)

@@ -3,6 +3,7 @@
 package opsserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -41,6 +42,40 @@ func TestUpgradeStartAndStatus(t *testing.T) {
 	prog, _ := body["progress"].(map[string]any)
 	if prog["totalSteps"].(float64) != 7 {
 		t.Errorf("progress = %v", prog)
+	}
+}
+
+// spec: §25.8 Version Aggregation — version/full returns the aggregated
+// report with per-component drift; an unmapped aggregator returns 404.
+func TestVersionFullReportsDrift(t *testing.T) {
+	agg := upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
+		PlatformVersion: "1.5.0",
+		Sources: []upgradeservice.VersionSource{
+			upgradeservice.NewFuncVersionSource("ops", "1.5.0", func(context.Context) (string, error) { return "1.5.0", nil }),
+			upgradeservice.NewFuncVersionSource("gateway", "1.5.0", func(context.Context) (string, error) { return "1.4.0", nil }),
+		},
+	})
+	s := opsserver.New(opsserver.Options{VersionAggregator: agg})
+	w := do(s, http.MethodGet, "/v1/admin/platform/version/full", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("version/full = %d, body=%s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["versionDrift"] != true {
+		t.Errorf("versionDrift = %v, want true", body["versionDrift"])
+	}
+	if body["requiredVersion"] != "1.5.0" {
+		t.Errorf("requiredVersion = %v, want 1.5.0", body["requiredVersion"])
+	}
+}
+
+// spec: §25.8 — version/full is unmapped (404) without an aggregator.
+func TestVersionFullUnmappedWithoutAggregator(t *testing.T) {
+	s := opsserver.New(opsserver.Options{})
+	w := do(s, http.MethodGet, "/v1/admin/platform/version/full", "")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("version/full = %d, want 404 (route unmapped)", w.Code)
 	}
 }
 
@@ -83,12 +118,22 @@ func TestUpgradeProceed(t *testing.T) {
 	}
 }
 
-// spec: §25.8 — proceed with no upgrade is 404.
+// spec: §25.8 — proceed with no upgrade is 409 UPGRADE_NOT_IN_PROGRESS
+// (error table line 3638).
 func TestUpgradeProceedNoUpgrade(t *testing.T) {
 	s, _ := newUpgradeServer(t)
 	w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/proceed", "")
-	if w.Code != http.StatusNotFound {
-		t.Errorf("proceed = %d, want 404", w.Code)
+	if w.Code != http.StatusConflict {
+		t.Errorf("proceed = %d, want 409", w.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if errObj, ok := body["error"].(map[string]any); ok {
+		if errObj["code"] != "UPGRADE_NOT_IN_PROGRESS" {
+			t.Errorf("code = %v, want UPGRADE_NOT_IN_PROGRESS", errObj["code"])
+		}
+	} else {
+		t.Errorf("missing error envelope: %s", w.Body.String())
 	}
 }
 
