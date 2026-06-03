@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -980,10 +981,10 @@ func TestBindClonesGitSource(t *testing.T) {
 	}
 }
 
-func TestBindRejectsAuthenticatedGitClone(t *testing.T) {
-	// The §4.9 VCS credential-lease path is not yet wired, so an
-	// authenticated gitClone fails to bind rather than failing opaquely
-	// at clone time.
+func TestBindRejectsAuthenticatedGitCloneWithNoResolver(t *testing.T) {
+	// spec: §14 line 95 — an authenticated gitClone needs a wired VCS
+	// credential resolver. With none, Bind fails with a clear error rather
+	// than cloning unauthenticated.
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.StagingDir = t.TempDir()
@@ -1007,7 +1008,105 @@ func TestBindRejectsAuthenticatedGitClone(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Error("Bind succeeded for an authenticated gitClone, want a failure")
+		t.Error("Bind succeeded for an authenticated gitClone with no resolver, want a failure")
+	}
+}
+
+// stubVCSResolver records the Resolve call and returns a fixed credential
+// or error.
+type stubVCSResolver struct {
+	cred    vcscred.Credential
+	err     error
+	gotURL  string
+	gotTen  string
+	gotScpe string
+	calls   int
+}
+
+func (s *stubVCSResolver) Resolve(_ context.Context, tenantID, gitURL, leaseScope string) (vcscred.Credential, error) {
+	s.calls++
+	s.gotTen, s.gotURL, s.gotScpe = tenantID, gitURL, leaseScope
+	return s.cred, s.err
+}
+
+func TestBindClonesAuthenticatedGitClone(t *testing.T) {
+	// spec: §14 line 95 — an authenticated gitClone resolves its VCS
+	// credential on the gateway and clones on the gateway's network path.
+	// The local file:// remote ignores the injected HTTP header, so this
+	// exercises the binder's resolver-call-and-thread wiring end to end.
+	repo, sha := tempGitRepo(t)
+
+	srv := adapter.New("adapter-test")
+	root := t.TempDir()
+	srv.WorkspaceRoot = root
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	resolver := &stubVCSResolver{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
+	binder.VCSCreds = resolver
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{
+					Type: "gitClone", Path: "checkout", Url: repo, ResolvedCommitSha: sha,
+					Auth: &adapterv1.GitAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if resolver.calls != 1 {
+		t.Errorf("VCS resolver called %d times, want 1", resolver.calls)
+	}
+	if resolver.gotTen != "acme" || resolver.gotURL != repo || resolver.gotScpe != "vcs.github.read" {
+		t.Errorf("resolver got (tenant=%q url=%q scope=%q), want (acme, %q, vcs.github.read)",
+			resolver.gotTen, resolver.gotURL, resolver.gotScpe, repo)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "checkout", "service.go"))
+	if err != nil {
+		t.Fatalf("read cloned file: %v", err)
+	}
+	if string(got) != "package service" {
+		t.Errorf("cloned file = %q, want %q", got, "package service")
+	}
+}
+
+func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
+	// spec: §14 — a credential-resolution failure aborts the bind.
+	repo, sha := tempGitRepo(t)
+
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	binder.VCSCreds = &stubVCSResolver{err: errors.New("pool exhausted")}
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{
+					Type: "gitClone", Path: "checkout", Url: repo, ResolvedCommitSha: sha,
+					Auth: &adapterv1.GitAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Error("Bind succeeded despite a VCS credential-resolution failure")
 	}
 }
 

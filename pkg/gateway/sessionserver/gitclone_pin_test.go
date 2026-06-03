@@ -14,8 +14,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
+
+// stubVCSCreds is a vcscred.Resolver that returns a fixed credential or
+// error and records the arguments of its last call.
+type stubVCSCreds struct {
+	cred    vcscred.Credential
+	err     error
+	gotURL  string
+	gotScpe string
+	calls   int
+}
+
+func (s *stubVCSCreds) Resolve(_ context.Context, _ /*tenantID*/, gitURL, leaseScope string) (vcscred.Credential, error) {
+	s.calls++
+	s.gotURL, s.gotScpe = gitURL, leaseScope
+	return s.cred, s.err
+}
 
 // spec: §14 gitClone ref resolution — the gateway pins each gitClone
 // ref to an immutable commit SHA at session creation.
@@ -23,12 +40,16 @@ import (
 const pinSHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 // pinStubResolver is a workspaceplan.RefResolver for the pinning tests.
+// lastCred records the credential the resolver was handed so a test can
+// assert the §14 line 102 credential threading.
 type pinStubResolver struct {
-	shas map[string]string
-	err  error
+	shas     map[string]string
+	err      error
+	lastCred workspaceplan.VCSCredential
 }
 
-func (r *pinStubResolver) Resolve(_ context.Context, src workspaceplan.GitClone) (string, error) {
+func (r *pinStubResolver) Resolve(_ context.Context, src workspaceplan.GitClone, cred workspaceplan.VCSCredential) (string, error) {
+	r.lastCred = cred
 	if r.err != nil {
 		return "", r.err
 	}
@@ -105,6 +126,59 @@ func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 	}
 	if got := storedPlanSource(t, h, "sess_pin_branch")["resolvedCommitSha"]; got != pinSHA {
 		t.Errorf("stored resolvedCommitSha = %v, want %q", got, pinSHA)
+	}
+}
+
+// spec: §14 line 102 — the gateway resolves a private gitClone ref using
+// the same credential the clone will, so create-time ref pinning threads
+// the materialized VCS token to the ls-remote resolver.
+func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
+	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
+	creds := &stubVCSCreds{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:         func() string { return "sess_vcs_thread" },
+		RefResolver:    stub,
+		VCSCredentials: creds,
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if creds.calls != 1 {
+		t.Errorf("VCS resolver called %d times, want 1", creds.calls)
+	}
+	if creds.gotScpe != "vcs.github.read" {
+		t.Errorf("resolver got leaseScope %q, want vcs.github.read", creds.gotScpe)
+	}
+	if stub.lastCred.Token != "ghs_secret" {
+		t.Errorf("ls-remote resolver got token %q, want ghs_secret", stub.lastCred.Token)
+	}
+}
+
+// spec: §14 line 102 — a credential-materialization failure fails the
+// create as a non-retryable GIT_CLONE_REF_UNRESOLVABLE, not later at
+// clone time.
+func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
+	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
+	creds := &stubVCSCreds{err: errors.New("pool exhausted")}
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:         func() string { return "sess_vcs_fail" },
+		RefResolver:    stub,
+		VCSCredentials: creds,
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
+	})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422 for a credential failure; body %s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "GIT_CLONE_REF_UNRESOLVABLE") {
+		t.Errorf("body = %s, want GIT_CLONE_REF_UNRESOLVABLE", body)
+	}
+	if stub.lastCred.Token != "" {
+		t.Error("ls-remote resolver was called despite a credential failure")
 	}
 }
 

@@ -5,17 +5,18 @@
 // immutable commit SHA by running `git ls-remote` against the remote.
 // It implements workspaceplan.RefResolver.
 //
-// v1 resolves public repositories. A private repository fails with a
-// non-retryable auth error because the §4.9 VCS credential-lease path
-// that injects a short-lived token is not yet built; that integration
-// extends this resolver rather than replacing it.
+// A public repository resolves unauthenticated. A private repository
+// resolves when the caller supplies the §4.9 VCS credential
+// (workspaceplan.VCSCredential): the resolver injects it as an HTTP
+// Authorization header through the process environment. A private
+// repository with no credential fails fast with a non-retryable auth
+// error because interactive prompts are disabled.
 package gitref
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -58,10 +59,14 @@ func NewLsRemoteResolver(opts Options) *LsRemoteResolver {
 }
 
 // Resolve runs `git ls-remote` for src and returns the commit SHA its
-// ref points to. Interactive credential prompts are disabled, so a
-// private repository fails fast rather than blocking. A failure is
-// returned as a *workspaceplan.ResolveError classified per §14.
-func (r *LsRemoteResolver) Resolve(ctx context.Context, src workspaceplan.GitClone) (string, error) {
+// ref points to. When cred carries a token the ls-remote authenticates
+// with it (the §14 line 102 "same credential-lease as the clone")
+// injected through the process environment, so a private repository
+// resolves; a zero cred resolves a public repository. Interactive
+// credential prompts are disabled, so a private repository with no
+// credential fails fast rather than blocking. A failure is returned as a
+// *workspaceplan.ResolveError classified per §14.
+func (r *LsRemoteResolver) Resolve(ctx context.Context, src workspaceplan.GitClone, cred workspaceplan.VCSCredential) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
@@ -72,9 +77,10 @@ func (r *LsRemoteResolver) Resolve(ctx context.Context, src workspaceplan.GitClo
 	// a ref-pattern argument suppresses the peeled "^{}" lines that an
 	// annotated tag needs to resolve to its commit.
 	cmd := exec.CommandContext(ctx, r.gitPath, "ls-remote", "--", src.URL)
-	// GIT_TERMINAL_PROMPT=0 makes git fail instead of prompting for
-	// credentials on a private remote — the resolver never blocks.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// authEnv disables interactive prompts and, when cred is non-zero,
+	// adds the host-scoped Authorization header without writing the
+	// token to argv.
+	cmd.Env = authEnv(src.URL, Credential{Username: cred.Username, Token: cred.Token})
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -73,6 +73,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/task"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -259,6 +260,7 @@ type Server struct {
 	opsEmitter            events.EventEmitter
 	refResolver           workspaceplan.RefResolver
 	credPools             credentialpoolstore.Store
+	vcsCreds              vcscred.Resolver
 	defaultNoEnvPolicy    string
 	customRoles           customrolestore.Store
 	interceptors          *interceptor.Chain
@@ -1122,6 +1124,13 @@ type Options struct {
 	// check. Optional — when nil, the binding check is skipped.
 	CredentialPools credentialpoolstore.Store
 
+	// VCSCredentials materializes the §14 gitClone VCS token at session
+	// creation, so the ls-remote that pins a private repo's ref
+	// authenticates with the same credential the clone will. Optional —
+	// when nil, every gitClone ref is resolved unauthenticated and a
+	// private repo fails with GIT_CLONE_REF_UNRESOLVABLE.
+	VCSCredentials vcscred.Resolver
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
@@ -1352,6 +1361,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		opsEmitter:               opts.OpsEmitter,
 		refResolver:              opts.RefResolver,
 		credPools:                opts.CredentialPools,
+		vcsCreds:                 opts.VCSCredentials,
 		defaultNoEnvPolicy:       opts.DefaultNoEnvironmentPolicy,
 		customRoles:              opts.CustomRoles,
 		interceptors:             opts.Interceptors,

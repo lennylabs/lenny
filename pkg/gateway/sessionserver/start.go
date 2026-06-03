@@ -608,7 +608,7 @@ func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, ra
 		return workspaceplan.Plan{}, nil, nil, false
 	}
 	if s.refResolver != nil && hasGitClone(parsed) {
-		if err := workspaceplan.PinCommitSHAs(r.Context(), &parsed, s.refResolver); err != nil {
+		if err := workspaceplan.PinCommitSHAs(r.Context(), &parsed, s.refResolver, s.vcsCredentialFunc(r)); err != nil {
 			s.writeRefResolveError(w, err)
 			return workspaceplan.Plan{}, nil, nil, false
 		}
@@ -632,6 +632,30 @@ func hasGitClone(plan workspaceplan.Plan) bool {
 		}
 	}
 	return false
+}
+
+// vcsCredentialFunc returns the §14 credential materializer PinCommitSHAs
+// uses to authenticate the ls-remote that pins a private gitClone source.
+// It binds to the request's tenant and resolves each source through the
+// wired VCS resolver, so a private repo's ref resolution uses the same
+// credential the clone will (§14 line 102). A source with no auth block
+// resolves to a zero credential (public). It returns nil when no resolver
+// is wired, leaving public-only resolution unchanged.
+func (s *Server) vcsCredentialFunc(r *http.Request) workspaceplan.VCSCredentialFunc {
+	if s.vcsCreds == nil {
+		return nil
+	}
+	tenantID := s.resolveTenant(r)
+	return func(ctx context.Context, gc workspaceplan.GitClone) (workspaceplan.VCSCredential, error) {
+		if gc.Auth == nil {
+			return workspaceplan.VCSCredential{}, nil
+		}
+		c, err := s.vcsCreds.Resolve(ctx, tenantID, gc.URL, gc.Auth.LeaseScope)
+		if err != nil {
+			return workspaceplan.VCSCredential{}, err
+		}
+		return workspaceplan.VCSCredential{Username: c.Username, Token: c.Token}, nil
+	}
 }
 
 // checkGitCloneAuthBindings runs the §14 gitClone auth host-to-pool

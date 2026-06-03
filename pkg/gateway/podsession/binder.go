@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -55,6 +56,11 @@ type Binder struct {
 	// blob store configured; a plan carrying upload sources then fails
 	// to bind.
 	Blobs blobstore.Store
+	// VCSCreds materializes the §14 gitClone VCS token so Bind can clone
+	// a private repository on the gateway's network path. Nil when no VCS
+	// resolver is wired; a plan with an authenticated gitClone source
+	// then fails to stage rather than cloning unauthenticated.
+	VCSCreds vcscred.Resolver
 	// Fallback is the §4.6.1 Postgres-backed agent_pod_state mirror. When
 	// the Kubernetes-API claim returns podclaim.ErrNoIdlePod and Fallback
 	// is non-nil, connect attempts a fallback claim against the mirror
@@ -434,7 +440,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase receiving_uploads on pod %s: %w", sandboxName, err)
 	}
-	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
+	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan); err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
@@ -650,7 +656,7 @@ func (b *Binder) releaseCredentials(sessionID string) {
 // sources. A plan that carries upload sources but binds through a
 // Binder with no blob store fails rather than materializing an
 // incomplete workspace.
-func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID string, plan *adapterv1.WorkspacePlan) error {
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan) error {
 	uploads := make(map[string][]byte)
 
 	if refs := uploadRefs(plan); len(refs) > 0 {
@@ -679,14 +685,24 @@ func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, s
 		if src.GetType() != "gitClone" {
 			continue
 		}
-		// §14: an authenticated clone needs the §4.9 VCS credential-lease
-		// token, which is not yet wired. Public clones proceed.
+		// §14 line 95: an authenticated clone resolves the §4.9 VCS
+		// credential-lease token on the gateway and injects it into the
+		// fetch, so the pod never sees the raw credential. A public clone
+		// (no auth block) proceeds with a zero credential.
+		var cred gitref.Credential
 		if mode := src.GetAuth().GetMode(); mode != "" {
-			return fmt.Errorf("gitClone of %q uses auth.mode=%q; the §4.9 VCS credential-lease path is not yet wired",
-				src.GetUrl(), mode)
+			if b.VCSCreds == nil {
+				return fmt.Errorf("gitClone of %q uses auth.mode=%q but no VCS credential resolver is wired",
+					src.GetUrl(), mode)
+			}
+			c, err := b.VCSCreds.Resolve(ctx, tenantID, src.GetUrl(), src.GetAuth().GetLeaseScope())
+			if err != nil {
+				return fmt.Errorf("resolve gitClone credential for %q: %w", src.GetUrl(), err)
+			}
+			cred = gitref.Credential{Username: c.Username, Token: c.Token}
 		}
 		archive, err := gitref.CloneArchive(ctx, src.GetUrl(), src.GetResolvedCommitSha(),
-			gitref.CloneOptions{Depth: int(src.GetDepth()), Submodules: src.GetSubmodules()})
+			gitref.CloneOptions{Depth: int(src.GetDepth()), Submodules: src.GetSubmodules(), Credential: cred})
 		if err != nil {
 			return fmt.Errorf("clone %q: %w", src.GetUrl(), err)
 		}

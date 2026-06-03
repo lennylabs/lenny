@@ -108,7 +108,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	if req.Style == podclaim.StyleWorkspace {
 		// Workspace-concurrent: the slot has its own per-slot workspace
 		// (§6.4). Run the full §4.7 workspace-and-start sequence.
-		if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
+		if err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan); err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,

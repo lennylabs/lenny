@@ -95,14 +95,38 @@ func IsCommitSHA(ref string) bool {
 	return true
 }
 
+// VCSCredential is the §14 credential the gateway injects into the
+// ls-remote and clone of a private gitClone source. A zero value (empty
+// Token) resolves a public repository unauthenticated. It is a
+// dependency-free value type so workspaceplan does not import the
+// gateway credential packages; the gateway maps its own credential into
+// this shape at the resolver boundary.
+type VCSCredential struct {
+	// Username is the HTTP Basic username paired with Token.
+	Username string
+	// Token is the short-lived VCS token. Empty for a public clone.
+	Token string
+}
+
+// IsZero reports whether the credential carries no token.
+func (c VCSCredential) IsZero() bool { return c.Token == "" }
+
+// VCSCredentialFunc materializes the §14 VCS credential for one gitClone
+// source at ref-resolution time. The gateway supplies it so the
+// ls-remote that pins a private repo's ref uses the same credential the
+// clone will. It returns a zero VCSCredential for a public source. A
+// non-nil error aborts pinning for that source; PinCommitSHAs wraps it
+// as a ResolveError with the auth_failed reason.
+type VCSCredentialFunc func(ctx context.Context, src GitClone) (VCSCredential, error)
+
 // RefResolver resolves a gitClone source's ref to an immutable commit
 // SHA — the §14 git ls-remote step. A production implementation runs
-// git ls-remote against the remote with the source's credential lease;
-// tests supply a fake. A resolver should return a *ResolveError to
-// classify the failure mode; an unclassified error is treated as a
-// transient network failure.
+// git ls-remote against the remote with cred (the source's VCS
+// credential, zero for a public repo); tests supply a fake. A resolver
+// should return a *ResolveError to classify the failure mode; an
+// unclassified error is treated as a transient network failure.
 type RefResolver interface {
-	Resolve(ctx context.Context, src GitClone) (sha string, err error)
+	Resolve(ctx context.Context, src GitClone, cred VCSCredential) (sha string, err error)
 }
 
 // ResolveErrorReason classifies a §14 ref-resolution failure. It maps
@@ -151,12 +175,15 @@ func (e *ResolveError) Unwrap() error { return e.Err }
 // commit SHA and writes it to the source's ResolvedCommitSha — the §14
 // per-session immutability guarantee. A ref already in 40-character
 // lowercase hex form is pinned directly without a resolver call. Any
-// other ref is resolved through resolver. A source whose
-// ResolvedCommitSha is already set is left untouched, so PinCommitSHAs
-// is idempotent across re-materialization. The plan is mutated in
-// place. A non-nil return is a *ResolveError naming the first source
-// that failed; resolution stops at that source.
-func PinCommitSHAs(ctx context.Context, plan *Plan, resolver RefResolver) error {
+// other ref is resolved through resolver, using the VCS credential creds
+// materializes for the source (nil creds, or a zero credential, resolves
+// a public repo unauthenticated — §14 line 102 "the same credential-lease
+// as the clone itself, or unauthenticated for public repos"). A source
+// whose ResolvedCommitSha is already set is left untouched, so
+// PinCommitSHAs is idempotent across re-materialization. The plan is
+// mutated in place. A non-nil return is a *ResolveError naming the first
+// source that failed; resolution stops at that source.
+func PinCommitSHAs(ctx context.Context, plan *Plan, resolver RefResolver, creds VCSCredentialFunc) error {
 	if plan == nil {
 		return nil
 	}
@@ -168,7 +195,7 @@ func PinCommitSHAs(ctx context.Context, plan *Plan, resolver RefResolver) error 
 		if gc.ResolvedCommitSha != "" {
 			continue
 		}
-		sha, err := resolveRef(ctx, gc, i, resolver)
+		sha, err := resolveRef(ctx, gc, i, resolver, creds)
 		if err != nil {
 			return err
 		}
@@ -179,9 +206,10 @@ func PinCommitSHAs(ctx context.Context, plan *Plan, resolver RefResolver) error 
 }
 
 // resolveRef resolves one gitClone source's ref to a commit SHA.
-func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver) (string, error) {
+func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver, creds VCSCredentialFunc) (string, error) {
 	// §14 SHA fast-path: a ref already in commit-SHA form is its own
-	// resolution and needs no ls-remote round-trip.
+	// resolution and needs no ls-remote round-trip, so no credential is
+	// materialized either.
 	if IsCommitSHA(gc.Ref) {
 		return gc.Ref, nil
 	}
@@ -192,7 +220,23 @@ func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver)
 			Err:    errors.New("no ref resolver configured"),
 		}
 	}
-	sha, err := resolver.Resolve(ctx, gc)
+	var cred VCSCredential
+	if creds != nil {
+		c, err := creds(ctx, gc)
+		if err != nil {
+			// A credential-materialization failure (no usable pool
+			// credential, an unreadable Secret) is a non-retryable
+			// configuration failure, surfaced here so it fails session
+			// creation rather than the later clone — the §14 boundary the
+			// gateway must catch at create time.
+			return "", &ResolveError{
+				SourceIndex: idx, URL: gc.URL, Ref: gc.Ref,
+				Reason: ResolveAuthFailed, Err: err,
+			}
+		}
+		cred = c
+	}
+	sha, err := resolver.Resolve(ctx, gc, cred)
 	if err != nil {
 		var re *ResolveError
 		if errors.As(err, &re) {

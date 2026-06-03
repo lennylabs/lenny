@@ -147,7 +147,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
@@ -158,6 +157,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
@@ -246,6 +246,7 @@ import (
 	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
@@ -2824,6 +2825,27 @@ func main() {
 		credentialPools = credentialpoolpg.New(pgPool)
 	}
 
+	// §14 line 95: the VCS credential resolver materializes a gitClone
+	// source's short-lived token on the gateway (binding the URL host to
+	// one of the tenant's VCS credential pools, then reading the token
+	// from the credential's Kubernetes Secret) so the ref-pinning
+	// ls-remote and the clone authenticate without the pod ever seeing
+	// the raw credential. It needs a cluster client to read Secrets; in a
+	// dev/in-memory posture (no cluster client) it stays nil and an
+	// authenticated gitClone fails with a clear "no resolver wired"
+	// error. The Secret key defaults to `token`, the §4.9 github
+	// materializedConfig field.
+	var vcsCreds vcscred.Resolver
+	if clusterClient != nil {
+		vcsCreds = &vcscred.StoreResolver{
+			Pools:   credentialPools,
+			Secrets: connectorsecret.NewKubeResolver(clusterClient, "token"),
+		}
+		if podBinder != nil {
+			podBinder.VCSCreds = vcsCreds
+		}
+	}
+
 	// §10.2 tenant custom-role registry, shared by the admin custom-role
 	// CRUD and the §10.2 session-endpoint authorization gate (so a
 	// custom role granting manage_own_sessions / read_own_sessions is
@@ -3163,6 +3185,7 @@ func main() {
 		OpsEmitter:                 opsEmitter,
 		RefResolver:                gitref.NewLsRemoteResolver(gitref.Options{}),
 		CredentialPools:            credentialPools,
+		VCSCredentials:             vcsCreds,
 		CustomRoles:                customRoles,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{

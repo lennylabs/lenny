@@ -18,15 +18,18 @@ const (
 )
 
 // fakeResolver resolves refs from a fixed map. When err is set every
-// Resolve fails; calls counts invocations.
+// Resolve fails; calls counts invocations; lastCred records the
+// credential the resolver was handed on the most recent call.
 type fakeResolver struct {
-	shas  map[string]string
-	err   error
-	calls int
+	shas     map[string]string
+	err      error
+	calls    int
+	lastCred workspaceplan.VCSCredential
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, src workspaceplan.GitClone) (string, error) {
+func (f *fakeResolver) Resolve(_ context.Context, src workspaceplan.GitClone, cred workspaceplan.VCSCredential) (string, error) {
 	f.calls++
+	f.lastCred = cred
 	if f.err != nil {
 		return "", f.err
 	}
@@ -81,7 +84,7 @@ func TestPinCommitSHAsFastPathSkipsResolver(t *testing.T) {
 	// A ref already in commit-SHA form is pinned without a resolver call.
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: shaA})
 	fake := &fakeResolver{}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	if fake.calls != 0 {
@@ -96,7 +99,7 @@ func TestPinCommitSHAsFastPathSkipsResolver(t *testing.T) {
 func TestPinCommitSHAsFastPathNilResolver(t *testing.T) {
 	// The SHA fast-path works even with no resolver wired.
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: shaA})
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, nil); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, nil, nil); err != nil {
 		t.Fatalf("PinCommitSHAs with a nil resolver and a SHA ref: %v", err)
 	}
 	gc := plan.Sources[0].Variant.(workspaceplan.GitClone)
@@ -108,7 +111,7 @@ func TestPinCommitSHAsFastPathNilResolver(t *testing.T) {
 func TestPinCommitSHAsResolvesBranchRef(t *testing.T) {
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: "main"})
 	fake := &fakeResolver{shas: map[string]string{"main": shaB}}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	if fake.calls != 1 {
@@ -126,7 +129,7 @@ func TestPinCommitSHAsAlreadyPinnedIsIdempotent(t *testing.T) {
 		URL: "https://example.com/r.git", Ref: "main", ResolvedCommitSha: shaA,
 	})
 	fake := &fakeResolver{shas: map[string]string{"main": shaB}}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	if fake.calls != 0 {
@@ -147,7 +150,7 @@ func TestPinCommitSHAsIgnoresNonGitCloneSources(t *testing.T) {
 		},
 	}
 	fake := &fakeResolver{shas: map[string]string{"main": shaA}}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	if fake.calls != 1 {
@@ -165,7 +168,7 @@ func TestPinCommitSHAsPropagatesClassifiedError(t *testing.T) {
 		Reason: workspaceplan.ResolveRefNotFound,
 		Err:    errors.New("ref missing"),
 	}}
-	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake)
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil)
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError", err)
@@ -186,7 +189,7 @@ func TestPinCommitSHAsWrapsUnclassifiedError(t *testing.T) {
 	// A plain (unclassified) resolver error is treated as transient.
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: "main"})
 	fake := &fakeResolver{err: errors.New("connection reset")}
-	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake)
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil)
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError", err)
@@ -200,7 +203,7 @@ func TestPinCommitSHAsRejectsNonSHAResolverResult(t *testing.T) {
 	// A resolver that returns a non-SHA string is a failure.
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: "main"})
 	fake := &fakeResolver{shas: map[string]string{"main": "refs/heads/main"}}
-	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake)
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, nil)
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError", err)
@@ -212,10 +215,64 @@ func TestPinCommitSHAsRejectsNonSHAResolverResult(t *testing.T) {
 
 func TestPinCommitSHAsNilResolverNonSHARefErrors(t *testing.T) {
 	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://example.com/r.git", Ref: "main"})
-	err := workspaceplan.PinCommitSHAs(context.Background(), plan, nil)
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, nil, nil)
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError for a non-SHA ref with no resolver", err)
+	}
+}
+
+// spec: §14 line 102 — the ls-remote that pins a private repo's ref uses
+// the same credential the clone will. PinCommitSHAs hands the credential
+// materialized by the VCSCredentialFunc to the resolver.
+func TestPinCommitSHAsThreadsCredentialToResolver(t *testing.T) {
+	plan := gitClonePlan(workspaceplan.GitClone{
+		URL:  "https://github.com/acme/private.git",
+		Ref:  "main",
+		Auth: &workspaceplan.GitCloneAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+	})
+	fake := &fakeResolver{shas: map[string]string{"main": shaA}}
+	want := workspaceplan.VCSCredential{Username: "x-access-token", Token: "ghs_secret"}
+	credFn := func(_ context.Context, gc workspaceplan.GitClone) (workspaceplan.VCSCredential, error) {
+		if gc.Auth == nil || gc.Auth.LeaseScope != "vcs.github.read" {
+			t.Errorf("credFn got gc.Auth = %+v, want the leaseScope-carrying source", gc.Auth)
+		}
+		return want, nil
+	}
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, credFn); err != nil {
+		t.Fatalf("PinCommitSHAs: %v", err)
+	}
+	if fake.lastCred != want {
+		t.Errorf("resolver got credential %+v, want %+v", fake.lastCred, want)
+	}
+}
+
+// spec: §14 line 102 — a credential-materialization failure must fail
+// session creation as a non-retryable GIT_CLONE_REF_UNRESOLVABLE
+// (auth_failed), not surface later at clone time.
+func TestPinCommitSHAsCredentialErrorIsAuthFailed(t *testing.T) {
+	plan := gitClonePlan(workspaceplan.GitClone{
+		URL:  "https://github.com/acme/private.git",
+		Ref:  "main",
+		Auth: &workspaceplan.GitCloneAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+	})
+	fake := &fakeResolver{shas: map[string]string{"main": shaA}}
+	credFn := func(_ context.Context, _ workspaceplan.GitClone) (workspaceplan.VCSCredential, error) {
+		return workspaceplan.VCSCredential{}, errors.New("pool exhausted")
+	}
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, credFn)
+	var re *workspaceplan.ResolveError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %v, want *ResolveError", err)
+	}
+	if re.Reason != workspaceplan.ResolveAuthFailed {
+		t.Errorf("Reason = %q, want auth_failed", re.Reason)
+	}
+	if re.Reason.Transient() {
+		t.Error("a credential failure must be non-retryable")
+	}
+	if fake.calls != 0 {
+		t.Errorf("resolver called %d times after a credential failure, want 0", fake.calls)
 	}
 }
 
@@ -264,7 +321,7 @@ func TestGitCloneHost(t *testing.T) {
 }
 
 func TestPinCommitSHAsNilPlan(t *testing.T) {
-	if err := workspaceplan.PinCommitSHAs(context.Background(), nil, nil); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), nil, nil, nil); err != nil {
 		t.Errorf("PinCommitSHAs(nil) = %v, want nil", err)
 	}
 }
@@ -312,7 +369,7 @@ func TestMarshalEmitsPinnedCommitSHA(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	fake := &fakeResolver{shas: map[string]string{"main": shaA}}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), &plan, fake); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), &plan, fake, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	out, err := workspaceplan.Marshal(plan)
@@ -361,7 +418,7 @@ func TestMarshalPinnedRoundTripsThroughParseStored(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	if err := workspaceplan.PinCommitSHAs(context.Background(), &plan,
-		&fakeResolver{shas: map[string]string{"main": shaB}}); err != nil {
+		&fakeResolver{shas: map[string]string{"main": shaB}}, nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	out, err := workspaceplan.Marshal(plan)

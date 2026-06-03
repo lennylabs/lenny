@@ -72,7 +72,7 @@ var _ workspaceplan.RefResolver = (*LsRemoteResolver)(nil)
 func TestResolveBranch(t *testing.T) {
 	dir, want := tempRepo(t)
 	r := NewLsRemoteResolver(Options{})
-	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "main"})
+	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "main"}, workspaceplan.VCSCredential{})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestResolveLightweightTag(t *testing.T) {
 	dir, want := tempRepo(t)
 	gitTag(t, dir, false, "v1.0")
 	r := NewLsRemoteResolver(Options{})
-	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "v1.0"})
+	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "v1.0"}, workspaceplan.VCSCredential{})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestResolveAnnotatedTagPeelsToCommit(t *testing.T) {
 	dir, want := tempRepo(t)
 	gitTag(t, dir, true, "v2.0")
 	r := NewLsRemoteResolver(Options{})
-	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "v2.0"})
+	got, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "v2.0"}, workspaceplan.VCSCredential{})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestResolveAnnotatedTagPeelsToCommit(t *testing.T) {
 func TestResolveUnknownRefIsNotFound(t *testing.T) {
 	dir, _ := tempRepo(t)
 	r := NewLsRemoteResolver(Options{})
-	_, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "no-such-ref"})
+	_, err := r.Resolve(context.Background(), workspaceplan.GitClone{URL: dir, Ref: "no-such-ref"}, workspaceplan.VCSCredential{})
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError", err)
@@ -132,7 +132,7 @@ func TestResolveMissingRepoIsClassified(t *testing.T) {
 	r := NewLsRemoteResolver(Options{})
 	_, err := r.Resolve(context.Background(), workspaceplan.GitClone{
 		URL: filepath.Join(t.TempDir(), "does-not-exist"), Ref: "main",
-	})
+	}, workspaceplan.VCSCredential{})
 	var re *workspaceplan.ResolveError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ResolveError", err)
@@ -151,7 +151,7 @@ func TestResolveDrivesPinCommitSHAs(t *testing.T) {
 			{Type: workspaceplan.TypeGitClone, Variant: workspaceplan.GitClone{URL: dir, Ref: "main"}},
 		},
 	}
-	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, NewLsRemoteResolver(Options{})); err != nil {
+	if err := workspaceplan.PinCommitSHAs(context.Background(), plan, NewLsRemoteResolver(Options{}), nil); err != nil {
 		t.Fatalf("PinCommitSHAs: %v", err)
 	}
 	gc := plan.Sources[0].Variant.(workspaceplan.GitClone)
