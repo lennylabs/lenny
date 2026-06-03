@@ -28599,7 +28599,7 @@ and never fires.
 
 ### Findings
 
-### - [ ] F-16.5.1 — Operator threshold-tuning Helm-values surface is unbuilt (§25.13 Path 1 and 2). [High] — OPEN
+### - [x] F-16.5.1 — Operator threshold-tuning Helm-values surface is unbuilt (§25.13 Path 1 and 2). [High] — CLOSED
 
 §16.5 opens with a preface that pins the policy: "**Thresholds in the tables below are shipped defaults, not platform invariants.** Every numeric condition (sustain windows, percentage thresholds, latency caps, utilization ratios) is rendered into the bundled `PrometheusRule` objects at chart-install time and can be tuned by the deployer via Helm values." §25.13 then enumerates the customization model: Path 1 is `monitoring.alertThresholds` Helm values; Path 2 is `monitoring.alertOverrides`; the §25.13 example shows tier-specific `values-tier{1,2,3}.yaml` files containing the per-alert threshold knobs.
 
@@ -28610,7 +28610,31 @@ Evidence:
 - Tunable scaffolding exists for a small subset via `scalar(lenny_*_threshold)` references (e.g., `lenny_artifact_gc_backlog_threshold` at `:606`, `lenny_gateway_queue_depth_threshold` at `:799`, `lenny_gateway_latency_threshold_seconds` at `:808`, `lenny_warmpool_idle_cost_threshold` at `:1130`, `lenny_controller_workqueue_max_depth` at `:1171`, `lenny_max_orphan_tasks_per_tenant` at `:1146`, `lenny_erasure_job_deadline_seconds` at `:950`, `lenny_tenant_deletion_sla_seconds` at `:1008`, `lenny_billing_redis_stream_max_len` at `:1032`), but none of these threshold series are emitted by any production code path (see F2) and none come from Helm values.
 - `charts/lenny/templates/prometheusrule.yaml` splices `files/alerting-rules.yaml` verbatim under `spec:` — there is no value substitution after the file is read.
 
-### - [ ] F-16.5.2 — 55 metric series referenced in alert expressions are absent from the §16.1 catalog (and from any emit-side code). [High] — OPEN
+- **Resolution (verify-close; evidence is stale):** The §25.13
+  customization model is now built end to end. **Path 1**
+  (`monitoring.alertThresholds`) exists in `charts/lenny/values.yaml`
+  (`gatewayQueueDepthHigh`, `gatewayLatencyHigh`, `warmPoolReplenishmentSlow`,
+  `credentialPoolLow` — the finding's own §25.13 example alerts) and is
+  wired by F-25.13.2: the gateway publishes each value as a Prometheus
+  gauge at startup (`Set{GatewayQueueDepthThreshold,GatewayLatencyThresholdSeconds,
+  CredentialPoolLowThreshold}` in `pkg/gateway/gatewaymetrics`, fed from
+  `--gateway-queue-depth-threshold` etc. in `cmd/lenny-gateway/main.go`)
+  and the bundled expressions read it via `scalar(lenny_*_threshold)`, so a
+  tier preset tightening the value flows through without re-rendering the
+  rule. F-16.5.4 added the per-pool `lenny_pool_warmup_seconds_baseline`
+  mirror for `WarmPoolReplenishmentSlow`. **Path 2**
+  (`monitoring.alertOverrides`) is implemented in
+  `charts/lenny/templates/prometheusrule.yaml` (F-25.13.1): each entry
+  merges over the bundled rule by §16.5 name, and `enabled: false` prunes
+  it — this is the spec's mechanism for "replace a specific rule
+  expression entirely (not just tweak a number)," so every numeric
+  threshold that is not exposed as a named Path-1 knob is still
+  operator-tunable. **Path 3** (`bundleRules: false`) and the tier preset
+  files `charts/lenny/presets/values-tier{1,2,3}.yaml` exist. The
+  finding's evidence ("no `alertThresholds` or `alertOverrides` map", "no
+  `values-tier{1,2,3}.yaml` file") predates that work.
+
+### - [x] F-16.5.2 — 55 metric series referenced in alert expressions are absent from the §16.1 catalog (and from any emit-side code). [High] — CLOSED
 
 The impl `pkg/alerting/rules/rules.go` `Expr` strings reference 153 unique metric series. 55 of them have no row in `pkg/observability/metrics/catalog.go`; most also have no spec-text definition in §16.1 prose. Each missing series is a metric the alert needs in Prometheus at evaluation time — without it, the alert never fires (the expression evaluates to "no series", and `pkg/alerting/evaluator` treats that as inactive).
 
@@ -28654,7 +28678,26 @@ The 55 absent series (with the alert(s) that reference each):
 | `lenny_pgaudit_sink_delivery_failed_total` | `PgAuditSinkDeliveryFailed` | not catalogued |
 | `lenny_controller_workqueue_max_depth` | `ControllerWorkQueueDepthHigh` | tunability scaffolding; series never emitted |
 
-### - [ ] F-16.5.3 — Eight burn-rate alerts reference six invented `*_ratio` series that are nowhere defined. [High] — OPEN
+- **Resolution (commit 4305c225):** The catalog absence is closed. The
+  §16.1 canonical table is kept pure; the alert-referenced series that
+  are not §16.1/§16.8 rows are declared in a new
+  `metrics.AlertSupportCatalog` in `pkg/observability/metrics/catalog.go`
+  — 65 series grouped by role (Helm-tunable threshold gauges read via
+  `scalar(...)`, state/suppression gauges, infrastructure-liveness probes
+  for Postgres/etcd/Redis/cert-manager, recording-rule ratio outputs, and
+  §25 ops/backup/platform-upgrade/compliance series). A new tier-1
+  cross-check (`alert_catalog_crosscheck_test.go`) parses every
+  `rules.Catalog()` expression, normalises histogram `_bucket`/`_count`/
+  `_sum` suffixes against the catalogued histogram base, and fails if any
+  `lenny_` series referenced by an alert is in neither
+  `MetricCatalog` nor `AlertSupportCatalog`; a disjointness guard keeps a
+  series in exactly one catalog. The emit-side instrumentation for the
+  declared series remains a separate Wave-3 concern (the finding itself
+  frames the absence of emitters as out of §16.5's audit scope), and the
+  recording-rule definitions plus burn-rate Helm-value mechanism for the
+  five `*_ratio` series stay tracked under F-16.5.3.
+
+### - [ ] F-16.5.3 — Eight burn-rate alerts reference six invented `*_ratio` series that are nowhere defined. [High] — DEFERRED
 
 §16.5 specifies the multi-window burn-rate alerts in conceptual terms — for example "Session creation success rate ≥ 99.5%, Critical (fast) / Warning (slow), 1h 14× / 6h 3×" — and gives the burn-rate formula textually ("burn rate is `error_rate / (1 - slo_target)`"). It never names the underlying metric series. The impl `burnRateAlerts()` in `pkg/alerting/rules/rules.go:1510-1591` invents six error-ratio series and references them in every burn-rate `Expr`:
 
@@ -28669,6 +28712,30 @@ The 55 absent series (with the alert(s) that reference each):
 None of these series are in `pkg/observability/metrics/catalog.go`. None are defined as Prometheus recording rules either (a recording-rule definition is the natural way to compute "slow_ratio" from a histogram: `sum(rate(..._bucket{le="2"}[5m])) / sum(rate(..._count[5m]))`). The chart-rendered `PrometheusRule` has only the burn-rate alerts, no recording rules. The net effect: every burn-rate alert in the bundle evaluates against series that do not exist. None of the eight SLOs can be paged on.
 
 The spec also requires the burn-rate metric source be tunable: §16.5 ends with "Burn-rate thresholds are configurable via Helm values (`slo.burnRate.fastMultiplier`, default 14; `slo.burnRate.slowMultiplier`, default 3)." Neither Helm value exists in `charts/lenny/values.yaml`. The impl hard-codes `> 14` and `> 3` at `rules.go:1570,1581`.
+
+- **DEFERRED (commit 4305c225 catalogues the series):** Two of the
+  finding's seven listed ratio series are already inlined from
+  catalogued histograms by a prior batch (`StartupLatency*BurnRate` and
+  `TTFTBurnRate` in `slo.go` compute their slow-fraction directly from
+  `lenny_session_startup_duration_seconds` / `_time_to_first_token_seconds`,
+  so they reference no `_ratio` series). The remaining five
+  (`lenny_session_creation_error_ratio`, `_session_creation_latency_slow_ratio`,
+  `_session_unavailability_ratio`, `_gateway_unavailability_ratio`,
+  `_checkpoint_duration_slow_ratio`) are now declared in
+  `metrics.AlertSupportCatalog` (F-16.5.2) so the catalog cross-check
+  resolves, but they remain undefined as recording rules. The two latency
+  ratios are derivable from catalogued histograms, but the three
+  availability/error ratios require session-creation and gateway/session
+  availability instrumentation that does not exist: the only catalogued
+  session-outcome counters (`lenny_session_total` / `lenny_session_error_total`)
+  are §10.7 per-experiment-variant series, not platform-wide availability
+  signals, so defining the recording rules from them would mis-attribute
+  the SLO. Defining honest recording rules is therefore blocked on the
+  Wave-3 availability/error instrumentation. The `slo.burnRate.{fast,slow}Multiplier`
+  Helm values are implementable via the F-25.13.2 threshold-gauge pattern
+  (`scalar(lenny_slo_burn_rate_*_multiplier)`) and should land together
+  with the recording-rule definitions so the burn-rate alerts can
+  actually fire; doing the Helm values alone leaves the alerts inert.
 
 ### - [x] F-16.5.4 — `WarmPoolReplenishmentSlow` does not derive its threshold from `scalingPolicy.podWarmupSecondsBaseline`. [Medium] — CLOSED
 
