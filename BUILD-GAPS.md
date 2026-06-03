@@ -38736,29 +38736,37 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Resolution (commit `502e840d`):** Closed by F-24.2.5. `cmdInstall` runs `runInstallPreflight` (probing the wizard's resolved Postgres/Redis/MinIO backends via `pkg/preflight/infra.Run`) between the preview/dry-run gate and the `helm install` subprocess; any hard failure aborts before any cluster mutation.
 
-### - [ ] F-24.20.4 — Smoke-test phase missing from `lenny-ctl install` [High] — OPEN
+### - [x] F-24.20.4 — Smoke-test phase missing from `lenny-ctl install` [High] — CLOSED
 - **Spec:** §24.20 line 299 — "runs a smoke test against the `chat` reference runtime."
 - **Evidence:** `cmd/lenny-ctl/install.go` exits after `bootstrap` succeeds. There is no MCP `lenny/create_session` round-trip against the `chat` runtime, no health-check loop on `/healthz`, and no rollback on smoke-test failure.
 - **Gap:** Installs are reported successful even when the gateway is unreachable or the `chat` runtime is unregistered.
 - **Suggested resolution:** Add a `smoketest` phase that polls `/healthz` for up to 120s, then issues a `lenny/create_session` MCP call against the `chat` runtime and asserts a non-error response; on failure, print the rollback procedure.
 
-### - [ ] F-24.20.5 — `--save-answers <file>` does not compose with `--dry-run` [Medium] — OPEN
+**Resolution (commit `5df9c539`):** `cmd/lenny-ctl/install_smoke.go` adds the post-`helm install` smoke-test phase. `runSmokeTest` polls `GET {gatewayURL}/healthz` for up to 120s (poll interval 3s), then runs a `lenny/create_session` MCP round-trip against the `chat` runtime through the Go client SDK and asserts a non-error response. The gateway URL resolves from `LENNY_API_URL` (falling back to `https://<domain>`) and the token from `LENNY_API_TOKEN`; with no token the phase stops after the health probe (the full round-trip needs auth, gated by F-17.6.3). On failure it prints the `helm uninstall` rollback procedure and exits non-zero; `--skip-smoke-test` opts out. Tier-1 tests cover skip/pass/fail+rollback, health-only, health timeout, MCP round-trip pass/fail, and target resolution.
+
+### - [x] F-24.20.5 — `--save-answers <file>` does not compose with `--dry-run` [Medium] — CLOSED
 - **Spec:** §24.20 line 301 — "Does not run `helm install` when combined with `--dry-run`."
 - **Evidence:** `cmd/lenny-ctl/install.go` does not parse a `--dry-run` flag (verified by grep for `"--dry-run"` in install.go). The closest analogue is the unconditional preview step.
 - **Gap:** Users cannot capture answers without applying. The current preview-only path is implicit.
 - **Suggested resolution:** Add a `--dry-run` flag that short-circuits after `--save-answers` writes the file, before the helm-apply step.
 
-### - [ ] F-24.20.6 — `--offline` skips reachability probes that don't yet exist [Medium] — OPEN
+**Resolution (commit `5df9c539`):** Verify-closed (rule O). The `--dry-run` flag was added under F-24.20.2; the evidence is stale. `cmdInstall` writes `--save-answers` (install.go) before the dry-run gate, which short-circuits with "not invoking helm" ahead of the preflight/helm phases, so the two flags already compose per §24.20 line 301. Strengthened `TestCmdInstallSaveAnswers` to assert the file is written and helm is not invoked.
+
+### - [x] F-24.20.6 — `--offline` skips reachability probes that don't yet exist [Medium] — CLOSED
 - **Spec:** §24.20 line 302 — "Skip cluster-reachability probes in the detection phase. Preflight still runs against the target cluster."
 - **Evidence:** `cmd/lenny-ctl/install.go:333` accepts `--offline` and stores it on the config, but the detection phase performs no cluster-reachability probes (no `kubectl cluster-info`-shaped call), so the flag is effectively inert. The second half ("preflight still runs against the target cluster") cannot be satisfied because of F-24.20.3.
 - **Gap:** Flag is accepted and ignored; documentation overstates its effect.
 - **Suggested resolution:** Add cluster-reachability probes to the detection phase, gated by `!offline`; tie preflight to the F-24.20.3 resolution.
 
-### - [ ] F-24.20.7 — Spec accepts `--answers` only; implementation accepts both `--answer-file` and `--answers` [Medium] — OPEN
+**Resolution (commit `5df9c539`):** Verify-closed (rule O). Both blockers are now resolved. F-17.6.9 added the detection phase (`newKubectlDetector(...).detect`, the cluster-reachability probe), gated by `if !cfg.offline` in `cmdInstall`, so `--offline` skips the probe and prints "Detection phase skipped (--offline)". F-24.20.3 wired `runInstallPreflight`, which runs unconditionally after the dry-run gate regardless of `--offline`, satisfying "preflight still runs against the target cluster". Added `TestCmdInstallOfflineSkipsDetection` (interactive path asserts the skip summary and absence of the probe summary) and a flag-parse test.
+
+### - [x] F-24.20.7 — Spec accepts `--answers` only; implementation accepts both `--answer-file` and `--answers` [Medium] — CLOSED
 - **Spec:** §24.20 lines 300, 304 — both use `--answers <file>`.
 - **Evidence:** `cmd/lenny-ctl/install.go:293–296` accepts `--answer-file` and `--answers` as synonyms; the doc-comment at line 293 calls `--answer-file` "the build-plan spelling."
 - **Gap:** Two-flag aliasing is undocumented in the spec and risks bit-rot.
 - **Suggested resolution:** Pick one canonical name (the spec's `--answers`) and either remove the alias or document it explicitly in §24.20.
+
+**Resolution (commit `5df9c539`):** Removed the `--answer-file` alias from `parseInstallFlags`; `--answers` is now the sole spelling (matching §24.20 lines 300, 304). Updated the `cmdUpgrade` selector, the `install`/`upgrade` usage text, the operator-guide docs, and the chart answer-file headers/README to `--answers`; the TTHW gate (`tests/tier11_docs`) now invokes `--answers`. `TestParseInstallFlagsRejectsAnswerFileAlias` asserts `--answer-file` is now an unknown flag.
 
 ### - [x] F-24.20.8 — No `--token` / `--timeout` / `--insecure-skip-verify` / `--output` / `--quiet` flags on `install` [Low] — CLOSED
 
