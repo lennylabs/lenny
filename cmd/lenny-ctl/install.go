@@ -88,6 +88,12 @@ type installAnswers struct {
 	AgentNamespaces []string `json:"agentNamespaces,omitempty"`
 	// Features gates the optional admission webhooks (§17.2).
 	Features installFeatures `json:"features"`
+	// ReferenceRuntimes is the §17.6 reference-runtime multi-select. An
+	// empty list installs all of §26 (the chart default); a non-empty list
+	// names the subset to register via referenceRuntimes.include; the
+	// single-element ["none"] sentinel disables the catalog entirely
+	// (referenceRuntimes.enabled=false). F-17.6.10.
+	ReferenceRuntimes []string `json:"referenceRuntimes,omitempty"`
 	// DevMode sets global.devMode. It is valid only for the local
 	// environment and must stay false on any multi-tenant cluster.
 	DevMode bool `json:"devMode,omitempty"`
@@ -155,6 +161,7 @@ type installConfig struct {
 	chartDir     string
 	releaseName  string
 	namespace    string
+	kubeContext  string
 	nonInteract  bool
 	dryRun       bool
 	offline      bool
@@ -167,6 +174,27 @@ var knownTiers = map[string]bool{"tier1": true, "tier2": true, "tier3": true}
 // knownEnvironments is the set of target environments (§17.9.1).
 var knownEnvironments = map[string]bool{
 	"local": true, "dev": true, "staging": true, "prod": true,
+}
+
+// knownReferenceRuntimes is the §26 reference-runtime catalog the wizard's
+// multi-select validates against. It mirrors charts/lenny/values.yaml
+// referenceRuntimes.catalog; an unknown name is rejected so a typo does not
+// silently install nothing for that entry. F-17.6.10.
+var knownReferenceRuntimes = map[string]bool{
+	"claude-code": true, "gemini-cli": true, "codex": true,
+	"cursor-cli": true, "chat": true, "langgraph": true,
+	"mastra": true, "openai-assistants": true, "crewai": true,
+}
+
+// referenceRuntimeNames returns the §26 catalog names, sorted, for the
+// wizard prompt's "available" hint.
+func referenceRuntimeNames() []string {
+	names := make([]string, 0, len(knownReferenceRuntimes))
+	for n := range knownReferenceRuntimes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // tenantIDPattern is the canonical tenant_id format (§10.2). The
@@ -206,7 +234,16 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "lenny-ctl: --non-interactive requires --answer-file <path>")
 			return 2
 		}
-		answers = promptAnswers(bufio.NewReader(stdin), stdout)
+		// Detection phase (§17.6 lines 671-697): probe the target cluster
+		// and present a summary before any question, so the operator sees
+		// what was found and the question phase can apply detection-driven
+		// defaults. --offline skips the probes entirely. F-17.6.9.
+		det := clusterDetection{skipped: true}
+		if !cfg.offline {
+			det = newKubectlDetector(cfg.kubeContext).detect(context.Background())
+		}
+		printDetectionSummary(stdout, det)
+		answers = promptAnswers(bufio.NewReader(stdin), stdout, det)
 	}
 
 	// CLI flags override the answer file's release coordinates so a
@@ -360,6 +397,14 @@ func parseInstallFlags(args []string) (installConfig, error) {
 				return cfg, fmt.Errorf("--namespace requires a name")
 			}
 			cfg.namespace, i = args[i+1], i+1
+		// --context overrides the kubeconfig context the detection phase
+		// probes (§17.6 line 673). It has no effect under --offline or
+		// --answer-file (neither runs detection).
+		case "--context":
+			if i+1 >= len(args) {
+				return cfg, fmt.Errorf("--context requires a name")
+			}
+			cfg.kubeContext, i = args[i+1], i+1
 		case "--non-interactive":
 			cfg.nonInteract = true
 		case "--dry-run":
@@ -493,6 +538,23 @@ func validateAnswers(a installAnswers) []string {
 			errs = append(errs, fmt.Sprintf(
 				"agent namespace %q is not a valid Kubernetes namespace name", ns,
 			))
+		}
+	}
+	// spec: §17.6 lines 688-689 — every selected reference runtime must
+	// name a §26 catalog entry. "none" is a valid selection only as the
+	// sole entry (it disables the catalog). F-17.6.10.
+	for _, rt := range a.ReferenceRuntimes {
+		if strings.EqualFold(rt, "none") {
+			if len(a.ReferenceRuntimes) != 1 {
+				errs = append(errs,
+					"referenceRuntimes 'none' cannot be combined with other runtime names")
+			}
+			continue
+		}
+		if !knownReferenceRuntimes[rt] {
+			errs = append(errs, fmt.Sprintf(
+				"referenceRuntimes %q is not a §26 catalog runtime (one of %s)",
+				rt, strings.Join(referenceRuntimeNames(), ", ")))
 		}
 	}
 	// spec: §17.9.3 — validate the object-storage selection. A cloud
@@ -696,6 +758,20 @@ func composeValues(a installAnswers) ([]byte, error) {
 		values["agentNamespaces"] = nss
 	}
 
+	// spec: §17.6 lines 688-689 — the reference-runtime selection. An empty
+	// list leaves the chart default (the whole §26 catalog); ["none"]
+	// disables the catalog; any other list narrows it via
+	// referenceRuntimes.include. F-17.6.10.
+	if len(a.ReferenceRuntimes) == 1 && strings.EqualFold(a.ReferenceRuntimes[0], "none") {
+		values["referenceRuntimes"] = map[string]any{"enabled": false}
+	} else if len(a.ReferenceRuntimes) > 0 {
+		include := make([]any, 0, len(a.ReferenceRuntimes))
+		for _, n := range a.ReferenceRuntimes {
+			include = append(include, n)
+		}
+		values["referenceRuntimes"] = map[string]any{"include": include}
+	}
+
 	header := fmt.Sprintf(
 		"# Helm values composed by `lenny-ctl install`.\n"+
 			"# release: %s/%s  environment: %s  tier: %s  auth: %s\n"+
@@ -737,7 +813,7 @@ func helmInstallArgs(a installAnswers, chartDir, presetPath, valuesPath string) 
 // promptAnswers runs the interactive question phase (§17.6). It reads
 // one answer per line from r, showing each default in brackets. An
 // empty line accepts the default.
-func promptAnswers(r *bufio.Reader, w io.Writer) installAnswers {
+func promptAnswers(r *bufio.Reader, w io.Writer, det clusterDetection) installAnswers {
 	var a installAnswers
 	fmt.Fprintln(w, "lenny-ctl install — interactive wizard")
 	fmt.Fprintln(w, "Press Enter to accept the bracketed default for any question.")
@@ -752,9 +828,20 @@ func promptAnswers(r *bufio.Reader, w io.Writer) installAnswers {
 	}
 	a.Tier = ask(r, w, "Capacity tier (tier1|tier2|tier3)", defTier)
 	a.Domain = ask(r, w, "Gateway domain (blank to keep the chart default)", "")
-	a.TLS = ask(r, w, "TLS strategy (cert-manager|bring-your-own, blank to skip)", "")
-	if a.TLS == "cert-manager" {
-		a.TLSIssuer = ask(r, w, "cert-manager ClusterIssuer name (blank to add the annotation later)", "")
+	// spec: §17.6 line 689 — the TLS-strategy default is detection-driven
+	// (cert-manager when a Ready ClusterIssuer exists, bring-your-own
+	// otherwise) and the question is skipped when exactly one ClusterIssuer
+	// is Ready, since the answer is then unambiguous. F-17.6.9.
+	tlsDef, issuerDef, skipTLS := tlsDefaults(det)
+	if skipTLS {
+		a.TLS = tlsDef
+		a.TLSIssuer = issuerDef
+		fmt.Fprintf(w, "TLS strategy: cert-manager (detected the Ready ClusterIssuer %q — skipping prompt)\n", issuerDef)
+	} else {
+		a.TLS = ask(r, w, "TLS strategy (cert-manager|bring-your-own, blank to skip)", tlsDef)
+		if a.TLS == "cert-manager" {
+			a.TLSIssuer = ask(r, w, "cert-manager ClusterIssuer name (blank to add the annotation later)", issuerDef)
+		}
 	}
 	a.Postgres.DSN = ask(r, w, "Postgres DSN (blank for the chart default)", "")
 	a.Redis.URL = ask(r, w, "Redis URL (blank for the chart default)", "")
@@ -783,7 +870,34 @@ func promptAnswers(r *bufio.Reader, w io.Writer) installAnswers {
 	a.Features.LLMProxy = askBool(r, w, "Enable the LLM-proxy admission webhook", false)
 	a.Features.DrainReadiness = askBool(r, w, "Enable the drain-readiness admission webhook", false)
 	a.Features.Compliance = askBool(r, w, "Enable the compliance admission webhooks", false)
+	// spec: §17.6 lines 688-689 — the reference-runtime multi-select. All
+	// of §26 is installed by default; the operator names a subset to
+	// minimize the image-pull footprint, or "none" to register no
+	// reference runtime. F-17.6.10.
+	rts := ask(r, w, "Reference runtimes to install (comma-separated names, blank for all of §26, 'none' for none)\n  available: "+strings.Join(referenceRuntimeNames(), ", "), "")
+	a.ReferenceRuntimes = parseReferenceRuntimeAnswer(rts)
 	return a
+}
+
+// parseReferenceRuntimeAnswer splits the comma-separated reference-runtime
+// answer into a name list. A blank answer leaves the list nil (install all
+// of §26); the literal "none" yields a single-element ["none"] sentinel that
+// composeValues maps to referenceRuntimes.enabled=false.
+func parseReferenceRuntimeAnswer(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if strings.EqualFold(s, "none") {
+		return []string{"none"}
+	}
+	var out []string
+	for _, n := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(n); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ask prompts for a single answer, returning def when the operator
@@ -843,6 +957,7 @@ func answerFileKeys() []string {
 		"features.llmProxy",
 		"features.drainReadiness",
 		"features.compliance",
+		"referenceRuntimes",
 		"devMode",
 	}
 	sort.Strings(keys)
@@ -909,7 +1024,8 @@ Flags:
   --chart <path>         Chart directory (default charts/lenny)
   --release <name>       Override the release name from the answer file
   --namespace <ns>       Override the release namespace from the answer file
-  --offline              Skip cluster-reachability detection probes
+  --context <name>       kubeconfig context for the detection phase
+  --offline              Skip the cluster detection phase
   --dry-run              Print the composed values and helm command; do not run helm
 
 Answer-file keys:
@@ -917,7 +1033,7 @@ Answer-file keys:
   tls, postgres.dsn, redis.url, objectStorage.endpoint,
   objectStorage.bucket, auth.mode, auth.oidcIssuer, auth.oidcClientId,
   agentNamespaces, features.llmProxy, features.drainReadiness,
-  features.compliance, devMode
+  features.compliance, referenceRuntimes, devMode
 
 Environment-variable references of the form ${VAR} in the answer file
 are resolved against the process environment at read time, so secret

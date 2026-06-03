@@ -22,7 +22,16 @@ F-26.2.1 / F-26.9.2 / F-26.10.2 / F-26.11.2 / F-26.3.2 / F-26.3.4 /
 F-26.3.5.
 */ -}}
 {{- if .Values.referenceRuntimes.enabled }}
+{{- /*
+referenceRuntimes.include narrows the catalog to a subset of runtimes by
+name. An empty list (the default) registers the whole catalog; a non-empty
+list registers only the named entries. The §17.6 install wizard's
+reference-runtime multi-select composes this key so a deployer can minimize
+the image-pull footprint without hand-editing the catalog. F-17.6.10.
+*/ -}}
+{{- $include := .Values.referenceRuntimes.include | default (list) }}
 {{- range .Values.referenceRuntimes.catalog }}
+{{- if or (eq (len $include) 0) (has .name $include) }}
 ---
 apiVersion: lenny.dev/v1
 kind: Runtime
@@ -80,5 +89,6 @@ spec:
   {{- with .delegationPolicyRef }}
   delegationPolicyRef: {{ . | quote }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

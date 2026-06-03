@@ -398,6 +398,26 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--attest-volume-encryption=true"
 
+  # spec: §17.6 line 532 — preflight.enabled: false skips the whole
+  # admission-plane preflight Job (air-gapped / constrained installs).
+  # The SA, RBAC, and Job all disappear. F-17.6.11.
+  - it: renders nothing when preflight.enabled is false
+    set:
+      preflight.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # The Job renders by default (preflight.enabled defaults to true in
+  # values.yaml), so the skip-knob is opt-in.
+  - it: renders the Job by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - isKind:
+          of: Job
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

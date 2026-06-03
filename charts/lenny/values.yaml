@@ -2188,6 +2188,12 @@ memory:
 # pin their own digests in an override.
 referenceRuntimes:
   enabled: true
+  # include narrows the catalog to a subset of runtimes by name. Empty
+  # (the default) registers the whole catalog; a non-empty list registers
+  # only the named entries. The §17.6 install wizard's reference-runtime
+  # multi-select writes this key so a deployer minimizes the image-pull
+  # footprint without hand-editing the catalog below. F-17.6.10.
+  include: []
   # catalog is the §26 runtime set. Trim it to the runtimes a
   # deployment uses; an operator may also register more runtimes
   # through the admin API after install.
@@ -2772,6 +2778,14 @@ etcdEncryption:
 # (§17.9), which runs the admission-plane checks before the install
 # proceeds.
 preflight:
+  # enabled gates the pre-install/pre-upgrade lenny-preflight Job. §17.6
+  # line 532 documents `preflight.enabled: false` as the skip-knob for
+  # air-gapped or constrained environments where the Job cannot reach all
+  # backends at install time; the chart logs the spec's verbatim warning in
+  # its install NOTES when it is false. The post-upgrade CRD-validate Job
+  # (crd-validate-job.yaml) renders independently of this flag so the
+  # stale-CRD catch-net is never silently removed. F-17.6.11.
+  enabled: true
   image:
     repository: ghcr.io/lennylabs/lenny-preflight
     # tag defaults to the chart appVersion when left empty.

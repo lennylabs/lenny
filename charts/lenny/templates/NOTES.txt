@@ -1,6 +1,10 @@
 Lenny {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
 
 Run the lenny-preflight Job output (kubectl logs job/lenny-preflight -n {{ .Release.Namespace }}) to review the §17.9 install-and-upgrade checks.
+{{- if not .Values.preflight.enabled }}
+
+WARNING: Preflight validation skipped — infrastructure misconfigurations may cause runtime failures. The lenny-preflight Job was not rendered because preflight.enabled is false (§17.6).
+{{- end }}
 {{- if and (not .Values.observability.otlpTlsEnabled) .Values.observability.acknowledgeOtlpPlaintext }}
 
 WARNING: Plaintext OTLP export enabled — trace payloads are sent without TLS. Tenant metadata, session identifiers, and error bodies are readable by any in-cluster interceptor. Re-enable TLS before production use (OTLP-068; §13.2).

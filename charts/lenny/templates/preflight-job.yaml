@@ -11,6 +11,14 @@ exist when the Job pod starts. The RBAC is read-only: list
 ValidatingWebhookConfigurations cluster-wide and get ConfigMaps in the
 release namespace.
 */ -}}
+{{- /*
+preflight.enabled: false (§17.6 line 532) skips the whole admission-plane
+preflight Job for air-gapped or constrained installs. The skip is surfaced
+in the install NOTES with the spec's verbatim warning. The post-upgrade
+CRD-validate Job renders independently so the stale-CRD catch-net stays.
+F-17.6.11.
+*/ -}}
+{{- if .Values.preflight.enabled -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -325,3 +333,4 @@ spec:
                 - ALL
           resources:
             {{- toYaml .Values.preflight.resources | nindent 12 }}
+{{- end }}

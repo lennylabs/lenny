@@ -358,3 +358,46 @@ tests:
       - equal:
           path: spec.defaultPoolConfig.egressProfile
           value: restricted
+
+  # spec: §17.6 lines 688-689 — the install wizard's reference-runtime
+  # multi-select narrows the catalog to a deployer-chosen subset, written
+  # to referenceRuntimes.include. A non-empty list registers only the
+  # named entries. F-17.6.10.
+  - it: narrows the catalog to referenceRuntimes.include when set
+    set:
+      referenceRuntimes:
+        include: [claude-code, chat]
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: registers exactly the included runtimes by name
+    set:
+      referenceRuntimes:
+        include: [claude-code, chat]
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - isKind:
+          of: Runtime
+
+  # An empty include list is the default and registers the whole catalog,
+  # so the multi-select is opt-in narrowing rather than opt-in expansion.
+  - it: registers the whole catalog when include is empty
+    set:
+      referenceRuntimes:
+        include: []
+    asserts:
+      - hasDocuments:
+          count: 9
+
+  # An include entry that names no catalog runtime registers nothing for
+  # that name; a list of only-unknown names yields an empty release.
+  - it: registers nothing for an unknown include name
+    set:
+      referenceRuntimes:
+        include: [does-not-exist]
+    asserts:
+      - hasDocuments:
+          count: 0
