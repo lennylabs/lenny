@@ -31,6 +31,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
@@ -797,4 +798,131 @@ func loadEd25519PublicKey(path, keyID string) (releasechannel.Key, error) {
 		return releasechannel.Key{}, errors.New("release-channel previous key is not an Ed25519 public key")
 	}
 	return releasechannel.Key{ID: keyID, Public: pub}, nil
+}
+
+// platformUpgradeAvailable is the §16.5 lenny_platform_upgrade_available
+// gauge: 1 when the configured release channel advertises a newer
+// version than the running lenny-ops, 0 otherwise. The
+// PlatformUpgradeAvailable alert (§16.5 line 1569) reads it. It is
+// registered on the process default registry so the §16.9 /metrics
+// exposition scrapes it (F-16.8.1).
+//
+// spec: §16.5 PlatformUpgradeAvailable, §25.8 Upgrade Check.
+var platformUpgradeAvailable = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_platform_upgrade_available",
+		Help: "§25.8 1 when a newer platform release than the running version is available.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// setPlatformUpgradeAvailable is the upgradeservice.AvailabilityGauge
+// the §25.8 upgrade-check raises on each evaluation.
+func setPlatformUpgradeAvailable(available bool) {
+	if platformUpgradeAvailable == nil {
+		return
+	}
+	v := 0.0
+	if available {
+		v = 1.0
+	}
+	platformUpgradeAvailable.WithLabelValues().Set(v)
+}
+
+// upgradeAuditSink is the §16.7 platform-upgrade AuditSink used until
+// the audit-store client lands. It logs each lifecycle transition so the
+// upgrade is observable in the lenny-ops log, mirroring logAuditSink
+// (backup) and driftAuditSink (drift). The events fire and are
+// observable; only the durable §11.7 destination is the documented seam.
+func upgradeAuditSink(ev upgradeservice.AuditEvent) {
+	log.Printf("lenny-ops: audit %s op=%s actor=%s phase=%s->%s target=%s detail=%q",
+		ev.Type, ev.OperationID, ev.Actor, ev.OldPhase, ev.NewPhase, ev.TargetVersion, ev.Detail)
+}
+
+// buildUpgradeService constructs the §25.8 platform-upgrade orchestrator
+// over an in-memory singleton store. The orchestrator drives the §25.8
+// phase machine (pkg/upgrade) and emits the §16.7 platform-upgrade
+// lifecycle audit events plus the §16.6 upgrade_progressed operational
+// events through the shared lenny-ops EventEmitter. The Postgres-backed
+// platform_upgrade_state store (§25.4 line 1492) is the documented
+// durable seam; the in-memory store survives within a single leader
+// term, which is the v1 single-process posture other ops subsystems
+// share.
+//
+// spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
+// consumer).
+func buildUpgradeService(emitter events.EventEmitter) *upgradeservice.Service {
+	return upgradeservice.New(upgradeservice.Options{
+		Store:   upgradeservice.NewMemoryStore(),
+		Emitter: emitter,
+		Audit:   upgradeAuditSink,
+	})
+}
+
+// buildUpgradeChecker constructs the §25.8 upgrade-check client. It reads
+// the operator-supplied release manifest (the same document the
+// release-channel publisher serves at GET /v1/latest) as its Source, so
+// an air-gapped or mirror install that hosts its own channel can compare
+// the advertised version against the running one. When no manifest is
+// configured (platform.upgradeChannel: "") the checker is disabled and
+// GET /v1/admin/platform/upgrade-check reports the channel disabled.
+//
+// spec: §25.8 Upgrade Check, Air-Gapped Support.
+func buildUpgradeChecker(manifestPath, currentVersion string, emitter events.EventEmitter) *upgradeservice.Checker {
+	var source releasechannel.Source
+	if manifestPath != "" {
+		manifestBytes, err := os.ReadFile(manifestPath)
+		if err != nil {
+			log.Fatalf("lenny-ops: read upgrade-check manifest %s: %v", manifestPath, err)
+		}
+		var stable releasechannel.Manifest
+		if err := json.Unmarshal(manifestBytes, &stable); err != nil {
+			log.Fatalf("lenny-ops: decode upgrade-check manifest %s: %v", manifestPath, err)
+		}
+		source = releasechannel.NewStaticSource(map[releasechannel.Channel]releasechannel.Manifest{
+			releasechannel.ChannelStable: stable,
+		})
+	}
+	return upgradeservice.NewChecker(upgradeservice.CheckerOptions{
+		Source:         source,
+		CurrentVersion: currentVersion,
+		Emitter:        emitter,
+		Audit:          upgradeAuditSink,
+		Gauge:          setPlatformUpgradeAvailable,
+	})
+}
+
+// upgradeCheckJob is the §25.8 / §25.4 line 1338 platform_upgrade_check
+// cron: the leader-only job that queries the release channel hourly and
+// raises the lenny_platform_upgrade_available gauge plus the
+// platform_upgrade_available operational event when a newer release is
+// advertised. A disabled channel makes the job a no-op.
+//
+// spec: §25.4 line 1338 (platform_upgrade_check cron), §25.8.
+func upgradeCheckJob(chk *upgradeservice.Checker) opsservice.ScheduledJob {
+	return opsservice.ScheduledJob{
+		Name:       "platform-upgrade-check",
+		Expression: "0 * * * *", // hourly, per §25.8 ("the check cron runs hourly")
+		Run: func(ctx context.Context) error {
+			if !chk.Enabled() {
+				return nil
+			}
+			res, err := chk.Check(ctx)
+			if err != nil {
+				if errors.Is(err, releasechannel.ErrManifestNotFound) {
+					// First check with no advertised release; not an error.
+					return nil
+				}
+				return err
+			}
+			if res.UpgradeAvailable {
+				log.Printf("lenny-ops: platform upgrade available: %s -> %s", res.CurrentVersion, res.AvailableVersion)
+			}
+			return nil
+		},
+	}
 }

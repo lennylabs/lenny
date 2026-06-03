@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
@@ -78,6 +79,8 @@ type Server struct {
 	eventSubscriptions *eventsubscription.Service
 	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
+	upgrade            *upgradeservice.Service
+	upgradeChecker     *upgradeservice.Checker
 	podLogs            PodLogReader
 	production         bool
 
@@ -152,6 +155,16 @@ type Options struct {
 	// the publisher when no key is configured rather than serving
 	// unsigned responses).
 	ReleaseChannel *releasechannel.Publisher
+	// Upgrade is the §25.8 platform-upgrade orchestrator. When non-nil
+	// the Server registers the upgrade lifecycle routes
+	// (start/proceed/pause/rollback/verify/status); when nil the routes
+	// are unmapped (404), the cold-start posture for a deployment whose
+	// upgrade orchestrator is not yet wired.
+	Upgrade *upgradeservice.Service
+	// UpgradeChecker is the §25.8 release-channel upgrade-check client.
+	// When non-nil the Server registers GET
+	// /v1/admin/platform/upgrade-check; when nil the route is unmapped.
+	UpgradeChecker *upgradeservice.Checker
 	// PodLogs, when non-nil, backs the §25.4 GET
 	// /v1/admin/logs/pods/{namespace}/{name} log-proxy endpoint with the
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
@@ -218,6 +231,8 @@ func New(opts Options) *Server {
 		eventStream:        opts.EventStream,
 		eventSubscriptions: opts.EventSubscriptions,
 		releaseChannel:     opts.ReleaseChannel,
+		upgrade:            opts.Upgrade,
+		upgradeChecker:     opts.UpgradeChecker,
 		podLogs:            opts.PodLogs,
 		production:         opts.Production,
 		diagAuditCfg:       opts.DiagnosticsAudit,
@@ -267,6 +282,7 @@ func New(opts Options) *Server {
 	s.registerEventStreamRoutes()
 	s.registerEventSubscriptionRoutes()
 	s.registerReleaseChannelRoutes()
+	s.registerPlatformUpgradeRoutes()
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.

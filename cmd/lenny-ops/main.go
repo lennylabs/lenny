@@ -67,6 +67,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
+// buildVersion is the compiled-in lenny-ops binary version, overridden
+// at build time via "-X main.buildVersion=...". The §25.8 upgrade-check
+// compares it against the release channel's advertised version to decide
+// whether a newer release is available (§25.8 "lenny-ops binary metadata
+// — local, compiled-in via ldflags").
+var buildVersion = "dev"
+
 func main() {
 	addr := flag.String("addr", ":8090", "address the lenny-ops HTTP server binds to")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -460,14 +467,25 @@ func main() {
 		*releaseChannelManifestPath,
 	)
 
+	// The §25.8 platform-upgrade orchestrator (F-10.5.7) and its
+	// upgrade-check client (F-10.5.5). The orchestrator drives the §25.8
+	// phase machine and emits the §16.7 platform-upgrade lifecycle audit
+	// events; the checker queries the operator-supplied release manifest
+	// and emits platform_upgrade_available. The platform-upgrade-check
+	// cron (§25.4 line 1338) runs leader-only alongside the backup jobs.
+	upgradeSvc := buildUpgradeService(opsEmitter)
+	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, opsEmitter)
+	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker))
+
 	// The §25.4 service body: leader election plus the background loops.
-	// The §25.11 scheduled-backup cron jobs register here; the upgrade
-	// and escalation loops are wired as those subsystems are built.
+	// The §25.11 scheduled-backup cron jobs and the §25.8
+	// platform-upgrade-check cron register here; the escalation loop is
+	// wired as that subsystem is built.
 	svc, err := opsservice.New(opsservice.Config{
 		ReplicaID:          replicaID,
 		Elector:            elector,
 		Webhook:            webhook,
-		CronJobs:           backupJobs,
+		CronJobs:           cronJobs,
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
 		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {
@@ -578,6 +596,8 @@ func main() {
 		Escalations:      escalationSvc,
 		EventStream:      eventStream,
 		ReleaseChannel:   releaseChannelPub,
+		Upgrade:          upgradeSvc,
+		UpgradeChecker:   upgradeChecker,
 		PodLogs:          podLogs,
 		Production:       *production,
 		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
