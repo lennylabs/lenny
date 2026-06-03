@@ -32801,7 +32801,7 @@ controller crash-loops or runtime field-stripping behavior.
 
 ---
 
-### - [ ] F-17.6.5 — Helm `values.schema.json` is not generated; chart accepts unknown / malformed values silently [High] — OPEN
+### - [x] F-17.6.5 — Helm `values.schema.json` is not generated; chart accepts unknown / malformed values silently [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.20.1 — F-17.6.5 is the missing build-time generation of values.schema.json while F-24.20.1 is the missing lenny-ctl values validate command; related schema-validation surface, different deliverables.
 
@@ -32838,6 +32838,8 @@ materialize as gateway crashes.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/` (no `values.schema.json`)
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:73-122` (no `values validate` dispatch)
+
+**Resolution:** Built the `pkg/chart/values` source of truth (`Root` modelling every documented top-level key of `values.yaml`, with the security-relevant `Global` and `Playground` sections fully enumerated and strict) and a deterministic reflection-based generator (`Generate`, the spec-sanctioned "equivalent Go reflection-based generator"). `cmd/lenny-chart-schema-gen` writes `charts/lenny/values.schema.json` (Draft 2020-12, `$id: https://schemas.lenny.dev/helm/values/v1.json`); its `-check` mode plus tier-1 `TestSchemaIsCommitted` are the build-time drift guard. Helm v4 now validates `-f`/`--set` against it on install/upgrade: an unknown top-level key (`gatway:`), an out-of-enum `global.noEnvironmentPolicy`, a malformed `playground.devTenantId` (the §17.6 line 373 `^[a-zA-Z0-9_-]{1,128}$` pattern + maxLength), and an out-of-range `playground.bearerTtlSeconds` are all rejected at render time. `lenny-ctl values validate --config <values.yaml>` exposes the standalone validator (santhosh-tekuri/jsonschema v5, exit 0 / report+1). The chart's `values.yaml` carries the `# yaml-language-server: $schema=…` IDE reference, and the release workflow's Helm was bumped to a 2020-12-capable v4.x. The schema generalises the partial playground-only schema commit ff3fd0f3 left behind, preserving its §27.2 constraints. The cross-field `devTenantId`-required-when-`authMode=dev` rule stays the preflight/startup backstop the spec mandates (already built under F-27.2.x); unifying the install-wizard `installAnswers` struct and the preflight config parser onto these structs is a separate follow-on. Closes F-24.20.1, F-17.9.7, F-17.9.14. Commit `a58506ad`.
 
 ---
 
@@ -34526,7 +34528,7 @@ gets a chart render identical to one that answered both empty.
 
 ---
 
-### - [ ] F-17.9.7 — No `values.schema.json`, so the spec's CI-lint claim "files cannot drift out of sync with the schema" cannot run [Medium] — OPEN
+### - [x] F-17.9.7 — No `values.schema.json`, so the spec's CI-lint claim "files cannot drift out of sync with the schema" cannot run [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.9.14 — Both report that the §17.9.2 CI lint of answer files against values.schema.json cannot run because no values.schema.json exists and the Go struct test is not equivalent.
 
@@ -34554,6 +34556,8 @@ mechanism that prevents answer-file drift.
 - `/Users/joan/projects/lenny/charts/lenny/` (no `values.schema.json`)
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install_test.go:559`
 - `/Users/joan/projects/lenny/.github/workflows/release.yml:294`
+
+**Resolution:** Closed by F-17.6.5. `charts/lenny/values.schema.json` now exists (generated, Draft 2020-12), so the §17.9.2 line 1374 lint can run. The shipped chart-values fragments (the tier presets) are validated directly against the schema by tier-1 `TestPresetsConformToSchema`, and the chart's own `values.yaml` by `TestChartValuesYAMLConformsToSchema`; both run in the standard `go test` CI job (version-independent). The release workflow's `helm lint` additionally schema-validates the base values once its Helm was bumped to a 2020-12-capable v4.x. Closed alongside the duplicate F-17.9.14. Commit `a58506ad`.
 
 ---
 
@@ -34746,7 +34750,7 @@ operator-facing knob is missing either way.
 
 ---
 
-### - [ ] F-17.9.14 — No CI lint enforcing answer-file schema validity beyond the three shipped files [Medium] — OPEN
+### - [x] F-17.9.14 — No CI lint enforcing answer-file schema validity beyond the three shipped files [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.9.7 — Both report that the §17.9.2 CI lint of answer files against values.schema.json cannot run because no values.schema.json exists and the Go struct test is not equivalent.
 
@@ -34772,6 +34776,8 @@ test suite; this is the closest mechanism. However:
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install_test.go:559`
 - `/Users/joan/projects/lenny/.github/workflows/release.yml:294`
+
+**Resolution:** Closed by F-17.6.5 (duplicate of F-17.9.7). The precise gap this finding names — "a file that validates against `installAnswers` may still produce an invalid chart values document if the `composeValues` mapping breaks" — is now caught: tier-3 `TestComposedAnswerFilesConformToChartSchema` parses each shipped wizard answer file, runs it through `composeValues`, and validates the composed chart-values document against the generated `values.schema.json`. The validation surface is now the chart's values shape (via the composed output), not the wizard struct. Runs in the standard `go test` CI job. Commit `a58506ad`.
 
 ---
 
@@ -38339,7 +38345,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 ### Findings
 
-### - [ ] F-24.20.1 — `lenny-ctl values validate --config <values.yaml>` not implemented [High] — OPEN
+### - [x] F-24.20.1 — `lenny-ctl values validate --config <values.yaml>` not implemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-17.6.5 — F-17.6.5 is the missing build-time generation of values.schema.json while F-24.20.1 is the missing lenny-ctl values validate command; related schema-validation surface, different deliverables.
 
@@ -38347,6 +38353,8 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Evidence:** `cmd/lenny-ctl/main.go` dispatch switch has no `values` case; grep for `cmdValuesValidate`/`valuesValidate` returns no matches. `charts/lenny/values.schema.json` is not generated.
 - **Gap:** No CI- or IaC-callable schema validation for chart values. The §17.6 invariant "Helm rejects malformed inputs at render time, before any state change" relies on this command.
 - **Suggested resolution:** Generate `values.schema.json` from a typed `pkg/chart/values/` source and add `cmdValuesValidate` that loads both files and runs `jsonschema.Validate`.
+
+**Resolution:** Closed by F-17.6.5. `cmd/lenny-ctl/values.go` adds the `values validate --config <values.yaml>` subcommand: it generates the canonical schema from the same `pkg/chart/values` source of truth the committed `values.schema.json` is built from, validates the supplied YAML (santhosh-tekuri/jsonschema v5, Draft 2020-12), exits 0 on conformance, and prints a violation report and exits 1 otherwise. Tier-1 `values_test.go` covers conformance, a rejected bad value naming the offending field, missing `--config`, and a missing file. Commit `a58506ad`.
 
 ### - [ ] F-24.20.2 — `lenny-ctl upgrade --answers <file>` not implemented [High] — OPEN
 - **Spec:** §24.20 line 304 — "Replay an answer file against an existing install. Runs preflight, renders the values diff, and invokes `helm upgrade`."
