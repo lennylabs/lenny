@@ -1506,6 +1506,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
+	// spec: §15.1 line 673 / §24.17 line 220 — the `lenny session logs`
+	// target; session logs over the durable event store, content-
+	// negotiated SSE / JSON envelope with the `--since` filter.
+	mux.HandleFunc("GET /v1/sessions/{id}/logs", read(s.handleLogs))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))
