@@ -32967,7 +32967,7 @@ setting. A silent override is the worst failure mode for a value labeled
 
 ---
 
-### - [ ] F-17.6.8 — Bootstrap upsert lacks `--dry-run`, `--force-update`, security-critical-field protection, and the documented exit codes [Medium] — OPEN
+### - [x] F-17.6.8 — Bootstrap upsert lacks `--dry-run`, `--force-update`, security-critical-field protection, and the documented exit codes [Medium] — CLOSED
 
 **Spec:** §17.6 lines 417–453:
 
@@ -33000,9 +33000,11 @@ means upgraded values silently mutate existing rows.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:485-547`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/bootstrap.go:106-338`
 
+**Resolution (verify-closed, rule O):** The evidence is stale; commit `0866e9fb` (and the §17.6.16 `--wait-timeout` work) had already delivered every named gap. `cmdBootstrap` (`cmd/lenny-ctl/main.go`) parses `--dry-run` (→`?dryRun=true`), `--force-update` (→`?forceUpdate=true`), and `--wait-timeout` (default 120s), and `bootstrapResult.exitCode()` maps the response to the §17.6 line 420 codes (0 all-seeded, 1 validation/security-critical, 2 partial). The server handler (`pkg/gateway/admin/bootstrap.go`) implements skip-by-default on differing fields (`SEED_CONFLICT` with `conflictingFields`), the `--force-update` overwrite, and the §17.6 line 451 `SEED_SECURITY_CRITICAL_FIELD` block on `runtime.isolationProfile` / pool isolation regardless of force. Coverage already exists (`TestBootstrapDryRunAndForceUpdateQuery_spec_24_1_35`, `TestBootstrapExitCodeMapping_spec_17_6_420`, `TestBootstrapSkipsDifferingFieldsWithoutForceUpdate_spec_17_6_450`, `TestBootstrapBlocksSecurityCriticalFieldOverwrite_spec_17_6_451`), all passing this batch.
+
 ---
 
-### - [ ] F-17.6.9 — Interactive `install` wizard has no detection phase [Medium] — OPEN
+### - [x] F-17.6.9 — Interactive `install` wizard has no detection phase [Medium] — CLOSED
 
 **Spec:** §17.6 lines 671–698 require five phases:
 
@@ -33038,9 +33040,11 @@ without NetworkPolicy support.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:329-334` (`--offline` flag, no probing code)
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:561-602` (question phase, no detection-driven defaults)
 
+**Resolution (commit `27036a8f`):** `cmd/lenny-ctl/install_detect.go` adds the §17.6 detection phase. A `kubectlDetector` (command runner injected for testability) probes the Kubernetes version, RuntimeClass objects, Ready cert-manager ClusterIssuers, the Prometheus Operator CRDs (ServiceMonitor + PrometheusRule), and the `networking.k8s.io` NetworkPolicy surface; `printDetectionSummary` renders the findings before the question phase. The Postgres/Redis/MinIO reachability half of detection is the wizard's existing preflight phase (`runInstallPreflight`). Detection drives the TLS-strategy default via `tlsDefaults` (cert-manager when a Ready issuer exists, bring-your-own otherwise), and the strategy prompt is skipped when exactly one ClusterIssuer is Ready (§17.6 line 689 "unambiguous"). A new `--context` flag overrides the kubeconfig context; `--offline` skips detection (the static-default fallback). A probe failure is recorded as an advisory note and never aborts the wizard. Tests: detector probe parsing (available / missing-capability / unreachable), `tlsDefaults` table, summary rendering, `kubectlArgs` context handling.
+
 ---
 
-### - [ ] F-17.6.10 — Wizard question set is narrower than the spec table [Medium] — OPEN
+### - [x] F-17.6.10 — Wizard question set is narrower than the spec table [Medium] — CLOSED
 
 **Spec:** §17.6 lines 677–689 table:
 - Cluster name / release namespace
@@ -33065,9 +33069,11 @@ wizard.
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:561-602`
 
+**Resolution (commit `27036a8f`):** The wizard's question phase now ends with the §17.6 line 688 reference-runtime multi-select: it lists the §26 catalog names and accepts a comma-separated subset (blank installs all of §26; `none` installs no reference runtime). `composeValues` writes the subset to `referenceRuntimes.include` (or `referenceRuntimes.enabled=false` for `none`), and the chart's `reference-runtimes.yaml` filters the catalog by that list (a new `referenceRuntimes.include` values key, empty = whole catalog). `validateAnswers` rejects a name that is not a §26 runtime and rejects `none` combined with other names. The answer-file key `referenceRuntimes` and the usage text are updated. The detection-driven defaults (the other half of the §17.6 question table) landed alongside in F-17.6.9. Tests: compose include/none/all, validation rejections, answer parsing; chart helm-unittest narrows-to-subset / unknown-name-empty / default-whole-catalog.
+
 ---
 
-### - [ ] F-17.6.11 — `preflight.enabled: false` skip-knob and `preflight.timeoutSeconds` knob are absent [Medium] — OPEN
+### - [x] F-17.6.11 — `preflight.enabled: false` skip-knob and `preflight.timeoutSeconds` knob are absent [Medium] — CLOSED
 
 **Spec:** §17.6 lines 532–534:
 - `preflight.enabled: false` skips the preflight Job (for air-gapped or
@@ -33094,6 +33100,8 @@ admission-plane check even when they shouldn't.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:883-895`
 - `/Users/joan/projects/lenny/charts/lenny/templates/preflight-job.yaml`
+
+**Resolution (commit `27036a8f`):** Partly stale. `preflight.timeoutSeconds` (default 120) already fed the Job's `activeDeadlineSeconds`, and the dev-mode skip is wired through `--dev-mode`/`--global-dev-mode` to the preflight binary. This batch adds the missing `preflight.enabled: true` knob (`charts/lenny/values.yaml`) and gates `preflight-job.yaml` on it (`{{- if .Values.preflight.enabled -}}`, avoiding the `default true` boolean-falsiness trap), so `preflight.enabled: false` skips the SA, RBAC, and Job for air-gapped installs. `NOTES.txt` emits the spec's verbatim `"Preflight validation skipped — infrastructure misconfigurations may cause runtime failures."` warning when disabled. The post-upgrade CRD-validate Job renders independently of the flag so the stale-CRD catch-net is never silently removed. Tests: preflight-job helm-unittest (renders-nothing-when-false, renders-by-default).
 
 ---
 
@@ -33155,7 +33163,7 @@ the `kubectl-lenny` name (via krew) and bundled in the `lenny-*` archive.
 
 **Resolution:** Closed by F-24.0.2 (confirmed duplicate). A signed standalone `lenny-ctl_<tag>_<os>_<arch>` archive is now published and `dist/brew/lenny-ctl.rb` installs the `lenny-ctl` binary. Commit 4b666d57.
 
-### - [ ] F-17.6.14 — `lenny-ctl bootstrap` does not log `first-use` token-retrieval prompt [Medium] — OPEN
+### - [ ] F-17.6.14 — `lenny-ctl bootstrap` does not log `first-use` token-retrieval prompt [Medium] — DEFERRED
 
 **Spec:** §17.6 line 473: bootstrap CLI prints `"Initial admin token written
 to Secret lenny-system/lenny-admin-token. Retrieve with: kubectl get secret
@@ -33172,6 +33180,8 @@ fails.
 
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:485-547`
+
+**Deferred (batch 27036a8f):** Blocked on F-17.6.3. The first-use vs re-run log lines announce that the `lenny-system/lenny-admin-token` Secret was written, but no code path creates that Secret yet (F-17.6.3, still OPEN). Emitting the log line before the Secret-creation mechanism exists would mislead the operator. Re-attempt once F-17.6.3 lands the admin-token Secret + idempotent creation path.
 
 ---
 
