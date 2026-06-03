@@ -4087,11 +4087,11 @@ func main() {
 	)); err != nil {
 		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
 	}
-	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
-		"mcp",
-		mcpSrv.Handler(),
-		gwadapter.Capabilities{PathPrefix: "/mcp", Protocol: "mcp", SupportsElicitation: true},
-	)); err != nil {
+	// §15.2 line 1335: the MCP adapter is the platform's primary streaming
+	// surface, so it overrides the BaseAdapter no-op OutboundCapabilities()
+	// with the mandatory six-kind push declaration (MCPAdapter, not a plain
+	// SimpleAdapter). F-15.2.8.
+	if err := adapterReg.Register(adapterregistry.NewMCPAdapter(mcpSrv.Handler())); err != nil {
 		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
 	}
 	adapterReg.Mount(mux)

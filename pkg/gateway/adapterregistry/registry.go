@@ -70,6 +70,56 @@ const (
 	SessionEventTerminated SessionEventKind = "terminated"
 )
 
+// AllSessionEventKinds returns the §15.0 closed SessionEventKind enum in
+// spec order. The gateway will never dispatch a kind outside this set and
+// third-party adapters MUST NOT rely on receiving unknown kinds
+// (§15.0 "SessionEvent Kind Registry"). spec: §15 line 318.
+func AllSessionEventKinds() []SessionEventKind {
+	return []SessionEventKind{
+		SessionEventStateChange,
+		SessionEventOutput,
+		SessionEventElicitation,
+		SessionEventToolUse,
+		SessionEventError,
+		SessionEventTerminated,
+	}
+}
+
+// IsValid reports whether k is one of the §15.0 closed-enum kinds.
+func (k SessionEventKind) IsValid() bool {
+	for _, v := range AllSessionEventKinds() {
+		if k == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateCapabilityConsistency enforces the §15.0 "Capability-consistency
+// invariant with elicitation policy": an adapter that declares
+// SessionEventElicitation in its OutboundCapabilitySet.SupportedEventKinds
+// MUST also return AdapterCapabilities.SupportsElicitation: true. Declaring
+// the elicitation kind without the matching capability would mislead clients
+// that gate elicitation-dependent workflows on SupportsElicitation. The check
+// also rejects any kind outside the closed enum, which the spec calls a
+// gateway-internal bug rather than an adapter-extension point.
+// spec: §15 line 559.
+func ValidateCapabilityConsistency(caps Capabilities, out OutboundCapabilitySet) error {
+	declaresElicitation := false
+	for _, k := range out.SupportedEventKinds {
+		if !k.IsValid() {
+			return fmt.Errorf("adapterregistry: SupportedEventKinds carries %q which is outside the §15.0 closed SessionEventKind enum", k)
+		}
+		if k == SessionEventElicitation {
+			declaresElicitation = true
+		}
+	}
+	if declaresElicitation && !caps.SupportsElicitation {
+		return fmt.Errorf("adapterregistry: adapter declares the %q outbound kind but Capabilities.SupportsElicitation is false (§15.0 capability-consistency invariant)", SessionEventElicitation)
+	}
+	return nil
+}
+
 // SessionEvent is the outbound event envelope dispatched to adapters
 // per §15.0. v1 carries the minimum fields the built-in surfaces
 // emit; the spec defines the closed schema in §15.0 "Shared Adapter
@@ -255,6 +305,13 @@ func (r *Registry) Register(a ExternalProtocolAdapter) error {
 	prefix := strings.TrimSpace(caps.PathPrefix)
 	if prefix == "" {
 		return fmt.Errorf("adapterregistry: adapter %q PathPrefix is empty (§15.0)", name)
+	}
+	// §15.0 capability-consistency invariant: an adapter cannot declare the
+	// elicitation outbound kind without SupportsElicitation, and cannot
+	// declare a kind outside the closed enum. Checked at registration so a
+	// misdeclared adapter never reaches the dispatch path.
+	if err := ValidateCapabilityConsistency(caps, a.OutboundCapabilities()); err != nil {
+		return fmt.Errorf("adapterregistry: adapter %q: %w", name, err)
 	}
 
 	r.mu.Lock()

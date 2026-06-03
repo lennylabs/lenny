@@ -38,6 +38,9 @@ func (s *slowAncestorStore) Get(ctx context.Context, tenantID, id string) (sessi
 	}
 }
 
+func (s *slowAncestorStore) GetByID(context.Context, string) (sessionstore.Session, error) {
+	panic("unused")
+}
 func (s *slowAncestorStore) Create(context.Context, sessionstore.Session) error {
 	panic("unused")
 }

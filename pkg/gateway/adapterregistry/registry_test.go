@@ -21,6 +21,7 @@ type fakeAdapter struct {
 	name    string
 	prefix  string
 	body    string
+	elicits bool
 	caps    adapterregistry.OutboundCapabilitySet
 	created []adapterregistry.SessionMetadata
 	events  []adapterregistry.SessionEvent
@@ -39,8 +40,9 @@ func (f *fakeAdapter) HTTPHandler() http.Handler {
 
 func (f *fakeAdapter) Capabilities() adapterregistry.Capabilities {
 	return adapterregistry.Capabilities{
-		PathPrefix: f.prefix,
-		Protocol:   f.name,
+		PathPrefix:          f.prefix,
+		Protocol:            f.name,
+		SupportsElicitation: f.elicits,
 	}
 }
 
