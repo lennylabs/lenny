@@ -114,6 +114,7 @@ func main() {
 		leaderElect        bool
 		leaderElectNS      string
 		adapterImage       string
+		gatewayGRPCAddr    string
 		egressCaptureImage string
 		postgresDSN        string
 		agentNSList        string
@@ -151,6 +152,8 @@ func main() {
 		"namespace that holds the leader-election Lease")
 	flag.StringVar(&adapterImage, "adapter-image", "",
 		"the lenny-adapter sidecar image stamped into agent pods")
+	flag.StringVar(&gatewayGRPCAddr, "gateway-grpc-addr", os.Getenv("LENNY_GATEWAY_GRPC_ADDR"),
+		"§9.1/§8.6 gateway GatewayControl address (host:port) stamped onto agent-pod adapters so a type:agent runtime's platform tool calls (lenny/delegate_task, ...) reach the gateway platform tool surface. Empty leaves the platform MCP server unstarted.")
 	flag.StringVar(&saTokenAudience, "sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
 		"§10.3 deployment-specific projected-token audience (global.saTokenAudience, e.g. lenny-gateway-<cluster-name>). When set, every agent pod mounts a §6.1 audience-bound, 900s-TTL projected service-account token; empty leaves the pod without it rather than mounting a cluster-default-audience token.")
 	flag.StringVar(&agentServiceAccount, "agent-service-account", os.Getenv("LENNY_AGENT_SERVICE_ACCOUNT"),
@@ -375,6 +378,7 @@ func main() {
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		AdapterImage:            adapterImage,
+		GatewayGRPCAddr:         gatewayGRPCAddr,
 		EgressCaptureImage:      egressCaptureImage,
 		DevMode:                 devMode,
 		SATokenAudience:         saTokenAudience,

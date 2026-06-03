@@ -145,6 +145,15 @@ const (
 	// matches runtimekit.SocketEnvVar.
 	RuntimeSocketEnvVar = "LENNY_ADAPTER_SOCKET"
 
+	// PlatformMCPSocketName is the §9.1/§4.7 abstract Unix socket the
+	// adapter's platform MCP server binds (@lenny-platform-mcp). A
+	// type:agent runtime discovers it from the adapter manifest's
+	// platformMcpServer.socket and dials it to reach the platform tools
+	// (lenny/delegate_task, ...). It lives in the same kernel abstract
+	// namespace as the runtime socket, reachable across the pod's
+	// containers. spec: §9.1 line 8. F-9.1.1.
+	PlatformMCPSocketName = "@lenny-platform-mcp"
+
 	// ReadinessGateSandboxReady is the §6.1 line 18 pod readiness gate
 	// ("Marked 'idle and claimable' via readiness gate"). The pod spec
 	// declares the gate so the kubelet holds Pod.Ready False — and the pod
@@ -201,6 +210,14 @@ type Inputs struct {
 	// supplied as controller configuration. It is required for the
 	// sidecar model and unused for the embedded model.
 	AdapterImage string
+	// GatewayGRPCAddr is the §8.6/§9.1 gateway GatewayControl address
+	// (host:port) the adapter dials to forward a type:agent runtime's
+	// platform tool calls (lenny/delegate_task, ...). When set, the
+	// builder starts the platform MCP server on PlatformMCPSocketName and
+	// points the adapter at this address; when empty, the platform MCP
+	// server is not started (no gateway link to forward to). Supplied as
+	// controller configuration. spec: §9.1 lines 14-31. F-9.1.1.
+	GatewayGRPCAddr string
 	// IsolationProfile is the §5.3 profile (standard, sandboxed, or
 	// microvm) that selects the RuntimeClass.
 	IsolationProfile string
@@ -423,7 +440,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// §4.7 sidecar transport: the adapter binds the abstract
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
-			}, sharedAssetsArgs(in)...),
+			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(AdapterUID),
@@ -499,7 +516,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// §4.7: the embedded runtime is the adapter, so it stages
 				// uploads the same way the sidecar adapter does.
 				"--staging-dir=" + stagingPath,
-			}, sharedAssetsArgs(in)...),
+			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
 			SecurityContext: containerSecurityContext(AgentUID),
@@ -609,6 +626,23 @@ func sharedAssetsArgs(in Inputs) []string {
 		args = append(args, "--shared-assets="+in.SharedAssetsArg)
 	}
 	return args
+}
+
+// platformMCPArgs returns the §9.1 platform MCP server args for the
+// adapter container: when the controller is configured with the gateway
+// GatewayControl address, the adapter binds the platform MCP socket and
+// forwards a type:agent runtime's platform tool calls to that gateway.
+// When no gateway address is configured the platform MCP server is not
+// started (there is no gateway link to forward to). spec: §9.1 lines
+// 8-31. F-9.1.1.
+func platformMCPArgs(in Inputs) []string {
+	if in.GatewayGRPCAddr == "" {
+		return nil
+	}
+	return []string{
+		"--mcp-socket=" + PlatformMCPSocketName,
+		"--gateway-grpc-addr=" + in.GatewayGRPCAddr,
+	}
 }
 
 // podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the

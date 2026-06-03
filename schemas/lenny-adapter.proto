@@ -192,6 +192,68 @@ service GatewayControl {
   // CEILING_REACHED or REJECTED the adapter MUST NOT retry the
   // extension; it propagates BUDGET_EXHAUSTED to the runtime.
   rpc ExtendLease(ExtendLeaseRequest) returns (ExtendLeaseResponse) {}
+
+  // ListPlatformTools returns the §9.1 platform tool catalog (lines
+  // 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+  // intra-pod platform MCP server advertises to a type:agent runtime on
+  // tools/list. The catalog is sourced from the gateway's platform tool
+  // surface so the intra-pod server never duplicates the tool schemas.
+  // spec: §9.1 lines 14-31.
+  rpc ListPlatformTools(ListPlatformToolsRequest) returns (ListPlatformToolsResponse) {}
+
+  // CallPlatformTool dispatches one §9.1 platform tool call a type:agent
+  // runtime made against the adapter's intra-pod platform MCP server
+  // (the @lenny-platform-mcp socket) to the gateway's platform tool
+  // surface, scoped to the calling session. The gateway runs the same
+  // handler the gateway-edge /mcp surface runs, so the intra-pod and
+  // edge surfaces stay in lockstep. The response carries the JSON-encoded
+  // MCP tool result; a tool-level failure is an is_error result rather
+  // than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+  rpc CallPlatformTool(CallPlatformToolRequest) returns (CallPlatformToolResponse) {}
+}
+
+// ListPlatformToolsRequest asks the gateway for the §9.1 platform tool
+// catalog visible to session_id. The session scopes the catalog to the
+// runtimes and capabilities the session's effective delegation policy
+// admits.
+message ListPlatformToolsRequest {
+  SessionId session_id = 1;
+}
+
+// PlatformTool is one entry in the §9.1 platform tool catalog: the tool
+// name (e.g. `lenny/delegate_task`), its human description, and the
+// JSON-Schema for its arguments. The adapter relays each entry verbatim
+// on the intra-pod tools/list response.
+message PlatformTool {
+  string name = 1;
+  string description = 2;
+  // input_schema is the tool's JSON-Schema, encoded as JSON bytes.
+  bytes input_schema = 3;
+}
+
+// ListPlatformToolsResponse carries the platform tool catalog.
+message ListPlatformToolsResponse {
+  repeated PlatformTool tools = 1;
+}
+
+// CallPlatformToolRequest dispatches one §9.1 platform tool call to the
+// gateway on behalf of session_id. arguments is the raw JSON `arguments`
+// object from the runtime's MCP tools/call request.
+message CallPlatformToolRequest {
+  SessionId session_id = 1;
+  string tool_name = 2;
+  bytes arguments = 3;
+}
+
+// CallPlatformToolResponse carries the §15.2 MCP tool result. result is
+// the JSON-encoded MCP result object (a `content` array, optionally with
+// `isError`). is_error mirrors the result's isError flag so the adapter
+// does not have to parse the body to know the call failed. A transport
+// or authorization failure (unknown session, unregistered tool) is a
+// gRPC status error instead.
+message CallPlatformToolResponse {
+  bytes result = 1;
+  bool is_error = 2;
 }
 
 // =====================================================================

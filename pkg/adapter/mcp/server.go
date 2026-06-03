@@ -55,6 +55,34 @@ type Server struct {
 	// SO_PEERCRED is disabled (--require-so-peercred=false), where the
 	// static nonce alone is replayable (spec lines 879-883).
 	RequireChallenge bool
+
+	// Provider supplies the §9.1 platform tools the intra-pod server does
+	// not register locally: List backs tools/list and Call backs
+	// tools/call for any name not registered locally. In production the
+	// platform MCP server registers no tools directly and forwards every
+	// tool to the gateway through the Provider, so the catalog and
+	// dispatch stay in lockstep with the gateway-edge /mcp surface. Nil
+	// leaves the server serving only its registered tools (the dev / test
+	// default). spec: §9.1 lines 14-31. F-9.1.1.
+	Provider ToolProvider
+}
+
+// ToolProvider supplies tools a Server forwards rather than handles
+// locally. The §9.1 intra-pod platform MCP server uses it to proxy the
+// platform tool catalog and dispatch to the gateway: List returns the
+// catalog to advertise on tools/list, and Call dispatches a tools/call
+// for a name the server does not register locally. spec: §9.1 lines
+// 14-31. F-9.1.1.
+type ToolProvider interface {
+	// List returns the provider's tool catalog. The server appends it to
+	// any locally-registered tools on tools/list.
+	List(ctx context.Context) ([]Tool, error)
+	// Call dispatches one tool invocation and returns the JSON-RPC
+	// result. The returned bytes are the MCP tools/call result object (a
+	// `content` array, optionally with `isError`); a tool-level failure
+	// is carried inside that object, while a returned error is a
+	// transport/routing failure the server reports as a JSON-RPC error.
+	Call(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error)
 }
 
 // NewServer returns an MCP server with no tools registered.
@@ -125,6 +153,11 @@ func (s *Server) Serve(ctx context.Context, lis net.Listener, nonce string) erro
 // tools/call until the peer closes the connection.
 func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 	defer conn.Close()
+	// The §9.1 Provider calls (tools/list, tools/call forwarding to the
+	// gateway) apply their own per-call deadline; the connection lifetime
+	// is bounded by the peer closing the socket and by Serve closing the
+	// listener on ctx cancel.
+	ctx := context.Background()
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
 
@@ -161,7 +194,7 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 			}
 			return fmt.Errorf("mcp: read request: %w", err)
 		}
-		resp, respond := s.dispatch(req)
+		resp, respond := s.dispatch(ctx, req)
 		if !respond {
 			continue
 		}
@@ -216,33 +249,54 @@ func (s *Server) initializeResponse(id json.RawMessage) rpcResponse {
 
 // dispatch handles one post-handshake request. respond is false for a
 // JSON-RPC notification, which receives no reply.
-func (s *Server) dispatch(req rpcRequest) (resp rpcResponse, respond bool) {
+func (s *Server) dispatch(ctx context.Context, req rpcRequest) (resp rpcResponse, respond bool) {
 	if req.isNotification() {
 		return rpcResponse{}, false
 	}
 	switch req.Method {
 	case "tools/list":
-		return s.ok(req.ID, s.toolList()), true
+		list, err := s.toolList(ctx)
+		if err != nil {
+			return s.fail(req.ID, errInternal, err.Error()), true
+		}
+		return s.ok(req.ID, list), true
 	case "tools/call":
-		return s.callTool(req)
+		return s.callTool(ctx, req)
 	default:
 		return s.fail(req.ID, errMethodNotFound, "unknown method "+req.Method), true
 	}
 }
 
-func (s *Server) toolList() map[string]any {
+// toolList returns the locally-registered tool descriptors followed by
+// the §9.1 Provider's catalog (when a Provider is wired), so the
+// intra-pod platform MCP server advertises the gateway's platform tools
+// without duplicating their schemas. F-9.1.1.
+func (s *Server) toolList(ctx context.Context) (map[string]any, error) {
 	tools := make([]map[string]any, 0, len(s.tools))
 	for _, t := range s.tools {
-		descriptor := map[string]any{"name": t.Name, "description": t.Description}
-		if len(t.InputSchema) > 0 {
-			descriptor["inputSchema"] = t.InputSchema
-		}
-		tools = append(tools, descriptor)
+		tools = append(tools, toolDescriptor(t))
 	}
-	return map[string]any{"tools": tools}
+	if s.Provider != nil {
+		provided, err := s.Provider.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range provided {
+			tools = append(tools, toolDescriptor(t))
+		}
+	}
+	return map[string]any{"tools": tools}, nil
 }
 
-func (s *Server) callTool(req rpcRequest) (rpcResponse, bool) {
+func toolDescriptor(t Tool) map[string]any {
+	descriptor := map[string]any{"name": t.Name, "description": t.Description}
+	if len(t.InputSchema) > 0 {
+		descriptor["inputSchema"] = t.InputSchema
+	}
+	return descriptor
+}
+
+func (s *Server) callTool(ctx context.Context, req rpcRequest) (rpcResponse, bool) {
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -250,15 +304,23 @@ func (s *Server) callTool(req rpcRequest) (rpcResponse, bool) {
 	if err := json.Unmarshal(req.Params, &call); err != nil {
 		return s.fail(req.ID, errInvalidParams, "malformed tools/call params"), true
 	}
-	tool, ok := s.tools[call.Name]
-	if !ok {
-		return s.fail(req.ID, errInvalidParams, "unknown tool "+call.Name), true
+	if tool, ok := s.tools[call.Name]; ok {
+		result, err := tool.Handler(call.Arguments)
+		if err != nil {
+			return s.fail(req.ID, errInternal, err.Error()), true
+		}
+		return s.ok(req.ID, result), true
 	}
-	result, err := tool.Handler(call.Arguments)
-	if err != nil {
-		return s.fail(req.ID, errInternal, err.Error()), true
+	// §9.1: a tool the intra-pod server does not register locally is a
+	// platform tool the Provider forwards to the gateway. F-9.1.1.
+	if s.Provider != nil {
+		result, err := s.Provider.Call(ctx, call.Name, call.Arguments)
+		if err != nil {
+			return s.fail(req.ID, errInternal, err.Error()), true
+		}
+		return s.ok(req.ID, result), true
 	}
-	return s.ok(req.ID, result), true
+	return s.fail(req.ID, errInvalidParams, "unknown tool "+call.Name), true
 }
 
 func (s *Server) ok(id json.RawMessage, result any) rpcResponse {

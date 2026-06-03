@@ -37,6 +37,16 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	// §4.7 lines 879-883: when SO_PEERCRED is disabled, the static nonce
 	// is replayable, so the server adds a per-connection challenge-response.
 	srv.RequireChallenge = s.NonceOnlyMode
+	// §9.1 lines 14-31: serve the platform tool catalog and forward every
+	// tools/call to the gateway over GatewayControl, scoped to this
+	// session. Without a forwarder the server serves an empty catalog (the
+	// dev path with no gateway link). F-9.1.1.
+	if s.PlatformForwarder != nil {
+		s.mu.Lock()
+		sessionID := s.sessionID
+		s.mu.Unlock()
+		srv.Provider = &platformToolProvider{forwarder: s.PlatformForwarder, sessionID: sessionID}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
 	s.mu.Lock()

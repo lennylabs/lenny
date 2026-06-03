@@ -365,6 +365,12 @@ type Service struct {
 	// maxAutoExtensionsPerMinute applied when a tree carries no more
 	// specific value. Zero means no limit. F-8.6.7.
 	defaultAutoMaxPerMinute int
+
+	// platformTools forwards the §9.1 platform tool calls a type:agent
+	// runtime makes against its pod's intra-pod platform MCP server to
+	// the gateway platform tool surface. Nil leaves CallPlatformTool and
+	// ListPlatformTools returning codes.Unimplemented. F-9.1.1.
+	platformTools PlatformToolService
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
@@ -593,6 +599,14 @@ type Options struct {
 	// is registered. Zero is the spec default (no limit). F-8.6.7.
 	// spec: §8.6 line 712
 	DefaultAutoMaxPerMinute int
+
+	// PlatformTools backs the §9.1 platform tool forwarding RPCs
+	// (CallPlatformTool / ListPlatformTools): a type:agent runtime's
+	// tools/call on its pod's @lenny-platform-mcp socket reaches the
+	// gateway platform tool surface through it. Nil leaves both RPCs
+	// returning codes.Unimplemented (the §8.6-only GatewayControl
+	// deployment). F-9.1.1.
+	PlatformTools PlatformToolService
 }
 
 // NewService returns a §8.6 ExtendLease Service.
@@ -630,6 +644,7 @@ func NewService(opts Options) (*Service, error) {
 	}
 	svc.autoLimiter = newAutoExtensionLimiter(opts.AutoExtensionCounter)
 	svc.defaultAutoMaxPerMinute = opts.DefaultAutoMaxPerMinute
+	svc.platformTools = opts.PlatformTools
 	return svc, nil
 }
 

@@ -83,6 +83,12 @@ type Reconciler struct {
 	// AdapterImage is the lenny-adapter sidecar image stamped into
 	// every agent Pod.
 	AdapterImage string
+	// GatewayGRPCAddr is the §8.6/§9.1 gateway GatewayControl address
+	// (host:port) stamped onto the adapter container so it forwards a
+	// type:agent runtime's platform tool calls to the gateway. Empty
+	// leaves the platform MCP server unstarted. spec: §9.1 lines 14-31.
+	// F-9.1.1.
+	GatewayGRPCAddr string
 	// EgressCaptureImage is the §12.9.8 egress-capture sidecar image.
 	// Empty disables the sidecar globally; a non-empty value enables
 	// the §12.9.8 tier-9 leakage probe path on Sandboxes whose
@@ -298,11 +304,15 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		return fmt.Errorf("encode shared assets for runtime %s: %w", sb.Spec.RuntimeRef, err)
 	}
 	pod, err := podspec.Build(podspec.Inputs{
-		Name:             sb.Name,
-		Namespace:        sb.Namespace,
-		Labels:           sb.Labels,
-		RuntimeImage:     rt.Spec.Image,
-		AdapterImage:     r.AdapterImage,
+		Name:         sb.Name,
+		Namespace:    sb.Namespace,
+		Labels:       sb.Labels,
+		RuntimeImage: rt.Spec.Image,
+		AdapterImage: r.AdapterImage,
+		// spec: §9.1 lines 14-31 — point the adapter at the gateway's
+		// GatewayControl listener so a type:agent runtime's platform tool
+		// calls reach the gateway platform tool surface. F-9.1.1.
+		GatewayGRPCAddr:  r.GatewayGRPCAddr,
 		IsolationProfile: profile,
 		// spec: §17.5 line 3 — apply operator RuntimeClass-name
 		// overrides (e.g. gvisor→runsc, kata→kata-qemu) so the chart's

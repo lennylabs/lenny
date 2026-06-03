@@ -392,26 +392,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 		// and MCP transports report identical (code, category,
 		// retryable) triples for the same error. A *ToolError supplies
 		// the lenny code; any other error falls back to INTERNAL_ERROR.
-		lennyCode := "INTERNAL_ERROR"
-		msg := err.Error()
-		var details map[string]any
-		var te *ToolError
-		if errors.As(err, &te) {
-			if te.Code != "" {
-				lennyCode = te.Code
-			}
-			msg = te.Msg
-			details = te.Details
-		}
-		envelope := NewLennyErrorDetail(lennyCode, msg, details)
-		envelopeJSON, _ := json.Marshal(envelope)
-		s.writeResult(w, req.ID, ToolResult{
-			Content: []ToolContent{
-				{Type: "text", Text: msg},
-				{Type: LennyErrorContentType, Text: string(envelopeJSON)},
-			},
-			IsError: true,
-		})
+		s.writeResult(w, req.ID, toolErrorResult("INTERNAL_ERROR", err))
 		return
 	}
 	// §4.8 PreToolResult: run the interceptor chain over the tool
@@ -422,31 +403,88 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 	if s.resultInterceptor != nil {
 		modified, ierr := s.resultInterceptor(ctx, string(req.ID), params.Name, result)
 		if ierr != nil {
-			lennyCode := "INTERCEPTOR_REJECTED"
-			msg := ierr.Error()
-			var details map[string]any
-			var te *ToolError
-			if errors.As(ierr, &te) {
-				if te.Code != "" {
-					lennyCode = te.Code
-				}
-				msg = te.Msg
-				details = te.Details
-			}
-			envelope := NewLennyErrorDetail(lennyCode, msg, details)
-			envelopeJSON, _ := json.Marshal(envelope)
-			s.writeResult(w, req.ID, ToolResult{
-				Content: []ToolContent{
-					{Type: "text", Text: msg},
-					{Type: LennyErrorContentType, Text: string(envelopeJSON)},
-				},
-				IsError: true,
-			})
+			s.writeResult(w, req.ID, toolErrorResult("INTERCEPTOR_REJECTED", ierr))
 			return
 		}
 		result = modified
 	}
 	s.writeResult(w, req.ID, result)
+}
+
+// Catalog returns the registered tool descriptors in registration
+// order. It is the read side the §9.1 intra-pod platform MCP server
+// uses (over GatewayControl.ListPlatformTools) to advertise the same
+// catalog the gateway-edge /mcp surface serves, so the two surfaces
+// never drift. spec: §9.1 lines 14-31. F-9.1.1.
+func (s *Server) Catalog() []Tool {
+	return s.toolList()
+}
+
+// DispatchTool runs a registered tool handler (and the §4.8
+// PreToolResult interceptor) outside the HTTP transport. It is the
+// dispatch side the §9.1 intra-pod platform MCP server reaches over
+// GatewayControl.CallPlatformTool: a type:agent runtime's tools/call on
+// the @lenny-platform-mcp socket lands on the same handler the
+// gateway-edge /mcp surface runs, so the intra-pod and edge platform
+// tool surfaces stay in lockstep per the §15.2.1 consistency contract.
+//
+// ok is false when no tool with name is registered (the caller maps
+// this to the MCP method-not-found error). A tool-level failure (a
+// handler error or an interceptor rejection) is returned as an isError
+// ToolResult carrying the §15.2.1 lenny error envelope with err nil, so
+// the result reaches the agent the same way it would over HTTP. err is
+// non-nil only for a dispatch fault that has no tool-result form.
+//
+// The idempotency path is intentionally absent: the §11.5 idempotency
+// keys gate the client-facing session-lifecycle tools, not the
+// agent-facing platform tools this entry point serves.
+// spec: §9.1 line 14; §4.8 line 1053. F-9.1.1.
+func (s *Server) DispatchTool(ctx context.Context, name string, arguments json.RawMessage) (result ToolResult, ok bool, err error) {
+	handler, found := s.handlers[name]
+	if !found {
+		return ToolResult{}, false, nil
+	}
+	res, herr := handler(ctx, arguments)
+	if herr != nil {
+		return toolErrorResult("INTERNAL_ERROR", herr), true, nil
+	}
+	if s.resultInterceptor != nil {
+		modified, ierr := s.resultInterceptor(ctx, "", name, res)
+		if ierr != nil {
+			return toolErrorResult("INTERCEPTOR_REJECTED", ierr), true, nil
+		}
+		res = modified
+	}
+	return res, true, nil
+}
+
+// toolErrorResult converts a tool handler (or interceptor) error into
+// the §15.2.1 isError ToolResult: the first content block carries the
+// human-readable message and the second carries the JSON-encoded lenny
+// error envelope. A *ToolError supplies the lenny code; any other error
+// falls back to defaultCode. This is the shared builder for both the
+// HTTP and DispatchTool error paths. spec: §15.2.1 rule 3. F-9.1.1.
+func toolErrorResult(defaultCode string, err error) ToolResult {
+	lennyCode := defaultCode
+	msg := err.Error()
+	var details map[string]any
+	var te *ToolError
+	if errors.As(err, &te) {
+		if te.Code != "" {
+			lennyCode = te.Code
+		}
+		msg = te.Msg
+		details = te.Details
+	}
+	envelope := NewLennyErrorDetail(lennyCode, msg, details)
+	envelopeJSON, _ := json.Marshal(envelope)
+	return ToolResult{
+		Content: []ToolContent{
+			{Type: "text", Text: msg},
+			{Type: LennyErrorContentType, Text: string(envelopeJSON)},
+		},
+		IsError: true,
+	}
 }
 
 func (s *Server) writeResult(w http.ResponseWriter, id json.RawMessage, result any) {

@@ -112,6 +112,15 @@ type Server struct {
 	// challenge-response (lines 879-883), keeping forward security on each
 	// new connection.
 	NonceOnlyMode bool
+	// PlatformForwarder forwards the §9.1 platform tool calls a type:agent
+	// runtime makes against the intra-pod platform MCP server to the
+	// gateway over GatewayControl. When set, startPlatformMCP wires it as
+	// the MCP server's tool Provider so the server advertises the
+	// gateway's platform tool catalog on tools/list and dispatches every
+	// tools/call to the gateway. Nil leaves the platform MCP server
+	// serving an empty catalog (the dev path with no gateway link).
+	// *gatewaycontrol.Client satisfies it. spec: §9.1 lines 14-31. F-9.1.1.
+	PlatformForwarder PlatformToolForwarder
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP

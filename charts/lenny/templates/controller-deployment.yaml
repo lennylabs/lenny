@@ -67,6 +67,13 @@ spec:
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}
+            {{- /* spec: §9.1 lines 14-31 — point each agent pod's adapter at
+                   the gateway's GatewayControl listener so a type:agent
+                   runtime's platform tool calls (lenny/delegate_task, ...)
+                   forwarded over the intra-pod platform MCP socket reach the
+                   gateway platform tool surface. The gateway always serves
+                   GatewayControl on gateway.grpcPort. F-9.1.1. */}}
+            - --gateway-grpc-addr=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.grpcPort }}
             {{- if .Values.controller.egressCaptureImage }}
             - --egress-capture-image={{ .Values.controller.egressCaptureImage }}
             {{- end }}

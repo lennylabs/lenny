@@ -28,6 +28,21 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --leader-elect
 
+  # spec: §9.1 lines 14-31 — the controller points each agent pod's
+  # adapter at the gateway's GatewayControl listener so a type:agent
+  # runtime's platform tool calls reach the gateway platform tool
+  # surface. F-9.1.1.
+  - it: points agent-pod adapters at the gateway GatewayControl listener
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.grpcPort: 50051
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-grpc-addr=lenny-gateway.NAMESPACE.svc:50051
+
   # spec: §10.3 line 334 (NET-064) — when set the controller stamps the
   # audience-bound projected SA token on every warm pod. F-10.3.5.
   - it: passes --sa-token-audience when global.saTokenAudience is set

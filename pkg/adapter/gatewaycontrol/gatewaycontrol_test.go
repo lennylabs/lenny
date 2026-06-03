@@ -29,6 +29,14 @@ type stubGatewayControl struct {
 
 	// gotReq captures the last request the server received.
 	gotReq *adapterv1.ExtendLeaseRequest
+
+	// §9.1 platform tool forwarding stubs. F-9.1.1.
+	listResp   *adapterv1.ListPlatformToolsResponse
+	listErr    error
+	callResp   *adapterv1.CallPlatformToolResponse
+	callErr    error
+	gotListReq *adapterv1.ListPlatformToolsRequest
+	gotCallReq *adapterv1.CallPlatformToolRequest
 }
 
 func (s *stubGatewayControl) ExtendLease(_ context.Context, req *adapterv1.ExtendLeaseRequest) (*adapterv1.ExtendLeaseResponse, error) {
@@ -37,6 +45,22 @@ func (s *stubGatewayControl) ExtendLease(_ context.Context, req *adapterv1.Exten
 		return nil, s.err
 	}
 	return s.resp, nil
+}
+
+func (s *stubGatewayControl) ListPlatformTools(_ context.Context, req *adapterv1.ListPlatformToolsRequest) (*adapterv1.ListPlatformToolsResponse, error) {
+	s.gotListReq = req
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.listResp, nil
+}
+
+func (s *stubGatewayControl) CallPlatformTool(_ context.Context, req *adapterv1.CallPlatformToolRequest) (*adapterv1.CallPlatformToolResponse, error) {
+	s.gotCallReq = req
+	if s.callErr != nil {
+		return nil, s.callErr
+	}
+	return s.callResp, nil
 }
 
 // dialStub boots stub on an in-memory bufconn server and returns a

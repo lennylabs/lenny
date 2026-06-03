@@ -1095,7 +1095,9 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	GatewayControl_ExtendLease_FullMethodName = "/lenny.adapter.v1.GatewayControl/ExtendLease"
+	GatewayControl_ExtendLease_FullMethodName       = "/lenny.adapter.v1.GatewayControl/ExtendLease"
+	GatewayControl_ListPlatformTools_FullMethodName = "/lenny.adapter.v1.GatewayControl/ListPlatformTools"
+	GatewayControl_CallPlatformTool_FullMethodName  = "/lenny.adapter.v1.GatewayControl/CallPlatformTool"
 )
 
 // GatewayControlClient is the client API for GatewayControl service.
@@ -1121,6 +1123,22 @@ type GatewayControlClient interface {
 	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
 	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
 	ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error)
+	// ListPlatformTools returns the §9.1 platform tool catalog (lines
+	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// intra-pod platform MCP server advertises to a type:agent runtime on
+	// tools/list. The catalog is sourced from the gateway's platform tool
+	// surface so the intra-pod server never duplicates the tool schemas.
+	// spec: §9.1 lines 14-31.
+	ListPlatformTools(ctx context.Context, in *ListPlatformToolsRequest, opts ...grpc.CallOption) (*ListPlatformToolsResponse, error)
+	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
+	// runtime made against the adapter's intra-pod platform MCP server
+	// (the @lenny-platform-mcp socket) to the gateway's platform tool
+	// surface, scoped to the calling session. The gateway runs the same
+	// handler the gateway-edge /mcp surface runs, so the intra-pod and
+	// edge surfaces stay in lockstep. The response carries the JSON-encoded
+	// MCP tool result; a tool-level failure is an is_error result rather
+	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	CallPlatformTool(ctx context.Context, in *CallPlatformToolRequest, opts ...grpc.CallOption) (*CallPlatformToolResponse, error)
 }
 
 type gatewayControlClient struct {
@@ -1135,6 +1153,26 @@ func (c *gatewayControlClient) ExtendLease(ctx context.Context, in *ExtendLeaseR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExtendLeaseResponse)
 	err := c.cc.Invoke(ctx, GatewayControl_ExtendLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) ListPlatformTools(ctx context.Context, in *ListPlatformToolsRequest, opts ...grpc.CallOption) (*ListPlatformToolsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPlatformToolsResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ListPlatformTools_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) CallPlatformTool(ctx context.Context, in *CallPlatformToolRequest, opts ...grpc.CallOption) (*CallPlatformToolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CallPlatformToolResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_CallPlatformTool_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1164,6 +1202,22 @@ type GatewayControlServer interface {
 	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
 	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
 	ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error)
+	// ListPlatformTools returns the §9.1 platform tool catalog (lines
+	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// intra-pod platform MCP server advertises to a type:agent runtime on
+	// tools/list. The catalog is sourced from the gateway's platform tool
+	// surface so the intra-pod server never duplicates the tool schemas.
+	// spec: §9.1 lines 14-31.
+	ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error)
+	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
+	// runtime made against the adapter's intra-pod platform MCP server
+	// (the @lenny-platform-mcp socket) to the gateway's platform tool
+	// surface, scoped to the calling session. The gateway runs the same
+	// handler the gateway-edge /mcp surface runs, so the intra-pod and
+	// edge surfaces stay in lockstep. The response carries the JSON-encoded
+	// MCP tool result; a tool-level failure is an is_error result rather
+	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error)
 }
 
 // UnimplementedGatewayControlServer should be embedded to have
@@ -1175,6 +1229,12 @@ type UnimplementedGatewayControlServer struct{}
 
 func (UnimplementedGatewayControlServer) ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExtendLease not implemented")
+}
+func (UnimplementedGatewayControlServer) ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPlatformTools not implemented")
+}
+func (UnimplementedGatewayControlServer) CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CallPlatformTool not implemented")
 }
 func (UnimplementedGatewayControlServer) testEmbeddedByValue() {}
 
@@ -1214,6 +1274,42 @@ func _GatewayControl_ExtendLease_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GatewayControl_ListPlatformTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPlatformToolsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ListPlatformTools(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ListPlatformTools_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ListPlatformTools(ctx, req.(*ListPlatformToolsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GatewayControl_CallPlatformTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CallPlatformToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).CallPlatformTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_CallPlatformTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).CallPlatformTool(ctx, req.(*CallPlatformToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GatewayControl_ServiceDesc is the grpc.ServiceDesc for GatewayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1224,6 +1320,14 @@ var GatewayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExtendLease",
 			Handler:    _GatewayControl_ExtendLease_Handler,
+		},
+		{
+			MethodName: "ListPlatformTools",
+			Handler:    _GatewayControl_ListPlatformTools_Handler,
+		},
+		{
+			MethodName: "CallPlatformTool",
+			Handler:    _GatewayControl_CallPlatformTool_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

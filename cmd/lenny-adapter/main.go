@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
@@ -127,6 +128,13 @@ func main() {
 			"the runtime container dials it")
 	lifecycleSocket := flag.String("lifecycle-socket", "",
 		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
+	mcpSocket := flag.String("mcp-socket", "",
+		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent "+
+			"runtime (the @lenny-platform-mcp socket the manifest names); empty disables it")
+	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
+		"§9.1/§8.6 gateway GatewayControl address (host:port) the adapter dials to forward "+
+			"platform tool calls (and lease extensions); empty leaves the platform MCP server "+
+			"serving an empty catalog")
 	taskMode := flag.Bool("task-mode", false,
 		"§4.7/§5.2: advertise the task_lifecycle capability on the lifecycle channel; "+
 			"set on task-mode pods so the runtime is driven through task_complete / task_ready")
@@ -238,6 +246,29 @@ func main() {
 	// §4.7 lines 879-883: in nonce-only mode the platform MCP server adds
 	// the per-connection challenge-response supplement to the static nonce.
 	adapterSrv.NonceOnlyMode = !*requireSoPeercred
+	// §9.1 lines 8-31: the platform MCP server binds the abstract socket
+	// the manifest advertises (@lenny-platform-mcp) so a type:agent runtime
+	// can dial it. F-9.1.1.
+	adapterSrv.MCPSocket = *mcpSocket
+	// §9.1 lines 14-31: dial the gateway's GatewayControl service so the
+	// platform MCP server can forward a runtime's tools/list and tools/call
+	// to the gateway platform tool surface. The dial reuses the adapter's
+	// mesh identity (its server cert/key) as the client certificate and
+	// pins the gateway's DNS SAN (§10.3 NET-060). F-9.1.1.
+	if *gatewayGRPCAddr != "" {
+		dialOpt, derr := adapter.TLSClientOption(*certFile, *keyFile, *clientCAFile,
+			adapter.WithServerName(gatewaycontrol.GatewayDNSName))
+		if derr != nil {
+			log.Fatalf("lenny-adapter: §9.1 gateway dial TLS: %v", derr)
+		}
+		gwClient, derr := gatewaycontrol.Dial(*gatewayGRPCAddr, dialOpt)
+		if derr != nil {
+			log.Fatalf("lenny-adapter: §9.1 dial gateway %s: %v", *gatewayGRPCAddr, derr)
+		}
+		defer func() { _ = gwClient.Close() }()
+		adapterSrv.PlatformForwarder = gwClient
+		log.Printf("lenny-adapter: §9.1 platform tool forwarding to gateway at %s", *gatewayGRPCAddr)
+	}
 	adapterSrv.CredentialsDir = *credentialsDir
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
