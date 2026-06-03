@@ -28419,7 +28419,7 @@ rejections, or any Token Service activity. The §16.7 catalog promises
 events for these paths; the catalog constants exist but the writers do
 not.
 
-### - [ ] F-16.4.8 — Credential-sensitive-RPC redaction has no enforcement seam [High] — OPEN
+### - [x] F-16.4.8 — Credential-sensitive-RPC redaction has no enforcement seam [High] — CLOSED
 
 **High.** §16.4 line 376 mandates: "Credential-sensitive RPCs
 (`AssignCredentials`, `RotateCredentials`) are excluded from
@@ -28453,6 +28453,28 @@ is no logging/tracing surface to enforce against. If a future fix
 without first installing the per-method redaction filter, the
 credential payloads will leak — the H8 redaction seam is missing from
 the codebase by design.
+
+**Resolution:** New `pkg/adapter/credredact.go` is the H8 seam.
+`IsCredentialSensitiveMethod` holds the §16.4 line 376 method set
+(`AssignCredentials`, `RotateCredentials`); `SafeCredentialFields`
+returns the only request-derived values the spec permits — the lease
+IDs and provider types, sorted and deduplicated — and never reads
+`CredentialLease.Payload`. The redaction is installed as the gRPC
+server's credential access-log surface itself (`grpc.ChainUnaryInterceptor`
+prepended in `NewGRPCServer`, ahead of any caller interceptor): for a
+credential-sensitive method the `credentialRedactionInterceptor` emits
+exactly one `credential_rpc` access line carrying the RPC name, the
+§16.3 reserved operation span name (`credential.assign` /
+`credential.rotate`, previously unused constants), the lease IDs, the
+provider types, and the outcome, and stamps the same safe field set onto
+the active otelgrpc span — never the payload. Non-credential methods
+pass through with no added logging. Building the redaction into the seam
+(rather than letting a future generic gRPC logger attach first) is the
+point: the two RPCs cannot leak a payload into a log or span even as
+observability is extended. 6 tier-1 tests (method classification, safe-field
+extraction + sorting + non-credential-type guard, payload-never-leaked on
+success and on error, error outcome + gRPC code, non-sensitive
+passthrough). Commit a948972c.
 
 ### - [x] F-16.4.9 — The SIEM forwarder, the `audit.siem.endpoint` config knob, and the SIEM-configured alert suppression are not wired [Medium] — CLOSED
 
@@ -28590,7 +28612,7 @@ gdpr.* rows are never deleted early — over-satisfying the minimum-floor
 guarantee rather than violating it. When F-16.4.6 lands the GC it
 consumes the already-wired `gdprRetentionDays` value.
 
-### - [ ] F-16.4.12 — The error-code taxonomy is wired into envelopes, not into log lines [Medium] — OPEN
+### - [x] F-16.4.12 — The error-code taxonomy is wired into envelopes, not into log lines [Medium] — CLOSED
 
 **Medium.** §16.4 line 375 mandates: "Error events include structured
 error codes (TRANSIENT/PERMANENT/POLICY/UPSTREAM)."
@@ -28609,6 +28631,24 @@ package without the category (H1, H2). The taxonomy appears on the
 client's response, never on a log line. A consumer that ingests log
 lines and bins them by category cannot do so against the current
 emission.
+
+**Resolution:** The H1/H2 blocker (no production binary used the
+structured logger) is closed (F-16.4.1, 70834ab1), so the gateway's
+single per-request access-log chokepoint — the `http_request`
+completion line emitted by `pkg/gateway/middleware/correlation` — is now
+a structured JSON record. That line now carries `error_code`,
+`error_category`, and `retryable` whenever the response is an error: the
+`captureRW` buffers a bounded prefix of any 4xx/5xx body, recovers the
+lenny `error.code` from the `{"error":{"code":...}}` envelope, and runs
+it through `errorclassify.Classify` (the same §15.2.1 classifier the
+envelope itself uses) to derive the §16.4 line 375 category. The
+classifier (not the body) is the source of truth, so the bare
+middleware writers that omit `category` from the envelope
+(circuitbreaker, environment) still produce the correct category on the
+log line. Success responses are never buffered. 4 tier-1 tests
+(error-line classification, classifier-over-body for category-less
+envelopes, success omits the fields, non-JSON 5xx omits the fields).
+Commit a948972c.
 
 ### - [x] F-16.4.13 — The catalog of typed audit event constants is exhaustive on paper, undercovered by writers [Low] — CLOSED
 
