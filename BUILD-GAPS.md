@@ -41884,7 +41884,7 @@ The integration level is fixed by §26.1 and `runtime.yaml` is the authoritative
 
 ---
 
-### - [ ] F-26.1.2 — 1-02 — Helm chart bypass: `referenceRuntimes.enabled: false` produces an installation with no reference runtimes registered [Medium] — OPEN
+### - [x] F-26.1.2 — 1-02 — Helm chart bypass: `referenceRuntimes.enabled: false` produces an installation with no reference runtimes registered [Medium] — CLOSED
 
 **Spec:** §26.1 lines 28–30:
 
@@ -41901,9 +41901,11 @@ The integration level is fixed by §26.1 and `runtime.yaml` is the authoritative
 
 **Remediation sketch:** Either document `referenceRuntimes.enabled: false` as a supported §26.1 install posture (and explain when an operator would use it), or remove the `enabled` gate so the catalog is always rendered and operators trim individual entries via the `catalog:` list. The embedded-stack path has no equivalent toggle, so the Helm path is the outlier.
 
+**Resolution:** Closed by 9898be0b via the document-as-supported-posture option (removing the gate would break the existing `enabled: false` test and remove a capability air-gapped/curated-catalog deployers use). The `values.yaml` comment now describes the posture and when to use it (register runtimes through `POST /v1/admin/runtimes` after install), and steers operators wanting a trimmed catalog to `referenceRuntimes.include` rather than disabling registration. `NOTES.txt` emits a warning when the catalog is disabled so the empty-catalog result is not silent. Test: `reference-runtimes-notes_test.yaml` (`matchRegexRaw` on the NOTES warning when disabled / absent by default).
+
 ---
 
-### - [ ] F-26.1.3 — 1-03 — Helm chart catalog records carry no integration-level signaling for `chat`'s smaller-resource posture [Medium] — OPEN
+### - [x] F-26.1.3 — 1-03 — Helm chart catalog records carry no integration-level signaling for `chat`'s smaller-resource posture [Medium] — CLOSED
 
 **Spec:** §26.1 table line 22 fixes `chat`'s use case as "the minimum useful runtime". §5.1 (referenced by §26.1) requires runtimes to declare their full schema, including `runtimeOptions`, `capabilities`, and `limits` so the gateway can reason about admission. The Helm chart's `referenceRuntimes.yaml` only emits `type`, `image`, `integrationLevel`, `executionMode`, `isolationProfile`, `allowedResourceClasses`, and `supportedProviders`.
 
@@ -41917,6 +41919,8 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 **Impact:** Severity Medium. The registered Runtime record is structurally complete enough to dispatch sessions, but it lacks the capability and limit declarations that downstream platform logic (admission, quota, capability negotiation) consumes. Operators receive a runtime catalog whose declared surface does not match the per-runtime sections of §26, and the gap is not addressed by any documented post-install step. The §26.2 shared coding-agent conventions (sandboxed isolation, restricted egress, `setupCommandPolicy`, capabilities) need to land somewhere; today only `isolationProfile: sandboxed` does.
 
 **Remediation sketch:** Either expand `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml` to emit the §26.2 shared fields and the per-runtime §26.3–§26.11 fields, or document the §17 install flow that fills them in (referencing the admin API endpoints and the runtime YAML files that should be applied post-install). Today the gap is silent.
+
+**Resolution:** Closed by 9898be0b (Helm half by prior work). The evidence is stale on the chart side: `reference-runtimes.yaml` (lines 58-91) and `values.yaml` already emit the §26 fields (`capabilities`, `credentialCapabilities`, `limits`, `setupCommandPolicy`, `setupPolicy`, `defaultPoolConfig`, `agentInterface`, `runtimeOptionsSchemaRef`) per F-26.2.1 / F-26.3.x, and `chat` carries the §26.1 smaller-resource signal `allowedResourceClasses: [small]` plus its `immediate`-only injection capability. The residual gap was the Embedded Mode catalog, which seeded only Name/Image/IntegrationLevel/Description: it now carries `chat`'s resource posture and the coding-agent capability/limit declarations (see F-26.2.3). Verified end-to-end by `TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2`, which asserts `chat` registers as Standard with `allowedResourceClasses: [small]` and immediate-only injection.
 
 ---
 
@@ -42048,7 +42052,7 @@ This audit checks each requirement against the chart (`/Users/joan/projects/lenn
 
 ---
 
-### - [ ] F-26.2.2 — 2-02 — Coding-agent + `isolationProfile: standard` is not rejected at pool creation [High] — OPEN
+### - [x] F-26.2.2 — 2-02 — Coding-agent + `isolationProfile: standard` is not rejected at pool creation [High] — CLOSED
 
 **Spec:** §26.2 line 38:
 
@@ -42066,9 +42070,11 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 
 **Remediation sketch:** Add a runtime category (or surface the compliance-catalog `category` through the runtime registry), then teach `poolstore.Create` / `Update` to reject `IsolationProfile == standard` when the runtime's category is `coding-agent`, regardless of `allowStandardIsolation`. Mirror the rejection in the pool-config-validator admission webhook at `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/pool-config-validator-webhook.yaml` so the chart-installed path enforces it too.
 
+**Resolution:** Closed by 9898be0b. New `poolstore.ValidateCodingAgentIsolation` rejects an explicit `standard` profile for any coding-agent runtime regardless of `allowStandardIsolation`; `poolstore.IsCodingAgentRuntime` identifies the four §26.1 coding-agent names. Wired into `handleCreatePool`, `handleUpdatePool` (effective runtimeRef + isolation resolved from body-or-stored), and the bootstrap `upsertPools` path. The coding-agent set is duplicated in poolstore (the authoritative `pkg/compliance/reference_catalog.yaml` pulls in `testing`, which must not enter the gateway binary) and `TestCodingAgentSetMatchesReferenceCatalog_spec_26_1` cross-checks it against `category: coding-agent` in the catalog in both directions. The spec text names "the gateway rejects"; the gateway admin-API path is the enforced layer. The pool-config-validator admission webhook backend has no runtime-registry access to resolve the category, so the suggested webhook mirror is left as a defense-in-depth follow-on rather than implemented as a runtime-name list. Tests: poolstore table (standard/standard+opt-in/sandboxed/microvm/empty/non-coding-agent), IsCodingAgentRuntime pin, catalog drift guard; admin create-reject/sandboxed-ok/non-coding-agent-standard-ok and update-reject.
+
 ---
 
-### - [ ] F-26.2.3 — 2-03 — Helm chart catalog and embedded-stack catalog drop every §26.2 shared field [Medium] — OPEN
+### - [x] F-26.2.3 — 2-03 — Helm chart catalog and embedded-stack catalog drop every §26.2 shared field [Medium] — CLOSED
 
 **Spec:** §26.2 lines 55–93 require every coding-agent runtime entry to carry the shared `capabilities`, `credentialCapabilities`, `limits`, `setupCommandPolicy`, `setupPolicy`, `runtimeOptionsSchema`, `defaultPoolConfig`, `egressProfile`, and `allowedResourceClasses` blocks. The §26.3 worked example (lines 145–200) shows all of them populated together on the `claude-code` `Runtime` record `lenny-ctl install` / `lenny up` creates.
 
@@ -42081,6 +42087,8 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 **Impact:** Severity Medium. Operators installing Lenny through the chart or `lenny up` get reference runtimes that lack the §26.2 capability declarations, lease scoping, setup policy, and resource defaults the spec promises. Day-one usage works only because the gateway has permissive fallbacks (no allowlist enforcement, no `maxSessionAge` cap, no `proxyDialect` restriction). The §26.2 contract becomes aspirational documentation rather than installed behaviour.
 
 **Remediation sketch:** Once H-26.2-01 lands, expand `/Users/joan/projects/lenny/charts/lenny/values.yaml` `referenceRuntimes.catalog[]` and `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go` `ReferenceRuntime{}` with the §26.2 shared blocks. The shared subset is identical across the four coding-agent runtimes, so a chart-side `_helpers.tpl` partial (or a Go helper in the embedded stack) can hold the shared template and per-runtime overrides can add the runtime-specific `proxyDialect`/`supportedProviders` restrictions.
+
+**Resolution:** Closed by 9898be0b. H-26.2-01 (F-26.2.1) landed the runtime data model and the chart half (`values.yaml` `referenceRuntimes.catalog[]` already carries the §26.2 shared blocks). This batch completes the embedded-stack half: `pkg/embedded/stack/catalog.go` now models the §26.2 blocks (capabilities, credentialCapabilities, limits, setupCommandPolicy, setupPolicy, defaultPoolConfig, allowedResourceClasses, supportedProviders) via a `codingAgentShared()` helper plus per-runtime `codingAgent()` overrides (values mirror the chart verbatim), and `seedRuntime` / `buildBootstrapSeed` thread them into the `POST /v1/admin/bootstrap` payload. The §26.8-§26.11 framework runtimes keep the basic fields (their per-runtime blocks are §26.8-§26.11 scope, not the §26.2 shared coding-agent pattern). Verified by `TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2`, a tier-3 test that pushes the seed through the real admin bootstrap handler and asserts claude-code's limits/setupCommandPolicy/defaultPoolConfig/credentialCapabilities/capabilities/allowedResourceClasses survive registration.
 
 ---
 
@@ -42333,7 +42341,7 @@ maintainer/upstream labels (only the generic
 
 **Resolution:** Closed by 212e8c93. `RuntimeSpec` gains `agentInterface` and `defaultPoolConfig` CRD types (runtimeOptionsSchema was already on the CRD as `runtimeOptionsSchemaRef`, F-26.9.2); the runtime controller's `agentInterfaceFromCRD` / `defaultPoolConfigFromCRD` mirror them into the registry. `reference-runtimes.yaml` renders both blocks plus a `metadata.labels` range, and the claude-code catalog entry carries the §26.3 agentInterface (skills code/debug/refactor/review, text/plain + application/json modes), `defaultPoolConfig` (warmCount 2, medium, restricted), and the maintainer/upstream labels. Tier-2 helm-unittest pins the rendered fields; tier-1 `TestAgentInterfaceFromCRD_spec_5_1` / `TestDefaultPoolConfigFromCRD_spec_5_1` pin the mirror.
 
-### - [ ] F-26.3.6 — 6  Embedded-stack image is placeholder-digest-pinned and will fail on first pull [Medium] — OPEN
+### - [x] F-26.3.6 — 6  Embedded-stack image is placeholder-digest-pinned and will fail on first pull [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.1.4 — Both report the placeholder all-zero digest in catalog.go that fails image-pull on first use.
 
@@ -42356,6 +42364,8 @@ pullable image. Recommend either: (a) generate a real digest at build
 time, (b) document the re-pin step in the `lenny up` output, or (c)
 flag-gate `claude-code` from the day-one Embedded catalog until the
 upstream image publishes.
+
+**Resolution:** Closed by 9898be0b via option (b). The reference-runtime images are published by their own first-party CI, so a real digest is unknowable at lenny build time (option a is impossible) and flag-gating only claude-code (option c) leaves the rest silently broken. `installReferenceRuntimes` now prints a `[WARN]` line naming every placeholder-pinned runtime and pointing at the `lenny image import` / re-register remediation, so an operator following the §26.1 day-one promise is not surprised by an ImagePullBackOff. New `hasPlaceholderDigest` / `placeholderPinnedRuntimes` helpers back the warning. Also closes the verify-already-closed duplicate F-26.1.4 (which deferred its digest-pin and warning work here). Tests: `TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3`, `TestPlaceholderPinnedRuntimes_spec_26_3`.
 
 ### - [x] F-26.3.7 — 7  `pkg/compliance/reference_catalog.yaml` lists an image reference that does not match §26.3 [Low] — CLOSED
 
