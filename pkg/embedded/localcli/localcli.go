@@ -159,9 +159,10 @@ Embedded Mode commands (§17.4, §24.19):
                            without tearing down the rest of the stack
   token print [--ttl <d>]  Print a bearer token for the built-in user
   image <import|list|rm>   Manage images in the embedded containerd store
-  session new --runtime <name>
-                           Start a session against the running gateway
-                           and print the new session id
+  session <new|send|interrupt|cancel|list|get|logs>
+                           Session operations (§24.17) over the MCP/REST
+                           client SDK; new --runtime <name> starts one.
+                           --api-url / --token target a remote gateway
   version                  Print the local CLI build version (offline)
 
 Flags:

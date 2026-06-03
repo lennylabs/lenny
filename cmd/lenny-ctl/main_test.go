@@ -751,3 +751,18 @@ func TestLennyCtlDelegatesRestart_spec_24_19_264(t *testing.T) {
 		t.Errorf("stderr = %q, want a no-stack message", stderr.String())
 	}
 }
+
+// TestSessionDelegatesToLocalCLI confirms `lenny-ctl session ...` reaches
+// the shared §24.19 localcli session dispatcher, so the §24.17 session
+// command tree is available under the long binary name (the "one binary,
+// two names" contract). F-24.17.1.
+func TestSessionDelegatesToLocalCLI(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("lenny-ctl session (no subcommand): code=%d, want 2 (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "new --runtime") {
+		t.Errorf("lenny-ctl session did not reach the session usage: %q", stderr.String())
+	}
+}

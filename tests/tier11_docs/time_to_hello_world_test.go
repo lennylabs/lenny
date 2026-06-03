@@ -123,9 +123,10 @@ func TestTimeToHelloWorld(t *testing.T) {
 
 	t.Run("step_3_lenny_session_start", func(t *testing.T) {
 		// The quick-start's session step is `lenny session new --runtime
-		// <name>` (docs/getting-started/quickstart.md). The subcommand
-		// is wired in cmd/lenny/session.go and dispatches to
-		// /v1/sessions/start. Running the live POST needs a reachable
+		// <name>` (docs/getting-started/quickstart.md). The subcommand is
+		// wired in pkg/embedded/localcli/session.go and routes through the
+		// §15.2 MCP lenny/create_session tool via the Lenny Go client SDK
+		// (§24.17 line 209). Running the live call needs a reachable
 		// embedded gateway from `lenny up`, which is the Docker-heavy
 		// step covered by the tier-7 tthw benchmark. The offline
 		// assertion here is that the CLI dispatch recognises

@@ -20,7 +20,7 @@ func TestSessionSubcommandWired(t *testing.T) {
 	if code != 2 {
 		t.Errorf("no-argument session: exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "lenny session new --runtime") {
+	if !strings.Contains(stderr.String(), "new --runtime") {
 		t.Errorf("usage text is missing: %q", stderr.String())
 	}
 }
