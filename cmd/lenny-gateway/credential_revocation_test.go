@@ -74,6 +74,28 @@ func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 	}
 }
 
+// TestPoolCredentialHealthReaderCountsLeases asserts the §24.5 row-2
+// health reader returns the active lease count keyed by credential id,
+// counting only the supplied ids and omitting credentials with no lease.
+func TestPoolCredentialHealthReaderCountsLeases(t *testing.T) {
+	leases := credleasestore.New()
+	_ = leases.Put(credLease("l1", "key-1"))
+	_ = leases.Put(credLease("l2", "key-1"))
+	_ = leases.Put(credLease("l3", "key-2"))
+
+	h := &poolCredentialHealthReader{leases: leases}
+	counts := h.PoolCredentialLeaseCounts("claude-prod", []string{"key-1", "key-2", "key-3"})
+	if counts["key-1"] != 2 {
+		t.Errorf("key-1 lease count = %d, want 2", counts["key-1"])
+	}
+	if counts["key-2"] != 1 {
+		t.Errorf("key-2 lease count = %d, want 1", counts["key-2"])
+	}
+	if _, ok := counts["key-3"]; ok {
+		t.Errorf("key-3 has no lease but appears in counts: %v", counts)
+	}
+}
+
 // TestPoolCredentialRevokerNoLeasesStillDenies confirms a credential
 // with no live lease on this replica is still added to the deny list, so
 // a peer replica's cached lease for it is rejected (§4.9 step 3/4).

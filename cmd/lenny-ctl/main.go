@@ -282,6 +282,14 @@ Gateway commands:
   admin pools resume-reconciliation <name>  Clear PoolScalingAdmissionStuck state
   admin pools set-warm-count --pool <name> --min <N> [--dry-run]
                                         Override a pool's minWarm for emergency scaling (§24.4)
+  admin credential-pools list [--tenant <id>]   List credential pools and their status (§24.5)
+  admin credential-pools get --pool <name> [--tenant <id>]   Show a pool with per-credential health and lease counts (§24.5)
+  admin credential-pools add-credential --pool <name> --id <credId> [--secret-ref <r>] [--role-arn <a>] [--region <r>]   Add a credential (§24.5)
+  admin credential-pools update-credential --pool <name> --credential <id> [--secret-ref <r>] [--role-arn <a>] [--region <r>]   Update a credential (§24.5)
+  admin credential-pools remove-credential --pool <name> --credential <id>   Remove a credential (§24.5)
+  admin credential-pools revoke-credential --pool <name> --credential <id> [--reason <r>]   Emergency-revoke one credential (§24.5, §4.9)
+  admin credential-pools revoke-pool --pool <name> [--reason <r>]   Emergency-revoke all credentials in a pool (§24.5, §4.9)
+  admin credential-pools re-enable --pool <name> --credential <id> [--reason <r>]   Re-enable a revoked credential (§24.5, §4.9)
   admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
   admin sessions force-terminate <id> [--reason <text>]
                                         Force a stuck session to failed and release its pod (§24.11)
@@ -510,7 +518,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|quota|circuit-breakers|erasure-jobs|external-adapters)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|quota|circuit-breakers|erasure-jobs|external-adapters)")
 		return 2
 	}
 	switch args[0] {
@@ -520,6 +528,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdRuntimes(ctx, c, args[1:], stdout, stderr)
 	case "pools":
 		return cmdPools(ctx, c, args[1:], stdout, stderr)
+	case "credential-pools":
+		return cmdCredentialPools(ctx, c, args[1:], stdout, stderr)
 	case "sessions":
 		return cmdSessions(ctx, c, args[1:], stdout, stderr)
 	case "quota":
@@ -1299,6 +1309,175 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 		return 2
 	}
 	return 0
+}
+
+// cmdCredentialPools implements the §24.5 credential-management group:
+// the eight `lenny-ctl admin credential-pools …` subcommands, each
+// mapping 1:1 to a §15.1 `/v1/admin/credential-pools` route (§24 preamble
+// line 5). All commands accept `--tenant <id>`, sent as the `?tenantId=`
+// query a platform-admin uses to target a tenant's pools.
+//
+// spec: §24.5 rows 1-8; §15.1 lines 805-812, 876-878.
+func cmdCredentialPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: credential-pools requires a subcommand "+
+			"(list|get|add-credential|update-credential|remove-credential|revoke-credential|revoke-pool|re-enable)")
+		return 2
+	}
+	// tenantQuery renders the optional ?tenantId= suffix from --tenant.
+	tenantQuery := func(rest []string) string {
+		if v := flagValue(rest, "--tenant"); v != "" {
+			return "?tenantId=" + url.QueryEscape(v)
+		}
+		return ""
+	}
+	base := "/v1/admin/credential-pools"
+	switch args[0] {
+	case "list":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", base+tenantQuery(args[1:]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "get":
+		pool := flagValue(args[1:], "--pool")
+		if pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools get requires --pool <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", base+"/"+url.PathEscape(pool)+tenantQuery(args[1:]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "add-credential":
+		pool := flagValue(args[1:], "--pool")
+		if pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools add-credential requires --pool <name>")
+			return 2
+		}
+		id := flagValue(args[1:], "--id")
+		if id == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools add-credential requires --id <credential-id>")
+			return 2
+		}
+		body := map[string]any{"id": id}
+		if v := flagValue(args[1:], "--secret-ref"); v != "" {
+			body["secretRef"] = v
+		}
+		if v := flagValue(args[1:], "--role-arn"); v != "" {
+			body["roleArn"] = v
+		}
+		if v := flagValue(args[1:], "--region"); v != "" {
+			body["region"] = v
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", base+"/"+url.PathEscape(pool)+"/credentials"+tenantQuery(args[1:]), body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "update-credential":
+		pool := flagValue(args[1:], "--pool")
+		cred := flagValue(args[1:], "--credential")
+		if pool == "" || cred == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools update-credential requires --pool <name> --credential <id>")
+			return 2
+		}
+		body := map[string]any{}
+		if v := flagValue(args[1:], "--secret-ref"); v != "" {
+			body["secretRef"] = v
+		}
+		if v := flagValue(args[1:], "--role-arn"); v != "" {
+			body["roleArn"] = v
+		}
+		if v := flagValue(args[1:], "--region"); v != "" {
+			body["region"] = v
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "PUT", base+"/"+url.PathEscape(pool)+"/credentials/"+url.PathEscape(cred)+tenantQuery(args[1:]), body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "remove-credential":
+		pool := flagValue(args[1:], "--pool")
+		cred := flagValue(args[1:], "--credential")
+		if pool == "" || cred == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools remove-credential requires --pool <name> --credential <id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "DELETE", base+"/"+url.PathEscape(pool)+"/credentials/"+url.PathEscape(cred)+tenantQuery(args[1:]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "revoke-credential":
+		pool := flagValue(args[1:], "--pool")
+		cred := flagValue(args[1:], "--credential")
+		if pool == "" || cred == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools revoke-credential requires --pool <name> --credential <id>")
+			return 2
+		}
+		var out map[string]any
+		path := base + "/" + url.PathEscape(pool) + "/credentials/" + url.PathEscape(cred) + "/revoke" + tenantQuery(args[1:])
+		if err := c.Do(ctx, "POST", path, revokeBody(args[1:]), &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "revoke-pool":
+		pool := flagValue(args[1:], "--pool")
+		if pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools revoke-pool requires --pool <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", base+"/"+url.PathEscape(pool)+"/revoke"+tenantQuery(args[1:]), revokeBody(args[1:]), &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "re-enable":
+		pool := flagValue(args[1:], "--pool")
+		cred := flagValue(args[1:], "--credential")
+		if pool == "" || cred == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: credential-pools re-enable requires --pool <name> --credential <id>")
+			return 2
+		}
+		var out map[string]any
+		path := base + "/" + url.PathEscape(pool) + "/credentials/" + url.PathEscape(cred) + "/re-enable" + tenantQuery(args[1:])
+		if err := c.Do(ctx, "POST", path, revokeBody(args[1:]), &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown credential-pools subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// revokeBody renders the optional §4.9 {reason, note} body for the
+// revoke / revoke-pool / re-enable commands. It returns nil when neither
+// flag is present so the request carries an empty body (the spec marks
+// both optional). spec: §24.5 rows 6-8; §4.9 lines 1632-1636.
+func revokeBody(rest []string) map[string]any {
+	body := map[string]any{}
+	if v := flagValue(rest, "--reason"); v != "" {
+		body["reason"] = v
+	}
+	if v := flagValue(rest, "--note"); v != "" {
+		body["note"] = v
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return body
 }
 
 // parseExternalAdapter builds the §15.1 external-adapter register/update

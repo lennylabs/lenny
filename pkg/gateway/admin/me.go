@@ -149,5 +149,22 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.list_pool_tenant_access", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants with access to a pool"},
 		{Tool: "admin.revoke_pool_tenant_access", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a pool"},
 		{Tool: "admin.bootstrap", Scope: "admin.bootstrap.write", Category: "platform-management", MinRole: auth.RolePlatformAdmin, Description: "Apply seed configuration (upsert)"},
+		// spec: §24.5 / §15.1:805-812, 876-878 — credential-pool admin
+		// operations. The CRUD and per-credential management ops are gated
+		// on the §10.2 manage_credential_pools permission (held by
+		// tenant-admin); re-enable is platform-admin per §15.1 line 811.
+		// The catalog mirrors the OpenAPI x-lenny-mcp-tool declarations so a
+		// §25.14 agent discovers every mounted credential-pool route.
+		{Tool: "admin.create_credential_pool", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Create a credential pool"},
+		{Tool: "admin.list_credential_pools", Scope: "admin.credential-pools.read", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "List credential pools"},
+		{Tool: "admin.get_credential_pool", Scope: "admin.credential-pools.read", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Get a credential pool, including per-credential health and lease counts"},
+		{Tool: "admin.update_credential_pool", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Update a credential pool"},
+		{Tool: "admin.delete_credential_pool", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Delete a credential pool"},
+		{Tool: "admin.add_credential_to_pool", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Add a credential to a pool"},
+		{Tool: "admin.update_pool_credential", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Update a credential in a pool"},
+		{Tool: "admin.remove_pool_credential", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Remove a credential from a pool"},
+		{Tool: "admin.revoke_pool_credential", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Emergency-revoke a single pool credential"},
+		{Tool: "admin.revoke_credential_pool", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Emergency-revoke all credentials in a pool"},
+		{Tool: "admin.re_enable_pool_credential", Scope: "admin.credential-pools.write", Category: "policy-management", MinRole: auth.RolePlatformAdmin, Description: "Re-enable a previously revoked pool credential"},
 	}
 }

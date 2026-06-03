@@ -1809,6 +1809,88 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/credential-pools/{name}/credentials": {
+      "post": {
+        "summary": "Add a credential to a pool",
+        "x-lenny-mcp-tool": "admin.add_credential_to_pool",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/v1/admin/credential-pools/{name}/credentials/{credId}": {
+      "put": {
+        "summary": "Update a credential in a pool",
+        "x-lenny-mcp-tool": "admin.update_pool_credential",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "credId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Remove a credential from a pool",
+        "x-lenny-mcp-tool": "admin.remove_pool_credential",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "credId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/credential-pools/{name}/credentials/{credId}/revoke": {
+      "post": {
+        "summary": "Emergency revocation of a single pool credential",
+        "x-lenny-mcp-tool": "admin.revoke_pool_credential",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "credId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/credential-pools/{name}/credentials/{credId}/re-enable": {
+      "post": {
+        "summary": "Re-enable a previously revoked pool credential",
+        "x-lenny-mcp-tool": "admin.re_enable_pool_credential",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "credId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/credential-pools/{name}/revoke": {
+      "post": {
+        "summary": "Emergency revocation of all credentials in a pool",
+        "x-lenny-mcp-tool": "admin.revoke_credential_pool",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/delegation-policies": {
       "post": {
         "summary": "Create a delegation policy",

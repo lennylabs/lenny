@@ -10,6 +10,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/ops/me"
 )
@@ -147,6 +148,94 @@ func TestAuthorizedToolsIncludeTenantAccess_spec_24_3(t *testing.T) {
 	for _, w := range want {
 		if !got[w] {
 			t.Errorf("missing tenant-access tool %q in authorized-tools: %+v", w, resp.Tools)
+		}
+	}
+}
+
+// TestAuthorizedToolsIncludeCredentialPools_spec_24_5 asserts the §24.5
+// credential-pool operations are discoverable in the authorized-tools
+// catalog so a §25.14 agent finds the credential-management surface. The
+// manage operations are tenant-admin-visible (the manage_credential_pools
+// permission); re-enable is platform-admin per §15.1 line 811. F-24.5.5.
+func TestAuthorizedToolsIncludeCredentialPools_spec_24_5(t *testing.T) {
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
+
+	taReq := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))
+	taRR := httptest.NewRecorder()
+	router.Handler().ServeHTTP(taRR, taReq)
+	var taResp admin.AuthorizedToolsPayload
+	_ = json.Unmarshal(taRR.Body.Bytes(), &taResp)
+	taGot := map[string]bool{}
+	for _, tool := range taResp.Tools {
+		taGot[tool.Tool] = true
+	}
+	for _, w := range []string{
+		"admin.create_credential_pool",
+		"admin.list_credential_pools",
+		"admin.get_credential_pool",
+		"admin.update_credential_pool",
+		"admin.delete_credential_pool",
+		"admin.add_credential_to_pool",
+		"admin.update_pool_credential",
+		"admin.remove_pool_credential",
+		"admin.revoke_pool_credential",
+		"admin.revoke_credential_pool",
+	} {
+		if !taGot[w] {
+			t.Errorf("tenant-admin missing credential-pool tool %q: %+v", w, taResp.Tools)
+		}
+	}
+	// re-enable is platform-admin only.
+	if taGot["admin.re_enable_pool_credential"] {
+		t.Error("tenant-admin should not see admin.re_enable_pool_credential (platform-admin per §15.1:811)")
+	}
+
+	paReq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))
+	paRR := httptest.NewRecorder()
+	router.Handler().ServeHTTP(paRR, paReq)
+	var paResp admin.AuthorizedToolsPayload
+	_ = json.Unmarshal(paRR.Body.Bytes(), &paResp)
+	paGot := map[string]bool{}
+	for _, tool := range paResp.Tools {
+		paGot[tool.Tool] = true
+	}
+	if !paGot["admin.re_enable_pool_credential"] {
+		t.Errorf("platform-admin missing admin.re_enable_pool_credential: %+v", paResp.Tools)
+	}
+}
+
+// TestCredentialPoolCatalogMirrorsOpenAPI_spec_25_14 asserts every
+// credential-pool MCP tool the catalog advertises is declared in the
+// OpenAPI document, so a discovered tool resolves to a real route
+// (§25.14 — the catalog is the source of truth for agent-callable ops).
+// F-24.5.5.
+func TestCredentialPoolCatalogMirrorsOpenAPI_spec_25_14(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode openapi: %v", err)
+	}
+	declared := map[string]bool{}
+	paths, _ := parsed["paths"].(map[string]any)
+	for _, raw := range paths {
+		methods, _ := raw.(map[string]any)
+		for _, m := range methods {
+			body, _ := m.(map[string]any)
+			if tool, ok := body["x-lenny-mcp-tool"].(string); ok {
+				declared[tool] = true
+			}
+		}
+	}
+	for _, tool := range []string{
+		"admin.create_credential_pool", "admin.list_credential_pools",
+		"admin.get_credential_pool", "admin.update_credential_pool",
+		"admin.delete_credential_pool", "admin.add_credential_to_pool",
+		"admin.update_pool_credential", "admin.remove_pool_credential",
+		"admin.revoke_pool_credential", "admin.revoke_credential_pool",
+		"admin.re_enable_pool_credential",
+	} {
+		if !declared[tool] {
+			t.Errorf("credential-pool tool %q not declared in OpenAPI document", tool)
 		}
 	}
 }

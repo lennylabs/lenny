@@ -155,6 +155,7 @@ type Router struct {
 	delegationPolicies      delegationpolicystore.Store
 	credentialPools         credentialpoolstore.Store
 	poolCredRevoker         PoolCredentialRevoker
+	poolCredHealth          PoolCredentialHealthReader
 	customRoles             customrolestore.Store
 	tenantAccess            tenantaccessstore.Store
 	auditLog                AuditLog
@@ -737,6 +738,14 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
 		mux.Handle("PUT /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
 		mux.Handle("DELETE /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
+		// §15.1 lines 876-878 / §24.5 rows 3-5: per-credential subresource
+		// CRUD (add / update / remove a single credential in a pool).
+		mux.Handle("POST /v1/admin/credential-pools/{name}/credentials",
+			credPoolAdmin(http.HandlerFunc(r.handleAddCredential)))
+		mux.Handle("PUT /v1/admin/credential-pools/{name}/credentials/{credId}",
+			credPoolAdmin(http.HandlerFunc(r.handleUpdateCredentialEntry)))
+		mux.Handle("DELETE /v1/admin/credential-pools/{name}/credentials/{credId}",
+			credPoolAdmin(http.HandlerFunc(r.handleRemoveCredential)))
 		// §4.9 Emergency Credential Revocation: single-credential revoke,
 		// pool-wide force-rotate, and the re-enable path. Same
 		// manage_credential_pools gate as the pool CRUD.

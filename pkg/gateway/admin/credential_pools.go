@@ -65,6 +65,16 @@ type CredentialEntryPayload struct {
 	RevokedAt        string `json:"revokedAt,omitempty"`
 	RevokedBy        string `json:"revokedBy,omitempty"`
 	RevocationReason string `json:"revocationReason,omitempty"`
+
+	// Health and LeaseCount are the §24.5 row-2 per-credential runtime
+	// signals surfaced on GET. They are populated only when a
+	// PoolCredentialHealthReader is wired (the gateway holds the
+	// credential-lease store); a minimal gateway omits them. Health is
+	// "revoked" for a revoked credential and "healthy" otherwise;
+	// LeaseCount is the credential's active lease count read from the
+	// lease store. spec: §24.5 line 87.
+	Health     string `json:"health,omitempty"`
+	LeaseCount *int   `json:"leaseCount,omitempty"`
 }
 
 // validAssignmentStrategies is the §4.9 closed enum. Empty selects the
@@ -484,8 +494,40 @@ func (r *Router) handleGetCredentialPool(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	payload := fromCredentialPool(row)
+	r.enrichCredentialHealth(&payload, row)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(fromCredentialPool(row))
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// enrichCredentialHealth fills the §24.5 row-2 per-credential health and
+// lease-count fields on the GET payload. Health derives from the
+// persisted credential status (the admin store's authoritative
+// revocation state); lease counts come from the wired
+// PoolCredentialHealthReader (the credential-lease store). With no
+// reader wired only the status-derived health is set, since the admin
+// store carries no runtime lease state. spec: §24.5 line 87.
+func (r *Router) enrichCredentialHealth(payload *CredentialPoolPayload, row credentialpoolstore.CredentialPool) {
+	var counts map[string]int
+	if r.poolCredHealth != nil {
+		ids := make([]string, 0, len(row.Credentials))
+		for _, c := range row.Credentials {
+			ids = append(ids, c.ID)
+		}
+		counts = r.poolCredHealth.PoolCredentialLeaseCounts(row.Name, ids)
+	}
+	for i := range payload.Credentials {
+		c := &payload.Credentials[i]
+		if c.Status == string(credentialpoolstore.CredentialRevoked) {
+			c.Health = "revoked"
+		} else {
+			c.Health = "healthy"
+		}
+		if counts != nil {
+			n := counts[c.ID]
+			c.LeaseCount = &n
+		}
+	}
 }
 
 // handleUpdateCredentialPool implements PUT — a full replace of the
@@ -585,6 +627,176 @@ func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// errCredentialExists is the mutate sentinel for an add-credential whose
+// id is already present in the pool. handleAddCredential maps it to a
+// 409 RESOURCE_CONFLICT.
+var errCredentialExists = errors.New("credential id already exists in pool")
+
+// handleAddCredential implements POST
+// /v1/admin/credential-pools/{name}/credentials — the §24.5 row-3
+// add-credential operation. The body is a single credential entry; the
+// handler runs the §4.9 admin-time RBAC live-probe over its secretRef
+// before appending it, so a Secret the Token Service cannot read fails
+// admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather than later as
+// an opaque CREDENTIAL_POOL_EXHAUSTED.
+//
+// spec: §15.1 line 876 (POST .../credentials); §24.5 row 3; §4.9 line
+// 1212 (admin-time RBAC live-probe — same probe paths as pool create).
+func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	var body CredentialEntryPayload
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "credential id is required",
+			map[string]any{"field": "id"})
+		return
+	}
+	// §4.9 admin-time RBAC live-probe over the new secretRef.
+	if !r.probeSecretRefs(w, req, secretRefsOf([]CredentialEntryPayload{body})) {
+		return
+	}
+	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		if credentialIndex(p, body.ID) >= 0 {
+			return errCredentialExists
+		}
+		p.Credentials = append(p.Credentials, credentialpoolstore.Credential{
+			ID: body.ID, SecretRef: body.SecretRef, RoleArn: body.RoleArn, Region: body.Region,
+		})
+		return nil
+	})
+	if err != nil {
+		if writeProxyEndpointError(w, err) {
+			return
+		}
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.credential_pool.credential_added", name+"/"+body.ID,
+		map[string]any{"tenantId": tenant, "pool_id": name, "credential_id": body.ID})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(fromCredentialPool(updated))
+}
+
+// handleUpdateCredentialEntry implements PUT
+// /v1/admin/credential-pools/{name}/credentials/{credId} — the §24.5
+// row-4 update-credential operation. It replaces the addressed
+// credential's mutable fields (secretRef, roleArn, region) in place,
+// preserving its §4.9 revocation status (an update is not a re-enable).
+// When the secretRef changes, the §4.9 admin-time RBAC live-probe runs
+// over the new value.
+//
+// spec: §15.1 line 877 (PUT .../credentials/{credId}, RBAC probe on
+// secretRef change); §24.5 row 4; §4.9 line 1212.
+func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	credID := req.PathValue("credId")
+	var body CredentialEntryPayload
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// §4.9 admin-time RBAC live-probe runs only when the update changes
+	// secretRef (§15.1 line 877). Resolve the current entry first so an
+	// unchanged secretRef takes no probe and a missing credential 404s
+	// before any probe.
+	if r.secretProber != nil && body.SecretRef != "" {
+		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
+		if gerr != nil {
+			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		idx := credentialIndex(&current, credID)
+		if idx < 0 {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
+			return
+		}
+		if body.SecretRef != current.Credentials[idx].SecretRef {
+			if !r.probeSecretRefs(w, req, []string{body.SecretRef}) {
+				return
+			}
+		}
+	}
+	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		idx := credentialIndex(p, credID)
+		if idx < 0 {
+			return errCredentialNotFound
+		}
+		p.Credentials[idx].SecretRef = body.SecretRef
+		p.Credentials[idx].RoleArn = body.RoleArn
+		p.Credentials[idx].Region = body.Region
+		return nil
+	})
+	if err != nil {
+		if writeProxyEndpointError(w, err) {
+			return
+		}
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.credential_pool.credential_updated", name+"/"+credID,
+		map[string]any{"tenantId": tenant, "pool_id": name, "credential_id": credID})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(fromCredentialPool(updated))
+}
+
+// handleRemoveCredential implements DELETE
+// /v1/admin/credential-pools/{name}/credentials/{credId} — the §24.5
+// row-5 remove-credential operation. The credential is dropped from the
+// pool, so no new lease selects it. Per §15.1 line 878 the active
+// leases backed by it are rotated via the standard §4.9 fallback path
+// (the renewal path can no longer resolve the removed credential and
+// re-acquires from the remaining pool credentials); removal does not add
+// the credential to the deny list, which is reserved for emergency
+// revocation (CREDENTIAL_REVOKED hard-reject).
+//
+// spec: §15.1 line 878 (DELETE .../credentials/{credId}); §24.5 row 5.
+func (r *Router) handleRemoveCredential(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	credID := req.PathValue("credId")
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		idx := credentialIndex(p, credID)
+		if idx < 0 {
+			return errCredentialNotFound
+		}
+		p.Credentials = append(p.Credentials[:idx], p.Credentials[idx+1:]...)
+		return nil
+	})
+	if err != nil {
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.credential_pool.credential_removed", name+"/"+credID,
+		map[string]any{"tenantId": tenant, "pool_id": name, "credential_id": credID})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(fromCredentialPool(updated))
+}
+
 // PoolCredentialRevoker terminates the §4.9 credential leases backed by
 // one or more pool credentials. The emergency-revocation handlers
 // resolve the (poolID, credentialID) of each credential they revoke and
@@ -615,6 +827,30 @@ type PoolCredentialRevoker interface {
 // the audit event, reporting zero leases terminated on this replica.
 func (r *Router) WithPoolCredentialRevocation(rev PoolCredentialRevoker) *Router {
 	r.poolCredRevoker = rev
+	return r
+}
+
+// PoolCredentialHealthReader returns the §24.5 row-2 per-credential
+// runtime signals — the active lease count keyed by credential id —
+// for one pool. The gateway implementation reads the credential-lease
+// store; the admin store itself holds no runtime lease state (§4.9
+// separates the pool definition from the leasing machinery). The
+// returned map is keyed by credential id; a credential absent from the
+// map has no active lease on this replica.
+//
+// spec: §24.5 line 87 — `get --pool <name>` shows per-credential health
+// scores and lease counts.
+type PoolCredentialHealthReader interface {
+	PoolCredentialLeaseCounts(poolName string, credentialIDs []string) map[string]int
+}
+
+// WithPoolCredentialHealth wires the §24.5 per-credential health reader
+// onto the Router. With it set, GET /v1/admin/credential-pools/{name}
+// surfaces each credential's active lease count and a derived health
+// indicator. Without it the GET response omits those fields, the
+// minimal-gateway posture where no lease store is wired.
+func (r *Router) WithPoolCredentialHealth(h PoolCredentialHealthReader) *Router {
+	r.poolCredHealth = h
 	return r
 }
 
@@ -873,6 +1109,8 @@ func (r *Router) writeCredentialMutateError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
 	case errors.Is(err, errCredentialNotFound):
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
+	case errors.Is(err, errCredentialExists):
+		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT", "credential id already exists in pool", nil)
 	default:
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}

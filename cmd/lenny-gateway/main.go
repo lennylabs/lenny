@@ -3984,6 +3984,10 @@ func main() {
 	if ls, ok := llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
 			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp})
+		// §24.5 row 2: surface per-credential lease counts on the admin GET
+		// from the same lease store the revoker drains.
+		adminRouter = adminRouter.WithPoolCredentialHealth(
+			&poolCredentialHealthReader{leases: ls})
 	}
 	// §4.9.1 KMS-key-rotation re-encryption admin surface. Registered
 	// only when at least one envelope-backed store is wired (Postgres).

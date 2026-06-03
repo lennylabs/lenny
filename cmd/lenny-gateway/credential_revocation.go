@@ -66,3 +66,34 @@ func (p *poolCredentialRevoker) RevokePoolCredentials(_ context.Context, poolID 
 }
 
 var _ admin.PoolCredentialRevoker = (*poolCredentialRevoker)(nil)
+
+// poolCredentialHealthReader serves the §24.5 row-2 per-credential lease
+// counts the admin GET handler surfaces. It reads the credential-lease
+// store this replica holds; the count is per-replica (matching the
+// `leasesTerminated` semantics of the revoker), so an operator reading a
+// pool's health sees the leases live on the replica that served the
+// request. It satisfies admin.PoolCredentialHealthReader.
+type poolCredentialHealthReader struct {
+	leases poolLeaseStore
+}
+
+// PoolCredentialLeaseCounts returns the active lease count keyed by
+// credential id for the named pool, counting only the credential ids the
+// caller supplies (the pool's current credential set). A credential with
+// no live lease on this replica is omitted from the map.
+func (h *poolCredentialHealthReader) PoolCredentialLeaseCounts(poolName string, credentialIDs []string) map[string]int {
+	out := make(map[string]int, len(credentialIDs))
+	for _, credID := range credentialIDs {
+		key := credential.CredentialKey{
+			Source:       credential.SourcePool,
+			PoolID:       poolName,
+			CredentialID: credID,
+		}
+		if n := len(h.leases.LeasesByCredential(key)); n > 0 {
+			out[credID] = n
+		}
+	}
+	return out
+}
+
+var _ admin.PoolCredentialHealthReader = (*poolCredentialHealthReader)(nil)
