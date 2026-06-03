@@ -39711,9 +39711,10 @@ Implementation tree: `pkg/releasechannel/`, `pkg/upgrade/`, `pkg/ops/`, `cmd/len
 > `pkg/ops/opsserver/platform_upgrade.go` registers 7 of the 13 endpoints:
 > `POST /v1/admin/platform/upgrade/{start,proceed,pause,rollback,verify}`,
 > `GET .../status`, and `GET .../upgrade-check` (release-channel Checker +
-> `platform-upgrade-check` cron). The `UPGRADE_*` error codes and the
-> `lenny_platform_upgrade_available` emitter also landed. Still missing for
-> this finding: `version/full` aggregator, `upgrade/preflight`,
+> `platform-upgrade-check` cron). The `UPGRADE_*`/`CONFIG_*` error codes
+> (F-25.8.11), the upgrade/version-drift metric emitters (F-25.8.10), and
+> the `GET /v1/admin/platform/version/full` aggregator (F-25.8.4, commit
+> 86050958) also landed. Still missing for this finding: `upgrade/preflight`,
 > `config/diff` + `PUT config`, `GET/PUT registry`, the OpsRoll
 > watchdog/heartbeat, and the Postgres `platform_upgrade_state` persistence
 > (F-25.8.2 — the v1 store is in-memory).
@@ -39737,13 +39738,17 @@ This is the bulk of §25.8: the lifecycle surface itself is not built.
 
 §25.8 (line 3577) specifies two singleton Postgres tables. The DDL is supplied in the spec, and the upgrade state machine and the channel cache are described as Postgres-backed throughout (lines 3398-3604). `migrations/` contains migrations 0001–0049; none names either table (`ls migrations/ | grep -iE 'upgrade|registry'` returns only `0021_runtime_min_platform_version` and yields no platform-upgrade entries). Without these tables, none of the durability claims hold: long-paused upgrades cannot survive leader-election handoff (3560), the 6h channel cache cannot exist (3414), pre-upgrade backup IDs cannot be linked, and `previousImages` cannot be recovered for rollback.
 
-### - [ ] F-25.8.3 — Release-channel consumer (upgrade-check client) is not implemented [High] — OPEN
+### - [x] F-25.8.3 — Release-channel consumer (upgrade-check client) is not implemented [High] — CLOSED
 
 §25.8 (lines 3376, 3408-3415) requires lenny-ops to query `platform.upgradeChannel` (default `https://releases.lenny.dev/v1/latest`) every 6h via cron and cache the result. `grep -rn -E 'platform.upgradeChannel|releases.lenny.dev'` returns only the Helm value definition (`charts/lenny/values.yaml:374-385`) — no Go code reads it. `pkg/ops/opsservice/cronloop.go` carries a generic cron loop type but no platform-upgrade-check job. There is no caller of `releasechannel.Verifier` outside the test files. The `lenny_platform_upgrade_available` metric referenced by the `PlatformUpgradeAvailable` alert (`rules.go:1413`) has no producer. `EventPlatformUpgradeAvailable` is declared (`opsevents/catalog.go:35`) but never emitted. The publisher half of §25.8 is built; the consumer half is missing.
 
-### - [ ] F-25.8.4 — Version aggregator (`GET /v1/admin/platform/version/full`) is not implemented [High] — OPEN
+**Resolution:** Verify-closed (resolved by F-10.5.5/F-10.5.7, commits 40313176 / d7fd4a67). `pkg/ops/upgradeservice.Checker` is the consumer: it reads the release-channel `Source`, emits `platform.version_checked` and the `platform_upgrade_available` operational event, and raises `lenny_platform_upgrade_available`. The leader-only `platform-upgrade-check` cron in `cmd/lenny-ops/deps.go` (`upgradeCheckJob`) drives it. The cron runs hourly per the spec (line 3414: "the check cron runs hourly"), not 6h; the finding's "every 6h" predates that clarification.
+
+### - [x] F-25.8.4 — Version aggregator (`GET /v1/admin/platform/version/full`) is not implemented [High] — CLOSED
 
 §25.8 (line 3364) requires aggregation of gateway binary metadata, lenny-ops binary metadata, controller Deployment versions, CRD versions, Helm chart version, and Postgres schema version, with per-component drift detection. The implementation supplies only `pkg/gateway/admin/platform.go:63-83`, which returns the gateway's own `GatewayVersion`, `GitCommit`, `BuildDate`, `GoVersion`, and the `OpsServiceURL` discovery field — the §25.3 endpoint. No aggregator at the lenny-ops layer combines these. No `GatewayClient.GetVersion()` call site exists (`grep -rn GatewayClient.GetVersion` returns nothing). The `versionDrift` boolean is not produced anywhere. The `lenny_platform_version_drift` metric in the `PlatformVersionDrift` alert (`rules.go:1430`) has no emitter.
+
+**Resolution:** Built `pkg/ops/upgradeservice/version.go` (`VersionAggregator` + `VersionSource`/`FuncVersionSource`): each component declares its own required version compared by exact equality (binaries against the build version, the schema counter left unscored), produces per-component `drift`/`requiredAction`, `versionDrift`, and a degradation warning per unreachable source. `GET /v1/admin/platform/version/full` is registered when the aggregator is wired. `cmd/lenny-ops` wires the ops (compiled-in), gateway (HTTP `GET /v1/admin/platform/version` — the GatewayClient.GetVersion call site), Postgres-schema (`schema_migrations`), and controller-Deployment-image sources, sets `lenny_platform_version_drift`, and runs an hourly drift cron. CRD-version and Helm-chart-version K8s introspection are the documented follow-on `VersionSource` additions; absent ones degrade to partial data per §25.8. Commit 86050958.
 
 ### - [ ] F-25.8.5 — Config diff and config apply (`/v1/admin/platform/config/*` runtime API) is not implemented [High] — OPEN
 
@@ -39757,21 +39762,29 @@ This is the bulk of §25.8: the lifecycle surface itself is not built.
 
 §25.8 (lines 3509-3511) specifies that the old `lenny-ops` pod runs a watchdog goroutine that auto-rolls-back on `OPS_ROLL_TIMEOUT` (default 600s) and emits `platform_upgrade_image_pull_failed` when it observes the new pod stuck in `ImagePullBackOff`/`CrashLoopBackOff` within a 60s window. None of `opsRollTimeoutSeconds`, `gatewayRollTimeoutSeconds`, `controllerRollTimeoutSeconds`, `opsRollHeartbeat`, or `previousImages` is referenced in any `.go` file (`grep -rn opsRollTimeout ...` returns only the spec text). `EventPlatformUpgradeImagePullFailed` is declared (`opsevents/catalog.go:89`) but never emitted. Without this watchdog the spec's "image pull failure surfaces in <10 min" guarantee does not hold; the `PlatformUpgradeStuck` alert at 1h is the only safety net, contradicting §25.8's explicit "without this timeout, an upgrade … would hang until the … alert fires (default 1h)."
 
-### - [ ] F-25.8.8 — `lenny-ops` `/v1/latest` is the mirror endpoint, not the operator-facing client [High] — OPEN
+### - [x] F-25.8.8 — `lenny-ops` `/v1/latest` is the mirror endpoint, not the operator-facing client [High] — CLOSED
 
 §25.8 distinguishes two surfaces: the upgrade-check **client** (`GET /v1/admin/platform/upgrade-check` on lenny-ops, the operator-facing endpoint) and the release-channel **publisher** at `releases.lenny.dev/v1/latest` (operated by the Lenny project, optionally mirrored by air-gap operators). The implementation builds the publisher half only and mounts it on the same lenny-ops binary at `GET /v1/latest` (`pkg/ops/opsserver/releasechannel.go:21-29`). For a non-mirror lenny-ops install, the publisher returns 404 (`opsserver.go:114-122`) — which is fine — but the operator-facing `/v1/admin/platform/upgrade-check` is never registered. An operator running the canonical Lenny install thus cannot drive an upgrade-check at all. The chart (`charts/lenny/values.yaml:391`) defaults `publisher.enabled: false`, so the default deployment has neither the consumer nor the publisher running.
 
-### - [ ] F-25.8.9 — `currentVersion` query parameter is not honored on the publisher [High] — OPEN
+**Resolution:** Verify-closed (resolved by F-10.5.5/F-10.5.7, commits 40313176 / d7fd4a67). `registerPlatformUpgradeRoutes` registers `GET /v1/admin/platform/upgrade-check` (the operator-facing client) whenever a `Checker` is configured, and `cmd/lenny-ops` wires `buildUpgradeChecker` into `opsserver.Options.UpgradeChecker`. The operator-facing client and the `/v1/latest` publisher are now distinct, independently-mountable surfaces.
+
+### - [x] F-25.8.9 — `currentVersion` query parameter is not honored on the publisher [High] — CLOSED
 
 §25.8 (line 3410) states the release-channel endpoint contract includes `?currentVersion=1.4.3` so the service can refuse to advertise a newer release when the deployment is below a hard `minUpgradeFrom` prerequisite. `ParseChannel` in `pkg/releasechannel/manifest.go:106-116` reads only `?channel=`; the publisher in `publisher.go:71-117` consults the `Source` with the channel only. A mirror operator running the implementation cannot honor the personalized minimum-version filter the spec defines.
 
-### - [ ] F-25.8.10 — Upgrade Prometheus metrics have no emitter [Medium] — OPEN
+**Resolution:** Added `Manifest.MeetsMinUpgradeFrom` (a local SemVer compare, since releasechannel cannot import upgradeservice) and a `?currentVersion=` check in `Publisher.ServeHTTP`: when the supplied current version is below the advertised release's `minUpgradeFrom`, the publisher returns 404 (the "no upgrade available to you" signal the upgrade-check client treats as not-upgradeable). The filter is opt-in on both sides (absent `currentVersion` or absent `minUpgradeFrom` advertises unconditionally). Commit 86050958.
+
+### - [x] F-25.8.10 — Upgrade Prometheus metrics have no emitter [Medium] — CLOSED
 
 §25.8 (line 3614) defines four metrics. The alerting rules reference three (`lenny_platform_upgrade_phase`, `lenny_platform_upgrade_duration_seconds`, `lenny_platform_version_drift`), and none has a registered Prometheus collector or emitter (`grep -rn lenny_platform_upgrade_phase ...` finds only the alert expression). The fourth (`lenny_platform_image_pull_check_duration_seconds`) is unreferenced anywhere. Without emitters the alerts can never fire and the dashboards in §25.13 cannot render.
 
-### - [ ] F-25.8.11 — Error-code symbols (`UPGRADE_*`, `CONFIG_*`) are not declared in code [Medium] — OPEN
+**Resolution:** The three alert-referenced metrics now emit. `upgradeservice.MetricsCollector` is a live Prometheus collector that reads the orchestrator singleton at scrape time and emits `lenny_platform_upgrade_phase{target_version}` (1..7 working step, 0 terminal so PlatformUpgradeStuck does not fire on a completed upgrade) and `lenny_platform_upgrade_duration_seconds{target_version}` (time since start, frozen at the terminal transition); registered on the default registry in `cmd/lenny-ops`. `lenny_platform_version_drift` is set by the F-25.8.4 version aggregator (`setPlatformVersionDrift`) plus its hourly cron, and added to the §16.1 catalog. The fourth metric, `lenny_platform_image_pull_check_duration_seconds` (preflight image-pullability latency), lands with the OpsRoll watchdog / image-pull observation tracked by F-25.8.7. Commit 86050958.
+
+### - [x] F-25.8.11 — Error-code symbols (`UPGRADE_*`, `CONFIG_*`) are not declared in code [Medium] — CLOSED
 
 §25.8 (line 3629) tabulates nine error codes. None of `UPGRADE_ALREADY_IN_PROGRESS`, `UPGRADE_PREFLIGHT_FAILED`, `UPGRADE_IMAGE_NOT_PULLABLE`, `UPGRADE_ROLLBACK_UNAVAILABLE`, `UPGRADE_ROLLBACK_MANUAL_CRD`, `UPGRADE_NOT_IN_PROGRESS`, `UPGRADE_CHANNEL_UNREACHABLE`, `CONFIG_VALIDATION_FAILED`, `CONFIG_RESTART_REQUIRED` is declared in the codebase (`grep -rn UPGRADE_CHANNEL_UNREACHABLE ...` returns nothing). This follows from the absence of the handlers, but the symbols are also referenced by §25.2's canonical-error envelope and by external operator agents; they should be defined when the surfaces are implemented.
+
+**Resolution:** `pkg/ops/upgradeservice/codes.go` declares all nine canonical §25.8 codes with their spec-table wire values, plus `Section258ErrorCodes()` (the package test asserts the set matches the table exactly). The orchestrator constants were aligned to the spec names: `CodeUpgradeInProgress`→`UPGRADE_ALREADY_IN_PROGRESS`, `CodeNoUpgrade`→`UPGRADE_NOT_IN_PROGRESS`, `CodeNotRollbackable`→`UPGRADE_ROLLBACK_UNAVAILABLE`. The handler now maps a mutating call with no active upgrade to 409 `UPGRADE_NOT_IN_PROGRESS` and `UPGRADE_ALREADY_IN_PROGRESS` to category POLICY, matching the spec table. The preflight/image/manual-CRD/config codes are declared for the handlers that consume them (F-25.8.5/.7). Commit 86050958.
 
 ### - [ ] F-25.8.12 — Air-gap mirror story is partial [Medium] — OPEN
 
