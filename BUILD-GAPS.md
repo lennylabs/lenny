@@ -21415,7 +21415,7 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 
 **Impact:** A tenant-scope legal hold cannot be honored during deletion. The "destroying held evidence is spoliation" invariant the spec marks as mandatory and fail-closed has no enforcement path.
 
-### - [ ] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — OPEN
+### - [x] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.3, F-25.11.10 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
 
@@ -21431,6 +21431,15 @@ But the reconciler itself — the code that walks the restored audit_log for `gd
 - The reconciler is referenced in BUILD-PROGRESS.md only as the confirm-ledger endpoint and not as a reconcile loop.
 
 **Impact:** Restoring a backup taken before an erasure resurrects erased users' sessions, memories, OAuth tokens, billing rows with the original `user_id`, audit events, and `processing_restricted = false`. GDPR Article 17 reinstatement and 45 C.F.R. §164.502 unauthorized disclosure cannot be prevented by the platform — the operator must manually re-run erasure.
+
+**Resolution (406555cb):** Closed by F-25.11.10 / F-17.3.5 (same
+defect). `Service.runErasureReconcile` (`pkg/ops/backup/postrestore.go`)
+enumerates `gdpr.%` receipts with `completed_at > backupTakenAt`,
+computes the ledger watermark, blocks-vs-replays, and runs the idempotent
+replay through the `ErasureReconciler` seam between `restore_completed`
+and the gateway restart, with the ledger-stale block clearable via the
+existing `ConfirmLegalHoldLedger` watermark. The audit-store row erasure
+itself (§12.8 audit participation) is F-12.8.4.
 
 ### - [ ] F-12.8.4 — Audit-log GDPR erasure (DeleteByUser/DeleteByTenant, gdpr.* exemption, chain re-sealing) is unimplemented [High] — OPEN
 
@@ -30997,7 +31006,7 @@ down because no PDB caps simultaneous evictions. The §17.3
 
 ---
 
-### - [ ] F-17.3.3 — 3.2 — Post-restore GDPR erasure reconciler is not implemented [High] — OPEN
+### - [x] F-17.3.3 — 3.2 — Post-restore GDPR erasure reconciler is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.8.3, F-25.11.10 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
 
@@ -31039,6 +31048,18 @@ is not enforceable because there is no reconciler.
 
 Related H-17.3.4 below confirms the gateway-restart step 7 is also
 absent.
+
+**Resolution (406555cb):** Closed by F-25.11.10 / F-17.3.5 in the same
+batch. The §25.11 step-6 reconciler is implemented in
+`Service.runErasureReconcile` (`pkg/ops/backup/postrestore.go`): it runs
+the legal-hold ledger freshness gate, blocks with
+`gdpr.backup_reconcile_blocked` when the ledger is stale, replays
+`DeleteByUser`/`DeleteByTenant` via the new `ErasureReconciler` seam,
+suppresses subjects under a post-receipt hold, and emits a single
+`gdpr.backup_reconcile_completed`. Ready-gating holds the lock and skips
+the gateway restart on failure. The §12.8 audit-store erasure primitives
+(`DeleteByUser`/`DeleteByTenant` on the EventStore, chain re-sealing)
+remain tracked by F-12.8.4.
 
 ---
 
@@ -31098,7 +31119,7 @@ backups are not real. A pre-restore safety backup created by
 
 ---
 
-### - [ ] F-17.3.5 — 3.4 — Restore execution stops after launching the Job; events / gateway restart / step-8 lock-release are not wired [High] — OPEN
+### - [x] F-17.3.5 — 3.4 — Restore execution stops after launching the Job; events / gateway restart / step-8 lock-release are not wired [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.11.11 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
@@ -31143,6 +31164,20 @@ remediation lock is held indefinitely so no other restore can
 proceed; and the pre-restore backup is never eligible for
 deletion (Pre-Restore Backup Lifecycle requires the gateway
 rolling-restart step to have completed).
+
+**Resolution (406555cb):** `Service.CompleteRestore`
+(`pkg/ops/backup/postrestore.go`) implements §25.11 steps 5-8. Step 5
+records per-shard outcomes and emits `restore.shard_completed` +
+`operation_progressed` per shard, then `restore.completed` (all shards)
+or `restore.failed` with `failure_phase:"restore"` (any shard fails,
+lock held). Step 6 runs the post-restore GDPR erasure reconciler under
+ready-gating (F-25.11.10). Step 7 patches the gateway Deployment via the
+new `GatewayRestarter` seam on success only. Step 8 releases the
+`restore:platform` lock and expires the pre-restore backup
+(`status:expired, expires_at:now()`). A gateway-rollout failure keeps the
+restore completed but the lock held behind a `GATEWAY_RESTART_PENDING`
+marker; the leader-only `ReconcileRunningRestores` driver retries steps
+7-8 and is wired as the `restore-complete` cron in `cmd/lenny-ops`.
 
 ---
 
@@ -40828,7 +40863,7 @@ Implementation status:
 - `Controller.ResidencyTickInterval()` exists to feed a loop runner; no loop runner exists.
 - Therefore the entire ArtifactStore residency-preflight pipeline (the security control the spec calls "second-layer compliance") is dark in any built deployment. `ArtifactReplicationResidencyViolation`/`MinIOArtifactReplicationLagHigh` alerts can never fire because the controller that updates the underlying metrics never runs.
 
-### - [ ] F-25.11.10 — Post-restore GDPR erasure reconciler not implemented [High] — OPEN
+### - [x] F-25.11.10 — Post-restore GDPR erasure reconciler not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.8.3, F-17.3.3 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
 
@@ -40840,7 +40875,21 @@ Implementation status:
 - `GDPR.backup_reconcile_completed`/`blocked`/`erasure_reconciled_suppressed_by_hold` event constants exist but are never emitted (grep for `EventGDPRBackup*` outside catalog returns nothing).
 - `ConfirmLegalHoldLedger` (orchestrator.go:547) records a synthetic ledger watermark on the restore row — but no reconciler reads it, so the workflow it is meant to unblock does not exist.
 
-### - [ ] F-25.11.11 — Restore lock auto-release on success and gateway restart not implemented [High] — OPEN
+**Resolution (406555cb):** `Service.runErasureReconcile`
+(`pkg/ops/backup/postrestore.go`) is the §25.11 step-6 reconciler: the
+ledger freshness gate emits `gdpr.backup_reconcile_blocked` and aborts
+with `RESTORE_ERASURE_RECONCILE_FAILED` (`failure_phase:erasure_reconcile`,
+`block_reason:legal_hold_ledger_stale`) when the ledger's most recent
+write is `<= backupTakenAt`; a fresh ledger replays `DeleteByUser` /
+`DeleteByTenant` via the new `ErasureReconciler` seam, suppresses subjects
+under a post-receipt hold, and emits one `gdpr.backup_reconcile_completed`.
+The operator `ConfirmLegalHoldLedger` watermark now drives a real
+unblock: a confirmed restore skips the gate on the next completion.
+Ready-gating retains the lock and skips the gateway restart on any
+reconciler failure. The replay's restored-DB store adapter is the
+production wiring of the seam.
+
+### - [x] F-25.11.11 — Restore lock auto-release on success and gateway restart not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.5 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
@@ -40850,6 +40899,13 @@ Implementation status:
 - `Service.ExecuteRestore` returns immediately after launching the restore Job. No code path calls `s.locker.Release()` on a successful restore; the only `Release` calls (orchestrator.go:428, 446) are roll-backs on pre-restore-backup failure or DB-insert failure during setup.
 - No grep hit for `RolloutRestart`, `RestartGateway`, deployment annotation patching, or any k8s client call from `pkg/ops/backup/`.
 - A successful restore therefore leaves the `restore:platform` lock held forever, blocking all subsequent restores until an operator manually deletes it via `/v1/admin/remediation-locks`.
+
+**Resolution:** Closed by F-17.3.5 (same defect). `finishRestoreSuccess`
+(`pkg/ops/backup/postrestore.go`) rolls the gateway Deployment via the
+`GatewayRestarter` seam, then releases the `restore:platform` lock and
+expires the pre-restore backup once the rollout completes (step 8). A
+failed restore or reconciler leaves the lock held per §25.11 line 4149.
+(this batch, 406555cb)
 
 ### - [ ] F-25.11.12 — In-Job dump pipeline lacks ArtifactStore handling, sensitive-content policy enforcement, and restore mode [High] — OPEN
 
