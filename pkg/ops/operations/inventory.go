@@ -44,12 +44,12 @@ const (
 type Status string
 
 const (
-	StatusInProgress     Status = "in_progress"
-	StatusPaused         Status = "paused"
-	StatusHeld           Status = "held"
-	StatusAwaitingFlush  Status = "awaiting_flush"
-	StatusFailed         Status = "failed"
-	StatusCompleted      Status = "completed"
+	StatusInProgress    Status = "in_progress"
+	StatusPaused        Status = "paused"
+	StatusHeld          Status = "held"
+	StatusAwaitingFlush Status = "awaiting_flush"
+	StatusFailed        Status = "failed"
+	StatusCompleted     Status = "completed"
 )
 
 // DefaultStatuses are the §25.4 default status filter when the request
@@ -158,15 +158,36 @@ func (f Filter) HasKind(k Kind) bool {
 // owns no state — sources are registered at construction time and the
 // scatter-gather happens on every List call.
 type Inventory struct {
-	mu      sync.RWMutex
-	sources []Source
+	mu        sync.RWMutex
+	sources   []Source
+	clock     func() time.Time
+	baselines BaselineStore
 }
 
 // New returns a §4.0 Inventory with the given sources registered. A nil
 // or empty slice yields an empty Inventory whose List returns an empty
 // page.
 func New(sources ...Source) *Inventory {
-	return &Inventory{sources: append([]Source(nil), sources...)}
+	return &Inventory{sources: append([]Source(nil), sources...), clock: time.Now}
+}
+
+// SetProgressBaselines installs the §25.2 progress-envelope enrichment.
+// With it set, every in-progress operation's Progress is recomputed
+// through the canonical ETA chain on each List/Get: the historical_p50
+// method draws on the baseline store, and stalledForSeconds is derived
+// from the kind's expected cadence (§25.2 lines 393-396). clock supplies
+// the current time; a nil clock keeps time.Now. A nil store leaves the
+// historical_p50 method unavailable (etaMethod falls through), but the
+// cadence-based stall detection still runs.
+//
+// spec: §25.2 line 357 (the progress object), lines 393-396.
+func (i *Inventory) SetProgressBaselines(clock func() time.Time, store BaselineStore) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if clock != nil {
+		i.clock = clock
+	}
+	i.baselines = store
 }
 
 // Register adds src to the Inventory. It is safe to call after New;
@@ -208,6 +229,7 @@ func (i *Inventory) List(ctx context.Context, filter Filter, limit int) Page {
 	}
 	i.mu.RLock()
 	sources := append([]Source(nil), i.sources...)
+	clock, baselines := i.clock, i.baselines
 	i.mu.RUnlock()
 
 	var (
@@ -232,6 +254,7 @@ func (i *Inventory) List(ctx context.Context, filter Filter, limit int) Page {
 	if len(out) > limit {
 		out = out[:limit]
 	}
+	enrichOperations(ctx, out, clock, baselines)
 	page := Page{
 		Operations: out,
 		Pagination: conventions.Pagination{
@@ -258,6 +281,7 @@ func (i *Inventory) List(ctx context.Context, filter Filter, limit int) Page {
 func (i *Inventory) Get(ctx context.Context, id string) (*Operation, []string, bool) {
 	i.mu.RLock()
 	sources := append([]Source(nil), i.sources...)
+	clock, baselines := i.clock, i.baselines
 	i.mu.RUnlock()
 	filter := Filter{OperationID: id}
 	var warns []string
@@ -272,11 +296,72 @@ func (i *Inventory) Get(ctx context.Context, id string) (*Operation, []string, b
 		}
 		for _, op := range ops {
 			if op.OperationID == id {
+				enrichProgress(ctx, &op, clock, baselines)
 				return &op, warns, true
 			}
 		}
 	}
 	return nil, warns, false
+}
+
+// enrichOperations applies the §25.2 progress-envelope enrichment to
+// every operation in place.
+func enrichOperations(ctx context.Context, ops []Operation, clock func() time.Time, baselines BaselineStore) {
+	for idx := range ops {
+		enrichProgress(ctx, &ops[idx], clock, baselines)
+	}
+}
+
+// enrichProgress recomputes an in-progress operation's ETA and stall
+// fields through the §25.2 canonical ETA chain, drawing the
+// historical_p50 baseline from the store and the expected cadence from
+// the operation kind. It is additive: the source's descriptive fields
+// (currentStep, currentStepDetail, rateMetric, step counts) are
+// preserved; only etaSeconds/etaConfidence/etaMethod and
+// stalledForSeconds are (re)derived. A terminal or paused operation is
+// left untouched — a completed operation is not stalled, and a paused
+// one is awaiting an operator by design (§25.2 line 391).
+//
+// spec: §25.2 lines 357-401.
+func enrichProgress(ctx context.Context, op *Operation, clock func() time.Time, baselines BaselineStore) {
+	if op == nil || op.Progress == nil || op.Status != StatusInProgress {
+		return
+	}
+	now := time.Now().UTC()
+	if clock != nil {
+		now = clock().UTC()
+	}
+	pr := op.Progress
+	in := ETAInputs{
+		Now:               now,
+		StartedAt:         op.StartedAt,
+		CurrentStep:       pr.CurrentStep,
+		CurrentStepDetail: pr.CurrentStepDetail,
+		CompletedSteps:    pr.CompletedSteps,
+		TotalSteps:        pr.TotalSteps,
+		Percent:           pr.Percent,
+		Rate:              pr.RateMetric,
+		ExpectedCadence:   ExpectedCadence(op.Kind),
+	}
+	if pr.LastProgressAt != "" {
+		if t, err := time.Parse(time.RFC3339, pr.LastProgressAt); err == nil {
+			in.LastProgressAt = t
+		}
+	}
+	if baselines != nil {
+		if b, ok, err := baselines.Lookup(ctx, op.Kind); err == nil && ok {
+			in.HistoricalP50 = b.P50
+			in.SampleSize = b.SampleSize
+		}
+	}
+	computed := Compute(in)
+	pr.EtaSeconds = computed.EtaSeconds
+	pr.EtaConfidence = computed.EtaConfidence
+	pr.EtaMethod = computed.EtaMethod
+	pr.StalledForSeconds = computed.StalledForSeconds
+	if pr.Percent == nil {
+		pr.Percent = computed.Percent
+	}
 }
 
 // sourceMatchesFilter reports whether src may produce any operation the

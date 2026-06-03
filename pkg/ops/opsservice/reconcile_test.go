@@ -46,6 +46,30 @@ func TestReconcilersWireFourLeaderLoops_spec_25_4(t *testing.T) {
 	}
 }
 
+// spec: §25.2 lines 399-401 — wiring the OperationsObserve reconciler
+// produces the leader-only operations-observe loop that maintains the
+// lenny_ops_operations_stalled gauge and emits operation_progressed.
+func TestOperationsObserveWiresLoop_spec_25_2(t *testing.T) {
+	noop := func(context.Context) error { return nil }
+	svc, err := opsservice.New(opsservice.Config{
+		ReplicaID:   "r1",
+		Elector:     stoppedElector{},
+		Reconcilers: opsservice.Reconcilers{OperationsObserve: noop},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	found := false
+	for _, name := range svc.LoopNames() {
+		if name == "operations-observe" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("loops %v missing operations-observe", svc.LoopNames())
+	}
+}
+
 // spec: §25.4 line 1337 — a nil reconciler contributes no loop, so a
 // deployment without a Postgres-backed durable tier skips the loops it
 // cannot run.

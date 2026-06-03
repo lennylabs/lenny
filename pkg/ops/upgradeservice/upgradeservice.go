@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
 
@@ -238,8 +239,23 @@ type Service struct {
 	drift   DriftCleaner    // §25.10 target-snapshot cleanup on rollback; nil skips
 	now     func() time.Time
 	newID   func() string
+	// baselines folds a completed upgrade's wall-clock duration into the
+	// §25.2 ops_operation_baselines table; nil skips the record. spec:
+	// §25.2 line 393.
+	baselines BaselineRecorder
 
 	mu sync.Mutex // serializes the read-modify-write of the singleton
+}
+
+// BaselineRecorder records a completed operation's wall-clock duration
+// into the §25.2 historical baseline table so subsequent operations of
+// the kind receive a historical_p50 ETA. The upgrade service records the
+// platform_upgrade kind on each Complete transition.
+//
+// spec: §25.2 line 393 ("ops_operation_baselines ... is updated on each
+// operation completion").
+type BaselineRecorder interface {
+	RecordCompletion(ctx context.Context, kind string, dur time.Duration) error
 }
 
 // Options configures a Service.
@@ -258,6 +274,9 @@ type Options struct {
 	Now func() time.Time
 	// NewID mints the operation id; nil defaults to `upgrade-<uuid>`.
 	NewID func() string
+	// Baselines records the upgrade's completion duration into the §25.2
+	// historical baseline table. A nil recorder skips it.
+	Baselines BaselineRecorder
 }
 
 // New returns a Service over opts. It panics when Store is nil, which is
@@ -274,7 +293,7 @@ func New(opts Options) *Service {
 	if newID == nil {
 		newID = func() string { return "upgrade-" + uuid.NewString() }
 	}
-	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftCleaner, now: now, newID: newID}
+	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftCleaner, now: now, newID: newID, baselines: opts.Baselines}
 }
 
 // StartRequest is the POST /v1/admin/platform/upgrade/start body.
@@ -548,6 +567,18 @@ func (s *Service) transition(ctx context.Context, mutate func(*State) error) (St
 	st.UpdatedAt = s.now()
 	if err := s.store.Save(ctx, st); err != nil {
 		return State{}, err
+	}
+	// §25.2 line 393: fold the completed upgrade's wall-clock duration into
+	// the historical baseline table on the Complete transition. The state
+	// machine rejects any further transition once terminal, so this fires
+	// exactly once per upgrade. A rollback is not a successful completion
+	// and is not recorded.
+	if s.baselines != nil && st.Phase == upgrade.Complete {
+		dur := st.UpdatedAt.Sub(st.StartedAt)
+		if dur < 0 {
+			dur = 0
+		}
+		_ = s.baselines.RecordCompletion(ctx, string(operations.KindPlatformUpgrade), dur)
 	}
 	return st, nil
 }

@@ -34,6 +34,7 @@ func TestComputeHistoricalP50(t *testing.T) {
 		Now:           now,
 		StartedAt:     started,
 		HistoricalP50: 10 * time.Minute,
+		SampleSize:    operations.HistoricalP50MinSamples,
 	})
 	if p.EtaMethod != conventions.EtaHistoricalP50 {
 		t.Errorf("EtaMethod = %q, want historical_p50", p.EtaMethod)
@@ -53,9 +54,29 @@ func TestComputeHistoricalP50ClampsAtZero(t *testing.T) {
 		Now:           now,
 		StartedAt:     now.Add(-time.Hour),
 		HistoricalP50: 10 * time.Minute,
+		SampleSize:    operations.HistoricalP50MinSamples,
 	})
 	if p.EtaSeconds == nil || *p.EtaSeconds != 0 {
 		t.Errorf("EtaSeconds = %v, want 0 when elapsed exceeds p50", p.EtaSeconds)
+	}
+}
+
+// spec §25.2 line 394: below HistoricalP50MinSamples (3) the historical
+// method is skipped even when a p50 is present — etaMethod falls through
+// to a lower-confidence method, or "none" when nothing else applies.
+func TestComputeHistoricalP50BelowSampleThresholdFallsThrough(t *testing.T) {
+	now := time.Date(2026, 4, 16, 10, 5, 0, 0, time.UTC)
+	p := operations.Compute(operations.ETAInputs{
+		Now:           now,
+		StartedAt:     now.Add(-2 * time.Minute),
+		HistoricalP50: 10 * time.Minute,
+		SampleSize:    operations.HistoricalP50MinSamples - 1,
+	})
+	if p.EtaMethod == conventions.EtaHistoricalP50 {
+		t.Errorf("EtaMethod = historical_p50, want fall-through below %d samples", operations.HistoricalP50MinSamples)
+	}
+	if p.EtaMethod != conventions.EtaNone {
+		t.Errorf("EtaMethod = %q, want none (no other method applies)", p.EtaMethod)
 	}
 }
 
@@ -165,15 +186,48 @@ func TestComputeClampsPercent(t *testing.T) {
 	}
 }
 
-// spec §25.2: lastProgressAt drives stalledForSeconds.
+// spec §25.2 lines 391/396: stalledForSeconds is the overrun beyond the
+// kind's expected cadence — populated only once now-lastProgressAt
+// exceeds the cadence, and reporting the excess.
 func TestComputeStalledForSeconds(t *testing.T) {
+	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	p := operations.Compute(operations.ETAInputs{
+		Now:             now,
+		StartedAt:       now.Add(-time.Hour),
+		LastProgressAt:  now.Add(-10 * time.Minute),
+		ExpectedCadence: 5 * time.Minute,
+	})
+	// 10 min since last progress, 5 min cadence -> 5 min (300s) overrun.
+	if p.StalledForSeconds == nil || *p.StalledForSeconds != 300 {
+		t.Errorf("StalledForSeconds = %v, want 300", p.StalledForSeconds)
+	}
+}
+
+// spec §25.2 line 391: an operation advancing within its cadence is not
+// stalled — stalledForSeconds stays null.
+func TestComputeStalledForSecondsNilWithinCadence(t *testing.T) {
+	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	p := operations.Compute(operations.ETAInputs{
+		Now:             now,
+		StartedAt:       now.Add(-time.Hour),
+		LastProgressAt:  now.Add(-1 * time.Minute),
+		ExpectedCadence: 5 * time.Minute,
+	})
+	if p.StalledForSeconds != nil {
+		t.Errorf("StalledForSeconds = %v, want nil within cadence", *p.StalledForSeconds)
+	}
+}
+
+// spec §25.2 line 396: a zero cadence disables stall detection entirely,
+// even when progress has not advanced for a long time.
+func TestComputeStalledForSecondsNilWithoutCadence(t *testing.T) {
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
 	p := operations.Compute(operations.ETAInputs{
 		Now:            now,
 		StartedAt:      now.Add(-time.Hour),
-		LastProgressAt: now.Add(-10 * time.Minute),
+		LastProgressAt: now.Add(-30 * time.Minute),
 	})
-	if p.StalledForSeconds == nil || *p.StalledForSeconds != 600 {
-		t.Errorf("StalledForSeconds = %v, want 600", p.StalledForSeconds)
+	if p.StalledForSeconds != nil {
+		t.Errorf("StalledForSeconds = %v, want nil with no cadence", *p.StalledForSeconds)
 	}
 }

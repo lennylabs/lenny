@@ -30,6 +30,12 @@ const (
 	// BundleRulesReconcileInterval paces the §25.4 bundleRules reconciler
 	// that keeps the rendered alerting rules in sync.
 	BundleRulesReconcileInterval = 5 * time.Minute
+	// OperationsObserveInterval paces the §25.2 operations-observe loop
+	// that scans the Operations Inventory to maintain the
+	// lenny_ops_operations_stalled gauge (the OperationStalled alert
+	// backing) and to emit operation_progressed on step transitions and
+	// percent-threshold crossings.
+	OperationsObserveInterval = 30 * time.Second
 )
 
 // Reconciler is a tick function for one §25.4 leader-only
@@ -52,6 +58,10 @@ type Reconcilers struct {
 	DriftSnapshotValidate Reconciler
 	// BundleRulesReconcile keeps the rendered alerting rules in sync.
 	BundleRulesReconcile Reconciler
+	// OperationsObserve scans the §25.2 Operations Inventory to maintain
+	// the lenny_ops_operations_stalled gauge and emit operation_progressed
+	// on step transitions and percent-threshold crossings.
+	OperationsObserve Reconciler
 }
 
 // loops projects the configured reconcilers into leader-only Loops. A
@@ -69,6 +79,7 @@ func (r Reconcilers) loops() []Loop {
 		{"lock-epoch-reconcile", LockEpochReconcileInterval, r.LockEpochReconcile},
 		{"drift-snapshot-validate", DriftSnapshotValidateInterval, r.DriftSnapshotValidate},
 		{"bundle-rules-reconcile", BundleRulesReconcileInterval, r.BundleRulesReconcile},
+		{"operations-observe", OperationsObserveInterval, r.OperationsObserve},
 	}
 	var loops []Loop
 	for _, s := range specs {

@@ -427,7 +427,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_audit_ocsf_retry_pending_rows", TypeGauge, "OCSF-translation rows pending retry, read by OCSFTranslationBacklog"},
 	{"lenny_pgaudit_sink_delivery_failed_total", TypeCounter, "pgaudit sink delivery failures, read by PgAuditSinkDeliveryFailed"},
 	{"lenny_ops_lock_split_brain_detected_total", TypeCounter, "lenny-ops remediation-lock split-brain detections, read by LenniOpsLockSplitBrainDetected"},
-	{"lenny_ops_operations_stalled_total", TypeCounter, "In-flight operations that exceeded their progress cadence, read by OperationStalled"},
+	{"lenny_ops_operations_stalled", TypeGauge, "Count of in-flight operations whose progress exceeded their expected cadence (stalledForSeconds > 0), read by OperationStalled"},
 	{"lenny_backup_total", TypeCounter, "Backup Job outcomes by status, read by BackupFailed"},
 	{"lenny_backup_storage_used_bytes", TypeGauge, "Backup object-storage bytes used, read by BackupStorageHigh"},
 	{"lenny_backup_storage_quota_bytes", TypeGauge, "Backup object-storage quota in bytes, read by BackupStorageHigh"},

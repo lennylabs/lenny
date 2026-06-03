@@ -521,16 +521,16 @@ func main() {
 		adminPort, _ = strconv.Atoi((*addr)[i+1:])
 	}
 	delivery := buildWebhookDelivery(ctx, webhookDeliveryDeps{
-		Pool:        pgPool,
-		Clientset:   clientset,
-		Source:      eventSource,
-		Emitter:     opsEmitter,
-		Audit:       subscriptionAuditFunc(func(ev eventsubscription.AuditEvent) { log.Printf("lenny-ops: audit %s %v", ev.Type, ev.Details) }),
-		SharedKey:   webhookSharedKey,
-		Namespace:   envOr("POD_NAMESPACE", *leaderElectNS),
-		ServiceName: *opsServiceName,
-		SelfIP:      os.Getenv("POD_IP"),
-		AdminPort:   adminPort,
+		Pool:         pgPool,
+		Clientset:    clientset,
+		Source:       eventSource,
+		Emitter:      opsEmitter,
+		Audit:        subscriptionAuditFunc(func(ev eventsubscription.AuditEvent) { log.Printf("lenny-ops: audit %s %v", ev.Type, ev.Details) }),
+		SharedKey:    webhookSharedKey,
+		Namespace:    envOr("POD_NAMESPACE", *leaderElectNS),
+		ServiceName:  *opsServiceName,
+		SelfIP:       os.Getenv("POD_IP"),
+		AdminPort:    adminPort,
 		TrackingMode: webhookdelivery.TrackingMode(*webhookTrackingMode),
 		Retention: opsservice.RetentionPolicy{
 			Retention:             time.Duration(*webhookRetentionDays) * 24 * time.Hour,
@@ -693,7 +693,13 @@ func main() {
 	// events; the checker queries the operator-supplied release manifest
 	// and emits platform_upgrade_available. The platform-upgrade-check
 	// cron (§25.4 line 1338) runs leader-only alongside the backup jobs.
-	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter)
+	// §25.2 historical baselines for the canonical Progress Envelope:
+	// Postgres-backed (ops_operation_baselines, migration 0128) when a pool
+	// is available, in-memory otherwise. The upgrade orchestrator records a
+	// completion into it, and the Operations Inventory reads it to derive
+	// the historical_p50 ETA. F-25.2.7.
+	baselineStore := buildBaselineStore(pgPool)
+	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter, baselineStore)
 	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter)
 	// §25.8 live upgrade gauges (phase + duration): a collector that reads
 	// the orchestrator's singleton at scrape time so the gauges advance
@@ -712,6 +718,51 @@ func main() {
 	platformConfigSvc := buildPlatformConfigService(gwClient)
 	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator),
 		deliveryRetentionJob(delivery.Store))
+
+	// §25.4 Operations Inventory: a scatter-gather view over the wired
+	// subsystem sources. The lock, escalation, and platform-upgrade
+	// adapters project their live records; the §25.10 drift reconcile
+	// tracker is already an operations.Source. The backup/restore,
+	// idempotency, and webhook-delivery kinds plug in as their subsystems
+	// expose enumeration. F-25.4.3.
+	inventory := operations.New(
+		opsinventory.NewLockSource(lockSvc),
+		opsinventory.NewEscalationSource(escalationSvc),
+		opsinventory.NewUpgradeSource(upgradeSvc),
+		driftSvc.ReconcileSource(),
+	)
+	// §25.2 lines 357-396: enrich every in-progress operation's Progress
+	// with the canonical ETA (historical_p50 from the baseline store) and
+	// the cadence-relative stalledForSeconds on each List/Get. F-25.2.7.
+	inventory.SetProgressBaselines(time.Now, baselineStore)
+	// §25.2 lines 399-401 operations-observe loop: maintain the
+	// lenny_ops_operations_stalled gauge (OperationStalled alert backing)
+	// and emit operation_progressed on step transitions and percent-
+	// threshold crossings. Runs leader-only via Reconcilers. F-25.2.7 /
+	// F-25.2.14.
+	operationsObserver := opsinventory.NewObserver(inventory, setOperationsStalled,
+		func(ctx context.Context, ev opsinventory.ProgressUpdate) {
+			payload, err := json.Marshal(map[string]any{
+				"operationId":       ev.OperationID,
+				"kind":              ev.Kind,
+				"percent":           ev.Percent,
+				"completedSteps":    ev.CompletedSteps,
+				"totalSteps":        ev.TotalSteps,
+				"currentStep":       ev.CurrentStep,
+				"currentStepDetail": ev.CurrentStepDetail,
+				"crossedThresholds": ev.CrossedThresholds,
+				"stepTransition":    ev.StepTransition,
+			})
+			if err != nil {
+				return
+			}
+			_ = opsEmitter.Emit(ctx, events.OperationalEvent{
+				Type:            events.EventOperationProgressed.CloudEventsType(),
+				Subject:         "operation/" + ev.OperationID,
+				DataContentType: "application/json",
+				Data:            payload,
+			})
+		})
 
 	// §25.4 idempotency: durable when Postgres is available, in-memory in
 	// single-process degraded mode. Built before the service body so the
@@ -777,6 +828,12 @@ func main() {
 				}
 				return nil
 			},
+			// §25.2 lines 399-401: scan the Operations Inventory to maintain
+			// the lenny_ops_operations_stalled gauge and emit
+			// operation_progressed on step transitions and percent-threshold
+			// crossings. Leader-only so a multi-replica deployment emits one
+			// stream. F-25.2.7 / F-25.2.14.
+			OperationsObserve: operationsObserver.Tick,
 		},
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
@@ -871,19 +928,6 @@ func main() {
 		podLogs = k8sPodLogReader{pods: clientset.CoreV1()}
 	}
 
-	// §25.4 Operations Inventory: a scatter-gather view over the wired
-	// subsystem sources. The lock, escalation, and platform-upgrade
-	// adapters project their live records; the §25.10 drift reconcile
-	// tracker is already an operations.Source. The backup/restore,
-	// idempotency, and webhook-delivery kinds plug in as their subsystems
-	// expose enumeration. F-25.4.3.
-	inventory := operations.New(
-		opsinventory.NewLockSource(lockSvc),
-		opsinventory.NewEscalationSource(escalationSvc),
-		opsinventory.NewUpgradeSource(upgradeSvc),
-		driftSvc.ReconcileSource(),
-	)
-
 	// §25.4 GET /v1/admin/me platform context + capabilities snapshot. The
 	// capabilities reflect the actual wired state; opsReplicas reads the
 	// live Endpoints count. F-25.4.2.
@@ -919,15 +963,15 @@ func main() {
 		log.Printf("lenny-ops: audit %s %v", event, fields)
 	}}
 	opsHandler := opsserver.New(opsserver.Options{
-		Probes:            probes,
-		Runbooks:          runbookSource,
-		SelfHealth:        svc.Monitor(),
-		Leader:            svc,
-		Backups:           backupSvc,
-		Diagnostics:       diagnosticSvc,
-		Drift:             driftSvc,
-		Locks:             lockSvc,
-		LockCoordination:  lockCoordination,
+		Probes:             probes,
+		Runbooks:           runbookSource,
+		SelfHealth:         svc.Monitor(),
+		Leader:             svc,
+		Backups:            backupSvc,
+		Diagnostics:        diagnosticSvc,
+		Drift:              driftSvc,
+		Locks:              lockSvc,
+		LockCoordination:   lockCoordination,
 		Escalations:        escalationSvc,
 		EventStream:        eventStream,
 		EventSubscriptions: eventSubscriptions,
@@ -935,18 +979,18 @@ func main() {
 		CacheInvalidator:     subscriptionCache,
 		CacheInvalidateToken: delivery.InvalidateToken,
 		ReleaseChannel:       releaseChannelPub,
-		Upgrade:           upgradeSvc,
-		UpgradeChecker:    upgradeChecker,
-		VersionAggregator: versionAggregator,
-		PlatformConfig:    platformConfigSvc,
-		PodLogs:           podLogs,
-		Production:        *production,
-		DiagnosticsAudit:  buildDiagnosticsAudit(*diagnosticsAuditRate),
-		Auth:              authCfg,
-		Idempotency:       idemStore,
-		Inventory:         inventory,
-		Me:                meConfig,
-		Audit:             opsAudit,
+		Upgrade:              upgradeSvc,
+		UpgradeChecker:       upgradeChecker,
+		VersionAggregator:    versionAggregator,
+		PlatformConfig:       platformConfigSvc,
+		PodLogs:              podLogs,
+		Production:           *production,
+		DiagnosticsAudit:     buildDiagnosticsAudit(*diagnosticsAuditRate),
+		Auth:                 authCfg,
+		Idempotency:          idemStore,
+		Inventory:            inventory,
+		Me:                   meConfig,
+		Audit:                opsAudit,
 		// §16.8 / §16.9: expose every instrument registered on the process
 		// default registry (self-health, backup, drift, rate-limit,
 		// diagnostics) on the mandatory lenny-ops scrape target.

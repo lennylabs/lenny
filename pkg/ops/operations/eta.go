@@ -47,25 +47,47 @@ type ETAInputs struct {
 	// unit). Used alongside RateUnit to compute the rate-based ETA.
 	CompletedUnits float64
 	// HistoricalP50 is the §25.2 historical p50 duration for an
-	// operation of this kind on this deployment. A non-zero value
-	// drives the highest-confidence ETA method.
+	// operation of this kind on this deployment. It drives the
+	// highest-confidence ETA method only once SampleSize reaches the
+	// §25.2 minimum (HistoricalP50MinSamples).
 	HistoricalP50 time.Duration
+	// SampleSize is the number of completed operations of this kind that
+	// fed HistoricalP50. The §25.2 historical_p50 method applies only
+	// when SampleSize >= HistoricalP50MinSamples; below the threshold the
+	// historical path is skipped (etaMethod falls through to a lower
+	// method or "none").
+	//
+	// spec: §25.2 line 394 ("sample_size >= 3 receive etaMethod
+	// historical_p50 ... below that threshold they return etaMethod none").
+	SampleSize int
+	// ExpectedCadence is the operation kind's expected max inter-step
+	// cadence (§25.2 line 396). stalledForSeconds is populated only when
+	// now - lastProgressAt exceeds it; a zero cadence disables stall
+	// detection (the operation is never reported stalled).
+	//
+	// spec: §25.2 line 391, line 396.
+	ExpectedCadence time.Duration
 	// FixedPhaseDuration is the worst-confidence fallback: a constant
 	// duration the subsystem documents for the phase. The ETA equals
 	// max(0, FixedPhaseDuration - (Now - StartedAt)).
 	FixedPhaseDuration time.Duration
 }
 
+// HistoricalP50MinSamples is the §25.2 line 394 minimum sample count an
+// operation kind needs before the historical_p50 ETA method applies.
+const HistoricalP50MinSamples = 3
+
 // Compute applies the §25.2 ETA fallback chain and returns a Progress
 // envelope ready for the operation response. The method selection is:
 //
-//   1. historical_p50 — when HistoricalP50 > 0 and StartedAt is non-zero.
-//   2. rate_based — when Rate.Value > 0 and either RateUnit > 0 or
-//      Percent ∈ (0, 100].
-//   3. linear_extrapolation — when Percent ∈ (0, 100] and StartedAt is
-//      non-zero, projecting completion from the elapsed wall-clock.
-//   4. fixed_phase_durations — when FixedPhaseDuration > 0.
-//   5. none — no ETA possible. EtaSeconds is null.
+//  1. historical_p50 — when HistoricalP50 > 0, SampleSize >=
+//     HistoricalP50MinSamples, and StartedAt is non-zero.
+//  2. rate_based — when Rate.Value > 0 and either RateUnit > 0 or
+//     Percent ∈ (0, 100].
+//  3. linear_extrapolation — when Percent ∈ (0, 100] and StartedAt is
+//     non-zero, projecting completion from the elapsed wall-clock.
+//  4. fixed_phase_durations — when FixedPhaseDuration > 0.
+//  5. none — no ETA possible. EtaSeconds is null.
 //
 // The returned Progress always carries the descriptive fields (current
 // step, percent, steps) regardless of whether an ETA was producible.
@@ -81,12 +103,17 @@ func Compute(in ETAInputs) conventions.Progress {
 	}
 	if !in.LastProgressAt.IsZero() {
 		p.LastProgressAt = in.LastProgressAt.UTC().Format(time.RFC3339)
-		if !in.Now.IsZero() {
-			stalled := int(in.Now.Sub(in.LastProgressAt).Seconds())
-			if stalled < 0 {
-				stalled = 0
+		// §25.2 line 391/396: stalledForSeconds is populated only when the
+		// time since the last progress exceeds the operation kind's expected
+		// inter-step cadence, and reports the overrun beyond that cadence. A
+		// zero cadence disables stall detection; an operation advancing
+		// within its cadence leaves stalledForSeconds null.
+		if !in.Now.IsZero() && in.ExpectedCadence > 0 {
+			overrun := in.Now.Sub(in.LastProgressAt) - in.ExpectedCadence
+			if overrun > 0 {
+				stalled := int(overrun.Seconds())
+				p.StalledForSeconds = &stalled
 			}
-			p.StalledForSeconds = &stalled
 		}
 	}
 
@@ -99,7 +126,10 @@ func Compute(in ETAInputs) conventions.Progress {
 	}
 
 	switch {
-	case in.HistoricalP50 > 0 && !in.StartedAt.IsZero() && !in.Now.IsZero():
+	case in.HistoricalP50 > 0 && in.SampleSize >= HistoricalP50MinSamples && !in.StartedAt.IsZero() && !in.Now.IsZero():
+		// §25.2 line 394: a kind with sample_size >= 3 receives
+		// historical_p50 with etaConfidence >= 0.5. Below the threshold the
+		// historical path is skipped and a lower-confidence method applies.
 		eta := historicalETA(in.Now, in.StartedAt, in.HistoricalP50)
 		setETA(&p, eta, 0.85, conventions.EtaHistoricalP50)
 

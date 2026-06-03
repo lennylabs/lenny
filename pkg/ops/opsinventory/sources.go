@@ -16,6 +16,7 @@ package opsinventory
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
@@ -274,6 +275,16 @@ func upgradeProgress(st upgradeservice.State) *conventions.Progress {
 	}
 	if detail, ok := raw["currentStepDetail"].(string); ok {
 		p.CurrentStepDetail = detail
+	}
+	// §25.2 lines 387-391: stamp startedAt and lastProgressAt so the
+	// Inventory's progress enrichment can derive the historical_p50 ETA
+	// and the cadence-relative stalledForSeconds. UpdatedAt is the time of
+	// the last §25.8 phase transition, i.e. when progress last advanced.
+	if !st.StartedAt.IsZero() {
+		p.StartedAt = st.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !st.UpdatedAt.IsZero() {
+		p.LastProgressAt = st.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	return p
 }

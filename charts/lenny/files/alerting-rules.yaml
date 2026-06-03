@@ -1284,11 +1284,11 @@ groups:
             description: lenny-ops itself is degraded — dependent operability endpoints may return stale or partial data.
             summary: lenny-ops self-health degraded
         - alert: OperationStalled
-          expr: lenny_ops_operations_stalled_total > 0
+          expr: lenny_ops_operations_stalled > 0
           labels:
             severity: warning
           annotations:
-            description: An in-flight operation exceeded its expected inter-step cadence per the §25.2 Progress Envelope. Investigate via GET /v1/admin/operations/{id}.
+            description: One or more in-flight operations exceeded their expected inter-step cadence (stalledForSeconds > 0) per the §25.2 Progress Envelope. The gauge clears when every operation advances within its cadence. Investigate via GET /v1/admin/operations/{id}.
             summary: An in-flight operation has stalled
         - alert: SessionCreationSuccessRateBurnRateSlow
           expr: lenny_session_creation_error_ratio / (1 - 0.995) > 3

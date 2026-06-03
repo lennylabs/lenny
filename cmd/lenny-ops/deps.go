@@ -28,18 +28,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	backupk8slauncher "github.com/lennylabs/lenny/pkg/ops/backup/k8slauncher"
 	backuppgstore "github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/baselinestore"
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
-	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
-	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	escpgstore "github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
 	escredisstore "github.com/lennylabs/lenny/pkg/ops/escalation/redisstore"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -1198,6 +1200,65 @@ var platformUpgradeAvailable = func() *prometheus.GaugeVec {
 	return g
 }()
 
+// operationsStalled is the §25.2 line 399 lenny_ops_operations_stalled
+// gauge: the count of in-flight operations whose progress exceeded their
+// expected inter-step cadence (stalledForSeconds > 0). The
+// OperationStalled alert (§16.5) reads it. It is registered on the
+// process default registry and pre-stamped to 0 so the §16.9 /metrics
+// exposition always carries the series, and the §25.2 operations-observe
+// loop updates it on each leader tick.
+//
+// spec: §25.2 lines 399, §16.5 OperationStalled.
+var operationsStalled = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_ops_operations_stalled",
+		Help: "§25.2 count of in-flight operations whose progress exceeded their expected cadence (stalledForSeconds > 0).",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	g.WithLabelValues().Set(0)
+	return g
+}()
+
+// setOperationsStalled publishes the §25.2 stalled-operation count onto
+// the lenny_ops_operations_stalled gauge.
+func setOperationsStalled(n float64) {
+	if operationsStalled == nil {
+		return
+	}
+	operationsStalled.WithLabelValues().Set(n)
+}
+
+// buildBaselineStore returns the §25.2 operation-baseline store. With a
+// Postgres pool it persists the ops_operation_baselines table (migration
+// 0128) so the historical_p50 ETA survives a restart and is visible
+// across replicas; in single-process degraded mode it falls back to the
+// in-memory store, which accumulates baselines within a single process
+// lifetime.
+//
+// spec: §25.2 lines 393-394.
+func buildBaselineStore(pool *pgxpool.Pool) operations.BaselineStore {
+	if pool != nil {
+		return baselinestore.New(pool)
+	}
+	return operations.NewMemoryBaselineStore()
+}
+
+// opsBaselineRecorder adapts a §25.2 operations.BaselineStore onto the
+// upgradeservice.BaselineRecorder seam (string kind) so the upgrade
+// orchestrator records the platform_upgrade completion duration without
+// importing the operations.Kind enum.
+type opsBaselineRecorder struct{ store operations.BaselineStore }
+
+func (r opsBaselineRecorder) RecordCompletion(ctx context.Context, kind string, dur time.Duration) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.RecordCompletion(ctx, operations.Kind(kind), dur)
+}
+
 // setPlatformUpgradeAvailable is the upgradeservice.AvailabilityGauge
 // the §25.8 upgrade-check raises on each evaluation.
 func setPlatformUpgradeAvailable(available bool) {
@@ -1235,7 +1296,7 @@ func upgradeAuditSink(ev upgradeservice.AuditEvent) {
 //
 // spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
 // consumer).
-func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter) *upgradeservice.Service {
+func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter, baselines operations.BaselineStore) *upgradeservice.Service {
 	var store upgradeservice.Store = upgradeservice.NewMemoryStore()
 	if pool != nil {
 		store = upgradepg.New(pool)
@@ -1244,6 +1305,10 @@ func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitte
 		Store:   store,
 		Emitter: emitter,
 		Audit:   upgradeAuditSink,
+		// §25.2 line 393: fold the upgrade's completion duration into the
+		// historical baseline table so a later upgrade gets a historical_p50
+		// ETA.
+		Baselines: opsBaselineRecorder{store: baselines},
 	}
 	if drift != nil {
 		opts.DriftCleaner = drift

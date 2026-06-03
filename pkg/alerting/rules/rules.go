@@ -1654,10 +1654,10 @@ func warningAlerts() []Rule {
 		},
 		{
 			Name:        "OperationStalled",
-			Expr:        `lenny_ops_operations_stalled_total > 0`,
+			Expr:        `lenny_ops_operations_stalled > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "An in-flight operation has stalled",
-			Description: "An in-flight operation exceeded its expected inter-step cadence per the §25.2 Progress Envelope. Investigate via GET /v1/admin/operations/{id}.",
+			Description: "One or more in-flight operations exceeded their expected inter-step cadence (stalledForSeconds > 0) per the §25.2 Progress Envelope. The gauge clears when every operation advances within its cadence. Investigate via GET /v1/admin/operations/{id}.",
 			SpecRef:     "§16.5",
 		},
 	}
