@@ -5019,6 +5019,13 @@ func main() {
 		log.Printf("lenny-gateway: §25.11 ArtifactStore replication enabled (%d region(s), residency tick %s)",
 			len(replCfg.Regions), replCtrl.ResidencyTickInterval())
 		go runReplicationController(watchdogCtx, replCtrl, log.Printf)
+		// Wire the live controller onto the admin Router so the §25.11
+		// POST/GET /v1/admin/artifact-replication/{region}/{resume,status}
+		// endpoints reach it. The admin Handler is already mounted; the
+		// handlers read this field at request time, so the late wiring is
+		// honoured (same pattern as the playground-revocation wiring).
+		// F-25.11.1.
+		adminRouter = adminRouter.WithArtifactReplication(replCtrl)
 	}
 
 	// ----- §7.1 artifact-retention GC -----

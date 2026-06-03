@@ -194,6 +194,11 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		{
 			Name:       "backup-full",
 			Expression: "0 2 * * *",
+			// §25.11 line 4106: the firing cadence follows the stored
+			// schedule's `full` cron, so an operator who edits it via PUT
+			// /v1/admin/backups/schedule changes the schedule without a
+			// restart. F-25.11.5.
+			ExpressionFunc: func() string { return scheduledBackupCron(svc, backup.TypeFull) },
 			Run: func(ctx context.Context) error {
 				if skip, err := scheduledBackupsDisabled(ctx, svc); err != nil {
 					return err
@@ -208,8 +213,9 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 			},
 		},
 		{
-			Name:       "backup-postgres",
-			Expression: "0 */6 * * *",
+			Name:           "backup-postgres",
+			Expression:     "0 */6 * * *",
+			ExpressionFunc: func() string { return scheduledBackupCron(svc, backup.TypePostgres) },
 			Run: func(ctx context.Context) error {
 				if skip, err := scheduledBackupsDisabled(ctx, svc); err != nil {
 					return err
@@ -415,6 +421,26 @@ func scheduledBackupsDisabled(ctx context.Context, svc *backup.Service) (bool, e
 		return false, nil
 	}
 	return !sched.Enabled, nil
+}
+
+// scheduledBackupCron returns the persisted §25.11 cron expression for a
+// backup type so the cron evaluator fires on the runtime-modifiable
+// schedule rather than the compiled-in default. An empty string (a
+// store failure or a cleared field) tells the evaluator to fall back to
+// the static Expression. spec: §25.11 line 4106; F-25.11.5.
+func scheduledBackupCron(svc *backup.Service, typ backup.Type) string {
+	sched, err := svc.GetSchedule(context.Background())
+	if err != nil || sched == nil {
+		return ""
+	}
+	switch typ {
+	case backup.TypeFull:
+		return sched.Full
+	case backup.TypePostgres:
+		return sched.Postgres
+	default:
+		return ""
+	}
 }
 
 // streamEscalationEmitter is the §25.4 / §25.17 escalation Emitter. It

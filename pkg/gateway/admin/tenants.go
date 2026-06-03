@@ -207,6 +207,14 @@ type Router struct {
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
 
+	// artifactReplication backs the §25.11 line 3898-3899
+	// POST/GET /v1/admin/artifact-replication/{region}/{resume,status}
+	// endpoints. The routes are registered unconditionally so an agent
+	// always reaches a real endpoint; a nil controller (the default until
+	// the gateway wires the live replication.Controller) answers 503
+	// ARTIFACT_REPLICATION_UNAVAILABLE.
+	artifactReplication ArtifactReplicationController
+
 	// migrations backs the §15.1 / §24.13 schema-migration management
 	// endpoints. Nil leaves them unregistered.
 	migrations MigrationManager
@@ -491,6 +499,16 @@ func (r *Router) Handler() http.Handler {
 	// unwired (the default until the F-11.2.4 Postgres checkpoint lands).
 	mux.Handle("POST /v1/admin/quota/reconcile",
 		r.requireAdmin(http.HandlerFunc(r.handleQuotaReconcile)))
+	// §25.11 lines 3898-3899 — ArtifactStore replication resume and
+	// status. Registered unconditionally so the agent always reaches a
+	// real endpoint; the handlers answer 503 when the replication
+	// controller is unwired (the Tier-1 dev default). Both are
+	// platform-admin-only (§25.11 line 3898 narrows resume to
+	// platform-admin; status follows for symmetry).
+	mux.Handle("POST /v1/admin/artifact-replication/{region}/resume",
+		r.requireAdmin(http.HandlerFunc(r.handleResumeArtifactReplication)))
+	mux.Handle("GET /v1/admin/artifact-replication/{region}/status",
+		r.requireAdmin(http.HandlerFunc(r.handleArtifactReplicationStatus)))
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))
 		mux.Handle("GET /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleListUsers)))

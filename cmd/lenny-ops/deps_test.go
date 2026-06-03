@@ -70,3 +70,44 @@ func TestScheduledBackupsRespectScheduleEnabled_spec_25_11(t *testing.T) {
 		}
 	}
 }
+
+// spec: §25.11 line 4106 — "The schedule is stored in Postgres and
+// modifiable at runtime via PUT /v1/admin/backups/schedule." The cron
+// jobs expose ExpressionFunc so the evaluator fires on the stored cron,
+// reflecting an edit without a restart. F-25.11.5.
+func TestScheduledBackupCronReflectsRuntimeEdit_spec_25_11(t *testing.T) {
+	svc, jobs := buildBackupService(false)
+
+	byName := map[string]func() string{}
+	for _, j := range jobs {
+		if j.ExpressionFunc != nil {
+			byName[j.Name] = j.ExpressionFunc
+		}
+	}
+	for _, name := range []string{"backup-full", "backup-postgres"} {
+		if byName[name] == nil {
+			t.Fatalf("%s has no ExpressionFunc; the runtime schedule cannot take effect", name)
+		}
+	}
+
+	// The default-store schedule matches the compiled-in cron.
+	if got := byName["backup-full"](); got != "0 2 * * *" {
+		t.Errorf("default backup-full expression = %q, want 0 2 * * *", got)
+	}
+	if got := byName["backup-postgres"](); got != "0 */6 * * *" {
+		t.Errorf("default backup-postgres expression = %q, want 0 */6 * * *", got)
+	}
+
+	// An operator edit is reflected by the next ExpressionFunc call.
+	if _, err := svc.UpdateSchedule(context.Background(), backup.BackupSchedule{
+		Full: "0 5 * * *", Postgres: "30 */4 * * *", Enabled: true,
+	}); err != nil {
+		t.Fatalf("UpdateSchedule: %v", err)
+	}
+	if got := byName["backup-full"](); got != "0 5 * * *" {
+		t.Errorf("post-edit backup-full expression = %q, want 0 5 * * *", got)
+	}
+	if got := byName["backup-postgres"](); got != "30 */4 * * *" {
+		t.Errorf("post-edit backup-postgres expression = %q, want 30 */4 * * *", got)
+	}
+}

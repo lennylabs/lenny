@@ -24,6 +24,16 @@ type ScheduledJob struct {
 	// evaluator does the work inline on its own goroutine; a long job
 	// should return promptly and continue asynchronously.
 	Run func(ctx context.Context) error
+	// ExpressionFunc, when non-nil, supplies the job's current cron
+	// expression at evaluation time so a schedule edited at runtime takes
+	// effect without a process restart. §25.11 line 4106 makes the backup
+	// schedule "modifiable at runtime via PUT /v1/admin/backups/schedule";
+	// the evaluator resolves this on each tick and uses it in place of the
+	// static Expression. An empty return (an absent or cleared stored
+	// schedule) or an unparseable expression falls back to Expression, so
+	// the job still fires on its compiled-in cadence. spec: §25.11 line
+	// 4106; F-25.11.5.
+	ExpressionFunc func() string
 }
 
 // CronEvaluator is the §25.4 cron evaluator: the leader-only loop that
@@ -78,7 +88,21 @@ func (e *CronEvaluator) Tick(ctx context.Context) error {
 
 	var firstErr error
 	for _, entry := range entries {
-		if !dueInWindow(entry.schedule, from, to) {
+		schedule := entry.schedule
+		// §25.11 line 4106: a job whose schedule is runtime-modifiable
+		// resolves its current cron expression here so an edit applied via
+		// PUT /v1/admin/backups/schedule changes the firing cadence on the
+		// next tick rather than waiting for a lenny-ops restart. A blank or
+		// unparseable expression keeps the compiled-in fallback parsed at
+		// startup. F-25.11.5.
+		if entry.job.ExpressionFunc != nil {
+			if expr := entry.job.ExpressionFunc(); expr != "" {
+				if parsed, err := cron.Parse(expr); err == nil {
+					schedule = parsed
+				}
+			}
+		}
+		if !dueInWindow(schedule, from, to) {
 			continue
 		}
 		if err := entry.job.Run(ctx); err != nil && firstErr == nil {

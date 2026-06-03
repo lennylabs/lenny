@@ -137,3 +137,78 @@ func TestCronEvaluatorReportsRunError(t *testing.T) {
 		t.Error("Tick returned nil, want the scheduled job's error")
 	}
 }
+
+// TestCronEvaluatorHonoursRuntimeSchedule is the §25.11 line 4106
+// contract: a job whose ExpressionFunc supplies a runtime-edited cron
+// fires on the edited cadence rather than the compiled-in Expression,
+// without a process restart. The compiled-in default is 02:00 daily;
+// the operator re-schedules to 04:00, and the 02:00 window must not
+// fire while the 04:00 window does. F-25.11.5.
+func TestCronEvaluatorHonoursRuntimeSchedule(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 5, 18, 1, 58, 0, 0, time.UTC)}
+	var fired int
+	current := "0 4 * * *" // operator edited the schedule to 04:00
+	ev, err := NewCronEvaluator(clk.Now, ScheduledJob{
+		Name:           "backup-full",
+		Expression:     "0 2 * * *", // compiled-in default
+		ExpressionFunc: func() string { return current },
+		Run:            func(context.Context) error { fired++; return nil },
+	})
+	if err != nil {
+		t.Fatalf("NewCronEvaluator: %v", err)
+	}
+
+	// Cross 02:00 — the static default would fire here, but the runtime
+	// schedule (04:00) must suppress it.
+	clk.Advance(3 * time.Minute) // 02:01
+	if err := ev.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("job fired %d times at the 02:00 default; the 04:00 runtime schedule must win", fired)
+	}
+
+	// Cross 04:00 — the runtime schedule fires.
+	clk.Advance(2 * time.Hour) // 04:01
+	if err := ev.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("job fired %d times across the 04:00 runtime schedule, want 1", fired)
+	}
+}
+
+// TestCronEvaluatorFallsBackOnBlankOrBadRuntimeSchedule confirms an
+// empty ExpressionFunc return (a cleared or unreadable stored schedule)
+// and an unparseable expression both fall back to the compiled-in
+// Expression, so the job still fires on its default cadence. F-25.11.5.
+func TestCronEvaluatorFallsBackOnBlankOrBadRuntimeSchedule(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		runt string
+	}{
+		{"blank", ""},
+		{"unparseable", "not a cron"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := &fakeClock{now: time.Date(2026, 5, 18, 1, 58, 0, 0, time.UTC)}
+			var fired int
+			ev, err := NewCronEvaluator(clk.Now, ScheduledJob{
+				Name:           "backup-full",
+				Expression:     "0 2 * * *",
+				ExpressionFunc: func() string { return tc.runt },
+				Run:            func(context.Context) error { fired++; return nil },
+			})
+			if err != nil {
+				t.Fatalf("NewCronEvaluator: %v", err)
+			}
+			clk.Advance(3 * time.Minute) // cross the 02:00 default
+			if err := ev.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if fired != 1 {
+				t.Fatalf("job fired %d times, want 1 (fallback to the static 02:00 default)", fired)
+			}
+		})
+	}
+}
