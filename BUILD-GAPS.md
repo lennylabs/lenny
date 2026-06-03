@@ -37533,23 +37533,29 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 
 ### Findings
 
-### - [ ] F-24.11.1 — `lenny-ctl admin sessions` group not implemented [High] — OPEN
+### - [x] F-24.11.1 — `lenny-ctl admin sessions` group not implemented [High] — CLOSED
 - **Spec:** §24.11 lines 133–136 list two `admin sessions` subcommands with `platform-admin` minimum role.
 - **Evidence:** `cmd/lenny-ctl/main.go` `cmdAdmin` dispatches only `tenants|runtimes|circuit-breakers`. Grep for `admin sessions`/`cmdSessions`/`sessions get`/`force-terminate` across `cmd/lenny-ctl/` returns no matches. The §17.7 force-terminate runbook is unexecutable through the documented CLI path.
 - **Gap:** No CLI surface for admin session investigation; operators must hand-craft HTTP calls or use cluster-internal port-forwards.
 - **Suggested resolution:** Add `cmdSessions` to `cmdAdmin` with `get`/`force-terminate` subcommands; reuse the existing admin client helpers.
 
-### - [ ] F-24.11.2 — `GET /v1/admin/sessions/{id}` and `POST /v1/admin/sessions/{id}/force-terminate` not registered [High] — OPEN
+**Resolution (`4e2f458b`):** Added `cmdSessions` to `cmdAdmin` (`get <id>` → GET /v1/admin/sessions/{id}; `force-terminate <id> [--reason <text>]` → POST .../force-terminate), advertised in the admin-resource hint and usage banner. CLI tests cover routing for both verbs, the `--reason` body, missing-`<id>` exit-2, and the unknown-subcommand path.
+
+### - [x] F-24.11.2 — `GET /v1/admin/sessions/{id}` and `POST /v1/admin/sessions/{id}/force-terminate` not registered [High] — CLOSED
 - **Spec:** §24.11 API-mapping column requires both routes.
 - **Evidence:** `pkg/gateway/admin/tenants.go` (the admin router) registers neither path. No `force-terminate` or `ForceTerminate` symbols exist anywhere in `pkg/gateway/admin/` or `pkg/gateway/sessionserver/`.
 - **Gap:** The admin-level read-through to session state (with role enforcement) and the operator-driven forced terminal transition cannot be performed against the running gateway.
 - **Suggested resolution:** Mount the two routes in `pkg/gateway/admin/sessions.go` (new file) with `requireAdmin`; reuse `sessionstore.Get` for the read path and add a `Sessionserver.ForceTerminate` method that bypasses the normal interactive-state guard, transitions to `failed`, calls `adapterclient.Terminate`, and releases the pod claim.
 
-### - [ ] F-24.11.3 — `session.force_terminated` audit event has no catalog entry [Medium] — OPEN
+**Resolution (`4e2f458b`):** New `pkg/gateway/admin/sessions.go` mounts both routes behind `requireAdmin` (platform-admin) under a new `admin.SessionAdmin` seam. The operator supplies only the session id, so the lookup uses a new tenant-agnostic `sessionstore.Store.GetByID` (pgstore runs it under the §4.2 platform-admin `app.current_tenant = '__all__'` cross-tenant RLS context). The gateway-side `sessionAdminAdapter.ForceTerminate` transitions a non-terminal row to `failed`/`FORCE_TERMINATED` (bypassing the interactive-state guard — the store does not validate transitions) and releases the pod by invoking the sessionserver's `OnSessionTerminal` terminal-side-effects pipeline (the same executor-release path a watchdog-forced termination runs). The endpoint is idempotent: a force against an already-terminal session is a 200 no-op. Tests cover GET found/not-found/forbidden, force transition+release+idempotent+not-found+malformed-body, the adapter, and the memstore + pgstore (component) GetByID round-trip.
+
+### - [x] F-24.11.3 — `session.force_terminated` audit event has no catalog entry [Medium] — CLOSED
 - **Spec:** §16.7 + §24.11 imply an audit-event emission for the force-terminate path (operator identity recorded, justification optional).
 - **Evidence:** `pkg/observability/audit/catalog.go` has no `session.force_terminated` constant; OCSF mapping is absent.
 - **Gap:** Even if F-24.11.2 ships, the audit record will be lost or fall through to a generic prefix mapping.
 - **Suggested resolution:** Add `EventSessionForceTerminated` to the catalog with OCSF class mapping; emit it from the force-terminate handler with `operator_sub`/`operator_tenant_id`/`session_id`/`reason` fields.
+
+**Resolution (`4e2f458b`):** Added `EventSessionForceTerminated = "session.force_terminated"` to `auxKnownEventTypes` (recognized by `IsKnownEventType`, excluded from `Catalog()` because §16.7 enumerates the session-lifecycle terminals but not this §24.11 operator action — mirrors the §24.12 erasure-job operator events). An explicit OCSF `exactCatalog` entry maps it to `apiActivity(ActivityDelete)` rather than the generic `session.` prefix Unknown; the committed `schemas/ocsf-mapping.yaml` mirror was regenerated. The force-terminate handler emits it (only on a real transition) with operator identity via `r.emit`, plus `session_id`, `previous_state`, and the optional `reason`.
 
 ---
 
@@ -37750,7 +37756,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Agents cannot resolve their own role, scope, or authorized tools through the CLI surface §24.15 promises, defeating the discovery primitive the operability spec is built on.
 
-### - [ ] F-24.15.2 — `lenny-ctl operations` group is unimplemented [High] — OPEN
+### - [x] F-24.15.2 — `lenny-ctl operations` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.1, F-24.15.3, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
 
@@ -37759,6 +37765,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impl:** No `case "operations"` in `cmd/lenny-ctl/main.go`. No handler registers `/v1/admin/operations` anywhere under `pkg/` (only a doc comment in `pkg/alerting/rules/rules.go:1498` references the endpoint). Both the backing API and the CLI wrapper are absent.
 
 **Impact:** Progress-envelope tracking, the primary §25.2 long-running-operation interface, is unreachable.
+
+**Resolution (`4e2f458b`):** The backing endpoints were built by a prior batch — `GET /v1/admin/operations` and `GET /v1/admin/operations/{id}` are registered on the gateway admin router (`pkg/gateway/admin/tenants.go`, the §4.0/§25.4 Operations Inventory with Progress Envelope output); the finding's "no handler" evidence was stale. This batch adds the missing CLI wrapper: `lenny-ctl operations list [--status|--kind|--actor|--tenant|--operation-id|--limit]` (forwarding the §25.4 scatter-gather filters) and `operations get <id>`, targeting the gateway client. Tested for list-with-filters, get, and unknown-subcommand.
 
 ### - [ ] F-24.15.3 — `lenny-ctl events` group is unimplemented [High] — OPEN
 
@@ -37812,7 +37820,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Resolution:** Added `cmdRestore` (safety-check/preview/execute/status/resume/confirm-legal-hold-ledger) in `cmd/lenny-ctl/ops.go`, wired the `restore` group through `withOps` in `main.go`, matching the §25.14 lines 4956-4961 API mapping (safety-check/resume use the spec query params `backupId`/`restoreId`). Commit pending this batch.
 
-### - [ ] F-24.15.8 — `lenny-ctl logs` group is unimplemented [High] — OPEN
+### - [ ] F-24.15.8 — `lenny-ctl logs` group is unimplemented [Medium] — DEFERRED
 
 **Spec (§24.15 line 192):** `lenny-ctl logs` must fetch pod logs from the ops service for sessions, controllers, and the gateway fleet via `/v1/admin/logs/pods/*`.
 
@@ -37820,13 +37828,17 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** The pod-log fetch primitive is the standard escalation step in every operability runbook; agents have no way to retrieve logs.
 
-### - [ ] F-24.15.9 — `lenny-ctl mcp-management` group is unimplemented [High] — OPEN
+**Deferred:** The backing endpoint now exists — `GET /v1/admin/logs/pods/{namespace}/{name}` was added to lenny-ops by F-25.4.15 (the evidence is stale). The blocker is a CLI name collision: the top-level command `logs` is unconditionally claimed by the embedded-mode `lenny logs <component>` stack-log tailer (`pkg/embedded/localcli.Local("logs")` short-circuits the main dispatch before any `case "logs"` can match). Routing the clustered §24.15 `lenny-ctl logs pods <ns> <name>` proxy while keeping the embedded `lenny logs <component>` tailer requires disambiguating the two surfaces inside `localcli` (an embedded-package change with its own design fork), so it is out of scope for a clean CLI-only addition. Downgraded from High to Medium — the underlying pod-log proxy is reachable today via the raw ops HTTP API. A prototyped `cmdLogs` (with a `ctl.Client.DoRaw` text-stream helper) was reverted in `4e2f458b` rather than ship dead, collision-shadowed code. Re-attempt once the embedded/clustered `logs` namespace split is resolved.
+
+### - [x] F-24.15.9 — `lenny-ctl mcp-management` group is unimplemented [High] — CLOSED
 
 **Spec (§24.15 line 193):** `lenny-ctl mcp-management` must exercise the `/mcp/management` tools for local testing and scripting.
 
 **Impl:** `/mcp/management` server is mounted on the ops mux (`pkg/ops/opsserver/opsserver.go:167-168`), and `pkg/ops/mcpmgmt` exposes the tool surface. No `case "mcp-management"` (or `case "mcp"`) in `cmd/lenny-ctl/main.go`. CLI wrapper is absent.
 
 **Impact:** Operators cannot drive the management MCP server from the CLI; the §24.15-promised scripting surface is unreachable through the documented entry point.
+
+**Resolution (`4e2f458b`):** Added `cmdMCPManagement` (wired through `withOps`): `mcp-management tools` issues a JSON-RPC `tools/list` and `mcp-management call <tool> [--params <json>]` issues `tools/call` against the stateless `/mcp/management` server (`pkg/ops/mcp`, which dispatches each method per request with no initialize handshake required), printing the raw JSON-RPC envelope. `--params` is validated as JSON before send. Tested for tools/list, tools/call (name + arguments passthrough), missing-tool exit-2, and malformed-`--params` exit-2.
 
 ### - [x] F-24.15.10 — `lenny-ctl diagnose` lacks platform-connectivity subcommand parity [Medium] — CLOSED
 
