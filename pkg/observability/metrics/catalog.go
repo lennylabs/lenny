@@ -342,11 +342,120 @@ var metricCatalog = []MetricSpec{
 	{"lenny_alerting_rule_eval_duration_seconds", TypeHistogram, "In-process tracker evaluation latency per §16.5 rule (Prometheus fallback)"},
 }
 
+// alertSupportCatalog holds metric series that §16.5 alert expressions
+// reference but that are not rows in the §16.1 canonical metric table.
+// They fall into a few categories: config-mirror gauges that publish a
+// Helm-tunable threshold so an alert can read it via `scalar(...)`
+// (§25.13 line 4737), suppression/state gauges that gate an alert,
+// infrastructure-liveness series scraped from a dependency (Postgres,
+// etcd, PgBouncer, cert-manager), and recording-rule outputs the
+// rendered PrometheusRule defines from underlying histograms or
+// counters. Keeping them separate from metricCatalog preserves the
+// §16.1 table as an accurate transcription while still letting an
+// alert-expression cross-check resolve every referenced series.
+// F-16.5.2.
+var alertSupportCatalog = []MetricSpec{
+	// --- Helm-tunable threshold gauges (§25.13 line 4737). The chart
+	// emits the configured value into the gauge at startup; the alert
+	// reads it via scalar(...) so a tier preset tightening the value
+	// flows through without re-rendering the rule expression. F-25.13.2.
+	{"lenny_gateway_queue_depth_threshold", TypeGauge, "Configured GatewayQueueDepthHigh per-subsystem queue-depth ceiling"},
+	{"lenny_gateway_latency_threshold_seconds", TypeGauge, "Configured GatewayLatencyHigh p95 latency ceiling in seconds"},
+	{"lenny_credential_pool_low_threshold", TypeGauge, "Configured CredentialPoolLow utilisation-fraction ceiling"},
+	{"lenny_artifact_gc_backlog_threshold", TypeGauge, "Configured ArtifactGCBacklog backlog ceiling"},
+	{"lenny_billing_correction_rate_threshold", TypeGauge, "Configured BillingCorrectionRateHigh rate ceiling"},
+	{"lenny_controller_workqueue_max_depth", TypeGauge, "Configured controller work-queue max depth, read by ControllerWorkQueueDepthHigh"},
+	{"lenny_erasure_job_deadline_seconds", TypeGauge, "Configured erasure-job deadline, read by ErasureJobOverdue"},
+	{"lenny_tenant_deletion_sla_seconds", TypeGauge, "Configured tenant-deletion SLA, read by TenantDeletionOverdue"},
+	{"lenny_warmpool_idle_cost_threshold", TypeGauge, "Configured WarmPoolIdleCostHigh idle pod-minute ceiling"},
+	{"lenny_audit_siem_max_delivery_lag_seconds", TypeGauge, "Configured audit.siem.maxDeliveryLagSeconds, read by AuditSIEMDeliveryLag"},
+	{"lenny_billing_redis_stream_max_len", TypeGauge, "Configured billing Redis stream max length, read by BillingStreamBackpressure"},
+	{"lenny_pool_warmup_seconds_baseline", TypeGauge, "Per-pool scalingPolicy.podWarmupSecondsBaseline mirror, read by WarmPoolReplenishmentSlow"},
+	{"lenny_agent_dns_min_replicas", TypeGauge, "Configured dedicated-DNS minimum replica count, read by DedicatedDNSDegraded"},
+	{"lenny_gateway_min_replicas", TypeGauge, "Configured tier-minimum gateway replica count, read by GatewayNoHealthyReplicas"},
+	{"lenny_gateway_stream_ceiling", TypeGauge, "Configured per-replica streaming-connection ceiling, read by GatewayActiveStreamsHigh"},
+	{"lenny_pool_min_warm", TypeGauge, "Configured pool minWarm target, read by WarmPoolLow / PodClaimQueueSaturated"},
+	{"lenny_warmpool_min_warm", TypeGauge, "Configured warm-pool minWarm target mirror"},
+	{"lenny_pool_bootstrap_min_warm_override", TypeGauge, "Configured bootstrap minWarm override, read by PoolBootstrapUnderprovisioned"},
+	{"lenny_pool_bootstrap_target_min_warm", TypeGauge, "Configured bootstrap target minWarm, read by PoolBootstrapMode"},
+	{"lenny_audit_retention_days", TypeGauge, "Resolved audit retention window in days, read by AuditRetentionLow"},
+
+	// --- State / suppression gauges (1 when the condition holds). An
+	// alert reads these to gate or suppress firing on a configuration or
+	// lifecycle posture.
+	{"lenny_audit_siem_configured", TypeGauge, "1 when audit.siem.endpoint is configured; suppresses AuditSIEMNotConfigured / AuditRetentionLow"},
+	{"lenny_env_production", TypeGauge, "1 when the deployment runs in production mode (LENNY_ENV)"},
+	{"lenny_warmpool_fill_grace_active", TypeGauge, "1 while a pool is inside its initial-fill grace period; suppresses WarmPoolExhausted"},
+	{"lenny_pool_warming_up", TypeGauge, "1 while a pool is in bootstrap warm-up, read by WarmPoolBootstrapping"},
+	{"lenny_rate_limit_failopen_active", TypeGauge, "1 when a replica is in quota fail-open mode, read by RateLimitDegraded"},
+	{"lenny_delegation_cycle_detection_mode_permissive", TypeGauge, "1 when delegation cycle detection is permissive, read by CycleDetectionModeUnsafe"},
+	{"lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce", TypeGauge, "1 when elicitation content-integrity mode is weaker than enforce, read by ElicitationContentIntegrityWeakened"},
+	{"lenny_dev_flag_compliance_enabled", TypeGauge, "1 when the compliance dev override is enabled"},
+	{"lenny_dev_flag_drain_readiness_enabled", TypeGauge, "1 when the drain-readiness dev override is enabled"},
+	{"lenny_dev_flag_llm_proxy_enabled", TypeGauge, "1 when the LLM-proxy dev override is enabled"},
+	{"lenny_ops_self_health_status", TypeGauge, "lenny-ops self-health status (1 healthy), read by LenniOpsSelfHealthDegraded"},
+	{"lenny_audit_partition_drop_blocked", TypeGauge, "1 when an audit-partition drop is blocked by SIEM lag, read by AuditPartitionDropBlocked"},
+
+	// --- Infrastructure-liveness and capacity series scraped from a
+	// platform dependency (Postgres, etcd, Redis, cert-manager).
+	{"lenny_postgres_primary_up", TypeGauge, "Postgres primary liveness probe (1 reachable), read by SessionStoreUnavailable"},
+	{"lenny_etcd_connectivity_errors_total", TypeCounter, "API-server etcd connectivity errors, read by EtcdUnavailable"},
+	{"lenny_cert_expiry_seconds", TypeGauge, "Seconds until the nearest managed certificate expires, read by CertExpiryImminent"},
+	{"lenny_redis_maxmemory_bytes", TypeGauge, "Redis configured maxmemory, paired with lenny_redis_memory_used_bytes for RedisMemoryHigh"},
+	{"lenny_postgres_write_iops", TypeGauge, "Observed Postgres write IOPS, read by PostgresWriteSaturation"},
+	{"lenny_postgres_write_ceiling_iops", TypeGauge, "Per-tier Postgres sustained write-IOPS ceiling"},
+	{"lenny_postgres_write_burst_iops", TypeGauge, "Observed Postgres burst write IOPS, read by PostgresWriteBurstIops"},
+	{"lenny_postgres_write_burst_ceiling_iops", TypeGauge, "Per-tier Postgres burst write-IOPS ceiling"},
+	{"lenny_sandbox_finalizer_terminating_seconds", TypeGauge, "Seconds a sandbox has been blocked on finalizer cleanup, read by FinalizerStuck"},
+
+	// --- Computed / recording-rule output series. The latency and
+	// availability burn-rate alerts read these budget-normalised ratios;
+	// the rendered PrometheusRule recording rules define them from the
+	// underlying histograms and counters.
+	{"lenny_session_creation_error_ratio", TypeGauge, "Session-creation error fraction, read by SessionCreationSuccessRateBurnRate"},
+	{"lenny_session_creation_latency_slow_ratio", TypeGauge, "Fraction of session creations slower than the latency SLO, read by SessionCreationLatencyBurnRate"},
+	{"lenny_session_unavailability_ratio", TypeGauge, "Session unavailability fraction, read by SessionAvailabilityBurnRate"},
+	{"lenny_gateway_unavailability_ratio", TypeGauge, "Gateway unavailability fraction, read by GatewayAvailabilityBurnRate"},
+	{"lenny_checkpoint_duration_slow_ratio", TypeGauge, "Fraction of checkpoints slower than the duration SLO, read by CheckpointDurationBurnRate"},
+	{"lenny_artifact_gc_backlog", TypeGauge, "Pending artifact-GC backlog count, read by ArtifactGCBacklog"},
+	{"lenny_billing_correction_rate_24h", TypeGauge, "24-hour billing-correction rate, read by BillingCorrectionRateHigh"},
+	{"lenny_credential_pool_assignable_count", TypeGauge, "Assignable credentials per pool, read by CredentialPoolExhausted"},
+
+	// --- §25 operability series (audit, ops, backup, platform-upgrade,
+	// compliance) that §16.5 alerts reference but that are not part of
+	// the §16.1 / §16.8 canonical enumeration.
+	{"lenny_audit_ocsf_retry_pending_rows", TypeGauge, "OCSF-translation rows pending retry, read by OCSFTranslationBacklog"},
+	{"lenny_pgaudit_sink_delivery_failed_total", TypeCounter, "pgaudit sink delivery failures, read by PgAuditSinkDeliveryFailed"},
+	{"lenny_ops_lock_split_brain_detected_total", TypeCounter, "lenny-ops remediation-lock split-brain detections, read by LenniOpsLockSplitBrainDetected"},
+	{"lenny_ops_operations_stalled_total", TypeCounter, "In-flight operations that exceeded their progress cadence, read by OperationStalled"},
+	{"lenny_backup_total", TypeCounter, "Backup Job outcomes by status, read by BackupFailed"},
+	{"lenny_backup_storage_used_bytes", TypeGauge, "Backup object-storage bytes used, read by BackupStorageHigh"},
+	{"lenny_backup_storage_quota_bytes", TypeGauge, "Backup object-storage quota in bytes, read by BackupStorageHigh"},
+	{"lenny_backup_reconcile_blocked_total", TypeCounter, "Backup reconciliations blocked, read by BackupReconcileBlocked"},
+	{"lenny_platform_upgrade_available", TypeGauge, "1 when a new platform release is available, read by PlatformUpgradeAvailable"},
+	{"lenny_platform_upgrade_phase", TypeGauge, "Current platform-upgrade phase (0 terminal), read by PlatformUpgradeStuck"},
+	{"lenny_platform_version_drift", TypeGauge, "Count of components whose version drifts from the active binary, read by PlatformVersionDrift"},
+	{"lenny_compliance_profile_decommissioned_total", TypeCounter, "Compliance-profile decommission events, read by CompliancePostureDecommissioned"},
+	{"lenny_gdpr_legal_hold_overridden_total", TypeCounter, "Legal-hold override uses, read by LegalHoldOverrideUsed"},
+	{"lenny_gdpr_legal_hold_overridden_tenant_total", TypeCounter, "Per-tenant legal-hold override uses, read by LegalHoldOverrideUsedTenant"},
+	{"lenny_credential_proactive_renewal_exhausted_total", TypeCounter, "Proactive credential-renewal exhaustions, read by CredentialProactiveRenewalExhausted"},
+	{"lenny_erasure_job_age_seconds", TypeGauge, "Age of the oldest in-flight erasure job, read by ErasureJobOverdue"},
+}
+
 // MetricCatalog returns the §16.1 metrics catalog. The slice is fresh
 // on every call so callers may sort or filter it freely.
 func MetricCatalog() []MetricSpec {
 	out := make([]MetricSpec, len(metricCatalog))
 	copy(out, metricCatalog)
+	return out
+}
+
+// AlertSupportCatalog returns the §16.5 alert-support series catalog.
+// The slice is fresh on every call. See alertSupportCatalog for the
+// categories these series fall into. F-16.5.2.
+func AlertSupportCatalog() []MetricSpec {
+	out := make([]MetricSpec, len(alertSupportCatalog))
+	copy(out, alertSupportCatalog)
 	return out
 }
 
