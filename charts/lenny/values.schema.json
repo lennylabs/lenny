@@ -49,6 +49,10 @@
     "certmanager": {
       "type": "object"
     },
+    "cluster": {
+      "description": "Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla). §17.9.1 line 1351.",
+      "type": "string"
+    },
     "complianceProfile": {
       "type": "string"
     },
@@ -130,6 +134,10 @@
     },
     "isolation": {
       "type": "object"
+    },
+    "isolationProfile": {
+      "description": "Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes. §17.9.1 line 1354.",
+      "type": "string"
     },
     "kms": {
       "type": "object"

@@ -245,3 +245,41 @@ debug
 info
 {{- end -}}
 {{- end -}}
+
+{{/*
+lenny.clusterType validates and returns the §17.9.1 cluster-type
+composition dimension. An empty value is the docker-compose answer
+file's cluster=n/a case and passes through unchanged; a non-empty value
+must be one of the §17.9.1 cluster types so a typo in a curated answer
+file (e.g. cluster: eks-prod) fails the render rather than rendering an
+install that silently ignores the dimension.
+spec: §17.9.1 line 1351. F-17.9.1.
+*/}}
+{{- define "lenny.clusterType" -}}
+{{- $c := .Values.cluster | default "" -}}
+{{- if and (ne $c "") (not (has $c (list "laptop" "eks" "gke" "aks" "openshift" "vanilla"))) -}}
+{{- fail (printf "§17.9.1: cluster must be one of laptop, eks, gke, aks, openshift, vanilla (or empty), got %q" $c) -}}
+{{- end -}}
+{{- $c -}}
+{{- end -}}
+
+{{/*
+lenny.seededIsolationProfile maps the §17.9.1 isolationProfile
+composition dimension (baseline | sandboxed | hypervisor) to the §5.3
+runtime isolation profile the seeded reference runtimes carry: baseline
+-> standard (runc), sandboxed -> sandboxed (gVisor), hypervisor ->
+microvm (Kata). An empty dimension defaults to sandboxed, preserving the
+historical seeded-runtime posture. An unrecognized value fails the
+render so a typo cannot silently drop every seeded runtime onto the
+wrong RuntimeClass.
+spec: §17.9.1 line 1354; §5.3. F-17.9.10.
+*/}}
+{{- define "lenny.seededIsolationProfile" -}}
+{{- $p := .Values.isolationProfile | default "sandboxed" -}}
+{{- if eq $p "baseline" -}}standard
+{{- else if eq $p "sandboxed" -}}sandboxed
+{{- else if eq $p "hypervisor" -}}microvm
+{{- else -}}
+{{- fail (printf "§17.9.1: isolationProfile must be one of baseline, sandboxed, hypervisor, got %q" $p) -}}
+{{- end -}}
+{{- end -}}

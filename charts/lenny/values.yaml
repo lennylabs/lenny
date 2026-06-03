@@ -453,6 +453,27 @@ redis:
 # guards). spec: §12.5 line 279.
 backends: ""
 
+# cluster is the §17.9.1 cluster-type composition dimension: laptop |
+# eks | gke | aks | openshift | vanilla. The curated §17.9.2 answer
+# files (charts/lenny/answers/) pin it to record which cluster the
+# install targets; the cluster-specific concrete values (StorageClass,
+# IngressClass, cloud-provider IAM annotations) are carried by the same
+# answer file rather than derived from this selector. Empty is the
+# docker-compose answer file's cluster=n/a case. A non-empty value is
+# validated against the allow-list at render time. spec: §17.9.1 line
+# 1351. F-17.9.1.
+cluster: ""
+
+# isolationProfile is the §17.9.1 isolation-profile composition
+# dimension: baseline | sandboxed | hypervisor. It sets the default
+# isolationProfile the §26 seeded reference runtimes inherit (a catalog
+# entry may still override per runtime). The lenny.seededIsolationProfile
+# helper maps the dimension to the §5.3 runtime profile
+# (baseline→standard, sandboxed→sandboxed, hypervisor→microvm). The
+# default `sandboxed` preserves the historical seeded-runtime posture.
+# spec: §17.9.1 line 1354. F-17.9.10 / F-17.9.1.
+isolationProfile: sandboxed
+
 # complianceProfile names the §11.7 / §12.5 regulated posture the
 # deployment runs under. Empty selects no profile. Regulated values
 # (`soc2`, `fedramp`, `hipaa`) gate the chart-time checks the §12.5
@@ -2943,6 +2964,16 @@ preflight:
   # slow API server is bounded so the install never hangs indefinitely.
   # Deployers can raise this for sluggish managed control planes.
   timeoutSeconds: 120
+  # skipNetworkProbes drops the backend-reachability probes that dial an
+  # endpoint outside the kube-apiserver: MinIO server-side encryption,
+  # the BYO-Redis maxmemory-policy audit, the OTLP collector TLS
+  # handshake, and the lenny-ops -> gateway internal-TLS handshake. The
+  # cluster-API checks (admission-webhook inventory, phase-stamp, CRD
+  # schema, RuntimeClass presence, NetworkPolicy parity) still run. The
+  # §17.9.2 airgap answer file sets this true so the preflight Job
+  # succeeds in an environment with no egress to the managed backends.
+  # spec: §17.9.2 line 1372. F-17.9.11.
+  skipNetworkProbes: false
   # checkRedisMaxmemoryPolicy opts the self-managed (bring-your-own
   # Redis) profile into the §12.4 maxmemory-policy=noeviction preflight
   # audit. The cloud Terraform sets the policy on managed Redis natively,

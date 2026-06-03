@@ -322,6 +322,12 @@ spec:
             # Set certmanager.enabled=false alongside mtls.enabled=false for
             # a mesh-managed install so the prerequisite is not enforced.
             - --certmanager-enabled={{ .Values.certmanager.enabled }}
+            # §17.9.2 line 1372 — the airgap answer file sets
+            # preflight.skipNetworkProbes so the backend-reachability probes
+            # (MinIO SSE, BYO-Redis maxmemory, OTLP TLS handshake, ops-admin
+            # internal-TLS handshake) are dropped while the cluster-API checks
+            # still run. F-17.9.11.
+            - --skip-network-probes={{ .Values.preflight.skipNetworkProbes | default false }}
           {{- if $hasMinio }}
           env:
             - name: MINIO_ACCESS_KEY_ENV

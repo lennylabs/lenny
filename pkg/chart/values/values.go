@@ -37,21 +37,35 @@ type Object map[string]any
 // Field types match the YAML node kind (object, array, or scalar) so the
 // generated schema accepts the chart's default values document verbatim.
 type Root struct {
-	AgentNamespaces            []Object   `json:"agentNamespaces,omitempty"`
-	Controller                 Object     `json:"controller,omitempty"`
-	PoolScalingController      Object     `json:"poolScalingController,omitempty"`
-	AdmissionWebhooks          Object     `json:"admissionWebhooks,omitempty"`
-	AdmissionPolicies          Object     `json:"admissionPolicies,omitempty"`
-	WebhookIngressCIDR         string     `json:"webhookIngressCIDR,omitempty"`
-	KubeAPIServerCIDR          string     `json:"kubeApiServerCIDR,omitempty"`
-	KubeAPIServerPorts         []int      `json:"kubeApiServerPorts,omitempty"`
-	EgressCIDRs                Object     `json:"egressCIDRs,omitempty"`
-	CoreDNS                    Object     `json:"coredns,omitempty"`
-	IngressControllerNamespace string     `json:"ingressControllerNamespace,omitempty"`
-	Ingress                    Object     `json:"ingress,omitempty"`
-	TokenService               Object     `json:"tokenService,omitempty"`
-	Redis                      Object     `json:"redis,omitempty"`
-	Backends                   string     `json:"backends,omitempty"`
+	AgentNamespaces            []Object `json:"agentNamespaces,omitempty"`
+	Controller                 Object   `json:"controller,omitempty"`
+	PoolScalingController      Object   `json:"poolScalingController,omitempty"`
+	AdmissionWebhooks          Object   `json:"admissionWebhooks,omitempty"`
+	AdmissionPolicies          Object   `json:"admissionPolicies,omitempty"`
+	WebhookIngressCIDR         string   `json:"webhookIngressCIDR,omitempty"`
+	KubeAPIServerCIDR          string   `json:"kubeApiServerCIDR,omitempty"`
+	KubeAPIServerPorts         []int    `json:"kubeApiServerPorts,omitempty"`
+	EgressCIDRs                Object   `json:"egressCIDRs,omitempty"`
+	CoreDNS                    Object   `json:"coredns,omitempty"`
+	IngressControllerNamespace string   `json:"ingressControllerNamespace,omitempty"`
+	Ingress                    Object   `json:"ingress,omitempty"`
+	TokenService               Object   `json:"tokenService,omitempty"`
+	Redis                      Object   `json:"redis,omitempty"`
+	Backends                   string   `json:"backends,omitempty"`
+	// Cluster is the §17.9.1 cluster-type composition dimension
+	// (laptop | eks | gke | aks | openshift | vanilla). The curated
+	// §17.9.2 answer files pin it; the chart validates the value with the
+	// lenny.clusterType helper. Left a plain string (no enum) so the
+	// chart default may leave it unset (the docker-compose answer file's
+	// cluster=n/a case). spec: §17.9.1 line 1351.
+	Cluster string `json:"cluster,omitempty" desc:"Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla). §17.9.1 line 1351."`
+	// IsolationProfile is the §17.9.1 isolation-profile composition
+	// dimension (baseline | sandboxed | hypervisor). It sets the default
+	// isolationProfile stamped on the §26 seeded reference runtimes; the
+	// lenny.seededIsolationProfile helper maps it to the §5.3 profile
+	// (baseline→standard, sandboxed→sandboxed, hypervisor→microvm).
+	// spec: §17.9.1 line 1354.
+	IsolationProfile           string     `json:"isolationProfile,omitempty" desc:"Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes. §17.9.1 line 1354."`
 	ComplianceProfile          string     `json:"complianceProfile,omitempty"`
 	ObjectStorage              Object     `json:"objectStorage,omitempty"`
 	MinIO                      Object     `json:"minio,omitempty"`

@@ -412,3 +412,82 @@ func TestRunWiresRedisMaxmemoryPolicyCheck_spec_12_4(t *testing.T) {
 		t.Error("Run did not fail the install despite a drifted Redis eviction policy")
 	}
 }
+
+// networkProbeConfig wires every backend-reachability probe (MinIO SSE,
+// BYO-Redis maxmemory, OTLP collector TLS, ops-admin internal TLS) with a
+// closure that records whether it was invoked. The closures flip *called
+// so a test can assert the probes are dropped under skipNetworkProbes.
+func networkProbeConfig(skip bool, called *[4]bool) preflight.Config {
+	return preflight.Config{
+		Namespace:         preflightNS,
+		SkipNetworkProbes: skip,
+		MinIOBucket:       "lenny-artifacts",
+		MinIOEncryptionProber: preflight.MinIOEncryptionProbeFunc(func(context.Context, string) (string, error) {
+			called[0] = true
+			return "aws:kms", nil
+		}),
+		RedisConfigProber: preflight.RedisConfigProbeFunc(func(context.Context, string) (string, error) {
+			called[1] = true
+			return "noeviction", nil
+		}),
+		OTLP: preflight.OTLPTLSConfig{Endpoint: "https://otel-collector.lenny-system.svc:4317", TLSEnabled: true},
+		OTLPTLSProber: preflight.OTLPTLSProbeFunc(func(context.Context, string) error {
+			called[2] = true
+			return nil
+		}),
+		OpsAdminTLS: preflight.OpsAdminTLSConfig{Endpoint: "lenny-gateway.lenny-system.svc:8443", InternalEnabled: true, ExpectedSANHost: "lenny-gateway.lenny-system.svc"},
+		OpsAdminTLSProber: preflight.OpsAdminTLSProbeFunc(func(context.Context, string, string) error {
+			called[3] = true
+			return nil
+		}),
+	}
+}
+
+// spec: §17.9.2 line 1372 / §17.9.11 — preflight.skipNetworkProbes drops
+// the backend-reachability probes (MinIO SSE, BYO-Redis maxmemory, OTLP
+// TLS handshake, ops-admin internal-TLS handshake) for an air-gapped
+// install while the cluster-API checks still run. F-17.9.11.
+func TestRunSkipsNetworkProbesWhenAirgapped_spec_17_9_11(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+	netChecks := []string{
+		"minio-server-side-encryption",
+		"redis-maxmemory-policy",
+		"otlp-tls",
+		"ops-admin-tls",
+	}
+
+	// Baseline: with skipNetworkProbes false, every backend-reachability
+	// probe runs and is present in the report.
+	var ran [4]bool
+	on := preflight.Run(context.Background(), c, networkProbeConfig(false, &ran))
+	for _, name := range netChecks {
+		if resultByName(on, name) == (preflight.Decision{}) {
+			t.Errorf("%s did not run with skipNetworkProbes=false", name)
+		}
+	}
+
+	// Airgap: with skipNetworkProbes true, none of the four checks run and
+	// none of their probers are dialed.
+	var skipped [4]bool
+	off := preflight.Run(context.Background(), c, networkProbeConfig(true, &skipped))
+	for _, name := range netChecks {
+		if resultByName(off, name) != (preflight.Decision{}) {
+			t.Errorf("%s ran despite skipNetworkProbes=true", name)
+		}
+	}
+	for i, did := range skipped {
+		if did {
+			t.Errorf("network prober %d was dialed despite skipNetworkProbes=true", i)
+		}
+	}
+
+	// The cluster-API checks are unaffected: the admission-webhook
+	// inventory still runs and the airgap install is not failed by the
+	// skip alone.
+	if resultByName(off, "admission-webhook-inventory") == (preflight.Decision{}) {
+		t.Error("admission-webhook-inventory was dropped by skipNetworkProbes")
+	}
+	if preflight.Failed(off) {
+		t.Error("skipNetworkProbes failed the install despite healthy cluster-API checks")
+	}
+}

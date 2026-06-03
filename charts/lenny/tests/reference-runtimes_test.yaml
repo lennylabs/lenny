@@ -401,3 +401,50 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  # spec: §17.9.1 line 1354 — the seeded reference runtimes inherit the
+  # chart-wide isolationProfile composition dimension. The default
+  # (sandboxed) keeps the historical posture. F-17.9.10.
+  - it: defaults the seeded isolationProfile to sandboxed per §17.9.1 line 1354
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: sandboxed
+
+  # baseline -> standard (runc): the §17.9.1 dimension maps onto the §5.3
+  # runtime profile so a baseline install seeds runc runtimes. F-17.9.10.
+  - it: maps isolationProfile=baseline to the standard §5.3 profile
+    set:
+      isolationProfile: baseline
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: standard
+
+  # hypervisor -> microvm (Kata): a hypervisor install seeds microvm
+  # runtimes. F-17.9.10.
+  - it: maps isolationProfile=hypervisor to the microvm §5.3 profile
+    set:
+      isolationProfile: hypervisor
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: microvm
+
+  # An out-of-range dimension fails the render rather than silently
+  # dropping every seeded runtime onto the wrong RuntimeClass. F-17.9.10.
+  - it: fails the render for an unknown isolationProfile dimension
+    set:
+      isolationProfile: bogus
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.1: isolationProfile must be one of baseline, sandboxed, hypervisor, got \"bogus\""

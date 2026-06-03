@@ -11,6 +11,30 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--required-runtime-classes=sandboxed=gvisor"
 
+  # spec: §17.9.2 line 1372 / §17.9.11 — preflight.skipNetworkProbes is
+  # false by default so the backend-reachability probes run. F-17.9.11.
+  - it: passes --skip-network-probes=false by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--skip-network-probes=false"
+
+  # The §17.9.2 airgap answer file sets skipNetworkProbes=true so the
+  # preflight Job succeeds with no egress to the managed backends. F-17.9.11.
+  - it: passes --skip-network-probes=true when preflight.skipNetworkProbes is set
+    set:
+      preflight.skipNetworkProbes: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--skip-network-probes=true"
+
   # spec: §10.3 lines 316, 334 (NET-064) — the preflight Job needs the
   # values at hand to feed CheckSPIFFETrustDomainUniqueness /
   # CheckSATokenAudienceUniqueness. F-10.3.5.

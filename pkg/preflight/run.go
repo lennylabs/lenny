@@ -158,6 +158,16 @@ type Config struct {
 	// raises a non-blocking advisory that the chart fell back to a
 	// ConfigMap. Empty skips the check. F-16.9.4.
 	MonitoringFormat string
+	// SkipNetworkProbes is the preflight.skipNetworkProbes chart value.
+	// When true the backend-reachability probes that dial an endpoint
+	// outside the kube-apiserver are skipped: the §12.5 MinIO server-side
+	// encryption check, the §12.4 BYO-Redis maxmemory-policy audit, the
+	// §13.2 OTLP collector TLS handshake, and the §25.4 lenny-ops ->
+	// gateway internal-TLS handshake. The cluster-API checks still run.
+	// The §17.9.2 airgap answer file sets this so the preflight Job
+	// succeeds with no egress to the managed backends. spec: §17.9.2 line
+	// 1372. F-17.9.11.
+	SkipNetworkProbes bool
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -350,7 +360,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// prober. A regulated complianceProfile (soc2 | fedramp | hipaa)
 	// fails closed on absent SSE; non-regulated installs surface the
 	// posture as advisory and pass.
-	if cfg.MinIOBucket != "" && cfg.MinIOEncryptionProber != nil {
+	if !cfg.SkipNetworkProbes && cfg.MinIOBucket != "" && cfg.MinIOEncryptionProber != nil {
 		report = append(report, CheckResult{
 			Name: "minio-server-side-encryption",
 			Decision: MinIOEncryptionCheck{
@@ -467,7 +477,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// cloud Terraform sets maxmemory-policy=noeviction natively, but the
 	// self-managed profile's operator-supplied Redis is unverified
 	// otherwise. F-12.4.15.
-	if cfg.RedisConfigProber != nil {
+	if !cfg.SkipNetworkProbes && cfg.RedisConfigProber != nil {
 		report = append(report, CheckResult{
 			Name:     "redis-maxmemory-policy",
 			Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
@@ -499,7 +509,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// handshake must complete with a SAN matching the endpoint. Runs only
 	// when an endpoint is configured; the scheme guard is a pure check, the
 	// handshake runs only when the Job wires a prober. F-13.2.9.
-	if cfg.OTLP.Endpoint != "" {
+	if !cfg.SkipNetworkProbes && cfg.OTLP.Endpoint != "" {
 		report = append(report, CheckResult{
 			Name: "otlp-tls",
 			Decision: OTLPTLSCheck{
@@ -515,7 +525,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// completes and the server certificate's SAN covers the lenny-gateway
 	// ClusterIP hostname. Skipped when internal TLS is disabled (the
 	// acknowledged plaintext path). F-25.4.19.
-	if cfg.OpsAdminTLS.InternalEnabled && cfg.OpsAdminTLS.Endpoint != "" {
+	if !cfg.SkipNetworkProbes && cfg.OpsAdminTLS.InternalEnabled && cfg.OpsAdminTLS.Endpoint != "" {
 		report = append(report, CheckResult{
 			Name: "ops-admin-tls",
 			Decision: OpsAdminTLSCheck{

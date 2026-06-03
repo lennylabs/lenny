@@ -1,0 +1,48 @@
+suite: §17.9.1 composition dimensions (cluster + isolationProfile)
+templates:
+  - NOTES.txt
+tests:
+  # spec: §17.9.1 line 1351 — the cluster-type dimension is surfaced in
+  # the install NOTES composition summary. The default is unset (n/a).
+  # F-17.9.1.
+  - it: renders the composition summary with cluster=n/a by default
+    asserts:
+      - matchRegexRaw:
+          pattern: "cluster=n/a, backends=embedded, isolationProfile=sandboxed"
+
+  # A curated answer file pins the cluster-type and backends dimensions;
+  # the NOTES summary echoes them so the operator sees the composition.
+  - it: echoes the selected cluster and backends dimensions
+    set:
+      cluster: eks
+      backends: cloud-managed
+    asserts:
+      - matchRegexRaw:
+          pattern: "cluster=eks, backends=cloud-managed"
+
+  # spec: §17.9.1 line 1354 — the seeded-runtime profile mapping is shown
+  # so an operator selecting hypervisor sees microvm seeded runtimes.
+  - it: shows the hypervisor -> microvm seeded-runtime mapping
+    set:
+      isolationProfile: hypervisor
+    asserts:
+      - matchRegexRaw:
+          pattern: "isolationProfile=hypervisor \\(seeded runtimes -> microvm\\)"
+
+  # An out-of-range cluster fails the render rather than installing with a
+  # silently-ignored dimension. F-17.9.1.
+  - it: fails the render for an unknown cluster-type dimension
+    set:
+      cluster: eks-prod
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.1: cluster must be one of laptop, eks, gke, aks, openshift, vanilla (or empty), got \"eks-prod\""
+
+  # spec: §17.9.2 line 1372 — the airgap posture note appears when
+  # preflight.skipNetworkProbes is set. F-17.9.11.
+  - it: notes the airgap skip-network-probes posture
+    set:
+      preflight.skipNetworkProbes: true
+    asserts:
+      - matchRegexRaw:
+          pattern: "preflight.skipNetworkProbes is true"

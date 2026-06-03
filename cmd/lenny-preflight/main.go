@@ -414,6 +414,12 @@ func main() {
 		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9 line 1050)")
 	certManagerEnabled := flag.Bool("certmanager-enabled", true,
 		"value of the certmanager.enabled chart flag; when true the §10.3 line 304 cert-manager version check requires cert-manager >= v1.12.0")
+	// §17.9.2 line 1372 — the airgap answer file sets preflight.skipNetworkProbes
+	// so the backend-reachability probes (MinIO SSE, BYO-Redis maxmemory,
+	// OTLP TLS handshake, ops-admin internal-TLS handshake) are dropped while
+	// the cluster-API checks still run. F-17.9.11.
+	skipNetworkProbes := flag.Bool("skip-network-probes", false,
+		"value of the preflight.skipNetworkProbes chart flag; skips the backend-reachability probes for air-gapped installs (§17.9.2 line 1372)")
 	flag.Parse()
 
 	// MinIO credentials for the §12.5 line 297 SSE preflight are read
@@ -520,6 +526,7 @@ func main() {
 		},
 		CertManagerEnabled: *certManagerEnabled,
 		CertManagerProber:  certManagerVersionProber(cl),
+		SkipNetworkProbes:  *skipNetworkProbes,
 	})
 
 	for _, r := range report {

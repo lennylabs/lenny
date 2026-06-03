@@ -1,6 +1,16 @@
 Lenny {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
 
+{{- /* §17.9.1 composition summary. Calling lenny.clusterType here both
+   surfaces the selected cluster-type dimension to the operator and
+   validates it (an out-of-range cluster fails the render). F-17.9.1. */ -}}
+{{- $cluster := include "lenny.clusterType" . }}
+Composition (§17.9.1): cluster={{ $cluster | default "n/a" }}, backends={{ .Values.backends | default "embedded" }}, isolationProfile={{ .Values.isolationProfile | default "sandboxed" }} (seeded runtimes -> {{ include "lenny.seededIsolationProfile" . }}).
+
 Run the lenny-preflight Job output (kubectl logs job/lenny-preflight -n {{ .Release.Namespace }}) to review the §17.9 install-and-upgrade checks.
+{{- if .Values.preflight.skipNetworkProbes }}
+
+NOTE: preflight.skipNetworkProbes is true — the backend-reachability probes (MinIO encryption, Redis maxmemory-policy, OTLP and ops-admin TLS handshakes) were skipped. This is the §17.9.2 airgap posture; the cluster-API checks still ran (§17.9.11).
+{{- end }}
 {{- if not .Values.preflight.enabled }}
 
 WARNING: Preflight validation skipped — infrastructure misconfigurations may cause runtime failures. The lenny-preflight Job was not rendered because preflight.enabled is false (§17.6).
