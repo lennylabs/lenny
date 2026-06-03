@@ -4,6 +4,7 @@ package backends_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -106,5 +107,129 @@ func TestSIEMDefaultThreshold(t *testing.T) {
 	c := backends.SIEM(fakeSIEM{healthy: true, rate: 6}, fakeSIEM{rate: 6}, 0, "siem")
 	if got := c.Check(context.Background()); got.Status != health.StatusDegraded {
 		t.Errorf("6%% with the default 5%% threshold: status %q, want degraded", got.Status)
+	}
+}
+
+// errProbe returns a ProbeFunc that always fails, for the §25.3
+// dependency-probe failure paths.
+func errProbe(msg string) backends.ProbeFunc {
+	return func(context.Context) error { return errors.New(msg) }
+}
+
+// okProbe returns a ProbeFunc that always succeeds.
+func okProbe() backends.ProbeFunc {
+	return func(context.Context) error { return nil }
+}
+
+// spec: §25.3 line 441 / lines 527-528 — the MinIO/objectStore probe
+// reports unhealthy and stamps MINIO_UNREACHABLE on a failed HeadBucket.
+func TestObjectStoreUnhealthy_spec_25_3_441(t *testing.T) {
+	c := backends.ObjectStore(errProbe("head bucket: connection refused"), "objectStore")
+	got := c.Check(context.Background())
+	if got.Status != health.StatusUnhealthy {
+		t.Fatalf("status = %q, want unhealthy", got.Status)
+	}
+	if got.Issue != "MINIO_UNREACHABLE" {
+		t.Fatalf("issue = %q, want MINIO_UNREACHABLE", got.Issue)
+	}
+}
+
+func TestObjectStoreHealthy_spec_25_3_441(t *testing.T) {
+	c := backends.ObjectStore(okProbe(), "objectStore")
+	if got := c.Check(context.Background()); got.Status != health.StatusHealthy {
+		t.Fatalf("status = %q, want healthy", got.Status)
+	}
+}
+
+// spec: §25.3 line 441 — the K8s API server probe reports unhealthy with
+// an investigate hint when GET /healthz fails.
+func TestAPIServerUnhealthy_spec_25_3_441(t *testing.T) {
+	c := backends.APIServer(errProbe("/healthz returned 500"), "kubernetes-api")
+	got := c.Check(context.Background())
+	if got.Status != health.StatusUnhealthy {
+		t.Fatalf("status = %q, want unhealthy", got.Status)
+	}
+	if got.SuggestedAction == nil || got.SuggestedAction.Action != "INVESTIGATE_KUBE_API" {
+		t.Fatalf("suggestedAction = %+v, want INVESTIGATE_KUBE_API", got.SuggestedAction)
+	}
+}
+
+func TestAPIServerHealthy_spec_25_3_441(t *testing.T) {
+	c := backends.APIServer(okProbe(), "kubernetes-api")
+	if got := c.Check(context.Background()); got.Status != health.StatusHealthy {
+		t.Fatalf("status = %q, want healthy", got.Status)
+	}
+}
+
+// spec: §25.3 line 441 — the registered-connectors probe reports
+// unhealthy with an investigate hint when the registry query fails.
+func TestConnectorsUnhealthy_spec_25_3_441(t *testing.T) {
+	c := backends.Connectors(errProbe("registry list: timeout"), "connectors")
+	got := c.Check(context.Background())
+	if got.Status != health.StatusUnhealthy {
+		t.Fatalf("status = %q, want unhealthy", got.Status)
+	}
+	if got.SuggestedAction == nil || got.SuggestedAction.Action != "INVESTIGATE_CONNECTOR_REGISTRY" {
+		t.Fatalf("suggestedAction = %+v, want INVESTIGATE_CONNECTOR_REGISTRY", got.SuggestedAction)
+	}
+}
+
+func TestConnectorsHealthy_spec_25_3_441(t *testing.T) {
+	c := backends.Connectors(okProbe(), "connectors")
+	if got := c.Check(context.Background()); got.Status != health.StatusHealthy {
+		t.Fatalf("status = %q, want healthy", got.Status)
+	}
+}
+
+// fakeCertReader returns a fixed NotAfter / error for the cert-manager
+// probe tests.
+type fakeCertReader struct {
+	notAfter time.Time
+	err      error
+}
+
+func (f fakeCertReader) NotAfter(context.Context) (time.Time, error) {
+	return f.notAfter, f.err
+}
+
+// spec: §25.3 line 441 / §16.5 CertExpiryImminent — a valid certificate
+// with ample lifetime is healthy.
+func TestCertManagerHealthy_spec_25_3_441(t *testing.T) {
+	c := backends.CertManager(fakeCertReader{notAfter: time.Now().Add(48 * time.Hour)}, "cert-manager")
+	if got := c.Check(context.Background()); got.Status != health.StatusHealthy {
+		t.Fatalf("status = %q, want healthy", got.Status)
+	}
+}
+
+// A certificate inside the warning window is degraded and carries the
+// CERT_EXPIRY_IMMINENT issue.
+func TestCertManagerDegradedWhenExpiringSoon_spec_25_3_441(t *testing.T) {
+	c := backends.CertManager(fakeCertReader{notAfter: time.Now().Add(30 * time.Minute)}, "cert-manager")
+	got := c.Check(context.Background())
+	if got.Status != health.StatusDegraded {
+		t.Fatalf("status = %q, want degraded", got.Status)
+	}
+	if got.Issue != "CERT_EXPIRY_IMMINENT" {
+		t.Fatalf("issue = %q, want CERT_EXPIRY_IMMINENT", got.Issue)
+	}
+}
+
+// An expired certificate is unhealthy with CERT_EXPIRY_IMMINENT.
+func TestCertManagerUnhealthyWhenExpired_spec_25_3_441(t *testing.T) {
+	c := backends.CertManager(fakeCertReader{notAfter: time.Now().Add(-time.Minute)}, "cert-manager")
+	got := c.Check(context.Background())
+	if got.Status != health.StatusUnhealthy {
+		t.Fatalf("status = %q, want unhealthy", got.Status)
+	}
+	if got.Issue != "CERT_EXPIRY_IMMINENT" {
+		t.Fatalf("issue = %q, want CERT_EXPIRY_IMMINENT", got.Issue)
+	}
+}
+
+// An unreadable certificate is unhealthy.
+func TestCertManagerUnhealthyWhenUnreadable_spec_25_3_441(t *testing.T) {
+	c := backends.CertManager(fakeCertReader{err: errors.New("open cert.pem: no such file")}, "cert-manager")
+	if got := c.Check(context.Background()); got.Status != health.StatusUnhealthy {
+		t.Fatalf("status = %q, want unhealthy", got.Status)
 	}
 }

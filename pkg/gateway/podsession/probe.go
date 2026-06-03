@@ -29,15 +29,33 @@ const readyzProbeTimeout = time.Second
 // (a lightweight GET /readyz or equivalent); if the probe fails, the
 // fallback is skipped."
 func NewReadyzProbe(cfg *rest.Config) (func(context.Context) error, error) {
+	return newAPIServerProbe(cfg, "/readyz")
+}
+
+// NewHealthzProbe builds the §25.3 Kubernetes API server dependency
+// probe: a lightweight GET /healthz against the API server using the
+// cluster rest config's transport. It returns nil when the API server
+// answers 200 and an error otherwise, suitable as a health.backends
+// ProbeFunc. spec: §25.3 line 441 — "K8s API server (/healthz). Each
+// probe has a hard timeout of 2 seconds."
+func NewHealthzProbe(cfg *rest.Config) (func(context.Context) error, error) {
+	return newAPIServerProbe(cfg, "/healthz")
+}
+
+// newAPIServerProbe builds a GET-<path> probe against the API server
+// using the cluster rest config's transport (reusing the gateway's mTLS
+// and auth). The probe applies its own short timeout; a caller may also
+// bound the supplied context.
+func newAPIServerProbe(cfg *rest.Config, path string) (func(context.Context) error, error) {
 	httpClient, err := rest.HTTPClientFor(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("podsession: build readyz probe client: %w", err)
+		return nil, fmt.Errorf("podsession: build apiserver %s probe client: %w", path, err)
 	}
 	base := strings.TrimRight(cfg.Host, "/")
 	return func(ctx context.Context) error {
 		cctx, cancel := context.WithTimeout(ctx, readyzProbeTimeout)
 		defer cancel()
-		req, err := http.NewRequestWithContext(cctx, http.MethodGet, base+"/readyz", nil)
+		req, err := http.NewRequestWithContext(cctx, http.MethodGet, base+path, nil)
 		if err != nil {
 			return err
 		}
@@ -50,7 +68,7 @@ func NewReadyzProbe(cfg *rest.Config) (func(context.Context) error, error) {
 			_ = resp.Body.Close()
 		}()
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("podsession: apiserver /readyz returned %d", resp.StatusCode)
+			return fmt.Errorf("podsession: apiserver %s returned %d", path, resp.StatusCode)
 		}
 		return nil
 	}, nil

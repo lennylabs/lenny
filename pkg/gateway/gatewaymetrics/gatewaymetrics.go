@@ -3813,6 +3813,16 @@ func (m *Metrics) Registerer() prometheus.Registerer {
 	return m.reg
 }
 
+// Gatherer exposes the gateway's private metric registry as a read-only
+// gatherer. The §25.3 capacity-recommendation sampler reads gauge and
+// counter values directly from the same in-process registry Prometheus
+// scrapes, so it can feed the recommendation ring buffers without a
+// Prometheus query (spec: §25.3 line 439 — "In-process metric registry
+// ... works even when Prometheus is down").
+func (m *Metrics) Gatherer() prometheus.Gatherer {
+	return m.reg
+}
+
 // SetActiveSessions updates the active-session gauge. The gateway
 // calls this from the watchdog sweep or a dedicated poller.
 func (m *Metrics) SetActiveSessions(n int) {

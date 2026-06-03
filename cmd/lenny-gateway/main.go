@@ -1976,6 +1976,11 @@ func main() {
 		// session-start path and by the §10.4 PDB poller (F-10.4.4). It
 		// stays nil when --agent-namespace is unset (single-process dev).
 		clusterClient client.Client
+		// kubeHealthzProbe is the §25.3 Kubernetes API server dependency
+		// probe (GET /healthz). It stays nil when --agent-namespace is
+		// unset, so the §25.3 health surface omits the component on a
+		// Postgres-only deployment with no cluster client.
+		kubeHealthzProbe func(context.Context) error
 	)
 	if *agentNamespace != "" {
 		cfg, err := ctrl.GetConfig()
@@ -2005,6 +2010,15 @@ func main() {
 			log.Fatalf("lenny-gateway: build cluster client: %v", err)
 		}
 		clusterClient = k8sClient
+		// spec: §25.3 line 441 — the §25.3 health service probes the
+		// Kubernetes API server with a GET /healthz over the cluster
+		// transport. Built here where the rest config is in scope; wired
+		// onto the health aggregator below.
+		probe, err := podsession.NewHealthzProbe(cfg)
+		if err != nil {
+			log.Fatalf("lenny-gateway: build apiserver /healthz probe: %v", err)
+		}
+		kubeHealthzProbe = probe
 		dialOpt, err := adapter.TLSClientOption(*adapterTLSCert, *adapterTLSKey, *adapterCA)
 		if err != nil {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
@@ -4113,8 +4127,36 @@ func main() {
 	healthAgg.SetMetrics(healthMetrics)
 	healthAgg.Register(staticHealthy("gateway"))
 	healthAgg.Register(staticHealthy("sessionstore"))
-	healthAgg.Register(staticHealthy("blobstore"))
 	healthAgg.Register(staticHealthy("executor"))
+	// spec: §25.3 line 441 / lines 527-528 — the MinIO/ArtifactStore probe
+	// runs the §12.5 HeadBucket-equivalent liveness check (blobProbe is the
+	// real bucket probe for self-managed MinIO and an always-ready stub for
+	// in-memory / managed cloud object storage). The component name matches
+	// the §25.3 Degradation section ("objectStore.status reports
+	// unhealthy"), replacing the prior static stub.
+	healthAgg.Register(backends.ObjectStore(blobProbe.Probe, "objectStore"))
+	// spec: §25.3 line 441 — registered-connectors dependency probe. A
+	// single List against the connector registry confirms the backing
+	// store answers; the platform tenant scope is a reachability ping (the
+	// query hits the same store regardless of tenant and an empty result
+	// is healthy).
+	healthAgg.Register(backends.Connectors(func(ctx context.Context) error {
+		_, err := connectors.List(ctx, "platform", connectorstore.ListFilter{})
+		return err
+	}, "connectors"))
+	// spec: §25.3 line 441 — Kubernetes API server (/healthz) dependency
+	// probe, registered only on an agent-namespace deployment where the
+	// cluster transport exists.
+	if kubeHealthzProbe != nil {
+		healthAgg.Register(backends.APIServer(kubeHealthzProbe, "kubernetes-api"))
+	}
+	// spec: §25.3 line 441 — cert-manager certificate-status probe over the
+	// gateway's mounted mesh certificate. Registered only when a cert path
+	// is configured (mTLS deployments); reports degraded inside the §16.5
+	// CertExpiryImminent window and unhealthy once expired or unreadable.
+	if *adapterTLSCert != "" {
+		healthAgg.Register(backends.CertManager(backends.FileCertReader(*adapterTLSCert), "cert-manager"))
+	}
 	// When a backing service is wired, the §25.3 health API reports
 	// its real reachability instead of a static verdict.
 	//
@@ -5052,6 +5094,17 @@ func main() {
 	if dsMonitor != nil {
 		go dsMonitor.Run(watchdogCtx)
 	}
+
+	// ----- §25.3 capacity-recommendation metric sampler -----
+	// Reads the recommendation source metrics out of the gateway's
+	// in-process Prometheus registry into the WindowStore the rules engine
+	// evaluates against, so /v1/admin/recommendations serves real
+	// per-replica data instead of a permanently-empty result. Metrics that
+	// originate in another process (warm-pool exhaustion from the
+	// controller, kubelet OOM kills) are absent from the gateway registry
+	// and are served by lenny-ops through its Prometheus reader — the
+	// §25.3 per-replica-scope note. F-25.3.20.
+	go recommendations.NewSampler(gwMetrics.Gatherer(), recommendationStore).Run(watchdogCtx)
 
 	// ----- §12.4 line 210 storage-quota recovery reconciler -----
 	// Probes Redis reachability; on a recovery edge it writes each
