@@ -125,6 +125,18 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
+	// spec: §25.2 lines 287-300, §25.11 line 3883 — a confirm-gated backup
+	// (a full backup in production) requested without confirm:true returns
+	// 200 with a dry-run preview, not an error. The orchestrator keeps the
+	// same gate as a library-level guard.
+	if backup.ValidType(body.Type) &&
+		backup.RequiresConfirm(backup.Type(body.Type), s.production) && !body.Confirm {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"dryRun":  true,
+			"preview": backup.PreviewBackup(backup.Type(body.Type)),
+		})
+		return
+	}
 	b, err := s.backups.CreateBackup(r.Context(), backup.BackupRequest{
 		Type:       body.Type,
 		Confirm:    body.Confirm,

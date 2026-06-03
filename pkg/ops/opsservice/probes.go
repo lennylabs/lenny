@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -17,10 +18,12 @@ import (
 // Probe names §25.4 reports in the connectivity diagnostic and the
 // readiness signal.
 const (
-	ProbePostgres = "postgres"
-	ProbeRedis    = "redis"
-	ProbeK8sAPI   = "kubernetes"
-	ProbeGateway  = "gateway"
+	ProbePostgres   = "postgres"
+	ProbeRedis      = "redis"
+	ProbeK8sAPI     = "kubernetes"
+	ProbeGateway    = "gateway"
+	ProbeMinIO      = "minio"
+	ProbePrometheus = "prometheus"
 )
 
 // PostgresProbe returns the §25.4 Postgres dependency probe: it pings
@@ -83,4 +86,65 @@ func GatewayProbe(client *http.Client, healthURL string) probe.Func {
 		}
 		return nil
 	}
+}
+
+// MinIOProbe returns the §25.2 / §25.11 MinIO dependency probe: it GETs
+// the MinIO liveness endpoint (`/minio/health/live`). §25.2 line 169
+// lists MinIO among the dependencies lenny-ops connects to, and §25.11
+// streams backup archives to it. An endpoint without a scheme is
+// assumed plain HTTP. An empty endpoint yields a probe that reports
+// MinIO not configured, keeping the connectivity report honest in a
+// deployment without object storage.
+func MinIOProbe(client *http.Client, endpoint string) probe.Func {
+	return func(ctx context.Context) error {
+		if endpoint == "" {
+			return fmt.Errorf("minio endpoint is not configured")
+		}
+		return httpHealthGet(ctx, client, normalizeHTTPBase(endpoint)+"/minio/health/live")
+	}
+}
+
+// PrometheusProbe returns the §25.2 / §25.16 Prometheus dependency
+// probe: it GETs the Prometheus health endpoint (`/-/healthy`). §25.2
+// line 169 lists Prometheus among the dependencies lenny-ops connects
+// to, and §25.6 queries it for diagnostic time-series. An empty URL
+// yields a probe that reports Prometheus not configured, the §25.16
+// Minimal-block degraded posture.
+func PrometheusProbe(client *http.Client, baseURL string) probe.Func {
+	return func(ctx context.Context) error {
+		if baseURL == "" {
+			return fmt.Errorf("prometheus URL is not configured")
+		}
+		return httpHealthGet(ctx, client, strings.TrimRight(normalizeHTTPBase(baseURL), "/")+"/-/healthy")
+	}
+}
+
+// normalizeHTTPBase prepends a plain-HTTP scheme to a bare host:port so
+// http.NewRequest accepts it. A value that already carries a scheme is
+// returned unchanged.
+func normalizeHTTPBase(s string) string {
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return s
+	}
+	return "http://" + s
+}
+
+// httpHealthGet GETs url and treats any non-5xx response as reachable.
+// A health endpoint that answers at all proves the dependency is up; a
+// 4xx (wrong path on an older MinIO, auth-gated Prometheus) still
+// confirms connectivity, which is what the §25.6 report measures.
+func httpHealthGet(ctx context.Context, client *http.Client, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("health endpoint returned %d", resp.StatusCode)
+	}
+	return nil
 }

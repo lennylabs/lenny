@@ -2,7 +2,10 @@
 
 package errorclassify
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestClassifyKnownCodes(t *testing.T) {
 	cases := []struct {
@@ -188,5 +191,49 @@ func TestClassifyAuditConcurrencyTimeout_spec_11_7(t *testing.T) {
 	cat, retr := Classify("AUDIT_CONCURRENCY_TIMEOUT")
 	if cat != CategoryTransient || !retr {
 		t.Errorf("AUDIT_CONCURRENCY_TIMEOUT classify = (%q, %v), want (%q, true)", cat, retr, CategoryTransient)
+	}
+}
+
+// spec: §25.2 lines 320-329 — the §15.1 admin API emits a large
+// vocabulary of resource-specific codes the catalog does not enumerate.
+// ClassifyStatus derives a status-appropriate pair for those rather than
+// the provisional (TRANSIENT, true) fallback, so a bespoke 4xx code is
+// not wrongly advertised as retryable. F-25.2.6.
+func TestClassifyStatusUnknownCode_spec_25_2(t *testing.T) {
+	cases := []struct {
+		status   int
+		wantCat  Category
+		wantRetr bool
+	}{
+		{400, CategoryPermanent, false},
+		{404, CategoryPermanent, false},
+		{409, CategoryPermanent, false},
+		{422, CategoryPermanent, false},
+		{429, CategoryTransient, true},
+		{500, CategoryTransient, true},
+		{503, CategoryTransient, true},
+	}
+	for _, c := range cases {
+		cat, retr := ClassifyStatus("ARTIFACT_REPLICATION_REGION_NOT_FOUND_BESPOKE", c.status)
+		if cat != c.wantCat || retr != c.wantRetr {
+			t.Errorf("status %d: classify = (%q, %v), want (%q, %v)", c.status, cat, retr, c.wantCat, c.wantRetr)
+		}
+	}
+}
+
+// ClassifyStatus prefers the catalog over the status-derived default so
+// a known code keeps its authoritative pair regardless of the status the
+// caller pairs with it. F-25.2.6.
+func TestClassifyStatusKnownCodeWinsOverStatus(t *testing.T) {
+	if !Known("VALIDATION_ERROR") {
+		t.Fatal("VALIDATION_ERROR must be a known catalog code")
+	}
+	if Known("ARTIFACT_REPLICATION_REGION_NOT_FOUND_BESPOKE") {
+		t.Fatal("bespoke code must not be a known catalog code")
+	}
+	// A transient catalog code keeps retryable=true even at a 4xx status.
+	cat, retr := ClassifyStatus("INTERNAL_ERROR", http.StatusBadRequest)
+	if cat != CategoryTransient || !retr {
+		t.Errorf("INTERNAL_ERROR@400 = (%q, %v), want (TRANSIENT, true)", cat, retr)
 	}
 }

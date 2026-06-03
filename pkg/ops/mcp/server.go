@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // ProtocolVersion is the MCP protocol version the §25.12 management
@@ -220,7 +221,10 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 			Code:    errScopeForbidden,
 			Message: "tool " + tool.Name + " is outside the caller's scope claim",
 			Data: map[string]any{
-				"code":          "SCOPE_FORBIDDEN",
+				"code": "SCOPE_FORBIDDEN",
+				// §25.2 error category: a scope-claim rejection is an
+				// authorization failure (spec: §25.2 lines 302-329).
+				"category":      string(conventions.CategoryAuth),
 				"retryable":     false,
 				"requiredScope": tool.Scope,
 				"activeScope":   set.Raw,
@@ -234,7 +238,7 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 	if err != nil {
 		return rpcResponse{Error: &rpcError{
 			Code: errEndpointUnavailable, Message: err.Error(),
-			Data: map[string]any{"code": "ENDPOINT_UNAVAILABLE", "retryable": true},
+			Data: map[string]any{"code": "ENDPOINT_UNAVAILABLE", "category": string(conventions.CategoryTransient), "retryable": true},
 		}}
 	}
 	if result.Unavailable {
@@ -274,7 +278,7 @@ func endpointUnavailable(tool Tool) rpcResponse {
 	return rpcResponse{Error: &rpcError{
 		Code:    errEndpointUnavailable,
 		Message: "the endpoint backing " + tool.Name + " is unavailable",
-		Data:    map[string]any{"code": "ENDPOINT_UNAVAILABLE", "retryable": true},
+		Data:    map[string]any{"code": "ENDPOINT_UNAVAILABLE", "category": string(conventions.CategoryTransient), "retryable": true},
 	}}
 }
 

@@ -426,6 +426,13 @@ func main() {
 	probes := map[string]probe.Func{
 		opsservice.ProbePostgres: opsservice.PostgresProbe(pgPool),
 		opsservice.ProbeRedis:    opsservice.RedisProbe(redisClient),
+		// spec: §25.2 line 169 — lenny-ops connects to MinIO and Prometheus;
+		// the §25.6 connectivity report names both. Each probe is registered
+		// unconditionally and reports "not configured" when its endpoint is
+		// empty, so the report is honest about object-storage / metrics
+		// availability rather than silently omitting the dependency. F-25.2.10.
+		opsservice.ProbeMinIO:      opsservice.MinIOProbe(gatewayHTTP, *backupMinIOEndpoint),
+		opsservice.ProbePrometheus: opsservice.PrometheusProbe(gatewayHTTP, *prometheusURL),
 	}
 	if clientset != nil {
 		probes[opsservice.ProbeK8sAPI] = opsservice.K8sAPIProbe(clientset.Discovery())

@@ -8,6 +8,8 @@
 // function is how that parity holds.
 package errorclassify
 
+import "net/http"
+
 // Category is the §15.2.1 / §16.3 error category. Every lenny error
 // code maps to exactly one Category.
 type Category string
@@ -44,6 +46,33 @@ func Classify(code string) (Category, bool) {
 		return c.cat, c.retryable
 	}
 	return CategoryTransient, true
+}
+
+// Known reports whether code has an explicit table entry. A caller that
+// can supply an HTTP status prefers ClassifyStatus, which derives a
+// status-appropriate pair for an unknown code rather than the
+// provisional (CategoryTransient, true) fallback Classify returns.
+func Known(code string) bool {
+	_, ok := table[code]
+	return ok
+}
+
+// ClassifyStatus returns the (category, retryable) pair for code,
+// deriving it from the HTTP status when code has no table entry. The
+// §15.1 admin API emits a large vocabulary of resource-specific codes
+// the catalog does not enumerate; for those, the Classify fallback
+// (TRANSIENT, retryable) would wrongly mark a 4xx validation or
+// not-found error as retryable. A 429 or 5xx is treated as transient
+// and retryable; every other status is treated as permanent and not
+// retryable. spec: §25.2 lines 320-329 (category HTTP ranges).
+func ClassifyStatus(code string, status int) (Category, bool) {
+	if c, ok := table[code]; ok {
+		return c.cat, c.retryable
+	}
+	if status == http.StatusTooManyRequests || status >= 500 {
+		return CategoryTransient, true
+	}
+	return CategoryPermanent, false
 }
 
 type entry struct {

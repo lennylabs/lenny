@@ -64,24 +64,43 @@ func TestCreateBackupEndpoint(t *testing.T) {
 	}
 }
 
-func TestCreateBackupConfirmGateInProduction(t *testing.T) {
-	srv, _, _ := newBackupServer(t, true)
-	// §25.11: a full backup in production without confirm is rejected.
+// spec: §25.2 lines 287-300, §25.11 line 3883 — a full backup in
+// production without confirm:true returns 200 with a dry-run preview
+// (not an error); with confirm:true it is accepted. F-25.2.5.
+func TestCreateBackupConfirmGateInProduction_spec_25_2_300(t *testing.T) {
+	srv, _, store := newBackupServer(t, true)
 	rec := do(srv, http.MethodPost, "/v1/admin/backups", `{"type":"full"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (dry-run preview)\nbody: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
+	var preview struct {
+		DryRun  bool `json:"dryRun"`
+		Preview struct {
+			ResourcesAffected []string `json:"resourcesAffected"`
+			EstimatedDowntime string   `json:"estimatedDowntime"`
+			Warnings          []string `json:"warnings"`
+		} `json:"preview"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Error.Code != backup.ErrCodeRestoreRequiresConfirm {
-		t.Errorf("error code = %q, want RESTORE_REQUIRES_CONFIRM", resp.Error.Code)
+	if !preview.DryRun {
+		t.Errorf("dryRun = false, want true")
 	}
+	if len(preview.Preview.ResourcesAffected) == 0 {
+		t.Errorf("preview.resourcesAffected is empty, want the full-backup components")
+	}
+	if preview.Preview.EstimatedDowntime != "0s" {
+		t.Errorf("preview.estimatedDowntime = %q, want 0s", preview.Preview.EstimatedDowntime)
+	}
+	if len(preview.Preview.Warnings) == 0 {
+		t.Errorf("preview.warnings is empty, want a confirm advisory")
+	}
+	// A dry run mutates no state: no backup row was created.
+	if rows, _ := store.ListBackups(context.Background(), backup.BackupFilter{}); len(rows) != 0 {
+		t.Errorf("dry-run created %d backups, want 0", len(rows))
+	}
+
 	// With confirm:true it is accepted.
 	rec = do(srv, http.MethodPost, "/v1/admin/backups", `{"type":"full","confirm":true}`)
 	if rec.Code != http.StatusAccepted {

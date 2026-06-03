@@ -43,6 +43,36 @@ func RequiresConfirm(t Type, production bool) bool {
 	return t == TypeFull && production
 }
 
+// CreatePreview is the §25.2 dry-run preview body POST /v1/admin/backups
+// returns when a confirm-gated backup is requested without confirm:true.
+// It mirrors the canonical preview object (resourcesAffected,
+// estimatedDowntime, warnings) so an agent can inspect the blast radius
+// before re-issuing with confirm. spec: §25.2 lines 287-300.
+type CreatePreview struct {
+	ResourcesAffected []string `json:"resourcesAffected"`
+	EstimatedDowntime string   `json:"estimatedDowntime"`
+	Warnings          []string `json:"warnings"`
+}
+
+// PreviewBackup builds the §25.2 dry-run preview for an on-demand backup
+// of type t. A backup runs online against live stores, so the estimated
+// downtime is zero; the affected resources are the components the backup
+// would dump. spec: §25.2 lines 287-300, §25.11 line 3883.
+func PreviewBackup(t Type) CreatePreview {
+	comps := componentsFor(t)
+	resources := make([]string, len(comps))
+	for i, c := range comps {
+		resources[i] = c.Name
+	}
+	return CreatePreview{
+		ResourcesAffected: resources,
+		EstimatedDowntime: "0s",
+		Warnings: []string{
+			"This triggers a " + string(t) + " backup. Re-run with confirm:true to apply.",
+		},
+	}
+}
+
 // Schedule is the §25.11 backup schedule: cron expressions for the full
 // and postgres backups and whether scheduled backups run.
 type Schedule struct {

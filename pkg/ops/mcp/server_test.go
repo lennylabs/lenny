@@ -157,6 +157,11 @@ func TestToolsCallScopeForbidden(t *testing.T) {
 	if data["code"] != "SCOPE_FORBIDDEN" {
 		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
 	}
+	// spec: §25.2 lines 302-329 — a scope rejection carries the AUTH
+	// error category alongside code/retryable. F-25.2.6.
+	if data["category"] != "AUTH" {
+		t.Errorf("data.category = %v, want AUTH", data["category"])
+	}
 	if data["requiredScope"] != "tools:locks:write" {
 		t.Errorf("data.requiredScope = %v, want tools:locks:write", data["requiredScope"])
 	}
@@ -224,6 +229,11 @@ func TestToolsCallEndpointUnavailable(t *testing.T) {
 	data, _ := rpcErr["data"].(map[string]any)
 	if data["code"] != "ENDPOINT_UNAVAILABLE" {
 		t.Errorf("data.code = %v, want ENDPOINT_UNAVAILABLE", data["code"])
+	}
+	// spec: §25.2 lines 302-329 — an unavailable endpoint is a TRANSIENT
+	// failure; the category rides alongside code/retryable. F-25.2.6.
+	if data["category"] != "TRANSIENT" {
+		t.Errorf("data.category = %v, want TRANSIENT", data["category"])
 	}
 	// §25.12: the tool stays in tools/list during the outage.
 	_, list := rpc(t, srv, nil, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"})

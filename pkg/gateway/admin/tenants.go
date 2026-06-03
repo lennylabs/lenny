@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
@@ -40,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
@@ -1764,14 +1766,54 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// writeError shares the §15.1 envelope shape with the rest of the
-// gateway.
+// writeError writes the §15.1 / §25.2 canonical admin error envelope:
+// `error.{code, category, message, retryable, suggestedRetryAfter?,
+// details?}`. The `category` and `retryable` fields are populated from
+// the shared §15.2.1 errorclassify table so the admin surface reports
+// the same pair for a given code as the REST and MCP transports
+// (spec: §15.1 line 944, §25.2 lines 302-329). A retryable failure at a
+// 429 or 5xx status also advertises a backoff via `suggestedRetryAfter`
+// and the matching `Retry-After` header (spec: §25.2 line 329 — the two
+// agree when both are present).
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	writeErrorRetryAfter(w, status, code, message, details, 0)
+}
+
+// adminRetryAfterDefault is the §25.2 advisory backoff stamped on a
+// retryable admin error that does not carry a more precise value. It
+// matches the §4.3 token-service and rate-limit precedent of a 5-second
+// floor for transient retries.
+const adminRetryAfterDefault = 5 * time.Second
+
+// writeErrorRetryAfter is writeError with an explicit backoff hint. A
+// zero retryAfter defers to the category-derived default for retryable
+// 429/5xx failures and omits the hint otherwise. spec: §25.2 line 329.
+func writeErrorRetryAfter(w http.ResponseWriter, status int, code, message string, details map[string]any, retryAfter time.Duration) {
+	cat, retryable := errorclassify.ClassifyStatus(code, status)
+	body := map[string]any{
+		"code":      code,
+		"category":  string(cat),
+		"message":   message,
+		"retryable": retryable,
+	}
+	if details != nil {
+		body["details"] = details
+	}
+	if retryable {
+		if retryAfter == 0 && (status >= 500 || status == http.StatusTooManyRequests) {
+			retryAfter = adminRetryAfterDefault
+		}
+		if retryAfter > 0 {
+			secs := int(retryAfter.Seconds())
+			body["suggestedRetryAfter"] = strconv.Itoa(secs) + "s"
+			if w.Header().Get("Retry-After") == "" {
+				w.Header().Set("Retry-After", strconv.Itoa(secs))
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]any{"code": code, "message": message, "details": details},
-	})
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": body})
 }
 
 // writeJSON writes v as a JSON body with the given status code. It is the
