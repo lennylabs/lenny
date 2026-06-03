@@ -110,6 +110,25 @@ func TestParseReplicationConfig(t *testing.T) {
 			t.Fatalf("expected CONFIG_INVALID, got %v", err)
 		}
 	})
+	// The chart's lenny.artifactReplicationConfigJSON helper emits every
+	// replication.Config key (versioning, replicationLagRpoSeconds,
+	// residencyAuditSamplingWindowSeconds, per-region allowedDestinationCidrs
+	// and target.kmsKeyId). DisallowUnknownFields must accept the full
+	// chart-rendered shape — this is the chart↔binary contract. F-25.11.9.
+	t.Run("chart-rendered full shape decodes", func(t *testing.T) {
+		raw := `{"enabled":true,"versioning":true,"replicationLagRpoSeconds":900,"residencyCheckIntervalSeconds":300,"residencyAuditSamplingWindowSeconds":3600,"regions":[{"region":"eu-west-1","sourceBucket":"lenny-artifacts-eu","dataResidencyRegion":"eu-west-1","target":{"endpoint":"https://dest:9000","bucket":"dest","accessCredentialSecret":"s","kmsKeyId":"k"},"allowedDestinationCidrs":["10.0.0.0/8"]}]}`
+		cfg, err := parseReplicationConfig(raw)
+		if err != nil {
+			t.Fatalf("chart shape rejected: %v", err)
+		}
+		if !cfg.Versioning || cfg.ReplicationLagRpoSeconds != 900 || cfg.ResidencyAuditSamplingWindowSeconds != 3600 {
+			t.Fatalf("tuning fields not mapped: %+v", cfg)
+		}
+		if len(cfg.Regions) != 1 || cfg.Regions[0].Target.KMSKeyID != "k" ||
+			len(cfg.Regions[0].AllowedDestinationCIDRs) != 1 {
+			t.Fatalf("region fields not mapped: %+v", cfg.Regions[0])
+		}
+	})
 }
 
 // spec: §25.11 — the destination endpoint scheme controls TLS. F-12.5.20.

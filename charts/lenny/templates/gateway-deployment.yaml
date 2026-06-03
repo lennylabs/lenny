@@ -1152,6 +1152,21 @@ spec:
             - name: LENNY_MINIO_USE_SSL
               value: {{ $minioUseSSL | quote }}
             {{- end }}
+            {{- $replConfig := include "lenny.artifactReplicationConfigJSON" . }}
+            {{- if $replConfig }}
+            # spec: §25.11 lines 4045-4071 — the ArtifactStore continuous
+            # replication configuration (minio.artifactBackup / minio.regions)
+            # rendered into the gateway flag. The gateway runs the runtime
+            # residency preflight and the lag/failure gauge scrape from it.
+            # F-25.11.9 / F-17.3.7.
+            - name: LENNY_ARTIFACT_REPLICATION_CONFIG
+              value: {{ $replConfig | quote }}
+            {{- $roleArn := (default dict $minio.artifactBackup).replicationRoleArn }}
+            {{- if $roleArn }}
+            - name: LENNY_ARTIFACT_REPLICATION_ROLE_ARN
+              value: {{ $roleArn | quote }}
+            {{- end }}
+            {{- end }}
             {{- if and .Values.ops.ingress.enabled .Values.ops.ingress.host }}
             # spec: §25.16 line 5115 / §25.14 — advertise the externally
             # reachable lenny-ops URL in GET /v1/admin/platform/version so

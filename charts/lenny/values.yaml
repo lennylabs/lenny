@@ -543,6 +543,67 @@ minio:
     # latest stable mc release; pin to a digest in answers for
     # reproducible installs.
     image: "minio/mc:latest"
+  # artifactBackup configures the §25.11 ArtifactStore continuous
+  # off-cluster replication (single-region form). When enabled, the
+  # gateway runs the §25.11 runtime residency preflight and emits the
+  # lenny_minio_replication_lag_seconds / _failed_total gauges. The chart
+  # renders these values into the gateway's --artifact-replication-config
+  # JSON (LENNY_ARTIFACT_REPLICATION_CONFIG); enabling it requires
+  # minio.endpoint (the source cluster) to be set, else the render fails.
+  # Default false (Tier 1 dev); Tier 2/3 set it true after declaring a
+  # target. spec: §25.11 lines 4045-4068. F-25.11.9 / F-17.3.7.
+  artifactBackup:
+    enabled: false
+    # target is the off-cluster S3-compatible destination the
+    # ArtifactStore bucket replicates to.
+    target:
+      # endpoint is the destination endpoint (host:port or full URL); an
+      # https:// scheme selects TLS to the destination.
+      endpoint: ""
+      # bucket is the destination bucket name.
+      bucket: ""
+      # accessCredentialSecret names the Kubernetes Secret (in the agent
+      # namespace) holding the destination {accessKey, secretKey}.
+      accessCredentialSecret: ""
+      # kmsKeyId is the KMS key on the destination side; it MUST reside in
+      # the same jurisdiction when the source region pins a
+      # dataResidencyRegion (§12.8 Backup pipeline residency).
+      kmsKeyId: ""
+    # versioning records that source-bucket versioning is enabled so
+    # delete markers replicate without destroying prior versions.
+    versioning: true
+    # replicationLagRpoSeconds is the §25.11 RPO threshold the
+    # MinIOArtifactReplicationLagHigh alert fires on (4× for Critical).
+    replicationLagRpoSeconds: 900
+    # residencyCheckIntervalSeconds is the runtime residency-preflight
+    # tick (min 60, max 3600). The preflight also runs before every batch.
+    residencyCheckIntervalSeconds: 300
+    # residencyAuditSamplingWindowSeconds is the positive-audit sampling
+    # window for artifact.cross_region_replication_verified events.
+    residencyAuditSamplingWindowSeconds: 3600
+    # replicationRoleArn is the replication Role ARN the source MinIO
+    # cluster requires on a replication rule (arn:minio:replication or
+    # arn:aws:iam form). Optional; rendered into the gateway's
+    # --artifact-replication-role-arn flag when set.
+    replicationRoleArn: ""
+  # regions carries the §25.11 per-region ArtifactStore replication
+  # topology, mirroring backups.regions and storage.regions. Each entry
+  # declares its source bucket and a per-region artifactBackup.target;
+  # dataResidencyRegion is the region key (cross-region replication is
+  # prohibited, so the destination bucket's lenny.dev/jurisdiction-region
+  # tag MUST equal the key). When non-empty these take precedence over the
+  # single-region artifactBackup block. Example:
+  #   eu-west-1:
+  #     sourceBucket: "lenny-artifacts-eu"
+  #     artifactBackup:
+  #       target:
+  #         endpoint: "https://artifact-backup.eu.lenny-dr:9000"
+  #         bucket: "lenny-artifacts-eu-backup"
+  #         accessCredentialSecret: "lenny-backup-minio-eu"
+  #         kmsKeyId: ""
+  #       allowedDestinationCidrs: []
+  # spec: §25.11 line 4071. F-25.11.9.
+  regions: {}
 
 # gc configures the §12.5 artifact garbage-collection sweep that the
 # gateway runs as a §10.1 leader-elected goroutine. The same cadence

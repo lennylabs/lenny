@@ -283,3 +283,56 @@ spec: §17.9.1 line 1354; §5.3. F-17.9.10.
 {{- fail (printf "§17.9.1: isolationProfile must be one of baseline, sandboxed, hypervisor, got %q" $p) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+lenny.artifactReplicationConfigJSON renders the §25.11 minio.artifactBackup
+Helm values into the JSON the gateway's --artifact-replication-config flag
+(LENNY_ARTIFACT_REPLICATION_CONFIG) decodes into replication.Config. It
+emits the empty string when replication is disabled so the gateway omits
+the env and runs no replication controller.
+
+Two topologies (§25.11 "Required Helm values"):
+  - per-region: each minio.regions.<region>.artifactBackup becomes a
+    region entry with dataResidencyRegion = <region> (cross-region
+    replication is prohibited, so the destination jurisdiction tag MUST
+    equal the region key).
+  - single-region: minio.artifactBackup.enabled true becomes one "default"
+    region with no residency constraint and sourceBucket = minio.bucket.
+Per-region entries take precedence; when any exist the single-region block
+is ignored. The gateway runs the §25.11 startup CONFIG_INVALID validation
+on the decoded config, so an incomplete residency-region target is
+rejected fail-closed at process start.
+spec: §25.11 lines 4045-4071. F-25.11.9.
+*/}}
+{{- define "lenny.artifactReplicationConfigJSON" -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $ab := $minio.artifactBackup | default dict -}}
+{{- $regionsIn := $minio.regions | default dict -}}
+{{- $regionList := list -}}
+{{- range $rk, $rv := $regionsIn -}}
+{{- $rab := (default dict $rv).artifactBackup -}}
+{{- if $rab -}}
+{{- $rt := (default dict $rab).target | default dict -}}
+{{- $target := dict "endpoint" ($rt.endpoint | default "") "bucket" ($rt.bucket | default "") "accessCredentialSecret" ($rt.accessCredentialSecret | default "") "kmsKeyId" ($rt.kmsKeyId | default "") -}}
+{{- $entry := dict "region" $rk "sourceBucket" ((default dict $rv).sourceBucket | default $minio.bucket | default "") "dataResidencyRegion" $rk "target" $target "allowedDestinationCidrs" ((default dict $rab).allowedDestinationCidrs | default (list)) -}}
+{{- $regionList = append $regionList $entry -}}
+{{- end -}}
+{{- end -}}
+{{- $enabled := false -}}
+{{- if gt (len $regionList) 0 -}}
+{{- $enabled = true -}}
+{{- else if $ab.enabled -}}
+{{- $enabled = true -}}
+{{- $t := $ab.target | default dict -}}
+{{- $target := dict "endpoint" ($t.endpoint | default "") "bucket" ($t.bucket | default "") "accessCredentialSecret" ($t.accessCredentialSecret | default "") "kmsKeyId" ($t.kmsKeyId | default "") -}}
+{{- $entry := dict "region" "default" "sourceBucket" ($minio.bucket | default "") "dataResidencyRegion" "" "target" $target "allowedDestinationCidrs" (list) -}}
+{{- $regionList = append $regionList $entry -}}
+{{- end -}}
+{{- if $enabled -}}
+{{- if eq ($minio.endpoint | default "") "" -}}
+{{- fail "§25.11: minio.artifactBackup requires minio.endpoint (the source ArtifactStore cluster the gateway replicates from)." -}}
+{{- end -}}
+{{- $cfg := dict "enabled" true "versioning" (ternary $ab.versioning true (hasKey $ab "versioning")) "replicationLagRpoSeconds" (int ($ab.replicationLagRpoSeconds | default 900)) "residencyCheckIntervalSeconds" (int ($ab.residencyCheckIntervalSeconds | default 300)) "residencyAuditSamplingWindowSeconds" (int ($ab.residencyAuditSamplingWindowSeconds | default 3600)) "regions" $regionList -}}
+{{- $cfg | toJson -}}
+{{- end -}}
+{{- end -}}

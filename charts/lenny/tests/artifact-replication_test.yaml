@@ -1,0 +1,110 @@
+suite: artifact-store replication config
+templates:
+  - gateway-deployment.yaml
+tests:
+  # spec: §25.11 lines 4045-4068 — by default (Tier 1 dev,
+  # minio.artifactBackup.enabled false) the gateway gets no replication
+  # config env, so it runs no replication controller. F-25.11.9.
+  - it: omits LENNY_ARTIFACT_REPLICATION_CONFIG by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ARTIFACT_REPLICATION_CONFIG
+          any: true
+
+  # spec: §25.11 lines 4046-4068 — the single-region minio.artifactBackup
+  # block renders into the gateway's --artifact-replication-config JSON
+  # (one "default" region with no residency constraint). F-25.11.9.
+  - it: renders the single-region replication config JSON
+    set:
+      minio.endpoint: "m:9000"
+      minio.bucket: "b"
+      minio.artifactBackup.enabled: true
+      minio.artifactBackup.target.endpoint: "https://dr:9000"
+      minio.artifactBackup.target.bucket: "db"
+      minio.artifactBackup.target.accessCredentialSecret: "sec"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ARTIFACT_REPLICATION_CONFIG
+            value: '{"enabled":true,"regions":[{"allowedDestinationCidrs":[],"dataResidencyRegion":"","region":"default","sourceBucket":"b","target":{"accessCredentialSecret":"sec","bucket":"db","endpoint":"https://dr:9000","kmsKeyId":""}}],"replicationLagRpoSeconds":900,"residencyAuditSamplingWindowSeconds":3600,"residencyCheckIntervalSeconds":300,"versioning":true}'
+
+  # spec: §25.11 line 4071 — the per-region topology declares each region's
+  # replication under minio.regions.<region>.artifactBackup; the region key
+  # becomes dataResidencyRegion (cross-region replication is prohibited).
+  # Per-region entries take precedence over the single-region block.
+  # F-25.11.9.
+  - it: renders the per-region replication config with dataResidencyRegion = region key
+    set:
+      minio.endpoint: "m:9000"
+      minio.bucket: "b"
+      minio.regions:
+        eu-west-1:
+          sourceBucket: "lenny-artifacts-eu"
+          artifactBackup:
+            target:
+              endpoint: "https://eu-dr:9000"
+              bucket: "eu-backup"
+              accessCredentialSecret: "sec-eu"
+            allowedDestinationCidrs: ["10.0.0.0/8"]
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ARTIFACT_REPLICATION_CONFIG
+            value: '{"enabled":true,"regions":[{"allowedDestinationCidrs":["10.0.0.0/8"],"dataResidencyRegion":"eu-west-1","region":"eu-west-1","sourceBucket":"lenny-artifacts-eu","target":{"accessCredentialSecret":"sec-eu","bucket":"eu-backup","endpoint":"https://eu-dr:9000","kmsKeyId":""}}],"replicationLagRpoSeconds":900,"residencyAuditSamplingWindowSeconds":3600,"residencyCheckIntervalSeconds":300,"versioning":true}'
+
+  # spec: §25.11 — the optional replicationRoleArn renders the source
+  # cluster's replication Role ARN flag. F-25.11.9.
+  - it: renders LENNY_ARTIFACT_REPLICATION_ROLE_ARN when set
+    set:
+      minio.endpoint: "m:9000"
+      minio.bucket: "b"
+      minio.artifactBackup.enabled: true
+      minio.artifactBackup.target.endpoint: "https://dr:9000"
+      minio.artifactBackup.target.bucket: "db"
+      minio.artifactBackup.target.accessCredentialSecret: "sec"
+      minio.artifactBackup.replicationRoleArn: "arn:minio:replication::role/lenny"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ARTIFACT_REPLICATION_ROLE_ARN
+            value: "arn:minio:replication::role/lenny"
+          any: true
+
+  # spec: §25.11 line 4041 — enabling replication without a source
+  # ArtifactStore endpoint (minio.endpoint) is rejected at render so the
+  # operator sees the misconfiguration before the gateway fatals at start.
+  # F-25.11.9.
+  - it: fails the render when artifactBackup is enabled without minio.endpoint
+    set:
+      minio.endpoint: ""
+      minio.bucket: "b"
+      minio.artifactBackup.enabled: true
+      minio.artifactBackup.target.endpoint: "https://dr:9000"
+      minio.artifactBackup.target.bucket: "db"
+      minio.artifactBackup.target.accessCredentialSecret: "sec"
+    asserts:
+      - failedTemplate:
+          errorMessage: "§25.11: minio.artifactBackup requires minio.endpoint (the source ArtifactStore cluster the gateway replicates from)."
+
+# §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+# value with no default; a placeholder lets the gateway-deployment
+# annotation `required` guard render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local
