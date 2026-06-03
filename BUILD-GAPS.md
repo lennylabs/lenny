@@ -31063,7 +31063,7 @@ remain tracked by F-12.8.4.
 
 ---
 
-### - [ ] F-17.3.4 — 3.3 — lenny-ops backup service runs against in-memory fakes; no Postgres or K8s Job wiring [High] — OPEN
+### - [x] F-17.3.4 — 3.3 — lenny-ops backup service runs against in-memory fakes; no Postgres or K8s Job wiring [High] — CLOSED
 
 Spec — §17.3 line 140: §25.11 is the canonical recovery surface.
 §25.11 "Backup Execution" (lines 3963–4007) describes a K8s Job
@@ -31116,6 +31116,19 @@ because no archive exists; the entire §17.3 "RTO < 30s
 (Postgres) / < 5 min (MinIO)" target is not measurable because
 backups are not real. A pre-restore safety backup created by
 `ExecuteRestore` is also fake.
+
+**Resolution (48b4896a):** `buildBackupService` now selects the durable
+backings over the fakes: the Postgres-backed `backuppgstore.New` Store when
+a `pgxpool.Pool` is wired (F-25.11.3), the client-go `backupk8slauncher`
+Kubernetes JobLauncher when a clientset + `--backup-image` are configured
+(F-25.11.4), and a `restoreLocker` over the §25.4 remediation-lock service
+(scope `restore:platform`) when the lock service is wired. Each falls back
+to its in-memory implementation for a Postgres/cluster-less local deploy.
+The pending-fail reconcile now runs server-side for Postgres via the new
+`backup.PendingReconciler` seam (`Store.FailStalePending`, one UPDATE), and
+the `backup-reconcile` cron drives it. Migrations 0123 (prior) + 0126 + 0127
+supply the §25.11 schema; the MemLocker multi-replica split-brain concern is
+closed by the durable lock adapter.
 
 ---
 
@@ -31358,7 +31371,7 @@ backup pipeline does not exist.
 
 ---
 
-### - [ ] F-17.3.9 — 3.8 — Backup retention enforcement Job is registered as a cron action but the Job execution is fake [High] — OPEN
+### - [x] F-17.3.9 — 3.8 — Backup retention enforcement Job is registered as a cron action but the Job execution is fake [High] — CLOSED
 
 Spec — §17.3 "Backup schedule" + §25.11 "Retention Enforcement":
 the daily 03:30 UTC retention sweep deletes expired backups from
@@ -31387,6 +31400,18 @@ Effect: retention enforcement on a production install would leak
 every backup object in MinIO indefinitely (rows expired but
 objects retained), and on restart the cron rebuilds an empty Store
 that "retains" all of zero backups. Storage cost grows unbounded.
+
+**Resolution (48b4896a):** Both halves are closed. The process-local
+store is replaced by the Postgres-backed store (F-25.11.3), so expired
+marks survive a restart. The `backup-retention` cron now launches a real
+`lenny-backup --mode=retention` Job via the wired Kubernetes JobLauncher
+(`Service.LaunchRetentionJob`, new `JobRetention` kind) whenever a launcher
+is configured — the Job pod mounts the lenny-backup-minio credentials and
+performs the MinIO `DeleteObject` + Postgres row removal in the coordinated
+sequence §25.11 lines 4108-4111 require, which lenny-ops itself cannot do
+(it holds no MinIO client). Without a launcher the cron falls back to the
+in-process `EnforceRetention` planner (which marks rows expired and deletes
+objects through the `ObjectDeleter` seam when configured, per F-25.11.15).
 
 ---
 
@@ -40765,7 +40790,7 @@ This is a security/compliance gap: every backup, every restore, every retention 
 
 **Resolution (d358fc2e):** Added an injectable `AuditSink` to the backup `Service`. The orchestrator now emits `backup.created` (CreateBackup), `backup.schedule_updated`/`backup.policy_updated` (Update*), `backup.deleted_by_retention` (EnforceRetention, see F-25.11.15), `restore.preview_generated`/`restore.started`/`restore.resumed`/`restore.failed`, and `legal_hold.ledger_confirmed_current_at` (ConfirmLegalHoldLedger, removing the stale "caller wraps the audit hook" comment) on each transition it owns. `cmd/lenny-ops` wires a logging sink; the durable audit-append destination is a documented seam (lenny-ops has no audit-store client, same posture as the escalation `logEmitter`). Job-completion events (`backup.completed`/`failed`/`verified`, `restore.shard_completed`/`completed`) are emitted by the Job reporter path and remain gated on the real JobLauncher (F-25.11.4). A tier-1 cross-check asserts every emitted type is a known §16.7 catalog entry.
 
-### - [ ] F-25.11.3 — `ops_*` Postgres tables for backup state never migrated [High] — OPEN
+### - [x] F-25.11.3 — `ops_*` Postgres tables for backup state never migrated [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.4.13 — F-25.11.3 and F-25.4.13 both report the ops_* Postgres tables never being migrated; F-17.3.4 is the related but distinct in-memory-fakes wiring defect for the backup service.
 
@@ -40779,7 +40804,21 @@ Implementation status:
 
 **Partial progress (commit 183ebe0f):** The schema-migration half of the F-25.4.13 overlap is resolved — migration 0123 now creates `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, and `ops_restore_state` per the normative §25.11 DDL (tier-1 + tier-2 component coverage). The finding stays OPEN for the remainder it uniquely owns: the Postgres-backed `pkg/ops/backup` store (production still wires `backup.NewMemStore()`), the `ops_artifact_replication_state` table (not in the §25.4.13 set), and the `cmd/lenny-backup` reporter queries actually reaching a durable schema.
 
-### - [ ] F-25.11.4 — Kubernetes-backed JobLauncher never implemented [High] — OPEN
+**Resolution (48b4896a):** All three remaining items are closed.
+(1) `pkg/ops/backup/pgstore` is the Postgres-backed Store over all four
+tables (full-row read-modify-write that preserves the Job-written completion
+fields; `FailStalePending` server-side reconcile); `buildBackupService`
+wires it when a `pgxpool.Pool` is present. (2) Migration 0126 creates
+`ops_artifact_replication_state`, backed by `pkg/blobstore/replication/pgstore`
+and wired into the gateway replication Controller so a fail-closed residency
+suspension survives a restart; migration 0127 adds the `job_id` +
+`ledger_confirmed_*` columns the RestoreState row gained after 0123 shipped.
+(3) With the store wired to the same Postgres, the `cmd/lenny-backup` reporter
+`UPDATE ops_backups` / `SELECT … ops_retention_policy` queries reach a durable
+schema lenny-ops also reads. Embedded-Postgres round-trip tests cover both
+stores; migration text tests cover 0126/0127.
+
+### - [x] F-25.11.4 — Kubernetes-backed JobLauncher never implemented [High] — CLOSED
 
 Spec lines 3963–3995 describe the Job-pod orchestration: lenny-ops creates a K8s Job in `lenny-system` using the `lenny-backup` image, mounts the dedicated SA/Secrets, applies the §25.11 Job Pod Specification (restartPolicy Never, backoffLimit 3, ttlSecondsAfterFinished 3600, activeDeadlineSeconds 7200, the NetworkPolicy, the non-root read-only-rootfs pod security context).
 
@@ -40788,6 +40827,25 @@ Implementation status:
 - `cmd/lenny-ops/deps.go:76` constructs the production Service with `Launcher: backup.NewFakeLauncher()`. No K8s-client-backed implementation exists in the tree.
 - Therefore in any real deployment: every `POST /v1/admin/backups`, `/verify`, and `/restore/execute` returns 202 with a synthetic `JobID` (`lenny-backup-job-1`, ...) without actually launching anything; the row stays in `running` forever; nothing writes to MinIO; nothing completes the row. The §25.11 surface is non-functional end-to-end despite the HTTP API serving 2xx responses.
 - No Helm template renders `lenny-backup-sa`, the `lenny-backup-job` NetworkPolicy, or the `lenny-backup-postgres` / `lenny-backup-minio` Secrets the spec calls out (lines 3990–3994). The only backup-related template is `restore-test-cronjob.yaml`.
+
+**Resolution (48b4896a):** `pkg/ops/backup/k8slauncher` is the production
+client-go `JobLauncher` (and `JobReaper`). `Launch` renders the §25.11 Job
+Pod Specification verbatim — `restartPolicy Never`, `backoffLimit 3`,
+`ttlSecondsAfterFinished 3600`, `activeDeadlineSeconds 7200`, the
+`lenny-backup-sa` ServiceAccount, the non-root read-only-rootfs security
+context with a writable `/tmp` emptyDir, the `app: lenny-backup` label the
+NetworkPolicy selects, the `lenny.dev/backup-id` correlation annotation, and
+the Postgres/MinIO/report-DSN credentials sourced from their Secrets — and
+maps `--mode` per JobKind (full/verify/restore/retention). `JobStatus`
+projects the K8s Job status onto `backup.BackupJob` for the restore
+reconciler; `ListManagedJobs`/`DeleteJob` back the orphan sweep.
+`buildBackupService` wires it when `clientset != nil` and `--backup-image`
+is set, else keeps the FakeLauncher. The Helm half (`lenny-backup-sa` +
+RBAC in `backup-job.yaml`, the two Secrets in `backup-secrets.yaml`, the
+`lenny-backup-job` NetworkPolicy in `ops-network-policies.yaml`) was already
+rendered by a prior batch, so the finding's Helm evidence is stale.
+Fake-clientset tier-1 tests assert the rendered pod spec, the per-mode args,
+the status projection, and the reaper.
 
 ### - [x] F-25.11.5 — Schedule edits via `PUT /v1/admin/backups/schedule` are ignored by the actual cron loop [High] — CLOSED
 
@@ -40840,6 +40898,23 @@ Implementation status:
 Backups can fail silently in production; the alerting surface the spec promises is hollow.
 
 **Deferred (d358fc2e batch):** Blocked on two absent surfaces. (1) lenny-ops exposes no `/metrics` endpoint (`grep promhttp cmd/lenny-ops` is empty), so registered metrics would never be scraped and the alerts that target them could never fire regardless. (2) Four of the six metrics (`lenny_backup_duration_seconds`, `lenny_backup_size_bytes`, `lenny_backup_last_successful_timestamp`, `lenny_restore_duration_seconds`) and the `status="completed"/"failed"` dimension of the counters are Job-completion values emitted by the (still-fake) JobLauncher's reporter path (F-25.11.4). Adding the metrics only to `pkg/observability/metrics/catalog.go` is also inconsistent with that catalog's §16.1/§16.8 scope (the basis on which F-25.11.16 was already closed-deferred to this finding). The metric surface lands with the lenny-ops `/metrics` exporter and the real JobLauncher completion path.
+
+**Re-deferred (48b4896a batch):** Both original blockers are now cleared —
+the lenny-ops `/metrics` endpoint exists (F-16.8.1, `promhttp.Handler()` at
+`cmd/lenny-ops/main.go`) and the real JobLauncher completion path exists
+(F-25.11.4). `lenny_backup_last_successful_timestamp{type}` already emits via
+the leader-gated `backup-metrics` cron. The remaining work is a distinct,
+non-trivial piece rather than a wiring flip: the backup Job pod is ephemeral
+and cannot be scraped, so the counters/gauges (`lenny_backup_total{status}`,
+`lenny_backup_size_bytes`, `lenny_restore_total`) need a Postgres-backed
+scrape-time collector deriving them from `ops_backups` / `ops_restore_state`
+(the `upgradeservice.NewMetricsCollector` pattern), and the two histograms
+(`lenny_backup_duration_seconds`, `lenny_restore_duration_seconds`) need a
+stateful completion-observation hook (observed once per row as the reconciler
+sees it transition to completed, with restart-safe dedup) because a histogram
+cannot be reconstructed from current DB state at scrape time. Deferred to a
+focused metrics batch to get the histogram semantics right rather than rush
+them into this store/launcher batch.
 
 ### - [ ] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — OPEN
 
