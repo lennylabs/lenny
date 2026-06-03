@@ -34482,8 +34482,8 @@ helper that mirrors its precedence; the Go package stays the binary-side
 primitive (the adapter/egress-capture images remain operator-supplied full
 references via `--adapter-image` / `--egress-capture-image`, the resolver's
 override rung). Third-party images (CoreDNS, PgBouncer, MinIO mc, OTel) and
-the §26 reference-runtime catalog keep their own registries. Closed this
-batch (commit pending); helm-unittest covers url propagation, override
+the §26 reference-runtime catalog keep their own registries. Closed by
+713cb7a7; helm-unittest covers url propagation, override
 precedence, and pull-secret propagation on the gateway, PSC, controller, and
 webhook surfaces.
 
@@ -34599,7 +34599,7 @@ block now reads the same knob), so the two leaders never share a node at
 Tier 2/3. `controller.replicas` was already wired. The etcd
 compaction/defrag/quota rows are external-infra guidance for the operator's
 etcd cluster (the chart ships no etcd workload) and stay out of chart scope.
-Closed this batch (commit pending); helm-unittest covers the default
+Closed by 713cb7a7; helm-unittest covers the default
 (flags-omitted) render, an explicit tuning override, preferred/required
 anti-affinity on both controllers, and the Tier 3 preset column.
 
