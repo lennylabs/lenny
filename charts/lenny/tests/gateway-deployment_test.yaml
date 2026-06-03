@@ -714,10 +714,12 @@ tests:
       # + LENNY_QUOTA_USER_FAILOPEN_FRACTION /
       #   LENNY_QUOTA_PER_REPLICA_HARD_CAP /
       #   LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
-      #   (§12.4 lines 222-224, F-12.4.9) = 64.
+      #   (§12.4 lines 222-224, F-12.4.9)
+      # + LENNY_LOG_LEVEL (§17.9.1 line 1350, F-17.9.9 — the default dev
+      #   environment renders the env var) = 65.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 64
+          count: 65
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -2224,6 +2226,85 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --deprecated-api-versions=v1,v2
+
+  # spec: §17.9.1 line 1350 (F-17.9.9) — the environment dimension drives
+  # gateway log verbosity. The default posture (dev) renders debug.
+  - it: drives LENNY_LOG_LEVEL=debug from the default dev environment
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_LOG_LEVEL
+            value: debug
+
+  - it: drives LENNY_LOG_LEVEL=info for a prod environment
+    set:
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_LOG_LEVEL
+            value: info
+
+  # spec: §17.9.3 lines 1402-1409 (F-17.9.4) — provider=sentinel wires the
+  # Sentinel discovery env; addresses and master are plain env, the data
+  # AUTH password is read from the datastore Secret, and TLS is requested.
+  - it: wires the Redis Sentinel env when redis.provider=sentinel
+    set:
+      redis.provider: sentinel
+      redis.sentinels: ["s0:26379", "s1:26379"]
+      redis.sentinelMaster: lenny-master
+      redis.password: sentinel-data-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+            value: s0:26379,s1:26379
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_MASTER
+            value: lenny-master
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+
+  # provider=sentinel without the required fields aborts the render.
+  - it: fails the render when redis.provider=sentinel lacks a master
+    set:
+      redis.provider: sentinel
+      redis.sentinels: ["s0:26379"]
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.3: redis.provider=sentinel requires redis.sentinelMaster"
+
+  - it: rejects an unknown redis.provider
+    set:
+      redis.provider: memcached
+    asserts:
+      - failedTemplate:
+          errorMessage: '§17.9.3: redis.provider must be "external", "sentinel", or "cluster", got "memcached"'
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

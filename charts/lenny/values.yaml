@@ -336,6 +336,17 @@ tokenService:
 
 # redis configures the Redis connection.
 redis:
+  # provider selects the §17.9.3 Redis topology the chart wires the
+  # gateway at. Accepted values: "external" (a single managed endpoint,
+  # configured via url — RDS/ElastiCache/Memorystore/Azure Cache),
+  # "sentinel" (self-managed Redis Sentinel, configured via sentinels +
+  # sentinelMaster), or "cluster" (Redis Cluster, configured via
+  # cluster.addrs). Empty is treated as "external". The chart renders
+  # exactly the connection env block matching the provider so two
+  # topologies cannot be configured at once; the lenny.redisProvider
+  # helper fails the render when the matching fields are missing.
+  # spec: §17.9.3 lines 1402-1409, §12.4.
+  provider: ""
   # tlsPort is the TLS port for Redis (§13.2).
   tlsPort: 6380
   # url is the Redis connection URL. Redis is a bring-your-own external
@@ -365,6 +376,29 @@ redis:
   # TLS port; managed Redis uses 6379 (rediss://) for ElastiCache and
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
+  # password is the §12.4 Redis AUTH credential applied to the data
+  # connection on the Sentinel path (the external/url path carries the
+  # credential inline in the rediss:// URL instead). Rendered into the
+  # lenny-datastore-conn Secret and read by the gateway via
+  # LENNY_REDIS_PASSWORD. §12.4 requires AUTH; an empty value on a
+  # sentinel-provider install fails the gateway startup invariant unless
+  # --redis-allow-insecure is set. Honored only when provider=sentinel.
+  password: ""
+  # sentinels is the §12.4 list of Redis Sentinel host:port endpoints the
+  # gateway discovers the master through. Honored only when
+  # provider=sentinel. The addresses are not secret, so they render as a
+  # plain env var (LENNY_REDIS_SENTINEL_ADDRS).
+  sentinels: []
+  # sentinelMaster is the Sentinel monitored master name (e.g.
+  # lenny-master). Required when provider=sentinel; flows to the gateway
+  # as LENNY_REDIS_SENTINEL_MASTER.
+  sentinelMaster: ""
+  # sentinelPassword is the optional AUTH password for the sentinels
+  # themselves (distinct from the data password above). Sentinels
+  # typically run unauthenticated, so this is empty by default; when set
+  # it renders into the lenny-datastore-conn Secret and is read via
+  # LENNY_REDIS_SENTINEL_PASSWORD. Honored only when provider=sentinel.
+  sentinelPassword: ""
   # cluster.addrs is a comma-separated list of §12.4 Redis Cluster seed
   # nodes (host:port). When set the gateway base Redis client is a
   # CLUSTER KEYSLOT-aware ClusterClient — the Tier 2→3 migration topology
@@ -519,11 +553,14 @@ kms:
   # the broad default is bounded by the per-port (443) egress rule.
   endpointCIDR: "0.0.0.0/0"
 
-# environment names the deployment posture (dev | staging | prod).
-# Production refuses to start with kms.provider=local because the
-# in-process random KEK cannot survive a restart. spec: F-4.3.11 /
-# F-17.5.2. The chart renders the value into --environment on both
-# binaries.
+# environment is the §17.9.1 composition dimension naming the target
+# deployment environment (local | dev | staging | prod). The chart
+# renders it into --environment on both binaries; production refuses to
+# start with kms.provider=local because the in-process random KEK cannot
+# survive a restart. The value also drives gateway log verbosity through
+# the lenny.gatewayLogLevel helper: local and dev render
+# LENNY_LOG_LEVEL=debug, staging and prod render info. spec: §17.9.1
+# line 1350, F-4.3.11 / F-17.5.2 / F-17.9.9.
 environment: "dev"
 
 # monitoring identifies the Prometheus monitoring namespace whose
@@ -531,6 +568,16 @@ environment: "dev"
 # configures the §16.9 / §25.13 bundled §16.5 alerting rules.
 monitoring:
   namespace: "monitoring"
+  # acknowledgeNoPrometheus is the §25.4 line 819 install-time
+  # acknowledgement that lenny-ops runs without a reachable Prometheus.
+  # The §17.6 lenny-preflight Job's "Prometheus reachability" check
+  # treats an unreachable ops.prometheus.url as non-blocking unless this
+  # value is true (INFO at Tier 1, WARN at Tier 2/3). The gateway does
+  # not gate startup on it — preflight is the single touchpoint. Tier 2/3
+  # presets default it false so a missing Prometheus is a blocking
+  # configuration error at those tiers. spec: §17.6 line 518, §25.4
+  # lines 819, 1470.
+  acknowledgeNoPrometheus: false
   # bundleRules gates the §16.5 alert catalog manifests (§25.13). The
   # full catalog is generated from pkg/alerting/rules into
   # files/alerting-rules.yaml; the prometheusrule.yaml template renders

@@ -47,9 +47,10 @@ type installAnswers struct {
 	// Release is the Helm release name and target namespace.
 	Release installRelease `json:"release"`
 	// Environment is the target environment: local, dev, staging, or
-	// prod. It drives nothing in the rendered values directly; it is
-	// recorded so the answer file documents operator intent and so
-	// future wizard logic can branch on it.
+	// prod. composeValues writes it into the rendered values so the
+	// lenny.gatewayLogLevel helper drives gateway log verbosity from it
+	// (local/dev render LENNY_LOG_LEVEL=debug, staging/prod info), per the
+	// §17.9.1 composition dimension. F-17.9.9.
 	Environment string `json:"environment"`
 	// Tier selects the capacity tier preset: tier1, tier2, or tier3.
 	// The wizard layers presets/values-<tier>.yaml under the rendered
@@ -67,6 +68,12 @@ type installAnswers struct {
 	Domain string `json:"domain,omitempty"`
 	// TLS is the gateway TLS strategy: cert-manager or bring-your-own.
 	TLS string `json:"tls,omitempty"`
+	// TLSIssuer is the cert-manager ClusterIssuer name the gateway
+	// Ingress requests its serving certificate from. Honored only when
+	// TLS is cert-manager; composeValues stamps it as the
+	// cert-manager.io/cluster-issuer annotation. Empty leaves the
+	// annotation off so the operator can add it out of band.
+	TLSIssuer string `json:"tlsIssuer,omitempty"`
 	// Postgres carries the Postgres connection details.
 	Postgres installPostgres `json:"postgres"`
 	// Redis carries the Redis connection details.
@@ -535,6 +542,36 @@ func deriveSpiffeTrustDomain(namespace, name string) string {
 	return "lenny"
 }
 
+// ingressTLSSecretName is the per-host serving-certificate Secret the
+// composed gateway.ingress points at. cert-manager issues into it; a
+// bring-your-own deployer creates it. spec: §17.9.2 / §17.6. F-17.9.6.
+const ingressTLSSecretName = "lenny-gateway-ingress-tls"
+
+// composeIngress maps the wizard's domain and TLS answers onto the
+// gateway.ingress chart values. It returns nil when neither a domain nor
+// a TLS strategy was answered, so a stock render keeps the opt-in
+// Ingress off (gateway.ingress.enabled defaults false). spec: §17.9.2
+// line 1376 / §17.6. F-17.9.6.
+func composeIngress(a installAnswers) map[string]any {
+	if a.Domain == "" && a.TLS == "" {
+		return nil
+	}
+	ingress := map[string]any{"enabled": true}
+	if a.Domain != "" {
+		ingress["host"] = a.Domain
+	}
+	switch a.TLS {
+	case "cert-manager":
+		ingress["tls"] = map[string]any{"enabled": true, "secretName": ingressTLSSecretName}
+		if a.TLSIssuer != "" {
+			ingress["annotations"] = map[string]any{"cert-manager.io/cluster-issuer": a.TLSIssuer}
+		}
+	case "bring-your-own":
+		ingress["tls"] = map[string]any{"enabled": true, "secretName": ingressTLSSecretName}
+	}
+	return ingress
+}
+
 // The result is the per-question override layer; the tier preset is
 // layered under it by helm itself via a second -f argument.
 func composeValues(a installAnswers) ([]byte, error) {
@@ -572,6 +609,28 @@ func composeValues(a installAnswers) ([]byte, error) {
 	}
 	if len(oidc) > 0 {
 		values["auth"] = map[string]any{"oidc": oidc}
+	}
+
+	// spec: §17.9.1 line 1350 — the environment dimension drives gateway
+	// log verbosity and the environment-keyed chart defaults via the
+	// lenny.gatewayLogLevel helper. Write it into the values document so
+	// the rendered chart reacts; previously it was echoed only into the
+	// header comment. F-17.9.9.
+	if a.Environment != "" {
+		values["environment"] = a.Environment
+	}
+
+	// spec: §17.9.2 line 1376 / §17.6 — the wizard's domain and TLS
+	// answers reach the gateway Ingress (`gateway.ingress.*`). Domain
+	// turns the opt-in Ingress on and sets its host; the TLS strategy
+	// selects the serving-certificate posture: cert-manager stamps the
+	// cluster-issuer annotation (when an issuer is named) so cert-manager
+	// issues into the per-host Secret, while bring-your-own names the
+	// Secret the operator supplies. Both enable TLS termination on the
+	// Ingress. Previously these answers were collected and discarded.
+	// F-17.9.6.
+	if ingress := composeIngress(a); ingress != nil {
+		values["gateway"] = map[string]any{"ingress": ingress}
 	}
 
 	if a.Postgres.DSN != "" {
@@ -694,6 +753,9 @@ func promptAnswers(r *bufio.Reader, w io.Writer) installAnswers {
 	a.Tier = ask(r, w, "Capacity tier (tier1|tier2|tier3)", defTier)
 	a.Domain = ask(r, w, "Gateway domain (blank to keep the chart default)", "")
 	a.TLS = ask(r, w, "TLS strategy (cert-manager|bring-your-own, blank to skip)", "")
+	if a.TLS == "cert-manager" {
+		a.TLSIssuer = ask(r, w, "cert-manager ClusterIssuer name (blank to add the annotation later)", "")
+	}
 	a.Postgres.DSN = ask(r, w, "Postgres DSN (blank for the chart default)", "")
 	a.Redis.URL = ask(r, w, "Redis URL (blank for the chart default)", "")
 	a.ObjectStorage.Provider = ask(r, w, "Object storage provider (minio|s3|gcs|azure)", "minio")

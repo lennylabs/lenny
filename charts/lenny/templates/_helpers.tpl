@@ -135,3 +135,62 @@ external
 transactional
 {{- end -}}
 {{- end -}}
+
+{{/*
+lenny.redisProvider resolves and validates the §17.9.3 Redis topology
+selector, returning the effective provider ("external", "sentinel", or
+"cluster"). An explicit redis.provider is validated against the
+allow-list and against the fields the chosen topology requires (sentinel
+needs redis.sentinels + redis.sentinelMaster; cluster needs
+redis.cluster.addrs). An empty redis.provider resolves from the
+configured fields — cluster.addrs selects "cluster", a non-empty
+sentinels list selects "sentinel", otherwise "external" — so existing
+url-only and cluster-only values files resolve exactly as before. The
+external topology imposes no requirement: an empty url is the §17.4
+in-memory dev posture. Templates use this helper as the single source of
+truth for which connection env block to render.
+spec: §17.9.3 lines 1402-1409.
+*/}}
+{{- define "lenny.redisProvider" -}}
+{{- $redis := .Values.redis | default dict -}}
+{{- $cluster := $redis.cluster | default dict -}}
+{{- $hasClusterAddrs := ne ($cluster.addrs | default "" | toString) "" -}}
+{{- $hasSentinels := and (hasKey $redis "sentinels") $redis.sentinels -}}
+{{- $provider := $redis.provider | default "" -}}
+{{- if eq $provider "" -}}
+{{- if $hasClusterAddrs -}}{{- $provider = "cluster" -}}
+{{- else if $hasSentinels -}}{{- $provider = "sentinel" -}}
+{{- else -}}{{- $provider = "external" -}}{{- end -}}
+{{- else if not (or (eq $provider "external") (eq $provider "sentinel") (eq $provider "cluster")) -}}
+{{- fail (printf "§17.9.3: redis.provider must be \"external\", \"sentinel\", or \"cluster\", got %q" $provider) -}}
+{{- end -}}
+{{- if eq $provider "sentinel" -}}
+{{- if not $hasSentinels -}}
+{{- fail "§17.9.3: redis.provider=sentinel requires a non-empty redis.sentinels list" -}}
+{{- end -}}
+{{- if eq ($redis.sentinelMaster | default "") "" -}}
+{{- fail "§17.9.3: redis.provider=sentinel requires redis.sentinelMaster" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $provider "cluster") (not $hasClusterAddrs) -}}
+{{- fail "§17.9.3: redis.provider=cluster requires redis.cluster.addrs" -}}
+{{- end -}}
+{{- $provider -}}
+{{- end -}}
+
+{{/*
+lenny.gatewayLogLevel maps the §17.9.1 environment dimension to the
+gateway's LENNY_LOG_LEVEL. The local and dev environments render
+"debug" verbosity; staging and prod render "info". An empty environment
+yields "info", matching the gateway's own LENNY_LOG_LEVEL default, so a
+stock render is unchanged.
+spec: §17.9.1 line 1350; §16.4 line 372.
+*/}}
+{{- define "lenny.gatewayLogLevel" -}}
+{{- $env := .Values.environment | default "" -}}
+{{- if or (eq $env "local") (eq $env "dev") -}}
+debug
+{{- else -}}
+info
+{{- end -}}
+{{- end -}}

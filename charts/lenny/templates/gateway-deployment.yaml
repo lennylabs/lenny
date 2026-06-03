@@ -39,9 +39,18 @@ only the env vars it can satisfy.
 {{- $minio := .Values.minio -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- $hasBillingAuditPg := and $pg (hasKey $pg "billingAuditDSN") (ne $pg.billingAuditDSN "") -}}
-{{- $hasRedis := and $redis $redis.url (ne $redis.url "") -}}
+{{- /* §17.9.3 — the effective Redis topology gates which connection env
+   block renders so two topologies cannot be wired at once. The helper
+   validates an explicit redis.provider and derives one from the
+   configured fields when it is empty (cluster.addrs -> cluster, a
+   non-empty sentinels list -> sentinel, otherwise external). */ -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
 {{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
-{{- $hasRedisCluster := and $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
+{{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $useSentinel := eq $redisProvider "sentinel" -}}
+{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
 {{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
 {{- $hasCoordRedis := and $concerns (hasKey $concerns "coordinationUrl") (ne ($concerns.coordinationUrl | toString) "") -}}
 {{- $hasQuotaRedis := and $concerns (hasKey $concerns "quotaUrl") (ne ($concerns.quotaUrl | toString) "") -}}
@@ -990,6 +999,14 @@ spec:
             # enforces the connect_query __unset__ sentinel.
             - name: LENNY_POOLER_MODE
               value: {{ include "lenny.poolerMode" . | quote }}
+            {{- /* §17.9.1 line 1350 — the environment dimension drives
+                   gateway log verbosity. Rendered only when environment is
+                   set so a stock render keeps the gateway's own Info
+                   default; local/dev select debug, staging/prod info. */}}
+            {{- if ne (.Values.environment | default "") "" }}
+            - name: LENNY_LOG_LEVEL
+              value: {{ include "lenny.gatewayLogLevel" . | quote }}
+            {{- end }}
             {{- if $hasPg }}
             - name: LENNY_POSTGRES_DSN
               valueFrom:
@@ -1020,6 +1037,33 @@ spec:
             {{- if $hasRedisCluster }}
             - name: LENNY_REDIS_CLUSTER_ADDRS
               value: {{ $redisCluster.addrs | quote }}
+            {{- end }}
+            {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
+                   addresses and master name are not secret (plain env);
+                   the data AUTH password and the optional sentinel AUTH
+                   password are read from the datastore Secret. TLS is
+                   requested on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+            {{- if $useSentinel }}
+            - name: LENNY_REDIS_SENTINEL_ADDRS
+              value: {{ join "," $redis.sentinels | quote }}
+            - name: LENNY_REDIS_SENTINEL_MASTER
+              value: {{ $redis.sentinelMaster | quote }}
+            - name: LENNY_REDIS_TLS
+              value: "true"
+            {{- if $hasRedisPassword }}
+            - name: LENNY_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+            {{- end }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
             {{- end }}
             {{- /* §12.4 lines 237-245 — per-concern Redis URLs (logical
                    separation of concerns); each read from the datastore

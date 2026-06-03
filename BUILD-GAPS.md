@@ -34354,7 +34354,7 @@ check, a deployer who omits the bucket configuration is unprotected.
 
 ---
 
-### - [ ] F-17.9.4 — Chart has no `backends`, `postgres.connectionPooler`, `redis.provider`, or `objectStorage.provider` Helm values; §17.9 composition is not a chart contract [High] — OPEN
+### - [x] F-17.9.4 — Chart has no `backends`, `postgres.connectionPooler`, `redis.provider`, or `objectStorage.provider` Helm values; §17.9 composition is not a chart contract [High] — CLOSED
 
 **Spec:** §17.9.3 (lines 1393–1416) and §17.9.5 (lines 1508–1530) show
 the Helm-config shapes that select between cloud-managed and
@@ -34408,6 +34408,8 @@ incidentally but not enforced by the contract.
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:132-155` (redis block, no `provider`/`endpoints`)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:157-173` (minio block, no `provider`)
 - `/Users/joan/projects/lenny/charts/lenny/templates/datastore-secret.yaml` (gates rendering on DSN/URL/endpoint emptiness only)
+
+- **Resolution:** The §17.9.3 composition selectors are now a chart contract. `backends`, `postgres.connectionPooler` (with the §12.3 line 55 default-to-`external` when `backends=cloud-managed`, via the `lenny.connectionPooler`/`lenny.poolerMode` helpers feeding `LENNY_POOLER_MODE`), `objectStorage.provider` (F-17.5.1, drives the gateway `--object-storage-*` adapter selection), and `redis.concerns.*` (the §12.4 logical concern split, F-12.4.16) already existed. This batch adds the last missing selector: `redis.provider` (`external` \| `sentinel` \| `cluster`) plus `redis.sentinels`, `redis.sentinelMaster`, `redis.password`, and `redis.sentinelPassword`. A new `lenny.redisProvider` helper resolves the effective provider (an explicit value is validated against the allow-list and its required fields; an empty value derives from `cluster.addrs`/`sentinels`/`url` so existing values files are unchanged) and gates exactly one connection env block in `gateway-deployment.yaml`. `provider=sentinel` wires `LENNY_REDIS_SENTINEL_ADDRS`/`_MASTER`/`_TLS` and the secret-backed `LENNY_REDIS_PASSWORD`/`_SENTINEL_PASSWORD` (the gateway already supports the full Sentinel path). `postgres.readDsn` is the one remaining key, tracked and deferred under F-17.9.13 (no read/write-split store layer exists). Commit `25fa076a`. Tested: helm-unittest sentinel env + secret rendering + provider-validation failures, plus stock/cluster/url backward-compat renders.
 
 ---
 
@@ -34470,7 +34472,7 @@ path.
 
 ---
 
-### - [ ] F-17.9.6 — `composeValues` ignores the wizard's `domain`, `tls`, `auth.*`, `environment`, and `profile` answers; only postgres.dsn, redis.url, minio.endpoint/bucket, and feature flags survive into the rendered values [High] — OPEN
+### - [x] F-17.9.6 — `composeValues` ignores the wizard's `domain`, `tls`, `auth.*`, `environment`, and `profile` answers; only postgres.dsn, redis.url, minio.endpoint/bucket, and feature flags survive into the rendered values [High] — CLOSED
 
 **Spec:** §17.9.2 (line 1376) and §17.6 (line 671) name the wizard as
 the first-class path to produce a working install. The composed Helm
@@ -34509,6 +34511,8 @@ gets a chart render identical to one that answered both empty.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:466-539` (composeValues)
 - `/Users/joan/projects/lenny/charts/lenny/answers/README.md:39-41` (documented but unwired schema)
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:567-589` (wizard prompts that get discarded)
+
+- **Resolution:** `composeValues` now maps the previously-discarded answers onto their existing chart value paths. The new `composeIngress` helper turns a `domain` answer into `gateway.ingress.enabled: true` + `gateway.ingress.host`, and the `tls` answer into `gateway.ingress.tls.{enabled,secretName=lenny-gateway-ingress-tls}`; `cert-manager` additionally stamps the `cert-manager.io/cluster-issuer` annotation when the new `tlsIssuer` answer (prompted only for cert-manager) is set. `environment` is written into the rendered values (it drives the §17.9.1 effects, see F-17.9.9) instead of only the header comment, which also fixes the latent bug where a wizard `environment=prod` install rendered `--environment=dev`. `auth.oidc.*` was already wired (F-10.3.14); `profile` stays advisory metadata by design (F-17.9.15). Commit `25fa076a`. Tested: `cmd/lenny-ctl` `TestComposeValuesWiresIngress_spec_17_9_6` (domain/cert-manager-with+without-issuer/bring-your-own/none) and `TestComposeValuesWritesEnvironment_spec_17_9_1`.
 
 ---
 
@@ -34574,7 +34578,7 @@ label, `node.kubernetes.io/instance-type` patterns, the
 
 ---
 
-### - [ ] F-17.9.9 — `environment` answer is recorded but drives nothing in the rendered chart; the §17.9.1 dimension table claims it drives alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, and `acknowledgeNoPrometheus` default [Medium] — OPEN
+### - [x] F-17.9.9 — `environment` answer is recorded but drives nothing in the rendered chart; the §17.9.1 dimension table claims it drives alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, and `acknowledgeNoPrometheus` default [Medium] — CLOSED
 
 **Spec:** §17.9.1 (line 1350): "Environment: `local | dev | staging |
 prod` → Drives: Alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS
@@ -34614,6 +34618,8 @@ composition axes; its claimed effects do not materialise.
   `.Values.environment` reference)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:185-230`
   (`monitoring` block has no `acknowledgeNoPrometheus` key)
+
+- **Resolution:** The `environment` dimension now drives a concrete, rendered chart effect. A new `lenny.gatewayLogLevel` helper maps the pre-existing top-level `environment` value (the §17.5.2 KMS posture, reused as the §17.9.1 dimension) to gateway log verbosity: `local`/`dev` render `LENNY_LOG_LEVEL=debug`, `staging`/`prod` render `info`; the gateway already reads `LENNY_LOG_LEVEL` (`pkg/observability/logging.Setup`). `gateway-deployment.yaml` renders the env from the helper. The missing `monitoring.acknowledgeNoPrometheus: false` value was added (the §17.6 Prometheus-reachability preflight and §25.4 line 819 reference it; Tier 2/3 presets keep it false so a missing Prometheus is blocking there). The wizard writes `environment` into the composed values (F-17.9.6) so a wizard install reacts too. `LENNY_DEV_MODE` (via `global.devMode`), TLS strictness (via `backends`), and alert thresholds (tier presets) remain the existing mechanisms; this finding's gap was that `.Values.environment` drove nothing rendered, which the log-level helper resolves. Commit `25fa076a`. Tested: helm-unittest `LENNY_LOG_LEVEL=debug` (default dev) / `info` (prod).
 
 ---
 
@@ -34683,7 +34689,7 @@ exists, but the airgap-specific preflight knob does not.
 
 ---
 
-### - [ ] F-17.9.12 — Spec lists Tier-3 Redis concern separation (`coordinationEndpoints`, `quotaEndpoints`, `cacheEndpoints`); the chart has a single `redis.url` [Medium] — OPEN
+### - [x] F-17.9.12 — Spec lists Tier-3 Redis concern separation (`coordinationEndpoints`, `quotaEndpoints`, `cacheEndpoints`); the chart has a single `redis.url` [Medium] — CLOSED
 
 **Spec:** §17.9.3 (lines 1407–1409): "For Tier 3 concern separation,
 configure per-role endpoints: `coordinationEndpoints: [...]`,
@@ -34705,9 +34711,11 @@ endpoints, the single Redis URL becomes the bottleneck.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:132-155`
 
+- **Resolution:** Evidence stale. The §12.4 logical concern separation (which §17.9.3 line 1388 maps onto separate managed-Redis replication groups) is implemented as `redis.concerns.{coordinationUrl,quotaUrl,cachePubSubUrl,sessionDataUrl,delegationUrl}` (commit `41f86bf5`, F-12.4.16). Each non-empty concern URL renders into the `lenny-datastore-conn` Secret and the gateway reads it via `LENNY_REDIS_{COORDINATION,QUOTA,CACHE_PUBSUB,SESSION_DATA,DELEGATION}_URL`; the gateway routes each store role to its dedicated client. The chart uses dedicated per-concern URLs rather than the spec's example `coordinationEndpoints`/`quotaEndpoints`/`cacheEndpoints` lists, but the Tier-3 concern split the finding asks for is present. The `redis.provider` selector landed alongside (F-17.9.4). No new code.
+
 ---
 
-### - [ ] F-17.9.13 — `postgres.readDsn` (read-replica reader endpoint) is not a Helm value [Medium] — OPEN
+### - [ ] F-17.9.13 — `postgres.readDsn` (read-replica reader endpoint) is not a Helm value [Medium] — DEFERRED
 
 **Spec:** §17.9.3 (line 1400): "`readDsn: 'postgres://...'  # Read
 replica endpoint (provider reader endpoint)"
@@ -34723,6 +34731,8 @@ operator-facing knob is missing either way.
 
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:259-284`
+
+- **Deferred:** The gateway has no read/write-split store layer. It constructs a single `*pgxpool.Pool` from `--postgres-dsn` (plus the optional `--postgres-billing-audit-dsn` for the §12.3 R-03 split), and the `storerouter.StoreRouter` interface exposes only write-or-either shard pools — there is no `ReadShard`/read-pool seam, and read-heavy callers (session status, task tree, audit reads, usage reports) read through the primary. §12.3 line 146 is a SHOULD. Adding only a `postgres.readDsn` Helm value + gateway env would be a hollow knob (rule O): the gateway would open a pool nothing routes to. Read-replica routing is a dedicated store-layer effort (thread a read pool through the read-only query paths) and is deferred to that batch; the Helm value lands with it.
 
 ---
 

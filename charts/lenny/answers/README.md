@@ -39,11 +39,12 @@ typo fails the install rather than being silently ignored.
 |---|---|---|---|
 | `release.name` | string | `lenny` | Helm release name. The `--release` flag overrides it. |
 | `release.namespace` | string | `lenny-system` | Release namespace. The `--namespace` flag overrides it. |
-| `environment` | string | `local` | Target environment: `local`, `dev`, `staging`, or `prod`. |
+| `environment` | string | `local` | Target environment: `local`, `dev`, `staging`, or `prod`. Written into the rendered values; drives gateway log verbosity (`local`/`dev` render `LENNY_LOG_LEVEL=debug`, `staging`/`prod` render `info`) and the `--environment` KMS posture. |
 | `tier` | string | `tier1` for `local` and `dev`, `tier2` for `staging` and `prod` | Capacity tier: `tier1`, `tier2`, or `tier3`. Selects the preset under `charts/lenny/presets/`. |
 | `profile` | string | empty | Advisory answer-file base name recorded from cluster detection. Not loaded as a second values file. |
-| `domain` | string | empty | Gateway external DNS name. Empty keeps the chart default. |
-| `tls` | string | empty | TLS strategy: `cert-manager` or `bring-your-own`. |
+| `domain` | string | empty | Gateway external DNS name. When set, enables the gateway Ingress (`gateway.ingress.enabled`) and sets its host. Empty keeps the chart default. |
+| `tls` | string | empty | TLS strategy: `cert-manager` or `bring-your-own`. Both enable TLS on the gateway Ingress and name the `lenny-gateway-ingress-tls` Secret; `cert-manager` additionally stamps the `cert-manager.io/cluster-issuer` annotation when `tlsIssuer` is set. |
+| `tlsIssuer` | string | empty | cert-manager `ClusterIssuer` name the gateway Ingress requests its serving certificate from. Honored only when `tls` is `cert-manager`. Empty leaves the annotation off so the operator can add it out of band. |
 | `postgres.dsn` | string | empty | Postgres DSN. Empty keeps the chart default. |
 | `redis.url` | string | empty | Redis connection URL. Empty keeps the chart default. |
 | `objectStorage.endpoint` | string | empty | Object-store endpoint. Empty keeps the chart default. |

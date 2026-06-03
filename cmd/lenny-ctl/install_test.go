@@ -475,10 +475,14 @@ func TestComposeValuesAlwaysSetsRequiredSpiffeTrustDomain_spec_10_3(t *testing.T
 	if got := global["spiffeTrustDomain"]; got != "lenny-lenny-system-lenny" {
 		t.Errorf("derived spiffeTrustDomain = %v, want lenny-lenny-system-lenny", got)
 	}
-	// Only the required global.spiffeTrustDomain should be emitted when
-	// every other answer is a default.
-	if len(v) != 1 || len(global) != 1 {
-		t.Errorf("expected only global.spiffeTrustDomain, got %+v", v)
+	// The required global.spiffeTrustDomain and the environment dimension
+	// (§17.9.1, F-17.9.9) are the only blocks emitted when every other
+	// answer is a default; no data-store, feature, or ingress block.
+	if v["environment"] != "local" {
+		t.Errorf("expected environment=local in the composed values, got %+v", v)
+	}
+	if len(v) != 2 || len(global) != 1 {
+		t.Errorf("expected only global.spiffeTrustDomain and environment, got %+v", v)
 	}
 }
 
@@ -869,4 +873,140 @@ func TestInstallPreflightConfig_MinIONeedsCredentials(t *testing.T) {
 	if cfg.MinIOEndpoint != "minio:9000" || cfg.MinIOAccessKey != "ak" || cfg.MinIOBucket != "artifacts" {
 		t.Errorf("MinIO should be probed with credentials present: %+v", cfg)
 	}
+}
+
+// spec: §17.9.1 line 1350 — composeValues writes the environment answer
+// into the rendered values so the lenny.gatewayLogLevel helper drives
+// gateway log verbosity from it; previously it was echoed only into the
+// header comment. F-17.9.9.
+func TestComposeValuesWritesEnvironment_spec_17_9_1(t *testing.T) {
+	for _, env := range []string{"local", "dev", "staging", "prod"} {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: env, Tier: "tier1",
+			Auth: installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+		}
+		if env == "local" {
+			a.Auth = installAuth{Mode: "dev"}
+		}
+		out, err := composeValues(a)
+		if err != nil {
+			t.Fatalf("composeValues(%s): %v", env, err)
+		}
+		var v map[string]any
+		if err := yaml.Unmarshal(out, &v); err != nil {
+			t.Fatalf("invalid YAML: %v", err)
+		}
+		if v["environment"] != env {
+			t.Errorf("environment = %v, want %q: %+v", v["environment"], env, v)
+		}
+	}
+}
+
+// spec: §17.9.2 line 1376 / §17.6 — composeValues maps the domain and
+// TLS answers onto gateway.ingress instead of discarding them. F-17.9.6.
+func TestComposeValuesWiresIngress_spec_17_9_6(t *testing.T) {
+	t.Run("domain enables the ingress and sets host", func(t *testing.T) {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: "prod", Tier: "tier2",
+			Auth:   installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+			Domain: "lenny.acme.com",
+		}
+		ing := ingressOf(t, a)
+		if ing["enabled"] != true || ing["host"] != "lenny.acme.com" {
+			t.Fatalf("ingress = %+v, want enabled+host", ing)
+		}
+	})
+
+	t.Run("cert-manager stamps the cluster-issuer annotation", func(t *testing.T) {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: "prod", Tier: "tier2",
+			Auth:      installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+			Domain:    "lenny.acme.com",
+			TLS:       "cert-manager",
+			TLSIssuer: "letsencrypt-prod",
+		}
+		ing := ingressOf(t, a)
+		tls, _ := ing["tls"].(map[string]any)
+		if tls["enabled"] != true || tls["secretName"] != ingressTLSSecretName {
+			t.Fatalf("tls = %+v, want enabled + secretName", tls)
+		}
+		ann, _ := ing["annotations"].(map[string]any)
+		if ann["cert-manager.io/cluster-issuer"] != "letsencrypt-prod" {
+			t.Fatalf("annotations = %+v, want cluster-issuer", ann)
+		}
+	})
+
+	t.Run("cert-manager without an issuer omits the annotation", func(t *testing.T) {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: "prod", Tier: "tier2",
+			Auth:   installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+			Domain: "lenny.acme.com", TLS: "cert-manager",
+		}
+		ing := ingressOf(t, a)
+		if _, present := ing["annotations"]; present {
+			t.Fatalf("annotations must be omitted without an issuer: %+v", ing)
+		}
+	})
+
+	t.Run("bring-your-own enables tls and names the secret", func(t *testing.T) {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: "prod", Tier: "tier2",
+			Auth:   installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+			Domain: "lenny.acme.com", TLS: "bring-your-own",
+		}
+		ing := ingressOf(t, a)
+		tls, _ := ing["tls"].(map[string]any)
+		if tls["enabled"] != true || tls["secretName"] != ingressTLSSecretName {
+			t.Fatalf("tls = %+v, want enabled + secretName", tls)
+		}
+		if _, present := ing["annotations"]; present {
+			t.Fatalf("bring-your-own must not stamp a cluster-issuer: %+v", ing)
+		}
+	})
+
+	t.Run("no domain and no tls omits the gateway block", func(t *testing.T) {
+		a := installAnswers{
+			Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
+			Environment: "prod", Tier: "tier2",
+			Auth: installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+		}
+		out, err := composeValues(a)
+		if err != nil {
+			t.Fatalf("composeValues: %v", err)
+		}
+		var v map[string]any
+		if err := yaml.Unmarshal(out, &v); err != nil {
+			t.Fatalf("invalid YAML: %v", err)
+		}
+		if _, present := v["gateway"]; present {
+			t.Fatalf("gateway block must be omitted when no domain/tls: %+v", v)
+		}
+	})
+}
+
+// ingressOf composes a values doc and returns the gateway.ingress map.
+func ingressOf(t *testing.T, a installAnswers) map[string]any {
+	t.Helper()
+	out, err := composeValues(a)
+	if err != nil {
+		t.Fatalf("composeValues: %v", err)
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal(out, &v); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	gw, ok := v["gateway"].(map[string]any)
+	if !ok {
+		t.Fatalf("gateway block missing: %+v", v)
+	}
+	ing, ok := gw["ingress"].(map[string]any)
+	if !ok {
+		t.Fatalf("gateway.ingress missing: %+v", gw)
+	}
+	return ing
 }
