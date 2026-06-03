@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -74,14 +75,19 @@ func TestService_Stream_ReplaysBacklog(t *testing.T) {
 	}
 }
 
-// spec: §25.5 — Last-Event-ID skips already-seen events on reconnect.
+// spec: §25.5 lines 2679-2680 — Last-Event-ID (the CloudEvents id /
+// eventKey) skips already-seen events on reconnect.
 func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 	s.Publish(context.Background(), events.OperationalEvent{Type: "first"})
 	s.Publish(context.Background(), events.OperationalEvent{Type: "second"})
 
+	// The resume cursor is the CloudEvents id of the first event, read
+	// back from the buffer (clients echo the SSE id: line).
+	firstKey := s.Query(0, events.EventFilter{}, 0).Events[0].Event.ID
+
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
-	req.Header.Set("Last-Event-ID", "1")
+	req.Header.Set("Last-Event-ID", firstKey)
 	rec := newStreamingRecorder()
 	ctx, cancel := context.WithCancel(req.Context())
 	go func() {
@@ -92,7 +98,7 @@ func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 
 	frames := parseSSEFrames(rec.Body.String())
 	if len(frames) != 1 {
-		t.Fatalf("frames after resume: %d", len(frames))
+		t.Fatalf("frames after resume: %d (%q)", len(frames), rec.Body.String())
 	}
 	if frames[0].Type != "second" {
 		t.Errorf("frame.Type: %q", frames[0].Type)
@@ -152,43 +158,52 @@ func TestService_Stream_FilterByEventType(t *testing.T) {
 	}
 }
 
-// spec: §25.5 / §25.2 — the polling endpoint returns the §25.2
-// pagination envelope (cursor + hasMore).
+// spec: §25.5 lines 2687-2699 / §25.2 — the polling endpoint returns
+// the canonical pagination envelope (items + opaque cursor + hasMore +
+// cursorKind + headCursor) and the cursor round-trips to the next page.
 func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 	for i := 0; i < 5; i++ {
-		s.Publish(context.Background(), events.OperationalEvent{Type: "ev"})
+		s.Publish(context.Background(), events.OperationalEvent{Type: "alert_fired"})
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events?limit=3", nil)
 	rec := httptest.NewRecorder()
 	s.HandlePoll(rec, req)
 
-	var page events.BufferedEventPage
+	var page opsstream.EventPage
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(page.Events) != 3 {
-		t.Errorf("first page size: %d", len(page.Events))
+	if len(page.Items) != 3 {
+		t.Errorf("first page size: %d", len(page.Items))
 	}
-	if page.Pagination.Cursor != 3 {
-		t.Errorf("cursor: %d", page.Pagination.Cursor)
+	if page.Pagination.Cursor == "" {
+		t.Error("cursor should be a non-empty opaque string")
+	}
+	if page.Pagination.CursorKind != "buffer" {
+		t.Errorf("cursorKind: %q, want buffer", page.Pagination.CursorKind)
+	}
+	if page.Pagination.HeadCursor == "" {
+		t.Error("headCursor should be set on a live buffer")
 	}
 	if !page.Pagination.HasMore {
 		t.Error("hasMore should be true")
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/v1/admin/events?limit=3&since=3", nil)
+	// Round-trip the opaque cursor into the next page request.
+	next := "/v1/admin/events?limit=3&cursor=" + url.QueryEscape(page.Pagination.Cursor)
+	req = httptest.NewRequest(http.MethodGet, next, nil)
 	rec = httptest.NewRecorder()
 	s.HandlePoll(rec, req)
-	page = events.BufferedEventPage{}
+	page = opsstream.EventPage{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page2: %v", err)
 	}
-	if len(page.Events) != 2 || page.Pagination.HasMore {
-		t.Fatalf("page2: events=%d hasMore=%v", len(page.Events), page.Pagination.HasMore)
+	if len(page.Items) != 2 || page.Pagination.HasMore {
+		t.Fatalf("page2: items=%d hasMore=%v", len(page.Items), page.Pagination.HasMore)
 	}
-	if page.Pagination.Cursor != 5 {
-		t.Errorf("page2 cursor: %d", page.Pagination.Cursor)
+	if page.Pagination.GapDetected {
+		t.Error("a valid round-tripped cursor must not report a gap")
 	}
 }
 
@@ -288,7 +303,9 @@ type pipeWriter struct {
 	status int
 }
 
-type pipeReader struct{ r interface{ ReadString(byte) (string, error) } }
+type pipeReader struct {
+	r interface{ ReadString(byte) (string, error) }
+}
 
 type pipeWriterAdapter struct {
 	wr   chan []byte
@@ -306,8 +323,8 @@ func newPipeRecorder() (*pipeReaderWrap, *pipeWriter) {
 	return pr, pw
 }
 
-func (p *pipeWriter) Header() http.Header        { return p.header }
-func (p *pipeWriter) WriteHeader(code int)       { p.status = code }
+func (p *pipeWriter) Header() http.Header  { return p.header }
+func (p *pipeWriter) WriteHeader(code int) { p.status = code }
 func (p *pipeWriter) Write(b []byte) (int, error) {
 	buf := make([]byte, len(b))
 	copy(buf, b)

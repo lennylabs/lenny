@@ -85,6 +85,17 @@ func (s *statusRecorder) WriteHeader(status int) {
 	s.ResponseWriter.WriteHeader(status)
 }
 
+// Flush forwards to the underlying ResponseWriter's Flusher so the §25.5
+// SSE handler (GET /v1/admin/events/stream) can stream frames through
+// the access-logging middleware. Without this passthrough the SSE
+// handler's http.Flusher type assertion fails and the stream aborts with
+// "streaming unsupported". spec: §25.5 lines 2677-2685.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ContextWithComponent stamps component=lenny-ops on ctx for log lines
 // emitted outside the HTTP request path (background loops, leader-elected
 // reconcilers). spec: §16.4 every log line carries the binary label.

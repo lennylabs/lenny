@@ -154,10 +154,10 @@ type BufferedEvent struct {
 }
 
 // EventFilter narrows a §25.3 / §25.5 buffer query. An empty field does
-// not filter on that dimension. Both fields accept the §25.2 CSV form
+// not filter on that dimension. The CSV fields accept the §25.2 CSV form
 // (e.g. EventType "alert_fired,session_failed", Severity
 // "critical,warning"); a query matches when the event matches any one
-// of the comma-separated tokens. spec: §25.2 lines 210-211.
+// of the comma-separated tokens. spec: §25.2 lines 210-211, 334-345.
 type EventFilter struct {
 	// EventType matches the CloudEvents type, either in full
 	// (dev.lenny.alert_fired) or by short-name suffix (alert_fired).
@@ -167,11 +167,33 @@ type EventFilter struct {
 	// Severity matches the event's severity extension attribute. A CSV
 	// value matches the union of its tokens.
 	Severity string
+
+	// ResourceType matches the type segment of the event's Subject (the
+	// part before the first "/", e.g. "pool" in "pool/default-gvisor").
+	// A CSV value matches the union of its tokens. spec: §25.2 line 340
+	// (?resourceType=pool).
+	ResourceType string
+
+	// ResourceID matches the id segment of the event's Subject (the part
+	// after the first "/", e.g. "default-gvisor" in "pool/default-
+	// gvisor"). A CSV value matches the union of its tokens. spec: §25.2
+	// line 340 (?resourceId=default-gvisor).
+	ResourceID string
+
+	// Since constrains the query to events at or after this instant. A
+	// zero value imposes no lower time bound. spec: §25.2 line 344
+	// (?since=, RFC 3339).
+	Since time.Time
+
+	// Until constrains the query to events at or before this instant. A
+	// zero value imposes no upper time bound. spec: §25.2 line 344
+	// (?until=, RFC 3339).
+	Until time.Time
 }
 
 // Matches reports whether e satisfies the filter. An empty filter field
 // does not constrain that dimension; a CSV field matches when any token
-// matches (a §25.2 union). spec: §25.2 lines 210-211.
+// matches (a §25.2 union). spec: §25.2 lines 210-211, 334-345.
 func (f EventFilter) Matches(e OperationalEvent) bool {
 	if !matchToken(f.Severity, func(tok string) bool { return e.Severity == tok }) {
 		return false
@@ -181,7 +203,31 @@ func (f EventFilter) Matches(e OperationalEvent) bool {
 	}) {
 		return false
 	}
+	resType, resID := splitSubject(e.Subject)
+	if !matchToken(f.ResourceType, func(tok string) bool { return resType == tok }) {
+		return false
+	}
+	if !matchToken(f.ResourceID, func(tok string) bool { return resID == tok }) {
+		return false
+	}
+	if !f.Since.IsZero() && e.Time.Before(f.Since) {
+		return false
+	}
+	if !f.Until.IsZero() && e.Time.After(f.Until) {
+		return false
+	}
 	return true
+}
+
+// splitSubject splits a CloudEvents subject of the canonical
+// "type/id" form into its resource type and id segments. A subject
+// with no "/" is treated as the resource type with an empty id. spec:
+// §16.6 catalogue subject convention ("pool/default-gvisor").
+func splitSubject(subject string) (resType, resID string) {
+	if i := strings.Index(subject, "/"); i >= 0 {
+		return subject[:i], subject[i+1:]
+	}
+	return subject, ""
 }
 
 // matchToken reports whether csv is empty (no constraint) or any of its
@@ -348,4 +394,40 @@ func (b *EventBuffer) Query(since uint64, filter EventFilter, limit int) Buffere
 		}
 	}
 	return page
+}
+
+// Lookup returns the buffer id of the retained event whose CloudEvents
+// id (the canonical eventKey) equals key, and whether it was found. It
+// backs the §25.5 cross-source cursor translation: a cursor produced by
+// any source carries an eventKey, and the buffer resolves it to a local
+// position by scanning. spec: §25.5 lines 2666-2675 ("translates by
+// scanning for the first event with a matching eventKey").
+func (b *EventBuffer) Lookup(key string) (uint64, bool) {
+	if key == "" {
+		return 0, false
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	oldest := b.oldestID()
+	for id := oldest; id <= b.head; id++ {
+		entry := b.ring[id%b.cap]
+		if entry.ID == id && entry.Event.ID == key {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// Bounds returns the oldest and newest (head) buffer ids still
+// retained, along with their CloudEvents eventKeys. found is false when
+// the buffer is empty. It backs the §25.5 opaque headCursor /
+// oldestAvailableCursor encoding.
+func (b *EventBuffer) Bounds() (oldestID, headID uint64, oldestKey, headKey string, found bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.head == 0 {
+		return 0, 0, "", "", false
+	}
+	oldest := b.oldestID()
+	return oldest, b.head, b.ring[oldest%b.cap].Event.ID, b.ring[b.head%b.cap].Event.ID, true
 }

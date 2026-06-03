@@ -2,6 +2,8 @@
 
 package events
 
+import "strings"
+
 // EventType is a §16.6 operational-event short name. The CloudEvents
 // `type` attribute of an emitted event is "dev.lenny." + EventType.
 type EventType string
@@ -147,4 +149,71 @@ func inCatalog(t EventType, catalog []EventType) bool {
 		}
 	}
 	return false
+}
+
+// knownSeverities is the §16.6 closed set of severity values an
+// operational event carries. The §25.5 ?severity= filter is validated
+// against it so an unrecognized token returns INVALID_EVENT_FILTER
+// rather than silently matching nothing. spec: §16.6 catalogue severity
+// column (Critical | Warning | Info); §25.5 line 2796.
+var knownSeverities = map[string]bool{
+	"critical": true,
+	"warning":  true,
+	"info":     true,
+}
+
+// IsKnownSeverity reports whether s is a §16.6 catalogue severity value.
+func IsKnownSeverity(s string) bool { return knownSeverities[s] }
+
+// normalizeEventTypeToken reduces a filter token to its §16.6 short
+// name, stripping the dev.lenny. CloudEvents prefix when present so the
+// token can be checked against the catalogue.
+func normalizeEventTypeToken(tok string) EventType {
+	return EventType(strings.TrimPrefix(tok, cloudEventsPrefix))
+}
+
+// ValidateFilterTokens reports the first unrecognized event-type or
+// severity token in the CSV filter values, or nil when every token is
+// in the §16.6 catalogue. Empty values impose no constraint and pass.
+// It backs the §25.5 INVALID_EVENT_FILTER (400) error: an agent that
+// mistypes an event type or severity gets a precise rejection instead
+// of an empty page. spec: §25.5 lines 2795-2796.
+func ValidateFilterTokens(eventType, severity string) error {
+	for _, tok := range splitCSV(eventType) {
+		if !IsKnownEventType(normalizeEventTypeToken(tok)) {
+			return &FilterTokenError{Dimension: "eventType", Token: tok}
+		}
+	}
+	for _, tok := range splitCSV(severity) {
+		if !IsKnownSeverity(tok) {
+			return &FilterTokenError{Dimension: "severity", Token: tok}
+		}
+	}
+	return nil
+}
+
+// splitCSV splits a §25.2 CSV filter value into its non-empty,
+// space-trimmed tokens.
+func splitCSV(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	var out []string
+	for _, tok := range strings.Split(csv, ",") {
+		if tok = strings.TrimSpace(tok); tok != "" {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// FilterTokenError names an unrecognized §25.5 filter token. The
+// caller maps it to the INVALID_EVENT_FILTER (400) error code.
+type FilterTokenError struct {
+	Dimension string
+	Token     string
+}
+
+func (e *FilterTokenError) Error() string {
+	return "unrecognized " + e.Dimension + " filter token: " + e.Token
 }

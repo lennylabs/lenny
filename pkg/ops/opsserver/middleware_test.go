@@ -16,6 +16,29 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
 
+// spec: §25.5 lines 2677-2685 — the access-log middleware's
+// ResponseWriter wrapper forwards Flush() to the underlying writer so
+// the SSE handler can stream through it. A wrapper that drops Flusher
+// aborts the SSE stream with "streaming unsupported".
+func TestStatusRecorderForwardsFlush_spec_25_5_2677(t *testing.T) {
+	var flushed bool
+	base := flushSpy{ResponseRecorder: httptest.NewRecorder(), flushed: &flushed}
+	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
+
+	var asFlusher http.Flusher = rec // compile-time: statusRecorder is a Flusher
+	asFlusher.Flush()
+	if !flushed {
+		t.Error("statusRecorder.Flush did not reach the underlying Flusher")
+	}
+}
+
+type flushSpy struct {
+	*httptest.ResponseRecorder
+	flushed *bool
+}
+
+func (f flushSpy) Flush() { *f.flushed = true }
+
 // TestWithCorrelationStampsRequestContext_spec_25_4_2499 covers §25.4
 // lines 2499-2509: the middleware reads the §25.2 correlation headers
 // off the inbound request and stamps a correlation.Fields value onto the

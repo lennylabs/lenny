@@ -24,14 +24,14 @@ func TestEventStreamServiceSurface_spec_25_5_2574(t *testing.T) {
 			iface.NumMethod())
 	}
 	want := map[string]struct{}{
-		"StreamEvents":        {},
-		"ListEvents":          {},
-		"CreateSubscription":  {},
-		"ListSubscriptions":   {},
-		"GetSubscription":     {},
-		"UpdateSubscription":  {},
-		"DeleteSubscription":  {},
-		"ListDeliveries":      {},
+		"StreamEvents":       {},
+		"ListEvents":         {},
+		"CreateSubscription": {},
+		"ListSubscriptions":  {},
+		"GetSubscription":    {},
+		"UpdateSubscription": {},
+		"DeleteSubscription": {},
+		"ListDeliveries":     {},
 	}
 	for i := 0; i < iface.NumMethod(); i++ {
 		name := iface.Method(i).Name

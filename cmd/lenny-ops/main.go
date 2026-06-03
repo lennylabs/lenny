@@ -369,7 +369,7 @@ func main() {
 	// delivery surface (per §25.5 cold-start). Built before the webhook
 	// worker so OnSelfHealthChange can emit through it and the worker can
 	// consume the same Redis stream.
-	eventStream := opsstream.New(opsstream.Options{})
+	eventStream := opsstream.New(opsstream.Options{ReplicaID: replicaID})
 	var opsEmitter events.EventEmitter = eventStream
 	if redisClient != nil {
 		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID, *eventsStreamMaxLen)
