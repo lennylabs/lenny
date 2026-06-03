@@ -22080,7 +22080,7 @@ Evidence:
 - spec §12.9 default-mapping table row "Credential leases — T4 —
   Redis (encrypted)"
 
-**Resolution (commit `<this batch>`):** The Postgres-backed lease store
+**Resolution (commit `c7b8d5c6`):** The Postgres-backed lease store
 now meets the §12.9 T4 — Restricted encryption-at-rest control, the same
 posture migration 0039 gave the T4 credential-secret registry (the
 established precedent in this codebase for storing T4 material in
