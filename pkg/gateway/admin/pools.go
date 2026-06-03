@@ -100,6 +100,12 @@ type PoolPayload struct {
 	// spec: spec/04_system-components.md line 559.
 	SyncStatus string `json:"syncStatus,omitempty"`
 
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal pool_config_generation. List and GET responses carry it so
+	// a client can supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
+
 	// TaskPolicy is the §5.2 task-mode taskPolicy block (lines 398-413).
 	// Required when ExecutionMode is `task` and must be absent on session
 	// and concurrent pools; the gateway-side ValidateTaskPolicy enforces
@@ -215,6 +221,9 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		CreatedAt:                        rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                        rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                        rfc3339Nano(p.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal
+		// pool_config_generation (the per-resource version column).
+		ETag: formatETag(p.Generation),
 	}
 	if p.TaskPolicy != nil {
 		out.TaskPolicy = taskPolicyToWire(p.TaskPolicy)
@@ -559,6 +568,9 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	payload := fromPool(row)
 	r.attachPoolStatus(req.Context(), &payload)
 	payload.SyncStatus = r.resolveSyncStatus(req.Context(), row)
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry
+	// the ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Generation))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
 }
@@ -708,6 +720,23 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	var body UpdatePoolRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// The pool's entity tag is its pool_config_generation; read the
+	// current row and enforce the optimistic-concurrency precondition
+	// before applying the mutation. A missing pool reads as 404 ahead of
+	// the precondition so a stale-handle client cannot probe existence.
+	current, err := r.pools.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Generation) {
 		return
 	}
 	r.applyPoolUpdate(w, req, name, body)
@@ -971,6 +1000,9 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	// spec: §15.1 line 1210 — on a successful PUT the response carries
+	// the new ETag reflecting the incremented version.
+	w.Header().Set("ETag", formatETag(updated.Generation))
 	w.Header().Set("Content-Type", "application/json")
 	payload := fromPool(updated)
 	// spec: §4.6.2 line 559 — a PUT immediately bumps the Postgres

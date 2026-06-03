@@ -68,6 +68,38 @@ func TestAuthorizedToolsForPlatformAdmin(t *testing.T) {
 	}
 }
 
+// spec: §24.4 / §25.14 — the §24.4 pool actions that have mounted
+// endpoints (warm-count, sync-status, resume-reconciliation) appear in
+// the agent-discovery catalog so an AI DevOps agent can find the
+// warm-pool-exhaustion and PoolScalingAdmissionStuck remediation surface.
+func TestAuthorizedToolsAdvertisesMountedPoolActions_spec_24_4(t *testing.T) {
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp admin.AuthorizedToolsPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	got := map[string]bool{}
+	for _, tool := range resp.Tools {
+		got[tool.Tool] = true
+	}
+	for _, w := range []string{
+		"admin.set_pool_warm_count",
+		"admin.pool_sync_status",
+		"admin.resume_pool_reconciliation",
+		"admin.grant_pool_tenant_access",
+		"admin.list_pool_tenant_access",
+		"admin.revoke_pool_tenant_access",
+	} {
+		if !got[w] {
+			t.Errorf("missing pool tool %q in authorized-tools: %+v", w, resp.Tools)
+		}
+	}
+}
+
 func TestAuthorizedToolsForTenantAdminScopedToTenant(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
 	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))

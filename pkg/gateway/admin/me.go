@@ -133,6 +133,16 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.get_pool", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Get a pool"},
 		{Tool: "admin.update_pool", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Update a pool"},
 		{Tool: "admin.soft_delete_pool", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Soft-delete a pool"},
+		// spec: §24.4 / §15.1:798-800 — the §25.14 agent-discovery catalog
+		// advertises every mounted pool action so an AI DevOps agent can
+		// discover the warm-pool-exhaustion and PoolScalingAdmissionStuck
+		// remediation surface. The upgrade/drain/circuit-breaker/
+		// exit-bootstrap tools register here when their endpoints mount
+		// (F-24.4.2); the catalog mirrors the OpenAPI document so a
+		// discovered tool resolves to a real route.
+		{Tool: "admin.set_pool_warm_count", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Override minWarm for emergency scaling"},
+		{Tool: "admin.pool_sync_status", Scope: "admin.pools.read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Show a pool's CRD reconciliation state"},
+		{Tool: "admin.resume_pool_reconciliation", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Clear a pool's admission-denial backoff"},
 		// spec: §15.1:802 — pool tenant-access management (the §24.3
 		// runtime commands have a pool sibling on the same join table).
 		{Tool: "admin.grant_pool_tenant_access", Scope: "admin.pools.write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Grant a tenant access to a pool"},

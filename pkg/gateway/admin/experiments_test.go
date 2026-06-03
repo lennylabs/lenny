@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,19 @@ func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as 
 		rdr = bytes.NewReader(b)
 	}
 	req := as(httptest.NewRequest(method, path, rdr))
+	if method == http.MethodPut && strings.HasPrefix(path, "/v1/admin/pools/") &&
+		!strings.HasSuffix(path, "/warm-count") {
+		// spec: §15.1 lines 1207-1211 — the pool PUT enforces If-Match.
+		// Authorization-focused cases reach the handler by carrying the
+		// resource's current ETag; only the pool resource enforces this
+		// precondition today.
+		g := as(httptest.NewRequest(http.MethodGet, path, nil))
+		grr := httptest.NewRecorder()
+		h.ServeHTTP(grr, g)
+		if etag := grr.Header().Get("ETag"); etag != "" {
+			req.Header.Set("If-Match", etag)
+		}
+	}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

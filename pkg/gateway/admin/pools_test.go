@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,9 +42,29 @@ func poolReq(t *testing.T, h http.Handler, method, path string, body any) *httpt
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
+	if method == http.MethodPut {
+		// spec: §15.1 lines 1207-1211 — the canonical pool PUT requires an
+		// If-Match precondition. Fetch the resource's current ETag so the
+		// many tests exercising other pool-update behaviour pass the
+		// concurrency gate; the dedicated ETag tests set headers directly.
+		if etag := currentPoolETag(h, path); etag != "" {
+			req.Header.Set("If-Match", etag)
+		}
+	}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
+}
+
+// currentPoolETag reads the ETag a GET on the pool reports, so a PUT can
+// satisfy the §15.1 optimistic-concurrency precondition. It strips the
+// §25.17 /warm-count sub-route suffix to address the base resource.
+func currentPoolETag(h http.Handler, putPath string) string {
+	base := strings.TrimSuffix(putPath, "/warm-count")
+	g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, base, nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, g)
+	return rr.Header().Get("ETag")
 }
 
 func TestCreatePoolHappyPath(t *testing.T) {
