@@ -50,7 +50,7 @@ The four coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cl
 
 **Credential delivery.** All coding-agent runtimes use `deliveryMode: proxy` by default ([§4.9](04_system-components.md#49-credential-leasing-service)): the LLM proxy is the sole egress path for provider API traffic and captures per-session token/cost metering. The runtime does not see the provider API key. `deliveryMode: direct` is supported for air-gapped environments where the operator has already provisioned provider keys as `Secret` volumes and does not need Lenny's credential leasing.
 
-**`setupCommandPolicy`.** Coding-agent runtimes ship with `mode: allowlist` and an allowlist covering the common package-manager prefixes: `npm ci`, `npm install`, `pnpm install`, `yarn install`, `pip install`, `poetry install`, `go mod download`, `cargo fetch`, `make`, `bundle install`, `gem install`, `mvn`, `gradle`, `apt-get install`, `chmod`, `mkdir`, `cp`, `mv`, `ln`. `shell: false` — setup commands are argv-form, not shell-string. Operators can override the policy per pool but MUST NOT set `mode: none` (unrestricted setup) for coding-agent runtimes in multi-tenant deployments.
+**`setupCommandPolicy`.** The reference coding-agent runtimes ship with `mode: allowlist` and an allowlist covering the common package-manager prefixes: `npm ci`, `npm install`, `pnpm install`, `yarn install`, `pip install`, `poetry install`, `go mod download`, `cargo fetch`, `make`, `bundle install`, `gem install`, `mvn`, `gradle`, `apt-get install`, `chmod`, `mkdir`, `cp`, `mv`, and `ln`. They set `shell: false`, so setup commands are argv-form rather than shell-string. An operator can override the policy per pool. Setting `mode: none` (unrestricted setup) removes a containment control, so an operator that does so on a pool running untrusted shell in a multi-tenant deployment accepts the added risk.
 
 **`capabilities`.**
 
@@ -467,7 +467,7 @@ CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/del
 - `runtimeOptionsSchema` at `https://schemas.lenny.dev/runtime-options/crewai/v1.json` — `crewModule` (required, Python dotted path to the `Crew` object), `process` (`sequential` | `hierarchical`), `verbose`.
 - `supportedProviders: [anthropic_direct, openai_direct]`.
 - `credentialCapabilities.proxyDialect: [anthropic, openai]`.
-- `delegationPolicyRef` is **required** to be set on the Runtime — CrewAI's value proposition is multi-agent orchestration, and crews register `lenny/delegate_task` as the delegation mechanism for spawning specialist agents into Lenny-managed sub-sessions.
+- The `crewai` reference runtime ships with `delegationPolicyRef` set on its `Runtime` record. CrewAI's purpose is multi-agent orchestration, and crews register `lenny/delegate_task` as the delegation mechanism for spawning specialist agents into Lenny-managed sub-sessions. The platform applies whatever `delegationPolicyRef` a runtime declares and does not single out `crewai`.
 
 **Workspace conventions:**
 
