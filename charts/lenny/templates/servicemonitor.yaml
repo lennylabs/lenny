@@ -19,12 +19,15 @@ separate ServiceMonitor with a gateway-only selector.
   - lenny-gateway:       component=gateway,        interval=gatewayInterval (10s)
   - lenny-control-plane: component in {controller, token-service}, interval=interval (30s)
 
-Gated by monitoring.serviceMonitor.enabled. The default is false: this
-is a monitoring.coreos.com CRD, and a cluster without the Prometheus
-Operator has no ServiceMonitor CRD, so an unconditional render would
-fail kubectl apply there. The §13.2 NET-045 metrics-scrape
-NetworkPolicies (rendered by system-network-policies.yaml) admit the
-scrape traffic these ServiceMonitors configure.
+Gated by lenny.monitoring.renderMonitors (F-16.9.6): rendered when the
+Prometheus Operator CRDs are present AND either monitoring.format selects
+the operator CRDs (prometheusrule/both) or monitoring.serviceMonitor.-
+enabled forces them on. The operator-presence check (F-16.9.4) fails
+closed when monitoring.coreos.com is absent, so a cluster without the
+operator never renders a ServiceMonitor that would fail kubectl apply.
+The §13.2 NET-045 metrics-scrape NetworkPolicies (rendered by
+system-network-policies.yaml) admit the scrape traffic these
+ServiceMonitors configure.
 
 Operator discovery: the labels under monitoring.prometheusRule.-
 additionalLabels are applied so the Prometheus Operator's
@@ -36,7 +39,7 @@ Service, and lenny-ops. The dedicated CoreDNS pod (lenny-system, TCP
 outside the §16.9 operator-managed set, so a deployer who wants CoreDNS
 metrics adds their own scrape config for it. F-16.9.9.
 */ -}}
-{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if eq (include "lenny.monitoring.renderMonitors" .) "true" }}
 {{- $root := . }}
 {{- $sm := .Values.monitoring.serviceMonitor }}
 {{- $smNS := $sm.namespace | default .Values.monitoring.namespace }}

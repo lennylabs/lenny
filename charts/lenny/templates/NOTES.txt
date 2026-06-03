@@ -5,3 +5,7 @@ Run the lenny-preflight Job output (kubectl logs job/lenny-preflight -n {{ .Rele
 
 WARNING: Plaintext OTLP export enabled — trace payloads are sent without TLS. Tenant metadata, session identifiers, and error bodies are readable by any in-cluster interceptor. Re-enable TLS before production use (OTLP-068; §13.2).
 {{- end }}
+{{- if and (or (eq .Values.monitoring.format "prometheusrule") (eq .Values.monitoring.format "both")) (not (include "lenny.monitoring.operatorPresent" .)) }}
+
+WARNING: monitoring.format={{ .Values.monitoring.format }} selects the Prometheus Operator CRDs (PrometheusRule, ServiceMonitor, PodMonitor), but monitoring.coreos.com/v1 is not registered in this cluster. The chart fell back to a ConfigMap rule file and did not render the ServiceMonitor or PodMonitor, so a `kubectl apply` does not fail on a missing CRD (§16.9). Install the Prometheus Operator and re-run helm upgrade to use the operator-managed scrape targets, or set monitoring.format=configmap to silence this warning.
+{{- end }}

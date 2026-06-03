@@ -291,6 +291,8 @@ func main() {
 		"value of the imageVerification.cosign.enabled chart flag; a production/staging install with it false gets a §5.3 line 669 advisory")
 	environment := flag.String("environment", "",
 		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 line 669 cosign-production advisory")
+	monitoringFormat := flag.String("monitoring-format", "",
+		"value of the monitoring.format chart value (prometheusrule | configmap | both); feeds the §16.9 R8 Prometheus Operator CRD-presence advisory")
 	// §17.9.3 / §17.6 line 488 — the preflight-job template passes
 	// --connection-pooler so the CloudPoolerSentinelDefense check can
 	// see the effective pooler mode. The flag must be accepted here or
@@ -411,9 +413,10 @@ func main() {
 	}
 
 	report := preflight.Run(context.Background(), cl, preflight.Config{
-		Namespace:       *namespace,
-		AgentNamespaces: parseCommaList(*agentNamespaces),
-		Environment:     *environment,
+		Namespace:        *namespace,
+		AgentNamespaces:  parseCommaList(*agentNamespaces),
+		Environment:      *environment,
+		MonitoringFormat: *monitoringFormat,
 		Features: preflight.WebhookFeatureFlags{
 			LLMProxy:       *llmProxy,
 			DrainReadiness: *drainReadiness,

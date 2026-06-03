@@ -99,6 +99,57 @@ processes, so the check runs on every render. F-16.9.8.
 {{- end -}}
 
 {{/*
+lenny.monitoring.operatorPresent reports "true" when the Prometheus
+Operator CRD API group (monitoring.coreos.com/v1) is registered in the
+target cluster, else "". Render-time detection via
+.Capabilities.APIVersions, which reflects the live cluster during
+`helm install`/`helm upgrade` and the built-in set during `helm template`
+(where `--api-versions monitoring.coreos.com/v1` declares it explicitly).
+This is the §16.9 R8 CRD-presence preflight: a chart render targeting the
+operator CRDs first confirms they exist. F-16.9.4.
+*/}}
+{{- define "lenny.monitoring.operatorPresent" -}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.monitoring.effectiveFormat resolves monitoring.format to the value
+actually rendered. When the configured format selects the Prometheus
+Operator PrometheusRule CRD (prometheusrule or both) but the operator is
+absent, it degrades to "configmap" so `kubectl apply` does not fail on a
+missing PrometheusRule CRD. This is the §16.9 R8 automatic fallback. The
+format is validated against the allow-list first. F-16.9.4.
+*/}}
+{{- define "lenny.monitoring.effectiveFormat" -}}
+{{- include "lenny.monitoring.validateFormat" . -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $operator := include "lenny.monitoring.operatorPresent" . -}}
+{{- if and (or (eq $format "prometheusrule") (eq $format "both")) (not $operator) -}}
+configmap
+{{- else -}}
+{{- $format -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.monitoring.renderMonitors reports "true" when the chart should
+render the §16.9 ServiceMonitor and PodMonitor. The Prometheus Operator
+CRDs MUST be present, and either monitoring.format selects the operator
+CRDs (prometheusrule/both) or monitoring.serviceMonitor.enabled forces
+them on. Collapsing the scrape-CRD gate onto monitoring.format (F-16.9.6)
+is safe because the operator-presence check (F-16.9.4) fails closed when
+the CRDs are absent, so a `format: prometheusrule` install on a cluster
+without the operator renders neither a PrometheusRule nor scrape monitors.
+F-16.9.4, F-16.9.6.
+*/}}
+{{- define "lenny.monitoring.renderMonitors" -}}
+{{- $operator := include "lenny.monitoring.operatorPresent" . -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $formatSelects := or (eq $format "prometheusrule") (eq $format "both") -}}
+{{- if and $operator (or $formatSelects .Values.monitoring.serviceMonitor.enabled) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 lenny.connectionPooler resolves the effective Postgres connection-pooler
 posture. An explicit postgres.connectionPooler wins; otherwise it
 defaults to "external" when backends is "cloud-managed" (so a

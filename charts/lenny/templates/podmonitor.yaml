@@ -7,16 +7,19 @@ turns this CRD into a scrape config that discovers lenny-ops pods and
 scrapes their metrics port (TCP 9090, the prometheus.io/port the
 lenny-ops Deployment declares — §13.2 NET-045).
 
-Gated by monitoring.serviceMonitor.enabled, the same flag as
-servicemonitor.yaml: both are monitoring.coreos.com CRDs and a cluster
-without the Prometheus Operator has neither CRD installed. The §13.2
-NET-045 metrics-scrape NetworkPolicy admits the scrape traffic.
+Gated by lenny.monitoring.renderMonitors, the same gate as
+servicemonitor.yaml (F-16.9.6): rendered when the Prometheus Operator
+CRDs are present AND monitoring.format selects them or
+monitoring.serviceMonitor.enabled forces them on. Both are
+monitoring.coreos.com CRDs; the operator-presence check (F-16.9.4) keeps
+a cluster without the operator from rendering either. The §13.2 NET-045
+metrics-scrape NetworkPolicy admits the scrape traffic.
 
 Operator discovery: the labels under monitoring.prometheusRule.-
 additionalLabels are applied so the Prometheus Operator's
 podMonitorSelector can match this object (§16.9).
 */ -}}
-{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if eq (include "lenny.monitoring.renderMonitors" .) "true" }}
 {{- $sm := .Values.monitoring.serviceMonitor }}
 {{- $smNS := $sm.namespace | default .Values.monitoring.namespace }}
 apiVersion: monitoring.coreos.com/v1

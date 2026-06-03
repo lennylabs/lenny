@@ -4,6 +4,15 @@ release:
   namespace: lenny-system
 templates:
   - prometheusrule.yaml
+# spec: §16.9 R8 / F-16.9.4 — the default monitoring.format=prometheusrule
+# renders a PrometheusRule CRD only when the Prometheus Operator CRDs are
+# present, degrading to a ConfigMap otherwise. Declare monitoring.coreos.-
+# com/v1 so these tests exercise the operator-present PrometheusRule path;
+# the operator-absent ConfigMap fallback is covered by
+# monitoring-fallback_test.yaml.
+capabilities:
+  apiVersions:
+    - monitoring.coreos.com/v1
 tests:
   - it: renders a PrometheusRule by default
     asserts:

@@ -656,16 +656,21 @@ monitoring:
   # serviceMonitor gates the §16.9 Prometheus Operator scrape-target
   # CRDs. servicemonitor.yaml renders a ServiceMonitor for the gateway,
   # controller, and Token Service; podmonitor.yaml renders a PodMonitor
-  # for lenny-ops, which requires Pod-level label selection. Both are
-  # monitoring.coreos.com CRDs, so the chart leaves them off by default:
-  # a cluster without the Prometheus Operator has no ServiceMonitor or
-  # PodMonitor CRD and rendering them would fail kubectl apply. The
-  # operator-discoverable labels are taken from prometheusRule.-
-  # additionalLabels (§16.9), so one label set covers all three CRDs.
+  # for lenny-ops, which requires Pod-level label selection. The chart
+  # renders them automatically when monitoring.format selects the operator
+  # CRDs (prometheusrule/both) AND the monitoring.coreos.com CRDs are
+  # present in the cluster (F-16.9.4 / F-16.9.6 — the CRD-presence check
+  # fails closed so a cluster without the operator never renders a monitor
+  # that would fail kubectl apply). The operator-discoverable labels are
+  # taken from prometheusRule.additionalLabels (§16.9), so one label set
+  # covers all three CRDs.
   serviceMonitor:
-    # enabled gates servicemonitor.yaml and podmonitor.yaml. Set true on
-    # a cluster running the Prometheus Operator (kube-prometheus-stack,
-    # OpenShift Monitoring).
+    # enabled is an explicit override: set true to render the scrape
+    # monitors even when monitoring.format is "configmap" (operator
+    # present). It is not needed for the default monitoring.format=-
+    # prometheusrule, which already renders the monitors when the operator
+    # CRDs are detected. It cannot force monitors onto a cluster that lacks
+    # the operator CRDs.
     enabled: false
     # namespace is where the ServiceMonitor and PodMonitor are created.
     # Defaults to monitoring.namespace when empty.

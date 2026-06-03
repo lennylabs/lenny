@@ -28,7 +28,11 @@ formats sees the same customised rule set. F-25.13.1.
        rendering nothing. F-16.9.8. */ -}}
 {{- include "lenny.monitoring.validateFormat" . -}}
 {{- if .Values.monitoring.bundleRules }}
-{{- $format := .Values.monitoring.format }}
+{{- /* spec: §16.9 R8 — when the configured format selects the operator
+       PrometheusRule CRD but the Prometheus Operator is absent, the
+       effective format degrades to configmap so the install does not fail
+       kubectl apply on a missing CRD. F-16.9.4. */ -}}
+{{- $format := include "lenny.monitoring.effectiveFormat" . }}
 {{- $ruleNS := .Values.monitoring.prometheusRule.namespace | default .Values.monitoring.namespace }}
 {{- $rules := .Files.Get "files/alerting-rules.yaml" }}
 {{- $overrides := .Values.monitoring.alertOverrides | default dict }}

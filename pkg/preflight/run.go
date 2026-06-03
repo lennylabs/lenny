@@ -144,6 +144,12 @@ type Config struct {
 	// version label; a nil prober while CertManagerEnabled routes through
 	// the can't-determine advisory. F-10.3.12.
 	CertManagerProber CertManagerProber
+	// MonitoringFormat is the monitoring.format chart value
+	// (prometheusrule | configmap | both). When it selects the Prometheus
+	// Operator CRDs but they are not installed, the §16.9 R8 preflight
+	// raises a non-blocking advisory that the chart fell back to a
+	// ConfigMap. Empty skips the check. F-16.9.4.
+	MonitoringFormat string
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -404,6 +410,17 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Expected: cfg.CRDSchemaVersion,
 			Names:    cfg.CRDNames,
 		}.Decide(ctx, reader),
+	})
+
+	// spec: §16.9 R8 — when monitoring.format selects the Prometheus
+	// Operator CRDs (prometheusrule/both) but they are not installed, the
+	// chart falls back to a ConfigMap rule file and skips the scrape
+	// monitors at render time. The preflight names the missing CRDs so the
+	// fallback is not silent. Advisory only (the install is not aborted).
+	// F-16.9.4.
+	report = append(report, CheckResult{
+		Name:     "prometheus-operator-crds",
+		Decision: PrometheusOperatorCRDCheck{Format: cfg.MonitoringFormat}.Decide(ctx, reader),
 	})
 
 	// spec: §10.3 line 304 — when the cert-manager-backed mTLS PKI is

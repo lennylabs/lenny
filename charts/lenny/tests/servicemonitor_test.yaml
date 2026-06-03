@@ -2,18 +2,32 @@ suite: §16.9 ServiceMonitor and PodMonitor scrape targets
 release:
   name: lenny
   namespace: lenny-system
+# spec: §16.9 R8 / F-16.9.4 — the scrape monitors render only when the
+# Prometheus Operator CRDs are present. Declare monitoring.coreos.com/v1
+# at the suite level so the operator-present path is exercised; the
+# operator-absent fallback is covered by monitoring-fallback_test.yaml.
+capabilities:
+  apiVersions:
+    - monitoring.coreos.com/v1
 tests:
-  - it: renders no ServiceMonitor by default
+  # spec: §16.9 / F-16.9.6 — with the operator present, the default
+  # monitoring.format=prometheusrule renders the scrape monitors without
+  # the deployer having to flip a second flag.
+  - it: renders both ServiceMonitors by default when the operator is present
     template: servicemonitor.yaml
     asserts:
       - hasDocuments:
-          count: 0
+          count: 2
+      - isKind:
+          of: ServiceMonitor
 
-  - it: renders no PodMonitor by default
+  - it: renders the PodMonitor by default when the operator is present
     template: podmonitor.yaml
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
+      - isKind:
+          of: PodMonitor
 
   # spec: §10.1 line 88 — the gateway is rendered as its own ServiceMonitor
   # (lenny-gateway) so it can scrape at 10s while the controller and Token

@@ -238,6 +238,11 @@ spec:
             # non-blocking WARNING (F-5.3.5).
             - --feature-cosign-verify={{ .Values.imageVerification.cosign.enabled }}
             - --environment={{ .Values.environment | default "dev" }}
+            # §16.9 R8 — feed monitoring.format so the preflight reports a
+            # non-blocking advisory when the format selects the Prometheus
+            # Operator CRDs but they are absent (chart falls back to a
+            # ConfigMap). F-16.9.4.
+            - --monitoring-format={{ .Values.monitoring.format | default "prometheusrule" }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
             # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The
