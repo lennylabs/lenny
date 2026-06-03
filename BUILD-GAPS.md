@@ -38035,7 +38035,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### Findings
 
-### - [ ] F-24.15.1 — `lenny-ctl me` group is unimplemented [High] — OPEN
+### - [x] F-24.15.1 — `lenny-ctl me` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.2, F-24.15.3, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
 
@@ -38044,6 +38044,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impl:** Gateway handlers for `GET /v1/admin/me` and `GET /v1/admin/me/authorized-tools` exist (`pkg/gateway/admin/me.go:42,63`; registered in `pkg/gateway/admin/tenants.go:499-500`). No `lenny-ctl me` subcommand is registered in `cmd/lenny-ctl/main.go` (the switch on `rest[0]` has no `case "me"`). Endpoint `GET /v1/admin/me/operations` is not implemented anywhere in `pkg/`.
 
 **Impact:** Agents cannot resolve their own role, scope, or authorized tools through the CLI surface §24.15 promises, defeating the discovery primitive the operability spec is built on.
+
+**Resolution:** Added the `me` dispatch case + `cmdMe` (`cmd/lenny-ctl/operability.go`): `me` → `GET /v1/admin/me`, `me tools` → `/v1/admin/me/authorized-tools`, `me operations` → `/v1/admin/me/operations`. The first two endpoints already existed; the third was missing, so this batch added the gateway `handleMeOperations` (`pkg/gateway/admin/me.go`) reusing the §4.0/§25.4 Operations Inventory scoped to the caller's `StartedBy` subject and the non-terminal statuses, registered under the existing inventory-conditional block. The handler post-filters by owner so a permissive Source cannot leak another operator's operations through the role-open `me` endpoint. Tier-1: CLI routing (3) + handler scope/anonymous (2).
 
 ### - [x] F-24.15.2 — `lenny-ctl operations` group is unimplemented [High] — CLOSED
 
@@ -38057,7 +38059,7 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Resolution (`4e2f458b`):** The backing endpoints were built by a prior batch — `GET /v1/admin/operations` and `GET /v1/admin/operations/{id}` are registered on the gateway admin router (`pkg/gateway/admin/tenants.go`, the §4.0/§25.4 Operations Inventory with Progress Envelope output); the finding's "no handler" evidence was stale. This batch adds the missing CLI wrapper: `lenny-ctl operations list [--status|--kind|--actor|--tenant|--operation-id|--limit]` (forwarding the §25.4 scatter-gather filters) and `operations get <id>`, targeting the gateway client. Tested for list-with-filters, get, and unknown-subcommand.
 
-### - [ ] F-24.15.3 — `lenny-ctl events` group is unimplemented [High] — OPEN
+### - [x] F-24.15.3 — `lenny-ctl events` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.1, F-24.15.2, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
 
@@ -38067,7 +38069,9 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Agents cannot observe live operability events; the SSE primitive that §25.5 defines is missing the live-stream surface and the CLI subscriber group.
 
-### - [ ] F-24.15.4 — `lenny-ctl upgrade` group is unimplemented [High] — OPEN
+**Resolution:** Evidence stale: the SSE `GET /v1/admin/events/stream` and the polling `GET /v1/admin/events` were built on lenny-ops (`pkg/ops/opsserver/eventstream.go`, F-25.5.2/.3); the gateway buffer and the lenny-ops subscription CRUD already existed. This batch added the `events` dispatch + `cmdEvents`: `list` → ops `/v1/admin/events`, `tail` → ops SSE stream via a new `ctl.Client.Stream` method (timeout-free, ctx-bounded), `buffer` → gateway `/v1/admin/events/buffer`, and `subscriptions list|get|create|delete` → the lenny-ops `/v1/admin/event-subscriptions` surface. Tier-1: CLI routing (list/buffer/subscriptions CRUD) + `ctl.Stream` body-copy/error/cancel (3).
+
+### - [x] F-24.15.4 — `lenny-ctl upgrade` group is unimplemented [High] — CLOSED
 
 **Spec (§24.15 line 185):** `lenny-ctl upgrade` must drive the platform-upgrade state machine (check, start, pause, rollback, complete, verify) via `/v1/admin/platform/upgrade/*` and `/v1/admin/platform/upgrade-check`.
 
@@ -38075,7 +38079,9 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** The agent-driven upgrade flow is the highest-stakes operability path; it has no operator entry point.
 
-### - [ ] F-24.15.5 — `lenny-ctl audit` group is unimplemented [High] — OPEN
+**Resolution:** Evidence stale: the platform-upgrade endpoints were built on lenny-ops (`pkg/ops/opsserver/platform_upgrade.go`, F-10.5.7/F-25.8). This batch added the `upgrade` dispatch + `cmdUpgrade` driving the state machine via lenny-ops: `check`/`status` (GET), `start --version [--confirm]`, `proceed`, `pause [--reason]`, `rollback [--confirm] [--reason]`, `verify` (POST). The `preflight --version` verb is wired to the spec's `POST /v1/admin/platform/upgrade/preflight`; that backing endpoint is the one remaining §25.8 follow-on (tracked under F-25.8.x) and answers 404 until it lands. The same `cmdUpgrade` routes the §24.20 `upgrade --answers` chart replay (F-24.20.2). Tier-1: CLI routing for check/status/start(+confirm)/rollback(+reason)/missing-version/unknown-subcommand.
+
+### - [x] F-24.15.5 — `lenny-ctl audit` group is unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.1, F-24.15.2, F-24.15.3 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
 
@@ -38084,6 +38090,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impl:** Gateway exposes `GET /v1/admin/audit-events` and `GET /v1/admin/audit-events/{seq}` (`pkg/gateway/admin/audit_query.go:84,128`, wired in `pkg/gateway/admin/tenants.go:484-486`). No `/audit-events/summary`, `/retranslate`, `/republish`, or `/audit-partitions/.../drop` handlers exist. No `case "audit"` in `cmd/lenny-ctl/main.go`.
 
 **Impact:** Audit-incident remediation (failed OCSF translation, stuck publish queue, blocked partition) has no CLI path; the listed remediation endpoints do not exist on the server side either.
+
+**Resolution:** Evidence stale: every backing endpoint now exists on the gateway admin router (`pkg/gateway/admin/audit_query.go` + `tenants.go:777-795`): `summary`, `{seq}/retranslate`, `{seq}/republish`, and `audit-partitions/{partition}/drop` were built by prior batches. This batch added the `audit` dispatch + `cmdAudit`: `query` (scatter-gather filters → query params), `get <id>`, `summary [--group-by]`, `retranslate <id> [--translator-version]`, `republish <id>`, and `drop-partition <p> --force --acknowledge-data-loss` (maps `--force` → `?force=true` and the data-loss ack into the body; the CLI requires both flags). Tier-1: query-filter/get/summary/retranslate/republish routing + drop-partition both-flags-required and force+ack body shape.
 
 ### - [x] F-24.15.6 — `lenny-ctl backup` group is unimplemented [High] — CLOSED
 
@@ -38238,6 +38246,8 @@ Spec (§24.16 line 205) lists `--api-url`, `--ops-server`, `--token`, `--timeout
 
 ### - [ ] F-24.16.4 — §24.15 command groups `audit`, `backup`, `restore`, `logs`, `upgrade`, `mcp-management` are not wired [Medium] — OPEN
 Spec §24.15 (the table at lines 185–193, immediately preceding §24.16 and reachable only through the routing rules §24.16 defines) enumerates `lenny-ctl upgrade`, `audit`, `backup`, `restore`, `logs`, and `mcp-management` command groups. `cmd/lenny-ctl/main.go:73–122` (`run`) dispatches `health`, `version`, `bootstrap`, `install`, `runtime`, `admin`, `runbooks`, `locks`, `escalations`, `diagnose`, `drift`, and the help variants. None of the six listed groups have a dispatch case; `default:` returns `unknown command`. This is adjacent to §24.16 because §24.16's routing applies to "every Section 25 ops-hosted endpoint" — the routing surface exists, but most of the commands that would use it are not built.
+
+**Progress (stays OPEN):** Five of the six groups are now wired — `backup`/`restore`/`mcp-management` (prior batches) and `audit`/`upgrade` (this batch, F-24.15.5/F-24.15.4). The remaining `logs` group is the one blocker: `logs` is a §24.19 Embedded Mode local command (`pkg/embedded/localcli.Local`) that short-circuits dispatch before the gateway/ops switch, so a clustered `lenny-ctl logs pod <ns> <name>` is shadowed by the embedded `lenny logs <component>` tailer. That collision is tracked as F-24.15.8 (DEFERRED, needs an embedded/clustered namespace split); F-24.16.4 unblocks when F-24.15.8 lands.
 
 ### - [x] F-24.16.5 — Discovery is performed per-`withOps` invocation rather than cached for the command duration [Low] — CLOSED
 Spec (§24.16 line 200) states "`lenny-ctl` caches this for the duration of the command invocation and routes ops calls there." `cmd/lenny-ctl/ops.go:23–45` (`withOps`) calls `discoverOpsURL` every time, with no per-invocation cache stored on `globalFlags`, on the `*ctl.Client`, or on a process-scoped variable. In practice each top-level command invokes exactly one ops group (per the dispatch table in `main.go:95–114`), so the lack of caching has no observable effect today. Once a command issues multiple ops calls (or once §24.15's missing groups are wired and could chain into the ops layer), this will mean an extra `GET /v1/admin/platform/version` per call.
@@ -38629,11 +38639,13 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Resolution:** Closed by F-17.6.5. `cmd/lenny-ctl/values.go` adds the `values validate --config <values.yaml>` subcommand: it generates the canonical schema from the same `pkg/chart/values` source of truth the committed `values.schema.json` is built from, validates the supplied YAML (santhosh-tekuri/jsonschema v5, Draft 2020-12), exits 0 on conformance, and prints a violation report and exits 1 otherwise. Tier-1 `values_test.go` covers conformance, a rejected bad value naming the offending field, missing `--config`, and a missing file. Commit `a58506ad`.
 
-### - [ ] F-24.20.2 — `lenny-ctl upgrade --answers <file>` not implemented [High] — OPEN
+### - [x] F-24.20.2 — `lenny-ctl upgrade --answers <file>` not implemented [High] — CLOSED
 - **Spec:** §24.20 line 304 — "Replay an answer file against an existing install. Runs preflight, renders the values diff, and invokes `helm upgrade`."
 - **Evidence:** `cmd/lenny-ctl/main.go` has no `upgrade` case; the only `upgrade`-shaped surface is the runtime upgrade dispatch, not the chart-level upgrade.
 - **Gap:** Operators cannot replay an answer file against an existing install in a deterministic way. The §17.7 schema-migration-failure runbook references this command path.
 - **Suggested resolution:** Add `cmdUpgrade` that reuses the install pipeline's compose-values + preflight phases, then renders `helm upgrade --dry-run --diff` before applying.
+
+**Resolution:** `cmdUpgrade` now selects the chart-replay path when `--answers`/`--answer-file` is present (otherwise the §24.15 platform state machine, F-24.15.4). `cmdUpgradeReplay` reuses the install wizard's `parseAnswerFile`/`applyAnswerDefaults`/`validateAnswers`/`composeValues`/`runInstallPreflight`, renders the values diff with `helm upgrade --dry-run`, then applies with `helm upgrade` (preset layered under the composed values, matching §17.6 composition order). `--dry-run` short-circuits before preflight/helm; a missing answer file exits 1. Tier-1: dry-run composes-without-helm, missing-file, and `helmUpgradeArgs` preset-before-values ordering.
 
 ### - [x] F-24.20.3 — Preflight phase missing from `lenny-ctl install` [High] — CLOSED
 

@@ -137,6 +137,47 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
+// Stream opens a long-lived GET against path and copies the response
+// body to w until the server closes the stream or ctx is cancelled. It
+// backs the §25.14 SSE tail commands (`lenny-ctl events tail`,
+// `audit ... --follow`) where the response is a `text/event-stream`
+// rather than a single JSON document. Unlike Do, Stream does not apply
+// the per-request Timeout: an SSE stream is bounded only by ctx, so a
+// 30 s client timeout would otherwise sever a healthy tail.
+// spec: §25.14 line 4920 — `lenny-ctl events tail` maps to
+// GET /v1/admin/events/stream (SSE).
+func (c *Client) Stream(ctx context.Context, path string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("lenny-ctl: build request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	c.applyAuth(req)
+
+	// A timeout-free client reusing the configured transport (which
+	// carries any InsecureSkipVerify relaxation). The nil-transport
+	// case falls through to http.DefaultTransport.
+	hc := &http.Client{Transport: c.http.Transport}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("lenny-ctl: GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		return parseAPIError(resp.StatusCode, raw)
+	}
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		// A cancelled context is the normal exit path for an operator
+		// who interrupted the tail; surface it as success.
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("lenny-ctl: stream %s: %w", path, err)
+	}
+	return nil
+}
+
 // applyAuth adds the §10.2 auth headers to a request.
 func (c *Client) applyAuth(req *http.Request) {
 	if c.bearer != "" {

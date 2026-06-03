@@ -162,6 +162,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// fetch one by id. Targets the gateway admin API (the Operations
 		// Inventory), not lenny-ops. spec: §24.15 line 181.
 		return cmdOperations(ctx, client, rest[1:], stdout, stderr)
+	case "me":
+		// §24.15 me group: caller identity, authorized tools, and
+		// in-flight operations. Gateway admin API. spec: §24.15 line 180.
+		return cmdMe(ctx, client, rest[1:], stdout, stderr)
+	case "audit":
+		// §24.15 audit group: query/summary and the OCSF/EventBus/
+		// partition remediation verbs. Gateway admin API. spec: §24.15
+		// line 186; §25.9.
+		return cmdAudit(ctx, client, rest[1:], stdout, stderr)
+	case "events":
+		// §24.15 events group: the poll, SSE tail, and webhook
+		// subscriptions target lenny-ops; the buffer subcommand targets
+		// the gateway. cmdEvents routes each subcommand itself. spec:
+		// §24.15 line 182; §25.5.
+		return cmdEvents(ctx, flags, client, rest[1:], stdout, stderr)
+	case "upgrade":
+		// §24.15 upgrade group: the platform-upgrade state machine on
+		// lenny-ops, plus the §24.20 `upgrade --answers` chart replay.
+		// cmdUpgrade routes both. spec: §24.15 line 185; §24.20 line 304.
+		return cmdUpgrade(ctx, flags, client, rest[1:], stdout, stderr)
 	case "slo":
 		// slo export renders the §16.10 OpenSLO documents from the
 		// embedded §16.5 SLO catalog and runs offline; it reaches no
@@ -278,6 +298,21 @@ Gateway commands:
   operations list [--status <s>] [--kind <k>] [--actor <a>] [--tenant <id>] [--operation-id <id>] [--limit <n>]
                                         List active long-running operations with Progress Envelopes (§24.15)
   operations get <id>                   Fetch a single operation by id (§24.15)
+  me [tools|operations]                 Caller identity, authorized tools, or in-flight operations (§24.15)
+  audit query --since <t> [--event-type <e>] [--actor <id>] [--operation-id <id>] [--limit <n>]
+                                        Query the audit log with scatter-gather (§24.15, §25.9)
+  audit get <id>                        Fetch a single audit event (§24.15)
+  audit summary --since <t> [--group-by <eventType|actorId|resourceType>]   Aggregate counts (§24.15)
+  audit retranslate <id> [--translator-version <semver>]   Retry OCSF translation on one row (§24.15)
+  audit republish <id>                  Re-queue one terminally-failed EventBus publish (§24.15)
+  audit drop-partition <p> --force --acknowledge-data-loss   Force-drop a blocked audit partition (§24.15)
+  events list [--since <t>] [--type <e>] [--limit <n>]   List operational events (polling, §24.15)
+  events tail                           Stream operational events over SSE (§24.15)
+  events buffer                         Read the gateway in-memory event buffer (§24.15)
+  events subscriptions list|get <id>|create --url <u> --types <csv>|delete <id>   Manage webhook subscriptions (§24.15)
+  upgrade check|status                  Inspect platform-upgrade availability and state (§24.15)
+  upgrade start --version <v> [--confirm]|proceed|pause|rollback [--confirm]|verify   Drive the upgrade state machine (§24.15)
+  upgrade --answers <file> [--dry-run]  Replay an answer file against an existing install (§24.20)
 
 Operability commands (§25.14 / §24.15, target lenny-ops):
   runbooks list [--alert <name>]        List runbooks (optionally by alert)

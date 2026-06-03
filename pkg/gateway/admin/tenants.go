@@ -482,6 +482,10 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handleListOperations)))
 		mux.Handle("GET /v1/admin/operations/{id}",
 			r.requireAdmin(http.HandlerFunc(r.handleGetOperation)))
+		// §25 line 4903 — caller's in-flight operations. Every
+		// authenticated caller may read their own slice of the
+		// inventory, so this route is not admin-gated.
+		mux.HandleFunc("GET /v1/admin/me/operations", r.handleMeOperations)
 	}
 	if r.sessionAdmin != nil {
 		// §24.11 platform-admin session investigation: read-through and

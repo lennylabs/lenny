@@ -180,3 +180,49 @@ func TestOperationsRequiresAdmin(t *testing.T) {
 		t.Errorf("unauthenticated caller got status %d, want 403", rr.Code)
 	}
 }
+
+// TestMeOperationsScopesToCallerAndInFlight verifies GET
+// /v1/admin/me/operations returns only the caller's own non-terminal
+// operations: an op started by another subject is excluded even when a
+// permissive Source returns it, and a completed op is dropped by the
+// status narrowing. spec: §25 line 4903; §24.15 line 180. F-24.15.1.
+func TestMeOperationsScopesToCallerAndInFlight(t *testing.T) {
+	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	src := &fakeOpsSource{
+		kinds: []operations.Kind{operations.KindRemediationLock},
+		ops: []operations.Operation{
+			{OperationID: "mine-held", Kind: operations.KindRemediationLock, Status: operations.StatusHeld,
+				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{}},
+			{OperationID: "mine-done", Kind: operations.KindRemediationLock, Status: operations.StatusCompleted,
+				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{}},
+			{OperationID: "others", Kind: operations.KindRemediationLock, Status: operations.StatusInProgress,
+				StartedBy: "bob@acme.com", StartedAt: now, Resources: map[string]string{}},
+		},
+	}
+	router := newOperationsAdmin(t, src)
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/operations", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var page operations.Page
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Operations) != 1 || page.Operations[0].OperationID != "mine-held" {
+		t.Errorf("me operations = %+v, want only mine-held", page.Operations)
+	}
+}
+
+// TestMeOperationsRejectsAnonymous asserts an unauthenticated caller is
+// rejected with 401. spec: §15.1 line 986.
+func TestMeOperationsRejectsAnonymous(t *testing.T) {
+	router := newOperationsAdmin(t, &fakeOpsSource{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/me/operations", nil)
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous me/operations: got %d, want 401", rr.Code)
+	}
+}

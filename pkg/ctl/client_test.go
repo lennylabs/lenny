@@ -3,12 +3,14 @@
 package ctl_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 )
@@ -137,5 +139,82 @@ func TestInsecureSkipVerifyAcceptsSelfSignedTLS(t *testing.T) {
 	}
 	if out["ok"] != "yes" {
 		t.Errorf("response not decoded: %+v", out)
+	}
+}
+
+// TestStreamCopiesSSEBody verifies the §25.14 SSE tail surface: Stream
+// opens a GET, sends the Accept: text/event-stream header, carries the
+// bearer, and copies the response body verbatim to the writer until the
+// server closes the stream. spec: §25.14 line 4920 (events tail).
+func TestStreamCopiesSSEBody(t *testing.T) {
+	const frames = "id: 1\ndata: {\"type\":\"ops.health_status_changed\"}\n\nid: 2\ndata: {\"type\":\"ops.escalation_created\"}\n\n"
+	var sawAccept, sawBearer string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAccept = r.Header.Get("Accept")
+		sawBearer = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(frames))
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL, Bearer: "tok-stream"})
+	var buf bytes.Buffer
+	if err := c.Stream(context.Background(), "/v1/admin/events/stream", &buf); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if buf.String() != frames {
+		t.Errorf("stream body: got %q, want %q", buf.String(), frames)
+	}
+	if sawAccept != "text/event-stream" {
+		t.Errorf("Accept header: got %q", sawAccept)
+	}
+	if sawBearer != "Bearer tok-stream" {
+		t.Errorf("Authorization header: got %q", sawBearer)
+	}
+}
+
+// TestStreamSurfacesAPIError verifies a non-2xx stream open returns the
+// decoded §15.1 error envelope rather than copying an error body.
+func TestStreamSurfacesAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"no"}}`))
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL})
+	var buf bytes.Buffer
+	err := c.Stream(context.Background(), "/v1/admin/events/stream", &buf)
+	var apiErr *ctl.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden {
+		t.Fatalf("Stream error: got %v, want APIError 403", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("error stream should not copy a body: %q", buf.String())
+	}
+}
+
+// TestStreamCancelledContextReturnsNil verifies an operator interrupt
+// (cancelled ctx) is the normal tail-exit path and surfaces as success.
+func TestStreamCancelledContextReturnsNil(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl, _ := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(": open\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	if err := c.Stream(ctx, "/v1/admin/events/stream", &bytes.Buffer{}); err != nil {
+		t.Errorf("cancelled stream should return nil, got %v", err)
 	}
 }
