@@ -74,18 +74,19 @@ type Component struct {
 	// spec: §25.7 lines 3217-3234.
 	Issue string `json:"issue,omitempty"`
 
-	// SuggestedAction is the §25.3 remediation hint an AI-DevOps
-	// agent can act on when Status is not healthy. Empty when the
-	// component is healthy or no action is known.
-	SuggestedAction string `json:"suggestedAction,omitempty"`
+	// SuggestedAction is the §25.3 singular machine-executable
+	// remediation hint, populated when one canonical response exists.
+	// Nil when the component is healthy, when no action is known, or
+	// when the issue presents ranked alternatives (SuggestedActions)
+	// instead. spec: §25.3 lines 459-501.
+	SuggestedAction *conventions.SuggestedAction `json:"suggestedAction,omitempty"`
 
-	// RunbookRef points at the operational runbook for this
-	// component's failure modes. Empty when none is registered.
-	// When the checker stamps Issue, the §25.3 aggregator resolves
-	// RunbookRef from the §17.7 issueRunbooks table when the
-	// checker left it empty.
-	// spec: §25.7 line 3234.
-	RunbookRef string `json:"runbookRef,omitempty"`
+	// SuggestedActions is the §25.3 ordered (descending confidence) set
+	// of remediation alternatives for the capacity/throttling issues
+	// that have more than one reasonable response (WARM_POOL_EXHAUSTED,
+	// WARM_POOL_LOW, CREDENTIAL_POOL_EXHAUSTED, CIRCUIT_BREAKER_OPEN).
+	// Empty for the singular form. spec: §25.3 lines 484-487.
+	SuggestedActions []conventions.SuggestedAction `json:"suggestedActions,omitempty"`
 }
 
 // Checker reports the health of one subsystem. Implementations must
@@ -199,12 +200,16 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	if comp.Name == "" {
 		comp.Name = name
 	}
-	// spec: §25.7 line 3234 — when the checker stamps Issue and leaves
-	// RunbookRef empty, the §17.7 issueRunbooks table is the source of
-	// truth so the agent receives the runbook pointer without
-	// per-checker duplication.
-	if comp.RunbookRef == "" && comp.Issue != "" {
-		comp.RunbookRef = RunbookForIssue(comp.Issue)
+	// spec: §25.3 lines 459-501 / §25.7 line 3234 — when the checker
+	// stamps an Issue but leaves the remediation hint empty, the catalog
+	// resolves the structured suggestedAction (singular) or
+	// suggestedActions (ranked, for capacity issues) so the agent
+	// receives a machine-executable hint, with the runbook pointer
+	// sourced from the §17.7 issueRunbooks table, without per-checker
+	// duplication. A checker that already populated either form keeps
+	// control.
+	if comp.Issue != "" && comp.SuggestedAction == nil && len(comp.SuggestedActions) == 0 {
+		comp.SuggestedAction, comp.SuggestedActions = ActionsForIssue(comp.Issue, comp.Name)
 	}
 	if a.cacheTTL > 0 {
 		a.cacheMu.Lock()

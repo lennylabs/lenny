@@ -60,10 +60,13 @@ func failing(name string, s health.Status) health.Checker {
 		ComponentName: name,
 		Fn: func(context.Context) health.Component {
 			return health.Component{
-				Name:            name,
-				Status:          s,
-				Detail:          "subsystem impaired",
-				SuggestedAction: "restart " + name,
+				Name:   name,
+				Status: s,
+				Detail: "subsystem impaired",
+				SuggestedAction: &conventions.SuggestedAction{
+					Action:    "RESTART_COMPONENT",
+					Reasoning: "restart " + name,
+				},
 			}
 		},
 	}
@@ -174,7 +177,7 @@ func TestAggregatorComponentLookup(t *testing.T) {
 	if !ok {
 		t.Fatal("redis component not found")
 	}
-	if comp.Status != health.StatusDegraded || comp.SuggestedAction == "" {
+	if comp.Status != health.StatusDegraded || comp.SuggestedAction == nil {
 		t.Errorf("component: %+v", comp)
 	}
 	if _, ok := agg.Component(context.Background(), "missing"); ok {

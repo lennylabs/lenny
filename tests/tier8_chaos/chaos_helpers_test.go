@@ -459,10 +459,32 @@ type healthReport struct {
 
 // healthComponent is one entry in the §25.3 health report.
 type healthComponent struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Detail     string `json:"detail"`
-	RunbookRef string `json:"runbookRef"`
+	Name             string                `json:"name"`
+	Status           string                `json:"status"`
+	Detail           string                `json:"detail"`
+	Issue            string                `json:"issue"`
+	SuggestedAction  *suggestedActionJSON  `json:"suggestedAction"`
+	SuggestedActions []suggestedActionJSON `json:"suggestedActions"`
+}
+
+// suggestedActionJSON is the subset of the §25.3 remediation hint the
+// chaos tests assert against.
+type suggestedActionJSON struct {
+	Action  string `json:"action"`
+	Runbook string `json:"runbook"`
+}
+
+// runbook returns the §25.7 Path B runbook the component points at, from
+// either the singular suggestedAction or the primary (highest-confidence)
+// ranked alternative. spec: §25.3 lines 459-501; §25.7 line 3234.
+func (c healthComponent) runbook() string {
+	if c.SuggestedAction != nil {
+		return c.SuggestedAction.Runbook
+	}
+	if len(c.SuggestedActions) > 0 {
+		return c.SuggestedActions[0].Runbook
+	}
+	return ""
 }
 
 // component returns the named component from the report and whether it

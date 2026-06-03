@@ -9,6 +9,7 @@ import (
 )
 
 const sample = `---
+title: "Warm Pool Exhaustion"
 triggers:
   - alert: WarmPoolLow
     severity: warning
@@ -50,6 +51,11 @@ func TestParseFrontMatter(t *testing.T) {
 	if len(fm.Tags) != 2 {
 		t.Errorf("tags = %v, want 2", fm.Tags)
 	}
+	// spec: §25.7 line 3143 — title is parsed so the `q` filter can
+	// search it.
+	if fm.Title != "Warm Pool Exhaustion" {
+		t.Errorf("title = %q, want %q", fm.Title, "Warm Pool Exhaustion")
+	}
 }
 
 func TestParseRejectsMissingFrontMatter(t *testing.T) {
@@ -80,8 +86,16 @@ func TestMatches(t *testing.T) {
 		{"matching component", runbooks.Filter{Component: "warmPools"}, true},
 		{"non-matching component", runbooks.Filter{Component: "redis"}, false},
 		{"matching tag", runbooks.Filter{Tag: "capacity"}, true},
-		{"symptom substring", runbooks.Filter{Symptom: "RUNTIME_UNAVAILABLE"}, true},
-		{"non-matching symptom", runbooks.Filter{Symptom: "disk full"}, false},
+		// spec: §25.7 line 3142 — `requires` filters to executable runbooks.
+		{"matching requires", runbooks.Filter{Requires: "admin-api"}, true},
+		{"non-matching requires", runbooks.Filter{Requires: "cluster-access"}, false},
+		// spec: §25.7 line 3143 — `q` full-text over symptoms, tags, title.
+		{"q matches symptom substring", runbooks.Filter{Query: "RUNTIME_UNAVAILABLE"}, true},
+		{"q matches symptom case-insensitive", runbooks.Filter{Query: "idle pod count"}, true},
+		{"q matches tag", runbooks.Filter{Query: "scaling"}, true},
+		{"q matches title", runbooks.Filter{Query: "warm pool"}, true},
+		{"q all terms must match", runbooks.Filter{Query: "idle disk"}, false},
+		{"q no match", runbooks.Filter{Query: "kafka"}, false},
 		{"all set and matching", runbooks.Filter{Alert: "WarmPoolLow", Component: "warmPools", Tag: "scaling"}, true},
 		{"one of several not matching", runbooks.Filter{Alert: "WarmPoolLow", Tag: "credentials"}, false},
 	}

@@ -54,13 +54,18 @@ func TestListRunbooksUnavailableWithoutSource(t *testing.T) {
 func TestListRunbooks(t *testing.T) {
 	src := fakeRunbookSource{books: []opsserver.Runbook{
 		{Name: "warm-pool-exhaustion", FrontMatter: runbooks.FrontMatter{
+			Title:      "Warm Pool Exhaustion",
 			Triggers:   []runbooks.Trigger{{Alert: "WarmPoolExhausted"}},
 			Components: []string{"warmPools"},
+			Symptoms:   []string{"session creation returns RUNTIME_UNAVAILABLE"},
 			Tags:       []string{"scaling"},
+			Requires:   []string{"admin-api", "cluster-access"},
 		}},
 		{Name: "postgres-failover", FrontMatter: runbooks.FrontMatter{
+			Title:      "Postgres Failover",
 			Triggers:   []runbooks.Trigger{{Alert: "PostgresDown"}},
 			Components: []string{"postgres"},
+			Requires:   []string{"cluster-access"},
 		}},
 	}}
 	srv := opsserver.New(opsserver.Options{Runbooks: src})
@@ -78,6 +83,27 @@ func TestListRunbooks(t *testing.T) {
 	byComponent := getRunbooks(t, srv, "/v1/admin/runbooks?component=warmPools")
 	if len(byComponent.Runbooks) != 1 || byComponent.Runbooks[0].Name != "warm-pool-exhaustion" {
 		t.Errorf("component filter = %+v, want only warm-pool-exhaustion", byComponent.Runbooks)
+	}
+
+	// spec: §25.7 line 3142 — `requires` narrows to runbooks the caller
+	// can execute. admin-api is unique to warm-pool-exhaustion.
+	byRequires := getRunbooks(t, srv, "/v1/admin/runbooks?requires=admin-api")
+	if len(byRequires.Runbooks) != 1 || byRequires.Runbooks[0].Name != "warm-pool-exhaustion" {
+		t.Errorf("requires filter = %+v, want only warm-pool-exhaustion", byRequires.Runbooks)
+	}
+	bothRequire := getRunbooks(t, srv, "/v1/admin/runbooks?requires=cluster-access")
+	if len(bothRequire.Runbooks) != 2 {
+		t.Errorf("requires=cluster-access returned %d, want 2", len(bothRequire.Runbooks))
+	}
+
+	// spec: §25.7 line 3143 — `q` full-text over symptoms, tags, title.
+	byQuerySymptom := getRunbooks(t, srv, "/v1/admin/runbooks?q=RUNTIME_UNAVAILABLE")
+	if len(byQuerySymptom.Runbooks) != 1 || byQuerySymptom.Runbooks[0].Name != "warm-pool-exhaustion" {
+		t.Errorf("q symptom filter = %+v, want only warm-pool-exhaustion", byQuerySymptom.Runbooks)
+	}
+	byQueryTitle := getRunbooks(t, srv, "/v1/admin/runbooks?q=failover")
+	if len(byQueryTitle.Runbooks) != 1 || byQueryTitle.Runbooks[0].Name != "postgres-failover" {
+		t.Errorf("q title filter = %+v, want only postgres-failover", byQueryTitle.Runbooks)
 	}
 
 	// Filtered by alert that matches nothing.

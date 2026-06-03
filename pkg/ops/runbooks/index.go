@@ -23,6 +23,9 @@ type Trigger struct {
 
 // FrontMatter is the §25.7 runbook front matter parsed for discovery.
 type FrontMatter struct {
+	// Title is the human runbook title, searched by the `q` full-text
+	// filter alongside symptoms and tags (§25.7 line 3143).
+	Title      string    `yaml:"title" json:"title,omitempty"`
 	Triggers   []Trigger `yaml:"triggers" json:"triggers,omitempty"`
 	Components []string  `yaml:"components" json:"components,omitempty"`
 	Symptoms   []string  `yaml:"symptoms" json:"symptoms,omitempty"`
@@ -51,18 +54,26 @@ func Parse(markdown []byte) (FrontMatter, error) {
 	return fm, nil
 }
 
-// Filter is the §25.7 Path A runbook discovery filter. Every set field
-// must match; an empty filter matches every runbook.
+// Filter is the §25.7 Path A runbook discovery filter (spec lines
+// 3140-3143). Every set field must match; an empty filter matches every
+// runbook.
 type Filter struct {
-	// Alert matches a runbook whose triggers name the alert.
+	// Alert matches a runbook whose triggers name the alert
+	// (`?alert=`, against triggers[].alert).
 	Alert string
-	// Component matches a runbook listing the health-API component.
+	// Component matches a runbook listing the health-API component
+	// (`?component=`, against components[]).
 	Component string
-	// Tag matches a runbook carrying the tag.
+	// Tag matches a runbook carrying the tag (`?tag=`, against tags[]).
 	Tag string
-	// Symptom matches a runbook any of whose symptom strings contains
-	// it as a substring.
-	Symptom string
+	// Requires matches a runbook listing the named capability
+	// (`?requires=`, against requires[]); the spec use case is "filter
+	// to runbooks the agent can execute".
+	Requires string
+	// Query is the `?q=` full-text filter: every whitespace-separated
+	// term must appear as a case-insensitive substring across the
+	// runbook's symptoms, tags, and title (spec line 3143).
+	Query string
 }
 
 // Matches reports whether a runbook with the given front matter
@@ -77,8 +88,38 @@ func Matches(fm FrontMatter, f Filter) bool {
 	if f.Tag != "" && !contains(fm.Tags, f.Tag) {
 		return false
 	}
-	if f.Symptom != "" && !anyContains(fm.Symptoms, f.Symptom) {
+	if f.Requires != "" && !contains(fm.Requires, f.Requires) {
 		return false
+	}
+	if f.Query != "" && !matchesQuery(fm, f.Query) {
+		return false
+	}
+	return true
+}
+
+// matchesQuery implements the §25.7 `q` filter: a case-insensitive AND
+// over the query's whitespace-separated terms, each of which must occur
+// as a substring somewhere in the runbook's symptoms, tags, or title.
+func matchesQuery(fm FrontMatter, query string) bool {
+	terms := strings.Fields(strings.ToLower(query))
+	if len(terms) == 0 {
+		return true
+	}
+	var hay strings.Builder
+	hay.WriteString(strings.ToLower(fm.Title))
+	for _, s := range fm.Symptoms {
+		hay.WriteByte('\n')
+		hay.WriteString(strings.ToLower(s))
+	}
+	for _, t := range fm.Tags {
+		hay.WriteByte('\n')
+		hay.WriteString(strings.ToLower(t))
+	}
+	haystack := hay.String()
+	for _, term := range terms {
+		if !strings.Contains(haystack, term) {
+			return false
+		}
 	}
 	return true
 }
@@ -95,15 +136,6 @@ func triggersAlert(triggers []Trigger, alert string) bool {
 func contains(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-func anyContains(list []string, substr string) bool {
-	for _, x := range list {
-		if strings.Contains(x, substr) {
 			return true
 		}
 	}

@@ -33,8 +33,11 @@ func TestCircuitBreakerCacheStaleIsDegraded(t *testing.T) {
 	if got.Status != health.StatusDegraded {
 		t.Errorf("a 30s-stale cache: status %q, want degraded", got.Status)
 	}
-	if got.SuggestedAction == "" {
-		t.Error("a degraded component must carry a §25.3 suggested action")
+	// The breaker-cache degradation is not a Path B issue code, so the
+	// checker carries the structured singular hint directly.
+	// spec: §25.3 lines 459-501.
+	if got.SuggestedAction == nil || got.SuggestedAction.Runbook == "" {
+		t.Error("a degraded component must carry a §25.3 structured suggested action with a runbook")
 	}
 }
 
@@ -77,8 +80,13 @@ func TestSIEMDegradedAboveThreshold(t *testing.T) {
 	if got.Issue != "AUDIT_SIEM_DELIVERY_DEGRADED" {
 		t.Errorf("issue = %q, want AUDIT_SIEM_DELIVERY_DEGRADED", got.Issue)
 	}
-	if got.SuggestedAction == "" || got.RunbookRef == "" {
-		t.Error("a degraded SIEM component must carry a §25.3 suggested action and runbook ref")
+	// The checker stamps the Issue; the aggregator's catalog resolves the
+	// structured suggestedAction and the Path B runbook from it. Assert
+	// the issue code is one the catalog can resolve to a hint with a
+	// runbook. spec: §25.3 lines 459-501; §25.7 line 3234.
+	single, _ := health.ActionsForIssue(got.Issue, got.Name)
+	if single == nil || single.Runbook == "" {
+		t.Errorf("ActionsForIssue(%q) = %+v, want a singular hint with a runbook", got.Issue, single)
 	}
 }
 

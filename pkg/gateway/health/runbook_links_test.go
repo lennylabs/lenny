@@ -7,34 +7,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
-
-// spec: §4.0 / §25.3 — the centralized runbook-link table resolves
-// known components to their runbook references and returns the empty
-// string for unknown components.
-func TestRunbookFor_KnownComponents(t *testing.T) {
-	cases := map[string]string{
-		"postgres":              "postgres-failover",
-		"redis":                 "redis-failure",
-		"circuit_breaker_cache": "redis-failure",
-		"warm_pool":             "warm-pool-exhaustion",
-		"unknown_component":     "",
-	}
-	for comp, want := range cases {
-		if got := health.RunbookFor(comp); got != want {
-			t.Errorf("RunbookFor(%q): want %q, got %q", comp, want, got)
-		}
-	}
-}
-
-// spec: §4.0 — RegisterRunbook installs a new (component → runbook)
-// link so out-of-tree backends can publish their own runbook routing.
-func TestRegisterRunbook(t *testing.T) {
-	health.RegisterRunbook("custom_backend", "custom-runbook")
-	if got := health.RunbookFor("custom_backend"); got != "custom-runbook" {
-		t.Errorf("RunbookFor(custom_backend): want custom-runbook, got %q", got)
-	}
-}
 
 // TestRunbookForIssue_RequiredByPathB pins the §25.7 Path B
 // (lines 3217–3231) lookup. The eight codes named at §17.7 line 741
@@ -71,12 +45,12 @@ func TestRegisterIssueRunbook(t *testing.T) {
 	}
 }
 
-// TestAggregatorBackfillsRunbookRefFromIssue asserts that when a
-// Checker stamps Issue but leaves RunbookRef empty, the aggregator
-// resolves the runbook from §17.7's issueRunbooks table so the §25.3
-// response carries the Path B pointer.
-// spec: §25.7 line 3234.
-func TestAggregatorBackfillsRunbookRefFromIssue_spec_25_7_3234(t *testing.T) {
+// TestAggregatorBackfillsActionsFromIssue asserts that when a Checker
+// stamps a ranked Issue but leaves the remediation hint empty, the
+// aggregator resolves the §25.3 suggestedActions array from the catalog,
+// each carrying the §25.7 Path B runbook pointer.
+// spec: §25.3 lines 459-501; §25.7 line 3234.
+func TestAggregatorBackfillsActionsFromIssue_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{
 		ComponentName: "warm_pool",
@@ -94,43 +68,62 @@ func TestAggregatorBackfillsRunbookRefFromIssue_spec_25_7_3234(t *testing.T) {
 		t.Fatalf("components: %d, want 1", len(report.Components))
 	}
 	comp := report.Components[0]
-	if comp.RunbookRef != "warm-pool-exhaustion" {
-		t.Errorf("RunbookRef: %q, want warm-pool-exhaustion", comp.RunbookRef)
+	// WARM_POOL_EXHAUSTED is a ranked issue: the singular field is empty
+	// and the ordered alternatives carry the Path B runbook.
+	if comp.SuggestedAction != nil {
+		t.Errorf("SuggestedAction: %+v, want nil (ranked issue uses the array form)", comp.SuggestedAction)
 	}
-	if comp.Issue != "WARM_POOL_EXHAUSTED" {
-		t.Errorf("Issue: %q, want WARM_POOL_EXHAUSTED", comp.Issue)
+	if len(comp.SuggestedActions) < 2 {
+		t.Fatalf("SuggestedActions: %d, want the ranked alternatives", len(comp.SuggestedActions))
+	}
+	if comp.SuggestedActions[0].Runbook != "warm-pool-exhaustion" {
+		t.Errorf("primary runbook: %q, want warm-pool-exhaustion", comp.SuggestedActions[0].Runbook)
+	}
+	if comp.SuggestedActions[0].Action != "SCALE_WARM_POOL" {
+		t.Errorf("primary action: %q, want SCALE_WARM_POOL", comp.SuggestedActions[0].Action)
+	}
+	// The pool name flows into the executable endpoint.
+	if comp.SuggestedActions[0].Endpoint != "PUT /v1/admin/pools/warm_pool/warm-count" {
+		t.Errorf("endpoint: %q, want the warm_pool target substituted", comp.SuggestedActions[0].Endpoint)
 	}
 }
 
-// TestAggregatorPreservesExplicitRunbookRef ensures that a checker
-// that already stamped RunbookRef wins over the back-fill, so
-// out-of-tree probes that point at a non-spec runbook keep control.
-// spec: §25.7 line 3234.
-func TestAggregatorPreservesExplicitRunbookRef_spec_25_7_3234(t *testing.T) {
+// TestAggregatorPreservesExplicitAction ensures that a checker that
+// already populated the remediation hint wins over the catalog back-fill,
+// so out-of-tree probes keep control.
+// spec: §25.3 lines 459-501.
+func TestAggregatorPreservesExplicitAction_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{
 		ComponentName: "warm_pool",
 		Fn: func(context.Context) health.Component {
 			return health.Component{
-				Name:       "warm_pool",
-				Status:     health.StatusUnhealthy,
-				Issue:      "WARM_POOL_EXHAUSTED",
-				RunbookRef: "custom-warm-pool-runbook",
+				Name:   "warm_pool",
+				Status: health.StatusUnhealthy,
+				Issue:  "WARM_POOL_EXHAUSTED",
+				SuggestedAction: &conventions.SuggestedAction{
+					Action:  "CUSTOM",
+					Runbook: "custom-warm-pool-runbook",
+				},
 			}
 		},
 	})
 	report := agg.Report(context.Background())
-	if got := report.Components[0].RunbookRef; got != "custom-warm-pool-runbook" {
-		t.Errorf("RunbookRef: %q, want explicit override preserved", got)
+	comp := report.Components[0]
+	if comp.SuggestedAction == nil || comp.SuggestedAction.Runbook != "custom-warm-pool-runbook" {
+		t.Errorf("SuggestedAction: %+v, want explicit override preserved", comp.SuggestedAction)
+	}
+	if len(comp.SuggestedActions) != 0 {
+		t.Errorf("SuggestedActions: %d, want none when the checker set the singular form", len(comp.SuggestedActions))
 	}
 }
 
-// TestComponentEndpointBackfillsRunbookRefFromIssue covers the
+// TestComponentEndpointBackfillsActionsFromIssue covers the
 // single-component lookup path (Aggregator.Component) so the
-// /v1/admin/health/{component} response also carries the Path B
-// runbook pointer when only Issue is stamped.
-// spec: §25.7 line 3234.
-func TestComponentEndpointBackfillsRunbookRefFromIssue_spec_25_7_3234(t *testing.T) {
+// /v1/admin/health/{component} response also carries the structured
+// remediation hint when only Issue is stamped.
+// spec: §25.3 lines 459-501.
+func TestComponentEndpointBackfillsActionsFromIssue_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{
 		ComponentName: "circuit_breaker_cache",
@@ -146,7 +139,10 @@ func TestComponentEndpointBackfillsRunbookRefFromIssue_spec_25_7_3234(t *testing
 	if !ok {
 		t.Fatal("component not found")
 	}
-	if comp.RunbookRef != "gateway-replica-failure" {
-		t.Errorf("RunbookRef: %q, want gateway-replica-failure", comp.RunbookRef)
+	if len(comp.SuggestedActions) < 2 {
+		t.Fatalf("SuggestedActions: %d, want the ranked alternatives", len(comp.SuggestedActions))
+	}
+	if comp.SuggestedActions[0].Runbook != "gateway-replica-failure" {
+		t.Errorf("primary runbook: %q, want gateway-replica-failure", comp.SuggestedActions[0].Runbook)
 	}
 }

@@ -295,8 +295,8 @@ type storeOutageScenario struct {
 	probePod string
 	// healthComp is the §25.3 health component name backed by the store.
 	healthComp string
-	// wantRunbookRef is the runbookRef the health component must carry
-	// while the store is down.
+	// wantRunbookRef is the §25.7 Path B runbook the health component's
+	// suggestedAction must point at while the store is down.
 	wantRunbookRef string
 	// postRestore, when set, runs after the store Deployment is Ready
 	// again. The e2e Postgres uses emptyDir, so a restored pod comes
@@ -371,11 +371,11 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 	} else {
 		report, _ := gatewayHealth(t, c, s.probePod, gatewayIP)
 		comp, _ := report.component(s.healthComp)
-		t.Logf("health report: component %q is %q, runbookRef %q", s.healthComp, comp.Status, comp.RunbookRef)
-		if s.wantRunbookRef != "" && comp.RunbookRef != s.wantRunbookRef &&
+		t.Logf("health report: component %q is %q, runbook %q", s.healthComp, comp.Status, comp.runbook())
+		if s.wantRunbookRef != "" && comp.runbook() != s.wantRunbookRef &&
 			!strings.Contains(comp.Detail, s.wantRunbookRef) {
-			t.Errorf("health component %q carries runbookRef %q, expected %q",
-				s.healthComp, comp.RunbookRef, s.wantRunbookRef)
+			t.Errorf("health component %q carries runbook %q, expected %q",
+				s.healthComp, comp.runbook(), s.wantRunbookRef)
 		}
 	}
 

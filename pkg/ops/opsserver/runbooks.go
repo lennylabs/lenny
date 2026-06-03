@@ -87,8 +87,13 @@ type RunbookSource interface {
 
 // handleListRunbooks serves the §25.7 Path A index, GET /v1/admin/-
 // runbooks. The canonical query parameters — alert, component, tag,
-// symptom — filter the index; an unfiltered request lists every
+// requires, q — filter the index; an unfiltered request lists every
 // runbook.
+//
+// spec: §25.7 lines 3140-3143 — the five combinable filter parameters
+// (`alert`, `component`, `tag`, `requires`, `q`); `requires` narrows to
+// runbooks the caller can execute and `q` is the full-text search across
+// symptoms, tags, and title.
 func (s *Server) handleListRunbooks(w http.ResponseWriter, r *http.Request) {
 	if s.runbooks == nil {
 		conventions.WriteError(w, http.StatusServiceUnavailable, "RUNBOOK_INDEX_UNAVAILABLE",
@@ -100,7 +105,8 @@ func (s *Server) handleListRunbooks(w http.ResponseWriter, r *http.Request) {
 		Alert:     q.Get("alert"),
 		Component: q.Get("component"),
 		Tag:       q.Get("tag"),
-		Symptom:   q.Get("symptom"),
+		Requires:  q.Get("requires"),
+		Query:     q.Get("q"),
 	}
 	matched := make([]Runbook, 0)
 	for _, rb := range s.runbooks.Runbooks() {

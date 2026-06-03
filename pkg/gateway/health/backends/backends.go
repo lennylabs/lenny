@@ -19,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // probeTimeout bounds a health ping so a hung backend cannot stall the
@@ -29,6 +30,18 @@ const probeTimeout = 2 * time.Second
 // circuit-breaker cache: a snapshot older than this is reported
 // degraded because the cache has stopped reconciling with Redis.
 const breakerCacheStaleAfter = 5 * time.Second
+
+// breakerCacheAction builds the §25.3 singular remediation hint for a
+// degraded circuit-breaker cache. The remediation is to restore Redis
+// connectivity; detail describes the gateway's fail-open behaviour
+// while the snapshot is stale. spec: §25.3 lines 459-501.
+func breakerCacheAction(detail string) *conventions.SuggestedAction {
+	return &conventions.SuggestedAction{
+		Action:    "INVESTIGATE_REDIS",
+		Reasoning: "Verify Redis reachability; " + detail + ".",
+		Runbook:   health.RunbookForIssue("REDIS_UNREACHABLE"),
+	}
+}
 
 // Postgres returns a health.Checker that pings the Postgres pool.
 func Postgres(pool *pgxpool.Pool, name string) health.Checker {
@@ -42,12 +55,12 @@ func Postgres(pool *pgxpool.Pool, name string) health.Checker {
 					Name:   name,
 					Status: health.StatusUnhealthy,
 					Detail: "postgres ping failed: " + err.Error(),
-					// spec: §25.7 line 3226 — Issue selects the
-					// Path B runbook through the §17.7 issueRunbooks
-					// table.
-					Issue:           "POSTGRES_UNREACHABLE",
-					SuggestedAction: "verify Postgres reachability, credentials, and the connection pool; the gateway rejects session writes until it recovers",
-					RunbookRef:      health.RunbookFor("postgres"),
+					// spec: §25.3 lines 459-501 / §25.7 line 3226 — the
+					// Issue selects both the Path B runbook and the
+					// structured suggestedAction through the catalog the
+					// aggregator applies; the checker does not duplicate
+					// the hint inline.
+					Issue: "POSTGRES_UNREACHABLE",
 				}
 			}
 			return health.Component{
@@ -71,10 +84,10 @@ func Redis(client redis.UniversalClient, name string) health.Checker {
 					Name:   name,
 					Status: health.StatusUnhealthy,
 					Detail: "redis ping failed: " + err.Error(),
-					// spec: §25.7 line 3227.
-					Issue:           "REDIS_UNREACHABLE",
-					SuggestedAction: "verify Redis reachability; circuit-breaker and coordination state degrade to per-replica behaviour until it recovers",
-					RunbookRef:      health.RunbookFor("redis"),
+					// spec: §25.3 lines 459-501 / §25.7 line 3227 — the
+					// aggregator resolves the structured hint and runbook
+					// from the Issue code.
+					Issue: "REDIS_UNREACHABLE",
 				}
 			}
 			return health.Component{
@@ -105,11 +118,14 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 			last := cache.LastRefresh()
 			if last.IsZero() {
 				return health.Component{
-					Name:            name,
-					Status:          health.StatusDegraded,
-					Detail:          "circuit-breaker cache has not completed its first refresh",
-					SuggestedAction: "verify Redis reachability; the gateway admits requests against an empty breaker snapshot until the first refresh succeeds",
-					RunbookRef:      health.RunbookFor("redis"),
+					Name:   name,
+					Status: health.StatusDegraded,
+					Detail: "circuit-breaker cache has not completed its first refresh",
+					// The breaker-cache staleness is a Redis-connectivity
+					// symptom rather than a §25.7 Path B issue code, so the
+					// checker carries the singular hint directly.
+					// spec: §25.3 lines 459-501.
+					SuggestedAction: breakerCacheAction("the gateway admits requests against an empty breaker snapshot until the first refresh succeeds"),
 				}
 			}
 			if age := time.Since(last); age > breakerCacheStaleAfter {
@@ -117,8 +133,7 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 					Name:            name,
 					Status:          health.StatusDegraded,
 					Detail:          fmt.Sprintf("circuit-breaker cache is %s stale; serving the last known snapshot", age.Round(time.Second)),
-					SuggestedAction: "verify Redis reachability; the gateway admits requests against a stale breaker snapshot until the cache refreshes",
-					RunbookRef:      health.RunbookFor("redis"),
+					SuggestedAction: breakerCacheAction("the gateway admits requests against a stale breaker snapshot until the cache refreshes"),
 				}
 			}
 			return health.Component{
@@ -175,9 +190,9 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 					Name:            name,
 					Status:          health.StatusDegraded,
 					Detail:          fmt.Sprintf("SIEM delivery failure rate %.1f%% exceeds the %.1f%% threshold; audit rows persist in Postgres but the external immutable copy is lagging", fr, thresholdPercent),
-					Issue:           "AUDIT_SIEM_DELIVERY_DEGRADED",
-					SuggestedAction: "verify SIEM endpoint reachability and credentials; the audit hash chain is durable in Postgres but the independent SIEM copy is incomplete until delivery recovers",
-					RunbookRef:      health.RunbookFor("siem"),
+					// spec: §25.3 lines 459-501 — the aggregator resolves
+					// the structured hint and runbook from the Issue code.
+					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",
 				}
 			}
 			if !fwd.Healthy() {
@@ -185,9 +200,9 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 					Name:            name,
 					Status:          health.StatusDegraded,
 					Detail:          "the most recent SIEM batch delivery failed",
-					Issue:           "AUDIT_SIEM_DELIVERY_DEGRADED",
-					SuggestedAction: "verify SIEM endpoint reachability and credentials; the audit hash chain is durable in Postgres but the independent SIEM copy is incomplete until delivery recovers",
-					RunbookRef:      health.RunbookFor("siem"),
+					// spec: §25.3 lines 459-501 — the aggregator resolves
+					// the structured hint and runbook from the Issue code.
+					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",
 				}
 			}
 			return health.Component{

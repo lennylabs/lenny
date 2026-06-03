@@ -23,8 +23,8 @@ import (
 // diagnosis: the Postgres backend health checker in
 // pkg/gateway/health/backends did not behave as specified. It must
 // report healthy against a live database and unhealthy against an
-// unreachable one, with the §25.3 operability hints (SuggestedAction
-// and RunbookRef) populated on an unhealthy component.
+// unreachable one, stamping the §25.3 issue code the aggregator's
+// catalog resolves into the structured suggestedAction and runbook.
 func TestPostgresChecker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -52,8 +52,14 @@ func TestPostgresChecker(t *testing.T) {
 		if comp.Status != health.StatusUnhealthy {
 			t.Errorf("Status = %q, want unhealthy", comp.Status)
 		}
-		if comp.SuggestedAction == "" || comp.RunbookRef == "" {
-			t.Errorf("unhealthy component missing §25.3 operability hints: %+v", comp)
+		// The checker stamps the Issue code; the aggregator's catalog
+		// resolves the structured suggestedAction and Path B runbook from
+		// it. spec: §25.3 lines 459-501; §25.7 line 3234.
+		if comp.Issue == "" {
+			t.Errorf("unhealthy component missing §25.3 issue code: %+v", comp)
+		}
+		if single, _ := health.ActionsForIssue(comp.Issue, comp.Name); single == nil || single.Runbook == "" {
+			t.Errorf("issue %q does not resolve to a §25.3 hint with a runbook", comp.Issue)
 		}
 	})
 }
@@ -62,8 +68,8 @@ func TestPostgresChecker(t *testing.T) {
 // diagnosis: the Redis backend health checker in
 // pkg/gateway/health/backends did not behave as specified. It must
 // report healthy against a live Redis and unhealthy against an
-// unreachable one, with the §25.3 operability hints (SuggestedAction
-// and RunbookRef) populated on an unhealthy component.
+// unreachable one, stamping the §25.3 issue code the aggregator's
+// catalog resolves into the structured suggestedAction and runbook.
 func TestRedisChecker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -86,8 +92,14 @@ func TestRedisChecker(t *testing.T) {
 		if comp.Status != health.StatusUnhealthy {
 			t.Errorf("Status = %q, want unhealthy", comp.Status)
 		}
-		if comp.SuggestedAction == "" || comp.RunbookRef == "" {
-			t.Errorf("unhealthy component missing §25.3 operability hints: %+v", comp)
+		// The checker stamps the Issue code; the aggregator's catalog
+		// resolves the structured suggestedAction and Path B runbook from
+		// it. spec: §25.3 lines 459-501; §25.7 line 3234.
+		if comp.Issue == "" {
+			t.Errorf("unhealthy component missing §25.3 issue code: %+v", comp)
+		}
+		if single, _ := health.ActionsForIssue(comp.Issue, comp.Name); single == nil || single.Runbook == "" {
+			t.Errorf("issue %q does not resolve to a §25.3 hint with a runbook", comp.Issue)
 		}
 	})
 }
