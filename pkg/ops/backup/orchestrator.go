@@ -85,6 +85,22 @@ type Config struct {
 	// Progress emits the §25.11 line 4196 operation_progressed event on
 	// each shard completion. A nil emitter drops it.
 	Progress RestoreProgressEmitter
+	// Regions is the §12.8 / §25.11 per-region backup endpoint map
+	// (backups.regions.<region>). When non-empty, CreateBackup dispatches
+	// one §25.11 pg_dump Job per region against that region's Postgres
+	// shards and fails closed (BACKUP_REGION_UNRESOLVABLE) on a shard whose
+	// region has no complete entry. An empty map keeps the single-region
+	// global dump path. Required only when a tenant has dataResidencyRegion
+	// set. spec: §12.8 lines 932-936.
+	Regions map[string]RegionBackupConfig
+	// ShardRegions resolves each Postgres shard to its data-residency
+	// region for the per-region dispatch. Required when Regions is
+	// non-empty; ignored otherwise. spec: §12.8 line 935.
+	ShardRegions ShardRegionResolver
+	// Residency receives the §12.8 lenny_data_residency_violation_total
+	// increment on a fail-closed backup abort. A nil sink drops the metric
+	// (the audit event still fires through Audit). spec: §12.8 line 936.
+	Residency ResidencyMetrics
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 	// NewID generates a backup/restore ID; nil uses a random hex id.
@@ -95,22 +111,25 @@ type Config struct {
 // Kubernetes Jobs through a JobLauncher and tracks their state in a
 // Store; it does not run backups in-process.
 type Service struct {
-	store       Store
-	launcher    JobLauncher
-	locker      RestoreLocker
-	platVer     string
-	schemaV     int
-	preDays     int
-	replication ReplicationLagSource
-	dataLoss    DataLossEstimator
-	throughput  int64
-	audit       AuditSink
-	objects     ObjectDeleter
-	erasure     ErasureReconciler
-	gatewayRoll GatewayRestarter
-	progress    RestoreProgressEmitter
-	now         func() time.Time
-	newID       func(prefix string) string
+	store        Store
+	launcher     JobLauncher
+	locker       RestoreLocker
+	platVer      string
+	schemaV      int
+	preDays      int
+	replication  ReplicationLagSource
+	dataLoss     DataLossEstimator
+	throughput   int64
+	audit        AuditSink
+	objects      ObjectDeleter
+	erasure      ErasureReconciler
+	gatewayRoll  GatewayRestarter
+	progress     RestoreProgressEmitter
+	regions      map[string]RegionBackupConfig
+	shardRegions ShardRegionResolver
+	residency    ResidencyMetrics
+	now          func() time.Time
+	newID        func(prefix string) string
 }
 
 var _ BackupService = (*Service)(nil)
@@ -136,23 +155,33 @@ func NewService(cfg Config) (*Service, error) {
 	if preDays <= 0 {
 		preDays = preRestoreRetainDaysDefault
 	}
+	// §12.8 line 935: per-region dispatch needs a shard→region resolver.
+	// A Regions map with no resolver is a misconfiguration that would
+	// silently fall back to the global dump and bypass the residency
+	// control, so reject it at construction.
+	if len(cfg.Regions) > 0 && cfg.ShardRegions == nil {
+		return nil, fmt.Errorf("backup: Regions configured but no ShardRegions resolver")
+	}
 	return &Service{
-		store:       cfg.Store,
-		launcher:    cfg.Launcher,
-		locker:      cfg.Locker,
-		platVer:     cfg.PlatformVersion,
-		schemaV:     cfg.SchemaVersion,
-		preDays:     preDays,
-		replication: cfg.ReplicationLag,
-		dataLoss:    cfg.DataLoss,
-		throughput:  cfg.RestoreThroughputBps,
-		audit:       cfg.Audit,
-		objects:     cfg.ObjectStore,
-		erasure:     cfg.Erasure,
-		gatewayRoll: cfg.GatewayRestart,
-		progress:    cfg.Progress,
-		now:         now,
-		newID:       newID,
+		store:        cfg.Store,
+		launcher:     cfg.Launcher,
+		locker:       cfg.Locker,
+		platVer:      cfg.PlatformVersion,
+		schemaV:      cfg.SchemaVersion,
+		preDays:      preDays,
+		replication:  cfg.ReplicationLag,
+		dataLoss:     cfg.DataLoss,
+		throughput:   cfg.RestoreThroughputBps,
+		audit:        cfg.Audit,
+		objects:      cfg.ObjectStore,
+		erasure:      cfg.Erasure,
+		gatewayRoll:  cfg.GatewayRestart,
+		progress:     cfg.Progress,
+		regions:      cfg.Regions,
+		shardRegions: cfg.ShardRegions,
+		residency:    cfg.Residency,
+		now:          now,
+		newID:        newID,
 	}, nil
 }
 
@@ -195,6 +224,15 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 		return nil, codedError(ErrCodeStorageUnreachable, "record backup: %v", err)
 	}
 
+	// §12.8 lines 932-936: when per-region backup endpoints are
+	// configured and this backup type dumps Postgres, run one pg_dump Job
+	// per region against that region's shards only, failing closed on any
+	// shard whose region has no complete backups.regions entry. There is
+	// no global aggregated dump in a multi-region deployment.
+	if len(s.regions) > 0 && dumpsPostgres(t) {
+		return s.createPerRegionBackup(ctx, b)
+	}
+
 	// Step 2: create the Kubernetes Job, annotated with the backup id.
 	launched, err := s.launcher.Launch(ctx, JobSpec{
 		Kind:       JobBackup,
@@ -222,6 +260,131 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 		Fields:   map[string]any{"type": b.Type, "jobId": b.JobID},
 	})
 	return &b, nil
+}
+
+// createPerRegionBackup implements the §12.8 lines 932-936 per-region
+// backup dispatch for an already-inserted pending row b. It resolves each
+// Postgres shard to its data-residency region, fails closed with
+// BACKUP_REGION_UNRESOLVABLE on a shard whose region has no complete
+// backups.regions.<region> entry, and otherwise launches one §25.11
+// pg_dump Job per region scoped to that region's MinIO endpoint, KMS key,
+// bucket, and access-credential Secret. The row records one component per
+// region so verification, retention, and restore operate per-region.
+func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup, error) {
+	shards, err := s.shardRegions.ShardRegions(ctx)
+	if err != nil {
+		return nil, s.failBackup(ctx, b, ErrCodeStorageUnreachable,
+			"resolve shard regions: %v", err)
+	}
+	if len(shards) == 0 {
+		return nil, s.failBackup(ctx, b, ErrCodeJobCreationFailed,
+			"no Postgres shards resolved for per-region backup")
+	}
+
+	// §12.8 line 936: fail closed on the first shard whose resolved region
+	// has no complete backups.regions entry, before launching any Job.
+	for _, sr := range shards {
+		cfg, ok := s.regions[sr.Region]
+		if ok && cfg.complete() {
+			continue
+		}
+		return nil, s.abortResidency(ctx, b, sr.Region, sr.ShardID)
+	}
+
+	// All regions resolve: launch one region-scoped Job per region.
+	regions := regionsInOrder(shards)
+	components := make([]BackupComponent, 0, len(regions))
+	var primaryJob string
+	for _, region := range regions {
+		launched, err := s.launcher.Launch(ctx, JobSpec{
+			Kind:         JobBackup,
+			BackupID:     b.ID,
+			BackupType:   b.Type,
+			Region:       region,
+			RegionConfig: s.regions[region],
+			Shards:       shardsInRegion(shards, region),
+		})
+		if err != nil {
+			// A region Job was not created. Fail the row; the orphan
+			// reconciler sweeps any sibling Jobs already launched.
+			return nil, s.failBackup(ctx, b, ErrCodeJobCreationFailed,
+				"create per-region backup Job for %s: %v", region, err)
+		}
+		if primaryJob == "" {
+			primaryJob = launched.JobID
+		}
+		components = append(components, BackupComponent{
+			Name:   region,
+			Status: StatusPending,
+			Region: region,
+			JobID:  launched.JobID,
+		})
+	}
+
+	b.JobID = primaryJob
+	b.Components = components
+	b.Status = StatusRunning
+	if err := s.store.UpdateBackup(ctx, b); err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "record backup job: %v", err)
+	}
+	regionJobs := make(map[string]any, len(components))
+	for _, c := range components {
+		regionJobs[c.Region] = c.JobID
+	}
+	// spec: §25.11 line 4343 — every backup creation is audited.
+	s.emitAudit(AuditEvent{
+		Type:     string(audit.EventBackupCreated),
+		BackupID: b.ID,
+		Actor:    b.StartedBy,
+		Fields:   map[string]any{"type": b.Type, "regions": regions, "regionJobs": regionJobs},
+	})
+	return &b, nil
+}
+
+// abortResidency marks b failed for a BACKUP_REGION_UNRESOLVABLE
+// violation, emits the §12.8 DataResidencyViolationAttempt audit event
+// and increments lenny_data_residency_violation_total{operation="backup"},
+// then returns the coded error. spec: §12.8 line 936, §25.11 line 4336.
+func (s *Service) abortResidency(ctx context.Context, b Backup, region, shardID string) error {
+	detail := fmt.Sprintf(
+		"region %s has no backups.regions entry (or endpoint/KMS is unreachable)", region)
+	b.Status = StatusFailed
+	b.Error = ErrCodeBackupRegionUnresolvable + ": " + detail
+	completedAt := s.now()
+	b.CompletedAt = &completedAt
+	// The row was already inserted; record the failed terminal state. A
+	// store error here is logged through the returned residency error.
+	_ = s.store.UpdateBackup(ctx, b)
+	s.emitAudit(AuditEvent{
+		Type:     string(audit.EventDataResidencyViolationAttempt),
+		BackupID: b.ID,
+		Actor:    b.StartedBy,
+		Outcome:  "failed",
+		Detail:   detail,
+		Fields: map[string]any{
+			"operation":        residencyOperationBackup,
+			"requested_region": region,
+			"shard_id":         shardID,
+			"backup_id":        b.ID,
+		},
+	})
+	if s.residency != nil {
+		s.residency.DataResidencyViolation(residencyOperationBackup)
+	}
+	return codedError(ErrCodeBackupRegionUnresolvable, "%s", detail)
+}
+
+// failBackup marks an already-inserted backup row failed with code/detail
+// and returns the coded error, so a per-region dispatch failure leaves a
+// terminal row rather than a pending one the reconciler must time out.
+func (s *Service) failBackup(ctx context.Context, b Backup, code, format string, args ...any) error {
+	detail := fmt.Sprintf(format, args...)
+	b.Status = StatusFailed
+	b.Error = code + ": " + detail
+	completedAt := s.now()
+	b.CompletedAt = &completedAt
+	_ = s.store.UpdateBackup(ctx, b)
+	return codedError(code, "%s", detail)
 }
 
 // ListBackups returns a page of backups matching filter. The cursor is

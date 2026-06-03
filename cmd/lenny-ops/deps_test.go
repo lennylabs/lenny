@@ -188,3 +188,46 @@ func TestScheduledBackupCronReflectsRuntimeEdit_spec_25_11(t *testing.T) {
 		t.Errorf("post-edit backup-postgres expression = %q, want 30 */4 * * *", got)
 	}
 }
+
+// TestParseBackupRegions covers the §12.8 backups.regions / shardRegions
+// JSON decoding the lenny-ops wiring uses to enable per-region dispatch:
+// an empty regions input keeps the single-region path, a complete pair
+// produces the region map plus a resolver, and a regions map with no
+// shard map is a fatal misconfiguration.
+func TestParseBackupRegions(t *testing.T) {
+	// Empty regions: single-region global dump, no resolver.
+	regions, resolver, err := parseBackupRegions("", "")
+	if err != nil || regions != nil || resolver != nil {
+		t.Fatalf("empty regions = (%v, %v, %v), want all nil", regions, resolver, err)
+	}
+	if regions, resolver, err = parseBackupRegions("{}", "[]"); err != nil || regions != nil || resolver != nil {
+		t.Fatalf("empty-literal regions = (%v, %v, %v), want all nil", regions, resolver, err)
+	}
+
+	// A complete pair decodes the region endpoint and the shard resolver.
+	regionsJSON := `{"eu-west-1":{"minioEndpoint":"minio.eu:9000","kmsKeyId":"kms-eu","accessCredentialSecret":"lenny-backup-minio-eu","bucket":"backups-eu"}}`
+	shardsJSON := `[{"shardId":"shard-eu","region":"eu-west-1"}]`
+	regions, resolver, err = parseBackupRegions(regionsJSON, shardsJSON)
+	if err != nil {
+		t.Fatalf("parseBackupRegions: %v", err)
+	}
+	eu, ok := regions["eu-west-1"]
+	if !ok || eu.MinioEndpoint != "minio.eu:9000" || eu.AccessCredentialSecret != "lenny-backup-minio-eu" {
+		t.Fatalf("eu region = %+v, want decoded endpoint/secret", eu)
+	}
+	srs, err := resolver.ShardRegions(context.Background())
+	if err != nil || len(srs) != 1 || srs[0].ShardID != "shard-eu" || srs[0].Region != "eu-west-1" {
+		t.Fatalf("resolver = (%+v, %v), want one shard-eu/eu-west-1", srs, err)
+	}
+
+	// Regions set but no shard map is a fatal config error (every shard
+	// would be unresolvable).
+	if _, _, err := parseBackupRegions(regionsJSON, ""); err == nil {
+		t.Fatal("regions with no shardRegions accepted, want an error")
+	}
+
+	// Malformed JSON is reported, not silently dropped.
+	if _, _, err := parseBackupRegions(`{bad`, shardsJSON); err == nil {
+		t.Fatal("malformed regions JSON accepted, want an error")
+	}
+}

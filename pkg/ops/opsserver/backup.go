@@ -32,6 +32,10 @@ var backupErrorMap = map[string]struct {
 	backup.ErrCodeRemediationLockConflict: {http.StatusConflict, conventions.CategoryPolicy},
 	backup.ErrCodeRestoreNotFailed:        {http.StatusConflict, conventions.CategoryPolicy},
 	backup.ErrCodeJustificationRequired:   {http.StatusBadRequest, conventions.CategoryPolicy},
+	// §25.11 line 4336: BACKUP_REGION_UNRESOLVABLE is PERMANENT, HTTP 422 —
+	// a fail-closed residency abort the operator resolves by configuring
+	// the missing backups.regions.<region> entry, not by retrying.
+	backup.ErrCodeBackupRegionUnresolvable: {http.StatusUnprocessableEntity, conventions.CategoryPermanent},
 }
 
 // writeBackupError maps a §25.11 BackupService error to the §25.2

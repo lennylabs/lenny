@@ -368,6 +368,15 @@ type backupDeps struct {
 	MinIOBucket     string
 	KMSKeyID        string
 	ReportDSNSecret string
+
+	// Regions is the §12.8 backups.regions.<region> per-region backup
+	// endpoint map. When non-empty, buildBackupService enables per-region
+	// dispatch and pairs it with ShardRegions; an empty map keeps the
+	// single-region global dump path. spec: §12.8 lines 932-936.
+	Regions map[string]backup.RegionBackupConfig
+	// ShardRegions resolves each Postgres shard to its data-residency
+	// region for per-region dispatch. Required when Regions is non-empty.
+	ShardRegions backup.ShardRegionResolver
 }
 
 // buildBackupService constructs the §25.11 BackupService and the
@@ -388,6 +397,17 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 		// logs the event until that path lands, matching the escalation
 		// logEmitter posture.
 		Audit: logAuditSink,
+		// §12.8 line 936: the lenny_data_residency_violation_total counter
+		// the fail-closed BACKUP_REGION_UNRESOLVABLE abort increments.
+		Residency: backupResidencyMetrics{},
+	}
+
+	// §12.8 lines 932-936: when per-region backup endpoints are configured,
+	// enable per-region pg_dump dispatch with the shard→region resolver.
+	if len(deps.Regions) > 0 && deps.ShardRegions != nil {
+		cfg.Regions = deps.Regions
+		cfg.ShardRegions = deps.ShardRegions
+		log.Printf("lenny-ops: §12.8 per-region backup dispatch enabled for %d region(s)", len(deps.Regions))
 	}
 
 	// §25.11 / F-25.11.3: the durable ops_backups store when Postgres is
@@ -597,6 +617,96 @@ var backupLastSuccessfulTimestamp = func() *prometheus.GaugeVec {
 	metrics.MustRegister(prometheus.DefaultRegisterer, g)
 	return g
 }()
+
+// dataResidencyViolationTotal is the §12.8 line 936
+// lenny_data_residency_violation_total{operation} counter incremented on
+// every fail-closed region-resolution abort the ops backup pipeline
+// raises (operation="backup" on a BACKUP_REGION_UNRESOLVABLE). It is the
+// lenny-ops process's series of the same counter the gateway increments
+// for runtime StorageRouter and artifact-replication violations; the
+// BackupRegionUnresolvable / data-residency alerts read it.
+var dataResidencyViolationTotal = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_data_residency_violation_total",
+		Help: "§12.8 fail-closed data-residency violations by operation.",
+	}, []string{"operation"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+// backupResidencyMetrics adapts the §12.8 backup.ResidencyMetrics seam
+// onto dataResidencyViolationTotal.
+type backupResidencyMetrics struct{}
+
+func (backupResidencyMetrics) DataResidencyViolation(operation string) {
+	if dataResidencyViolationTotal != nil {
+		dataResidencyViolationTotal.WithLabelValues(operation).Inc()
+	}
+}
+
+// staticShardRegions is the §12.8 line 935 shard→region resolver driven
+// by configuration (LENNY_OPS_BACKUP_SHARD_REGIONS) rather than a live
+// StoreRouter region map. In v1 the residency region of each Postgres
+// shard is declared by the operator; a StoreRouter-backed resolver
+// replaces this when region-aware routing lands (F-25.4.14).
+type staticShardRegions []backup.ShardRegion
+
+func (s staticShardRegions) ShardRegions(context.Context) ([]backup.ShardRegion, error) {
+	return []backup.ShardRegion(s), nil
+}
+
+// parseBackupRegions decodes the §12.8 backups.regions endpoint map and
+// the shard→region resolver from their JSON encodings (the chart renders
+// these from backups.regions and backups.shardRegions). An empty regions
+// input yields the single-region global-dump path (nil, nil, nil). A
+// non-empty regions map with no shardRegions is a misconfiguration that
+// would leave every shard unresolvable; it is returned as an error so
+// lenny-ops fails fast at startup rather than failing every backup.
+// spec: §12.8 lines 932-936.
+func parseBackupRegions(regionsJSON, shardRegionsJSON string) (map[string]backup.RegionBackupConfig, backup.ShardRegionResolver, error) {
+	regionsJSON = strings.TrimSpace(regionsJSON)
+	if regionsJSON == "" || regionsJSON == "{}" {
+		return nil, nil, nil
+	}
+	var raw map[string]struct {
+		MinioEndpoint          string `json:"minioEndpoint"`
+		KMSKeyID               string `json:"kmsKeyId"`
+		AccessCredentialSecret string `json:"accessCredentialSecret"`
+		Bucket                 string `json:"bucket"`
+	}
+	if err := json.Unmarshal([]byte(regionsJSON), &raw); err != nil {
+		return nil, nil, fmt.Errorf("parse backups.regions: %w", err)
+	}
+	regions := make(map[string]backup.RegionBackupConfig, len(raw))
+	for region, r := range raw {
+		regions[region] = backup.RegionBackupConfig{
+			MinioEndpoint:          r.MinioEndpoint,
+			KMSKeyID:               r.KMSKeyID,
+			AccessCredentialSecret: r.AccessCredentialSecret,
+			Bucket:                 r.Bucket,
+		}
+	}
+	var shardRaw []struct {
+		ShardID string `json:"shardId"`
+		Region  string `json:"region"`
+	}
+	if s := strings.TrimSpace(shardRegionsJSON); s != "" && s != "[]" {
+		if err := json.Unmarshal([]byte(s), &shardRaw); err != nil {
+			return nil, nil, fmt.Errorf("parse backups.shardRegions: %w", err)
+		}
+	}
+	if len(shardRaw) == 0 {
+		return nil, nil, fmt.Errorf("backups.regions set but backups.shardRegions empty")
+	}
+	shards := make(staticShardRegions, 0, len(shardRaw))
+	for _, sr := range shardRaw {
+		shards = append(shards, backup.ShardRegion{ShardID: sr.ShardID, Region: sr.Region})
+	}
+	return regions, shards, nil
+}
 
 // sampleBackupMetrics reads the last successful backup time per type
 // from svc and publishes it on lenny_backup_last_successful_timestamp.

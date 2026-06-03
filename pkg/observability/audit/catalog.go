@@ -256,6 +256,16 @@ const (
 	EventLegalHoldLedgerConfirmedCurrentAt      EventType = "legal_hold.ledger_confirmed_current_at"
 	EventArtifactCrossRegionReplicationVerified EventType = "artifact.cross_region_replication_verified"
 	EventArtifactReplicationResumed             EventType = "artifact_replication.resumed"
+	// EventDataResidencyViolationAttempt is the §12.8 cross-border
+	// violation event emitted on a fail-closed region-resolution abort.
+	// The operation field distinguishes the surface: "write" (runtime
+	// StorageRouter), "backup" (BACKUP_REGION_UNRESOLVABLE backup
+	// dispatch), "artifact_replication" (ArtifactStore replication
+	// preflight), "legal_hold_escrow" (Phase 3.5 escrow), and
+	// "platform_audit_write" (CMP-058). It shares the
+	// lenny_data_residency_violation_total counter across surfaces.
+	// spec: §12.8 lines 921-923, line 936.
+	EventDataResidencyViolationAttempt EventType = "DataResidencyViolationAttempt"
 )
 
 // The §16.7 / §12.8 GDPR erasure dead-letter and legal-hold audit

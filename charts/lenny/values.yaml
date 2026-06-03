@@ -3164,6 +3164,17 @@ backups:
   #     kmsKeyId: "arn:aws:kms:eu-west-1:...:key/..."
   #     accessCredentialSecret: "lenny-backup-minio-eu-west-1"
   regions: {}
+  # shardRegions declares which data-residency region each Postgres shard
+  # resides in, so the lenny-ops per-region dispatch (§12.8 line 935) can
+  # run one pg_dump per region. REQUIRED whenever regions is non-empty; a
+  # shard whose resolved region has no regions.<region> entry aborts the
+  # backup with BACKUP_REGION_UNRESOLVABLE (§25.11 line 4336) and emits a
+  # DataResidencyViolationAttempt audit event. In v1 the mapping is
+  # operator-declared; a StoreRouter-backed resolver replaces it when
+  # region-aware routing lands. Example:
+  #   - shardId: "platform"
+  #     region: "eu-west-1"
+  shardRegions: []
   # bucket names the §25.11 backup bucket the MinIO bucket policy locks
   # down; the bucket-policy ConfigMap renders only when it is set.
   bucket: ""

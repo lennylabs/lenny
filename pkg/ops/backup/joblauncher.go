@@ -49,6 +49,19 @@ type JobSpec struct {
 	// RestoreID is the ops_restore_state row a JobRestore correlates
 	// with; empty for a backup or verify Job.
 	RestoreID string
+	// Region is the §12.8 data-residency region a per-region backup Job's
+	// pg_dump covers. Empty on the single-region (global) dump path. When
+	// set, the launcher scopes the Job to RegionConfig's MinIO endpoint,
+	// KMS key, bucket, and access-credential Secret so one region's Job
+	// cannot authenticate to another region's MinIO. spec: §12.8 line 934.
+	Region string
+	// RegionConfig carries the per-region MinIO endpoint, KMS key, bucket,
+	// and access-credential Secret for a per-region Job. Zero on the
+	// single-region path. spec: §12.8 line 934.
+	RegionConfig RegionBackupConfig
+	// Shards lists the Postgres shard ids a per-region Job dumps. Empty on
+	// the single-region path. spec: §12.8 line 935.
+	Shards []string
 }
 
 // LaunchedJob is the launcher's report of an accepted §25.11 Job.

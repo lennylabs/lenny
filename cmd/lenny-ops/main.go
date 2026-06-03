@@ -126,6 +126,14 @@ func main() {
 	backupReportDSNSecret := flag.String("backup-report-dsn-secret", os.Getenv("LENNY_BACKUP_REPORT_DSN_SECRET"),
 		"name of the Secret whose report-dsn key holds the lenny-ops DSN the backup Job uses for "+
 			"the §25.11 step-8 ops_backups update; empty leaves it unset")
+	backupRegions := flag.String("backups-regions", os.Getenv("LENNY_OPS_BACKUPS_REGIONS"),
+		"§12.8 backups.regions per-region backup endpoint map as JSON "+
+			"({\"eu\":{\"minioEndpoint\":...,\"kmsKeyId\":...,\"accessCredentialSecret\":...}}). "+
+			"Empty keeps the single-region global dump. Override via LENNY_OPS_BACKUPS_REGIONS.")
+	backupShardRegions := flag.String("backups-shard-regions", os.Getenv("LENNY_OPS_BACKUP_SHARD_REGIONS"),
+		"§12.8 shard→region map as JSON ([{\"shardId\":...,\"region\":...}]) used to dispatch "+
+			"one pg_dump per region. Required when backups-regions is set. Override via "+
+			"LENNY_OPS_BACKUP_SHARD_REGIONS.")
 	selfHealthInterval := flag.Duration("self-health-interval", 10*time.Second,
 		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
 	eventsStreamMaxLen := flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", events.DefaultStreamMaxLen),
@@ -647,6 +655,14 @@ func main() {
 	if clientset != nil {
 		backupClientset = clientset
 	}
+	// §12.8 lines 932-936: the per-region backup endpoint map and the
+	// shard→region resolver. A parse failure (or a regions map with no
+	// shard map) is a fatal config error so lenny-ops fails fast rather
+	// than failing every backup at run time.
+	backupRegionMap, backupShardResolver, err := parseBackupRegions(*backupRegions, *backupShardRegions)
+	if err != nil {
+		log.Fatalf("lenny-ops: §12.8 per-region backup config: %v", err)
+	}
 	backupSvc, backupJobs := buildBackupService(*production, backupDeps{
 		Pool:            pgPool,
 		Clientset:       backupClientset,
@@ -657,6 +673,8 @@ func main() {
 		MinIOBucket:     *backupMinIOBucket,
 		KMSKeyID:        *backupKMSKeyID,
 		ReportDSNSecret: *backupReportDSNSecret,
+		Regions:         backupRegionMap,
+		ShardRegions:    backupShardResolver,
 	})
 
 	// The §25.4 escalation service, the §25.10 configuration-drift

@@ -62,6 +62,17 @@ const (
 	// restore is aborted without a gateway restart and the restore:platform
 	// lock is retained. spec: §25.11 line 4147, line 4334.
 	ErrCodeRestoreErasureReconcile = "RESTORE_ERASURE_RECONCILE_FAILED"
+	// ErrCodeBackupRegionUnresolvable is the §25.11 / §12.8 fail-closed
+	// backup abort (PERMANENT, HTTP 422): a Postgres shard resolved to a
+	// data-residency region with no complete backups.regions.<region>
+	// entry — a missing entry, or the region's MinIO endpoint / KMS key
+	// unreachable. It mirrors the runtime REGION_CONSTRAINT_UNRESOLVABLE
+	// control for the backup pipeline; the aborted backup row is marked
+	// failed and a DataResidencyViolationAttempt audit event is emitted
+	// (operation: backup, counter lenny_data_residency_violation_total).
+	// There is no silent fallback to a default backup bucket. spec: §25.11
+	// line 4336, §12.8 line 936.
+	ErrCodeBackupRegionUnresolvable = "BACKUP_REGION_UNRESOLVABLE"
 )
 
 // §25.11 restore_failed failure_phase values (line 4147): the phase a
@@ -144,11 +155,21 @@ type Backup struct {
 }
 
 // BackupComponent is one element of a backup: the §25.11 Response Types
-// BackupComponent.
+// BackupComponent. In the §12.8 per-region dispatch path, one component
+// is recorded per region covered (Name is the region) so verification,
+// retention, and restore all operate per-region. spec: §25.11 line 4004.
 type BackupComponent struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	SizeBytes int64  `json:"sizeBytes"`
+	// Region is the §12.8 data-residency region this component covers,
+	// set only on the per-region dispatch path. Empty for a single-region
+	// (global) backup component.
+	Region string `json:"region,omitempty"`
+	// JobID is the Kubernetes Job that dumped this region, set only on the
+	// per-region dispatch path so the reconciler can track each region's
+	// Job independently. spec: §12.8 line 935.
+	JobID string `json:"jobId,omitempty"`
 }
 
 // retentionKind maps a backup record to its pkg/backup/retention Kind

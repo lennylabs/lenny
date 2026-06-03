@@ -24,6 +24,7 @@ package k8slauncher
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +46,10 @@ const (
 	// backupIDAnnotation is the §25.11 lines 3972/3978 correlation
 	// annotation the orphan reconciler reads.
 	backupIDAnnotation = "lenny.dev/backup-id"
+	// backupRegionAnnotation records the §12.8 data-residency region a
+	// per-region backup Job covers, so an operator and the inventory can
+	// see which jurisdiction a Job dumped.
+	backupRegionAnnotation = "lenny.dev/backup-region"
 )
 
 // Config assembles a production Launcher.
@@ -204,6 +209,10 @@ func (l *Launcher) renderJob(spec backup.JobSpec) *batchv1.Job {
 	if correlationID != "" {
 		podAnnotations[backupIDAnnotation] = correlationID
 	}
+	// §12.8 line 935: a per-region Job records the region it dumped.
+	if spec.Region != "" {
+		podAnnotations[backupRegionAnnotation] = spec.Region
+	}
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -249,6 +258,48 @@ func (l *Launcher) renderJob(spec backup.JobSpec) *batchv1.Job {
 	}
 }
 
+// jobTarget is the resolved MinIO endpoint, bucket, KMS key, and
+// credential Secret a Job uploads with — the launcher defaults for a
+// single-region backup, or the §12.8 backups.regions.<region> overrides
+// for a per-region Job.
+type jobTarget struct {
+	minioEndpoint string
+	minioBucket   string
+	kmsKeyID      string
+	minioSecret   string
+}
+
+// target resolves the MinIO coordinates for spec. A per-region Job
+// (spec.Region set) uses its RegionConfig so one region's Job cannot
+// authenticate to or write into another region's MinIO; a single-region
+// Job uses the launcher defaults. spec: §12.8 line 934.
+func (l *Launcher) target(spec backup.JobSpec) jobTarget {
+	t := jobTarget{
+		minioEndpoint: l.cfg.MinIOEndpoint,
+		minioBucket:   l.cfg.MinIOBucket,
+		kmsKeyID:      l.cfg.KMSKeyID,
+		minioSecret:   l.cfg.MinIOSecret,
+	}
+	if spec.Region == "" {
+		return t
+	}
+	rc := spec.RegionConfig
+	if rc.MinioEndpoint != "" {
+		t.minioEndpoint = rc.MinioEndpoint
+	}
+	if rc.Bucket != "" {
+		t.minioBucket = rc.Bucket
+	}
+	// A per-region Job's KMS key comes from the region entry, even when the
+	// scalar default is unset; an explicit empty per-region key disables
+	// client-side encryption for that region just like the scalar default.
+	t.kmsKeyID = rc.KMSKeyID
+	if rc.AccessCredentialSecret != "" {
+		t.minioSecret = rc.AccessCredentialSecret
+	}
+	return t
+}
+
 // args renders the lenny-backup CLI arguments for spec.Kind.
 func (l *Launcher) args(spec backup.JobSpec) []string {
 	args := []string{"--mode=" + modeFor(spec.Kind)}
@@ -258,7 +309,7 @@ func (l *Launcher) args(spec backup.JobSpec) []string {
 	case backup.JobRestore:
 		args = append(args, "--restore-id=$(LENNY_RESTORE_ID)")
 	}
-	if l.cfg.KMSKeyID != "" {
+	if l.target(spec).kmsKeyID != "" {
 		args = append(args, "--kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)")
 	}
 	return args
@@ -266,23 +317,32 @@ func (l *Launcher) args(spec backup.JobSpec) []string {
 
 // env renders the §25.11 Job container environment: the run identifiers,
 // the MinIO bucket coordinates, and the Postgres/MinIO/report credentials
-// from their Secrets.
+// from their Secrets. A per-region Job is scoped to its
+// backups.regions.<region> endpoint, bucket, KMS key, and credential
+// Secret (§12.8 line 934).
 func (l *Launcher) env(spec backup.JobSpec) []corev1.EnvVar {
+	t := l.target(spec)
 	env := []corev1.EnvVar{
 		{Name: "LENNY_BACKUP_ID", Value: spec.BackupID},
-		{Name: "LENNY_BACKUP_MINIO_ENDPOINT", Value: l.cfg.MinIOEndpoint},
-		{Name: "LENNY_BACKUP_MINIO_BUCKET", Value: l.cfg.MinIOBucket},
+		{Name: "LENNY_BACKUP_MINIO_ENDPOINT", Value: t.minioEndpoint},
+		{Name: "LENNY_BACKUP_MINIO_BUCKET", Value: t.minioBucket},
+	}
+	if spec.Region != "" {
+		env = append(env, corev1.EnvVar{Name: "LENNY_BACKUP_REGION", Value: spec.Region})
+		if len(spec.Shards) > 0 {
+			env = append(env, corev1.EnvVar{Name: "LENNY_BACKUP_SHARDS", Value: strings.Join(spec.Shards, ",")})
+		}
 	}
 	if spec.Kind == backup.JobRestore {
 		env = append(env, corev1.EnvVar{Name: "LENNY_RESTORE_ID", Value: spec.RestoreID})
 	}
-	if l.cfg.KMSKeyID != "" {
-		env = append(env, corev1.EnvVar{Name: "LENNY_BACKUP_KMS_KEY_ID", Value: l.cfg.KMSKeyID})
+	if t.kmsKeyID != "" {
+		env = append(env, corev1.EnvVar{Name: "LENNY_BACKUP_KMS_KEY_ID", Value: t.kmsKeyID})
 	}
 	env = append(env,
 		secretEnv("LENNY_BACKUP_POSTGRES_DSN", l.cfg.PostgresSecret, "postgres-dsn"),
-		secretEnv("LENNY_BACKUP_MINIO_ACCESS_KEY", l.cfg.MinIOSecret, "minio-access-key"),
-		secretEnv("LENNY_BACKUP_MINIO_SECRET_KEY", l.cfg.MinIOSecret, "minio-secret-key"),
+		secretEnv("LENNY_BACKUP_MINIO_ACCESS_KEY", t.minioSecret, "minio-access-key"),
+		secretEnv("LENNY_BACKUP_MINIO_SECRET_KEY", t.minioSecret, "minio-secret-key"),
 	)
 	if l.cfg.ReportDSNSecret != "" {
 		env = append(env, secretEnv("LENNY_OPS_POSTGRES_DSN", l.cfg.ReportDSNSecret, "report-dsn"))

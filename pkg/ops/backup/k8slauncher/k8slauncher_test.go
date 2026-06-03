@@ -148,6 +148,63 @@ func TestLaunchEnvAndArgsByKind_spec_25_11(t *testing.T) {
 	}
 }
 
+// TestPerRegionJobScopedToRegionEndpoint_spec_12_8_934 asserts a
+// per-region backup Job is scoped to its backups.regions.<region> MinIO
+// endpoint, bucket, KMS key, and access-credential Secret, so one
+// region's Job cannot authenticate to or write into another region's
+// MinIO. The region is recorded as a pod annotation and env, and the
+// covered shards are passed as env.
+//
+// spec: §12.8 lines 934-935.
+func TestPerRegionJobScopedToRegionEndpoint_spec_12_8_934(t *testing.T) {
+	l, cs := newTestLauncher(t)
+	l.cfg.newSuffix = func() string { return "eu" }
+	launched, err := l.Launch(context.Background(), backup.JobSpec{
+		Kind:       backup.JobBackup,
+		BackupID:   "bkp-eu",
+		BackupType: "full",
+		Region:     "eu-west-1",
+		Shards:     []string{"shard-eu-a", "shard-eu-b"},
+		RegionConfig: backup.RegionBackupConfig{
+			MinioEndpoint:          "minio.eu:9000",
+			Bucket:                 "backups-eu",
+			KMSKeyID:               "kms-eu",
+			AccessCredentialSecret: "lenny-backup-minio-eu",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job, _ := cs.BatchV1().Jobs("lenny-system").Get(context.Background(), launched.JobID, metav1.GetOptions{})
+	c := job.Spec.Template.Spec.Containers[0]
+
+	// The MinIO coordinates come from the region entry, not the launcher
+	// defaults (minio:9000 / lenny-backups / kms-key-1).
+	if !hasEnv(c.Env, "LENNY_BACKUP_MINIO_ENDPOINT", "minio.eu:9000") {
+		t.Errorf("region Job endpoint not scoped: %+v", c.Env)
+	}
+	if !hasEnv(c.Env, "LENNY_BACKUP_MINIO_BUCKET", "backups-eu") {
+		t.Errorf("region Job bucket not scoped: %+v", c.Env)
+	}
+	if !hasEnv(c.Env, "LENNY_BACKUP_KMS_KEY_ID", "kms-eu") {
+		t.Errorf("region Job KMS key not scoped: %+v", c.Env)
+	}
+	if !hasEnv(c.Env, "LENNY_BACKUP_REGION", "eu-west-1") {
+		t.Errorf("region Job missing LENNY_BACKUP_REGION: %+v", c.Env)
+	}
+	if !hasEnv(c.Env, "LENNY_BACKUP_SHARDS", "shard-eu-a,shard-eu-b") {
+		t.Errorf("region Job missing/incorrect LENNY_BACKUP_SHARDS: %+v", c.Env)
+	}
+	// The MinIO credentials source from the region's access-credential
+	// Secret, not the default lenny-backup-minio Secret.
+	assertSecretEnv(t, c.Env, "LENNY_BACKUP_MINIO_ACCESS_KEY", "lenny-backup-minio-eu", "minio-access-key")
+	assertSecretEnv(t, c.Env, "LENNY_BACKUP_MINIO_SECRET_KEY", "lenny-backup-minio-eu", "minio-secret-key")
+	// The region is recorded as a pod annotation.
+	if got := job.Spec.Template.Annotations[backupRegionAnnotation]; got != "eu-west-1" {
+		t.Errorf("backup-region annotation = %q, want eu-west-1", got)
+	}
+}
+
 // TestRetentionJobCarriesNoBackupIDAnnotation asserts a retention Job (no
 // BackupID) renders without the correlation annotation, so the orphan
 // reconciler does not treat it as a stray backup Job.

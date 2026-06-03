@@ -31338,7 +31338,7 @@ relevant artifacts (legal hold attachments, erasure receipts).
 
 ---
 
-### - [ ] F-17.3.8 — 3.7 — Per-region backup dispatch (BACKUP_REGION_UNRESOLVABLE) is not implemented [High] — OPEN
+### - [x] F-17.3.8 — 3.7 — Per-region backup dispatch (BACKUP_REGION_UNRESOLVABLE) is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.11.8 — F-17.3.8 and F-25.11.8 are the same per-region backup dispatch / BACKUP_REGION_UNRESOLVABLE gap; F-11.7.9 is a different defect (platform-tenant audit residency routing).
 
@@ -31368,6 +31368,29 @@ Effect: a deployment that sets `dataResidencyRegion` on any tenant
 cannot run backups under the spec's residency rules; the
 fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE` for the
 backup pipeline does not exist.
+
+**Resolution:** Per-region backup dispatch and the fail-closed
+`BACKUP_REGION_UNRESOLVABLE` control are now implemented end-to-end.
+`backup.Service` gains a `Regions` map (`backups.regions.<region>` →
+MinIO endpoint / KMS key / access-credential Secret / bucket), a
+`ShardRegions` resolver seam, and a `Residency` metric seam
+(`pkg/ops/backup/region.go`). When `Regions` is non-empty and the backup
+type dumps Postgres, `CreateBackup` resolves each shard to its region and
+launches one §25.11 Job per region scoped to that region's MinIO endpoint,
+KMS key, bucket, and credential Secret (`k8slauncher` applies the
+overrides and records `lenny.dev/backup-region`); the `ops_backups` row
+records one component per region. A shard whose region has no complete
+entry fails closed: the row is marked failed with
+`BACKUP_REGION_UNRESOLVABLE: region <r> has no backups.regions entry`, a
+`DataResidencyViolationAttempt` audit event is emitted (`operation:backup`,
+`requested_region`, `shard_id`, `backup_id` — new
+`audit.EventDataResidencyViolationAttempt` constant), and
+`lenny_data_residency_violation_total{operation="backup"}` increments. The
+error code is `PERMANENT`/HTTP 422 (§25.11 line 4336). `NewService` rejects
+a `Regions` map with no resolver so the control cannot be silently bypassed.
+lenny-ops registers the counter, parses `backups.regions` /
+`backups.shardRegions` (env JSON), and the chart carries the matching
+values. (this batch)
 
 ---
 
@@ -41040,7 +41063,7 @@ cannot be reconstructed from current DB state at scrape time. Deferred to a
 focused metrics batch to get the histogram semantics right rather than rush
 them into this store/launcher batch.
 
-### - [ ] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — OPEN
+### - [x] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.8 — F-17.3.8 and F-25.11.8 are the same per-region backup dispatch / BACKUP_REGION_UNRESOLVABLE gap; F-11.7.9 is a different defect (platform-tenant audit residency routing).
 
@@ -41051,6 +41074,18 @@ Implementation status:
 - The string `BACKUP_REGION_UNRESOLVABLE` does not appear anywhere in `pkg/` or `cmd/` (grep returns only the alert-rule description at `pkg/alerting/rules/rules.go:368`).
 - `charts/lenny/values.yaml` declares no `backups.regions` block, no `backups.encryption.kmsKeyId`, no `backups.contentPolicy`. The Tier 1/2/3 deployments cannot configure residency at all.
 - The fail-closed compliance control the spec mandates is absent end-to-end.
+
+**Resolution:** Closed by F-17.3.8 (same per-region backup dispatch /
+`BACKUP_REGION_UNRESOLVABLE` defect, confirmed duplicate). The orchestrator
+now runs one `pg_dump` Job per region via the `StorageRouter`-backed
+`ShardRegions` resolver, fails closed with the new
+`backup.ErrCodeBackupRegionUnresolvable` (PERMANENT/422) plus a
+`DataResidencyViolationAttempt` audit event and
+`lenny_data_residency_violation_total` increment, and the chart's
+pre-existing `backups.regions` block is paired with a new
+`backups.shardRegions` value and the lenny-ops env parser. The
+`backups.encryption.kmsKeyId` / `backups.contentPolicy` evidence is also
+stale — both already exist in `values.yaml`. (this batch)
 
 ### - [ ] F-25.11.9 — Helm `minio.artifactBackup` block missing; replication subsystem not wired [High] — OPEN
 
