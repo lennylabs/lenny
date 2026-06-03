@@ -1,4 +1,11 @@
+# yaml-language-server: $schema=https://schemas.lenny.dev/helm/values/v1.json
 # Default values for the lenny chart.
+#
+# Helm validates -f / --set inputs against charts/lenny/values.schema.json
+# (Draft 2020-12) on every install and upgrade. The schema is generated
+# from the Go structs in pkg/chart/values (run `go run
+# ./cmd/lenny-chart-schema-gen`); IDE YAML extensions auto-complete and
+# validate against the published copy referenced above. spec: §17.6.
 #
 # The control plane (gateway, token service, controllers, lenny-ops,
 # stores) runs in the Helm release namespace, lenny-system by default.

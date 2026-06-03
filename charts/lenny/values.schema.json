@@ -1,71 +1,292 @@
 {
+  "$id": "https://schemas.lenny.dev/helm/values/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Lenny chart values",
-  "description": "JSON Schema for the Helm values of the Lenny chart. Enforced at install-time by helm install / helm upgrade / helm install --dry-run; the layer-3 startup gate in pkg/gateway/playground.Config.Validate is the runtime backstop.",
-  "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": false,
+  "description": "Canonical JSON Schema (Draft 2020-12) for charts/lenny/values.yaml, generated from pkg/chart/values. spec: §17.6.",
   "properties": {
-    "playground": {
-      "type": "object",
-      "description": "§27.2 playground configuration.",
-      "additionalProperties": true,
+    "acceptFeatureFlagDowngrade": {
+      "type": "object"
+    },
+    "adapter": {
+      "type": "object"
+    },
+    "admissionPolicies": {
+      "type": "object"
+    },
+    "admissionWebhooks": {
+      "type": "object"
+    },
+    "agentNamespaces": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "audit": {
+      "type": "object"
+    },
+    "auth": {
+      "type": "object"
+    },
+    "autoscaling": {
+      "type": "object"
+    },
+    "backends": {
+      "type": "string"
+    },
+    "backups": {
+      "type": "object"
+    },
+    "billing": {
+      "type": "object"
+    },
+    "bootstrap": {
+      "type": "object"
+    },
+    "capacityPlanning": {
+      "type": "object"
+    },
+    "certmanager": {
+      "type": "object"
+    },
+    "complianceProfile": {
+      "type": "string"
+    },
+    "controller": {
+      "type": "object"
+    },
+    "coredns": {
+      "type": "object"
+    },
+    "credentials": {
+      "type": "object"
+    },
+    "delegation": {
+      "type": "object"
+    },
+    "egressCIDRs": {
+      "type": "object"
+    },
+    "environment": {
+      "description": "Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1).",
+      "type": "string"
+    },
+    "etcdEncryption": {
+      "type": "object"
+    },
+    "features": {
+      "type": "object"
+    },
+    "gateway": {
+      "type": "object"
+    },
+    "gc": {
+      "type": "object"
+    },
+    "global": {
+      "additionalProperties": false,
       "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "§27.2 playground.enabled — mount /playground/* and /v1/playground/token on the gateway."
+        "deploymentTier": {
+          "description": "Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1.",
+          "type": "string"
         },
-        "authMode": {
-          "type": "string",
-          "description": "§27.2 playground.authMode — one of oidc, apiKey, dev.",
-          "enum": ["oidc", "apiKey", "dev"]
+        "devMode": {
+          "description": "Relaxes multi-tenant admission controls for local development. Never enable on a multi-tenant cluster. §4.9.",
+          "type": "boolean"
         },
-        "devTenantId": {
-          "type": "string",
-          "description": "§27.2 playground.devTenantId — the tenant bound to dev-mode playground tokens. Required when authMode=dev; must match the canonical §10.2 tenant_id format.",
-          "pattern": "^[a-zA-Z0-9_-]{1,128}$",
-          "maxLength": 128
+        "noEnvironmentPolicy": {
+          "description": "Platform-wide default access policy for a session that names no environment. §10.6 / §17.6 line 365.",
+          "enum": [
+            "deny-all",
+            "allow-all"
+          ],
+          "type": "string"
+        },
+        "saTokenAudience": {
+          "description": "Projected SA-token audience the gateway validates on every pod→gateway request. §10.3 line 334.",
+          "type": "string"
+        },
+        "spiffeTrustDomain": {
+          "description": "SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3 line 316.",
+          "type": "string"
+        },
+        "traceSamplingRate": {
+          "description": "Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3 line 359.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "imageVerification": {
+      "type": "object"
+    },
+    "ingress": {
+      "type": "object"
+    },
+    "ingressControllerNamespace": {
+      "type": "string"
+    },
+    "isolation": {
+      "type": "object"
+    },
+    "kms": {
+      "type": "object"
+    },
+    "kubeApiServerCIDR": {
+      "type": "string"
+    },
+    "kubeApiServerPorts": {
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "memory": {
+      "type": "object"
+    },
+    "migrate": {
+      "type": "object"
+    },
+    "minio": {
+      "type": "object"
+    },
+    "monitoring": {
+      "type": "object"
+    },
+    "mtls": {
+      "type": "object"
+    },
+    "objectStorage": {
+      "type": "object"
+    },
+    "observability": {
+      "type": "object"
+    },
+    "ops": {
+      "type": "object"
+    },
+    "pgbouncer": {
+      "type": "object"
+    },
+    "platform": {
+      "type": "object"
+    },
+    "playground": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgeApiKeyMode": {
+          "description": "Acknowledges the §27.9 paste-form phishing surface for authMode=apiKey outside dev mode.",
+          "type": "boolean"
         },
         "allowedRuntimes": {
-          "type": "string",
-          "description": "§27.2 playground.allowedRuntimes — comma-separated glob list of runtime IDs visible in the picker."
+          "description": "Comma-separated glob list of runtime IDs the playground runtime picker offers. Default is every visible runtime.",
+          "type": "string"
         },
-        "maxSessionMinutes": {
-          "type": "integer",
-          "description": "§27.6 playground.maxSessionMinutes — hard cap on session duration.",
-          "minimum": 1
-        },
-        "maxIdleTimeSeconds": {
-          "type": "integer",
-          "description": "§27.6 playground.maxIdleTimeSeconds — hard idle-timeout override.",
-          "minimum": 60
-        },
-        "oidcSessionTtlSeconds": {
-          "type": "integer",
-          "description": "§27.3.1 playground.oidcSessionTtlSeconds — server-side session and cookie lifetime.",
-          "minimum": 60
+        "authMode": {
+          "description": "Playground authentication mode. §27.3.",
+          "enum": [
+            "oidc",
+            "apiKey",
+            "dev"
+          ],
+          "type": "string"
         },
         "bearerTtlSeconds": {
-          "type": "integer",
-          "description": "§27.3.1 playground.bearerTtlSeconds — MCP bearer token TTL. Gateway bounds to 60..3600.",
+          "description": "TTL of an MCP bearer token minted by POST /v1/playground/token. The gateway bounds it to 60..3600.",
+          "maximum": 3600,
           "minimum": 60,
-          "maximum": 3600
+          "type": "integer"
+        },
+        "devTenantId": {
+          "description": "Tenant bound to every dev-mode playground token; applies only when authMode is dev. §27.3.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Turns the §27 playground on. Off by default.",
+          "type": "boolean"
         },
         "gatewayHost": {
-          "type": "string",
-          "description": "§27.7 playground.gatewayHost — public host interpolated into the connect-src CSP directive."
+          "description": "Public gateway host the playground UI connects to over the MCP WebSocket. §27.7 connect-src CSP.",
+          "type": "string"
+        },
+        "maxIdleTimeSeconds": {
+          "description": "§27.6 hard idle-timeout override for a playground-initiated session.",
+          "minimum": 60,
+          "type": "integer"
+        },
+        "maxSessionMinutes": {
+          "description": "§27.6 hard cap on a playground-initiated session's duration.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "oidcSessionTtlSeconds": {
+          "description": "Lifetime of the §27.3.1 server-side playground session record and its cookie.",
+          "minimum": 60,
+          "type": "integer"
         },
         "sessionLabels": {
-          "type": "object",
-          "description": "§27.2 line 41 playground.sessionLabels — operator-tunable label map stamped on every playground session record and audit event. The origin entry is re-stamped to \"playground\" at startup.",
           "additionalProperties": {
             "type": "string"
-          }
-        },
-        "acknowledgeApiKeyMode": {
-          "type": "boolean",
-          "description": "§27.2 line 42 playground.acknowledgeApiKeyMode — acknowledge the §27.9 paste-form phishing surface for authMode=apiKey outside dev mode."
+          },
+          "description": "§27.2 operator-tunable label map stamped on every playground session record and audit event.",
+          "type": "object"
         }
-      }
+      },
+      "type": "object"
+    },
+    "poolScalingController": {
+      "type": "object"
+    },
+    "postgres": {
+      "type": "object"
+    },
+    "preflight": {
+      "type": "object"
+    },
+    "redis": {
+      "type": "object"
+    },
+    "referenceRuntimes": {
+      "type": "object"
+    },
+    "resourceGovernance": {
+      "type": "object"
+    },
+    "runtimeClasses": {
+      "type": "object"
+    },
+    "sandbox": {
+      "type": "object"
+    },
+    "security": {
+      "type": "object"
+    },
+    "slo": {
+      "type": "object"
+    },
+    "storage": {
+      "type": "object"
+    },
+    "storeRouter": {
+      "type": "object"
+    },
+    "tenancy": {
+      "type": "object"
+    },
+    "tokenService": {
+      "type": "object"
+    },
+    "tracing": {
+      "type": "object"
+    },
+    "webhookIngressCIDR": {
+      "type": "string"
     }
-  }
+  },
+  "title": "Lenny Helm chart values",
+  "type": "object"
 }

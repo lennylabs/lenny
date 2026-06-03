@@ -306,7 +306,11 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112  # v4.3.0
         with:
-          version: v3.16.1
+          # Helm 4.x is required so `helm lint` / `helm package` validate
+          # the chart's values.schema.json, which is JSON Schema Draft
+          # 2020-12 (§17.6). The Helm 3.x line validates with a draft-07
+          # library that does not recognise the 2020-12 meta-schema.
+          version: v4.2.0
 
       - name: Import the chart-signing PGP key
         env:

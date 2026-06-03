@@ -165,6 +165,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// embedded §16.5 SLO catalog and runs offline; it reaches no
 		// gateway. spec: §16.10 lines 732-736.
 		return cmdSLO(rest[1:], stdout, stderr)
+	case "values":
+		// values validate checks a values.yaml against the chart's
+		// generated values.schema.json (§17.6). Runs offline; reaches no
+		// gateway. spec: §24.20 line 303, §17.6 line 666.
+		return cmdValues(rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
 	// the gateway. opsClient resolves the ops URL (the --ops-server flag
 	// or auto-discovery) on first use.
@@ -232,6 +237,7 @@ Gateway commands:
                                         Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
   install [--answer-file <f>]           Run the installation wizard (§17.6)
   preflight [--config <values.yaml>]    Assert installed CRD schema-version currency before helm upgrade (§10.5)
+  values validate --config <values.yaml>  Validate a values.yaml against the chart's values.schema.json (§17.6, §24.20)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
   runtime validate [<path>]             Statically validate a runtime repo
   runtime publish <name> --image <ref>  Push and register a runtime
