@@ -30847,7 +30847,9 @@ post-restore reconcile blocked) do not exist.
 
 ---
 
-### - [ ] F-17.3.1 — MUST / correctness / security [High] — OPEN
+### - [x] F-17.3.1 — MUST / correctness / security [High] — CLOSED
+
+**Resolution:** Section-marker heading with no actionable body; the individual MUST-class §17.3 findings are tracked at F-17.3.2 through F-17.3.9. Closed as a placeholder heading (same disposition as F-15.1.1 / F-17.3.10).
 
 ### - [x] F-17.3.2 — 3.1 — Gateway Deployment has no topology spread or PodDisruptionBudget [High] — CLOSED
 
@@ -31160,6 +31162,13 @@ relevant artifacts (legal hold attachments, erasure receipts).
   `lenny_minio_replication_lag_seconds` / `lenny_minio_replication_failed_total`
   gauges (which the controller does not measure; they require scraping
   MinIO replication metrics).
+- **Progress (4a1c0f35):** The admin-endpoint half is now closed by
+  F-25.11.1 — `POST/GET /v1/admin/artifact-replication/{region}/resume|status`
+  are registered on the gateway admin Router against the live controller.
+  This finding stays OPEN solely for the object-level
+  `lenny_minio_replication_lag_seconds` / `lenny_minio_replication_failed_total`
+  gauges, which require scraping the source MinIO cluster's replication
+  metrics (a surface the residency controller does not measure).
 
 ---
 
@@ -31228,7 +31237,9 @@ that "retains" all of zero backups. Storage cost grows unbounded.
 
 ---
 
-### - [ ] F-17.3.10 — SHOULD / capability unimplemented [Medium] — OPEN
+### - [x] F-17.3.10 — SHOULD / capability unimplemented [Medium] — CLOSED
+
+**Resolution:** Section-marker heading with no actionable body; the individual SHOULD-class §17.3 findings are tracked at F-17.3.11 onward. Closed as a placeholder heading (same disposition as F-15.1.16 / F-17.3.1).
 
 ### - [x] F-17.3.11 — 3.1 — No disaster-recovery, backup, restore, or replication runbooks [Medium] — CLOSED
 
@@ -31352,7 +31363,7 @@ gauge-publish assertions. (commit f41f14c0)
 
 ---
 
-### - [ ] F-17.3.14 — 3.4 — Backup / restore audit events are catalogued but never written [Medium] — OPEN
+### - [x] F-17.3.14 — 3.4 — Backup / restore audit events are catalogued but never written [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.11.2 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
@@ -31375,6 +31386,18 @@ Effect: an agent subscribing to `/v1/admin/events` for the
 `backup.*` / `restore.*` envelope sees no traffic. The §25.11
 "agents monitoring `platform_upgrade_*` events can observe this"
 guarantee for restore-progress observability is not met.
+
+**Resolution:** Closed by F-25.11.2 (commit d358fc2e), the confirmed
+cross-section duplicate. The backup `Service` gained an injectable
+`AuditSink` and the orchestrator now emits `backup.created`,
+`backup.schedule_updated` / `backup.policy_updated`,
+`backup.deleted_by_retention`, `restore.preview_generated` /
+`restore.started` / `restore.resumed` / `restore.failed`, and
+`legal_hold.ledger_confirmed_current_at` on each transition it owns; a
+tier-1 cross-check asserts every emitted type is a known §16.7 catalog
+entry. The Job-completion events (`backup.completed` / `failed` /
+`verified`, `restore.shard_completed` / `completed`) remain gated on the
+real JobLauncher (F-25.11.4), the same scope boundary F-25.11.2 records.
 
 ---
 
@@ -40361,7 +40384,7 @@ The split is per the package docs: `pkg/drift` is a deterministic, sorted, recur
 
 ### Findings
 
-### - [ ] F-25.11.1 — `POST /v1/admin/artifact-replication/{region}/resume` and `GET /v1/admin/artifact-replication/{region}/status` endpoints not wired [High] — OPEN
+### - [x] F-25.11.1 — `POST /v1/admin/artifact-replication/{region}/resume` and `GET /v1/admin/artifact-replication/{region}/status` endpoints not wired [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
@@ -40380,6 +40403,22 @@ Implementation status:
   `GET /v1/admin/artifact-replication/{region}/status` admin endpoints
   are still unregistered; wiring them to the live controller is a bounded
   follow-on now that the controller exists.
+
+**Resolution (4a1c0f35):** Both endpoints are now registered on the gateway
+admin Router (new `ArtifactReplicationController` seam in
+`pkg/gateway/admin/artifact_replication.go`) against the live
+`replication.Controller`. `POST .../resume` is platform-admin-only,
+requires a justification, calls `Controller.Resume` (which re-runs the
+residency preflight and emits `artifact_replication.resumed`), maps a
+persisting mismatch to 422 `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE`, and
+returns the post-resume state. `GET .../status` returns the region's
+`ops_artifact_replication_state` row (404 on an unknown region). Routes
+register unconditionally and answer 503 `ARTIFACT_REPLICATION_UNAVAILABLE`
+when the controller is unwired (Tier-1 dev default); `cmd/lenny-gateway`
+late-wires the controller via `WithArtifactReplication` (the admin
+handlers read the field at request time). Tier-1 tests cover
+resume success/mismatch/missing-justification/unwired-503/non-admin-403
+and status success/404.
 
 ### - [x] F-25.11.2 — Backup and restore audit events never emitted [High] — CLOSED
 
@@ -40419,7 +40458,7 @@ Implementation status:
 - Therefore in any real deployment: every `POST /v1/admin/backups`, `/verify`, and `/restore/execute` returns 202 with a synthetic `JobID` (`lenny-backup-job-1`, ...) without actually launching anything; the row stays in `running` forever; nothing writes to MinIO; nothing completes the row. The §25.11 surface is non-functional end-to-end despite the HTTP API serving 2xx responses.
 - No Helm template renders `lenny-backup-sa`, the `lenny-backup-job` NetworkPolicy, or the `lenny-backup-postgres` / `lenny-backup-minio` Secrets the spec calls out (lines 3990–3994). The only backup-related template is `restore-test-cronjob.yaml`.
 
-### - [ ] F-25.11.5 — Schedule edits via `PUT /v1/admin/backups/schedule` are ignored by the actual cron loop [High] — OPEN
+### - [x] F-25.11.5 — Schedule edits via `PUT /v1/admin/backups/schedule` are ignored by the actual cron loop [High] — CLOSED
 
 Spec line 3889 documents `PUT /v1/admin/backups/schedule` as runtime-modifiable; spec line 4106 states "The schedule is stored in Postgres and modifiable at runtime via `PUT /v1/admin/backups/schedule`."
 
@@ -40428,6 +40467,20 @@ Implementation status:
 - `pkg/ops/opsservice/cronloop.go:52-65` (`NewCronEvaluator`) parses each expression once and stores it on the `cronEntry`. There is no path that reads `BackupSchedule` from the store between ticks or rebuilds the evaluator.
 - `Service.UpdateSchedule` (orchestrator.go:264-272) only writes to the store. The leader-elected cron loop keeps firing on the hardcoded schedule.
 - Effect: an operator changing the schedule via the documented endpoint sees a 200 response but observes no change in actual backup cadence. The endpoint is decorative.
+
+**Resolution (4a1c0f35):** `opsservice.ScheduledJob` gained an optional
+`ExpressionFunc func() string`; `CronEvaluator.Tick` resolves it each
+tick and uses the returned cron in place of the compiled-in `Expression`
+(a blank or unparseable return falls back to the static default parsed at
+startup). `cmd/lenny-ops` wires `ExpressionFunc` on the `backup-full` /
+`backup-postgres` jobs to read the stored schedule's `full` / `postgres`
+cron via a new `scheduledBackupCron` helper, so an edit applied via `PUT
+/v1/admin/backups/schedule` changes the firing cadence on the next tick
+without a lenny-ops restart. The MemStore default schedule already
+matches the compiled-in cron, so a fresh deploy sees no cadence change.
+Tier-1 tests: evaluator honours a runtime-edited schedule and falls back
+on blank/bad input; the lenny-ops jobs' `ExpressionFunc` reflects a
+post-`UpdateSchedule` edit.
 
 ### - [x] F-25.11.6 — `confirm-legal-hold-ledger` endpoint enforces no `platform-admin` role [High] — CLOSED
 
