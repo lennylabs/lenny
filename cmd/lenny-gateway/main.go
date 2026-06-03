@@ -203,6 +203,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
+	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
@@ -2869,6 +2871,46 @@ func main() {
 		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain (quota checkpoint cadence %ds)", quotaSyncSeconds)
 	}
 
+	// ----- §11.2 token-usage Postgres checkpoint + §24.6 reconcile -----
+	// The Service persists each active (tenant, user) window total and the
+	// per-tenant rollup to the token_usage_checkpoint table on the
+	// quotaSyncIntervalSeconds cadence (§11.2 line 44), writes a final
+	// checkpoint on session completion, and restores counters to
+	// MAX(redis_current, postgres_checkpoint) on Redis recovery (§11.2 line
+	// 48) and on the operator-driven §24.6 reconcile. Active only when the
+	// Redis quota counter, the Postgres pool, and the SessionStore are all
+	// wired; otherwise the §24.6 endpoint stays the 503 stub and the final
+	// write is a no-op. F-11.2.4 / F-24.6.1 / F-24.6.2 / F-24.6.3.
+	var quotaCheckpointSvc *quotacheckpoint.Service
+	if quotaCounter != nil && pgPool != nil && sessions != nil {
+		limitLookup := tenantLimits
+		quotaCheckpointSvc = &quotacheckpoint.Service{
+			Store:    quotacheckpointpg.New(pgPool),
+			Subjects: quotacheckpoint.SessionSubjectLister{Sessions: sessions, Tenants: (tenantsLister{tenants}).ListTenants},
+			Periods: quotacheckpoint.PeriodResolverFunc(func(ctx context.Context, tenantID string) (quota.ResetPeriod, error) {
+				lim, err := limitLookup.LookupLimits(ctx, tenantID)
+				if err != nil {
+					return "", err
+				}
+				return lim.Period, nil
+			}),
+			Reader:   quotaCounter,
+			Restorer: quotaCounter,
+			Tenants: quotacheckpoint.TenantExistsFunc(func(ctx context.Context, tenantID string) (bool, error) {
+				if _, err := tenants.Get(ctx, tenantID); err != nil {
+					if errors.Is(err, tenantstore.ErrNotFound) {
+						return false, nil
+					}
+					return false, err
+				}
+				return true, nil
+			}),
+			Metrics: gwMetrics,
+			Now:     clockinject.Now,
+			Logf:    log.Printf,
+		}
+	}
+
 	// §4.8 line 1019: register each deployer-supplied external
 	// interceptor. The gateway dials the service's endpoint, builds the
 	// generated RequestInterceptor client, and registers an External on
@@ -3133,6 +3175,7 @@ func main() {
 		SessionLogHook:        &sessionlogstore.CloseHook{Store: sessionLogs},
 		TreeArchive:           treeArchive,
 		TreeBudgetReturner:    treeBudgetReserver,
+		QuotaCheckpointer:     quotaCheckpointSvc,
 		HighWatermarkReader:   hwmReader,
 		HighWatermarkObserver: gwMetrics,
 		Interceptors:          policyChain,
@@ -3975,6 +4018,14 @@ func main() {
 	adminRouter = adminRouter.WithBillingCorrections(
 		billing, corrections, *billingDualControlThreshold,
 	)
+	// spec: §24.6 line 99 / §15.1 line 879 — back `POST /v1/admin/quota/reconcile`
+	// with the §11.2 MAX-rule reconcile over the Postgres token-usage
+	// checkpoint. Until the checkpoint store is wired (no Redis/Postgres)
+	// the route keeps answering 503 QUOTA_RECONCILE_UNAVAILABLE.
+	// F-24.6.2 / F-24.6.3.
+	if quotaCheckpointSvc != nil {
+		adminRouter = adminRouter.WithQuotaReconciler(quotacheckpoint.AdminReconciler{Service: quotaCheckpointSvc})
+	}
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
@@ -4977,6 +5028,26 @@ func main() {
 		log.Printf("lenny-gateway: §11.2 delegation tree budget checkpoint cadence %s (node footprint %d bytes)",
 			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second, *delegationNodeMemoryFootprintBytes)
 		go delegationBudgetReconciler.Run(watchdogCtx)
+	}
+
+	// ----- §11.2 token-usage checkpoint + reconcile loop -----
+	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
+	// active window total to token_usage_checkpoint (§11.2 line 44); on a
+	// Redis-recovery edge it restores every still-current counter to
+	// MAX(redis_current, postgres_checkpoint) before the next checkpoint
+	// (§11.2 line 48). The same Service backs the §24.6 operator reconcile
+	// and the session-completion final write wired above. F-11.2.4.
+	if quotaCheckpointSvc != nil {
+		quotaCheckpointReconciler := &quotacheckpoint.Reconciler{
+			Probe: func(ctx context.Context) bool {
+				return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
+			},
+			Service:  quotaCheckpointSvc,
+			Interval: time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
+		}
+		log.Printf("lenny-gateway: §11.2 token-usage checkpoint cadence %s",
+			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second)
+		go quotaCheckpointReconciler.Run(watchdogCtx)
 	}
 
 	// ----- §25.11 ArtifactStore cross-region replication -----

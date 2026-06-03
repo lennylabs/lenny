@@ -387,6 +387,12 @@ type Metrics struct {
 	// so the tree root was moved to awaiting_client_action). spec: §11.2
 	// line 48; §12.4 line 218; F-11.2.5.
 	delegationBudgetReconstruction *prometheus.CounterVec
+	// quotaCheckpointReconcile counts §11.2 line 48 / §24.6 token-usage
+	// counter reconcile events. Label `outcome` is one of `restored` (the
+	// MAX rule was applied to a still-current window) or `skipped` (the
+	// checkpoint's window had already rolled over). spec: §11.2 line 48;
+	// §24.6 line 99; F-11.2.4 / F-24.6.3.
+	quotaCheckpointReconcile *prometheus.CounterVec
 	// delegationParallelChildrenHWM observes the §8.3 line 379 maximum
 	// simultaneous in-flight children per delegation tree, sampled once
 	// when the tree root reaches a terminal state. Labels `pool` and
@@ -1729,6 +1735,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §11.2 line 48 — `lenny_quota_checkpoint_reconcile_total`
+	// counts token-usage counter reconcile events on Redis recovery and on
+	// the §24.6 operator-driven reconcile, labelled by outcome
+	// (`restored` | `skipped`) so operators see how many counters the MAX
+	// rule restored versus dropped as stale-window. F-11.2.4 / F-24.6.3.
+	quotaCheckpointReconcile, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_quota_checkpoint_reconcile_total",
+		Help: "Token-usage counter reconcile events by outcome (restored | skipped).",
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 / §8.3 line 379 — `lenny_delegation_parallel_children_high_watermark`
 	// records the maximum simultaneous in-flight children observed for
 	// each delegation tree at tree completion, labelled by `pool` and
@@ -2177,6 +2195,7 @@ func New() (*Metrics, error) {
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
 		delegationBudgetReconstruction,
+		quotaCheckpointReconcile,
 		delegationParallelChildrenHWM,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		quotaFailopenCumulativeSeconds, quotaUserFailopenFraction,
@@ -2377,6 +2396,7 @@ func New() (*Metrics, error) {
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
 		delegationTreeCycleDetected:          delegationTreeCycleDetected,
 		delegationBudgetReconstruction:       delegationBudgetReconstruction,
+		quotaCheckpointReconcile:             quotaCheckpointReconcile,
 		delegationParallelChildrenHWM:        delegationParallelChildrenHWM,
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
@@ -2449,6 +2469,18 @@ func (m *Metrics) IncDelegationBudgetReconstruction(outcome string) {
 		return
 	}
 	m.delegationBudgetReconstruction.WithLabelValues(outcome).Inc()
+}
+
+// IncQuotaCheckpointReconcile records one §11.2 line 48 / §24.6
+// token-usage counter reconcile event. `outcome` is `restored` (the MAX
+// rule was applied to a still-current window) or `skipped` (the
+// checkpoint's window had already rolled over). spec: §11.2 line 48;
+// §24.6 line 99; F-11.2.4 / F-24.6.3.
+func (m *Metrics) IncQuotaCheckpointReconcile(outcome string) {
+	if m == nil {
+		return
+	}
+	m.quotaCheckpointReconcile.WithLabelValues(outcome).Inc()
 }
 
 // IncExportFileScan records one §8.7 PreExportMaterialization per-file

@@ -238,6 +238,7 @@ type Server struct {
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
 	treeBudgetReturner    TreeBudgetReturner
+	quotaCheckpointer     QuotaFinalCheckpointer
 	hwmObserver           DelegationHighWatermarkObserver
 	hwmReader             DelegationHighWatermarkReader
 	maxOrphanTasks        int
@@ -612,6 +613,21 @@ type SessionLogHook interface {
 	// Implementations are best-effort: a failure must not be
 	// propagated as a fatal error to the caller.
 	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
+}
+
+// QuotaFinalCheckpointer writes the §11.2 line 44 "final reconciliation"
+// token-usage checkpoint for a (tenant, user) when a session reaches a
+// terminal state: the final cumulative window total is persisted to
+// Postgres as the authoritative value so a subsequent Redis-recovery
+// reconstruction has an accurate baseline. The default production wiring
+// is quotacheckpoint.Service.CheckpointSubject. Best-effort: a failure
+// must not abort the terminal-state transition.
+//
+// spec: §11.2 line 44 ("on session completion as final reconciliation";
+// "the final cumulative token usage is always written to Postgres as an
+// authoritative value").
+type QuotaFinalCheckpointer interface {
+	CheckpointSubject(ctx context.Context, tenantID, userID string) error
 }
 
 // Options configures the Server at construction.
@@ -1043,6 +1059,12 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
+	// QuotaCheckpointer, when set, persists the §11.2 line 44 final
+	// token-usage checkpoint for the session's (tenant, user) when the
+	// session reaches a terminal state. Nil disables the final write
+	// (developer mode without the Postgres checkpoint store).
+	QuotaCheckpointer QuotaFinalCheckpointer
+
 	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 line
 	// 379 per-tree parallel-children high-watermark observation: when a
 	// delegation tree's root session settles, the gateway reads the
@@ -1315,6 +1337,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		partialManifestLookup:    opts.PartialManifestLookup,
 		treeArchive:              opts.TreeArchive,
 		treeBudgetReturner:       opts.TreeBudgetReturner,
+		quotaCheckpointer:        opts.QuotaCheckpointer,
 		hwmReader:                opts.HighWatermarkReader,
 		hwmObserver:              opts.HighWatermarkObserver,
 		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,

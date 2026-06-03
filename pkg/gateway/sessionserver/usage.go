@@ -381,6 +381,16 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	if s.inputWaits != nil {
 		s.inputWaits.ForgetSession(sess.ID)
 	}
+	// spec: §11.2 line 44 — on session completion the final cumulative
+	// token usage is written to Postgres as the authoritative value so a
+	// subsequent Redis-recovery reconstruction has an accurate baseline.
+	// Best-effort: a checkpoint failure never unwinds the terminal-state
+	// transition. F-11.2.4.
+	if s.quotaCheckpointer != nil && sess.UserID != "" {
+		if err := s.quotaCheckpointer.CheckpointSubject(ctx, sess.TenantID, sess.UserID); err != nil {
+			log.Printf("lenny-gateway: quota final checkpoint session=%s: %v", sess.ID, err)
+		}
+	}
 	if s.billing == nil {
 		return
 	}
