@@ -58,6 +58,11 @@ type Config struct {
 	// self-health status transitions, so the caller can emit the §25.4
 	// ops_health_status_changed event.
 	OnSelfHealthChange func(prev, next SelfHealthReport)
+	// OnSelfHealthSample, when non-nil, is invoked with the report from
+	// every self-monitor evaluation (not only on a transition), so the
+	// caller can publish the §16.8 lenny_ops_self_health_status{check}
+	// gauge on each tick rather than only when the status flips.
+	OnSelfHealthSample func(report SelfHealthReport)
 	// Clock supplies the current time for the cron evaluator; nil uses
 	// time.Now.
 	Clock func() time.Time
@@ -130,11 +135,18 @@ func New(cfg Config) (*Service, error) {
 	if selfInterval <= 0 {
 		selfInterval = 10 * time.Second
 	}
+	onSample := cfg.OnSelfHealthSample
 	loops = append(loops, Loop{
 		Name:     "self-monitor",
 		Interval: selfInterval,
 		Tick: func(context.Context) error {
-			monitor.Evaluate()
+			report := monitor.Evaluate()
+			// §16.8: publish the per-check gauge on every evaluation so the
+			// scrape surface reflects the current self-health, not only the
+			// last transition.
+			if onSample != nil {
+				onSample(report)
+			}
 			return nil
 		},
 		LeaderOnly: false,

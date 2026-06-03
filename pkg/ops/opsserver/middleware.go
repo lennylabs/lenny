@@ -44,6 +44,14 @@ func withCorrelation(next http.Handler) http.Handler {
 // audit trail.
 func withAccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Kubernetes probes and the §16.9 Prometheus scrape endpoint
+		// fire every few seconds; logging each one floods the access log
+		// without adding correlation value. Pass them through unlogged,
+		// matching the gateway's /metrics + /healthz access-log exclusion.
+		if isHighFrequencyScrape(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rw, r)
@@ -54,6 +62,14 @@ func withAccessLog(next http.Handler) http.Handler {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 	})
+}
+
+// isHighFrequencyScrape reports whether p is a path the kubelet or
+// Prometheus polls on a short interval (the liveness/readiness probes and
+// the §16.9 /metrics scrape). withAccessLog skips these so steady-state
+// scrape traffic does not drown the operation-correlated request log.
+func isHighFrequencyScrape(p string) bool {
+	return p == "/healthz" || p == "/readyz" || p == "/metrics"
 }
 
 // statusRecorder captures the response status so withAccessLog can record

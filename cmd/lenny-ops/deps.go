@@ -252,8 +252,8 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 			// spec: §25.11 line 4309 — publish the
 			// lenny_backup_last_successful_timestamp{type} gauge so the
 			// BackupOverdue alert (line 4317) has a source. Leader-gated
-			// like the other cron jobs; the /metrics exposition that
-			// scrapes the gauge is tracked by F-16.8.1.
+			// like the other cron jobs; the §16.9 /metrics exposition that
+			// scrapes the gauge is wired (F-16.8.1).
 			Name:       "backup-metrics",
 			Expression: "* * * * *",
 			Run: func(ctx context.Context) error {
@@ -269,8 +269,7 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 // the last successful backup per type, evaluated by the §25.11
 // BackupOverdue alert (line 4317: a full backup older than 48h). It is
 // registered on the default registry so the sampler publishes a real
-// gauge; the lenny-ops /metrics exposition that scrapes it is the same
-// documented gap F-16.8.1 tracks (mirroring diagnosticsAuditRateLimited).
+// gauge; the §16.9 lenny-ops /metrics exposition scrapes it (F-16.8.1).
 var backupLastSuccessfulTimestamp = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_backup_last_successful_timestamp",
@@ -304,11 +303,44 @@ func sampleBackupMetrics(ctx context.Context, svc *backup.Service) error {
 	return nil
 }
 
+// opsSelfHealthStatus is the §16.8 / §25.4 line 2507
+// lenny_ops_self_health_status{check} gauge: each self-health check's
+// status encoded as 0=healthy, 1=degraded, 2=unhealthy. The
+// LenniOpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
+// default registry the §16.9 /metrics exposition serves.
+var opsSelfHealthStatus = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_ops_self_health_status",
+		Help: "§25.4 lenny-ops self-health status per check (0 healthy, 1 degraded, 2 unhealthy).",
+	}, []string{"check"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// publishSelfHealthMetric maps a §25.4 self-health report onto the
+// lenny_ops_self_health_status{check} gauge, one series per check. It is
+// wired to opsservice.Config.OnSelfHealthSample so the gauge is refreshed
+// on every self-monitor evaluation. The HealthStatus enum already encodes
+// 0=healthy, 1=degraded, 2=unhealthy, matching the §25.4 line 2507 gauge
+// semantics.
+//
+// spec: §16.8 / §25.4 line 2507.
+func publishSelfHealthMetric(report opsservice.SelfHealthReport) {
+	if opsSelfHealthStatus == nil {
+		return
+	}
+	for _, c := range report.Checks {
+		opsSelfHealthStatus.WithLabelValues(c.Name).Set(float64(c.Status))
+	}
+}
+
 // diagnosticsAuditRateLimited is the §25.9 lenny_audit_rate_limited_total
 // counter (event_type, service_account). It is registered on the default
-// registry so the rate-limit seam increments a real counter; lenny-ops
-// gains its own /metrics exposition in a later commit (the same
-// documented exposition gap the pgaudit shipper notes).
+// registry so the rate-limit seam increments a real counter and the
+// §16.9 lenny-ops /metrics exposition surfaces it.
 var diagnosticsAuditRateLimited = func() *prometheus.CounterVec {
 	c, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_audit_rate_limited_total",

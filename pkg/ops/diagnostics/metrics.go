@@ -13,8 +13,8 @@ import (
 // requestDuration is the §25.6 line 2926 per-endpoint diagnostic
 // latency histogram. The label values are the four §25.6 endpoint
 // short names: "session", "pool", "credential-pool", "connectivity".
-// Registered on the default registry at package init so the §25.4
-// /metrics endpoint exposes it once that endpoint is wired.
+// Registered on the default registry at package init so the §16.9
+// lenny-ops /metrics endpoint exposes it (F-16.8.1).
 var requestDuration *prometheus.HistogramVec
 
 func init() {

@@ -60,7 +60,7 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 	authed := authmw.Wrap(inner, opts)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isProbePath(r.URL.Path) {
+		if isUnauthenticatedPath(r.URL.Path) {
 			mux.ServeHTTP(w, r)
 			return
 		}
@@ -74,6 +74,15 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 // rationale (a kubelet probe carries no bearer token).
 func isProbePath(p string) bool {
 	return p == "/healthz" || p == "/readyz"
+}
+
+// isUnauthenticatedPath reports whether p is exempt from the §25.4 OIDC
+// gate. The exempt set is the Kubernetes probes (isProbePath) plus the
+// §16.9 Prometheus scrape surface (/metrics): a scrape carries no bearer
+// token, and the §13.2 NET-045 metrics-scrape NetworkPolicy is its access
+// control, mirroring how the gateway serves /metrics unauthenticated.
+func isUnauthenticatedPath(p string) bool {
+	return isProbePath(p) || p == "/metrics"
 }
 
 // requireAdminRole rejects any request whose principal does not hold the

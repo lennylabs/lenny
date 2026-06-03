@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
@@ -495,6 +496,10 @@ func main() {
 				log.Printf("lenny-ops: emit ops_health_status_changed: %v", err)
 			}
 		},
+		// §16.8 line 704 — publish lenny_ops_self_health_status{check} on
+		// every evaluation so the §16.9 /metrics scrape reflects the live
+		// per-check status, not only the last transition.
+		OnSelfHealthSample: publishSelfHealthMetric,
 	})
 	if err != nil {
 		log.Fatalf("lenny-ops: build service: %v", err)
@@ -578,6 +583,10 @@ func main() {
 		DiagnosticsAudit: buildDiagnosticsAudit(*diagnosticsAuditRate),
 		Auth:             authCfg,
 		Idempotency:      idemStore,
+		// §16.8 / §16.9: expose every instrument registered on the process
+		// default registry (self-health, backup, drift, rate-limit,
+		// diagnostics) on the mandatory lenny-ops scrape target.
+		Metrics: promhttp.Handler(),
 	})
 	srv := &http.Server{
 		Addr:              *addr,

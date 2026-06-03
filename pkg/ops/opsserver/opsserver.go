@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
@@ -181,6 +183,18 @@ type Options struct {
 	// tracking. The middleware sits inside the Auth wrapper so caller_id
 	// resolves from the verified principal.
 	Idempotency opsidem.Store
+
+	// Metrics, when non-nil, is served at GET /metrics as the §16.8 / §16.9
+	// Prometheus scrape surface. lenny-ops registers its instruments (the
+	// §16.8 self-health, backup, drift, rate-limit, and diagnostics series)
+	// on the process default registry; the binary passes a promhttp handler
+	// over it. The endpoint is exempt from the §25.4 OIDC gate because a
+	// Prometheus scrape carries no bearer token — the §13.2 NET-045
+	// metrics-scrape NetworkPolicy is the access control, matching the
+	// gateway. A nil handler defaults to promhttp.Handler() over the
+	// process default registry so a dev or embedded build still exposes
+	// whatever instruments are registered.
+	Metrics http.Handler
 }
 
 // New returns a Server with the liveness probe, readiness probe, and
@@ -226,6 +240,17 @@ func New(opts Options) *Server {
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// spec: §16.8 / §16.9 line 720 — the Prometheus scrape surface. §16.9
+	// names lenny-ops (TCP 9090) a mandatory scrape target in every tier;
+	// the §16.8 self-monitoring, backup, drift, and rate-limit series are
+	// registered on the process default registry and exposed here. The
+	// route is exempt from the §25.4 OIDC gate (a scrape carries no bearer;
+	// the §13.2 NET-045 NetworkPolicy is the access control).
+	metricsHandler := opts.Metrics
+	if metricsHandler == nil {
+		metricsHandler = promhttp.Handler()
+	}
+	s.mux.Handle("GET /metrics", metricsHandler)
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)

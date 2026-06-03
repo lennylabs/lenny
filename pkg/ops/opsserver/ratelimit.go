@@ -27,7 +27,7 @@ const (
 // rateLimitedTotal is the §25.4 line 2007 counter of requests rejected
 // by the per-service-account rate limiter, labelled by the JWT sub
 // claim. Registered on the default registry at package init so the
-// §25.4 /metrics endpoint exposes it once that listener is wired.
+// §16.9 lenny-ops /metrics endpoint exposes it (F-16.8.1).
 var rateLimitedTotal *prometheus.CounterVec
 
 func init() {

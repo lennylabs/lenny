@@ -183,3 +183,50 @@ func TestServiceRunsSelfMonitorOnEveryReplica(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// spec: §16.8 line 704 / §25.4 line 2507 — the self-monitor invokes
+// OnSelfHealthSample with the full report on every evaluation (not only on
+// a status transition), so the §16.9 /metrics publisher refreshes the
+// lenny_ops_self_health_status{check} gauge each tick.
+func TestServicePublishesSelfHealthSampleEveryTick_spec_16_8(t *testing.T) {
+	fire, restore := manualTicker(t)
+	defer restore()
+
+	var samples atomic.Int32
+	var lastReport atomic.Pointer[SelfHealthReport]
+	svc, err := New(Config{
+		ReplicaID:          "ops-0",
+		Elector:            newFakeElector(),
+		SelfHealthInterval: time.Hour,
+		SelfHealthChecks: map[string]SelfCheck{
+			"postgres_pool": func() CheckResult {
+				return CheckResult{Name: "postgres_pool", Status: StatusDegraded}
+			},
+		},
+		OnSelfHealthSample: func(r SelfHealthReport) {
+			samples.Add(1)
+			cp := r
+			lastReport.Store(&cp)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { svc.Run(ctx); close(done) }()
+
+	// A healthy->degraded sample is published on the very first evaluation,
+	// without any status transition having to fire.
+	waitFor(t, func() bool { return samples.Load() >= 1 }, "the first self-health sample")
+	fire()
+	waitFor(t, func() bool { return samples.Load() >= 2 }, "a self-health sample after a tick")
+
+	if r := lastReport.Load(); r == nil || len(r.Checks) != 1 || r.Checks[0].Name != "postgres_pool" || r.Checks[0].Status != StatusDegraded {
+		t.Fatalf("sampled report = %+v, want one degraded postgres_pool check", lastReport.Load())
+	}
+
+	cancel()
+	<-done
+}
