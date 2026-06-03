@@ -4,8 +4,10 @@ package sessionserver
 
 import (
 	"context"
+	"net/http"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -32,6 +34,66 @@ type PlaygroundCapResolver interface {
 	// duration cap) in minutes, treating a zero runtimeMinutes as "no
 	// runtime limit declared".
 	EffectiveSessionMinutes(runtimeMinutes int) int
+	// RuntimeVisible reports whether the runtime named name is exposed to a
+	// playground caller under §27.2 playground.allowedRuntimes. The session
+	// server consults it only for origin=playground requests, on the shared
+	// §9.1 GET /v1/runtimes discovery surface and at session create, so the
+	// playground value never narrows a non-playground caller. *playground.Config
+	// satisfies it via its glob-matching RuntimeVisible method. spec: §27.5
+	// line 190; §27.9 line 250. F-27.4.1.
+	RuntimeVisible(name string) bool
+}
+
+// isPlaygroundOrigin reports whether the request carries a session bearer with
+// the §27.3 origin=playground claim. It is the producer side of the
+// mode-agnostic claim the §27.3 mint stamps on every /playground/* token. The
+// §27.4 allowedRuntimes filter and the session-create admission key on it so a
+// non-playground caller on the shared §9.1 discovery surface is never affected.
+// spec: §27.3 line 63. F-27.4.1.
+func (s *Server) isPlaygroundOrigin(r *http.Request) bool {
+	principal, ok := getPrincipal(r)
+	return ok && principal.Origin == originPlayground
+}
+
+// filterPlaygroundAllowedRuntimes drops every runtime the §27.2
+// playground.allowedRuntimes glob list excludes. It is applied on the §9.1 GET
+// /v1/runtimes discovery surface (after the §10.6 environment filter) only when
+// the request is origin=playground and a cap resolver is wired, so the §27.5
+// line 190 "filtered by playground.allowedRuntimes" rule holds for the picker
+// while non-playground discovery is untouched. A nil resolver leaves the list
+// unchanged. spec: §27.4 line 176; §27.5 line 190. F-27.4.1.
+func (s *Server) filterPlaygroundAllowedRuntimes(r *http.Request, rows []runtimestore.Runtime) []runtimestore.Runtime {
+	if s.playgroundCaps == nil || !s.isPlaygroundOrigin(r) {
+		return rows
+	}
+	out := make([]runtimestore.Runtime, 0, len(rows))
+	for _, rt := range rows {
+		if s.playgroundCaps.RuntimeVisible(rt.Name) {
+			out = append(out, rt)
+		}
+	}
+	return out
+}
+
+// requirePlaygroundRuntimeVisible enforces the §27.4 allowedRuntimes boundary
+// at session create. When the caller is origin=playground and the requested
+// runtime is excluded by playground.allowedRuntimes, the create is rejected
+// with 403 FORBIDDEN rather than admitting a runtime the playground picker
+// would never surface — closing the §27.5 "see and select" gap that discovery
+// filtering alone leaves open. It returns true (admit) for a non-playground
+// caller, a nil resolver, or a visible runtime. spec: §27.5 line 190; §27.9
+// line 250. F-27.4.1.
+func (s *Server) requirePlaygroundRuntimeVisible(w http.ResponseWriter, r *http.Request, runtimeRef string) bool {
+	if s.playgroundCaps == nil || runtimeRef == "" || !s.isPlaygroundOrigin(r) {
+		return true
+	}
+	if s.playgroundCaps.RuntimeVisible(runtimeRef) {
+		return true
+	}
+	s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+		"the requested runtime is not exposed to the playground by playground.allowedRuntimes (§27.5)",
+		map[string]any{"reason": "runtime_not_playground_visible", "runtimeRef": runtimeRef})
+	return false
 }
 
 // SetPlaygroundCaps wires the §27 playground enforcement onto a constructed

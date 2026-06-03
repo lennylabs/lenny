@@ -305,6 +305,14 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §27.5 line 190 / §27.9 line 250 — parity with handleCreate: an
+	// origin=playground caller may only create against a playground-visible
+	// runtime, so the create-and-start ingress enforces the same §27.4
+	// allowedRuntimes boundary. F-27.4.1.
+	if !s.requirePlaygroundRuntimeVisible(w, r, req.RuntimeRef) {
+		return
+	}
+
 	isoProf := req.IsolationProfile
 	if isoProf == "" {
 		isoProf = s.defaultIsoProf

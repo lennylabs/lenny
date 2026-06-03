@@ -14,8 +14,13 @@ import (
 // fakePlaygroundCaps mirrors playground.Config's §27.6 effective-cap math
 // without importing the playground package into the session server's tests.
 type fakePlaygroundCaps struct {
-	idleSeconds int // §27.2 playground.maxIdleTimeSeconds
-	sessionMins int // §27.2 playground.maxSessionMinutes
+	idleSeconds int    // §27.2 playground.maxIdleTimeSeconds
+	sessionMins int    // §27.2 playground.maxSessionMinutes
+	hidden      string // §27.2 playground.allowedRuntimes-excluded runtime; empty = all visible
+}
+
+func (f fakePlaygroundCaps) RuntimeVisible(name string) bool {
+	return f.hidden == "" || name != f.hidden
 }
 
 func (f fakePlaygroundCaps) EffectiveIdleSeconds(runtimeIdleSeconds int) int {

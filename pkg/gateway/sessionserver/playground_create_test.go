@@ -19,6 +19,13 @@ import (
 type playgroundCapsFake struct {
 	idleSeconds int
 	sessionMins int
+	// hidden names a single runtime the §27.2 playground.allowedRuntimes
+	// list excludes; empty means every runtime is visible. F-27.4.1.
+	hidden string
+}
+
+func (f playgroundCapsFake) RuntimeVisible(name string) bool {
+	return f.hidden == "" || name != f.hidden
 }
 
 func (f playgroundCapsFake) EffectiveIdleSeconds(runtimeIdleSeconds int) int {

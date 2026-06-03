@@ -1917,6 +1917,15 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §27.5 line 190 / §27.9 line 250 — an origin=playground caller may
+	// only create a session against a runtime its playground.allowedRuntimes
+	// list exposes. This closes the §27.4 "see and select" gap so the
+	// allowedRuntimes filter is an authorization boundary, not just a picker
+	// display filter. A non-playground caller is unaffected. F-27.4.1.
+	if !s.requirePlaygroundRuntimeVisible(w, r, req.RuntimeRef) {
+		return
+	}
+
 	// §5.3 isolation profile: explicit override > §5.3 default. The
 	// minimal gateway does not yet resolve pools, so any explicit
 	// value is taken at face value (production validates against the

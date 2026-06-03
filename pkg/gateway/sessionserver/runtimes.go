@@ -75,6 +75,21 @@ type RuntimeDiscoveryEntry struct {
 	// `/mcp/runtimes/{name}` for type:mcp runtimes; empty (and so
 	// omitted from the JSON envelope) for type:agent runtimes. F-9.1.4.
 	McpEndpoint string `json:"mcpEndpoint,omitempty"`
+	// RuntimeOptionsSchema is the §5.1 runtimeOptionsSchema JSON Schema
+	// fragment the §14 path validates session-creation runtimeOptions
+	// against. The §27.4 playground session-config screen renders a
+	// schema-driven form from it (§27.4 item 2); a client that omits it
+	// falls back to a free-form options editor. Empty (and so omitted)
+	// when the runtime declares no schema. spec: §5.1 line 167; §27.4
+	// line 177. F-27.4.2.
+	RuntimeOptionsSchema json.RawMessage `json:"runtimeOptionsSchema,omitempty"`
+	// MinPlatformVersion is the §5.1 minPlatformVersion: the lowest
+	// Lenny gateway version the runtime supports. It is the only
+	// version-bearing field §5.1 defines on a Runtime, so the §27.4 item
+	// 1 runtime-picker version line surfaces it. Empty (and so omitted)
+	// when the runtime declares no minimum. spec: §5.1 line 197; §27.4
+	// line 176. F-27.4.6.
+	MinPlatformVersion string `json:"minPlatformVersion,omitempty"`
 }
 
 // mcpEndpointFor returns the §9.1 discovery pointer for runtime
@@ -118,18 +133,25 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	if envID := r.URL.Query().Get("environmentId"); envID != "" {
 		rows = s.narrowRuntimesToEnvironment(r, rows, envID)
 	}
+	// spec: §27.5 line 190 — an origin=playground caller's discovery list is
+	// additionally filtered by playground.allowedRuntimes so the §27.4 runtime
+	// picker never surfaces a runtime the operator excluded. A non-playground
+	// caller is untouched. F-27.4.1.
+	rows = s.filterPlaygroundAllowedRuntimes(r, rows)
 
 	out := make([]RuntimeDiscoveryEntry, 0, len(rows))
 	for _, rt := range rows {
 		out = append(out, RuntimeDiscoveryEntry{
-			Name:              rt.Name,
-			Type:              string(rt.Type),
-			IntegrationLevel:  string(rt.IntegrationLevel),
-			Description:       rt.Description,
-			Labels:            rt.Labels,
-			AgentInterface:    rt.AgentInterface,
-			PublishedMetadata: runtimestore.PublicMetadataRefs(rt.PublishedMetadata),
-			McpEndpoint:       mcpEndpointFor(rt),
+			Name:                 rt.Name,
+			Type:                 string(rt.Type),
+			IntegrationLevel:     string(rt.IntegrationLevel),
+			Description:          rt.Description,
+			Labels:               rt.Labels,
+			AgentInterface:       rt.AgentInterface,
+			PublishedMetadata:    runtimestore.PublicMetadataRefs(rt.PublishedMetadata),
+			McpEndpoint:          mcpEndpointFor(rt),
+			RuntimeOptionsSchema: rt.RuntimeOptionsSchema,
+			MinPlatformVersion:   rt.MinPlatformVersion,
 		})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{

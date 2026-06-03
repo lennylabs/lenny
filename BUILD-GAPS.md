@@ -43618,7 +43618,7 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 
 ### Findings
 
-### - [ ] F-27.4.1 — `playground.allowedRuntimes` filter is not enforced [High] — OPEN
+### - [x] F-27.4.1 — `playground.allowedRuntimes` filter is not enforced [High] — CLOSED
 - Spec: §27.4 item 1 ("filtered by `playground.allowedRuntimes` and caller scopes").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/playground.go:103-106,144-145` defines `AllowedRuntimes`.
@@ -43627,7 +43627,9 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
   - `/Users/joan/projects/lenny/pkg/gateway/sessionserver/runtimes.go:51-89` (`handleListRuntimes`) filters only by §10.6 environment access (`filterRuntimesByEnvironment`, lines 264-300); there is no playground-origin glob filter and no equivalent enforcement at session start.
 - Impact: a playground caller with environment access to a runtime can see and select runtimes excluded by `playground.allowedRuntimes`. The control is configured and surfaced but never applied; this is a missing authorization boundary, not just a UI defect.
 
-### - [ ] F-27.4.2 — Session configuration uses a raw JSON textarea, not the schema-driven form [High] — OPEN
+**Resolution:** Closed by commit cf7ff0be. Added `playground.Config.RuntimeVisible` (glob match against `allowedRuntimes`, mirroring the §14 envblock matcher) and a `RuntimeVisible` method on the sessionserver `PlaygroundCapResolver` seam. `handleListRuntimes` now applies `filterPlaygroundAllowedRuntimes` after the §10.6 environment filter for `origin=playground` requests (the gateway is the authoritative §27.5 line 190 filter), and `handleCreate`/`handleCreateAndStart` reject a playground-origin create against an excluded runtime with `403 FORBIDDEN` (`reason=runtime_not_playground_visible`), closing the "see and select" gap. The SPA also filters the picker client-side against the server-sourced `allowedRuntimes`. A non-playground caller on the shared `GET /v1/runtimes` / create surface is never narrowed.
+
+### - [x] F-27.4.2 — Session configuration uses a raw JSON textarea, not the schema-driven form [High] — CLOSED
 - Spec: §27.4 item 2 ("A form generated from the runtime's `runtimeOptionsSchema` (§14) using the same JSON-Schema-to-form renderer the installer wizard uses (§17.6)").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:219-270` (`renderSessionConfig`) emits a single `<textarea>` for runtime options with placeholder `{ }`, validated only by `JSON.parse` client-side (lines 252-258). Notice text reads "JSON validated against the runtime's runtimeOptionsSchema by the gateway."
@@ -43635,7 +43637,9 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
   - `/Users/joan/projects/lenny/pkg/gateway/sessionserver/runtimes.go:41-49` (`RuntimeDiscoveryEntry`) does not include a `runtimeOptionsSchema` field, so the SPA could not render a form even if it tried.
 - Impact: the playground does not fulfil the SPA contract for session configuration. Operators relying on schema-driven validation, enum dropdowns, default values, and field descriptions do not get them; arbitrary JSON is sent and only rejected (if at all) at session start.
 
-### - [ ] F-27.4.3 — Workspace plan upload is captured but never sent [High] — OPEN
+**Resolution:** Closed by commit cf7ff0be. `RuntimeDiscoveryEntry` now surfaces `runtimeOptionsSchema` (the §5.1 field already exists on the `Runtime` record). The SPA's `renderSessionConfig` builds a schema-driven form via the new `renderSchemaForm`: one control per declared property (enum→`<select>`, boolean→checkbox, number/integer→numeric input, else text), annotated with each property's title and description, seeded with its default, with required fields marked and validated; `collect()` coerces values back to their declared types. When the runtime declares no schema the SPA falls back to the free-form JSON editor (`renderRawOptions`). The §17.6 installer is a Go TUI with no shareable JS renderer, so the form generator is implemented self-contained in the bundle. The create payload bug is fixed in the same change: the SPA now posts `runtimeRef` (the §15.1 field, previously the ignored `runtime`) and the collected `runtimeOptions` blob, which the gateway validates against the schema (`validateRuntimeOptions`).
+
+### - [ ] F-27.4.3 — Workspace plan upload is captured but never sent [High] — DEFERRED
 - Spec: §27.4 item 2 ("workspace plan upload (drag-drop tarball)").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:231` declares `planField = el("input", { type: "file", accept: ".tar,.tar.gz,.tgz" })` and renders the input (line 239-240).
@@ -43643,7 +43647,9 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
   - There is no drag-drop handler; `accept`-restricted file picker only.
 - Impact: the documented workspace-plan-upload affordance is non-functional. Users who select a tarball get no error and no upload; their session starts without the plan, silently dropping the input.
 
-### - [ ] F-27.4.4 — SDK snippet emits Python only; spec requires Go/Python/TS [High] — OPEN
+**Deferred:** The §27.4 "drag-drop tarball" affordance depends on the server-side §7.4 archive-upload pipeline, which has unfinished pieces (F-7.4.1 archive extraction in the pod adapter rather than the gateway, F-7.4.6 mid-session upload unreachable — both OPEN). `POST /v1/sessions` accepts a §14 JSON `workspacePlan`, not a tarball; the tarball path is the separate `uploadToken` → upload-endpoint flow. Wiring the SPA to read the file and POST it is premature until that endpoint and its size/schema checks are settled. Re-attempt once the §7.4 upload cluster lands.
+
+### - [x] F-27.4.4 — SDK snippet emits Python only; spec requires Go/Python/TS [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.9.4 — Both report the playground SDK-snippet button hard-codes Python instead of emitting Go/Python/TS.
 
@@ -43652,25 +43658,33 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:478-496` (`copySnippet`) hard-codes a single Python snippet, copies it to clipboard, and alerts "SDK snippet copied to the clipboard (Python)." No language picker, no Go template, no TypeScript template.
 - Impact: callers using Go or TypeScript clients receive Python source code. The spec is explicit about the three-language set.
 
-### - [ ] F-27.4.5 — Delegation policy field is shown unconditionally regardless of scope [Medium] — OPEN
+**Resolution:** Closed by commit cf7ff0be. The chat screen now renders a language picker (`<select>` of Go/Python/TypeScript) next to the copy button, and `copySnippet(lang)` delegates to `sdkSnippet(lang, runtime)`, which carries a template for each language. Every template references `LENNY_GATEWAY_URL` / `LENNY_BEARER_TOKEN` through environment variables and embeds no credential, preserving the §27.9 line 256 property. Closes the duplicate F-27.9.4 (already CLOSED as a pointer to this finding).
+
+### - [ ] F-27.4.5 — Delegation policy field is shown unconditionally regardless of scope [Medium] — DEFERRED
 - Spec: §27.4 item 2 ("delegation policy selection (if caller has the scope)").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:232` renders the delegation-policy input for every caller.
   - No scope is fetched from `config.json` or any `/v1/scopes`-style endpoint; the SPA has no notion of caller scope at all.
 - Impact: the field appears for callers without the delegation scope; their session-create call will (presumably) be rejected server-side rather than the affordance being hidden. This is a UX deviation from the spec MUST. Severity Medium rather than High because the authorization decision happens at the gateway; the playground misleads but does not bypass.
 
-### - [ ] F-27.4.6 — Runtime picker shows "version unknown" because the discovery response carries no version [Medium] — OPEN
+**Deferred:** The §27.4 "if caller has the scope" gate has no scope to test against. The scope vocabulary defines no delegation scope, the §27.3 `playgroundAllowedScope` ceiling (`token.go:22-30`) excludes delegation entirely, and `delegationPolicyId`/`maxDelegationPolicy` is not even read at session create (the field maps to the §8.3 session-level `maxDelegationPolicy` cap, currently unwired). Correctly hiding or showing the field requires a spec decision on which scope authorizes session-level delegation-policy selection in the playground and whether it belongs in the playground scope ceiling. Re-attempt once that scope is defined.
+
+### - [x] F-27.4.6 — Runtime picker shows "version unknown" because the discovery response carries no version [Medium] — CLOSED
 - Spec: §27.4 item 1 ("Each entry shows the runtime id, version, description from the Runtime CR ...").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:153-154` renders `"version " + (rt.version || "unknown")`.
   - `/Users/joan/projects/lenny/pkg/gateway/sessionserver/runtimes.go:41-49` (`RuntimeDiscoveryEntry`) emits `name`, `type`, `integrationLevel`, `description`, `labels`, `agentInterface`, `publishedMetadata`. There is no `version` field. The `Runtime` row in `runtimestore` exposes `MinPlatformVersion` but no general `Version`.
 - Impact: every runtime card displays "version unknown". The spec lists version as a required entry-level field.
 
-### - [ ] F-27.4.7 — Chat does not distinguish messages, tool-call events, delegation events, and errors reliably [Medium] — OPEN
+**Resolution:** Closed by commit cf7ff0be. §5.1 defines no general runtime-version field on the `Runtime` record; `minPlatformVersion` is the only version-bearing field, so `RuntimeDiscoveryEntry` now surfaces it as `minPlatformVersion`, and the picker renders a "requires platform ≥ X" line when present and omits the line entirely otherwise. The "version unknown" filler is gone. A general runtime-version field, if §27.4 intends one distinct from the platform-version floor, is a §5.1 spec decision outside this finding's scope.
+
+### - [ ] F-27.4.7 — Chat does not distinguish messages, tool-call events, delegation events, and errors reliably [Medium] — DEFERRED
 - Spec: §27.4 item 3 ("Renders messages, tool-call events, delegation events, and errors").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:404-426` (`dispatchFrame`) attempts the four-way split heuristically by inspecting `frame.result.type`, `frame.result.method`, and substrings of `method` ("delegat"). The matched MCP frame shape does not align with the gateway's actual MCP tool-call/notification structure; for instance the tool name used to send messages is `lenny/session_message` (lines 437-439) but there is no evidence in `pkg/gateway/mcptools/` of any `lenny/session_message`, `lenny/session_interrupt`, or `lenny/session_cancel` tool. `grep -rn "lenny/session_message\|lenny/session_interrupt\|lenny/session_cancel" pkg/gateway/` returns only the SPA file.
 - Impact: chat send, interrupt, and cancel paths target tools that do not exist in the gateway's MCP tool surface; inbound frames will fall through the heuristic dispatch and land in the generic `event/frame` branch. The chat screen will not behave as specified in practice. Severity Medium rather than High because the spec section being audited is the UI surface contract; the missing tool surface is a §27.5 concern but the symptom manifests here.
+
+**Deferred:** The finding's primary evidence is stale. The SPA's outbound tool names are now `lenny/send_message`, `lenny/interrupt_session`, and `lenny/cancel_session` (`app.js`), all of which exist in the gateway MCP tool surface (`pkg/gateway/mcptools/mcptools.go`), so the send/interrupt/cancel paths are no longer phantom. The remaining concern — whether `dispatchFrame`'s four-way heuristic (message / tool-call / delegation / error) aligns with the gateway's actual outbound `SessionEvent`→MCP notification frames — requires tracing the §15.2 closed `SessionEventKind` registry and the gateway outbound dispatcher's wire framing, which this batch did not fully map. Re-attempt as a focused §27.5 protocol pass once the outbound event-frame model is pinned.
 
 ### - [x] F-27.4.8 — "use this runtime" button label and frame inspector layout match; new-session affordance is additive [Low] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:156-162` emits the "use this runtime" button; lines 319-323 wrap the raw frames in a `<details>` panel; line 345 adds a "new session" button not specified.

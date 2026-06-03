@@ -219,6 +219,61 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// RuntimeVisible reports whether the runtime named name is exposed by the
+// §27.4 runtime picker under playground.allowedRuntimes. The match is a
+// case-sensitive glob where `*` matches any (possibly empty) sequence of
+// characters; a runtime is visible when it matches at least one pattern.
+// withDefaults normalizes an empty AllowedRuntimes to ["*"] (every runtime
+// visible), so the default posture is permissive; an un-normalized empty
+// list is treated as all-visible here as a belt-and-suspenders default.
+//
+// The gateway applies this as an authorization boundary on the shared §9.1
+// GET /v1/runtimes discovery surface and at session create, but only for
+// origin=playground requests — a non-playground caller is never narrowed by
+// the playground value. spec: §27.4 line 176; §27.5 line 190; §27.9 line 250.
+// F-27.4.1.
+func (c Config) RuntimeVisible(name string) bool {
+	if len(c.AllowedRuntimes) == 0 {
+		return true
+	}
+	for _, pattern := range c.AllowedRuntimes {
+		if runtimeGlobMatch(pattern, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// runtimeGlobMatch reports whether s matches pattern, where `*` is the only
+// metacharacter and matches any sequence of zero or more characters. A
+// pattern with no `*` is an exact, case-sensitive comparison. The semantics
+// mirror the §14 allowlist matcher (pkg/gateway/envblock) so the playground
+// allowedRuntimes globs behave the same as the env-block globs operators
+// already know. spec: §27.5 line 190.
+func runtimeGlobMatch(pattern, s string) bool {
+	if !strings.Contains(pattern, "*") {
+		return pattern == s
+	}
+	parts := strings.Split(pattern, "*")
+	n := len(parts)
+	if !strings.HasPrefix(s, parts[0]) || !strings.HasSuffix(s, parts[n-1]) {
+		return false
+	}
+	rest := s[len(parts[0]):]
+	if len(rest) < len(parts[n-1]) {
+		return false
+	}
+	rest = rest[:len(rest)-len(parts[n-1])]
+	for i := 1; i < n-1; i++ {
+		idx := strings.Index(rest, parts[i])
+		if idx < 0 {
+			return false
+		}
+		rest = rest[idx+len(parts[i]):]
+	}
+	return true
+}
+
 // EffectiveIdleSeconds returns the §27.6 effective idle cap for a
 // playground session running against a runtime whose own
 // maxIdleTimeSeconds is runtimeIdleSeconds. The override never

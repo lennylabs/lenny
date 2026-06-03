@@ -69,6 +69,101 @@ func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
 	}
 }
 
+// TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190 pins the
+// §27.5 line 190 rule: an origin=playground caller's GET /v1/runtimes is
+// additionally filtered by playground.allowedRuntimes (modeled by the fake's
+// hidden runtime), while a non-playground caller on the same shared §9.1
+// surface sees every runtime. F-27.4.1.
+func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "gemini-agent", Type: runtimestore.TypeAgent})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv.SetPlaygroundCaps(playgroundCapsFake{hidden: "gemini-agent"}, nil)
+
+	// origin=playground: gemini-agent is excluded by allowedRuntimes.
+	pg := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	pg = pg.WithContext(authmw.WithPrincipal(pg.Context(), authmw.Principal{
+		Subject: "alice@acme.com", TenantID: "acme", Origin: "playground",
+	}))
+	rrPG := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrPG, pg)
+	if rrPG.Code != http.StatusOK {
+		t.Fatalf("playground discovery status: %d, body=%s", rrPG.Code, rrPG.Body.String())
+	}
+	var pgResp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rrPG.Body.Bytes(), &pgResp)
+	if len(pgResp.Runtimes) != 1 || pgResp.Runtimes[0].Name != "claude-agent" {
+		t.Errorf("playground discovery must drop the allowedRuntimes-excluded runtime: got %+v", pgResp.Runtimes)
+	}
+
+	// non-playground caller: the playground value never narrows the shared surface.
+	plain := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	plain = plain.WithContext(authmw.WithPrincipal(plain.Context(), authmw.Principal{
+		Subject: "alice@acme.com", TenantID: "acme",
+	}))
+	rrPlain := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrPlain, plain)
+	var plainResp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rrPlain.Body.Bytes(), &plainResp)
+	if len(plainResp.Runtimes) != 2 {
+		t.Errorf("non-playground discovery must be unfiltered by allowedRuntimes: got %d runtimes", len(plainResp.Runtimes))
+	}
+}
+
+// TestListRuntimesSurfacesOptionsSchemaAndVersion_spec_27_4 pins the §27.4
+// item 1/2 discovery fields the playground session-config screen consumes: a
+// runtime that declares a runtimeOptionsSchema surfaces it verbatim, and the
+// only §5.1 version-bearing field (minPlatformVersion) is surfaced for the
+// picker's version line. A runtime that declares neither omits both keys (so
+// the SPA falls back to the free-form editor and shows no version line).
+// F-27.4.2 / F-27.4.6.
+func TestListRuntimesSurfacesOptionsSchemaAndVersion_spec_27_4(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+		MinPlatformVersion:   "1.4.0",
+		RuntimeOptionsSchema: json.RawMessage(`{"type":"object","properties":{"model":{"type":"string"}}}`),
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "bare-agent", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	byName := map[string]sessionserver.RuntimeDiscoveryEntry{}
+	for _, e := range resp.Runtimes {
+		byName[e.Name] = e
+	}
+	claude, ok := byName["claude-agent"]
+	if !ok {
+		t.Fatalf("claude-agent missing from discovery: %+v", resp.Runtimes)
+	}
+	if claude.MinPlatformVersion != "1.4.0" {
+		t.Errorf("minPlatformVersion: got %q, want 1.4.0", claude.MinPlatformVersion)
+	}
+	if !strings.Contains(string(claude.RuntimeOptionsSchema), `"properties"`) {
+		t.Errorf("runtimeOptionsSchema must surface the registered schema: %q", string(claude.RuntimeOptionsSchema))
+	}
+	bare := byName["bare-agent"]
+	if bare.MinPlatformVersion != "" || len(bare.RuntimeOptionsSchema) != 0 {
+		t.Errorf("a runtime that declares neither field must omit both: %+v", bare)
+	}
+	// Wire-level: the empty fields are omitted from the JSON envelope.
+	body := rr.Body.String()
+	if strings.Contains(body, `"minPlatformVersion":""`) || strings.Contains(body, `"runtimeOptionsSchema":null`) {
+		t.Errorf("empty version/schema must be omitted from the envelope, not emitted: %s", body)
+	}
+}
+
 func TestListModelsOpenAIFormat(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
