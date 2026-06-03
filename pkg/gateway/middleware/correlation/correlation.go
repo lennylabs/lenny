@@ -25,6 +25,7 @@ package correlation
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -34,8 +35,17 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
+
+// maxErrorBodySniff caps how many bytes of an error response body the
+// completion-line logger inspects to recover the lenny error code. Error
+// envelopes are small JSON objects written by json.Encoder.Encode in a
+// single Write; the cap bounds the cost when a 4xx/5xx handler streams a
+// larger body (a stack-trace dump, an upstream passthrough) past the
+// envelope.
+const maxErrorBodySniff = 8 << 10
 
 // Options configures the middleware.
 type Options struct {
@@ -96,13 +106,30 @@ func Wrap(next http.Handler, opts Options) http.Handler {
 		// The logging handler projects the correlation fields from ctx onto
 		// this record, so operation_id / agent_name / session_id / tenant_id /
 		// trace_id appear on the line when the request carried them.
-		logger.LogAttrs(ctx, slog.LevelInfo, "http_request",
+		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", cw.status),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.Int("bytes", cw.bytes),
-		)
+		}
+		// spec: §16.4 line 375 — "Error events include structured error codes
+		// (TRANSIENT/PERMANENT/POLICY/UPSTREAM)." When the response is a lenny
+		// error envelope, recover its code from the captured body and classify
+		// it through the same §15.2.1 classifier the envelope used, so the
+		// access-log line a SIEM bins by category carries error_code /
+		// error_category / retryable. The classifier (not the body) is the
+		// source of truth: bare middleware error writers omit the category from
+		// the envelope, but the code is always present. F-16.4.12.
+		if code := cw.errorCode(); code != "" {
+			cat, retryable := errorclassify.Classify(code)
+			attrs = append(attrs,
+				slog.String("error_code", code),
+				slog.String("error_category", string(cat)),
+				slog.Bool("retryable", retryable),
+			)
+		}
+		logger.LogAttrs(ctx, slog.LevelInfo, "http_request", attrs...)
 	})
 }
 
@@ -116,12 +143,21 @@ type captureRW struct {
 	status      int
 	bytes       int
 	wroteHeader bool
+
+	// sniffErr is armed when the status is a 4xx/5xx so the first body
+	// bytes are buffered for §16.4 line 375 error-code recovery. errBody
+	// holds that bounded prefix.
+	sniffErr bool
+	errBody  []byte
 }
 
 func (c *captureRW) WriteHeader(code int) {
 	if !c.wroteHeader {
 		c.status = code
 		c.wroteHeader = true
+		// spec: §16.4 line 375 — arm error-body capture only for error
+		// statuses so success and streaming responses are never buffered.
+		c.sniffErr = code >= 400
 	}
 	c.ResponseWriter.WriteHeader(code)
 }
@@ -130,9 +166,32 @@ func (c *captureRW) Write(b []byte) (int, error) {
 	if !c.wroteHeader {
 		c.wroteHeader = true
 	}
+	if c.sniffErr && len(c.errBody) < maxErrorBodySniff {
+		c.errBody = append(c.errBody, b[:min(len(b), maxErrorBodySniff-len(c.errBody))]...)
+	}
 	n, err := c.ResponseWriter.Write(b)
 	c.bytes += n
 	return n, err
+}
+
+// errorCode extracts the lenny error code from a captured error envelope.
+// It returns "" when no error body was captured or the body is not a
+// recognizable `{"error":{"code":...}}` envelope (a non-JSON 4xx, an empty
+// 5xx, a streamed error). The completion-line logger classifies the code;
+// an empty result simply omits the §16.4 line 375 error fields.
+func (c *captureRW) errorCode() string {
+	if !c.sniffErr || len(c.errBody) == 0 {
+		return ""
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(c.errBody, &env); err != nil {
+		return ""
+	}
+	return env.Error.Code
 }
 
 // Flush forwards to the underlying http.Flusher when present. The §15.1 SSE

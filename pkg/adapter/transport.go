@@ -30,7 +30,17 @@ func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
 	// the adapter's spans continue the gateway's trace, and propagates it
 	// onward. Prepended so a caller-supplied handler in opts cannot shadow
 	// the propagation seam. F-16.3.3.
-	opts = append([]grpc.ServerOption{grpc.StatsHandler(otelgrpc.NewServerHandler())}, opts...)
+	//
+	// spec: §16.4 line 376 — the credential-redaction interceptor is the
+	// per-method access-log/trace surface for AssignCredentials and
+	// RotateCredentials: it records only the RPC name, lease ID, provider
+	// type, and outcome, never the secret payload. Prepended so it owns the
+	// credential access-log surface before any caller-supplied interceptor.
+	// F-16.4.8.
+	opts = append([]grpc.ServerOption{
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(credentialRedactionInterceptor(nil)),
+	}, opts...)
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterAdapterServer(gs, s)
 

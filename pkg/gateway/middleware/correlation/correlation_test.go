@@ -191,3 +191,90 @@ func TestWrapMergePreservesExistingContextFields(t *testing.T) {
 		t.Errorf("pre-seeded tenant_id = %q, want globex (Merge clobbered it)", gotTenant)
 	}
 }
+
+// spec: §16.4 line 375 — an error response carries error_code,
+// error_category, and retryable on the completion line, classified through
+// the shared §15.2.1 classifier so a SIEM can bin the line by category.
+// F-16.4.12.
+func TestWrapEmitsErrorCategoryOnLogLine_spec_16_4_375(t *testing.T) {
+	var buf bytes.Buffer
+	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":"CIRCUIT_BREAKER_OPEN","message":"open"}}`))
+	}), Options{Logger: jsonLogger(&buf)})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
+
+	rec := lastLine(t, &buf)
+	if got, _ := rec["error_code"].(string); got != "CIRCUIT_BREAKER_OPEN" {
+		t.Errorf("error_code = %v, want CIRCUIT_BREAKER_OPEN", rec["error_code"])
+	}
+	// CIRCUIT_BREAKER_OPEN classifies as POLICY / not retryable.
+	if got, _ := rec["error_category"].(string); got != "POLICY" {
+		t.Errorf("error_category = %v, want POLICY", rec["error_category"])
+	}
+	if got, ok := rec["retryable"].(bool); !ok || got {
+		t.Errorf("retryable = %v, want false", rec["retryable"])
+	}
+}
+
+// The classifier is the source of truth: a bare middleware envelope that
+// omits the category from the body still produces the correct category on
+// the log line. spec: §16.4 line 375. F-16.4.12.
+func TestWrapClassifiesCodeWhenBodyOmitsCategory_spec_16_4_375(t *testing.T) {
+	var buf bytes.Buffer
+	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Mirrors pkg/gateway/middleware/environment / circuitbreaker, which
+		// write {error:{code,message}} with no category field.
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":"RATE_LIMITED","message":"slow down"}}`))
+	}), Options{Logger: jsonLogger(&buf)})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
+
+	rec := lastLine(t, &buf)
+	if got, _ := rec["error_category"].(string); got != "POLICY" {
+		t.Errorf("error_category = %v, want POLICY (classifier, not body)", rec["error_category"])
+	}
+	if got, ok := rec["retryable"].(bool); !ok || !got {
+		t.Errorf("retryable = %v, want true (RATE_LIMITED is retryable)", rec["retryable"])
+	}
+}
+
+// A 2xx response carries no error fields on the completion line.
+// spec: §16.4 line 375. F-16.4.12.
+func TestWrapOmitsErrorFieldsOnSuccess_spec_16_4_375(t *testing.T) {
+	var buf bytes.Buffer
+	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// A 200 body that happens to contain an "error" key must not be
+		// mined for a category — only error statuses are sniffed.
+		_, _ = w.Write([]byte(`{"error":{"code":"VALIDATION_ERROR"}}`))
+	}), Options{Logger: jsonLogger(&buf)})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	rec := lastLine(t, &buf)
+	for _, k := range []string{"error_code", "error_category", "retryable"} {
+		if _, ok := rec[k]; ok {
+			t.Errorf("success line carries %q = %v, want absent", k, rec[k])
+		}
+	}
+}
+
+// A non-JSON error body (a plaintext 500, a streamed dump) leaves the error
+// fields absent rather than emitting a garbage code. spec: §16.4 line 375.
+func TestWrapOmitsErrorFieldsOnNonEnvelopeBody_spec_16_4_375(t *testing.T) {
+	var buf bytes.Buffer
+	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal failure\n"))
+	}), Options{Logger: jsonLogger(&buf)})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
+
+	rec := lastLine(t, &buf)
+	if _, ok := rec["error_code"]; ok {
+		t.Errorf("non-envelope 500 carries error_code = %v, want absent", rec["error_code"])
+	}
+	if status, ok := rec["status"].(float64); !ok || int(status) != http.StatusInternalServerError {
+		t.Errorf("status = %v, want 500", rec["status"])
+	}
+}
