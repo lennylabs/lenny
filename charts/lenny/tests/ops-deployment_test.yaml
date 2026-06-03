@@ -480,3 +480,87 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --escalation-reconciliation-writes-per-second=5
+
+  # spec: §25.4 NET-070 — F-25.4.19. The admin-API link defaults to TLS
+  # on the gateway internal-TLS port, with --gateway-internal-tls=true.
+  - it: routes the gateway admin-API link over TLS by default per §25.4 NET-070
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-url=https://lenny-gateway.NAMESPACE.svc:8443
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-internal-tls=true
+
+  # spec: §25.4 NET-070 — F-25.4.19. The acknowledged plaintext path
+  # selects the plaintext internalPort and disables internal TLS.
+  - it: routes the gateway admin-API link plaintext under acknowledged opt-out
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.tls.internalEnabled: false
+      ops.acknowledgePlaintextAdminAPI: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-url=http://lenny-gateway.NAMESPACE.svc:8080
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-internal-tls=false
+
+  # spec: §25.4 lines 1740-1974 — F-25.4.8. The GatewayClient fan-out and
+  # token-lifecycle flags render from the ops.gateway / security.oidc
+  # values, and the projected SA token volume mounts at the token path.
+  - it: renders the GatewayClient fan-out and token-lifecycle flags per §25.4
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-headless-service=lenny-gateway-pods
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-fanout-breaker-failure-threshold=3
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-token-refresh-before-expiry=300s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-sa-token-file=/var/run/secrets/lenny/gateway/token
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-sa-token
+            projected:
+              sources:
+                - serviceAccountToken:
+                    path: token
+                    audience: lenny-gateway
+                    expirationSeconds: 3600
+
+  # spec: §25.4 line 1743 — F-25.4.19. Setting ops.tls.caBundleConfigMap
+  # mounts the operator CA and passes --gateway-ca-bundle-file.
+  - it: mounts the operator CA bundle when ops.tls.caBundleConfigMap is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.tls.caBundleConfigMap: gateway-admin-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-ca-bundle
+            configMap:
+              name: gateway-admin-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt

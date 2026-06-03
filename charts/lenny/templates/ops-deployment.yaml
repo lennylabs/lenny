@@ -109,7 +109,37 @@ spec:
           args:
             - --addr=:{{ .Values.ops.httpPort }}
             - --leader-election-namespace={{ .Release.Namespace }}
+            # §25.4 NET-070: the admin-API link is TLS by default
+            # (ops.tls.internalEnabled). When enabled, lenny-ops reaches
+            # the gateway internal-TLS port (gateway.internalTLSPort);
+            # otherwise the acknowledged-plaintext path uses the plaintext
+            # internalPort. The ops-tls-guard refuses a non-acknowledged
+            # plaintext render outside devMode. F-25.4.19.
+            {{- if .Values.ops.tls.internalEnabled }}
+            - --gateway-url=https://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalTLSPort }}
+            - --gateway-internal-tls=true
+            {{- else }}
             - --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}
+            - --gateway-internal-tls=false
+            {{- end }}
+            # §25.4 lines 1740-1974 GatewayClient routing: the per-replica
+            # fan-out resolves the headless Service; the breaker + timeout
+            # bound the fallback path. F-25.4.8.
+            - --gateway-headless-service={{ .Values.ops.gateway.headlessService }}
+            - --gateway-internal-tls-port={{ .Values.gateway.internalTLSPort }}
+            - --gateway-internal-port={{ .Values.gateway.internalPort }}
+            - --gateway-fanout-timeout={{ .Values.ops.gateway.fanOutTimeoutSeconds }}s
+            - --gateway-fanout-breaker-failure-threshold={{ .Values.ops.gateway.fanOutCircuitBreaker.failureThreshold }}
+            - --gateway-fanout-breaker-reset-after={{ .Values.ops.gateway.fanOutCircuitBreaker.resetAfter }}s
+            # §25.4 lines 1956-1971 service-account token lifecycle.
+            - --gateway-sa-token-file=/var/run/secrets/lenny/gateway/token
+            - --gateway-token-refresh-before-expiry={{ .Values.security.oidc.tokenRefreshBeforeExpirySeconds }}s
+            - --gateway-token-min-ttl={{ .Values.security.oidc.minTokenTTLSeconds }}s
+            {{- if .Values.ops.tls.caBundleConfigMap }}
+            # §25.4 line 1743 ops.tls.caBundleConfigMap — augment the
+            # system trust store for the admin-API TLS link. F-25.4.19.
+            - --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
+            {{- end }}
             - --production={{ .Values.ops.production }}
             {{- if .Values.ops.prometheus.url }}
             # §25.16 line 5124: when ops.prometheus.url is set, lenny-ops
@@ -232,6 +262,20 @@ spec:
             # write does not fail against the read-only root.
             - name: tmp
               mountPath: /tmp
+            # §25.4 lines 1956-1971 — the projected ServiceAccount token
+            # the GatewayClient presents to the gateway admin API. The
+            # kubelet rotates it in place; FileTokenLoader re-reads it on
+            # each pre-emptive refresh. F-25.4.8.
+            - name: gateway-sa-token
+              mountPath: /var/run/secrets/lenny/gateway
+              readOnly: true
+            {{- if .Values.ops.tls.caBundleConfigMap }}
+            # §25.4 line 1743 ops.tls.caBundleConfigMap — operator CA for
+            # the admin-API TLS link. F-25.4.19.
+            - name: gateway-ca-bundle
+              mountPath: /etc/lenny/gateway-ca
+              readOnly: true
+            {{- end }}
             {{- if .Values.security.oidc.bearerTrustKeySecret }}
             # §25.4 line 1562: the shared HMAC bearer-verify key. F-25.4.20.
             - name: oidc-bearer-trust-key
@@ -269,6 +313,22 @@ spec:
         # §25.4 line 1027 — writable /tmp scratch under read-only root.
         - name: tmp
           emptyDir: {}
+        # §25.4 lines 1956-1971 — projected SA token for the GatewayClient.
+        - name: gateway-sa-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: lenny-gateway
+                  expirationSeconds: 3600
+        {{- if .Values.ops.tls.caBundleConfigMap }}
+        - name: gateway-ca-bundle
+          configMap:
+            name: {{ .Values.ops.tls.caBundleConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
         {{- if .Values.security.oidc.bearerTrustKeySecret }}
         - name: oidc-bearer-trust-key
           secret:

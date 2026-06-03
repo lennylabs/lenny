@@ -214,6 +214,58 @@ func otlpTLSProber(endpoint, caBundlePath string, tlsEnabled bool) preflight.OTL
 	})
 }
 
+// opsAdminTLSProber builds an OpsAdminTLSProber for the §25.4 NET-070
+// live TLS handshake check. It dials the gateway internal admin-API
+// endpoint, completes a TLS 1.2+ handshake validating the server
+// certificate against the supplied SAN host (the lenny-gateway ClusterIP
+// hostname), and returns the handshake error otherwise. The trust bundle
+// is the system roots, augmented with caBundlePath when the chart mounts
+// ops.tls.caBundleConfigMap. An empty endpoint or disabled internal TLS
+// returns nil so the check is skipped.
+//
+// spec: §25.4 lines 2544-2546. F-25.4.19.
+func opsAdminTLSProber(endpoint, caBundlePath string, internalEnabled bool) preflight.OpsAdminTLSProber {
+	if endpoint == "" || !internalEnabled {
+		return nil
+	}
+	return preflight.OpsAdminTLSProbeFunc(func(ctx context.Context, endpoint, sanHost string) error {
+		hostPort := endpoint
+		if _, _, err := net.SplitHostPort(endpoint); err != nil {
+			// Allow a scheme://host:port form too.
+			if u, perr := url.Parse(endpoint); perr == nil && u.Host != "" {
+				hostPort = u.Host
+				if sanHost == "" {
+					sanHost = u.Hostname()
+				}
+			}
+		}
+		serverName := sanHost
+		if serverName == "" {
+			if host, _, err := net.SplitHostPort(hostPort); err == nil {
+				serverName = host
+			}
+		}
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}
+		if caBundlePath != "" {
+			pemBytes, err := os.ReadFile(caBundlePath)
+			if err != nil {
+				return fmt.Errorf("read ops admin CA bundle %q: %w", caBundlePath, err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pemBytes) {
+				return fmt.Errorf("ops admin CA bundle %q contains no PEM certificates", caBundlePath)
+			}
+			tlsCfg.RootCAs = pool
+		}
+		dialer := tls.Dialer{Config: tlsCfg}
+		conn, err := dialer.DialContext(ctx, "tcp", hostPort)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	})
+}
+
 // otlpDialTarget derives the host:port to dial and the TLS ServerName
 // from an OTLP endpoint, which may carry a scheme (https://host:4317),
 // omit the port (defaulting to OTLP's 4317), or be a bare host:port.
@@ -331,6 +383,14 @@ func main() {
 		"value of observability.otlpTlsEnabled; gates the §13.2 OTLP-068 otlp-tls scheme guard and live handshake probe.")
 	otlpCaBundle := flag.String("otlp-ca-bundle", "",
 		"path to the deployer OTLP collector CA bundle (observability.otlpCaBundle); augments the system trust store for the §13.2 OTLP-068 handshake probe.")
+	opsAdminTLSEndpoint := flag.String("ops-admin-tls-endpoint", "",
+		"host:port of the gateway internal admin API lenny-ops reaches over TLS; the §25.4 NET-070 ops-admin-tls check probes its TLS handshake when ops.tls.internalEnabled. Empty skips the check.")
+	opsAdminTLSInternalEnabled := flag.Bool("ops-admin-tls-internal-enabled", false,
+		"value of ops.tls.internalEnabled; gates the §25.4 NET-070 ops-admin-tls handshake probe (skipped under the acknowledged plaintext path).")
+	opsAdminTLSSANHost := flag.String("ops-admin-tls-san-host", "",
+		"the lenny-gateway ClusterIP hostname the gateway admin-API certificate SAN must cover (§25.4 NET-070).")
+	opsAdminTLSCaBundle := flag.String("ops-admin-tls-ca-bundle", "",
+		"path to the trust bundle for the §25.4 NET-070 admin-API handshake probe (ops.tls.caBundleConfigMap); empty uses the system trust store.")
 	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
 		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
 			"presence check requires; empty skips the check")
@@ -441,7 +501,13 @@ func main() {
 			Endpoint:   *otlpEndpoint,
 			TLSEnabled: *otlpTLSEnabled,
 		},
-		OTLPTLSProber:          otlpTLSProber(*otlpEndpoint, *otlpCaBundle, *otlpTLSEnabled),
+		OTLPTLSProber: otlpTLSProber(*otlpEndpoint, *otlpCaBundle, *otlpTLSEnabled),
+		OpsAdminTLS: preflight.OpsAdminTLSConfig{
+			Endpoint:        *opsAdminTLSEndpoint,
+			InternalEnabled: *opsAdminTLSInternalEnabled,
+			ExpectedSANHost: *opsAdminTLSSANHost,
+		},
+		OpsAdminTLSProber:      opsAdminTLSProber(*opsAdminTLSEndpoint, *opsAdminTLSCaBundle, *opsAdminTLSInternalEnabled),
 		DevMode:                *devMode,
 		AttestVolumeEncryption: *attestVolumeEncryption,
 		Playground: preflight.PlaygroundConfig{

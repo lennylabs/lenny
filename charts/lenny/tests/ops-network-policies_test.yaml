@@ -93,6 +93,10 @@ tests:
             port: 8443
 
   - it: selects the gateway plaintext port when ops.tls.internalEnabled is false
+    set:
+      ops:
+        tls:
+          internalEnabled: false
     documentSelector:
       path: metadata.name
       value: lenny-ops-egress

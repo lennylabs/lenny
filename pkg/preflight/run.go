@@ -120,6 +120,14 @@ type Config struct {
 	// lenny-preflight Job constructs a real prober; the scheme guard runs
 	// regardless of whether the prober is wired. F-13.2.9.
 	OTLPTLSProber OTLPTLSProber
+	// OpsAdminTLS carries the §25.4 NET-070 admin-API TLS values the
+	// ops-admin-tls check evaluates. An empty Endpoint or
+	// InternalEnabled=false skips the check. F-25.4.19.
+	OpsAdminTLS OpsAdminTLSConfig
+	// OpsAdminTLSProber, when non-nil and OpsAdminTLS.InternalEnabled with
+	// a configured endpoint, runs the §25.4 NET-070 live TLS handshake +
+	// SAN-coverage probe against the gateway internal admin API. F-25.4.19.
+	OpsAdminTLSProber OpsAdminTLSProber
 	// DevMode is the global.devMode chart value. It exempts the §12.9
 	// line 1050 volume-encryption check (local development volumes). F-12.9.12.
 	DevMode bool
@@ -497,6 +505,22 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Decision: OTLPTLSCheck{
 				Config: cfg.OTLP,
 				Prober: cfg.OTLPTLSProber,
+			}.Decide(ctx),
+		})
+	}
+
+	// §25.4 lines 2544-2546 (NET-070) — when ops.tls.internalEnabled is
+	// set, the lenny-ops → gateway admin-API link runs over TLS; the
+	// ops-admin-tls probe verifies the gateway internal-TLS handshake
+	// completes and the server certificate's SAN covers the lenny-gateway
+	// ClusterIP hostname. Skipped when internal TLS is disabled (the
+	// acknowledged plaintext path). F-25.4.19.
+	if cfg.OpsAdminTLS.InternalEnabled && cfg.OpsAdminTLS.Endpoint != "" {
+		report = append(report, CheckResult{
+			Name: "ops-admin-tls",
+			Decision: OpsAdminTLSCheck{
+				Config: cfg.OpsAdminTLS,
+				Prober: cfg.OpsAdminTLSProber,
 			}.Decide(ctx),
 		})
 	}

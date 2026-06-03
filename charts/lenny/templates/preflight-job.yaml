@@ -301,6 +301,16 @@ spec:
             # mechanism). F-13.2.9.
             - --otlp-endpoint={{ .Values.observability.otlpEndpoint }}
             - --otlp-tls-enabled={{ .Values.observability.otlpTlsEnabled }}
+            # §25.4 NET-070 — when the lenny-ops -> gateway admin-API link
+            # runs over TLS (ops.tls.internalEnabled), probe the gateway
+            # internal-TLS handshake and verify the certificate SAN covers
+            # the lenny-gateway ClusterIP hostname. Skipped under the
+            # acknowledged plaintext path. F-25.4.19.
+            - --ops-admin-tls-internal-enabled={{ .Values.ops.tls.internalEnabled }}
+            {{- if .Values.ops.tls.internalEnabled }}
+            - --ops-admin-tls-endpoint=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalTLSPort }}
+            - --ops-admin-tls-san-host=lenny-gateway.{{ .Release.Namespace }}.svc
+            {{- end }}
             # §12.9 line 1050 — T2 storage-layer volume-encryption baseline.
             # global.devMode exempts the check; preflight.attestVolumeEncryption
             # carries the operator attestation for BYO Postgres/Redis volumes

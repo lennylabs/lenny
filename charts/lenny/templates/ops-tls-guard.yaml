@@ -1,0 +1,18 @@
+{{- /*
+NET-070 plaintext admin-API opt-in guard (§25.4 lines 2538-2546).
+
+Every GatewayClient request from lenny-ops carries a lenny-ops-sa JWT
+with platform-admin scope plus admin-API payloads (pool configs,
+connector settings, audit-bearing event envelopes). The lenny-ops ->
+gateway admin-API hop therefore runs over TLS by default
+(ops.tls.internalEnabled: true). Disabling it outside the dev/`make run`
+profile (global.devMode) requires the explicit
+ops.acknowledgePlaintextAdminAPI: true acknowledgement; this render-time
+guard refuses to render `helm install`/`helm upgrade` otherwise. The
+template emits no Kubernetes object; it exists solely to evaluate the
+guard at template time. The acknowledged-plaintext deprecation banner is
+printed by NOTES.txt.
+*/ -}}
+{{- if and (not .Values.ops.tls.internalEnabled) (not .Values.ops.acknowledgePlaintextAdminAPI) (not .Values.global.devMode) }}
+{{- fail "ops.tls.internalEnabled is false without ops.acknowledgePlaintextAdminAPI=true; a plaintext admin-API hop exposes a replayable platform-admin JWT in-cluster. Set ops.acknowledgePlaintextAdminAPI=true to proceed, or re-enable TLS (NET-070)." }}
+{{- end }}

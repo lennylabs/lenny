@@ -2544,10 +2544,13 @@ ops:
   # named by certSecretName (default lenny-ops-tls). When certManager is
   # enabled the chart renders a cert-manager Certificate (ops-tls.yaml)
   # that issues that Secret automatically; otherwise the operator
-  # provisions it out of band. Defaults to disabled so a stock dev
-  # render runs the admin-API link in plaintext (dev-mode only).
+  # provisions it out of band. Defaults to enabled per §25.4 NET-070
+  # ("ops.tls.internalEnabled defaults to true in every non-dev
+  # profile"). The plaintext path requires internalEnabled: false plus
+  # the explicit acknowledgePlaintextAdminAPI below (auto-implied under
+  # global.devMode); the ops-tls-guard enforces it. F-25.4.19.
   tls:
-    internalEnabled: false
+    internalEnabled: true
     certSecretName: lenny-ops-tls
     certManager:
       enabled: false
@@ -2558,6 +2561,48 @@ ops:
     # dnsNames overrides the SANs on the rendered Certificate. Empty
     # defaults to the lenny-ops Service FQDN forms.
     dnsNames: []
+    # caBundleConfigMap names a ConfigMap (key ca.crt) holding an
+    # operator-supplied CA bundle the §25.4 GatewayClient trusts in
+    # addition to the system roots when calling the gateway admin API
+    # over TLS. The cert-manager case needs none (the gateway cert chains
+    # to the cert-manager CA the cluster already trusts); set this only
+    # when the gateway admin-API certificate is issued by a CA outside
+    # the system trust store. Mounted at /etc/lenny/gateway-ca and passed
+    # as --gateway-ca-bundle-file. F-25.4.19.
+    caBundleConfigMap: ""
+    # clientCertSecretName names a Secret holding a client certificate
+    # (tls.crt/tls.key) for mTLS to the gateway admin API. Empty deploys
+    # server-auth TLS with a JWT-authenticated client (the §25.4 default);
+    # set it only when the gateway admin listener requires mTLS.
+    clientCertSecretName: ""
+  # acknowledgePlaintextAdminAPI explicitly opts into a plaintext
+  # lenny-ops -> gateway admin-API hop when ops.tls.internalEnabled is
+  # false outside global.devMode. The ops-tls-guard render-time guard
+  # fails helm install/upgrade when internalEnabled is false without this
+  # acknowledgement (NET-070). The acknowledged path transits a
+  # replayable platform-admin JWT in cleartext; operators MUST compensate
+  # with network-layer controls (service mesh mTLS, an encrypted CNI, or
+  # a narrower NetworkPolicy). F-25.4.19.
+  acknowledgePlaintextAdminAPI: false
+  # gateway carries the §25.4 GatewayClient routing knobs. lenny-ops
+  # calls shared-state admin endpoints through the gateway ClusterIP and
+  # per-replica endpoints (event buffers, health, recommendations)
+  # through the headless Service, with circuit breakers protecting the
+  # fan-out. The values render as lenny-ops flags. F-25.4.8.
+  gateway:
+    # headlessService is the gateway per-replica headless Service the
+    # fan-out resolves via DNS (§17.8 lenny-gateway-pods). Empty disables
+    # fan-out (single-replica gateway or Prometheus-primary aggregation).
+    headlessService: "lenny-gateway-pods"
+    # fanOutTimeoutSeconds bounds each per-replica fan-out request; a
+    # replica not responding within it is skipped for that aggregation.
+    fanOutTimeoutSeconds: 2
+    # fanOutCircuitBreaker trips a replica out of the fan-out after
+    # failureThreshold consecutive failures, skipping it for resetAfter
+    # seconds so one struggling replica does not slow every aggregation.
+    fanOutCircuitBreaker:
+      failureThreshold: 3
+      resetAfter: 60
   # ingress configures the §25.4 lenny-ops Ingress (lines 991-1024).
   # lenny-ops is external-only: agents reach the §25 operability surface
   # through this Ingress, which the controller terminates TLS for and
