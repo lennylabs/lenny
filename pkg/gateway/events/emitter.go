@@ -4,8 +4,6 @@ package events
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"time"
 )
 
@@ -30,14 +28,54 @@ type EventEmitter interface {
 	Emit(ctx context.Context, event OperationalEvent) error
 }
 
+// emitterConfig is the resolved set of EmitterOption choices.
+type emitterConfig struct {
+	now        func() time.Time
+	checkpoint *NonceCheckpoint
+	metrics    *Metrics
+	onError    func(error)
+}
+
+// EmitterOption configures NewEmitter.
+type EmitterOption func(*emitterConfig)
+
+// WithClock overrides time.Now; tests use it to anchor timestamps.
+func WithClock(now func() time.Time) EmitterOption {
+	return func(c *emitterConfig) {
+		if now != nil {
+			c.now = now
+		}
+	}
+}
+
+// WithNonceCheckpoint enables the §25.3 on-disk nonce checkpoint so the
+// eventKey nonce survives a restart. spec: §25.3 line 748.
+func WithNonceCheckpoint(spec NonceCheckpoint) EmitterOption {
+	return func(c *emitterConfig) { c.checkpoint = &spec }
+}
+
+// WithMetrics wires the §25.3 event-emission metrics. spec: §25.3
+// lines 705-710.
+func WithMetrics(m *Metrics) EmitterOption {
+	return func(c *emitterConfig) { c.metrics = m }
+}
+
+// WithEmitErrorLogger registers a callback for non-fatal emit-path errors
+// (currently a failed nonce-checkpoint persist). The local-only emitter
+// never returns these through Emit, so the callback is the only place
+// they surface.
+func WithEmitErrorLogger(fn func(error)) EmitterOption {
+	return func(c *emitterConfig) { c.onError = fn }
+}
+
 // Emitter records §25.3 operational events into the in-process
 // EventBuffer. The §25.5 Redis-stream destination is provided by
 // StreamEmitter, which composes this Emitter with an XADD writer.
 type Emitter struct {
-	buffer    *EventBuffer
-	replicaID string
-	now       func() time.Time
-	nonce     atomic.Uint64
+	buffer  *EventBuffer
+	keyer   *keyer
+	now     func() time.Time
+	metrics *Metrics
 }
 
 // Compile-time guard that *Emitter satisfies EventEmitter.
@@ -46,11 +84,18 @@ var _ EventEmitter = (*Emitter)(nil)
 // NewEmitter returns an Emitter that records events into buffer.
 // replicaID is the per-replica identifier baked into each event's
 // stable eventKey; an empty replicaID falls back to "gateway".
-func NewEmitter(buffer *EventBuffer, replicaID string) *Emitter {
-	if replicaID == "" {
-		replicaID = "gateway"
+func NewEmitter(buffer *EventBuffer, replicaID string, opts ...EmitterOption) *Emitter {
+	cfg := emitterConfig{now: time.Now}
+	for _, o := range opts {
+		o(&cfg)
 	}
-	return &Emitter{buffer: buffer, replicaID: replicaID, now: time.Now}
+	cp, start := resolveCheckpoint(cfg.checkpoint, cfg.onError)
+	return &Emitter{
+		buffer:  buffer,
+		keyer:   newKeyer(replicaID, cp, start, cfg.onError),
+		now:     cfg.now,
+		metrics: cfg.metrics,
+	}
 }
 
 // Emit stamps an operational event with the §25.3 envelope — the
@@ -71,21 +116,11 @@ func (e *Emitter) Emit(ctx context.Context, event OperationalEvent) error {
 		event.Time = e.now().UTC()
 	}
 	if event.ID == "" {
-		event.ID = e.eventKey(event.Time)
+		event.ID = e.keyer.eventKey(event.Time)
 	}
 	e.buffer.Append(event)
+	e.metrics.IncEmitted(event.Type)
 	return nil
-}
-
-// eventKey composes the §25.3 stable event identifier
-// {replicaID}:{emittedAt}:{nonce}. The nonce is a per-replica
-// monotonically increasing counter that increments for every emitted
-// event regardless of the emitting subsystem; combined with the unique
-// replicaID it makes the key globally unique. v1 keeps the nonce
-// in-process — the §25.3 disk checkpoint that survives a restart is a
-// refinement.
-func (e *Emitter) eventKey(at time.Time) string {
-	return fmt.Sprintf("%s:%d:%d", e.replicaID, at.UnixNano(), e.nonce.Add(1))
 }
 
 // Buffer returns the underlying event buffer so the query side

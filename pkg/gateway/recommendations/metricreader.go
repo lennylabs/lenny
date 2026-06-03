@@ -128,6 +128,26 @@ func (w *WindowStore) windowed(key string, window time.Duration) []sample {
 	return s[start:]
 }
 
+// approxSampleBytes is the per-sample memory estimate for the ring-buffer
+// gauge: a time.Time plus a float64 plus slice overhead. It backs the
+// §25.3 lenny_recommendations_ring_buffer_bytes gauge, which only needs
+// to be close enough to drive the >100 MB alert. spec: §25.3 line 598.
+const approxSampleBytes = 32
+
+// ApproxBytes estimates the store's current memory use: the retained
+// samples across every series plus the series-key strings. It backs the
+// §25.3 lenny_recommendations_ring_buffer_bytes gauge. spec: §25.3
+// line 598.
+func (w *WindowStore) ApproxBytes() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	total := 0
+	for key, s := range w.series {
+		total += len(key) + len(s)*approxSampleBytes
+	}
+	return total
+}
+
 // GaugeValue returns the most recent sample of a gauge series.
 func (w *WindowStore) GaugeValue(name string, labels map[string]string) (float64, bool) {
 	w.mu.Lock()

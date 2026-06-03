@@ -215,6 +215,7 @@ type CapacityService struct {
 	evaluators map[string]Evaluator
 	config     Config
 	disabled   map[string]bool
+	metrics    *Metrics
 }
 
 // NewCapacityService returns a service that evaluates the §25.3
@@ -238,6 +239,15 @@ func NewCapacityServiceWithConfig(reader MetricReader, cfg Config) *CapacityServ
 		config:     cfg,
 		disabled:   disabled,
 	}
+}
+
+// WithMetrics wires the §25.3 recommendation metrics so every emitted
+// recommendation increments lenny_recommendations_generated_total
+// {category, priority}. Returns the receiver for chaining. spec: §25.3
+// line 618.
+func (s *CapacityService) WithMetrics(m *Metrics) *CapacityService {
+	s.metrics = m
+	return s
 }
 
 // GetRecommendations evaluates every catalog rule and returns the
@@ -275,10 +285,11 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 		if !e.Triggered {
 			continue
 		}
+		priority := string(priorityForConfidence(e.Confidence))
 		resp.Recommendations = append(resp.Recommendations, Recommendation{
 			Rule:          rule.Name,
 			Category:      string(rule.Category),
-			Priority:      string(priorityForConfidence(e.Confidence)),
+			Priority:      priority,
 			Summary:       rule.Summary,
 			Detail:        rule.Description,
 			Value:         e.Value,
@@ -286,6 +297,9 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 			Confidence:    e.Confidence,
 			DataAvailable: e.DataAvailable,
 		})
+		// spec: §25.3 line 618 — count each generated recommendation by
+		// category and priority.
+		s.metrics.IncGenerated(string(rule.Category), priority)
 	}
 	// spec: §25.13 line 4848 — the gateway's in-process recommendation
 	// evaluator always runs the compiled-in defaults. lenny-ops layers

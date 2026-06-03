@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -48,9 +47,9 @@ type StreamEmitter struct {
 	streamKey string
 	maxLen    int64
 	source    string
-	replicaID string
 	now       func() time.Time
-	nonce     atomic.Uint64
+	keyer     *keyer
+	metrics   *Metrics
 }
 
 // Compile-time guard that *StreamEmitter satisfies EventEmitter.
@@ -83,6 +82,18 @@ type StreamEmitterOptions struct {
 	ReplicaID string
 	// Now overrides time.Now; tests use it to anchor timestamps.
 	Now func() time.Time
+	// NonceCheckpoint, when non-nil, enables the §25.3 on-disk nonce
+	// checkpoint so the eventKey nonce survives a restart. spec: §25.3
+	// line 748.
+	NonceCheckpoint *NonceCheckpoint
+	// Metrics, when non-nil, receives the §25.3 emission counters
+	// (lenny_ops_events_emitted_total / _emit_failed_total). spec: §25.3
+	// lines 705-710.
+	Metrics *Metrics
+	// OnError receives non-fatal emit-path errors (a failed nonce
+	// checkpoint persist). The Redis-write error is returned from Emit
+	// instead.
+	OnError func(error)
 }
 
 // NewStreamEmitter returns a StreamEmitter that writes to opts.Client.
@@ -104,22 +115,20 @@ func NewStreamEmitter(opts StreamEmitterOptions) *StreamEmitter {
 	if maxLen <= 0 {
 		maxLen = DefaultStreamMaxLen
 	}
-	replicaID := opts.ReplicaID
-	if replicaID == "" {
-		replicaID = "gateway"
-	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
 	}
+	cp, start := resolveCheckpoint(opts.NonceCheckpoint, opts.OnError)
 	return &StreamEmitter{
 		client:    opts.Client,
 		buffer:    opts.Buffer,
 		streamKey: key,
 		maxLen:    maxLen,
 		source:    opts.Source,
-		replicaID: replicaID,
 		now:       now,
+		keyer:     newKeyer(opts.ReplicaID, cp, start, opts.OnError),
+		metrics:   opts.Metrics,
 	}
 }
 
@@ -141,12 +150,13 @@ func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) error 
 		event.Time = e.now().UTC()
 	}
 	if event.ID == "" {
-		event.ID = e.eventKey(event.Time)
+		event.ID = e.keyer.eventKey(event.Time)
 	}
 	if event.Source == "" && e.source != "" {
 		event.Source = e.source
 	}
 	e.buffer.Append(event)
+	e.metrics.IncEmitted(event.Type)
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("opsevents: marshal event: %w", err)
@@ -158,6 +168,10 @@ func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) error 
 		Values: map[string]any{"event": payload},
 	}
 	if _, err := e.client.XAdd(ctx, args).Result(); err != nil {
+		// spec: §25.3 line 703 — a Redis-unreachable emit still lands in
+		// the local buffer (already appended above); count the failed
+		// remote write and return the error for the caller to log.
+		e.metrics.IncEmitFailed(event.Type)
 		log.Printf("opsevents: XADD %s failed: %v (event %s)", e.streamKey, err, event.ID)
 		return fmt.Errorf("opsevents: xadd %s: %w", e.streamKey, err)
 	}
@@ -172,10 +186,3 @@ func (e *StreamEmitter) Buffer() *EventBuffer { return e.buffer }
 // StreamKey reports the §25.5 Redis-stream key this emitter writes to.
 // Exposed for observability and test assertions.
 func (e *StreamEmitter) StreamKey() string { return e.streamKey }
-
-// eventKey composes the §25.3 stable event identifier. The
-// implementation matches the local Emitter so events on the stream and
-// in the buffer carry the same id format.
-func (e *StreamEmitter) eventKey(at time.Time) string {
-	return fmt.Sprintf("%s:%d:%d", e.replicaID, at.UnixNano(), e.nonce.Add(1))
-}

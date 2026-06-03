@@ -1599,6 +1599,19 @@ gateway:
     # fallback in-process reader when the metric source is unreachable.
     # spec: §25.3 line 625.
     disableOnPrometheusOutage: false
+  # opsEvents configures the §25.3 operational-event emitter.
+  opsEvents:
+    # nonceCheckpointPath is the local-disk path the per-replica eventKey
+    # nonce counter is periodically checkpointed to (§25.3 line 748). The
+    # default replica id is unique per restart, so the eventKey is already
+    # replay-safe across restarts without a checkpoint. Set this only when
+    # the replica id is pinned to a stable value (e.g. a StatefulSet pod
+    # name via LENNY_REPLICA_ID): the checkpoint then resumes the nonce
+    # from last_checkpointed + safe_skip_window so a restart cannot replay
+    # an old nonce. The path must be on a writable volume the operator
+    # mounts (an emptyDir survives container restarts; a PVC survives pod
+    # rescheduling). Empty (the default) keeps the counter in-process.
+    nonceCheckpointPath: ""
   # healthTracker gates the §25.13 in-process alert tracker. When
   # useCompiledRules is true (default), the gateway runs the §16.5
   # compiled-in alert evaluator so /v1/admin/health derives its

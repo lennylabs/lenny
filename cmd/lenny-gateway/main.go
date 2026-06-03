@@ -539,6 +539,9 @@ func main() {
 	healthTrackerUseCompiledRules := flag.Bool("health-tracker-use-compiled-rules",
 		envBool("LENNY_HEALTH_TRACKER_USE_COMPILED_RULES", true),
 		"§25.13 line 4798 Helm value gateway.healthTracker.useCompiledRules: when true (default), the gateway's in-process §16.5 alert evaluator drives the per-replica health view. When false, the gateway suppresses the in-process alert tracker entirely and /v1/admin/health falls back to dependency probes and circuit breaker state only. Operators set this to false for strict consistency with operator-customized Prometheus rules. Override via LENNY_HEALTH_TRACKER_USE_COMPILED_RULES. F-25.13.4.")
+	opsNonceCheckpointPath := flag.String("ops-nonce-checkpoint-path",
+		envOr("LENNY_OPS_NONCE_CHECKPOINT_PATH", ""),
+		"§25.3 line 748: local-disk path the operational-event nonce counter is periodically checkpointed to so the eventKey stays unique across a restart when the replica id (LENNY_REPLICA_ID) is pinned to a stable value. Empty (the default) keeps the counter in-process; mount a writable volume (e.g. an emptyDir) and set this for a stable-replica-id deployment. Override via LENNY_OPS_NONCE_CHECKPOINT_PATH. F-25.3.8.")
 	alertingBundleFormats := flag.String("alerting-bundle-formats",
 		envOr("LENNY_ALERTING_BUNDLE_FORMATS", "prometheusrule"),
 		"§25.13 line 4833 Helm value monitoring.format (closed-enum subset rendered by the chart): comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. Stamps `lenny_alerting_rules_bundled{format}` so an operator can verify the bundling configuration. Override via LENNY_ALERTING_BUNDLE_FORMATS. F-25.13.3.")
@@ -2762,15 +2765,40 @@ func main() {
 	// unreachable. When Redis is wired, every emit also lands on the
 	// §25.5 platform-scoped stream ops:events:stream so lenny-ops and
 	// the controllers share the same logical event source.
-	opsEventBuffer := events.NewEventBuffer(0)
-	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replica)
+	// §25.3 lines 705-710 / 766-772: the operational-event emission and
+	// buffer metrics, registered on the gateway's Prometheus registry.
+	opsEventsMetrics, err := events.NewMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: §25.3 ops-events metrics: %v", err)
+	}
+	// §25.3 line 748: the optional on-disk nonce checkpoint so the
+	// eventKey stays unique across a restart with a pinned replica id.
+	var nonceCheckpoint *events.NonceCheckpoint
+	if *opsNonceCheckpointPath != "" {
+		nonceCheckpoint = &events.NonceCheckpoint{Path: *opsNonceCheckpointPath}
+	}
+	opsEmitErrLogger := func(emitErr error) {
+		log.Printf("lenny-gateway: §25.3 ops-event emit: %v", emitErr)
+	}
+	opsEventBuffer := events.NewEventBuffer(0, events.WithBufferMetrics(opsEventsMetrics))
+	emitterOpts := []events.EmitterOption{
+		events.WithMetrics(opsEventsMetrics),
+		events.WithEmitErrorLogger(opsEmitErrLogger),
+	}
+	if nonceCheckpoint != nil {
+		emitterOpts = append(emitterOpts, events.WithNonceCheckpoint(*nonceCheckpoint))
+	}
+	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replica, emitterOpts...)
 	if redisClient != nil {
 		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
 			// §12.4 Cache/Pub-Sub concern: ops event stream fan-out.
-			Client:    concernRedis.For(storerouter.RedisConcernCachePubSub),
-			Buffer:    opsEventBuffer,
-			Source:    "//lenny.dev/gateway/" + replica,
-			ReplicaID: replica,
+			Client:          concernRedis.For(storerouter.RedisConcernCachePubSub),
+			Buffer:          opsEventBuffer,
+			Source:          "//lenny.dev/gateway/" + replica,
+			ReplicaID:       replica,
+			Metrics:         opsEventsMetrics,
+			NonceCheckpoint: nonceCheckpoint,
+			OnError:         opsEmitErrLogger,
 		})
 		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
@@ -3701,6 +3729,20 @@ func main() {
 		// F-10.6.2.
 		WithEnvironments(environments)
 
+	// §25.3 capacity recommendations: the per-replica sliding-window
+	// metric store backing the rules engine, plus its §25.3 metrics
+	// (lenny_recommendations_generated_total and the
+	// lenny_recommendations_ring_buffer_bytes gauge registered over the
+	// store's current memory use). spec: §25.3 lines 588-598, 618.
+	recommendationStore := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	recommendationsMetrics, err := recommendations.NewMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: §25.3 recommendation metrics: %v", err)
+	}
+	if err := recommendations.RegisterRingBufferBytes(gwMetrics.Registerer(), recommendationStore); err != nil {
+		log.Fatalf("lenny-gateway: §25.3 recommendation ring-buffer gauge: %v", err)
+	}
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
@@ -3742,13 +3784,13 @@ func main() {
 		WithEnvironments(environments).
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityServiceWithConfig(
-			recommendations.NewWindowStore(7*24*time.Hour),
+			recommendationStore,
 			recommendations.Config{
 				DisabledRules:             splitCSV(*recommendationsDisabledRules),
 				WindowOverrides:           parseWindowOverrides(*recommendationsWindowOverrides),
 				DisableOnPrometheusOutage: *recommendationsDisableOnOutage,
 			},
-		))
+		).WithMetrics(recommendationsMetrics))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
@@ -4062,6 +4104,13 @@ func main() {
 	// /v1/admin/health* paths so Go's ServeMux routes them to the
 	// health handler ahead of the /v1/admin/ admin catch-all.
 	healthAgg := health.NewAggregator()
+	// §25.3 lines 538-542: per-component probe-latency histogram and
+	// status gauge, registered on the gateway's Prometheus registry.
+	healthMetrics, err := health.NewMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: §25.3 health metrics: %v", err)
+	}
+	healthAgg.SetMetrics(healthMetrics)
 	healthAgg.Register(staticHealthy("gateway"))
 	healthAgg.Register(staticHealthy("sessionstore"))
 	healthAgg.Register(staticHealthy("blobstore"))

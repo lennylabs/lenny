@@ -558,6 +558,13 @@ spec:
             # automation sets it true on the validated release. F-16.5.5.
             - name: LENNY_SLO_VALIDATED
               value: {{ .Values.slo.validated | default false | quote }}
+            {{- if .Values.gateway.opsEvents.nonceCheckpointPath }}
+            # §25.3 line 748 — the operational-event nonce checkpoint path.
+            # Set with a stable LENNY_REPLICA_ID and a writable volume
+            # mounted at the path so the eventKey nonce survives a restart.
+            - name: LENNY_OPS_NONCE_CHECKPOINT_PATH
+              value: {{ .Values.gateway.opsEvents.nonceCheckpointPath | quote }}
+            {{- end }}
             # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator.
             # Rendered from autoscaling.minReplicas so a tier-preset
             # override flows into the lenny_gateway_min_replicas gauge.

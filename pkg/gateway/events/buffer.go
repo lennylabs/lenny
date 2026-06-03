@@ -300,34 +300,56 @@ type BufferedEventPage struct {
 // assigned a 1-based monotonic id used as a polling cursor. The buffer
 // is per-gateway-replica and holds no Postgres or Redis state.
 type EventBuffer struct {
-	mu   sync.RWMutex
-	now  func() time.Time
-	cap  uint64
-	ring []BufferedEvent
-	head uint64 // count of events ever appended; the last id assigned
+	mu      sync.RWMutex
+	now     func() time.Time
+	cap     uint64
+	ring    []BufferedEvent
+	head    uint64 // count of events ever appended; the last id assigned
+	metrics *Metrics
+}
+
+// BufferOption configures NewEventBuffer.
+type BufferOption func(*EventBuffer)
+
+// WithBufferMetrics wires the §25.3 buffer metrics
+// (lenny_events_buffer_length / _queries_total / _gaps_total). spec:
+// §25.3 lines 766-772.
+func WithBufferMetrics(m *Metrics) BufferOption {
+	return func(b *EventBuffer) { b.metrics = m }
 }
 
 // NewEventBuffer returns an empty buffer of the given capacity. A
 // non-positive capacity falls back to DefaultBufferCapacity.
-func NewEventBuffer(capacity int) *EventBuffer {
+func NewEventBuffer(capacity int, opts ...BufferOption) *EventBuffer {
 	if capacity <= 0 {
 		capacity = DefaultBufferCapacity
 	}
-	return &EventBuffer{
+	b := &EventBuffer{
 		now:  time.Now,
 		cap:  uint64(capacity),
 		ring: make([]BufferedEvent, capacity),
 	}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
 // Append records an event and returns its monotonic buffer id. When
 // the buffer is full the oldest event is overwritten.
 func (b *EventBuffer) Append(e OperationalEvent) uint64 {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.head++
-	id := b.head
+	id := b.head + 1
+	b.head = id
 	b.ring[id%b.cap] = BufferedEvent{ID: id, Event: e}
+	length := b.head
+	if length > b.cap {
+		length = b.cap
+	}
+	b.mu.Unlock()
+	// spec: §25.3 line 770 — the buffer gauge tracks the retained count,
+	// which caps at the ring capacity once the buffer has wrapped.
+	b.metrics.SetBufferLength(int(length))
 	return id
 }
 
@@ -348,6 +370,10 @@ func (b *EventBuffer) oldestID() uint64 {
 // limit (a non-positive limit defaults to 100). When since predates
 // the oldest retained event the page reports a gap.
 func (b *EventBuffer) Query(since uint64, filter EventFilter, limit int) BufferedEventPage {
+	// spec: §25.3 line 771 — every buffer-endpoint query is counted; a
+	// query whose cursor was evicted additionally increments the gap
+	// counter (line 772).
+	b.metrics.IncQuery()
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if limit <= 0 {
@@ -371,6 +397,7 @@ func (b *EventBuffer) Query(since uint64, filter EventFilter, limit int) Buffere
 		page.Pagination.GapReason = "cursor evicted from in-memory ring buffer"
 		page.Pagination.OldestAvailableCursor = oldest
 		page.Pagination.SuggestedAction = "resync"
+		b.metrics.IncGap()
 	}
 	page.BufferAge = b.now().Sub(b.ring[oldest%b.cap].Event.Time).String()
 

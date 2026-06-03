@@ -154,6 +154,11 @@ type Aggregator struct {
 	cache    map[string]cachedProbe
 	cacheTTL time.Duration
 	now      func() time.Time
+
+	// §25.3 lines 538-542 health metrics. Nil until SetMetrics wires the
+	// prom-backed emitter; the Aggregator records probe latency and the
+	// derived status on every real (cache-miss) probe.
+	metrics Metrics
 }
 
 // NewAggregator returns an empty Aggregator with the §25.3 5-second
@@ -196,9 +201,20 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 		}
 		a.cacheMu.Unlock()
 	}
+	a.mu.RLock()
+	m := a.metrics
+	a.mu.RUnlock()
+	started := a.now()
 	comp := c.Check(ctx)
 	if comp.Name == "" {
 		comp.Name = name
+	}
+	// spec: §25.3 lines 538-542 — record probe latency and the derived
+	// verdict only on a real Check (a cache hit ran no probe; its gauge
+	// value still reflects the last real probe).
+	if m != nil {
+		m.ObserveCheckDuration(comp.Name, a.now().Sub(started).Seconds())
+		m.SetStatus(comp.Name, comp.Status)
 	}
 	// spec: §25.3 lines 459-501 / §25.7 line 3234 — when the checker
 	// stamps an Issue but leaves the remediation hint empty, the catalog
@@ -217,6 +233,15 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 		a.cacheMu.Unlock()
 	}
 	return comp
+}
+
+// SetMetrics wires the §25.3 health metrics. The Aggregator records each
+// real probe's latency on lenny_health_check_duration_seconds and the
+// derived verdict on lenny_health_status. spec: §25.3 lines 538-542.
+func (a *Aggregator) SetMetrics(m Metrics) {
+	a.mu.Lock()
+	a.metrics = m
+	a.mu.Unlock()
 }
 
 // OnTransition registers a callback the Aggregator invokes when a

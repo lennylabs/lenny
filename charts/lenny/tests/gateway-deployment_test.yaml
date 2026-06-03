@@ -1059,6 +1059,33 @@ tests:
             name: LENNY_SLO_VALIDATED
             value: "true"
 
+  # spec: §25.3 line 748 / F-25.3.8 — the operational-event nonce
+  # checkpoint path is rendered as LENNY_OPS_NONCE_CHECKPOINT_PATH only
+  # when gateway.opsEvents.nonceCheckpointPath is set.
+  - it: renders LENNY_OPS_NONCE_CHECKPOINT_PATH when opsEvents.nonceCheckpointPath is set
+    set:
+      gateway.opsEvents.nonceCheckpointPath: /var/lib/lenny/ops-nonce
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_OPS_NONCE_CHECKPOINT_PATH
+            value: /var/lib/lenny/ops-nonce
+
+  - it: omits LENNY_OPS_NONCE_CHECKPOINT_PATH by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: LENNY_OPS_NONCE_CHECKPOINT_PATH
+
   # spec: §12.3 line 56 — postgres.connectionPooler = external derives
   # LENNY_POOLER_MODE=external on the gateway, the value the §12.3
   # startup refusal reads. One source of truth: the same value gates the
