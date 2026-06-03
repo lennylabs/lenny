@@ -26082,7 +26082,7 @@ Severity: High (security/correctness). Files: `cmd/lenny-gateway/main.go:260`,
 
 **Resolution (19983f41):** Closed by F-8.6.4. `newGatewayControlServer` now builds the listener with `adapter.TLSServerOption(--adapter-tls-cert/key, --adapter-ca)` — the same §4.7 mesh credentials the pod-facing Adapter service uses — instead of bare `grpc.NewServer()`, and `leasecontrol.RequireVerifiedPeerInterceptor` rejects any call without a verified client cert when mTLS is active. The adapter↔gateway control channel is now mTLS in production, matching §15.3 "gRPC + mTLS" and §4.7.
 
-### - [ ] F-15.3.2 — Half of the §4.7 gateway→adapter RPC surface is absent [High] — OPEN
+### - [x] F-15.3.2 — Half of the §4.7 gateway→adapter RPC surface is absent [High] — CLOSED
 
 §15.3 incorporates §4.7's "Gateway → Adapter RPCs" table by reference and
 §15.4 promises the proto is the published wire contract. The implemented
@@ -26117,6 +26117,18 @@ end-to-end at all.
 
 Severity: High (correctness; large capability gap). Files: missing across
 `schemas/lenny-adapter.proto` and `pkg/adapter/`.
+
+**Resolution (verify-closed):** All four named RPCs now exist in both the
+proto and the adapter server, closed by the §4.7 batch:
+`ConfigureWorkspace` (proto line 68, `pkg/adapter/sdkwarm.go`, F-4.7.4),
+`CheckpointBarrier` and `CoordinatorFence` (proto lines 134/121,
+`pkg/adapter/coordination.go`, F-4.7.2), and `ExportPaths` (proto line
+143, `pkg/adapter/exportpaths.go`, plus gateway-side callers in
+`pkg/gateway/delegation/export`, F-4.7.5). The §4.7 RPC table is now the
+machine-readable wire contract this finding required. The gateway-side
+*calling* of `CheckpointBarrier`/`CoordinatorFence` from the §10.1
+drain/handoff path remains tracked under F-10.1.7 / F-10.3.3; this
+finding's scope (RPCs absent from proto + adapter server) is satisfied.
 
 ### - [x] F-15.3.3 — Adapter → Gateway events surface (§4.7 events table) is unimplemented [High] — CLOSED
 
@@ -26182,7 +26194,7 @@ proto:506–510`, `pkg/gateway/leasecontrol/leasecontrol.go:208`,
 
 **Resolution:** The finding's proto + gateway-handler premise was stale — the §8.6 extendable dimensions (`requested_children`, `requested_parallel_children`, `requested_tree_size`, `requested_file_export_limits`) were added to `ExtendLeaseRequest` and are read by the gateway via `requestedDimensions` (F-8.6.1). The residual gap was the adapter side: `gatewaycontrol.Client.ExtendLease` and the `adapter.LeaseExtender` interface accepted only `requestedTokens int64`, so the adapter could never ask for the other dimensions. Replaced that scalar with a new `gatewaycontrol.Extension` struct (AdditionalTokens/Seconds/Children/ParallelChildren/TreeSize/MaxFiles/MaxBytes) that populates every proto field, sending the optional `FileExportLimitsDelta` only when a file-export dimension is non-zero. `HandleBudgetExhaustion` (the token-exhaustion trigger) builds `Extension{AdditionalTokens: …}`; the wire is now complete for any future trigger. Commit `5c28b248`.
 
-### - [ ] F-15.3.5 — GatewayControl service is wired but functionally inert in production [Medium] — OPEN
+### - [ ] F-15.3.5 — GatewayControl service is wired but functionally inert in production [Medium] — DEFERRED
 
 `newGatewayControlServer` (`cmd/lenny-gateway/main.go:1838`) constructs a
 Service with `leasecontrol.NewMemoryBudgetSource()` and no `Auditing` field
@@ -26205,7 +26217,25 @@ that the wiring is a seam). Files: `cmd/lenny-gateway/main.go:1842–1847`,
 `pkg/gateway/leasecontrol/membudget.go:123–126`,
 `pkg/gateway/leasecontrol/leasecontrol.go:305–308`.
 
-### - [ ] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — OPEN
+**Deferred (partially stale + blocked on §8.6 config layering):** The
+`Options.Auditing` half is already resolved — `newGatewayControlServer`
+now passes a `leaseExtensionAuditAdapter` (`cmd/lenny-gateway/main.go`
+~line 4914/4929) that commits §8.6 extension audit rows. The residual gap
+is real: `MemoryBudgetSource.RegisterTree`/`AddSession`/`SetParentLease`
+still have no production caller, so the first `ExtendLease` fails
+`ErrSessionNotFound`. Wiring them correctly requires resolving the §8.6
+lease-extension configuration layering (deployment/tenant/runtime
+`maxExtendableBudget` bases and ceilings, `extensionApproval`,
+`rejectionCoolOff`, `maxAutoExtensionsPerMinute`) at root-session creation
+and registering each delegated child at `delegation.Delegate` time. That
+config-layering resolver does not exist in production today (no flag,
+runtime field, or tenant override populates it — only
+`--lease-extension-auto-max-per-min` is plumbed), so registering with a
+degenerate zero config would silently deny every extension rather than
+fix the path. Deferred until the §8.6 config-layering resolver and the
+session/delegation lifecycle registration hooks land as their own task.
+
+### - [ ] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — DEFERRED
 
 `pkg/adapter/leaseextend.go:53–58` (`HandleBudgetExhaustion` docstring)
 acknowledges the SEAM and the absence of any production caller:
@@ -26226,7 +26256,20 @@ Severity: Medium (capability unimplemented; spec calls the §8.6 trigger
 "automatic"). Files: `pkg/adapter/leaseextend.go:46–80`,
 `cmd/lenny-adapter/main.go`.
 
-### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — OPEN
+**Deferred (blocked on the adapter-side §4.9 LLM-proxy path):**
+`HandleBudgetExhaustion`'s own docstring records the blocker — the adapter
+does not host the §4.9 LLM-proxy client path, so nothing detects a
+budget-exhaustion rejection and calls the trigger. The §4.9 proxy lives in
+the gateway (`llmProxySrv` in `cmd/lenny-gateway/main.go`), not in
+`cmd/lenny-adapter`. Constructing a `gatewaycontrol.Client` and assigning
+`Server.LeaseExtender` in isolation (the finding's literal ask) produces
+dead code: with no in-pod LLM-proxy rejection detector to invoke
+`HandleBudgetExhaustion`, the path can never fire, which violates the
+no-dead-config rule. Deferred until the adapter-side §4.9 LLM-proxy /
+budget-rejection detector lands; that work then wires both the detector
+and the `LeaseExtender` together.
+
+### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — DEFERRED
 
 §4.7 line 637: "Report LLM token counts extracted from provider responses;
 gateway increments quota counters and persists to Postgres on the next
@@ -26243,6 +26286,19 @@ direct-mode RPC.
 
 Severity: Medium (capability unimplemented; budget enforcement gap on
 direct mode). Files: `pkg/gateway/adapterclient/client.go:280–296`.
+
+**Deferred (blocked on the adapter-side §4.9 usage meter):** the §4.7
+direct-mode `ReportUsage` poll is the path for SDK/Full credential-delivery
+sessions where the adapter holds raw provider credentials and the gateway
+LLM proxy never sees in-flight tokens. The adapter's `ReportUsage` handler
+returns `codes.Unimplemented` unless `Server.Usage` (a `UsageMeter`) is
+set, and `cmd/lenny-adapter/main.go` never sets it — the §4.9 direct-mode
+token-extraction meter (parse provider responses, report the delta) does
+not exist. Adding a gateway-side poll loop today would call a handler that
+always returns Unimplemented. The proxy-mode quota path is already wired
+(`newProxyUsageRecorder` feeds `quotaCounter`/`usage` from the §4.9
+in-flight accounting). Deferred until the adapter-side direct-mode
+`UsageMeter` lands; the gateway poll wires on top of it.
 
 ### - [x] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — CLOSED
 
@@ -30714,7 +30770,7 @@ Cross-checked against:
 
 ### Findings
 
-### - [ ] F-17.2.1 — 2-1  Kata node isolation enforcement absent [High] — OPEN
+### - [x] F-17.2.1 — 2-1  Kata node isolation enforcement absent [High] — CLOSED
 **Spec requirement** (§17.2 "Node isolation," lines 97–102): Kata (`microvm`) pods must run on dedicated node pools with all three of: (1) RuntimeClass `scheduling.nodeSelector` (e.g., `lenny.dev/node-pool: kata`); (2) controller-injected `requiredDuringSchedulingIgnoredDuringExecution` `nodeAffinity` matching the same label; (3) dedicated-node taint `lenny.dev/isolation=kata:NoSchedule` honored via toleration on the pod.
 
 **Implementation:**
@@ -30723,6 +30779,8 @@ Cross-checked against:
 - No template adds the `lenny.dev/isolation=kata:NoSchedule` taint to nodes or surfaces a values key for taint enforcement.
 
 **Impact:** All three required controls for the "kernel compromise via runc escape on a shared node" boundary called out in §17.2 are missing. Kata pods can land on shared nodes and non-Kata workloads can land on hypothetical Kata-dedicated hardware, violating the spec's core isolation invariant.
+
+**Resolution:** All three §17.2 lines 97-101 controls now render. The "no `kind: RuntimeClass` template" evidence was stale (`charts/lenny/templates/runtimeclasses.yaml` already exists and supports `scheduling.nodeSelector`); the gaps were the unset nodeSelector default and the absent controller injection. Control 1: the chart's `microvm` RuntimeClass profile now defaults `nodeSelector: {lenny.dev/node-pool: kata}`, so the rendered Kata RuntimeClass carries `scheduling.nodeSelector` and constrains every referencing pod at admission. Controls 2 and 3: `podspec.applyKataNodeIsolation` (mirroring the existing `applyT4NodeIsolation` pattern) injects a `requiredDuringSchedulingIgnoredDuringExecution` node affinity matching `lenny.dev/node-pool: kata` (ANDed idempotently into every node-selector term) and the `lenny.dev/isolation=kata:NoSchedule` toleration onto every pod whose resolved isolation profile is `microvm`. Standard/sandboxed pods are untouched. Commit {COMMIT}.
 
 ---
 

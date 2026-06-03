@@ -894,3 +894,124 @@ func TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4(t *testing.T) {
 		t.Errorf("T4 toleration count after second Build = %d, want exactly 1", count)
 	}
 }
+
+// TestBuildInjectsKataNodeIsolation_spec_17_2 confirms a microvm (Kata)
+// pod carries the §17.2 lines 99-101 control 2 (required node affinity on
+// lenny.dev/node-pool=kata) and control 3 (NoSchedule toleration for the
+// lenny.dev/isolation=kata taint) in both deployment models.
+func TestBuildInjectsKataNodeIsolation_spec_17_2(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		in.IsolationProfile = "microvm"
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		req := requiredNodeAffinity(t, pod)
+		var affinityFound bool
+		for _, term := range req.NodeSelectorTerms {
+			for _, e := range term.MatchExpressions {
+				if e.Key == podspec.KataNodePoolLabelKey &&
+					e.Operator == corev1.NodeSelectorOpIn &&
+					len(e.Values) == 1 && e.Values[0] == podspec.KataNodePoolValue {
+					affinityFound = true
+				}
+			}
+		}
+		if !affinityFound {
+			t.Errorf("model %q: required node affinity = %+v, want %s In [%s]",
+				model, req.NodeSelectorTerms, podspec.KataNodePoolLabelKey, podspec.KataNodePoolValue)
+		}
+		var tolFound bool
+		for _, tol := range pod.Spec.Tolerations {
+			if tol.Key == podspec.KataIsolationTaintKey &&
+				tol.Operator == corev1.TolerationOpEqual &&
+				tol.Value == podspec.KataIsolationTaintValue &&
+				tol.Effect == corev1.TaintEffectNoSchedule {
+				tolFound = true
+			}
+		}
+		if !tolFound {
+			t.Errorf("model %q: tolerations = %+v, want one %s=%s:NoSchedule entry",
+				model, pod.Spec.Tolerations, podspec.KataIsolationTaintKey, podspec.KataIsolationTaintValue)
+		}
+	}
+}
+
+// TestBuildLeavesNonKataPodsAlone_spec_17_2 confirms the standard and
+// sandboxed profiles produce a pod with no Kata node affinity and no Kata
+// toleration: the §17.2 hard scheduling constraints must be strictly gated
+// on the microvm profile so runc/gVisor pods are not pinned to Kata nodes.
+func TestBuildLeavesNonKataPodsAlone_spec_17_2(t *testing.T) {
+	for _, profile := range []string{"standard", "sandboxed"} {
+		in := inputs()
+		in.IsolationProfile = profile
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(profile=%q): %v", profile, err)
+		}
+		if pod.Spec.Affinity != nil && pod.Spec.Affinity.NodeAffinity != nil &&
+			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+			t.Errorf("profile %q: pod carries required node affinity, want none", profile)
+		}
+		for _, tol := range pod.Spec.Tolerations {
+			if tol.Key == podspec.KataIsolationTaintKey {
+				t.Errorf("profile %q: pod tolerates %s, want absent (got %+v)",
+					profile, podspec.KataIsolationTaintKey, tol)
+			}
+		}
+	}
+}
+
+// TestBuildKataInjectionIsIdempotent_spec_17_2 confirms a re-reconcile
+// (a second Build on the same Inputs) does not accumulate duplicate Kata
+// node-affinity requirements or tolerations.
+func TestBuildKataInjectionIsIdempotent_spec_17_2(t *testing.T) {
+	in := inputs()
+	in.IsolationProfile = "microvm"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// Build does not mutate Inputs, so a second call models a re-reconcile.
+	pod2, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build (second call): %v", err)
+	}
+	for _, p := range []*corev1.Pod{pod, pod2} {
+		req := requiredNodeAffinity(t, p)
+		var reqCount int
+		for _, term := range req.NodeSelectorTerms {
+			for _, e := range term.MatchExpressions {
+				if e.Key == podspec.KataNodePoolLabelKey {
+					reqCount++
+				}
+			}
+		}
+		if reqCount != 1 {
+			t.Errorf("Kata node-affinity requirement count = %d, want exactly 1", reqCount)
+		}
+		var tolCount int
+		for _, tol := range p.Spec.Tolerations {
+			if tol.Key == podspec.KataIsolationTaintKey {
+				tolCount++
+			}
+		}
+		if tolCount != 1 {
+			t.Errorf("Kata toleration count = %d, want exactly 1", tolCount)
+		}
+	}
+}
+
+// requiredNodeAffinity returns the pod's
+// requiredDuringSchedulingIgnoredDuringExecution node selector, failing the
+// test if any link in the chain is nil.
+func requiredNodeAffinity(t *testing.T, pod *corev1.Pod) *corev1.NodeSelector {
+	t.Helper()
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil ||
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatalf("pod has no required node affinity: %+v", pod.Spec.Affinity)
+	}
+	return pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+}

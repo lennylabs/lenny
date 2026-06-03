@@ -58,6 +58,33 @@ tests:
           path: overhead.podFixed.memory
           value: "500Mi"
 
+  # spec: §17.2 line 99 (control 1) — the Kata RuntimeClass carries
+  # scheduling.nodeSelector so every referencing pod is pinned to the
+  # dedicated Kata node pool at admission, with no pod-level config.
+  - it: renders the kata RuntimeClass scheduling.nodeSelector for the dedicated node pool
+    set:
+      runtimeClasses.create: true
+      runtimeClasses.profiles.microvm.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: kata
+    asserts:
+      - equal:
+          path: scheduling.nodeSelector["lenny.dev/node-pool"]
+          value: kata
+
+  # The gVisor RuntimeClass has no default nodeSelector: only Kata
+  # mandates a dedicated node pool (§17.2 line 97).
+  - it: leaves the gvisor RuntimeClass with no scheduling block by default
+    set:
+      runtimeClasses.create: true
+    documentSelector:
+      path: metadata.name
+      value: gvisor
+    asserts:
+      - notExists:
+          path: scheduling
+
   - it: renders runc with no overhead block (native runtime adds none)
     set:
       runtimeClasses.create: true

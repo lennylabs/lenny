@@ -1597,6 +1597,15 @@ runtimeClasses:
       overhead:
         cpu: 500m
         memory: 500Mi
+      # spec: §17.2 line 99 (control 1) — the Kata RuntimeClass MUST carry
+      # scheduling.nodeSelector so every pod referencing it is constrained
+      # to the dedicated Kata node pool at admission, with no pod-level
+      # configuration needed. The sandbox controller injects the matching
+      # hard node affinity (control 2) and the
+      # `lenny.dev/isolation=kata:NoSchedule` toleration (control 3). Label
+      # the Kata node pool with `lenny.dev/node-pool: kata` to match.
+      nodeSelector:
+        lenny.dev/node-pool: kata
     standard:
       enabled: false
       name: runc
