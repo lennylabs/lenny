@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
@@ -73,6 +74,18 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Wri
 	}
 	fmt.Fprintf(out, "  installed %d reference runtimes; granted default-tenant access to %d\n",
 		len(referenceRuntimes), granted)
+	// spec: §26.1 line 5 / §26.3 lines 215-223 — the reference-runtime
+	// images are published by their own first-party CI, so the digests are
+	// not known at lenny build time and the catalog ships placeholder-pinned.
+	// A placeholder-pinned image registers fine but fails to pull on the
+	// first session start. Surface this loudly so an operator following the
+	// "day-one utility" promise is not surprised by an ImagePullBackOff.
+	// F-26.3.6.
+	if pinned := placeholderPinnedRuntimes(); len(pinned) > 0 {
+		fmt.Fprintf(out, "  [WARN] %d reference runtime(s) are pinned to a placeholder image digest and cannot start a session until re-pinned: %s\n",
+			len(pinned), strings.Join(pinned, ", "))
+		fmt.Fprintf(out, "         Re-register each runtime with its published digest, or import a local image with `lenny image import <name>`, before invoking it.\n")
+	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%d reference-runtime access grant(s) failed: %w",
 			len(failures), errors.Join(failures...))
@@ -101,6 +114,19 @@ type seedRuntime struct {
 	Image            string `json:"image,omitempty"`
 	IntegrationLevel string `json:"integrationLevel,omitempty"`
 	Description      string `json:"description,omitempty"`
+
+	// The §26.1 / §26.2 declarations the bootstrap handler stores on the
+	// Runtime record. The JSON tags mirror the gateway admin
+	// RuntimePayload so the seed reaches §26 parity with the chart's
+	// reference-runtimes.yaml. F-26.2.3 / F-26.1.3.
+	AllowedResourceClasses []string                `json:"allowedResourceClasses,omitempty"`
+	SupportedProviders     []string                `json:"supportedProviders,omitempty"`
+	Capabilities           *runtimeCapabilities    `json:"capabilities,omitempty"`
+	CredentialCapabilities *credentialCapabilities `json:"credentialCapabilities,omitempty"`
+	Limits                 *runtimeLimits          `json:"limits,omitempty"`
+	SetupCommandPolicy     *setupCommandPolicy     `json:"setupCommandPolicy,omitempty"`
+	SetupPolicy            *setupPolicy            `json:"setupPolicy,omitempty"`
+	DefaultPoolConfig      *defaultPoolConfig      `json:"defaultPoolConfig,omitempty"`
 }
 
 type seedUser struct {
@@ -129,11 +155,19 @@ func buildBootstrapSeed() bootstrapSeed {
 	}
 	for _, rt := range referenceRuntimes {
 		seed.Runtimes = append(seed.Runtimes, seedRuntime{
-			Name:             rt.Name,
-			Type:             "agent",
-			Image:            rt.Image,
-			IntegrationLevel: rt.IntegrationLevel,
-			Description:      rt.Description,
+			Name:                   rt.Name,
+			Type:                   "agent",
+			Image:                  rt.Image,
+			IntegrationLevel:       rt.IntegrationLevel,
+			Description:            rt.Description,
+			AllowedResourceClasses: rt.AllowedResourceClasses,
+			SupportedProviders:     rt.SupportedProviders,
+			Capabilities:           rt.Capabilities,
+			CredentialCapabilities: rt.CredentialCapabilities,
+			Limits:                 rt.Limits,
+			SetupCommandPolicy:     rt.SetupCommandPolicy,
+			SetupPolicy:            rt.SetupPolicy,
+			DefaultPoolConfig:      rt.DefaultPoolConfig,
 		})
 	}
 	return seed

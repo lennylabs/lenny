@@ -13,3 +13,7 @@ WARNING: Plaintext OTLP export enabled — trace payloads are sent without TLS. 
 
 WARNING: monitoring.format={{ .Values.monitoring.format }} selects the Prometheus Operator CRDs (PrometheusRule, ServiceMonitor, PodMonitor), but monitoring.coreos.com/v1 is not registered in this cluster. The chart fell back to a ConfigMap rule file and did not render the ServiceMonitor or PodMonitor, so a `kubectl apply` does not fail on a missing CRD (§16.9). Install the Prometheus Operator and re-run helm upgrade to use the operator-managed scrape targets, or set monitoring.format=configmap to silence this warning.
 {{- end }}
+{{- if not .Values.referenceRuntimes.enabled }}
+
+WARNING: referenceRuntimes.enabled is false — no §26 reference runtimes were registered. The platform installs with only the built-in echo runtime, so a developer running a session has no coding-agent or framework runtime to use until you register one through POST /v1/admin/runtimes. This posture is supported for air-gapped or curated-catalog deployments that register their own runtimes; to install the reference catalog instead, set referenceRuntimes.enabled=true (the default) and trim the set with referenceRuntimes.include (§26.1; §17.6).
+{{- end }}

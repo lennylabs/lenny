@@ -2,6 +2,54 @@
 
 package stack
 
+import "strings"
+
+// The §26.2 shared coding-agent blocks and the §26.1 catalog fields the
+// Embedded Mode bootstrap seeds so `lenny up` reaches §26 parity with a
+// Helm install. The JSON tags mirror the gateway admin RuntimePayload
+// (pkg/gateway/admin.RuntimePayload) so POST /v1/admin/bootstrap applies
+// the same Runtime record the chart's reference-runtimes.yaml renders.
+// The blocks are declared locally so the stack package does not depend on
+// the gateway's admin package. F-26.2.3 / F-26.1.3.
+type runtimeCapabilities struct {
+	Interaction string         `json:"interaction,omitempty"`
+	Injection   *injectionCaps `json:"injection,omitempty"`
+}
+
+type injectionCaps struct {
+	Supported bool     `json:"supported,omitempty"`
+	Modes     []string `json:"modes,omitempty"`
+}
+
+type credentialCapabilities struct {
+	HotRotation  bool     `json:"hotRotation,omitempty"`
+	ProxyDialect []string `json:"proxyDialect,omitempty"`
+}
+
+type runtimeLimits struct {
+	MaxSessionAgeSeconds       int   `json:"maxSessionAgeSeconds,omitempty"`
+	MaxUploadSizeBytes         int64 `json:"maxUploadSizeBytes,omitempty"`
+	MaxRequestInputWaitSeconds int   `json:"maxRequestInputWaitSeconds,omitempty"`
+}
+
+type setupCommandPolicy struct {
+	Mode        string   `json:"mode,omitempty"`
+	Shell       bool     `json:"shell,omitempty"`
+	Allowlist   []string `json:"allowlist,omitempty"`
+	MaxCommands int      `json:"maxCommands,omitempty"`
+}
+
+type setupPolicy struct {
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+	OnTimeout      string `json:"onTimeout,omitempty"`
+}
+
+type defaultPoolConfig struct {
+	WarmCount     int    `json:"warmCount,omitempty"`
+	ResourceClass string `json:"resourceClass,omitempty"`
+	EgressProfile string `json:"egressProfile,omitempty"`
+}
+
 // ReferenceRuntime is one §26 reference-runtime catalog entry as the
 // Embedded Mode bootstrap registers it.
 type ReferenceRuntime struct {
@@ -14,6 +62,20 @@ type ReferenceRuntime struct {
 	IntegrationLevel string
 	// Description is the catalog one-line summary.
 	Description string
+
+	// The §26.1 / §26.2 declarations the registered Runtime record
+	// carries. Coding-agent entries populate all of them; chat carries
+	// the smaller-resource posture (§26.1 line 22); the framework
+	// runtimes carry the basic fields only. nil blocks are omitted from
+	// the bootstrap seed.
+	AllowedResourceClasses []string
+	SupportedProviders     []string
+	Capabilities           *runtimeCapabilities
+	CredentialCapabilities *credentialCapabilities
+	Limits                 *runtimeLimits
+	SetupCommandPolicy     *setupCommandPolicy
+	SetupPolicy            *setupPolicy
+	DefaultPoolConfig      *defaultPoolConfig
 }
 
 // placeholderDigest is the digest suffix used on each §26 reference
@@ -29,6 +91,55 @@ type ReferenceRuntime struct {
 // local image with `lenny image import`.
 const placeholderDigest = "@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
+// codingAgentShared returns a fresh copy of the §26.2 shared
+// coding-agent blocks (capabilities, limits, setupCommandPolicy,
+// setupPolicy, defaultPoolConfig, allowedResourceClasses). The four
+// coding-agent runtimes differ only in image, supportedProviders, and
+// credentialCapabilities.proxyDialect, so each entry composes these
+// shared defaults with its per-runtime overrides. Fresh pointers are
+// returned per call so callers never alias the shared block.
+//
+// The values mirror the chart's referenceRuntimes.catalog entries in
+// charts/lenny/values.yaml verbatim.
+//
+// spec: §26.2 lines 38-92 — the shared coding-agent isolation, limits,
+// setupCommandPolicy, setupPolicy, and defaultPoolConfig.
+func codingAgentShared() ReferenceRuntime {
+	return ReferenceRuntime{
+		IntegrationLevel:       "full",
+		AllowedResourceClasses: []string{"small", "medium", "large"},
+		Capabilities: &runtimeCapabilities{
+			Interaction: "multi_turn",
+			Injection:   &injectionCaps{Supported: true, Modes: []string{"immediate", "queued"}},
+		},
+		Limits: &runtimeLimits{
+			MaxSessionAgeSeconds:       14400,
+			MaxUploadSizeBytes:         524288000,
+			MaxRequestInputWaitSeconds: 1800,
+		},
+		SetupCommandPolicy: &setupCommandPolicy{
+			Mode:        "allowlist",
+			Shell:       false,
+			Allowlist:   []string{"npm", "pnpm", "yarn", "pip", "poetry", "go", "cargo", "make", "mvn", "gradle", "apt-get", "chmod", "mkdir", "cp", "mv", "ln"},
+			MaxCommands: 20,
+		},
+		SetupPolicy:       &setupPolicy{TimeoutSeconds: 600, OnTimeout: "fail"},
+		DefaultPoolConfig: &defaultPoolConfig{WarmCount: 2, ResourceClass: "medium", EgressProfile: "restricted"},
+	}
+}
+
+// codingAgent composes the §26.2 shared block with a coding-agent's
+// per-runtime name, image, providers, and proxy dialect.
+func codingAgent(name string, providers, proxyDialect []string, description string) ReferenceRuntime {
+	rt := codingAgentShared()
+	rt.Name = name
+	rt.Image = "ghcr.io/lennylabs/runtime-" + name + ":1.0.0" + placeholderDigest
+	rt.Description = description
+	rt.SupportedProviders = providers
+	rt.CredentialCapabilities = &credentialCapabilities{HotRotation: true, ProxyDialect: proxyDialect}
+	return rt
+}
+
 // referenceRuntimes is the §26 reference-runtime catalog. lenny up
 // registers every entry as a platform-global record and grants the
 // default tenant access to it. The §26 catalog publishes images under
@@ -36,35 +147,37 @@ const placeholderDigest = "@sha256:000000000000000000000000000000000000000000000
 // fixes the integration level of each runtime: chat is Standard, every
 // other reference runtime is Full.
 var referenceRuntimes = []ReferenceRuntime{
+	codingAgent("claude-code",
+		[]string{"anthropic_direct", "aws_bedrock", "gcp_vertex_anthropic"},
+		[]string{"anthropic"},
+		"Anthropic's Claude Code CLI inside a Lenny-managed sandbox"),
+	codingAgent("gemini-cli",
+		[]string{"gcp_vertex_gemini", "google_ai_studio"},
+		[]string{"google"},
+		"Google's Gemini CLI inside a Lenny-managed sandbox"),
+	codingAgent("codex",
+		[]string{"openai_direct", "azure_openai"},
+		[]string{"openai"},
+		"OpenAI's Codex CLI inside a Lenny-managed sandbox"),
+	codingAgent("cursor-cli",
+		[]string{"cursor_direct"},
+		[]string{"cursor"},
+		"Cursor's agent CLI inside a Lenny-managed sandbox"),
 	{
-		Name:             "claude-code",
-		Image:            "ghcr.io/lennylabs/runtime-claude-code:1.0.0" + placeholderDigest,
-		IntegrationLevel: "full",
-		Description:      "Anthropic's Claude Code CLI inside a Lenny-managed sandbox",
-	},
-	{
-		Name:             "gemini-cli",
-		Image:            "ghcr.io/lennylabs/runtime-gemini-cli:1.0.0" + placeholderDigest,
-		IntegrationLevel: "full",
-		Description:      "Google's Gemini CLI inside a Lenny-managed sandbox",
-	},
-	{
-		Name:             "codex",
-		Image:            "ghcr.io/lennylabs/runtime-codex:1.0.0" + placeholderDigest,
-		IntegrationLevel: "full",
-		Description:      "OpenAI's Codex CLI inside a Lenny-managed sandbox",
-	},
-	{
-		Name:             "cursor-cli",
-		Image:            "ghcr.io/lennylabs/runtime-cursor-cli:1.0.0" + placeholderDigest,
-		IntegrationLevel: "full",
-		Description:      "Cursor's agent CLI inside a Lenny-managed sandbox",
-	},
-	{
-		Name:             "chat",
-		Image:            "ghcr.io/lennylabs/runtime-chat:1.0.0" + placeholderDigest,
-		IntegrationLevel: "standard",
-		Description:      "Talk to an LLM with no tools; the minimum useful runtime",
+		// spec: §26.1 line 22 / §26.7 — chat is the minimum useful runtime:
+		// Standard level, the small resource class only, multi_turn with
+		// immediate (no queued) injection.
+		Name:                   "chat",
+		Image:                  "ghcr.io/lennylabs/runtime-chat:1.0.0" + placeholderDigest,
+		IntegrationLevel:       "standard",
+		Description:            "Talk to an LLM with no tools; the minimum useful runtime",
+		AllowedResourceClasses: []string{"small"},
+		SupportedProviders:     []string{"anthropic_direct", "openai_direct", "gcp_vertex_gemini"},
+		Capabilities: &runtimeCapabilities{
+			Interaction: "multi_turn",
+			Injection:   &injectionCaps{Supported: true, Modes: []string{"immediate"}},
+		},
+		CredentialCapabilities: &credentialCapabilities{HotRotation: true, ProxyDialect: []string{"anthropic", "openai", "google"}},
 	},
 	{
 		Name:             "langgraph",
@@ -102,4 +215,28 @@ func ReferenceRuntimes() []ReferenceRuntime {
 	out := make([]ReferenceRuntime, len(referenceRuntimes))
 	copy(out, referenceRuntimes)
 	return out
+}
+
+// hasPlaceholderDigest reports whether image carries the placeholder
+// digest sentinel. §17.4 pulls a runtime image lazily on its first
+// session start; a placeholder-pinned image fails the pull until the
+// operator re-registers the runtime with the published digest or
+// imports a local image with `lenny image import`.
+func hasPlaceholderDigest(image string) bool {
+	return strings.Contains(image, placeholderDigest)
+}
+
+// placeholderPinnedRuntimes returns the names of catalog entries whose
+// image is placeholder-pinned, in catalog order. The bootstrap output
+// warns the operator that these runtimes register but cannot start a
+// session until re-pinned. spec: §26.1 line 5 ("functioning agents");
+// §26.3 lines 215-223 (Bootstrap behavior).
+func placeholderPinnedRuntimes() []string {
+	var names []string
+	for _, rt := range referenceRuntimes {
+		if hasPlaceholderDigest(rt.Image) {
+			names = append(names, rt.Name)
+		}
+	}
+	return names
 }

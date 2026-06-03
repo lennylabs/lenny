@@ -285,6 +285,66 @@ func ValidateEgressIsolation(p Pool) error {
 	return nil
 }
 
+// codingAgentRuntimes is the §26.1 set of coding-agent reference
+// runtimes (`category: coding-agent`). The authoritative record is the
+// §26 reference catalog (pkg/compliance/reference_catalog.yaml);
+// TestCodingAgentSetMatchesReferenceCatalog guards this list against
+// drift. The set is duplicated here rather than imported from
+// pkg/compliance because that package pulls in `testing`, which must
+// not enter the gateway binary.
+//
+// spec: §26.2 line 36 — "The four coding-agent runtimes (`claude-code`,
+// `gemini-cli`, `codex`, `cursor-cli`) share a common workspace shape."
+var codingAgentRuntimes = map[string]bool{
+	"claude-code": true,
+	"gemini-cli":  true,
+	"codex":       true,
+	"cursor-cli":  true,
+}
+
+// IsCodingAgentRuntime reports whether name identifies a §26.1
+// coding-agent reference runtime. Pool admission consults it to apply
+// the §26.2 line 38 categorical isolation rule.
+func IsCodingAgentRuntime(name string) bool {
+	return codingAgentRuntimes[name]
+}
+
+// CodingAgentRuntimeNames returns the §26.1 coding-agent runtime names
+// in sorted order. The drift-guard test uses it to cross-check the set
+// against the authoritative reference catalog in both directions.
+func CodingAgentRuntimeNames() []string {
+	names := make([]string, 0, len(codingAgentRuntimes))
+	for n := range codingAgentRuntimes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ValidateCodingAgentIsolation enforces the §26.2 line 38 categorical
+// rule: coding-agent runtimes execute untrusted shell commands on
+// user-supplied workspaces, so `standard` (runc) isolation is never
+// permitted for them. Unlike the generic §5.3 standard-isolation gate
+// (which a pool can satisfy with allowStandardIsolation: true), this
+// rejection holds regardless of the opt-in — the §13 threat model
+// treats sandboxed isolation as the categorical defense against
+// agent-driven shell escapes. An empty IsolationProfile is the §5.3
+// sandboxed default and is permitted; only an explicit `standard`
+// profile trips the check.
+//
+// spec: §26.2 line 38 — "`standard` (runc) is not supported for
+// coding-agent runtimes and the gateway rejects pool definitions that
+// pair any coding-agent runtime with `isolationProfile: standard`."
+func ValidateCodingAgentIsolation(p Pool, isCodingAgent bool) error {
+	if !isCodingAgent {
+		return nil
+	}
+	if p.IsolationProfile == isolation.ProfileStandard {
+		return errors.New("poolstore: isolationProfile standard (runc) is not permitted for coding-agent runtimes; use sandboxed or microvm (§26.2)")
+	}
+	return nil
+}
+
 // ValidateConcurrentConfig enforces the §5.2 / §13.1 admission rules for
 // a pool's concurrent-mode configuration. It is the pool-side half of
 // the Phase 12c pod-level isolation enforcement: a `concurrent`-mode

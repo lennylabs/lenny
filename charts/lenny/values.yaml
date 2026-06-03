@@ -2206,6 +2206,17 @@ memory:
 # chart version. Deployers mirroring these images to a private registry
 # pin their own digests in an override.
 referenceRuntimes:
+  # enabled controls whether helm install registers the §26 reference
+  # catalog as platform-global Runtime records. The default (true) is the
+  # §26.1 "day-one utility" posture: the operator gets the coding-agent and
+  # framework runtimes without further configuration. Set it to false for
+  # an air-gapped or curated-catalog deployment that registers its own
+  # runtimes through POST /v1/admin/runtimes after install; that install
+  # ships with only the built-in echo runtime until you do. To keep the
+  # reference catalog but minimize the image-pull footprint, leave enabled
+  # true and trim the set with `include` below rather than disabling
+  # registration entirely. The install renders a NOTES warning when
+  # disabled so the empty-catalog posture is not silent. F-26.1.2.
   enabled: true
   # include narrows the catalog to a subset of runtimes by name. Empty
   # (the default) registers the whole catalog; a non-empty list registers

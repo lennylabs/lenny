@@ -19,6 +19,11 @@ import (
 //go:embed reference_catalog.yaml
 var referenceCatalogYAML []byte
 
+// CategoryCodingAgent is the §26.1 catalog category for the coding-agent
+// reference runtimes (claude-code, gemini-cli, codex, cursor-cli). The
+// §26.2 line 38 isolation rule keys off this category.
+const CategoryCodingAgent = "coding-agent"
+
 // ReferenceRuntime is one row in the §26 catalog. Image is the OCI
 // reference relative to the configured registry; Level is the §15.4
 // integration level the runtime declares.

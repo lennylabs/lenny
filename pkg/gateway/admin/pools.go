@@ -450,6 +450,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"runtimeRef": body.RuntimeRef, "workspaceTier": string(runtimeTier)})
 		return
 	}
+	// spec: §26.2 line 38 — reject a coding-agent runtime paired with
+	// standard (runc) isolation regardless of allowStandardIsolation. The
+	// coding-agent category is derived from the runtimeRef name against
+	// the §26.1 reference catalog, so the check fires even when the
+	// runtimes store is unwired.
+	if err := poolstore.ValidateCodingAgentIsolation(pl, poolstore.IsCodingAgentRuntime(body.RuntimeRef)); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef, "isolationProfile": string(pl.IsolationProfile)})
+		return
+	}
 	if err := r.pools.Create(req.Context(), pl); err != nil {
 		if errors.Is(err, poolstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -827,6 +837,24 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			return
 		} else if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		// spec: §26.2 line 38 — reject a PUT that would leave a coding-agent
+		// pool on standard (runc) isolation. Both the effective
+		// isolationProfile and runtimeRef are resolved from the body (when
+		// set) or the stored pool, so newly setting either field is caught.
+		effIsoRef := current.RuntimeRef
+		if body.RuntimeRef != nil {
+			effIsoRef = *body.RuntimeRef
+		}
+		effIso := current.IsolationProfile
+		if body.IsolationProfile != nil {
+			effIso = isolation.Profile(*body.IsolationProfile)
+		}
+		if err := poolstore.ValidateCodingAgentIsolation(
+			poolstore.Pool{IsolationProfile: effIso}, poolstore.IsCodingAgentRuntime(effIsoRef)); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"runtimeRef": effIsoRef, "isolationProfile": string(effIso)})
 			return
 		}
 		effCross := current.AllowCrossTenantReuse
