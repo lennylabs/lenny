@@ -31687,7 +31687,7 @@ Grep across the tree finds neither `compose-tls`, nor `LENNY_DEV_TLS`, nor a
 `credentials` profile, nor any `./lenny-data/certs/` generation
 (`grep -rn "LENNY_DEV_TLS\|compose-tls" .` returns no Go / Makefile / yaml matches).
 
-### - [ ] F-17.4.5 — Dev-mode guard rail #1 — hard startup assertion not implemented [High] — OPEN
+### - [x] F-17.4.5 — Dev-mode guard rail #1 — hard startup assertion not implemented [High] — CLOSED
 
 Spec lines 266–268: "The gateway **refuses to start** with TLS disabled unless the
 environment variable `LENNY_DEV_MODE=true` is explicitly set. Any other value, or
@@ -31703,7 +31703,19 @@ nothing). Production TLS is delegated entirely to the ingress; the spec's
 "unified security-relaxation gate" promise is therefore not enforceable in the
 gateway today.
 
-### - [ ] F-17.4.6 — Dev-mode guard rail #2 — repeated 60-second WARN log not implemented [High] — OPEN
+- **Resolution:** New `pkg/gateway/devmode` package carries
+  `ResolveStartupGate(devMode, tlsTerminatedUpstream)`, wired into
+  `cmd/lenny-gateway/main.go` right after flag-parse. The gateway's
+  listener is always plain HTTP, so the spec's "TLS disabled" maps to the
+  listener: production terminates TLS at the §17 line 7 ingress and
+  acknowledges that posture with the new `--tls-terminated-upstream`
+  flag (`LENNY_TLS_TERMINATED_UPSTREAM`). With neither dev mode nor the
+  acknowledgment the gateway exits with `LENNY_TLS_REQUIRED`. The chart
+  renders `--tls-terminated-upstream` whenever `global.devMode` is false
+  and `--dev-mode` otherwise; the tier-4 gateway harness sets the env so
+  the production-posture tests still start. Commit cited at F-17.4.6.
+
+### - [x] F-17.4.6 — Dev-mode guard rail #2 — repeated 60-second WARN log not implemented [High] — CLOSED
 
 Spec lines 268–269: "When `LENNY_DEV_MODE=true` is set, the gateway logs at `WARN`
 level on every startup: `WARNING: TLS disabled — dev mode active. Do not use in
@@ -31716,7 +31728,14 @@ returns nothing. Embedded Mode's `ProductionWarningBanner`
 (`pkg/embedded/stack/stack.go` line 34) prints once during `lenny up` and once again
 after readiness in `lifecycle.go` line 105; no ticker rebroadcasts it.
 
-### - [ ] F-17.4.7 — `~/.lenny/kms/master.key` soft-HSM is not actually used [High] — OPEN
+- **Resolution:** `pkg/gateway/devmode` carries the verbatim §17.4 line
+  269 `TLSDisabledWarning` and `StartWarnTicker(ctx, WarnInterval, logf)`,
+  which logs the warning immediately and re-broadcasts it every 60s. The
+  gateway starts the ticker whenever `--dev-mode` is set, beside the
+  existing dev-mode isolation warning. Closed with F-17.4.5 in the same
+  change.
+
+### - [x] F-17.4.7 — `~/.lenny/kms/master.key` soft-HSM is not actually used [High] — CLOSED
 
 Spec lines 163–166: "KMS | In-process soft-HSM (AES-256-GCM with a file-backed master
 key) | `~/.lenny/kms/master.key`; operators MUST NOT reuse this key in production."
@@ -31735,7 +31754,17 @@ This breaks the spec's "lenny down without `--purge` preserves state" guarantee
 (spec line 186): credentials encrypted at rest under one `lenny up` will not decrypt
 on the next `lenny up` because the KEK rotates.
 
-### - [ ] F-17.4.8 — Object-storage backend is in-memory, not local-filesystem [High] — OPEN
+- **Resolution:** New `kms.LoadOrCreateMasterKey` / `kms.NewLocalFromKeyFile`
+  (`pkg/kms/masterkey.go`) seed a `Local` provider from a persisted
+  0600 key file (generated on first use, O_EXCL against a create race,
+  short-key rejected rather than silently regenerated). The KMS
+  `providerflags` gain a `MasterKeyFile` option + `--kms-master-key-file`
+  / `LENNY_KMS_MASTER_KEY_FILE` flag; `Resolve` uses it for the local
+  provider (still forbidden in prod). The embedded stack passes
+  `paths.KMSMasterKey()` via `LENNY_KMS_MASTER_KEY_FILE`, so a DEK
+  wrapped before a restart unwraps after it. Closed with F-17.4.8.
+
+### - [x] F-17.4.8 — Object-storage backend is in-memory, not local-filesystem [High] — CLOSED
 
 Spec lines 165–166: "Object storage | Local filesystem (`~/.lenny/artifacts/`) | Same
 artifact-store interface as MinIO/S3."
@@ -31750,6 +31779,18 @@ No local-filesystem `blobstore.Store` implementation exists in the tree; the ava
 backends are `MemoryStore`, MinIO, S3, Azure, GCS. Uploads via
 `POST /v1/sessions/{id}/upload` therefore vanish on every `lenny down`, breaking the
 "lenny down preserves state" guarantee for artifacts.
+
+- **Resolution:** New `blobstore.FilesystemStore` (`pkg/blobstore/fsstore.go`)
+  implements `Store`, `Copier`, `Tombstoner`, `TenantPrefixDeleter`, and
+  `Eraser` (plus `DeleteBySession`/`Sweep`) over a `root/<tenant>/<object_type>/<session>/<part>/`
+  layout mirroring the §12.5 line 295 object key, with each path segment
+  URL-escaped and `.`/`..` rejected so a tenant id cannot traverse out of
+  root. The blobstore `providerflags` gain a `filesystem` provider +
+  `FilesystemRoot`; the gateway exposes `--object-storage-filesystem-root`
+  / `LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT`. The embedded stack selects it
+  via `LENNY_OBJECT_STORAGE_PROVIDER=filesystem` rooted at
+  `paths.Artifacts`, so uploads and snapshots survive a restart. Closed
+  with F-17.4.7.
 
 ### - [ ] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — DEFERRED
 

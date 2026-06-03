@@ -46,3 +46,56 @@ func TestGatewayArgsPassesBearerTrustKeyFile(t *testing.T) {
 		t.Errorf("-bearer-trust-hmac-key-file = %q, want %q", got, keyFile)
 	}
 }
+
+// envValue returns the value of the last KEY=VALUE entry for key, or ""
+// when absent. Last wins, matching exec's later-entry precedence.
+func envValue(env []string, key string) (string, bool) {
+	val, ok := "", false
+	for _, e := range env {
+		if strings.HasPrefix(e, key+"=") {
+			val, ok = strings.TrimPrefix(e, key+"="), true
+		}
+	}
+	return val, ok
+}
+
+// spec: §17.4 line 163 / F-17.4.7 — the embedded gateway is pointed at
+// the file-backed soft-HSM master key so encrypted state survives a
+// restart.
+func TestGatewayEnvPassesKMSMasterKeyFile_spec_17_4_163(t *testing.T) {
+	const path = "/home/alice/.lenny/kms/master.key"
+	env := gatewayEnv(gatewaySpec{KMSMasterKeyFile: path}, nil)
+	got, ok := envValue(env, "LENNY_KMS_MASTER_KEY_FILE")
+	if !ok || got != path {
+		t.Fatalf("LENNY_KMS_MASTER_KEY_FILE = %q (set=%v), want %q", got, ok, path)
+	}
+}
+
+// spec: §17.4 line 165 / F-17.4.8 — the embedded gateway selects the
+// local-filesystem object store rooted at the artifacts directory.
+func TestGatewayEnvSelectsFilesystemArtifactStore_spec_17_4_165(t *testing.T) {
+	const dir = "/home/alice/.lenny/artifacts"
+	env := gatewayEnv(gatewaySpec{ArtifactsDir: dir}, nil)
+	if got, ok := envValue(env, "LENNY_OBJECT_STORAGE_PROVIDER"); !ok || got != "filesystem" {
+		t.Fatalf("LENNY_OBJECT_STORAGE_PROVIDER = %q (set=%v), want filesystem", got, ok)
+	}
+	if got, ok := envValue(env, "LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT"); !ok || got != dir {
+		t.Fatalf("LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT = %q (set=%v), want %q", got, ok, dir)
+	}
+}
+
+// The dev-mode and embedded-mode gates are always present; the
+// persistence env vars are omitted when their spec fields are empty so a
+// non-embedded caller is unaffected.
+func TestGatewayEnvDefaults(t *testing.T) {
+	env := gatewayEnv(gatewaySpec{}, nil)
+	if got, ok := envValue(env, "LENNY_DEV_MODE"); !ok || got != "true" {
+		t.Fatalf("LENNY_DEV_MODE = %q (set=%v), want true", got, ok)
+	}
+	if _, ok := envValue(env, "LENNY_KMS_MASTER_KEY_FILE"); ok {
+		t.Error("LENNY_KMS_MASTER_KEY_FILE set without a key file")
+	}
+	if _, ok := envValue(env, "LENNY_OBJECT_STORAGE_PROVIDER"); ok {
+		t.Error("LENNY_OBJECT_STORAGE_PROVIDER set without an artifacts dir")
+	}
+}

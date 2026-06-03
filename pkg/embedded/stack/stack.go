@@ -236,13 +236,15 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// reads. Pointing the gateway at it lets a `lenny token print`
 	// bearer verify on the §10.2 Authorization header.
 	s.gwSpec = gatewaySpec{
-		BinPath:     gwBin,
-		HTTPAddr:    httpAddr,
-		PostgresDSN: dsn,
-		RedisURL:    redisURL,
-		Kubeconfig:  kubeconfig,
-		LogPath:     paths.Logs + "/gateway.log",
-		OIDCKeyFile: paths.OIDCKeyFile(),
+		BinPath:          gwBin,
+		HTTPAddr:         httpAddr,
+		PostgresDSN:      dsn,
+		RedisURL:         redisURL,
+		Kubeconfig:       kubeconfig,
+		LogPath:          paths.Logs + "/gateway.log",
+		OIDCKeyFile:      paths.OIDCKeyFile(),
+		KMSMasterKeyFile: paths.KMSMasterKey(),
+		ArtifactsDir:     paths.Artifacts,
 	}
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {

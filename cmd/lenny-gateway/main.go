@@ -142,6 +142,7 @@ import (
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
+	"github.com/lennylabs/lenny/pkg/gateway/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
@@ -299,6 +300,8 @@ func main() {
 		"§10.3 line 366 auth.oidc.clientId: the OIDC client registration whose audience the gateway checks. A §10.3 required platform key — outside --dev-mode an empty value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.clientId). Override via LENNY_OIDC_CLIENT_ID. F-10.3.14.")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
+	tlsTerminatedUpstream := flag.Bool("tls-terminated-upstream", envFlag("LENNY_TLS_TERMINATED_UPSTREAM"),
+		"§17.4 line 268 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.")
 	sloValidated := flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
 		"§16.5 line 623 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
 	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
@@ -717,6 +720,8 @@ func main() {
 		"§17.9.3 objectStorage.region: the AWS region for --object-storage-provider=s3. Empty falls back to the AWS SDK default chain (AWS_REGION). Override via LENNY_OBJECT_STORAGE_REGION. F-17.5.1.")
 	objectStorageAccountURL := flag.String("object-storage-account-url", os.Getenv("LENNY_OBJECT_STORAGE_ACCOUNT_URL"),
 		"§17.9.3 Azure Blob storage account URL (https://<account>.blob.core.windows.net) for --object-storage-provider=azure. Override via LENNY_OBJECT_STORAGE_ACCOUNT_URL. F-17.5.1.")
+	objectStorageFilesystemRoot := flag.String("object-storage-filesystem-root", os.Getenv("LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT"),
+		"§17.4 line 165 local-filesystem object-storage directory for --object-storage-provider=filesystem (e.g. ~/.lenny/artifacts/). Persists artifacts across a restart. Override via LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT. F-17.4.8.")
 	minioEndpoint := flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
 		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
 	minioAccessKey := flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
@@ -970,11 +975,28 @@ func main() {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 
+	// spec: §17.4 line 268 — dev-mode hard startup assertion. The
+	// gateway's own listener is plain HTTP; production terminates TLS at
+	// the ingress (the §17 line 7 Deployment+Service+Ingress topology)
+	// and acknowledges that posture with --tls-terminated-upstream. With
+	// neither dev mode nor that acknowledgment the gateway refuses to
+	// start so a misconfigured staging or production deployment cannot
+	// silently run without encryption. F-17.4.5.
+	if err := devmode.ResolveStartupGate(*devMode, *tlsTerminatedUpstream); err != nil {
+		log.Fatalf("lenny-gateway: LENNY_TLS_REQUIRED: %v", err)
+	}
+
 	// spec: §5.3 line 677 — in dev mode the default isolation profile
 	// falls back to runc. Log the mandated warning once at startup so an
 	// accidental production dev-mode install is visible in the logs.
 	if *devMode {
 		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
+		// spec: §17.4 line 269 — when dev mode relaxes TLS, log the
+		// warning at startup and re-broadcast it every minute while the
+		// process runs. F-17.4.6.
+		devmode.StartWarnTicker(context.Background(), devmode.WarnInterval, func(msg string) {
+			log.Printf("lenny-gateway: %s", msg)
+		})
 	}
 
 	// spec: §16.3 line 359 — install the process-wide OpenTelemetry
@@ -1260,6 +1282,7 @@ func main() {
 		Bucket:          *objectStorageBucket,
 		Region:          *objectStorageRegion,
 		AzureAccountURL: *objectStorageAccountURL,
+		FilesystemRoot:  *objectStorageFilesystemRoot,
 		MinIOEndpoint:   *minioEndpoint,
 		MinIOAccessKey:  *minioAccessKey,
 		MinIOSecretKey:  *minioSecretKey,

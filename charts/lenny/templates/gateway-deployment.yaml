@@ -475,6 +475,13 @@ spec:
             {{- end }}
             {{- if .Values.global.devMode }}
             - --dev-mode
+            {{- else }}
+            # §17.4 line 268 — the production Deployment+Service+Ingress
+            # topology (§17 line 7) terminates TLS at the ingress in front
+            # of the gateway's plain-HTTP listener. Acknowledge it so the
+            # dev-mode hard startup assertion passes outside dev mode.
+            # F-17.4.5.
+            - --tls-terminated-upstream
             {{- end }}
             {{- if .Values.features.llmProxy }}
             - --llm-proxy-addr=:{{ .Values.gateway.llmProxyPort }}

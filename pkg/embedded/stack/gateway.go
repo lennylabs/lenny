@@ -34,6 +34,17 @@ type gatewaySpec struct {
 	// Authorization header. Empty leaves the gateway on its Token
 	// Service signer alone.
 	OIDCKeyFile string
+	// KMSMasterKeyFile is the §17.4 file-backed soft-HSM master key
+	// (~/.lenny/kms/master.key). Pointing the gateway at it makes the
+	// local KEK survive a restart, so credentials encrypted under one
+	// `lenny up` still decrypt on the next — the §17.4 line 186 "lenny
+	// down without --purge preserves state" guarantee. F-17.4.7.
+	KMSMasterKeyFile string
+	// ArtifactsDir is the §17.4 local-filesystem object-storage root
+	// (~/.lenny/artifacts/). Pointing the gateway at it persists uploaded
+	// files and workspace snapshots across a restart instead of losing
+	// them with the in-memory store. F-17.4.8.
+	ArtifactsDir string
 }
 
 // startGateway launches the production gateway configured against the
@@ -49,8 +60,22 @@ type gatewaySpec struct {
 // verifier through --bearer-trust-hmac-key-file, so a bearer minted by
 // `lenny token print` verifies on the gateway's Authorization header.
 func startGateway(spec gatewaySpec) (*managedProcess, error) {
+	return startProcess(processSpec{
+		Name:    "gateway",
+		BinPath: spec.BinPath,
+		Args:    gatewayArgs(spec),
+		Env:     gatewayEnv(spec, os.Environ()),
+		LogPath: spec.LogPath,
+	})
+}
+
+// gatewayEnv builds the environment for the embedded gateway child
+// process by extending base (typically os.Environ()) with the §17.4
+// embedded-mode driver selectors. It is separated from startGateway so
+// the env construction is testable without launching a process.
+func gatewayEnv(spec gatewaySpec, base []string) []string {
 	env := append(
-		os.Environ(),
+		append([]string(nil), base...),
 		// LENNY_DEV_MODE is the §17.4 unified security-relaxation gate.
 		"LENNY_DEV_MODE=true",
 		"LENNY_POSTGRES_DSN="+spec.PostgresDSN,
@@ -60,16 +85,25 @@ func startGateway(spec gatewaySpec) (*managedProcess, error) {
 		// pick their embedded backends.
 		"LENNY_EMBEDDED_MODE=true",
 	)
+	if spec.KMSMasterKeyFile != "" {
+		// §17.4 line 163 file-backed soft-HSM: the local KEK seed loads
+		// from (or is generated into) this file so encrypted state
+		// outlives a restart. F-17.4.7.
+		env = append(env, "LENNY_KMS_MASTER_KEY_FILE="+spec.KMSMasterKeyFile)
+	}
+	if spec.ArtifactsDir != "" {
+		// §17.4 line 165 local-filesystem object storage: uploads and
+		// snapshots persist under this directory across a restart.
+		// F-17.4.8.
+		env = append(env,
+			"LENNY_OBJECT_STORAGE_PROVIDER=filesystem",
+			"LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT="+spec.ArtifactsDir,
+		)
+	}
 	if spec.Kubeconfig != "" {
 		env = append(env, "KUBECONFIG="+spec.Kubeconfig)
 	}
-	return startProcess(processSpec{
-		Name:    "gateway",
-		BinPath: spec.BinPath,
-		Args:    gatewayArgs(spec),
-		Env:     env,
-		LogPath: spec.LogPath,
-	})
+	return env
 }
 
 // gatewayArgs builds the command-line arguments for the embedded

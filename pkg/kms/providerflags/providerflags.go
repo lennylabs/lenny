@@ -48,6 +48,15 @@ type Options struct {
 	// spec: F-4.3.11 / F-17.5.2 — reject local in prod.
 	Environment string
 
+	// MasterKeyFile is the §17.4 file-backed soft-HSM master key path.
+	// When set with ProviderLocal, Resolve seeds the Local provider from
+	// this persisted key (creating it on first use) instead of a fresh
+	// per-process random seed, so envelope-encrypted state survives a
+	// restart — the §17.4 Embedded Mode "lenny down preserves state"
+	// guarantee. Empty keeps the zero-config random KEK. spec: §17.4
+	// line 163 / F-17.4.7.
+	MasterKeyFile string
+
 	// AliasToKey is the binary-level alias-to-KMS-key map shared
 	// across providers. The §4.9.1 lifecycle path adds tenant
 	// aliases through Provider.SetAlias after construction; this map
@@ -80,6 +89,12 @@ func Resolve(ctx context.Context, opts Options) (kms.Provider, error) {
 	}
 	switch prov {
 	case ProviderLocal:
+		// §17.4 line 163: a file-backed master key makes the local KEK
+		// survive a restart (Embedded Mode). Without one the seed is
+		// random per process, which is the zero-config dev/test posture.
+		if opts.MasterKeyFile != "" {
+			return kms.NewLocalFromKeyFile(opts.MasterKeyFile)
+		}
 		return kms.NewLocalRandom()
 	case ProviderAWS:
 		return resolveAWS(ctx, opts)
@@ -169,6 +184,13 @@ func Bind(fs *flag.FlagSet, env func(string) string, defaults Options) (*Options
 		def("LENNY_ENV", defaults.Environment),
 		"Deployment environment (dev | staging | prod). Production refuses "+
 			"to start with --kms-provider=local. Override via LENNY_ENV.")
+	fs.StringVar(&opts.MasterKeyFile, "kms-master-key-file",
+		def("LENNY_KMS_MASTER_KEY_FILE", defaults.MasterKeyFile),
+		"§17.4 line 163 file-backed soft-HSM master key path for "+
+			"--kms-provider=local. When set, the local KEK seed is loaded "+
+			"(or generated 0600 on first use) from this file so "+
+			"envelope-encrypted state survives a restart. Empty uses a "+
+			"random per-process seed. Override via LENNY_KMS_MASTER_KEY_FILE.")
 	fs.StringVar(&opts.AWSRegion, "kms-aws-region",
 		def("LENNY_KMS_AWS_REGION", defaults.AWSRegion),
 		"AWS region for --kms-provider=aws. Empty falls back to the AWS SDK default chain (AWS_REGION).")

@@ -40,6 +40,10 @@ const (
 	// ProviderMemory forces the process-local in-memory store. Dev
 	// only; nothing persists across a restart.
 	ProviderMemory = "memory"
+	// ProviderFilesystem is the §17.4 local-filesystem backend
+	// (pkg/blobstore.FilesystemStore). Embedded and Source modes use it
+	// so artifacts persist under a directory across a restart.
+	ProviderFilesystem = "filesystem"
 	// ProviderS3 is the AWS S3 backend (pkg/blobstore/s3).
 	ProviderS3 = "s3"
 	// ProviderGCS is the Google Cloud Storage backend (pkg/blobstore/gcs).
@@ -75,6 +79,10 @@ type Options struct {
 	// AzureAccountURL is the Azure Blob storage account URL
 	// (https://<account>.blob.core.windows.net) for ProviderAzure.
 	AzureAccountURL string
+
+	// FilesystemRoot is the §17.4 local-filesystem object-storage
+	// directory for ProviderFilesystem (e.g. ~/.lenny/artifacts/).
+	FilesystemRoot string
 
 	// MinIO connection fields, consumed by ProviderMinIO.
 	MinIOEndpoint  string
@@ -112,6 +120,13 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 		})
 	case ProviderMemory:
 		return blobstore.NewMemoryStore(nil), nil
+	case ProviderFilesystem:
+		// §17.4 line 165: the local-filesystem backend persists artifacts
+		// across a restart. The directory is created on first use.
+		if opts.FilesystemRoot == "" {
+			return nil, errors.New("blobstore/providerflags: objectStorage.provider=filesystem requires objectStorage.filesystemRoot")
+		}
+		return blobstore.NewFilesystemStore(opts.FilesystemRoot, nil)
 	case ProviderS3:
 		return resolveS3(ctx, opts)
 	case ProviderGCS:
@@ -119,7 +134,7 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 	case ProviderAzure:
 		return resolveAzure(opts)
 	default:
-		return nil, fmt.Errorf("blobstore/providerflags: unknown objectStorage.provider %q (want minio|s3|gcs|azure)", opts.Provider)
+		return nil, fmt.Errorf("blobstore/providerflags: unknown objectStorage.provider %q (want minio|memory|filesystem|s3|gcs|azure)", opts.Provider)
 	}
 }
 

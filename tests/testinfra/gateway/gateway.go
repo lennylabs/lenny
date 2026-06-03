@@ -97,6 +97,13 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	cmd := exec.Command(binary, append(baseArgs, extraArgs...)...)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
+	// §17.4 line 268: the harness emulates the production edge, where an
+	// ingress terminates TLS in front of the gateway's plain-HTTP
+	// listener. Acknowledge it so the dev-mode hard startup assertion
+	// passes for both the dev-mode and the production-posture tests. A
+	// test that wants the gate to fail sets LENNY_DEV_MODE/upstream
+	// itself. F-17.4.5.
+	cmd.Env = append(os.Environ(), "LENNY_TLS_TERMINATED_UPSTREAM=true")
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
 	// the gateway to exit within this window, the runtime sends
 	// SIGKILL and closes the inherited stdio pipes so cmd.Wait can

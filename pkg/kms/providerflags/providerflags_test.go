@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"path/filepath"
 	"testing"
 )
 
@@ -30,6 +31,42 @@ func TestResolveRejectsLocalInProduction(t *testing.T) {
 	}
 }
 
+// spec: §17.4 line 163 — a local provider with a master-key file is
+// seeded from the persisted key, so two Resolves over the same file
+// derive the same KEK (the property that lets state survive a restart).
+func TestResolveLocalWithMasterKeyFilePersists_spec_17_4_163(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kms", "master.key")
+	ctx := context.Background()
+	const alias = "platform:token-service-signing"
+
+	p1, err := Resolve(ctx, Options{Provider: ProviderLocal, MasterKeyFile: path})
+	if err != nil {
+		t.Fatalf("Resolve(local, file): %v", err)
+	}
+	dek := make([]byte, 32)
+	wrapped, err := p1.WrapDEK(ctx, alias, dek)
+	if err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+	p2, err := Resolve(ctx, Options{Provider: ProviderLocal, MasterKeyFile: path})
+	if err != nil {
+		t.Fatalf("second Resolve: %v", err)
+	}
+	if _, err := p2.UnwrapDEK(ctx, alias, wrapped); err != nil {
+		t.Fatalf("unwrap across restart: %v", err)
+	}
+}
+
+// spec: §17.4 line 163 — the file-backed master key is still rejected in
+// production; the persistence knob does not weaken the prod guard.
+func TestResolveRejectsLocalWithMasterKeyFileInProduction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "master.key")
+	_, err := Resolve(context.Background(), Options{Provider: ProviderLocal, Environment: "prod", MasterKeyFile: path})
+	if !errors.Is(err, ErrLocalForbidden) {
+		t.Fatalf("Resolve(local+file, prod) err=%v, want ErrLocalForbidden", err)
+	}
+}
+
 // spec: §17.5 — unknown providers fail loudly so a typo doesn't
 // silently fall back to local.
 func TestResolveRejectsUnknownProvider(t *testing.T) {
@@ -47,6 +84,7 @@ func TestBindRegistersFlags(t *testing.T) {
 	if err := fs.Parse([]string{
 		"--kms-provider=aws",
 		"--kms-aws-region=us-east-1",
+		"--kms-master-key-file=/var/lib/lenny/master.key",
 		"--kms-alias=platform:token-service-signing=alias/lenny/token-service",
 	}); err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -56,6 +94,9 @@ func TestBindRegistersFlags(t *testing.T) {
 	}
 	if opts.Provider != "aws" {
 		t.Errorf("Provider=%q, want aws", opts.Provider)
+	}
+	if opts.MasterKeyFile != "/var/lib/lenny/master.key" {
+		t.Errorf("MasterKeyFile=%q, want /var/lib/lenny/master.key", opts.MasterKeyFile)
 	}
 	if opts.AWSRegion != "us-east-1" {
 		t.Errorf("AWSRegion=%q, want us-east-1", opts.AWSRegion)

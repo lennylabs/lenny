@@ -35,6 +35,27 @@ func TestResolveMemoryProvider_spec_17_9_3(t *testing.T) {
 	}
 }
 
+// spec: §17.4 line 165 — provider=filesystem resolves to the
+// local-filesystem store rooted at the configured directory.
+func TestResolveFilesystemProvider_spec_17_4_165(t *testing.T) {
+	root := t.TempDir()
+	s, err := Resolve(context.Background(), Options{Provider: ProviderFilesystem, FilesystemRoot: root})
+	if err != nil {
+		t.Fatalf("Resolve(filesystem): %v", err)
+	}
+	if _, ok := s.(*blobstore.FilesystemStore); !ok {
+		t.Fatalf("provider=filesystem = %T, want *blobstore.FilesystemStore", s)
+	}
+}
+
+// spec: §17.4 line 165 — filesystem without a root is a hard error so a
+// misconfiguration fails startup rather than silently losing artifacts.
+func TestResolveFilesystemRequiresRoot_spec_17_4_165(t *testing.T) {
+	if _, err := Resolve(context.Background(), Options{Provider: ProviderFilesystem}); err == nil {
+		t.Fatal("provider=filesystem with no root unexpectedly succeeded")
+	}
+}
+
 // spec: §17.9.3 — the default/minio provider with a configured endpoint
 // resolves to the MinIO backend (the §17.1 self-managed posture).
 func TestResolveMinIOWhenEndpointSet_spec_17_9_3(t *testing.T) {
