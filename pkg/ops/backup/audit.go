@@ -118,7 +118,12 @@ func auditEventTypes() []string {
 		string(audit.EventRestorePreviewGenerated),
 		string(audit.EventRestoreStarted),
 		string(audit.EventRestoreResumed),
+		string(audit.EventRestoreShardCompleted),
+		string(audit.EventRestoreCompleted),
 		string(audit.EventRestoreFailed),
+		string(audit.EventGDPRBackupReconcileCompleted),
+		string(audit.EventGDPRBackupReconcileBlocked),
+		string(audit.EventGDPRErasureReconciledSuppressedByHold),
 		string(audit.EventLegalHoldLedgerConfirmedCurrentAt),
 	}
 }

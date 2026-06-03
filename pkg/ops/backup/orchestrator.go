@@ -69,6 +69,22 @@ type Config struct {
 	// enforcement (the MinIO half of the lines 4108-4111 deletion). A nil
 	// store leaves physical deletion to the daily retention Job.
 	ObjectStore ObjectDeleter
+	// Erasure runs the §25.11 step-6 post-restore GDPR erasure reconciler:
+	// the legal-hold ledger freshness gate plus the DeleteByUser /
+	// DeleteByTenant replay against the restored databases. A nil
+	// reconciler means GDPR erasure reconciliation is not configured for
+	// this deployment, so the step is a vacuous success and the gateway
+	// rolls without it. spec: §25.11 line 4147.
+	Erasure ErasureReconciler
+	// GatewayRestart triggers the §25.11 step-7 rolling restart of the
+	// gateway Deployment on a successful restore and reconcile, blocking
+	// until the rollout completes. A nil restarter means a single-process
+	// deployment with no gateway Deployment to roll; step 8 then releases
+	// the lock immediately. spec: §25.11 line 4148.
+	GatewayRestart GatewayRestarter
+	// Progress emits the §25.11 line 4196 operation_progressed event on
+	// each shard completion. A nil emitter drops it.
+	Progress RestoreProgressEmitter
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 	// NewID generates a backup/restore ID; nil uses a random hex id.
@@ -90,6 +106,9 @@ type Service struct {
 	throughput  int64
 	audit       AuditSink
 	objects     ObjectDeleter
+	erasure     ErasureReconciler
+	gatewayRoll GatewayRestarter
+	progress    RestoreProgressEmitter
 	now         func() time.Time
 	newID       func(prefix string) string
 }
@@ -129,6 +148,9 @@ func NewService(cfg Config) (*Service, error) {
 		throughput:  cfg.RestoreThroughputBps,
 		audit:       cfg.Audit,
 		objects:     cfg.ObjectStore,
+		erasure:     cfg.Erasure,
+		gatewayRoll: cfg.GatewayRestart,
+		progress:    cfg.Progress,
 		now:         now,
 		newID:       newID,
 	}, nil
@@ -609,6 +631,12 @@ func (s *Service) ExecuteRestore(ctx context.Context, req RestoreRequest) (*Rest
 		})
 		return nil, codedError(ErrCodeJobCreationFailed, "create restore Job: %v", err)
 	}
+	// Record the launched Job on the restore row so the §25.11 step-5-8
+	// completion reconciler can poll it. A persistence failure here is not
+	// fatal to the launch — the row is already running and a re-launch is
+	// idempotent — so it is reported only in the result.
+	restore.JobID = launched.JobID
+	_ = s.store.UpdateRestore(ctx, restore)
 	// spec: §25.11 line 4343 — a started restore is audited.
 	s.emitAudit(AuditEvent{
 		Type:      string(audit.EventRestoreStarted),
@@ -675,6 +703,7 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*Restore
 	r.Status = RestoreStatusRunning
 	r.FailedShard = ""
 	r.Error = ""
+	r.JobID = launched.JobID
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record resume: %v", err)
 	}

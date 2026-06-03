@@ -268,6 +268,30 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 			},
 		},
 		{
+			// spec: §25.11 lines 4146-4149 — the restore-completion driver
+			// polls every running restore's Job to completion and runs steps
+			// 5-8 (per-shard events, the post-restore GDPR erasure reconciler,
+			// the gateway rolling restart, and the restore:platform lock
+			// release). Leader-gated like the other cron jobs. In this
+			// single-process mode the Erasure and GatewayRestart seams are
+			// nil, so a restore that completes its shards rolls without an
+			// erasure replay and releases its lock immediately; a production
+			// lenny-ops supplies the §12.8 reconciler Job adapter and the
+			// gateway-Deployment patcher. F-17.3.5 / F-25.11.10.
+			Name:       "restore-complete",
+			Expression: "* * * * *",
+			Run: func(ctx context.Context) error {
+				advanced, err := svc.ReconcileRunningRestores(ctx)
+				if err != nil {
+					return err
+				}
+				if len(advanced) > 0 {
+					log.Printf("lenny-ops: restore-completion reconciler advanced %d restores", len(advanced))
+				}
+				return nil
+			},
+		},
+		{
 			// spec: §25.11 line 4309 — publish the
 			// lenny_backup_last_successful_timestamp{type} gauge so the
 			// BackupOverdue alert (line 4317) has a source. Leader-gated

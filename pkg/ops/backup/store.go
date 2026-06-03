@@ -54,6 +54,17 @@ type Store interface {
 	// GetRestore reads one ops_restore_state row. It returns ErrNotFound
 	// when no row of that ID exists.
 	GetRestore(ctx context.Context, id string) (RestoreState, error)
+	// ListRestores reads ops_restore_state rows matching filter, ordered
+	// newest-first by started_at. It backs the restore-completion
+	// reconciler that polls running restores to completion.
+	ListRestores(ctx context.Context, filter RestoreFilter) ([]RestoreState, error)
+}
+
+// RestoreFilter is the ListRestores query filter. A zero-value filter
+// matches every restore.
+type RestoreFilter struct {
+	// Status, when non-empty, restricts the listing to one restore status.
+	Status string
 }
 
 // MemStore is the in-memory §25.11 Store. It backs the unit tests and a
@@ -204,6 +215,27 @@ func (m *MemStore) GetRestore(_ context.Context, id string) (RestoreState, error
 		return RestoreState{}, ErrNotFound
 	}
 	return r, nil
+}
+
+// ListRestores implements Store. The result is ordered newest-first by
+// StartedAt, ties broken by ID descending so iteration is stable.
+func (m *MemStore) ListRestores(_ context.Context, filter RestoreFilter) ([]RestoreState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []RestoreState
+	for _, r := range m.restores {
+		if filter.Status != "" && r.Status != filter.Status {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out, nil
 }
 
 // pendingOlderThan returns the IDs of ops_backups rows still in

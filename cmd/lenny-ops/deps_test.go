@@ -71,6 +71,35 @@ func TestScheduledBackupsRespectScheduleEnabled_spec_25_11(t *testing.T) {
 	}
 }
 
+// spec: §25.11 lines 4146-4149 — the leader-only restore-completion
+// reconciler (steps 5-8) is registered as an every-minute cron job and
+// runs without error when no restore is in flight. F-17.3.5 / F-25.11.10.
+func TestRestoreCompleteJobWired_spec_25_11(t *testing.T) {
+	_, jobs := buildBackupService(false)
+	var found *struct {
+		expr string
+		run  func(context.Context) error
+	}
+	for _, j := range jobs {
+		if j.Name == "restore-complete" {
+			found = &struct {
+				expr string
+				run  func(context.Context) error
+			}{j.Expression, j.Run}
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("no restore-complete scheduled job registered")
+	}
+	if found.expr != "* * * * *" {
+		t.Errorf("restore-complete expression = %q, want every minute", found.expr)
+	}
+	if err := found.run(context.Background()); err != nil {
+		t.Errorf("restore-complete run with no in-flight restore: %v", err)
+	}
+}
+
 // spec: §25.11 line 4106 — "The schedule is stored in Postgres and
 // modifiable at runtime via PUT /v1/admin/backups/schedule." The cron
 // jobs expose ExpressionFunc so the evaluator fires on the stored cron,

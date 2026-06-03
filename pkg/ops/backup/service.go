@@ -55,7 +55,30 @@ const (
 	// §25.11 requires the operator's justification on every audited
 	// override.
 	ErrCodeJustificationRequired = "JUSTIFICATION_REQUIRED"
+	// ErrCodeRestoreErasureReconcile is the §25.11 step-6 abort code: the
+	// post-restore GDPR erasure reconciler failed (individual replay
+	// failure, Postgres unavailability mid-reconcile, enumeration error,
+	// or the legal-hold ledger freshness gate blocking replay). The
+	// restore is aborted without a gateway restart and the restore:platform
+	// lock is retained. spec: §25.11 line 4147, line 4334.
+	ErrCodeRestoreErasureReconcile = "RESTORE_ERASURE_RECONCILE_FAILED"
 )
+
+// §25.11 restore_failed failure_phase values (line 4147): the phase a
+// restore failed in, carried on the restore.failed audit event.
+const (
+	// FailurePhaseRestore is a per-shard pg_restore failure.
+	FailurePhaseRestore = "restore"
+	// FailurePhaseErasureReconcile is a post-restore GDPR erasure
+	// reconciler failure (step 6).
+	FailurePhaseErasureReconcile = "erasure_reconcile"
+)
+
+// BlockReasonLedgerStale is the §25.11 line 4147 restore.failed
+// block_reason carried when the erasure-reconcile failure was the
+// legal-hold ledger freshness gate firing (ledger restored in lockstep,
+// most recent write timestamp <= backupTakenAt).
+const BlockReasonLedgerStale = "legal_hold_ledger_stale"
 
 // scheduler is the §25.11 backup started_by value for a backup the
 // leader-elected cron evaluator created rather than an admin caller.
@@ -306,6 +329,12 @@ type RestoreState struct {
 	FailedShard        string                `json:"failedShard,omitempty"`
 	Error              string                `json:"error,omitempty"`
 
+	// JobID is the §25.11 restore Kubernetes Job the orchestrator launched.
+	// It is recorded so the restore-completion reconciler can poll the Job
+	// to completion and drive steps 5-8 (events, GDPR erasure reconciler,
+	// gateway restart, lock release). spec: §25.11 line 4145.
+	JobID string `json:"jobId,omitempty"`
+
 	// LedgerConfirmedAt is the §12.8 post-restore reconciler ledger
 	// freshness watermark recorded by ConfirmLegalHoldLedger. When set,
 	// the reconciler treats this timestamp as the authoritative
@@ -320,6 +349,21 @@ type RestoreState struct {
 	// LedgerConfirmedJustification carries the operator's justification
 	// for the confirmation, kept on the row alongside the audit event.
 	LedgerConfirmedJustification string `json:"ledgerConfirmedJustification,omitempty"`
+}
+
+// ShardResult is the outcome of one shard's pg_restore, reported by the
+// restore Job (or derived from the Job's success/failure by the
+// completion reconciler). It drives the §25.11 step-5 per-shard
+// restore_shard_completed events and the all-shards-completed vs
+// any-shard-failed branch.
+type ShardResult struct {
+	// Shard identifies the shard within the restore (a shard id, or
+	// "platform" for a single-shard deployment).
+	Shard string
+	// OK reports whether the shard's pg_restore succeeded.
+	OK bool
+	// Error carries the shard's failure detail when OK is false.
+	Error string
 }
 
 // ShardState is one shard's restore status within a RestoreState.
@@ -357,4 +401,19 @@ type BackupService interface {
 	// caller's identity and justification are recorded, and the
 	// legal_hold.ledger_confirmed_current_at audit event is emitted.
 	ConfirmLegalHoldLedger(ctx context.Context, restoreID, justification, caller string) (*RestoreState, error)
+	// CompleteRestore runs §25.11 Restore Execution steps 5-8 once the
+	// restore Job's shards have finished: it records the per-shard
+	// outcomes and emits the restore.shard_completed / restore.completed /
+	// restore.failed events, runs the post-restore GDPR erasure reconciler
+	// (the legal-hold ledger freshness gate plus the DeleteByUser /
+	// DeleteByTenant replay), patches the gateway Deployment to roll it on
+	// success, and releases the restore:platform lock. A reconciler block
+	// or failure aborts with RESTORE_ERASURE_RECONCILE_FAILED, holds the
+	// lock, and skips the gateway restart.
+	CompleteRestore(ctx context.Context, restoreID string, shards []ShardResult) (*RestoreState, error)
+	// ReconcileRunningRestores is the leader-only driver that polls every
+	// running restore's Job to completion and invokes CompleteRestore. A
+	// restore whose Job is still active is left untouched. It returns the
+	// restore IDs it advanced.
+	ReconcileRunningRestores(ctx context.Context) ([]string, error)
 }
