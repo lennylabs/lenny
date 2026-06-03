@@ -94,5 +94,14 @@ func (s *Store) Put(ctx context.Context, snap driftservice.Snapshot) error {
 	return err
 }
 
+// Delete removes the bootstrap_seed_snapshot row of the given id. §25.8
+// line 3551 deletes the target row on rollback; a DELETE that matches
+// zero rows (rollback during Preflight, when no target was written) is
+// not an error.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM bootstrap_seed_snapshot WHERE id=$1`, id)
+	return err
+}
+
 // Compile-time guard.
 var _ driftservice.SnapshotStore = (*Store)(nil)

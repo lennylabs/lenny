@@ -182,6 +182,13 @@ func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error
 	return c.do(ctx, http.MethodPost, c.baseURL, path, body, out)
 }
 
+// PutJSON issues an authenticated PUT with a JSON body and decodes the
+// response into out (which may be nil). The §25.8 config/registry apply
+// endpoints proxy through it.
+func (c *Client) PutJSON(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPut, c.baseURL, path, body, out)
+}
+
 // do is the shared request body for both single-replica calls (against
 // the ClusterIP) and per-replica fan-out calls (against a pod-IP base).
 func (c *Client) do(ctx context.Context, method, base, path string, body, out any) error {

@@ -235,6 +235,18 @@ func WriteError(w http.ResponseWriter, status int, code string, category ErrorCa
 	_ = json.NewEncoder(w).Encode(NewError(code, category, message))
 }
 
+// WriteErrorWithDetails writes the §25.2 canonical error envelope with a
+// structured details object (for example CONFIG_VALIDATION_FAILED's
+// details.errors list or UPGRADE_ROLLBACK_UNAVAILABLE's
+// details.requiresRestore flag). A nil details map omits the field.
+func WriteErrorWithDetails(w http.ResponseWriter, status int, code string, category ErrorCategory, message string, details map[string]any) {
+	resp := NewError(code, category, message)
+	resp.Error.Details = details
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // EtaMethod is the §25.2 method by which a progress ETA was produced.
 type EtaMethod string
 

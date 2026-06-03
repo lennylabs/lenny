@@ -15,6 +15,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
@@ -171,6 +172,57 @@ func gatewayAuthProbe(client *gateway.Client) opsservice.GatewayAuthProbe {
 // wraps a TokenSource failure with) rather than gateway reachability.
 func isTokenError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "gateway client: token:")
+}
+
+// gatewayConfigClient adapts the §25.4 gateway admin-API client to the
+// §25.8 configservice.GatewayConfig seam: it reads the gateway's
+// effective config and proxies a confirmed config apply. A nil client
+// yields a nil adapter so the config service is left unwired (404).
+//
+// spec: §25.8 Config Diff and Config Apply (lines 3567-3574).
+type gatewayConfigClient struct {
+	client *gateway.Client
+}
+
+// newGatewayConfigClient returns the §25.8 config adapter, or nil when no
+// gateway client is configured.
+func newGatewayConfigClient(client *gateway.Client) configservice.GatewayConfig {
+	if client == nil {
+		return nil
+	}
+	return gatewayConfigClient{client: client}
+}
+
+// GetConfig fetches GET /v1/admin/platform/config and flattens the
+// gateway's {config:[{key,value}]} list into a key→value map.
+func (g gatewayConfigClient) GetConfig(ctx context.Context) (map[string]any, error) {
+	var resp struct {
+		Config []struct {
+			Key   string `json:"key"`
+			Value any    `json:"value"`
+		} `json:"config"`
+	}
+	if err := g.client.Get(ctx, "/v1/admin/platform/config", &resp); err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(resp.Config))
+	for _, e := range resp.Config {
+		out[e.Key] = e.Value
+	}
+	return out, nil
+}
+
+// ApplyConfig proxies the confirmed change to the gateway's
+// PUT /v1/admin/platform/config and reports its restart verdict.
+func (g gatewayConfigClient) ApplyConfig(ctx context.Context, desired map[string]any) (bool, error) {
+	var resp struct {
+		RestartRequired bool `json:"restartRequired"`
+	}
+	if err := g.client.PutJSON(ctx, "/v1/admin/platform/config",
+		map[string]any{"config": desired}, &resp); err != nil {
+		return false, err
+	}
+	return resp.RestartRequired, nil
 }
 
 // gatewayMetrics is the Prometheus-backed adapter for the §25.4 gateway

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -42,6 +43,42 @@ type CheckResult struct {
 	UpgradeAvailable bool `json:"upgradeAvailable"`
 	// Manifest is the full §25.8 release manifest the channel advertised.
 	Manifest releasechannel.Manifest `json:"manifest"`
+	// Cached reports that this result was served from
+	// platform_upgrade_check_cache because the channel was unreachable at
+	// check time (§25.8 line 3413 Unreachable behavior).
+	Cached bool `json:"cached,omitempty"`
+	// CacheAge is the human-readable age of the cached response when
+	// Cached is true (for example "12m30s").
+	CacheAge string `json:"cacheAge,omitempty"`
+}
+
+// CachedCheck is one persisted §25.8 upgrade-check result. The cache
+// holds at most one row (the last successful check); a later successful
+// check replaces it. CheckedAt drives the cacheAge the unreachable path
+// reports.
+type CachedCheck struct {
+	// CheckedAt is when the cached check ran.
+	CheckedAt time.Time
+	// CurrentVersion is the running version recorded at check time.
+	CurrentVersion string
+	// Manifest is the release manifest the channel advertised.
+	Manifest releasechannel.Manifest
+}
+
+// CheckCache persists the §25.8 release-channel cache
+// (platform_upgrade_check_cache). lenny-ops supplies a Postgres-backed
+// implementation so a successful check survives a restart and an
+// air-gapped install can pre-populate the row; tests substitute an
+// in-memory cache. A nil cache disables caching: an unreachable channel
+// then returns 503 UPGRADE_CHANNEL_UNREACHABLE with no fallback.
+//
+// spec: §25.8 lines 3413-3414, 3598-3605.
+type CheckCache interface {
+	// Load returns the cached check. ok is false when the cache is empty
+	// (the cold-start condition).
+	Load(ctx context.Context) (cached CachedCheck, ok bool, err error)
+	// Save replaces the cached check with the latest successful result.
+	Save(ctx context.Context, cached CachedCheck) error
 }
 
 // Checker implements the §25.8 upgrade-check: it queries a release
@@ -57,6 +94,7 @@ type Checker struct {
 	emitter        events.EventEmitter
 	audit          AuditSink
 	gauge          AvailabilityGauge
+	cache          CheckCache
 	now            func() time.Time
 }
 
@@ -78,6 +116,10 @@ type CheckerOptions struct {
 	// Gauge sets the §16.5 lenny_platform_upgrade_available gauge. A nil
 	// setter is a no-op.
 	Gauge AvailabilityGauge
+	// Cache persists the §25.8 release-channel cache. A nil cache disables
+	// the cached-fallback path; an unreachable channel then returns
+	// UPGRADE_CHANNEL_UNREACHABLE.
+	Cache CheckCache
 	// Now supplies the current time; nil defaults to time.Now.
 	Now func() time.Time
 }
@@ -94,8 +136,39 @@ func NewChecker(opts CheckerOptions) *Checker {
 		emitter:        opts.Emitter,
 		audit:          opts.Audit,
 		gauge:          opts.Gauge,
+		cache:          opts.Cache,
 		now:            now,
 	}
+}
+
+// MemCheckCache is the in-process §25.8 release-channel cache used in
+// the single-process dev path and in tests. It is safe for concurrent
+// use and holds at most one cached check.
+type MemCheckCache struct {
+	mu     sync.Mutex
+	cached *CachedCheck
+}
+
+// NewMemCheckCache returns an empty in-memory check cache.
+func NewMemCheckCache() *MemCheckCache { return &MemCheckCache{} }
+
+// Load returns the cached check.
+func (m *MemCheckCache) Load(context.Context) (CachedCheck, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cached == nil {
+		return CachedCheck{}, false, nil
+	}
+	return *m.cached, true, nil
+}
+
+// Save records the cached check.
+func (m *MemCheckCache) Save(_ context.Context, cached CachedCheck) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := cached
+	m.cached = &cp
+	return nil
 }
 
 // Enabled reports whether a release channel is configured.
@@ -112,6 +185,14 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 	}
 	m, err := c.source.Latest(releasechannel.ChannelStable)
 	if err != nil {
+		// §25.8 line 3413 Unreachable behavior: serve the cached response
+		// with cached=true and a cacheAge when the channel is unreachable.
+		// A missing manifest and a transport error are both "unreachable"
+		// for the cache fallback; an empty cache returns the original error
+		// (the first-check 503 UPGRADE_CHANNEL_UNREACHABLE case).
+		if res, ok := c.cachedResult(ctx); ok {
+			return res, nil
+		}
 		return CheckResult{}, err
 	}
 	available := CompareSemver(m.Version, c.currentVersion) > 0
@@ -127,12 +208,52 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 	if available {
 		c.emitAvailable(ctx, m)
 	}
+	// §25.8 line 3414 Caching: a successful check refreshes the durable
+	// cache so a later unreachable check can fall back to it. A cache
+	// write failure is non-fatal — the live result still returns.
+	if c.cache != nil {
+		_ = c.cache.Save(ctx, CachedCheck{
+			CheckedAt:      c.now().UTC(),
+			CurrentVersion: c.currentVersion,
+			Manifest:       m,
+		})
+	}
 	return CheckResult{
 		CurrentVersion:   c.currentVersion,
 		AvailableVersion: m.Version,
 		UpgradeAvailable: available,
 		Manifest:         m,
 	}, nil
+}
+
+// cachedResult reads the durable cache and renders it as a CheckResult
+// with cached=true and a cacheAge measured from the cached CheckedAt.
+// ok is false when no cache is configured or the cache is empty, so the
+// caller falls through to the unreachable error.
+func (c *Checker) cachedResult(ctx context.Context) (CheckResult, bool) {
+	if c.cache == nil {
+		return CheckResult{}, false
+	}
+	cached, ok, err := c.cache.Load(ctx)
+	if err != nil || !ok {
+		return CheckResult{}, false
+	}
+	available := CompareSemver(cached.Manifest.Version, c.currentVersion) > 0
+	if c.gauge != nil {
+		c.gauge(available)
+	}
+	age := c.now().UTC().Sub(cached.CheckedAt).Round(time.Second)
+	if age < 0 {
+		age = 0
+	}
+	return CheckResult{
+		CurrentVersion:   c.currentVersion,
+		AvailableVersion: cached.Manifest.Version,
+		UpgradeAvailable: available,
+		Manifest:         cached.Manifest,
+		Cached:           true,
+		CacheAge:         age.String(),
+	}, true
 }
 
 // emitAvailable publishes the §16.6 platform_upgrade_available

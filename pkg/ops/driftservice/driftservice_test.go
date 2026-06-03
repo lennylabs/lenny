@@ -419,6 +419,74 @@ func (failingStore) Put(context.Context, driftservice.Snapshot) error {
 	return errors.New("postgres down")
 }
 
+func (failingStore) Delete(context.Context, string) error {
+	return errors.New("postgres down")
+}
+
+// seedTarget writes a target snapshot with the given upgrade id.
+func seedTarget(t *testing.T, store *driftservice.MemSnapshotStore, upgradeID string) {
+	t.Helper()
+	if err := store.Put(context.Background(), driftservice.Snapshot{
+		ID: driftservice.SnapshotTarget, DesiredState: map[string]any{"x": "1"},
+		Source: driftservice.SourceHelmValues, UpgradeID: upgradeID, WrittenAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+}
+
+// TestDeleteTargetSnapshot_Match_spec_25_8 covers §25.8 line 3551: a
+// rollback deletes the target snapshot whose upgrade_id matches.
+func TestDeleteTargetSnapshot_Match_spec_25_8(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	seedTarget(t, store, "upgrade-1")
+	svc := driftservice.NewService(store, fixedRunning{})
+	deleted, err := svc.DeleteTargetSnapshot(context.Background(), "upgrade-1")
+	if err != nil || !deleted {
+		t.Fatalf("DeleteTargetSnapshot = (%v, %v), want (true, nil)", deleted, err)
+	}
+	if _, ok, _ := store.Get(context.Background(), driftservice.SnapshotTarget); ok {
+		t.Fatalf("target snapshot still present after delete")
+	}
+}
+
+// TestDeleteTargetSnapshot_Mismatch_spec_25_8 covers that a rollback of
+// one upgrade does not clear a target written by another.
+func TestDeleteTargetSnapshot_Mismatch_spec_25_8(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	seedTarget(t, store, "upgrade-2")
+	svc := driftservice.NewService(store, fixedRunning{})
+	deleted, err := svc.DeleteTargetSnapshot(context.Background(), "upgrade-1")
+	if err != nil || deleted {
+		t.Fatalf("DeleteTargetSnapshot = (%v, %v), want (false, nil) on mismatch", deleted, err)
+	}
+	if _, ok, _ := store.Get(context.Background(), driftservice.SnapshotTarget); !ok {
+		t.Fatalf("mismatched target snapshot must remain")
+	}
+}
+
+// TestDeleteTargetSnapshot_NoTarget_spec_25_8 covers the rollback-during-
+// Preflight no-op: no target row exists, so the call deletes nothing.
+func TestDeleteTargetSnapshot_NoTarget_spec_25_8(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	svc := driftservice.NewService(store, fixedRunning{})
+	deleted, err := svc.DeleteTargetSnapshot(context.Background(), "upgrade-1")
+	if err != nil || deleted {
+		t.Fatalf("DeleteTargetSnapshot = (%v, %v), want (false, nil) with no target", deleted, err)
+	}
+}
+
+// TestDeleteTargetSnapshot_EmptyUpgradeIDMatchesAny_spec_25_8 covers that
+// a blank upgrade id deletes whatever target exists.
+func TestDeleteTargetSnapshot_EmptyUpgradeIDMatchesAny_spec_25_8(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	seedTarget(t, store, "upgrade-9")
+	svc := driftservice.NewService(store, fixedRunning{})
+	deleted, err := svc.DeleteTargetSnapshot(context.Background(), "")
+	if err != nil || !deleted {
+		t.Fatalf("DeleteTargetSnapshot = (%v, %v), want (true, nil) for blank id", deleted, err)
+	}
+}
+
 // countingRunningState is a RunningStateReader that counts how many
 // times the underlying source was read.
 type countingRunningState struct {

@@ -75,6 +75,10 @@ func (failingStore) Put(context.Context, driftservice.Snapshot) error {
 	return errStoreDown
 }
 
+func (failingStore) Delete(context.Context, string) error {
+	return errStoreDown
+}
+
 var errStoreDown = httpTestError("postgres down")
 
 // httpTestError is a string-typed error so the test doesn't need the

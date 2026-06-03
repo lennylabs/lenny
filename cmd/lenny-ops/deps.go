@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	backupk8slauncher "github.com/lennylabs/lenny/pkg/ops/backup/k8slauncher"
 	backuppgstore "github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -36,11 +37,13 @@ import (
 	escpgstore "github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
 	escredisstore "github.com/lennylabs/lenny/pkg/ops/escalation/redisstore"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
+	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
@@ -1033,24 +1036,34 @@ func upgradeAuditSink(ev upgradeservice.AuditEvent) {
 		ev.Type, ev.OperationID, ev.Actor, ev.OldPhase, ev.NewPhase, ev.TargetVersion, ev.Detail)
 }
 
-// buildUpgradeService constructs the §25.8 platform-upgrade orchestrator
-// over an in-memory singleton store. The orchestrator drives the §25.8
-// phase machine (pkg/upgrade) and emits the §16.7 platform-upgrade
-// lifecycle audit events plus the §16.6 upgrade_progressed operational
-// events through the shared lenny-ops EventEmitter. The Postgres-backed
-// platform_upgrade_state store (§25.4 line 1492) is the documented
-// durable seam; the in-memory store survives within a single leader
-// term, which is the v1 single-process posture other ops subsystems
-// share.
+// buildUpgradeService constructs the §25.8 platform-upgrade orchestrator.
+// The orchestrator drives the §25.8 phase machine (pkg/upgrade) and emits
+// the §16.7 platform-upgrade lifecycle audit events plus the §16.6
+// upgrade_progressed operational events through the shared lenny-ops
+// EventEmitter. When a Postgres pool is available the upgrade state is
+// persisted to the platform_upgrade_state singleton (§25.4 line 1492) so
+// a paused upgrade survives a leader-election handoff (§25.8 line 3560);
+// in single-process degraded mode (no pool) it falls back to the
+// in-memory store, which survives within a single leader term. The
+// drift cleaner deletes the §25.10 target snapshot when a rollback
+// reaches RolledBack (§25.8 line 3551).
 //
 // spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
 // consumer).
-func buildUpgradeService(emitter events.EventEmitter) *upgradeservice.Service {
-	return upgradeservice.New(upgradeservice.Options{
-		Store:   upgradeservice.NewMemoryStore(),
+func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter) *upgradeservice.Service {
+	var store upgradeservice.Store = upgradeservice.NewMemoryStore()
+	if pool != nil {
+		store = upgradepg.New(pool)
+	}
+	opts := upgradeservice.Options{
+		Store:   store,
 		Emitter: emitter,
 		Audit:   upgradeAuditSink,
-	})
+	}
+	if drift != nil {
+		opts.DriftCleaner = drift
+	}
+	return upgradeservice.New(opts)
 }
 
 // buildUpgradeChecker constructs the §25.8 upgrade-check client. It reads
@@ -1062,7 +1075,7 @@ func buildUpgradeService(emitter events.EventEmitter) *upgradeservice.Service {
 // GET /v1/admin/platform/upgrade-check reports the channel disabled.
 //
 // spec: §25.8 Upgrade Check, Air-Gapped Support.
-func buildUpgradeChecker(manifestPath, currentVersion string, emitter events.EventEmitter) *upgradeservice.Checker {
+func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool, emitter events.EventEmitter) *upgradeservice.Checker {
 	var source releasechannel.Source
 	if manifestPath != "" {
 		manifestBytes, err := os.ReadFile(manifestPath)
@@ -1077,13 +1090,71 @@ func buildUpgradeChecker(manifestPath, currentVersion string, emitter events.Eve
 			releasechannel.ChannelStable: stable,
 		})
 	}
+	// §25.8 line 3414 Caching: a successful check writes the Postgres
+	// cache so an unreachable channel serves cached data (line 3413); in
+	// single-process degraded mode the in-memory cache survives one term.
+	var cache upgradeservice.CheckCache = upgradeservice.NewMemCheckCache()
+	if pool != nil {
+		cache = upgradepg.NewCheckCache(pool)
+	}
 	return upgradeservice.NewChecker(upgradeservice.CheckerOptions{
 		Source:         source,
 		CurrentVersion: currentVersion,
 		Emitter:        emitter,
 		Audit:          upgradeAuditSink,
 		Gauge:          setPlatformUpgradeAvailable,
+		Cache:          cache,
 	})
+}
+
+// certExpirySeconds is the lenny_cert_expiry_seconds gauge the §16.5
+// CertExpiryImminent alert reads (min(lenny_cert_expiry_seconds) < 3600).
+// The §25.8 cert-manager health source sets it per certificate on each
+// self-health probe, so the alert fires on the same signal the certManager
+// health component reports (§25.8 line 3461). A negative value (an expired
+// certificate) clamps to 0 so the alert reads "expiring now".
+//
+// spec: §25.8 line 3461, §16.5 CertExpiryImminent.
+var certExpirySeconds = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_cert_expiry_seconds",
+		Help: "Seconds until a cert-manager-managed certificate expires, per certificate.",
+	}, []string{"certificate"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// setCertExpiry records a certificate's remaining lifetime on the
+// lenny_cert_expiry_seconds gauge. The §25.8 cert-manager source calls it
+// for each certificate it lists.
+func setCertExpiry(certificate string, seconds float64) {
+	if certExpirySeconds == nil {
+		return
+	}
+	if seconds < 0 {
+		seconds = 0
+	}
+	certExpirySeconds.WithLabelValues(certificate).Set(seconds)
+}
+
+// buildPlatformConfigService constructs the §25.8 config diff/apply
+// service over the gateway admin-API client. A nil gateway client (no
+// cluster / dev mode) yields a nil service so the config routes stay
+// unmapped. The v1 service ships without a schema validator: the
+// generated pkg/chart/values validator is the documented follow-on
+// (§17 line 655); until then any well-formed config is accepted, and the
+// gateway remains the authoritative validator on apply.
+//
+// spec: §25.8 Config Diff and Config Apply (lines 3566-3574).
+func buildPlatformConfigService(gw *gateway.Client) *configservice.Service {
+	cfgClient := newGatewayConfigClient(gw)
+	if cfgClient == nil {
+		return nil
+	}
+	return configservice.New(configservice.Options{Gateway: cfgClient})
 }
 
 // platformVersionDrift is the §25.8 lenny_platform_version_drift gauge:

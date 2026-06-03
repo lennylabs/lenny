@@ -116,6 +116,10 @@ type SnapshotStore interface {
 	Get(ctx context.Context, id string) (snap Snapshot, ok bool, err error)
 	// Put writes (replaces) the snapshot row.
 	Put(ctx context.Context, snap Snapshot) error
+	// Delete removes the snapshot row of the given id. Deleting a row that
+	// does not exist is not an error (it returns nil), so the §25.8
+	// rollback-during-Preflight no-op (no target was written) is harmless.
+	Delete(ctx context.Context, id string) error
 }
 
 // MemSnapshotStore is the §25.10 in-memory desired-state snapshot store.
@@ -143,6 +147,15 @@ func (s *MemSnapshotStore) Put(_ context.Context, snap Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byID[snap.ID] = snap
+	return nil
+}
+
+// Delete removes the snapshot row of the given id. Deleting an absent
+// row is a no-op.
+func (s *MemSnapshotStore) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.byID, id)
 	return nil
 }
 
@@ -548,6 +561,35 @@ func (s *Service) SnapshotFreshness(ctx context.Context) (SnapshotFreshness, err
 		AgeSeconds: age,
 		WrittenAt:  snap.WrittenAt,
 	}, nil
+}
+
+// DeleteTargetSnapshot removes the §25.10 target snapshot row when a
+// §25.8 upgrade rolls back (spec line 3551). The row is deleted only
+// when its upgrade_id matches the rolled-back upgrade, so a rollback of
+// one upgrade never clears a target written by a concurrent or later
+// one. A blank upgradeID matches any target (the orchestrator passes the
+// upgrade's operation id). When no target row exists — rollback during
+// Preflight, before OpsRoll writes the target — the call is a no-op and
+// returns false. After deletion, GET /v1/admin/drift?against=target
+// returns DRIFT_NO_TARGET_SNAPSHOT until a new upgrade starts.
+//
+// spec: §25.8 lines 3551-3554; §25.10 (target snapshot lifecycle).
+func (s *Service) DeleteTargetSnapshot(ctx context.Context, upgradeID string) (bool, error) {
+	snap, ok, err := s.snapshots.Get(ctx, SnapshotTarget)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if upgradeID != "" && snap.UpgradeID != "" && snap.UpgradeID != upgradeID {
+		// The target belongs to a different upgrade; leave it in place.
+		return false, nil
+	}
+	if err := s.snapshots.Delete(ctx, SnapshotTarget); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // applyStaleness fills the §25.10 snapshot-staleness fields on the

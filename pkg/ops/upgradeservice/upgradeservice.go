@@ -220,11 +220,22 @@ type AuditEvent struct {
 // matching pkg/ops/backup and pkg/ops/driftservice.
 type AuditSink func(AuditEvent)
 
+// DriftCleaner deletes the §25.10 target snapshot when a §25.8 upgrade
+// rolls back (spec line 3551). The driftservice.Service satisfies it.
+// A nil cleaner skips the cleanup, the cold-start posture for a
+// deployment whose drift service is not wired.
+type DriftCleaner interface {
+	// DeleteTargetSnapshot removes the target snapshot written for the
+	// given upgrade id. It returns whether a row was deleted.
+	DeleteTargetSnapshot(ctx context.Context, upgradeID string) (bool, error)
+}
+
 // Service is the §25.8 platform-upgrade orchestrator.
 type Service struct {
 	store   Store
 	emitter upgrade.Emitter // §16.6 upgrade_progressed operational events; nil is a no-op
 	audit   AuditSink       // §16.7 audit events; nil drops
+	drift   DriftCleaner    // §25.10 target-snapshot cleanup on rollback; nil skips
 	now     func() time.Time
 	newID   func() string
 
@@ -240,6 +251,9 @@ type Options struct {
 	Emitter upgrade.Emitter
 	// Audit receives §16.7 platform-upgrade audit events. A nil sink drops.
 	Audit AuditSink
+	// DriftCleaner deletes the §25.10 target snapshot on rollback (§25.8
+	// line 3551). A nil cleaner skips the cleanup.
+	DriftCleaner DriftCleaner
 	// Now supplies the current time; nil defaults to time.Now.
 	Now func() time.Time
 	// NewID mints the operation id; nil defaults to `upgrade-<uuid>`.
@@ -260,7 +274,7 @@ func New(opts Options) *Service {
 	if newID == nil {
 		newID = func() string { return "upgrade-" + uuid.NewString() }
 	}
-	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, now: now, newID: newID}
+	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftCleaner, now: now, newID: newID}
 }
 
 // StartRequest is the POST /v1/admin/platform/upgrade/start body.
@@ -394,7 +408,7 @@ func (s *Service) Pause(ctx context.Context, reason string) (State, error) {
 //
 // spec: §25.8 POST /v1/admin/platform/upgrade/rollback, §10.5 CanRollBack.
 func (s *Service) Rollback(ctx context.Context, reason string) (State, error) {
-	return s.transition(ctx, func(st *State) error {
+	st, err := s.transition(ctx, func(st *State) error {
 		if upgrade.IsTerminal(st.Phase) {
 			return ErrUpgradeTerminal
 		}
@@ -420,6 +434,17 @@ func (s *Service) Rollback(ctx context.Context, reason string) (State, error) {
 		})
 		return nil
 	})
+	if err != nil {
+		return State{}, err
+	}
+	// §25.8 line 3551: a completed rollback deletes the §25.10 target
+	// snapshot for this upgrade. A rollback during Preflight (no target
+	// written) deletes zero rows; a cleanup failure is non-fatal — the
+	// rollback itself succeeded and the drift reconciler re-checks later.
+	if s.drift != nil && st.Phase == upgrade.RolledBack {
+		_, _ = s.drift.DeleteTargetSnapshot(ctx, st.OperationID)
+	}
+	return st, nil
 }
 
 // Verify records a successful post-upgrade health verification at the

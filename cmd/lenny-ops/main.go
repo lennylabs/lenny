@@ -47,6 +47,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -386,12 +387,21 @@ func main() {
 	// surface (the K8s probe reports unreachable) and skips leader
 	// election — a single-process degraded mode for local development.
 	var clientset *kubernetes.Clientset
+	var dynClient dynamic.Interface
 	if cfg, err := ctrlconfig.GetConfig(); err != nil {
 		log.Printf("lenny-ops: no Kubernetes config (%v); running without leader election", err)
 	} else if cs, err := kubernetes.NewForConfig(cfg); err != nil {
 		log.Printf("lenny-ops: build Kubernetes clientset: %v; running without leader election", err)
 	} else {
 		clientset = cs
+		// The §25.8 cert-manager probe reads the cert-manager Certificate
+		// CRs through a dynamic client; a build failure leaves the probe
+		// unconfigured (reports healthy) rather than failing startup.
+		if dc, err := dynamic.NewForConfig(cfg); err != nil {
+			log.Printf("lenny-ops: build Kubernetes dynamic client: %v; cert-manager probe disabled", err)
+		} else {
+			dynClient = dc
+		}
 	}
 
 	// The §25.4 dependency probes feed the readiness signal and the
@@ -504,6 +514,20 @@ func main() {
 		opsservice.CheckMemoryPressure: opsservice.MemoryPressureCheck(*memoryLimitBytes),
 		opsservice.CheckGatewayAuth:    opsservice.GatewayAuthCheck(gatewayAuthProbe(gwClient)),
 	}
+	// §25.8 cert-manager probe: reports the worst Lenny-managed certificate
+	// expiry state. A nil source (no dynamic client) reports healthy with a
+	// "not configured" note, matching the deployer-provided-Secret model
+	// where there are no cert-manager Certificate resources to probe.
+	if dynClient != nil {
+		selfChecks[opsservice.CheckCertManager] = opsservice.CertManagerCheck(
+			certManagerSource{
+				client:    dynClient,
+				namespace: envOr("POD_NAMESPACE", *leaderElectNS),
+				onExpiry:  setCertExpiry,
+			})
+	} else {
+		selfChecks[opsservice.CheckCertManager] = opsservice.CertManagerCheck(nil)
+	}
 
 	// §25.4 lines 2206-2212: the in-memory (Tier-3) lock policy. The mode
 	// is validated at startup so an operator typo fails fast rather than
@@ -601,8 +625,8 @@ func main() {
 	// events; the checker queries the operator-supplied release manifest
 	// and emits platform_upgrade_available. The platform-upgrade-check
 	// cron (§25.4 line 1338) runs leader-only alongside the backup jobs.
-	upgradeSvc := buildUpgradeService(opsEmitter)
-	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, opsEmitter)
+	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter)
+	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter)
 	// §25.8 live upgrade gauges (phase + duration): a collector that reads
 	// the orchestrator's singleton at scrape time so the gauges advance
 	// without a background goroutine. Registered on the default registry
@@ -614,6 +638,10 @@ func main() {
 	versionAggregator := buildVersionAggregator(
 		buildVersion, *gatewayURL, gatewayHTTP, pgPool, clientset,
 		envOr("POD_NAMESPACE", *leaderElectNS))
+	// §25.8 config diff/apply: the operator surface over the gateway's own
+	// config API. Wired only when a gateway client exists; otherwise the
+	// routes stay unmapped (404).
+	platformConfigSvc := buildPlatformConfigService(gwClient)
 	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator))
 
 	// §25.4 idempotency: durable when Postgres is available, in-memory in
@@ -837,6 +865,7 @@ func main() {
 		Upgrade:           upgradeSvc,
 		UpgradeChecker:    upgradeChecker,
 		VersionAggregator: versionAggregator,
+		PlatformConfig:    platformConfigSvc,
 		PodLogs:           podLogs,
 		Production:        *production,
 		DiagnosticsAudit:  buildDiagnosticsAudit(*diagnosticsAuditRate),

@@ -22,6 +22,7 @@ const (
 	CheckK8sAPI         = "k8s_api"
 	CheckMemoryPressure = "memory_pressure"
 	CheckGatewayAuth    = "gateway_auth"
+	CheckCertManager    = "cert_manager"
 )
 
 // §25.4 self-health thresholds. The table in §25.4 "Self-Health

@@ -199,6 +199,81 @@ func TestRollbackHonorsPointOfNoReturn(t *testing.T) {
 	}
 }
 
+// recordingCleaner records DeleteTargetSnapshot calls.
+type recordingCleaner struct {
+	calls   []string
+	deleted bool
+}
+
+func (c *recordingCleaner) DeleteTargetSnapshot(_ context.Context, upgradeID string) (bool, error) {
+	c.calls = append(c.calls, upgradeID)
+	return c.deleted, nil
+}
+
+// TestRollbackDeletesTargetSnapshot_spec_25_8 covers §25.8 line 3551: a
+// completed rollback deletes the §25.10 target snapshot for the upgrade,
+// passing the upgrade's operation id to the drift cleaner.
+func TestRollbackDeletesTargetSnapshot_spec_25_8(t *testing.T) {
+	ctx := context.Background()
+	cleaner := &recordingCleaner{deleted: true}
+	svc := upgradeservice.New(upgradeservice.Options{
+		Store:        upgradeservice.NewMemoryStore(),
+		DriftCleaner: cleaner,
+		Now:          func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		NewID:        func() string { return "upgrade-xyz" },
+	})
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	_, _ = svc.Proceed(ctx) // OpsRoll (rollbackable)
+	if _, err := svc.Rollback(ctx, "regression"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if len(cleaner.calls) != 1 || cleaner.calls[0] != "upgrade-xyz" {
+		t.Fatalf("cleaner calls = %v, want one call with operation id", cleaner.calls)
+	}
+}
+
+// TestRollbackDuringPreflightStillCallsCleaner_spec_25_8 covers the
+// no-op path: a rollback during Preflight (no target written) still
+// invokes the cleaner, which deletes zero rows.
+func TestRollbackDuringPreflightStillCallsCleaner_spec_25_8(t *testing.T) {
+	ctx := context.Background()
+	cleaner := &recordingCleaner{deleted: false}
+	svc := upgradeservice.New(upgradeservice.Options{
+		Store:        upgradeservice.NewMemoryStore(),
+		DriftCleaner: cleaner,
+		NewID:        func() string { return "upgrade-pre" },
+	})
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	if _, err := svc.Rollback(ctx, "abort"); err != nil {
+		t.Fatalf("Rollback during Preflight: %v", err)
+	}
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("cleaner calls = %v, want one call", cleaner.calls)
+	}
+}
+
+// TestRollbackFailureSkipsCleaner_spec_25_8 covers that a rejected
+// rollback (past the point of no return) does not invoke the cleaner.
+func TestRollbackFailureSkipsCleaner_spec_25_8(t *testing.T) {
+	ctx := context.Background()
+	cleaner := &recordingCleaner{}
+	svc := upgradeservice.New(upgradeservice.Options{
+		Store:        upgradeservice.NewMemoryStore(),
+		DriftCleaner: cleaner,
+		NewID:        func() string { return "upgrade-late" },
+	})
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	for i := 0; i < 3; i++ {
+		_, _ = svc.Proceed(ctx) // → SchemaMigration (not rollbackable)
+	}
+	if _, err := svc.Rollback(ctx, "too late"); err != upgradeservice.ErrNotRollbackable {
+		t.Fatalf("Rollback err = %v, want ErrNotRollbackable", err)
+	}
+	if len(cleaner.calls) != 0 {
+		t.Fatalf("cleaner must not be called on a rejected rollback, got %v", cleaner.calls)
+	}
+}
+
 // spec: §25.8 — pause marks the upgrade awaiting proceed and audits
 // platform.upgrade_paused; the next proceed clears it.
 func TestPauseAndResumeViaProceed(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
+	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -83,6 +84,7 @@ type Server struct {
 	upgrade            *upgradeservice.Service
 	upgradeChecker     *upgradeservice.Checker
 	versionAggregator  *upgradeservice.VersionAggregator
+	platformConfig     *configservice.Service
 	podLogs            PodLogReader
 	production         bool
 
@@ -192,6 +194,11 @@ type Options struct {
 	// aggregator queries the per-component version sources lenny-ops can
 	// reach and flags drift from the running build.
 	VersionAggregator *upgradeservice.VersionAggregator
+	// PlatformConfig backs the §25.8 GET /v1/admin/platform/config/diff and
+	// PUT /v1/admin/platform/config endpoints. When non-nil the Server
+	// registers the routes; when nil they are unmapped (404), the
+	// cold-start posture for a deployment without a gateway config client.
+	PlatformConfig *configservice.Service
 	// PodLogs, when non-nil, backs the §25.4 GET
 	// /v1/admin/logs/pods/{namespace}/{name} log-proxy endpoint with the
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
@@ -279,6 +286,7 @@ func New(opts Options) *Server {
 		upgrade:            opts.Upgrade,
 		upgradeChecker:     opts.UpgradeChecker,
 		versionAggregator:  opts.VersionAggregator,
+		platformConfig:     opts.PlatformConfig,
 		podLogs:            opts.PodLogs,
 		production:         opts.Production,
 		inventory:          opts.Inventory,
@@ -337,6 +345,7 @@ func New(opts Options) *Server {
 	s.registerEventSubscriptionRoutes()
 	s.registerReleaseChannelRoutes()
 	s.registerPlatformUpgradeRoutes()
+	s.registerPlatformConfigRoutes()
 	s.registerOperationsRoutes()
 	s.registerMeRoutes()
 	// §25.12: the MCP management server exposes the §25 operability
