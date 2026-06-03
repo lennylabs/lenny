@@ -352,6 +352,66 @@ func (m *MCPClient) SendMessage(ctx context.Context, sessionID, content string) 
 	return res.Text(), nil
 }
 
+// MCPSessionState is the decoded `{sessionId, state}` result the
+// session-management MCP tools (lenny/interrupt_session,
+// lenny/cancel_session) return. Accepted and Reason are populated only by
+// the §27.6 best-effort cancel path; the interrupt and authoritative
+// cancel paths leave them zero.
+type MCPSessionState struct {
+	// SessionID is the affected session.
+	SessionID string `json:"sessionId"`
+	// State is the session state after the transition.
+	State string `json:"state"`
+	// Accepted is true when a §27.6 best-effort cancel hint was accepted
+	// for an already-gone or terminal session.
+	Accepted bool `json:"accepted,omitempty"`
+	// Reason echoes the §27.6 best-effort hint reason when one was sent.
+	Reason string `json:"reason,omitempty"`
+}
+
+// InterruptSession invokes the lenny/interrupt_session MCP tool,
+// transitioning a running session to suspended. It is the MCP transport
+// the §24.17 `lenny session interrupt` command uses. The §24.17 command
+// table names the mapping `lenny/interrupt`; the canonical §15.2 line
+// 1295 tool catalog registers it as `interrupt_session`, which is the
+// name the gateway answers.
+func (m *MCPClient) InterruptSession(ctx context.Context, sessionID string) (*MCPSessionState, error) {
+	return m.sessionStateTool(ctx, "lenny/interrupt_session", map[string]any{"sessionId": sessionID})
+}
+
+// CancelSession invokes the §15.2 lenny/cancel_session MCP tool, marking
+// the session cancelled. It is the MCP transport the §24.17 `lenny
+// session cancel` command uses. A non-empty reason carries the §27.6
+// best-effort cancel hint (for example playground_client_closed).
+func (m *MCPClient) CancelSession(ctx context.Context, sessionID, reason string) (*MCPSessionState, error) {
+	args := map[string]any{"sessionId": sessionID}
+	if reason != "" {
+		args["reason"] = reason
+	}
+	return m.sessionStateTool(ctx, "lenny/cancel_session", args)
+}
+
+// sessionStateTool calls a session-management tool that returns the
+// shared `{sessionId, state}` envelope and decodes it. A tool-level
+// failure (IsError) is surfaced as an error so the CLI can exit non-zero.
+func (m *MCPClient) sessionStateTool(ctx context.Context, name string, args map[string]any) (*MCPSessionState, error) {
+	res, err := m.CallTool(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	if res.IsError {
+		if env := res.LennyError(); env != nil {
+			return nil, env
+		}
+		return nil, fmt.Errorf("lenny: %s reported a failure: %s", name, res.Text())
+	}
+	var out MCPSessionState
+	if err := json.Unmarshal([]byte(res.Text()), &out); err != nil {
+		return nil, fmt.Errorf("lenny: decode %s result: %w", name, err)
+	}
+	return &out, nil
+}
+
 // ensureInitialized runs the initialize handshake once. A second call
 // after a successful handshake is a no-op.
 func (m *MCPClient) ensureInitialized(ctx context.Context) error {

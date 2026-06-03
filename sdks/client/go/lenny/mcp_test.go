@@ -96,6 +96,27 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 		}
 		_ = json.Unmarshal(params.Arguments, &args)
 		writeRPC(w, req.ID, toolResultMap("echo: "+args.Content, false), nil)
+	case "lenny/interrupt_session":
+		var args struct {
+			SessionID string `json:"sessionId"`
+		}
+		_ = json.Unmarshal(params.Arguments, &args)
+		if args.SessionID == "" {
+			writeRPC(w, req.ID, toolResultMap("sessionId is required", true), nil)
+			return
+		}
+		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"`+args.SessionID+`","state":"suspended"}`, false), nil)
+	case "lenny/cancel_session":
+		var args struct {
+			SessionID string `json:"sessionId"`
+			Reason    string `json:"reason"`
+		}
+		_ = json.Unmarshal(params.Arguments, &args)
+		if args.Reason != "" {
+			writeRPC(w, req.ID, toolResultMap(`{"sessionId":"`+args.SessionID+`","state":"cancelled","reason":"`+args.Reason+`"}`, false), nil)
+			return
+		}
+		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"`+args.SessionID+`","state":"cancelled"}`, false), nil)
 	default:
 		writeRPC(w, req.ID, nil, &MCPError{Code: -32601, Message: "unknown tool " + params.Name})
 	}
@@ -220,6 +241,62 @@ func TestMCPCallToolDrivesSession(t *testing.T) {
 	}
 	if reply != "echo: hello" {
 		t.Errorf("send_message reply: got %q, want %q", reply, "echo: hello")
+	}
+}
+
+// TestMCPInterruptSession_spec_24_17_216 confirms the §24.17 `lenny
+// session interrupt` MCP transport drives lenny/interrupt_session and
+// decodes the {sessionId, state} envelope. F-24.17.5.
+func TestMCPInterruptSession_spec_24_17_216(t *testing.T) {
+	ts := httptest.NewServer(mcpStub(t))
+	defer ts.Close()
+	m := mcpTestClient(t, ts.URL)
+
+	res, err := m.InterruptSession(context.Background(), "sess_x")
+	if err != nil {
+		t.Fatalf("InterruptSession: %v", err)
+	}
+	if res.SessionID != "sess_x" || res.State != "suspended" {
+		t.Errorf("interrupt result: got %+v, want sessionId=sess_x state=suspended", res)
+	}
+}
+
+// TestMCPCancelSession_spec_24_17_217 confirms the §24.17 `lenny session
+// cancel` MCP transport drives lenny/cancel_session, marks the session
+// cancelled, and threads the optional §27.6 best-effort reason. F-24.17.5.
+func TestMCPCancelSession_spec_24_17_217(t *testing.T) {
+	ts := httptest.NewServer(mcpStub(t))
+	defer ts.Close()
+	m := mcpTestClient(t, ts.URL)
+	ctx := context.Background()
+
+	res, err := m.CancelSession(ctx, "sess_y", "")
+	if err != nil {
+		t.Fatalf("CancelSession: %v", err)
+	}
+	if res.SessionID != "sess_y" || res.State != "cancelled" {
+		t.Errorf("cancel result: got %+v, want sessionId=sess_y state=cancelled", res)
+	}
+
+	withReason, err := m.CancelSession(ctx, "sess_z", "playground_client_closed")
+	if err != nil {
+		t.Fatalf("CancelSession with reason: %v", err)
+	}
+	if withReason.Reason != "playground_client_closed" {
+		t.Errorf("cancel reason: got %q, want playground_client_closed", withReason.Reason)
+	}
+}
+
+// TestMCPInterruptSessionToolFailureIsError_spec_24_17_216 confirms a
+// tool-level failure (empty sessionId) surfaces as a Go error rather than
+// a silent success. F-24.17.5.
+func TestMCPInterruptSessionToolFailureIsError_spec_24_17_216(t *testing.T) {
+	ts := httptest.NewServer(mcpStub(t))
+	defer ts.Close()
+	m := mcpTestClient(t, ts.URL)
+
+	if _, err := m.InterruptSession(context.Background(), ""); err == nil {
+		t.Fatal("InterruptSession with empty sessionId returned no error")
 	}
 }
 

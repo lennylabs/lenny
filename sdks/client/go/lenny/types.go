@@ -2,7 +2,10 @@
 
 package lenny
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // State is a §7.1 session lifecycle state. The gateway returns it as
 // the `state` field of every session envelope.
@@ -223,6 +226,39 @@ type TranscriptOptions struct {
 	AfterSeq uint64
 	// Limit caps the page size. Zero leaves the gateway default in
 	// place.
+	Limit int
+}
+
+// LogEntry is one entry of the §15.1 line 673 GET /v1/sessions/{id}/logs
+// page. It mirrors the event-store envelope items the gateway returns:
+// Data is the already-marshalled log payload kept as a RawMessage.
+type LogEntry struct {
+	Seq       uint64          `json:"seq"`
+	SessionID string          `json:"sessionId"`
+	Type      string          `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Timestamp string          `json:"timestamp"`
+}
+
+// LogsPage is one page of GET /v1/sessions/{id}/logs in the §15.1 line
+// 1228 canonical `{items, cursor, hasMore}` envelope.
+type LogsPage struct {
+	Items   []LogEntry `json:"items"`
+	Cursor  string     `json:"cursor"`
+	HasMore bool       `json:"hasMore"`
+}
+
+// LogsOptions narrows GET /v1/sessions/{id}/logs.
+type LogsOptions struct {
+	// Since returns only entries at or after this time — the §24.17
+	// `--since` flag. The zero value applies no time filter.
+	Since time.Time
+
+	// Cursor carries the pagination cursor from a prior page's Cursor.
+	// An empty cursor requests the first page.
+	Cursor string
+
+	// Limit caps the page size. Zero leaves the gateway default in place.
 	Limit int
 }
 

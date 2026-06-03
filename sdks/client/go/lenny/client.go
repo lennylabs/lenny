@@ -306,6 +306,33 @@ func (c *Client) GetTranscript(ctx context.Context, id string, opt TranscriptOpt
 	return &out, nil
 }
 
+// SessionLogs calls GET /v1/sessions/{id}/logs and returns one page of
+// the §15.1 line 673 session-log envelope. It is the REST transport the
+// §24.17 `lenny session logs` command uses. The SDK requests the JSON
+// list view (the do helper sets Accept: application/json) rather than the
+// SSE tail. Pass LogsOptions.Since to apply the §24.17 `--since` filter.
+func (c *Client) SessionLogs(ctx context.Context, id string, opt LogsOptions, opts ...RequestOption) (*LogsPage, error) {
+	q := url.Values{}
+	if !opt.Since.IsZero() {
+		q.Set("since", opt.Since.UTC().Format(time.RFC3339))
+	}
+	if opt.Cursor != "" {
+		q.Set("cursor", opt.Cursor)
+	}
+	if opt.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opt.Limit))
+	}
+	path := "/v1/sessions/" + url.PathEscape(id) + "/logs"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out LogsPage
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ApproveToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/approve
 // to resolve a pending tool-use interaction the agent is blocked on.
 //
