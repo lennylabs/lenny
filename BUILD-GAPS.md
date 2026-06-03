@@ -25062,6 +25062,24 @@ returned, so clients written against the spec cannot interoperate. The
 omission also defeats the entire `dryRun + If-Match` pre-validation flow
 the spec promises (lines 1202–1203).
 
+**Partial progress (2026-06-03, aa418bb8):** The reusable mechanism now
+exists at `pkg/gateway/admin/etag.go` — `formatETag` (quoted-decimal
+version), `parseIfMatch` (RFC 7232 §2.3: strong quoted-decimal only,
+rejects `W/`/`*`/unquoted/non-decimal), and `enforceIfMatch` (428
+`ETAG_REQUIRED` / 400 `VALIDATION_ERROR` / 412 `ETAG_MISMATCH` with
+`details.currentEtag`). It is wired into the **pool** resource (F-24.4.3):
+GET + list carry the ETag, `PUT /v1/admin/pools/{name}` enforces it,
+success returns the bumped tag. The remaining ~13 admin PUT handlers
+(tenants, runtimes, users, experiments, environments, connectors,
+external-adapters, delegation-policies, custom-roles, credential-pools,
+rbac-config, elicitation-content-integrity, warm-count) and their GET
+ETag exposure still need the same treatment, and the non-pool stores need
+a `version`/generation column (pools already have `Generation`). The
+helper makes each a mechanical apply; the volume (137 admin-PUT test sites
+to update) makes the platform-wide rollout a dedicated multi-batch effort.
+Per-resource manifestations F-9.3.13 (connectors) and F-24.4.3 (pools, now
+closed) trace here.
+
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 
 **Potential overlap** (confidence: medium) — F-24.4.2 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
@@ -36560,7 +36578,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### Findings
 
-### - [ ] F-24.4.1 — (High) — None of the §24.4 pool commands are wired in `lenny-ctl`; the entire `admin pools` group is missing [Medium] — OPEN
+### - [ ] F-24.4.1 — (High) — None of the §24.4 pool commands are wired in `lenny-ctl`; the entire `admin pools` group is missing [Medium] — DEFERRED
 
 **Spec (R1–R17):** §24.4 lists 18 normative pool subcommands.
 
@@ -36572,9 +36590,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Every operator workflow in §24.4 — listing pools, drain, upgrade orchestration, sync-status diagnostics, the `resume-reconciliation` recovery path the `PoolScalingAdmissionStuck` runbook names — is non-functional through `lenny-ctl`. Operators have no documented surface except direct REST calls, which is doubly broken because most of the underlying REST endpoints are also absent (F2). The §24.4 row 14 (`resume-reconciliation`) is the operator's only documented escape hatch for a pool stuck in the §4.6.3 admission-denied abort state; its absence converts that recovery path into a leader-restart workaround.
 
+**Deferred (2026-06-03):** The §24.4 CLI group maps onto the §24.4 REST surface, which is now ~10/18 mounted (CRUD, `set-warm-count`, `sync-status`, `resume-reconciliation`, the `tenant-access` trio). The remaining eight subcommands the group must cover — `upgrade {start,proceed,pause,resume,rollback,status}`, `drain`, `exit-bootstrap`, `circuit-breaker` — have no endpoints (F-24.4.2/F-24.4.6). Wiring the CLI group now would ship half a `admin pools` command set whose upgrade/drain verbs `404`. Building the whole group cohesively is gated on the §24.4 endpoint build, which needs the pool upgrade state machine (overlaps F-10.5.1) plus the drain / SDK-warm-circuit-breaker / bootstrap-override subsystems. Deferred to that endpoint batch so the CLI lands against a complete REST surface.
+
 ---
 
-### - [ ] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — OPEN
+### - [ ] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — DEFERRED
 
 **Potential overlap** (confidence: medium) — F-15.1.3 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
 
@@ -36617,9 +36637,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** The §24.4 surface is largely a documented future — the spec describes operator workflows whose REST endpoints do not exist on the gateway. This is the third-most-cited admin surface in the §16.5 alert catalog (`PoolConfigDrift`, `PoolScalingAdmissionStuck`, `RuntimeUpgradeStuck` all reference §24.4 operations as the operator clear path) and the §17.7 runbook catalog (`pool-upgrade-rollback.md`, `runtime-upgrade-stuck.md`). When a pool gets stuck in the §4.6.3 admission-denied abort state today, the only available recoveries are the leader-restart and the Postgres config-change paths from §4.6.3; the operator clear path is documented but unbuilt.
 
+**Deferred (2026-06-03):** Re-scoped against the current tree — `warm-count`, `sync-status`, and `resume-reconciliation` now mount (prior batches + this one), and the canonical pool `PUT` now enforces `If-Match` (F-24.4.3). Eight endpoints remain: `POST .../drain`, `PUT .../circuit-breaker`, the five `POST .../upgrade/{start,proceed,pause,resume,rollback}`, `GET .../upgrade-status`, and `DELETE .../bootstrap-override`. The upgrade cluster needs the pool upgrade state machine + persistence (overlaps F-10.5.1, still OPEN); `drain` needs a drain-state store wired into session placement (the `lenny_pool_draining_sessions_total` gauge has no incrementer); `circuit-breaker` needs the §6.1 `SDKWarmCircuitBreaker` override path; `bootstrap-override` needs the PSC bootstrap-convergence field. Each is a subsystem rather than a thin handler, so the eight are deferred to a dedicated §24.4 endpoint batch (which also unblocks F-24.4.1/F-24.4.6 and the remaining F-24.4.4 catalog entries).
+
 ---
 
-### - [ ] F-24.4.3 — (High) — `PUT /v1/admin/pools/{name}` does not enforce `If-Match`, contrary to §15.1:795 [Medium] — OPEN
+### - [x] F-24.4.3 — (High) — `PUT /v1/admin/pools/{name}` does not enforce `If-Match`, contrary to §15.1:795 [Medium] — CLOSED
 
 **Spec (R18):** §15.1:795 explicitly requires `If-Match` on `PUT /v1/admin/pools/{name}`. §15.1:800 and §15.1:801 require it on `/warm-count` and `/circuit-breaker` (which are absent per F2). Optimistic-concurrency guarding is the spec's defense against the standard read-modify-write race on a multi-replica gateway.
 
@@ -36630,9 +36652,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** A two-replica gateway can lose updates: two operators issuing concurrent `PUT /v1/admin/pools/{name}` on the same pool with different field-mutations against the same stored row will have one update overwrite the other without warning. The spec's §15.1 concurrency contract for pool updates is broken. The same gap propagates forward to `warm-count` and `circuit-breaker` once those endpoints are added (F2).
 
+**Resolution:** Closed by aa418bb8. Added the reusable ETag mechanism `pkg/gateway/admin/etag.go` (`formatETag`/`parseIfMatch`/`enforceIfMatch`) and applied it to the pool resource: `GET /v1/admin/pools/{name}` and the list response carry the ETag (the quoted decimal `pool_config_generation`, which is the §15.1 per-resource `version`); `PUT /v1/admin/pools/{name}` now reads the current pool, returns `404` for a missing pool ahead of the precondition, then enforces `If-Match` per §15.1 lines 1207-1211 (`428 ETAG_REQUIRED` absent, `400 VALIDATION_ERROR` malformed/`W/`/`*`, `412 ETAG_MISMATCH` with `details.currentEtag` stale) and returns the incremented ETag on success. The §25.17 `/warm-count` confirm-based sub-route keeps its own flow (its §25.17 worked example posts no `If-Match`). The helper is the shared core the remaining admin PUTs reuse — see the platform-wide F-15.1.2 progress note.
+
 ---
 
-### - [ ] F-24.4.4 — (Medium) — Admin tool catalog omits 13 §24.4 operations, breaking §25.14 agent discovery [Medium] — OPEN
+### - [x] F-24.4.4 — (Medium) — Admin tool catalog omits 13 §24.4 operations, breaking §25.14 agent discovery [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.3.3, F-24.5.5 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
 
@@ -36643,6 +36667,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The following §24.4 operations are not registered: `admin.set_pool_warm_count`, `admin.exit_pool_bootstrap`, `admin.upgrade_pool_start`, `admin.upgrade_pool_proceed`, `admin.upgrade_pool_pause`, `admin.upgrade_pool_resume`, `admin.upgrade_pool_rollback`, `admin.upgrade_pool_status`, `admin.drain_pool`, `admin.pool_sync_status`, `admin.resume_pool_reconciliation`, `admin.pool_circuit_breaker`, `admin.grant_pool_tenant_access`, `admin.list_pool_tenant_access`, `admin.revoke_pool_tenant_access`.
 
 **Impact:** AI DevOps agents (§25.14 consumers) enumerating their authorized tools cannot discover the pool action surface — even the tenant-access trio, which *is* implemented at the REST layer. The catalog drifts further from the routes mounted at `tenants.go:463-465`. This is closely parallel to the runtime-side finding F3 in `/tmp/lenny-build-gaps/24.3.md` and reproduces the same gap.
+
+**Resolution:** Closed by aa418bb8. The tenant-access trio was already cataloged (prior batch). Added the three remaining mounted pool actions — `admin.set_pool_warm_count`, `admin.pool_sync_status`, `admin.resume_pool_reconciliation` — to `adminToolCatalog()` so the §25.14 discovery surface advertises every invocable pool route. Per rule O, the catalog mirrors the OpenAPI document / mounted routes (a discovered tool must resolve to a real endpoint, never a 404); the seven remaining tool entries (`exit_pool_bootstrap`, `drain_pool`, `pool_circuit_breaker`, and the five `upgrade_pool_*`) register here when F-24.4.2 mounts their endpoints. The original "13 omitted" count predated the warm-count/sync-status/resume-reconciliation endpoints landing.
 
 ---
 
@@ -36663,7 +36689,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.4.6 — (Medium) — `lenny-ctl admin pools` would still 404 even if added today: drain/warm-count/sync-status/resume-reconciliation/circuit-breaker/upgrade/bootstrap-override routes are unmounted [Medium] — OPEN
+### - [ ] F-24.4.6 — (Medium) — `lenny-ctl admin pools` would still 404 even if added today: drain/warm-count/sync-status/resume-reconciliation/circuit-breaker/upgrade/bootstrap-override routes are unmounted [Medium] — DEFERRED
 
 **Spec (R3, R4, R5–R10, R11–R14):** §24.4 names ten distinct REST endpoints (F2 table); only `tenant-access` is present beyond bare CRUD.
 
@@ -36674,9 +36700,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Even if F1 is closed (CLI added), the operator would receive `404` for every action subcommand. The §24.4 surface is unbuilt at both the CLI and the HTTP layer.
 
+**Deferred (2026-06-03):** Partially stale. The pool block in `tenants.go` now mounts `warm-count`, `resume-reconciliation` (behind a `WithReconciliationResumer` seam), and `sync-status` (with a `WithCRDGenerationReader` seam) in addition to CRUD + the `tenant-access` trio, and the canonical `PUT` enforces `If-Match` (F-24.4.3). The routes that still 404 — `drain`, `circuit-breaker`, the `upgrade/*` cluster, `upgrade-status`, `bootstrap-override` — are exactly the eight tracked in F-24.4.2; the seam pattern for adding them is established (`WithReconciliationResumer`/`WithCRDGenerationReader` are the template). Deferred with F-24.4.2 to the dedicated §24.4 endpoint batch.
+
 ---
 
-### - [ ] F-24.4.7 — (Medium) — PSC has no public `ResetRetries(pool)`; even after F2's `resume-reconciliation` endpoint is added there is no way to clear the counter through the controller process boundary [Medium] — OPEN
+### - [ ] F-24.4.7 — (Medium) — PSC has no public `ResetRetries(pool)`; even after F2's `resume-reconciliation` endpoint is added there is no way to clear the counter through the controller process boundary [Medium] — DEFERRED
 
 **Spec (R13, §4.6.3):** "An operator invokes `POST /v1/admin/pools/{name}/resume-reconciliation` (which resets the in-memory denial counter for that pool without requiring a configuration change)."
 
@@ -36687,9 +36715,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** A faithful build of `POST /v1/admin/pools/{name}/resume-reconciliation` against the current PSC has no internal target to call. The endpoint cannot be a thin handler over an existing method; it requires either a new RPC, a new event channel, or persistence of the denial counter outside the controller process. The §4.6.3 abort-state contract ("an operator can clear it") is currently satisfied only by the documented leader-restart fallback.
 
+**Deferred (2026-06-03):** The structural prerequisites the finding named are now built: `Reconciler.ResumeReconciliation(namespace, name) int` is public (`controller.go`), `admissionRetryState.resumePool` exists, and `AdminResumer` structurally adapts the Reconciler to the gateway `ReconciliationResumer` interface; `handleResumeReconciliation` is the thin handler over it (registered when a resumer is wired). What remains is the cross-process channel: gateway and PSC are always separate binaries (`cmd/lenny-gateway` vs `cmd/lenny-pool-scaling-controller`; grep confirms no in-process combination), so `AdminResumer` has no live Reconciler to bind and no production `ReconciliationResumer` is wired. A faithful split-deployment fix needs an RPC `ReconciliationResumer` impl or a Postgres/Redis resume-epoch the PSC polls each tick (distinct from the §4.6.2 condition-(a) config-generation change, which must not be conflated per the spec's "without requiring a configuration change"). That is a dedicated subsystem; the §4.6.3 condition-(b) leader-restart fallback covers operators until it lands. No prior-batch F-ID blocks this — it is its own build.
+
 ---
 
-### - [ ] F-24.4.8 — (Medium) — `GET /v1/admin/pools/{name}/sync-status` has no datasource: no `pool_config_generation` mirror exists in the gateway [Medium] — OPEN
+### - [x] F-24.4.8 — (Medium) — `GET /v1/admin/pools/{name}/sync-status` has no datasource: no `pool_config_generation` mirror exists in the gateway [Medium] — CLOSED
 
 **Spec (R12, §15.1:798):** "Report CRD reconciliation state: `postgresGeneration`, `crdGeneration`, `lastReconciledAt`, `lagSeconds`, `inSync`."
 
@@ -36699,6 +36729,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The PoolScalingController writes the CRD generation but does not publish a Postgres mirror the gateway can serve from a thin handler.
 
 **Impact:** Even if F1/F2/F6 are closed, the gateway has no source of truth for the four sync-status fields. The endpoint's contract requires a new write boundary (PSC publishes the tuple to a gateway-readable table or in-process cache), or a gateway-side Kubernetes API client that pulls the CRD's annotation alongside the Postgres `pool_config_generation` column on every request.
+
+**Resolution:** Verify-closed (rule O); the headline claim is stale. `poolstore.Pool.Generation` (`pkg/gateway/poolstore/poolstore.go:109`) is exactly the gateway-readable Postgres `pool_config_generation` mirror — it starts at 1 and is bumped on every `Update`/`SoftDelete` (the §4.6.2 counter and the §15.1 ETag version are the same column). `handleSyncStatus` → `buildSyncStatus` already serves all five fields: `postgresGeneration` from the mirror, and `crdGeneration`/`lastReconciledAt`/`lagSeconds`/`inSync` from the `CRDGenerationReader` seam (covered by `TestSyncStatusEndpointReportsSynced…`/`…PendingWhenGenerationsDiverge…`/`…UnknownWithoutReader…`). Without a reader wired the handler degrades to the Postgres-only dev posture (CRD fields zero) rather than failing. The remaining follow-on — a production `CRDGenerationReader` backed by a gateway K8s informer in `cmd/lenny-gateway` — is deployment wiring over the existing seam, not a missing datasource.
 
 ---
 
