@@ -15716,6 +15716,19 @@ Also missing:
 - The `lenny_gateway_token_usage_anomaly_total` counter §11.2 specifies for direct-mode anomaly detection has no implementation (grep returned 0 hits across `pkg/`).
 - The "final cumulative token usage … written to Postgres as an authoritative value" on session completion is not done — `recordSessionCompleted` does not write a token total anywhere.
 
+**Partial progress (commit `725c5e6c`, F-17.7.5).** The operator-facing
+`POST /v1/admin/quota/reconcile` endpoint and `lenny-ctl admin quota
+reconcile` CLI now exist, registered behind a `QuotaReconciler` seam
+(`pkg/gateway/admin/quota.go`). The seam is the exact insertion point for
+this finding's MAX-rule reconciliation (`MAX(postgres_checkpoint,
+in_memory_counter)`): a `QuotaReconciler` implementation backed by the
+still-missing Postgres token-usage checkpoint store satisfies the
+interface and the route reconciles for real. Until then the endpoint
+answers 503 `QUOTA_RECONCILE_UNAVAILABLE`. The checkpoint table, the
+`quotaSyncIntervalSeconds`-driven checkpoint goroutine, the session-
+completion final write, and `lenny_gateway_token_usage_anomaly_total`
+remain unbuilt — this finding stays OPEN.
+
 ### - [x] F-11.2.5 — `delegation_tree_budget` Postgres table and the §11.2 crash-recovery reconstruction loop are not implemented [High] — CLOSED
 
 Spec §11.2 "Delegation budget counters included in Postgres checkpoint" and "Crash Recovery for Delegation Budget Counters" jointly require: per-tree `maxTreeSize`, `maxTokenBudget`, `maxTreeMemoryBytes` rows in the `delegation_tree_budget` table, written every `quotaSyncIntervalSeconds`; on Redis recovery, `max(postgres_checkpoint, live)` reconstruction; an irrecoverable tree moved to `awaiting_client_action` with reason `BUDGET_STATE_UNRECOVERABLE`; emission of `lenny_delegation_budget_reconstruction_total`.
@@ -33620,7 +33633,7 @@ inside each file but does not cross-check alert slugs against filenames.
 
 **Resolution.** 18 alert slugs in `pkg/alerting/rules/rules.go` renamed to the existing filenames (e.g., `postgres-replication-lag` → `postgres-failover`, `gateway-no-healthy-replicas` → `gateway-replica-failure`, `etcd-unavailable` → `etcd-operations`, `credential-compromised` → `credential-revocation`). 8 stub runbooks authored for slugs without a near match (`sandboxclaim-guard-unavailable`, `audit-redaction-receipt-missing`, `otlp-plaintext-egress-detected`, `ops-admin-api-plaintext-detected`, `backup-reconcile-blocked`, `ops-lock-split-brain`, `artifact-replication-residency-violation`, `legal-hold-escrow-residency-violation`). `tests/tier8_chaos/runbook-map.yaml` extended to map each new alert-driven runbook to its closest chaos scenario. The slug-resolution lint test in `tests/tier11_docs/runbooks_test.go` now passes with the §17.7 baseline allowlist reduced from 26 to 0 alert-driven entries; only the burn-rate-alert slugs (procedural, per §16.5) remain on the allowlist.
 
-### - [ ] F-17.7.5 — (High). `lenny-ctl` lacks the `admin pools`, `admin sessions`, `admin quota`, `migrate`, and `preflight` subcommands the §17.7 runbooks invoke [Medium] — OPEN
+### - [x] F-17.7.5 — (High). `lenny-ctl` lacks the `admin pools`, `admin sessions`, `admin quota`, `migrate`, and `preflight` subcommands the §17.7 runbooks invoke [Medium] — CLOSED
 
 §17.7 runbooks repeatedly invoke `lenny-ctl` commands the binary does
 not expose. The §24 command reference (`spec/24_lenny-ctl-command-
@@ -33666,6 +33679,24 @@ not found" wall on the most common remediation step. Path A discovery
 gives an agent a runbook whose `<!-- access: lenny-ctl -->` block fails
 to execute. The runbook catalog promises automation that the CLI does
 not deliver.
+
+**Resolution (commit `725c5e6c`).** Evidence was largely stale: `admin
+pools` (list/get/create/update/delete/drain/sync-status/resume-
+reconciliation), `admin sessions get|force-terminate`, `migrate
+status|down`, and top-level `preflight` already shipped. This batch added
+the two that were still missing: `admin pools set-warm-count --pool
+--min [--dry-run]` (→ the existing `PUT /v1/admin/pools/{name}/warm-count`,
+§24.4 line 63) and `admin quota reconcile (--all-tenants | --tenant
+<id>)` (→ a new `POST /v1/admin/quota/reconcile`, §24.6 line 99 / §15.1
+line 879). The reconcile endpoint is registered unconditionally behind a
+`QuotaReconciler` seam; with no Postgres token-usage checkpoint wired
+(F-11.2.4) it answers 503 `QUOTA_RECONCILE_UNAVAILABLE`, the same
+unavailable-seam convention drift-reconcile uses, so the CLI command
+reaches a real endpoint instead of a "command not found" wall. Two
+runbooks invoking non-spec'd verbs were corrected: workspace-seal-stuck
+(`admin sessions fail-sealed` → `force-terminate`) and
+redis-sentinel-failover (`admin quota check` → a metrics verification).
+13 tier-1 tests (6 handler, 7 CLI routing).
 
 ### - [x] F-17.7.6 — (Medium). `db-rollback.md` runbook referenced by §17.7 line 813 is absent [Medium] — CLOSED
 
@@ -33721,7 +33752,7 @@ make optional. The audit-chain-gap stub is the live example: it
 documents a class of `AuditChainGapDetected` failures (§11.7 hash-chain
 break) without any executable remediation step.
 
-### - [ ] F-17.7.8 — (Medium). Spec lists `audit-chain` restoration as a normative §17.7 expectation; the runbook is a 42-line stub [Medium] — OPEN
+### - [x] F-17.7.8 — (Medium). Spec lists `audit-chain` restoration as a normative §17.7 expectation; the runbook is a 42-line stub [Medium] — CLOSED
 
 The task prompt enumerates "audit-chain restore" as one of the §17.7
 runbook automation areas. Spec §11.7 lines 370, 381, 461, 483 describe
@@ -33746,7 +33777,21 @@ genuine. The §17.7 "ship runbooks for key failure scenarios" obligation
 is met by file presence but not content for one of the spec's most
 sensitive code paths.
 
-### - [ ] F-17.7.9 — (Medium). Two of the §17.7 named runbooks have no chaos-test entry in `tests/tier8_chaos/runbook-map.yaml` [Medium] — OPEN
+**Resolution (commit `6579fa2a`).** Rewrote `docs/runbooks/audit-chain-gap.md`
+from the 42-line chaos stub into a §11.7 procedure that (a) reads the
+`chainIntegrityReport` from `GET /v1/admin/audit-events` and branches on
+the per-row verdict (`broken` / `rechained_post_outage` / `gap_suspected`
+/ `redacted_gdpr` / `unchecked` / `verified`), (b) cross-references
+`ops_postgres_outage_log` to distinguish a deferred-write gap from
+tampering, (c) recovers stale `audit_log_deferred_writes` via the §25.9
+reconciliation pass, (d) verifies the signed `RedactionReceipt` for a
+`redacted_gdpr` discontinuity, and (e) recomputes the chain independently
+via `GET /v1/admin/audit-events/{seq}?format=raw-canonical` against the
+SIEM copy for a genuine `broken` verdict, with an explicit
+do-not-re-seal instruction so tamper evidence is preserved. Adds the
+`<!-- access: api … -->` markers `steps.go` needs to populate `/steps`.
+
+### - [x] F-17.7.9 — (Medium). Two of the §17.7 named runbooks have no chaos-test entry in `tests/tier8_chaos/runbook-map.yaml` [Medium] — CLOSED
 
 §12.8 (referenced from §17.7) requires every alert-driven runbook to
 have a chaos test mapping. `tests/testinfra/chaos/runbook_map_test.go`
@@ -33776,6 +33821,20 @@ TestPostgresFailover, ...) reduce chaos coverage relative to the
 spec's "every runbook implies at least one chaos test" promise — many
 runbooks point at a chaos test that exercises a different failure
 class.
+
+**Resolution (commit `6579fa2a`).** Re-verified: `drift-snapshot-refresh.md`
+and `db-rollback.md` now exist (drift-snapshot-refresh is operationally
+exempt; the test no longer flagged it). The live coverage gap had moved
+to three alert-driven backup runbooks (`backup-failed`, `backup-overdue`,
+`backup-storage-high`) that landed with non-empty `triggers` but no map
+entry, so `TestRunbookMapCoverage` was already failing on HEAD. Added the
+three entries mapped to the object-store failure scenarios
+(`TestMinIOOutageDuringCheckpoint` / `TestMinIOUnavailable`) under the
+documented §17.7 reuse convention; a backup-specific chaos scenario is
+the dedicated follow-on. The test now passes. The broader observation
+that reuse mappings exercise a different failure class than some runbooks
+document is acknowledged in the map comments and is the same trade-off
+the existing reconciliation block records.
 
 ### - [x] F-17.7.10 — (Low). No automated cross-check ties `pkg/alerting/rules/rules.go` runbook slugs to existing files in `docs/runbooks/` [Medium] — CLOSED
 
@@ -34117,7 +34176,7 @@ on every cycle that observes `Status.DisruptionsAllowed == 0`
 scale-down scenario the metric serves. The `PDBBlockedEvictions` alert
 now has a live producer.
 
-### - [ ] F-17.8.9 — 8-06 — `tier-promotion` runbook contradicts the CLI surface [Medium] — OPEN
+### - [x] F-17.8.9 — 8-06 — `tier-promotion` runbook contradicts the CLI surface [Medium] — CLOSED
 
 `docs/runbooks/tier-promotion.md` instructs operators to invoke `lenny-tier-promote validate --from … --to … --post-upgrade` (step 2 line 54, step 6 line 87) and `--from tier2 --to tier1 --acknowledge-demotion` for rollback (step 10 line 114, "Notes" line 124). The binary `cmd/lenny-tier-promote/main.go` has:
 
@@ -34132,6 +34191,21 @@ Evidence:
 - `/Users/joan/projects/lenny/cmd/lenny-tier-promote/main.go:31–46, 77`
 - `/Users/joan/projects/lenny/pkg/tierpromotion/tierpromotion.go:266–278`
 - `/Users/joan/projects/lenny/docs/runbooks/tier-promotion.md:54, 87, 114, 124`
+
+**Resolution (commit `6579fa2a`).** Resolved by correcting the runbook (rule
+O / rule B): the spec defines no `lenny-tier-promote` CLI surface, so the
+implemented bare-flag CLI is the source of truth and the runbook had
+invented a `validate` subcommand, `--post-upgrade`, and
+`--acknowledge-demotion`, plus a demotion-direction gate that
+`pkg/tierpromotion.validateTransition` rejects by design. Dropped the
+`validate` subcommand from steps 2/6/10, dropped `--post-upgrade` (the
+gate reads the live cluster, so the post-check is just a re-run), and
+replaced the rejected `--from tier2 --to tier1` rollback validation with
+a `kubectl`/`helm get values` check, noting the gate validates promotions
+only and that demotion is handled by `helm rollback` + restore. Also
+corrected step 7's `lenny-ctl tenants list`/`session start` to
+`lenny-ctl admin tenants list` and a `POST /v1/sessions` smoke test. The
+Tier 3 attestation example already used the correct bare-flag form.
 
 ---
 
