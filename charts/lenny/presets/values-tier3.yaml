@@ -133,6 +133,10 @@ ops:
   # peak event rates.
   events:
     streamMaxLen: 100000
+  # §25.5 lines 2655-2659 — Tier 3 webhook delivery retention of 30 days
+  # (compliance-aligned for audit).
+  webhooks:
+    deliveryRetentionDays: 30
 
 # §17.8.2 footnote ⁵ — Tier 3 billingRedisStreamMaxLen of 72,000
 # (600 events/s × 60s outage-plus-recovery envelope × 2 safety factor).

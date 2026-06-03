@@ -244,6 +244,12 @@ type Store interface {
 	Delete(ctx context.Context, id string) (Record, error)
 	RecordDelivery(ctx context.Context, d Delivery) (Delivery, error)
 	ListDeliveries(ctx context.Context, subID string, limit int) ([]Delivery, error)
+	// DeleteExpired removes delivery-tracking rows whose expires_at is at
+	// or before before, deleting at most limit rows so a single sweep does
+	// not hold a long lock, and returns the number deleted. The §25.5
+	// retention cron calls it in a loop until a sweep deletes fewer than
+	// limit. spec: §25.5 lines 2649-2664.
+	DeleteExpired(ctx context.Context, before time.Time, limit int) (int, error)
 }
 
 // Service composes the Store with the §25.5 validation, secret
@@ -265,6 +271,23 @@ type Service struct {
 	Now func() time.Time
 	// audit receives the §25.5 line 2731/2804 subscription audit events.
 	audit AuditSink
+	// OnChange, when non-nil, is invoked after every successful CRUD
+	// mutation (Create, Update, RotateSecret, Delete) with the affected
+	// subscription id. The lenny-ops wiring uses it for the §25.5 line
+	// 2751 synchronous in-process cache update plus the
+	// subscription_cache_invalidate RPC across replicas, so a change made
+	// on one replica reaches the leader's delivery worker within a few
+	// hundred milliseconds rather than at the next periodic refresh.
+	OnChange func(ctx context.Context, subID string)
+	// OnSecret, when non-nil, is invoked on Create and RotateSecret with
+	// the freshly generated plaintext secret so the delivery worker's
+	// in-memory reveal cache can sign deliveries. The plaintext is held
+	// only in memory and never persisted; the store keeps the SHA-256
+	// hash. spec: §25.5 lines 2715-2733, 2747-2756.
+	OnSecret func(subID, secret string, generation int64)
+	// OnRemove, when non-nil, is invoked on Delete with the removed
+	// subscription id so the reveal cache can drop its plaintext secret.
+	OnRemove func(subID string)
 }
 
 // NewService builds a Service against the supplied Store with the
@@ -368,6 +391,8 @@ func (s *Service) Create(ctx context.Context, req CreateRequest, caller Caller) 
 			"tenantFilter":      rec.TenantFilter,
 		},
 	})
+	s.fireSecret(rec.ID, secret, rec.Generation)
+	s.fireChange(ctx, rec.ID)
 	return Reveal{Subscription: rec.View(), Secret: secret, SecretRotationWarning: secretRotationWarning}, nil
 }
 
@@ -473,6 +498,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest, call
 			"generation":     rec.Generation,
 		},
 	})
+	s.fireChange(ctx, rec.ID)
 	return rec.View(), nil
 }
 
@@ -514,6 +540,8 @@ func (s *Service) RotateSecret(ctx context.Context, id string, caller Caller) (R
 			"previousSecretFingerprint": rec.PreviousSecretFingerprint,
 		},
 	})
+	s.fireSecret(rec.ID, secret, rec.Generation)
+	s.fireChange(ctx, rec.ID)
 	return Reveal{Subscription: rec.View(), Secret: secret, SecretRotationWarning: secretRotationWarning}, nil
 }
 
@@ -537,7 +565,27 @@ func (s *Service) Delete(ctx context.Context, id string, caller Caller) error {
 			"subscriptionId": rec.ID,
 		},
 	})
+	if s.OnRemove != nil {
+		s.OnRemove(rec.ID)
+	}
+	s.fireChange(ctx, rec.ID)
 	return nil
+}
+
+// fireChange invokes the OnChange hook when one is registered. spec:
+// §25.5 line 2751.
+func (s *Service) fireChange(ctx context.Context, subID string) {
+	if s.OnChange != nil {
+		s.OnChange(ctx, subID)
+	}
+}
+
+// fireSecret invokes the OnSecret hook when one is registered. spec:
+// §25.5 lines 2747-2756.
+func (s *Service) fireSecret(subID, secret string, generation int64) {
+	if s.OnSecret != nil {
+		s.OnSecret(subID, secret, generation)
+	}
 }
 
 // ListDeliveries returns the recent delivery attempts for a
@@ -749,6 +797,27 @@ func (m *MemoryStore) ListDeliveries(_ context.Context, subID string, limit int)
 		}
 	}
 	return out, nil
+}
+
+// DeleteExpired removes delivery rows whose ExpiresAt is at or before
+// before, deleting at most limit rows, and returns the count removed.
+func (m *MemoryStore) DeleteExpired(_ context.Context, before time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = len(m.deliveries)
+	}
+	kept := m.deliveries[:0]
+	deleted := 0
+	for _, d := range m.deliveries {
+		if deleted < limit && !d.ExpiresAt.IsZero() && !d.ExpiresAt.After(before) {
+			deleted++
+			continue
+		}
+		kept = append(kept, d)
+	}
+	m.deliveries = kept
+	return deleted, nil
 }
 
 func notFound(id string) error {

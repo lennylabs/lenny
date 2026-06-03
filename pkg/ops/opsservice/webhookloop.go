@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
@@ -39,6 +40,12 @@ type WebhookSubscription struct {
 	// Types, when non-empty, restricts delivery to events whose type is
 	// in the set. An empty set matches every event type.
 	Types []string
+	// Generation is the §25.5 line 2751 per-subscription invalidation
+	// counter. The worker re-checks it against the cache immediately
+	// before each delivery so a subscription deleted or updated since the
+	// tick's snapshot was taken is skipped (or not delivered with stale
+	// settings) rather than receiving one more event.
+	Generation int64
 }
 
 // matches reports whether the subscription wants the given event type.
@@ -71,6 +78,30 @@ type SubscriptionSource interface {
 	Subscriptions() []WebhookSubscription
 }
 
+// GenerationChecker, when implemented by a SubscriptionSource, lets the
+// worker verify a subscription is still current immediately before
+// delivery. spec: §25.5 line 2751 — "Delivery goroutines check
+// generation before each delivery; a deleted-but-not-yet-invalidated
+// subscription will be skipped because its generation mismatches."
+type GenerationChecker interface {
+	// Current reports whether subID is still an active subscription at
+	// the given generation. It returns false when the subscription was
+	// deleted or updated (its generation advanced) since the worker read
+	// the tick snapshot.
+	Current(subID string, generation int64) bool
+}
+
+// DeliveryMetrics receives the §25.5 webhook delivery instruments after
+// each terminal delivery: the lenny_ops_events_webhook_delivery_total
+// counter (by status) and the
+// lenny_ops_events_webhook_delivery_latency_seconds histogram. A nil
+// observer disables the instruments. spec: §25.5 lines 2790-2791.
+type DeliveryMetrics interface {
+	// ObserveDelivery records one terminal delivery: its subscription,
+	// "delivered" or "failed" status, and end-to-end latency.
+	ObserveDelivery(subID, status string, latency time.Duration)
+}
+
 // DeliveryRecorder persists the outcome of a §25.5 webhook delivery.
 // The production implementation writes ops_event_deliveries subject to
 // the tracking mode; a nil recorder drops delivery history (the loop
@@ -97,11 +128,14 @@ type transport interface {
 type WebhookWorker struct {
 	events      EventSource
 	subs        SubscriptionSource
+	generations GenerationChecker
 	transport   transport
 	recorder    DeliveryRecorder
 	tracking    webhookdelivery.TrackingMode
 	emitFailure func(subID, eventID string)
+	metrics     DeliveryMetrics
 	sleep       func(time.Duration)
+	now         func() time.Time
 
 	backlog atomic.Int64
 }
@@ -125,6 +159,12 @@ type WebhookWorkerConfig struct {
 	// EmitFailure, when non-nil, is invoked after a delivery exhausts the
 	// §25.5 retry budget so the service can emit event_delivery_failed.
 	EmitFailure func(subID, eventID string)
+	// Metrics, when non-nil, receives the §25.5 webhook delivery
+	// instruments after each terminal delivery.
+	Metrics DeliveryMetrics
+	// Now overrides the clock used to measure delivery latency for the
+	// Metrics observer. A nil value uses time.Now.
+	Now func() time.Time
 }
 
 // NewWebhookWorker builds a §25.5 webhook delivery worker.
@@ -137,15 +177,28 @@ func NewWebhookWorker(cfg WebhookWorkerConfig) *WebhookWorker {
 		}
 		tr = webhookdelivery.NewTransport(timeout)
 	}
-	return &WebhookWorker{
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	w := &WebhookWorker{
 		events:      cfg.Events,
 		subs:        cfg.Subscriptions,
 		transport:   tr,
 		recorder:    cfg.Recorder,
 		tracking:    cfg.TrackingMode,
 		emitFailure: cfg.EmitFailure,
+		metrics:     cfg.Metrics,
 		sleep:       time.Sleep,
+		now:         now,
 	}
+	// A SubscriptionSource that also tracks generations lets the worker
+	// re-verify each subscription is still current immediately before
+	// delivery (§25.5 line 2751).
+	if gc, ok := cfg.Subscriptions.(GenerationChecker); ok {
+		w.generations = gc
+	}
+	return w
 }
 
 // Backlog reports the number of webhook deliveries currently pending
@@ -191,6 +244,15 @@ func (w *WebhookWorker) Tick(ctx context.Context) error {
 				w.backlog.Add(-pending)
 				return ctx.Err()
 			}
+			// §25.5 line 2751: re-check the subscription is still current
+			// right before delivery. A subscription deleted or updated since
+			// this tick's snapshot (its generation advanced, or it left the
+			// active set) is skipped so it does not receive one more event.
+			if w.generations != nil && !w.generations.Current(sub.ID, sub.Generation) {
+				w.backlog.Add(-1)
+				pending--
+				continue
+			}
 			w.deliver(ctx, sub, ev)
 			pending--
 		}
@@ -203,6 +265,7 @@ func (w *WebhookWorker) Tick(ctx context.Context) error {
 // and, on exhaustion, triggers event_delivery_failed emission.
 func (w *WebhookWorker) deliver(ctx context.Context, sub WebhookSubscription, ev WebhookEvent) {
 	defer w.backlog.Add(-1)
+	start := w.now()
 	var (
 		attempts int
 		out      webhookdelivery.Outcome
@@ -234,6 +297,13 @@ func (w *WebhookWorker) deliver(ctx context.Context, sub WebhookSubscription, ev
 	}
 
 	failed := !out.Delivered()
+	if w.metrics != nil {
+		status := eventsubscription.DeliveryDelivered
+		if failed {
+			status = eventsubscription.DeliveryFailed
+		}
+		w.metrics.ObserveDelivery(sub.ID, status, w.now().Sub(start))
+	}
 	if w.recorder != nil && webhookdelivery.ShouldRecord(w.tracking, failed) {
 		w.recorder.RecordDelivery(ctx, sub.ID, ev.ID, attempts, failed)
 	}

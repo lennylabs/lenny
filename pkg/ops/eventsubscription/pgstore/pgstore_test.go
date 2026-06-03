@@ -134,6 +134,24 @@ func TestPgStoreRoundTrip_spec_25_5(t *testing.T) {
 		t.Errorf("deliveries not newest-first: %+v", deliveries)
 	}
 
+	// §25.5 lines 2649-2664: DeleteExpired purges only rows whose
+	// expires_at has passed, bounded by limit. Record one already-expired
+	// row; a sweep at a cutoff after its expiry removes it while the two
+	// future-dated rows survive.
+	if _, err := s.RecordDelivery(ctx, es.Delivery{
+		SubscriptionID: "sub_1", EventID: "stale", EventType: "dev.lenny.alert_fired",
+		Status: es.DeliveryDelivered, Attempts: 1, ExpiresAt: now.Add(-1 * time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordDelivery(stale): %v", err)
+	}
+	purged, err := s.DeleteExpired(ctx, now, 10000)
+	if err != nil || purged != 1 {
+		t.Fatalf("DeleteExpired = %d (%v), want 1", purged, err)
+	}
+	if rows, _ := s.ListDeliveries(ctx, "sub_1", 100); len(rows) != 2 {
+		t.Errorf("after retention sweep deliveries = %d, want 2 (future-dated survive)", len(rows))
+	}
+
 	deleted, err := s.Delete(ctx, "sub_1")
 	if err != nil || deleted.ID != "sub_1" {
 		t.Fatalf("Delete = %+v (%v)", deleted, err)

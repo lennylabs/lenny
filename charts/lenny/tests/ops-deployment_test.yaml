@@ -452,6 +452,42 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=100000
 
+  # spec: §25.5 lines 2649-2663 — the webhook delivery-tracking mode and
+  # retention windows render as flags. F-25.5.15.
+  - it: renders the webhook delivery tracking and retention flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-tracking-mode=full
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=7
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-failures-retention-days=0
+
+  - it: renders operator-overridden webhook tracking and retention
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.webhooks.deliveryTrackingMode: failures-only
+      ops.webhooks.deliveryRetentionDays: 30
+      ops.webhooks.failuresOnlyRetentionDays: 90
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-tracking-mode=failures-only
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=30
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-failures-retention-days=90
+
   # spec: §25.4 lines 2396, 2414 — the escalation durability knobs render
   # as flags. F-25.4.7.
   - it: renders the escalation durability flags (base defaults)

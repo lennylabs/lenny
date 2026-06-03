@@ -2702,6 +2702,22 @@ ops:
   # tier-preset-overridden field. F-17.8.1.
   events:
     streamMaxLen: 10000
+  # webhooks carries the §25.5 webhook-delivery tracking and retention
+  # knobs. deliveryTrackingMode (§25.5 line 2663) selects how much
+  # delivery history lenny-ops persists to ops_event_deliveries: "full"
+  # records every attempt, "failures-only" records only failed
+  # deliveries, and "metric-only" records none (the delivery counters
+  # still increment). deliveryRetentionDays (§25.5 lines 2649-2661) is the
+  # lifetime of a delivery row; a leader-only cron purges expired rows
+  # daily at 03:45 UTC. The tier defaults are 1/7/30 days; the values
+  # render as --webhook-tracking-mode / --webhook-delivery-retention-days
+  # / --webhook-failures-retention-days on lenny-ops. failuresOnlyRetention-
+  # Days, when greater than zero, keeps failed delivery rows longer than
+  # the default for investigation. F-25.5.15.
+  webhooks:
+    deliveryTrackingMode: full
+    deliveryRetentionDays: 7
+    failuresOnlyRetentionDays: 0
   # escalation carries the §25.4 escalation-durability knobs. The
   # escalation create path is tiered Postgres -> Redis -> in-memory so a
   # structured escalation can always be recorded, including during the

@@ -218,6 +218,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=10000
+      # spec: §25.5 lines 2655-2659 — Tier 1 webhook retention of 1 day.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=1
 
   - it: tier2 preset keeps the 10s cadence and raises the stream to 50k
     values:
@@ -233,6 +237,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=50000
+      # spec: §25.5 lines 2655-2659 — Tier 2 webhook retention of 7 days.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=7
 
   - it: tier3 preset keeps the 10s cadence and raises the stream to 100k
     values:
@@ -248,6 +256,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=100000
+      # spec: §25.5 lines 2655-2659 — Tier 3 webhook retention of 30 days.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=30
 
   # spec: §17.8.2 footnote ⁵ / F-17.8.5 — the tier3 preset sizes the
   # billing failover stream MAXLEN to the Tier 3 outage envelope (72,000).

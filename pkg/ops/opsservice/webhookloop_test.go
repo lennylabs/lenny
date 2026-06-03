@@ -251,6 +251,134 @@ func TestWebhookWorkerFailuresOnlyTrackingSkipsSuccess(t *testing.T) {
 	}
 }
 
+// recordingMetrics captures the §25.5 delivery instruments the worker
+// emits.
+type recordingMetrics struct {
+	mu      sync.Mutex
+	records []struct {
+		subID, status string
+		latency       time.Duration
+	}
+}
+
+func (m *recordingMetrics) ObserveDelivery(subID, status string, latency time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = append(m.records, struct {
+		subID, status string
+		latency       time.Duration
+	}{subID, status, latency})
+}
+
+// genSubs is a SubscriptionSource that also implements GenerationChecker.
+// current maps subscription id to the generation it considers live; an
+// id absent from current is treated as deleted.
+type genSubs struct {
+	subs    []WebhookSubscription
+	current map[string]int64
+}
+
+func (g genSubs) Subscriptions() []WebhookSubscription { return g.subs }
+
+func (g genSubs) Current(subID string, generation int64) bool {
+	live, ok := g.current[subID]
+	return ok && live == generation
+}
+
+// TestWebhookWorkerObservesDeliveryMetrics is the §25.5 lines 2790-2791
+// contract: the worker reports a delivered status and a measured latency
+// to the metrics observer for a successful delivery, and a failed status
+// when the budget is exhausted.
+func TestWebhookWorkerObservesDeliveryMetrics_spec_25_5_2790(t *testing.T) {
+	sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 200}}}
+	met := &recordingMetrics{}
+	// A clock that advances 250ms each read so the measured latency is
+	// non-zero (start vs end of deliver).
+	var ticks int64
+	clock := func() time.Time {
+		ticks++
+		return time.Unix(0, ticks*int64(250*time.Millisecond))
+	}
+	w := newWorker(t, WebhookWorkerConfig{
+		Events: &staticEvents{events: []WebhookEvent{
+			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
+		}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Transport:     sink,
+		Metrics:       met,
+		Now:           clock,
+	})
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(met.records) != 1 {
+		t.Fatalf("metrics records = %d, want 1", len(met.records))
+	}
+	r := met.records[0]
+	if r.subID != "sub-1" || r.status != "delivered" {
+		t.Errorf("metric = sub %q status %q, want sub-1/delivered", r.subID, r.status)
+	}
+	if r.latency != 250*time.Millisecond {
+		t.Errorf("latency = %v, want 250ms", r.latency)
+	}
+}
+
+// TestWebhookWorkerMetricsFailedStatus confirms an exhausted delivery is
+// reported with the failed status. spec: §25.5 line 2790.
+func TestWebhookWorkerMetricsFailedStatus_spec_25_5_2790(t *testing.T) {
+	sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 500}}}
+	met := &recordingMetrics{}
+	w := newWorker(t, WebhookWorkerConfig{
+		Events: &staticEvents{events: []WebhookEvent{
+			{ID: "evt-9", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
+		}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Transport:     sink,
+		Metrics:       met,
+	})
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(met.records) != 1 || met.records[0].status != "failed" {
+		t.Errorf("metrics = %+v, want one failed delivery", met.records)
+	}
+}
+
+// TestWebhookWorkerSkipsStaleGeneration is the §25.5 line 2751 contract:
+// a subscription whose generation no longer matches the cache (deleted
+// or updated since the tick snapshot) is not delivered to.
+func TestWebhookWorkerSkipsStaleGeneration_spec_25_5_2751(t *testing.T) {
+	sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 200}}}
+	subs := genSubs{
+		subs: []WebhookSubscription{
+			{ID: "live", CallbackURL: "https://h", Secret: []byte("s"), Generation: 3},
+			{ID: "stale", CallbackURL: "https://h", Secret: []byte("s"), Generation: 1},
+		},
+		// "live" is still at generation 3; "stale" advanced to 2 (or was
+		// deleted) so its snapshot generation 1 no longer matches.
+		current: map[string]int64{"live": 3, "stale": 2},
+	}
+	w := newWorker(t, WebhookWorkerConfig{
+		Events: &staticEvents{events: []WebhookEvent{
+			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
+		}},
+		Subscriptions: subs,
+		Transport:     sink,
+	})
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := sink.count(); got != 1 {
+		t.Fatalf("delivery attempts = %d, want 1 (only the live subscription)", got)
+	}
+	if sink.attempts[0].CallbackURL == "" {
+		t.Fatal("expected the live subscription's delivery")
+	}
+	if got := w.Backlog(); got != 0 {
+		t.Errorf("Backlog() = %d after a skipped stale delivery, want 0", got)
+	}
+}
+
 // TestWebhookWorkerBacklogClearsAfterTick confirms the §25.4
 // webhook_backlog gauge returns to zero once a tick's deliveries
 // complete, so the self-health check does not report a stale backlog.

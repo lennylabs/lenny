@@ -3,6 +3,7 @@
 package opsserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -10,7 +11,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
+
+// CacheInvalidator forces an immediate refresh of the §25.5 subscription
+// delivery cache. The opsservice.SubscriptionCache satisfies it. spec:
+// §25.5 line 2751.
+type CacheInvalidator interface {
+	Invalidate(ctx context.Context) error
+}
 
 // eventSubscriptionErrorMap maps each §25.5 canonical event-subscription
 // error code to its documented HTTP status and §25.2 category. spec:
@@ -77,6 +86,37 @@ func (s *Server) registerEventSubscriptionRoutes() {
 	s.mux.HandleFunc("DELETE /v1/admin/event-subscriptions/{id}", s.handleDeleteEventSubscription)
 	s.mux.HandleFunc("POST /v1/admin/event-subscriptions/{id}/rotate-secret", s.handleRotateEventSubscriptionSecret)
 	s.mux.HandleFunc("GET /v1/admin/event-subscriptions/{id}/deliveries", s.handleListEventSubscriptionDeliveries)
+}
+
+// registerCacheInvalidateRoute wires the §25.5 internal
+// subscription_cache_invalidate RPC. It registers only when both a
+// CacheInvalidator and a non-empty token are configured; otherwise the
+// path is unmapped and the cache degrades to periodic-refresh-only.
+// spec: §25.5 line 2751.
+func (s *Server) registerCacheInvalidateRoute() {
+	if s.cacheInvalidator == nil || s.cacheInvalidateToken == "" {
+		return
+	}
+	s.mux.HandleFunc("POST "+opsservice.DefaultCacheInvalidatePath, s.handleCacheInvalidate)
+}
+
+// handleCacheInvalidate handles the §25.5 subscription_cache_invalidate
+// peer RPC: it authenticates the shared-secret-derived token and forces
+// an immediate cache refresh. The RPC injects no data — it only kicks a
+// refresh — so a mismatched token returns 401 and a matching one returns
+// 204. spec: §25.5 line 2751.
+func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
+	if !opsservice.VerifyInvalidateToken(s.cacheInvalidateToken, r.Header.Get(opsservice.CacheInvalidateHeader)) {
+		conventions.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			conventions.CategoryAuth, "invalid cache-invalidate token")
+		return
+	}
+	if err := s.cacheInvalidator.Invalidate(r.Context()); err != nil {
+		conventions.WriteError(w, http.StatusServiceUnavailable, eventsubscription.ErrCodeNoDurableStore,
+			conventions.CategoryTransient, "cache refresh failed: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleCreateEventSubscription implements

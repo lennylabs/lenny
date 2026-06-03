@@ -90,6 +90,10 @@ ops:
   # (~25 MB Redis budget) for a longer catch-up window at moderate rates.
   events:
     streamMaxLen: 50000
+  # §25.5 lines 2655-2659 — Tier 2 webhook delivery retention of 7 days
+  # (standard incident-investigation window).
+  webhooks:
+    deliveryRetentionDays: 7
 
 # Backup retention at Tier 2 (§25.11): 30-day age floor, 10 backups
 # retained, 3 full backups kept.

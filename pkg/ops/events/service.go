@@ -77,6 +77,7 @@ type Service struct {
 	subs   []*subscription
 
 	webhook WebhookFanOut
+	onGap   func()
 }
 
 // subscription is one active SSE subscriber.
@@ -100,6 +101,11 @@ type Options struct {
 	// canonical eventKey ({replicaID}:{emittedAt}:{nonce}). An empty
 	// value falls back to "ops". spec: §25.5 line 2671.
 	ReplicaID string
+	// OnGap, when non-nil, is invoked once per stream or poll request that
+	// resolves a cursor whose event has been evicted (the response carries
+	// pagination.gapDetected: true). It backs the §25.5
+	// lenny_ops_events_stream_gaps_total counter. spec: §25.5 line 2788.
+	OnGap func()
 }
 
 // New returns a Service.
@@ -117,6 +123,14 @@ func New(opts Options) *Service {
 		now:       now,
 		replicaID: replicaID,
 		webhook:   opts.Webhook,
+		onGap:     opts.OnGap,
+	}
+}
+
+// observeGap fires the OnGap hook when configured. spec: §25.5 line 2788.
+func (s *Service) observeGap() {
+	if s.onGap != nil {
+		s.onGap()
 	}
 }
 
@@ -384,6 +398,7 @@ func (s *Service) pollPage(cursorKind, eventKey string, filter gwevents.EventFil
 	if gap {
 		page.Pagination.GapDetected = true
 		page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindBuffer, oldestKey)
+		s.observeGap()
 	}
 	return page
 }
@@ -455,6 +470,7 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	if gap {
 		writeSSEGap(w, resumeKey)
+		s.observeGap()
 	}
 	backlog := s.buffer.Query(since, filter, 0)
 	for _, ev := range backlog.Events {

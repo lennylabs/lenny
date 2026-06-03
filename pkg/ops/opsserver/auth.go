@@ -9,6 +9,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
+	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
 // AuthConfig configures the §25.4 lines 1562-1564 lenny-ops
@@ -82,7 +83,11 @@ func isProbePath(p string) bool {
 // token, and the §13.2 NET-045 metrics-scrape NetworkPolicy is its access
 // control, mirroring how the gateway serves /metrics unauthenticated.
 func isUnauthenticatedPath(p string) bool {
-	return isProbePath(p) || p == "/metrics"
+	// The §25.5 subscription_cache_invalidate peer RPC carries no OIDC
+	// bearer; it is authenticated by the shared-secret-derived token
+	// header in its handler and gated at the network layer. spec: §25.5
+	// line 2751.
+	return isProbePath(p) || p == "/metrics" || p == opsservice.DefaultCacheInvalidatePath
 }
 
 // requireAdminRole rejects any request whose principal does not hold the

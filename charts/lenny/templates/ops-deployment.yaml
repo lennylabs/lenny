@@ -161,6 +161,12 @@ spec:
             # the platform-scoped ops:events:stream (10k Tier 1, 50k Tier 2,
             # 100k Tier 3). Tier-preset overridden. F-17.8.1.
             - --events-stream-max-len={{ .Values.ops.events.streamMaxLen }}
+            # §25.5 lines 2649-2663 ops.webhooks — webhook delivery-tracking
+            # mode plus the retention windows the 03:45 UTC purge cron
+            # enforces. F-25.5.15.
+            - --webhook-tracking-mode={{ .Values.ops.webhooks.deliveryTrackingMode }}
+            - --webhook-delivery-retention-days={{ .Values.ops.webhooks.deliveryRetentionDays }}
+            - --webhook-failures-retention-days={{ .Values.ops.webhooks.failuresOnlyRetentionDays }}
             # §25.4 lines 2396, 2414 ops.escalation — the escalation
             # durability posture (reject vs buffer when no durable tier is
             # reachable) and the leader-only reconciliation flush rate. F-25.4.7.

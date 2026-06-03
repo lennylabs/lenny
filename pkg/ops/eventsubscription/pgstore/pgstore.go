@@ -198,6 +198,30 @@ func (s *Store) ListDeliveries(ctx context.Context, subID string, limit int) ([]
 	return out, rows.Err()
 }
 
+// DeleteExpired removes up to limit delivery rows whose expires_at is at
+// or before before, returning the number deleted. The §25.5 retention
+// cron calls it in a loop with limit=10000 (line 2661) until a sweep
+// deletes fewer than limit, so a single statement never holds a long
+// lock. The ctid sub-select bounds the DELETE to limit rows without a
+// table-wide scan. spec: §25.5 lines 2649-2664.
+func (s *Store) DeleteExpired(ctx context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 10000
+	}
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM ops_event_deliveries
+		 WHERE ctid IN (
+			SELECT ctid FROM ops_event_deliveries
+			WHERE expires_at <= $1
+			ORDER BY expires_at
+			LIMIT $2
+		 )`, before, limit)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func scanRecord(row pgx.Row) (eventsubscription.Record, error) {
 	var (
 		rec          eventsubscription.Record

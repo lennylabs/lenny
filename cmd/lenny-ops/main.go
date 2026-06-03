@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsinventory"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -71,6 +72,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
 // buildVersion is the compiled-in lenny-ops binary version, overridden
@@ -128,6 +130,12 @@ func main() {
 		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
 	eventsStreamMaxLen := flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", events.DefaultStreamMaxLen),
 		"§25.5 ops.events.streamMaxLen — MAXLEN of the platform-scoped ops:events:stream Redis stream. Tier 1 default 10,000; tier presets raise it (50,000 at Tier 2, 100,000 at Tier 3). Override via LENNY_OPS_EVENTS_STREAM_MAX_LEN. F-17.8.1.")
+	webhookTrackingMode := flag.String("webhook-tracking-mode", envOr("LENNY_OPS_WEBHOOK_TRACKING_MODE", string(webhookdelivery.TrackingFull)),
+		"§25.5 ops.webhooks.deliveryTrackingMode — full, failures-only, or metric-only. Override via LENNY_OPS_WEBHOOK_TRACKING_MODE.")
+	webhookRetentionDays := flag.Int("webhook-delivery-retention-days", envInt("LENNY_OPS_WEBHOOK_DELIVERY_RETENTION_DAYS", 7),
+		"§25.5 ops.webhooks.deliveryRetentionDays — lifetime of a delivery row. Tier defaults 1/7/30 days. Override via LENNY_OPS_WEBHOOK_DELIVERY_RETENTION_DAYS.")
+	webhookFailuresRetentionDays := flag.Int("webhook-failures-retention-days", envInt("LENNY_OPS_WEBHOOK_FAILURES_ONLY_RETENTION_DAYS", 0),
+		"§25.5 ops.webhooks.failuresOnlyRetentionDays — lifetime of failed delivery rows when longer than the default; 0 uses deliveryRetentionDays. Override via LENNY_OPS_WEBHOOK_FAILURES_ONLY_RETENTION_DAYS.")
 	memoryLimitBytes := flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
@@ -450,7 +458,7 @@ func main() {
 	// delivery surface (per §25.5 cold-start). Built before the webhook
 	// worker so OnSelfHealthChange can emit through it and the worker can
 	// consume the same Redis stream.
-	eventStream := opsstream.New(opsstream.Options{ReplicaID: replicaID})
+	eventStream := opsstream.New(opsstream.Options{ReplicaID: replicaID, OnGap: observeStreamGap})
 	var opsEmitter events.EventEmitter = eventStream
 	if redisClient != nil {
 		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID, *eventsStreamMaxLen)
@@ -461,19 +469,79 @@ func main() {
 	// Redis ops:events:stream consumer when Redis is wired (so the worker
 	// fans out events emitted by every replica — gateway, controllers,
 	// peer lenny-ops); without Redis it runs against an empty source and
-	// delivers nothing, the correct cold-start behavior. The
-	// subscription source is wired from ops_event_subscriptions as that
-	// seam lands.
+	// delivers nothing, the correct cold-start behavior.
 	var eventSource opsservice.EventSource = emptyEventSource{}
 	if redisClient != nil {
 		eventSource = opsservice.NewRedisEventSource(redisClient, events.DefaultStreamKey)
 		log.Printf("lenny-ops: §25.5 webhook worker consuming Redis stream %s", events.DefaultStreamKey)
 	}
-	webhook := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
-		Events:        eventSource,
-		Subscriptions: emptySubscriptionSource{},
-		HTTPTimeout:   10 * time.Second,
+
+	// §25.5 line 2753: the cold-start health signal. When the subscription
+	// cache cannot reach Postgres no webhook delivery occurs, so lenny-ops
+	// emits ops_health_status_changed with subscriptionsUnavailable; a
+	// later recovery emits the clear.
+	var subsUnavailMu sync.Mutex
+	subsUnavailEmitted := false
+	onSubsAvailability := func(available bool) {
+		subsUnavailMu.Lock()
+		defer subsUnavailMu.Unlock()
+		if available && !subsUnavailEmitted {
+			return // healthy start or steady state — nothing to announce
+		}
+		subsUnavailEmitted = !available
+		severity := "info"
+		if !available {
+			severity = "warning"
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"replicaId":                replicaID,
+			"subscriptionsUnavailable": !available,
+		})
+		if err := opsEmitter.Emit(ctx, events.OperationalEvent{
+			Type:            events.EventOpsHealthStatusChanged.CloudEventsType(),
+			Subject:         "ops/" + replicaID,
+			Severity:        severity,
+			DataContentType: "application/json",
+			Data:            payload,
+		}); err != nil {
+			log.Printf("lenny-ops: emit ops_health_status_changed (subscriptionsUnavailable=%t): %v", !available, err)
+		}
+	}
+
+	// §25.5 line 2751: the invalidate-RPC token derives from the shared
+	// HMAC key both replicas mount; an empty path (dev) disables the RPC.
+	var webhookSharedKey []byte
+	if *bearerTrustHMACKeyFile != "" {
+		if b, rerr := os.ReadFile(*bearerTrustHMACKeyFile); rerr == nil {
+			webhookSharedKey = b
+		}
+	}
+	adminPort := 0
+	if i := strings.LastIndex(*addr, ":"); i >= 0 {
+		adminPort, _ = strconv.Atoi((*addr)[i+1:])
+	}
+	delivery := buildWebhookDelivery(ctx, webhookDeliveryDeps{
+		Pool:        pgPool,
+		Clientset:   clientset,
+		Source:      eventSource,
+		Emitter:     opsEmitter,
+		Audit:       subscriptionAuditFunc(func(ev eventsubscription.AuditEvent) { log.Printf("lenny-ops: audit %s %v", ev.Type, ev.Details) }),
+		SharedKey:   webhookSharedKey,
+		Namespace:   envOr("POD_NAMESPACE", *leaderElectNS),
+		ServiceName: *opsServiceName,
+		SelfIP:      os.Getenv("POD_IP"),
+		AdminPort:   adminPort,
+		TrackingMode: webhookdelivery.TrackingMode(*webhookTrackingMode),
+		Retention: opsservice.RetentionPolicy{
+			Retention:             time.Duration(*webhookRetentionDays) * 24 * time.Hour,
+			FailuresOnlyRetention: time.Duration(*webhookFailuresRetentionDays) * 24 * time.Hour,
+		},
+		OnAvailabilityChange: onSubsAvailability,
 	})
+	webhook := delivery.Worker
+	eventSubscriptions := delivery.Subscriptions
+	subscriptionCache := delivery.Cache
+	defer subscriptionCache.Stop()
 
 	// The §25.4 gateway admin-API client (F-25.4.8). It refreshes the
 	// service-account OIDC token, routes per-replica fan-out through the
@@ -642,7 +710,8 @@ func main() {
 	// config API. Wired only when a gateway client exists; otherwise the
 	// routes stay unmapped (404).
 	platformConfigSvc := buildPlatformConfigService(gwClient)
-	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator))
+	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator),
+		deliveryRetentionJob(delivery.Store))
 
 	// §25.4 idempotency: durable when Postgres is available, in-memory in
 	// single-process degraded mode. Built before the service body so the
@@ -859,9 +928,13 @@ func main() {
 		Drift:             driftSvc,
 		Locks:             lockSvc,
 		LockCoordination:  lockCoordination,
-		Escalations:       escalationSvc,
-		EventStream:       eventStream,
-		ReleaseChannel:    releaseChannelPub,
+		Escalations:        escalationSvc,
+		EventStream:        eventStream,
+		EventSubscriptions: eventSubscriptions,
+		// §25.5 line 2751: the subscription_cache_invalidate peer RPC.
+		CacheInvalidator:     subscriptionCache,
+		CacheInvalidateToken: delivery.InvalidateToken,
+		ReleaseChannel:       releaseChannelPub,
 		Upgrade:           upgradeSvc,
 		UpgradeChecker:    upgradeChecker,
 		VersionAggregator: versionAggregator,
@@ -898,6 +971,25 @@ func main() {
 				return
 			case t := <-ticker.C:
 				opsHandler.SweepDiagnosticsAudit(t)
+			}
+		}
+	}()
+
+	// spec: §25.5 lines 2787, 2789 — refresh the event-stream gauges
+	// (lenny_ops_events_stream_length from the Redis XLEN of
+	// ops:events:stream, lenny_ops_events_sse_active_connections from the
+	// live SSE subscriber count) on every replica so the §16.9 scrape
+	// reflects current depth and connection count.
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		sampleEventStreamGauges(ctx, redisClient, eventStream)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sampleEventStreamGauges(ctx, redisClient, eventStream)
 			}
 		}
 	}()

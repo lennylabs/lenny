@@ -31,6 +31,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
+	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
@@ -45,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
+	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
 // redisFanOutEmitter wires lenny-ops's §4.0 EventEmitter dependency to
@@ -140,6 +143,188 @@ type emptySubscriptionSource struct{}
 // Subscriptions returns no subscriptions.
 func (emptySubscriptionSource) Subscriptions() []opsservice.WebhookSubscription {
 	return nil
+}
+
+// subscriptionAuditFunc adapts a plain function to the
+// eventsubscription.AuditSink interface so the §25.5 subscription audit
+// events (created/updated/deleted/secret_rotated) reach the lenny-ops
+// audit logger. spec: §25.5 lines 2731, 2804-2806.
+type subscriptionAuditFunc func(eventsubscription.AuditEvent)
+
+func (f subscriptionAuditFunc) Emit(ev eventsubscription.AuditEvent) { f(ev) }
+
+// webhookDeliveryDeps carries the backing seams buildWebhookDelivery
+// selects over its in-memory fallbacks.
+type webhookDeliveryDeps struct {
+	// Pool, when non-nil, selects the Postgres-backed
+	// ops_event_subscriptions / ops_event_deliveries store over the
+	// in-memory store so subscriptions and delivery history survive a
+	// restart and coordinate across replicas.
+	Pool *pgxpool.Pool
+	// Clientset, when non-nil, plus a non-empty SharedKey enables the
+	// §25.5 subscription_cache_invalidate peer RPC: the broadcaster reads
+	// peer pod IPs from the lenny-ops Service Endpoints.
+	Clientset kubernetes.Interface
+	// Redis is the §25.5 event source consumer (nil disables delivery).
+	Source opsservice.EventSource
+	// Emitter is where event_delivery_failed is published. Required.
+	Emitter events.EventEmitter
+	// Audit receives the §25.5 subscription audit events. Optional.
+	Audit eventsubscription.AuditSink
+	// SharedKey derives the invalidate RPC token; an empty key disables
+	// the cross-replica RPC (the cache degrades to periodic refresh).
+	SharedKey            []byte
+	Namespace            string
+	ServiceName          string
+	SelfIP               string
+	AdminPort            int
+	TrackingMode         webhookdelivery.TrackingMode
+	Retention            opsservice.RetentionPolicy
+	OnAvailabilityChange func(available bool)
+}
+
+// webhookDelivery bundles the wired §25.5 webhook delivery components the
+// lenny-ops binary consumes: the leader-only worker, the CRUD service the
+// opsserver routes against, the delivery cache the invalidate RPC
+// refreshes, and the shared-secret-derived invalidate token.
+type webhookDelivery struct {
+	Worker          *opsservice.WebhookWorker
+	Subscriptions   *eventsubscription.Service
+	Cache           *opsservice.SubscriptionCache
+	Store           eventsubscription.Store
+	InvalidateToken string
+}
+
+// buildWebhookDelivery wires the §25.5 webhook delivery subsystem
+// (F-25.5.11, F-25.5.13): a durable subscription store, the in-memory
+// reveal-secret cache that lets the worker sign deliveries, the
+// delivery-recording + failure-emission worker, the delivery metrics,
+// and the cross-replica subscription_cache_invalidate RPC. The leader
+// runs the returned Worker; the opsserver registers the returned
+// Subscriptions service and Cache invalidator. spec: §25.5 lines
+// 2701-2756.
+func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhookDelivery {
+	var store eventsubscription.Store
+	if deps.Pool != nil {
+		store = eventsubpgstore.New(deps.Pool)
+	} else {
+		store = eventsubscription.NewMemoryStore()
+	}
+	svc := eventsubscription.NewService(store)
+	if deps.Audit != nil {
+		svc.SetAuditSink(deps.Audit)
+	}
+
+	// §25.5 lines 2715-2733: the worker recovers each subscription's
+	// plaintext signing secret from this in-memory reveal cache, populated
+	// when the secret is generated and pruned when the subscription is
+	// deleted.
+	secretCache := opsservice.NewSecretCache()
+	svc.OnSecret = secretCache.Put
+	svc.OnRemove = secretCache.Remove
+
+	cache := opsservice.NewSubscriptionCache(ctx, opsservice.SubscriptionCacheConfig{
+		Store:                store,
+		Secrets:              secretCache,
+		OnAvailabilityChange: deps.OnAvailabilityChange,
+	})
+
+	// §25.5 line 2751: the cross-replica subscription_cache_invalidate RPC.
+	// The token derives from the shared HMAC key both replicas mount; an
+	// empty key (dev) leaves the broadcaster nil and the cache on
+	// periodic-refresh-only.
+	token := opsservice.InvalidateToken(deps.SharedKey)
+	var broadcaster *opsservice.CacheInvalidateBroadcaster
+	if token != "" && deps.Clientset != nil {
+		broadcaster = opsservice.NewCacheInvalidateBroadcaster(opsservice.CacheInvalidateBroadcasterConfig{
+			Peers: opsservice.NewEndpointsPeerLister(opsservice.EndpointsPeerListerConfig{
+				Endpoints: deps.Clientset.CoreV1(),
+				Namespace: deps.Namespace,
+				Service:   deps.ServiceName,
+				Port:      deps.AdminPort,
+				SelfIP:    deps.SelfIP,
+			}),
+			Token: token,
+		})
+	}
+	// §25.5 lines 2751, 2756: on every CRUD, refresh the local cache
+	// synchronously, then fan the invalidate RPC out to peers off the
+	// request path so one slow peer never blocks the response.
+	svc.OnChange = func(reqCtx context.Context, _ string) {
+		_ = cache.Invalidate(reqCtx)
+		if broadcaster != nil {
+			go func() {
+				bctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				broadcaster.Broadcast(bctx)
+			}()
+		}
+	}
+
+	// §25.5 lines 2701-2713: record each delivery outcome unless the
+	// deployment opted into metric-only tracking.
+	var recorder opsservice.DeliveryRecorder
+	if deps.TrackingMode != webhookdelivery.TrackingMetricOnly {
+		recorder = opsservice.NewStoreDeliveryRecorder(store, deps.Retention, nil)
+	}
+
+	worker := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
+		Events:        deps.Source,
+		Subscriptions: cache,
+		Recorder:      recorder,
+		TrackingMode:  deps.TrackingMode,
+		HTTPTimeout:   10 * time.Second,
+		Metrics:       deliveryMetricsObserver{},
+		EmitFailure: func(subID, eventID string) {
+			// §25.5 line 2713: emit event_delivery_failed but do not deliver
+			// it to the subscription, to avoid loops.
+			payload, _ := json.Marshal(map[string]any{
+				"subscriptionId": subID,
+				"eventId":        eventID,
+			})
+			if err := deps.Emitter.Emit(ctx, events.OperationalEvent{
+				Type:            events.EventEventDeliveryFailed.CloudEventsType(),
+				Subject:         "event_subscription/" + subID,
+				Severity:        "warning",
+				DataContentType: "application/json",
+				Data:            payload,
+			}); err != nil {
+				log.Printf("lenny-ops: emit event_delivery_failed: %v", err)
+			}
+		},
+	})
+
+	return webhookDelivery{Worker: worker, Subscriptions: svc, Cache: cache, Store: store, InvalidateToken: token}
+}
+
+// deliveryRetentionJob is the §25.5 lines 2649-2664 leader-only cron that
+// purges expired ops_event_deliveries rows daily at 03:45 UTC. expires_at
+// is stamped at record time from the retention policy, so the sweep just
+// deletes rows whose expires_at has passed, batched at LIMIT 10000 to
+// avoid a long lock. spec: §25.5 line 2661.
+func deliveryRetentionJob(store eventsubscription.Store) opsservice.ScheduledJob {
+	return opsservice.ScheduledJob{
+		Name:       "delivery-retention",
+		Expression: "45 3 * * *",
+		Run: func(ctx context.Context) error {
+			const batch = 10000
+			total := 0
+			for {
+				n, err := store.DeleteExpired(ctx, time.Now().UTC(), batch)
+				if err != nil {
+					return err
+				}
+				total += n
+				if n < batch {
+					break
+				}
+			}
+			if total > 0 {
+				log.Printf("lenny-ops: §25.5 delivery-retention purged %d expired delivery rows", total)
+			}
+			return nil
+		},
+	}
 }
 
 // selfHealthEventSeverity maps a §25.4 self-health status text to the

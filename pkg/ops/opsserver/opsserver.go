@@ -79,6 +79,11 @@ type Server struct {
 	escalations        *escalation.Service
 	eventStream        *opsevents.Service
 	eventSubscriptions *eventsubscription.Service
+	// cacheInvalidator + cacheInvalidateToken back the §25.5
+	// subscription_cache_invalidate peer RPC. Both must be set for the
+	// internal route to register.
+	cacheInvalidator     CacheInvalidator
+	cacheInvalidateToken string
 	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
 	upgrade            *upgradeservice.Service
@@ -169,6 +174,16 @@ type Options struct {
 	// without webhook delivery does not advertise a surface it cannot
 	// serve.
 	EventSubscriptions *eventsubscription.Service
+	// CacheInvalidator + CacheInvalidateToken back the §25.5
+	// subscription_cache_invalidate RPC. When both are set the Server
+	// registers POST /internal/v1/event-subscriptions/cache/invalidate;
+	// a peer replica that mutated a subscription posts to it with the
+	// shared-secret-derived token to force an immediate cache refresh.
+	// The route is exempt from the §25.4 OIDC gate (it carries no bearer)
+	// and authenticated by the token header instead, gated at the network
+	// layer by the intra-Service NetworkPolicy. spec: §25.5 line 2751.
+	CacheInvalidator     CacheInvalidator
+	CacheInvalidateToken string
 	// ReleaseChannel is the §25.8 release-channel manifest publisher.
 	// When non-nil the Server registers GET /v1/latest backed by the
 	// publisher; when nil the path is unmapped (404). A nil publisher
@@ -280,8 +295,10 @@ func New(opts Options) *Server {
 		locks:              opts.Locks,
 		lockCoordination:   opts.LockCoordination,
 		escalations:        opts.Escalations,
-		eventStream:        opts.EventStream,
-		eventSubscriptions: opts.EventSubscriptions,
+		eventStream:          opts.EventStream,
+		eventSubscriptions:   opts.EventSubscriptions,
+		cacheInvalidator:     opts.CacheInvalidator,
+		cacheInvalidateToken: opts.CacheInvalidateToken,
 		releaseChannel:     opts.ReleaseChannel,
 		upgrade:            opts.Upgrade,
 		upgradeChecker:     opts.UpgradeChecker,
@@ -343,6 +360,7 @@ func New(opts Options) *Server {
 	s.registerEscalationRoutes()
 	s.registerEventStreamRoutes()
 	s.registerEventSubscriptionRoutes()
+	s.registerCacheInvalidateRoute()
 	s.registerReleaseChannelRoutes()
 	s.registerPlatformUpgradeRoutes()
 	s.registerPlatformConfigRoutes()

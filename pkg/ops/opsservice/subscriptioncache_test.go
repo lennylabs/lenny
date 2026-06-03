@@ -59,6 +59,10 @@ func (s *stubStore) ListDeliveries(_ context.Context, _ string, _ int) ([]events
 	return nil, nil
 }
 
+func (s *stubStore) DeleteExpired(_ context.Context, _ time.Time, _ int) (int, error) {
+	return 0, nil
+}
+
 func (s *stubStore) setRows(rows []eventsubscription.Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -77,6 +77,10 @@ ops:
   # §17.8.4 tier-preset override surface is explicit.
   events:
     streamMaxLen: 10000
+  # §25.5 lines 2655-2659 — Tier 1 webhook delivery retention of 1 day
+  # (dev: recent debugging only).
+  webhooks:
+    deliveryRetentionDays: 1
 
 # Backup retention at Tier 1 is the shortest published window (§25.11):
 # 7-day age floor, 3 backups retained, 2 full backups kept.
