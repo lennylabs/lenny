@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
@@ -797,6 +798,23 @@ func buildDiagnosticsAudit(ratePerMinute int) *opsserver.DiagnosticsAuditConfig 
 				diagnosticsAuditRateLimited.WithLabelValues(eventType, serviceAccount).Inc()
 			}
 		},
+	}
+}
+
+// bundleRulesReconciler returns the §25.4 line 1339 leader-only
+// bundleRules reconciler. §25.13 line 4816 makes the bundled alerting
+// rules static manifests rendered at Helm install/upgrade time with no
+// runtime mutation, so the reconciler does not re-render rules; it
+// re-asserts the §25.13 bundled-rules observability gauges
+// (lenny_alerting_rules_bundled{format}, lenny_alerting_rule_overrides)
+// from the chart-supplied bundle format set and override count so they
+// stay current on the lenny-ops /metrics surface across metric resets.
+// F-25.4.17.
+func bundleRulesReconciler(mx *alertingmetrics.Metrics, formats []string, overrideCount int) opsservice.Reconciler {
+	return func(context.Context) error {
+		mx.SetBundledFormats(formats...)
+		mx.SetOverrideCount(overrideCount)
+		return nil
 	}
 }
 

@@ -341,7 +341,10 @@ spec:
             {{- with .Values.gateway.recommendations.windowOverrides }}
             - --recommendations-window-overrides={{- $pairs := list }}{{- range $k, $v := . }}{{- $pairs = append $pairs (printf "%s=%s" $k $v) }}{{- end }}{{ join "," $pairs }}
             {{- end }}
-            {{- if .Values.gateway.recommendations.disableOnPrometheusOutage }}
+            {{- if .Values.ops.recommendations.disableOnPrometheusOutage }}
+            # §25.4 line 944 — the canonical Prometheus-outage opt-out lives
+            # under ops.recommendations; the gateway hosts the recommendation
+            # service, so the flag renders here. F-25.4.25.
             - --recommendations-disable-on-prometheus-outage=true
             {{- end }}
             # §10.2 line 212 — OIDC claim the gateway extracts the

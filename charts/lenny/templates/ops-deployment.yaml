@@ -189,6 +189,14 @@ spec:
             # multi-replica deployments. F-25.4.26.
             - --locks-memory-tier={{ .Values.ops.locks.memoryTier }}
             - --ops-service-name=lenny-ops
+            # §25.4 line 1339 / §25.13 lines 4833-4834 — the leader-only
+            # bundleRules reconciler re-stamps the bundled-rules observability
+            # gauges (lenny_alerting_rules_bundled{format},
+            # lenny_alerting_rule_overrides) on the lenny-ops /metrics surface
+            # from the chart's monitoring.format and alertOverrides count.
+            # F-25.4.17.
+            - --alerting-bundle-formats={{ if eq .Values.monitoring.format "both" }}prometheusrule,configmap{{ else }}{{ .Values.monitoring.format | default "prometheusrule" }}{{ end }}
+            - --alerting-override-count={{ len .Values.monitoring.alertOverrides }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}

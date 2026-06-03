@@ -158,6 +158,15 @@ type Config struct {
 	// raises a non-blocking advisory that the chart fell back to a
 	// ConfigMap. Empty skips the check. F-16.9.4.
 	MonitoringFormat string
+	// Prometheus carries the §25.4 "Preflight validation" inputs the
+	// prometheus-reachability check evaluates (ops.prometheus.url,
+	// global.deploymentTier, monitoring.acknowledgeNoPrometheus). The
+	// check is non-blocking and emits a tier-specific INFO/WARN. F-25.4.25.
+	Prometheus PrometheusConfig
+	// PrometheusProber, when non-nil, runs the live §25.4 reachability
+	// probe against ops.prometheus.url. A nil prober (skip-network-probes
+	// / airgap) treats a configured URL as reachable. F-25.4.25.
+	PrometheusProber PrometheusProber
 	// SkipNetworkProbes is the preflight.skipNetworkProbes chart value.
 	// When true the backend-reachability probes that dial an endpoint
 	// outside the kube-apiserver are skipped: the §12.5 MinIO server-side
@@ -534,6 +543,23 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			}.Decide(ctx),
 		})
 	}
+
+	// §25.4 lines 1462-1470 — the prometheus-reachability check is
+	// non-blocking and tier-specific: INFO at Tier 1, WARN at Tier 2/3
+	// (suppressed by monitoring.acknowledgeNoPrometheus). The live dial
+	// is skipped under skip-network-probes (a configured URL is then
+	// assumed reachable); the advisory still runs. F-25.4.25.
+	prober := cfg.PrometheusProber
+	if cfg.SkipNetworkProbes {
+		prober = nil
+	}
+	report = append(report, CheckResult{
+		Name: "prometheus-reachability",
+		Decision: PrometheusReachabilityCheck{
+			Config: cfg.Prometheus,
+			Prober: prober,
+		}.Decide(ctx),
+	})
 
 	// §12.9 line 1050 — the T2 storage-layer encryption baseline: the
 	// Postgres and Redis volumes must be backed by encrypted storage. The

@@ -11,6 +11,28 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--required-runtime-classes=sandboxed=gvisor"
 
+  # spec: §25.4 lines 1462-1470 / F-25.4.25 — the preflight Job feeds the
+  # prometheus-reachability check ops.prometheus.url, global.deploymentTier,
+  # and monitoring.acknowledgeNoPrometheus.
+  - it: passes the §25.4 prometheus-reachability inputs
+    set:
+      ops.prometheus.url: "http://prom.monitoring.svc:9090"
+      global.deploymentTier: "tier2"
+      monitoring.acknowledgeNoPrometheus: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--prometheus-url=http://prom.monitoring.svc:9090"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--platform-tier=tier2"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--acknowledge-no-prometheus=true"
+
   # spec: §17.9.2 line 1372 / §17.9.11 — preflight.skipNetworkProbes is
   # false by default so the backend-reachability probes run. F-17.9.11.
   - it: passes --skip-network-probes=false by default

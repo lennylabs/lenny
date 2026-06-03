@@ -2,6 +2,28 @@ suite: lenny-gateway deployment
 templates:
   - gateway-deployment.yaml
 tests:
+  # spec: §25.4 line 944 / F-25.4.25 — the recommendation Prometheus-outage
+  # opt-out lives under ops.recommendations (the canonical §25.4 location);
+  # the gateway hosts the recommendation service, so the flag renders here.
+  - it: omits --recommendations-disable-on-prometheus-outage by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --recommendations-disable-on-prometheus-outage=true
+  - it: renders the recommendation outage opt-out from ops.recommendations.disableOnPrometheusOutage
+    set:
+      ops.recommendations.disableOnPrometheusOutage: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --recommendations-disable-on-prometheus-outage=true
+
   # spec: §17.4 line 268 / F-17.4.5 — outside global.devMode the gateway
   # acknowledges that the §17 Deployment+Service+Ingress topology
   # terminates TLS at the ingress, so the dev-mode hard startup assertion

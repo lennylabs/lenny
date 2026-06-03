@@ -35,9 +35,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -266,6 +268,40 @@ func opsAdminTLSProber(endpoint, caBundlePath string, internalEnabled bool) pref
 	})
 }
 
+// prometheusReachabilityProber builds a PrometheusProber for the §25.4
+// prometheus-reachability check. It issues a short-timeout HTTP GET
+// against the Prometheus query API (`/api/v1/query?query=1`, served by
+// every Prometheus-HTTP-API-compatible backend), treating any HTTP
+// response below 500 as "reachable" — an auth-protected endpoint that
+// answers 401/403 is still present. Only a transport failure or a 5xx
+// counts as unreachable, matching the §25.4 "Prometheus Unreachable"
+// definition. An empty URL returns nil so the check routes through its
+// not-configured advisory.
+//
+// spec: §25.4 lines 1462-1470. F-25.4.25.
+func prometheusReachabilityProber(rawURL string) preflight.PrometheusProber {
+	if strings.TrimSpace(rawURL) == "" {
+		return nil
+	}
+	return preflight.PrometheusProbeFunc(func(ctx context.Context, target string) error {
+		probeURL := strings.TrimRight(target, "/") + "/api/v1/query?query=1"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+		if err != nil {
+			return err
+		}
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 500 {
+			return fmt.Errorf("prometheus %q returned HTTP %d", target, resp.StatusCode)
+		}
+		return nil
+	})
+}
+
 // otlpDialTarget derives the host:port to dial and the TLS ServerName
 // from an OTLP endpoint, which may carry a scheme (https://host:4317),
 // omit the port (defaulting to OTLP's 4317), or be a bare host:port.
@@ -345,6 +381,12 @@ func main() {
 		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 line 669 cosign-production advisory")
 	monitoringFormat := flag.String("monitoring-format", "",
 		"value of the monitoring.format chart value (prometheusrule | configmap | both); feeds the §16.9 R8 Prometheus Operator CRD-presence advisory")
+	prometheusURL := flag.String("prometheus-url", "",
+		"value of the ops.prometheus.url chart value; the §25.4 prometheus-reachability check probes it (non-blocking, tier-specific INFO/WARN). Empty means no Prometheus configured.")
+	platformTier := flag.String("platform-tier", "",
+		"value of the global.deploymentTier chart value (tier1 | tier2 | tier3); the §25.4 prometheus-reachability check emits INFO at Tier 1 and WARN at Tier 2/3")
+	acknowledgeNoPrometheus := flag.Bool("acknowledge-no-prometheus", false,
+		"value of the monitoring.acknowledgeNoPrometheus chart value; suppresses the §25.4 Tier 2/3 Prometheus WARN when the operator intentionally runs without Prometheus")
 	// §17.9.3 / §17.6 line 488 — the preflight-job template passes
 	// --connection-pooler so the CloudPoolerSentinelDefense check can
 	// see the effective pooler mode. The flag must be accepted here or
@@ -526,12 +568,26 @@ func main() {
 		},
 		CertManagerEnabled: *certManagerEnabled,
 		CertManagerProber:  certManagerVersionProber(cl),
-		SkipNetworkProbes:  *skipNetworkProbes,
+		Prometheus: preflight.PrometheusConfig{
+			URL:                     *prometheusURL,
+			Tier:                    *platformTier,
+			AcknowledgeNoPrometheus: *acknowledgeNoPrometheus,
+		},
+		PrometheusProber:  prometheusReachabilityProber(*prometheusURL),
+		SkipNetworkProbes: *skipNetworkProbes,
 	})
 
 	for _, r := range report {
 		if r.Decision.Passed {
-			log.Printf("lenny-preflight: %s: ok", r.Name)
+			// A passed check may still carry a non-blocking advisory
+			// (INFO/WARN) in its Reason — the §5.3 cosign posture, the
+			// §25.4 prometheus-reachability advisory, etc. Surface it so
+			// the operator sees the advisory instead of a bare "ok".
+			if r.Decision.Reason != "" {
+				log.Printf("lenny-preflight: %s: %s", r.Name, r.Decision.Reason)
+			} else {
+				log.Printf("lenny-preflight: %s: ok", r.Name)
+			}
 			continue
 		}
 		log.Printf("lenny-preflight: %s: FAIL — %s", r.Name, r.Decision.Reason)

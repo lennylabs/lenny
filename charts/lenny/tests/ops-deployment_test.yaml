@@ -68,6 +68,38 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --addr=:8090
 
+  # spec: §25.4 line 1339 / §25.13 lines 4833-4834 / F-25.4.17 — the
+  # leader-only bundleRules reconciler re-stamps the bundled-rules gauges
+  # from monitoring.format and the alertOverrides count.
+  - it: renders the §25.4 bundleRules reconciler args (default prometheusrule, 0 overrides)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-bundle-formats=prometheusrule
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-override-count=0
+
+  - it: expands monitoring.format=both into both bundle formats and counts overrides
+    set:
+      monitoring.format: both
+      monitoring.alertOverrides:
+        GatewayQueueDepthHigh: { enabled: false }
+        PoolExhaustion: { enabled: false }
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-bundle-formats=prometheusrule,configmap
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-override-count=2
+
   - it: grants Lease RBAC for §25.4 leader election
     documentSelector:
       path: kind

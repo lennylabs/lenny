@@ -51,6 +51,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
+	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
@@ -65,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	opsmetrics "github.com/lennylabs/lenny/pkg/ops/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsinventory"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -313,6 +315,10 @@ func main() {
 		"§25.4 security.oidc.minTokenTTLSeconds: reject a startup token whose remaining lifetime is below this floor. 0 disables.")
 	gatewayCABundleFile := flag.String("gateway-ca-bundle-file", envOr("LENNY_OPS_GATEWAY_CA_BUNDLE_FILE", ""),
 		"§25.4 ops.tls.caBundleConfigMap: PEM CA bundle augmenting the system trust store for the gateway admin-API TLS link. Empty uses system roots.")
+	alertingBundleFormats := flag.String("alerting-bundle-formats", envOr("LENNY_ALERTING_BUNDLE_FORMATS", "prometheusrule"),
+		"§25.13 line 4833 Helm value monitoring.format: comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. The §25.4 line 1339 bundleRules reconciler re-stamps lenny_ops /metrics' lenny_alerting_rules_bundled{format} from it. Override via LENNY_ALERTING_BUNDLE_FORMATS.")
+	alertingOverrideCount := flag.Int("alerting-override-count", envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
+		"§25.13 line 4834 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules. The §25.4 bundleRules reconciler re-stamps lenny_alerting_rule_overrides from it. Override via LENNY_ALERTING_OVERRIDE_COUNT.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -796,6 +802,19 @@ func main() {
 	// missing key and fail closed on a store outage at Tier 2/3.
 	idemStore := buildIdempotencyStore(pgPool)
 
+	// §25.4 line 1339 — the bundleRules reconciler. §25.13 line 4816
+	// makes the bundled alerting rules static manifests rendered at Helm
+	// install/upgrade time with no runtime mutation, so the leader-only
+	// reconciler does not re-render rules; it keeps the §25.13 bundled-rules
+	// observability gauges (lenny_alerting_rules_bundled{format} and
+	// lenny_alerting_rule_overrides) current on the lenny-ops /metrics
+	// surface from the chart-supplied bundle format + override count.
+	alertingMx, err := alertingmetrics.New(prometheus.DefaultRegisterer)
+	if err != nil {
+		log.Fatalf("lenny-ops: register §25.13 alerting metrics: %v", err)
+	}
+	bundleRulesReconcile := bundleRulesReconciler(alertingMx, splitAndTrim(*alertingBundleFormats), *alertingOverrideCount)
+
 	// The §25.4 service body: leader election plus the background loops.
 	// The §25.11 scheduled-backup cron jobs and the §25.8
 	// platform-upgrade-check cron register here; the §25.4 leader-only
@@ -859,6 +878,10 @@ func main() {
 			// crossings. Leader-only so a multi-replica deployment emits one
 			// stream. F-25.2.7 / F-25.2.14.
 			OperationsObserve: operationsObserver.Tick,
+			// §25.4 line 1339: the bundleRules reconciler. Leader-only so a
+			// multi-replica deployment re-asserts the §25.13 bundled-rules
+			// gauges from one replica. F-25.4.17.
+			BundleRulesReconcile: bundleRulesReconcile,
 		},
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
@@ -912,8 +935,27 @@ func main() {
 	// backend swap is a single-line change). When empty, lenny-ops
 	// degrades to the per-replica fan-out fallback the §25.16 Minimal
 	// block accepts. F-25.16.4.
+	// §25.4 lines 1914-1916 — register lenny_prometheus_query_duration_seconds
+	// {kind} on the default registry so the §16.9 /metrics surface exposes it.
+	// The histogram receives observations once a PromQL query path consumes a
+	// PrometheusClient built with this adapter (below); until then the
+	// pre-stamped kind series read 0. F-25.4.18.
+	queryMetrics, err := opsmetrics.NewPromQueryMetrics(prometheus.DefaultRegisterer)
+	if err != nil {
+		log.Fatalf("lenny-ops: register §25.4 prometheus query-duration metric: %v", err)
+	}
 	if *prometheusURL != "" {
 		log.Printf("lenny-ops: §25.16 BYO Prometheus configured at %s", *prometheusURL)
+		// Build the §25.4 Prometheus client with the query-duration adapter
+		// so each query the cross-replica health/recommendation aggregator
+		// runs is timed. The aggregator consumer rides on the alert-evaluator
+		// backend swap; the client + metric wiring is in place for it.
+		if _, perr := opsmetrics.NewPrometheusClient(opsmetrics.PrometheusConfig{
+			BaseURL: *prometheusURL,
+			Metrics: queryMetrics,
+		}); perr != nil {
+			log.Printf("lenny-ops: §25.4 prometheus client config rejected: %v", perr)
+		}
 	} else {
 		log.Printf("lenny-ops: §25.16 BYO Prometheus not configured; cross-replica health degrades to per-replica fan-out")
 	}
@@ -1049,16 +1091,24 @@ func main() {
 	// ops:events:stream, lenny_ops_events_sse_active_connections from the
 	// live SSE subscriber count) on every replica so the §16.9 scrape
 	// reflects current depth and connection count.
+	// §25.4 lines 2491-2497 — refresh the self-health source gauges
+	// (postgres pool-active connections, redis consumer lag, webhook
+	// backlog) on the same cadence so the §16.9 scrape exposes the raw
+	// inputs behind the lenny_ops_self_health_status{check} statuses.
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
-		sampleEventStreamGauges(ctx, redisClient, eventStream)
+		sample := func() {
+			sampleEventStreamGauges(ctx, redisClient, eventStream)
+			sampleSelfHealthSourceGauges(pgPool, nil, webhook.Backlog)
+		}
+		sample()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				sampleEventStreamGauges(ctx, redisClient, eventStream)
+				sample()
 			}
 		}
 	}()

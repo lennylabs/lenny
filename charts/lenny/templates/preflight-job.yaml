@@ -251,6 +251,14 @@ spec:
             # Operator CRDs but they are absent (chart falls back to a
             # ConfigMap). F-16.9.4.
             - --monitoring-format={{ .Values.monitoring.format | default "prometheusrule" }}
+            # §25.4 lines 1462-1470 — the non-blocking prometheus-reachability
+            # check probes ops.prometheus.url and emits a tier-specific
+            # advisory (INFO at Tier 1, WARN at Tier 2/3). The Tier 2/3 WARN is
+            # suppressed when monitoring.acknowledgeNoPrometheus is set.
+            # F-25.4.25.
+            - --prometheus-url={{ .Values.ops.prometheus.url | default "" }}
+            - --platform-tier={{ .Values.global.deploymentTier | default "tier1" }}
+            - --acknowledge-no-prometheus={{ .Values.monitoring.acknowledgeNoPrometheus | default false }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
             # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The

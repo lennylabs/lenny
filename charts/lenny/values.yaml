@@ -1615,11 +1615,10 @@ gateway:
     # Defaults empty (the per-rule defaults: 24h pool sizing, 7d credential
     # sizing). spec: §25.3 line 596.
     windowOverrides: {}
-    # disableOnPrometheusOutage makes the recommendations endpoints return
-    # 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from the
-    # fallback in-process reader when the metric source is unreachable.
-    # spec: §25.3 line 625.
-    disableOnPrometheusOutage: false
+    # disableOnPrometheusOutage is sourced from ops.recommendations.
+    # disableOnPrometheusOutage (§25.4 line 944) — the canonical location
+    # for the recommendation Prometheus-outage opt-out. The gateway
+    # Deployment renders the flag from that value. F-25.4.25.
   # opsEvents configures the §25.3 operational-event emitter.
   opsEvents:
     # nonceCheckpointPath is the local-disk path the per-replica eventKey
@@ -2754,6 +2753,16 @@ ops:
   escalation:
     requireDurable: false
     reconciliationWritesPerSecond: 20
+  # recommendations carries the §25.4 line 944 capacity-recommendation
+  # opt-out. disableOnPrometheusOutage makes the recommendation endpoints
+  # return 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from the
+  # in-process fan-out fallback reader when Prometheus is unreachable, for
+  # operators who would rather see no recommendations than imprecise ones.
+  # The recommendation service runs on the gateway, so the value renders as
+  # the gateway Deployment's --recommendations-disable-on-prometheus-outage
+  # flag. Default false (§25.4 line 944). F-25.4.25.
+  recommendations:
+    disableOnPrometheusOutage: false
   image:
     repository: ghcr.io/lennylabs/lenny-ops
     # tag defaults to the chart appVersion when left empty.
