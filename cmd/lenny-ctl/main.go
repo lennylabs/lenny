@@ -6,7 +6,7 @@
 //
 // Resource management lives under the `admin` group:
 //
-//	lenny-ctl admin tenants list|get|create
+//	lenny-ctl admin tenants list|get|create|delete
 //	lenny-ctl admin runtimes list|get
 //	lenny-ctl admin pools list|get|set-warm-count|...
 //	lenny-ctl admin sessions get|force-terminate
@@ -273,6 +273,7 @@ Gateway commands:
   admin tenants list                    List tenants
   admin tenants get <id>                Get a tenant
   admin tenants create <id> [name]      Create a tenant
+  admin tenants delete <id>             Initiate the §12.8 tenant-deletion lifecycle
   admin runtimes list                   List runtimes
   admin runtimes get <name>             Get a runtime
   admin runtimes register --manifest <f>  Register a runtime from a runtime.yaml
@@ -790,7 +791,7 @@ func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, st
 
 func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create)")
+		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete)")
 		return 2
 	}
 	switch args[0] {
@@ -827,6 +828,21 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			return 1
 		}
 		printJSON(stdout, out)
+	case "delete":
+		// spec: §24.10 line 128 — DELETE /v1/admin/tenants/{id} initiates
+		// the §12.8 deletion lifecycle (active → disabling → deleting →
+		// deleted). The multi-phase controller runs asynchronously; the
+		// operator monitors progress with `tenants get <id>`, which surfaces
+		// the §12.8 TenantState on the `state` field.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: tenants delete requires <id>")
+			return 2
+		}
+		if err := c.Do(ctx, "DELETE", "/v1/admin/tenants/"+url.PathEscape(args[1]), nil, nil); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "tenant %q deletion initiated; monitor with: lenny-ctl admin tenants get %s\n", args[1], args[1])
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown tenants subcommand %q\n", args[0])
 		return 2

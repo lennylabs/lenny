@@ -220,6 +220,42 @@ func TestTenantStateExposedInAdminAPI_spec_12_8_865(t *testing.T) {
 	}
 }
 
+// spec: §24.10 line 127 — `tenants get` must surface the deletion state
+// so an operator can monitor progress through disabling → deleting →
+// deleted. A tenant mid-lifecycle (DeletedAt still zero) resolves 200
+// with the in-progress `state`, distinct from the `deleted` tombstone's
+// 410 Gone. F-24.10.4.
+func TestTenantGetSurfacesInProgressDeletionState_spec_24_10_127(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	for _, state := range []string{tenantstore.TenantStateDisabling, tenantstore.TenantStateDeleting} {
+		if _, err := store.Update(req.Context(), "acme", func(tn *tenantstore.Tenant) error {
+			tn.State = state
+			return nil
+		}); err != nil {
+			t.Fatalf("set state %s: %v", state, err)
+		}
+		greq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/tenants/acme", nil))
+		grr := httptest.NewRecorder()
+		router.Handler().ServeHTTP(grr, greq)
+		if grr.Code != http.StatusOK {
+			t.Fatalf("get during %s: status %d, want 200; body=%s", state, grr.Code, grr.Body.String())
+		}
+		var got admin.TenantPayload
+		_ = json.Unmarshal(grr.Body.Bytes(), &got)
+		if got.State != state {
+			t.Errorf("get response state = %q, want %q", got.State, state)
+		}
+	}
+}
+
 func TestCreateTenantWithExperimentTargeting(t *testing.T) {
 	router, store := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{

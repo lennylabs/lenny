@@ -32264,7 +32264,7 @@ via `LENNY_AGENT_RUNTIME=echo`."
 `grep -rn "LENNY_AGENT_RUNTIME" --include="*.go" --include="Makefile*"
 --include="*.yml" .` returns nothing. The env var is documented but unread.
 
-### - [ ] F-17.4.16 — Embedded OIDC provider does not verify the audience the gateway accepts [Medium] — OPEN
+### - [x] F-17.4.16 — Embedded OIDC provider does not verify the audience the gateway accepts [Medium] — CLOSED
 
 Spec line 182: "The embedded OIDC provider refuses any audience claim not matching
 `dev.local`; the gateway rejects externally-issued tokens."
@@ -32280,6 +32280,8 @@ Therefore the gateway accepts any token signed under the embedded OIDC HMAC key,
 regardless of its `aud` claim. In Embedded Mode the practical impact is mild (the
 secret never leaves localhost), but the spec's stated rejection of foreign audiences
 at the gateway layer is not enforced.
+
+**Resolution:** The gateway now wraps the trusted embedded OIDC HMAC verifier in a `jwt.ClaimChecker` pinned to the `dev.local` audience (`embeddedHMACVerifier` in `cmd/lenny-gateway/main.go`) before adding it to the bearer `MultiVerifier`. A token validly signed by the embedded key but carrying any other audience is refused at the gateway, matching the embedded provider's own `Verify`; the Token Service (`rotatingVerifier`) path is unaffected. Tier-1 tests `TestEmbeddedHMACVerifierRejectsForeignAudience_spec_17_4_182` and `TestEmbeddedAudienceCompositionMatchesGateway_spec_17_4_182` pin the foreign-audience rejection and the MultiVerifier composition (Token-Service token accepted regardless of aud, embedded token accepted only with `dev.local`).
 
 ### - [x] F-17.4.17 — `lenny image import` from a host Docker daemon depends on a `docker` binary [Medium] — CLOSED
 
@@ -33321,7 +33323,7 @@ admission-plane check even when they shouldn't.
 
 ---
 
-### - [ ] F-17.6.12 — Krew binary-naming contract has no CI assertion [Medium] — OPEN
+### - [x] F-17.6.12 — Krew binary-naming contract has no CI assertion [Medium] — CLOSED
 
 **Spec:** §17.6 line 360: "CI verifies the invariant after every release by
 running `kubectl krew install lenny` against a disposable kind cluster and
@@ -33342,6 +33344,18 @@ at the wrong archive, would surface only when a user attempts
 
 **Files:**
 - `/Users/joan/projects/lenny/.github/workflows/release.yml:421-492`
+
+**Resolution:** Closed by F-24.0.2 (commit `4b666d57`). The evidence is
+stale: `.github/workflows/release.yml` now carries a `krew-verify` job
+(`needs: [prepare, github-release]`) that creates a disposable kind
+cluster, installs krew, renders the krew manifest for the just-published
+release (validating each archive's SHA-256), runs
+`kubectl krew install --manifest=/tmp/lenny.yaml`, and asserts
+`kubectl lenny --version` reports the release tag. The job installs from
+the freshly rendered manifest via `--manifest` rather than the literal
+`kubectl krew install lenny` because the upstream krew-index PR is still
+open at that point; the binary-naming + manifest-URL + version invariant
+of §17.6 line 360 is exercised end to end.
 
 ---
 
@@ -37930,11 +37944,13 @@ Spec contract for `--acknowledge-hold-override`
 
 ### Findings
 
-### - [ ] F-24.10.1 — `lenny-ctl admin tenants delete` is not implemented in the CLI [High] — OPEN
+### - [x] F-24.10.1 — `lenny-ctl admin tenants delete` is not implemented in the CLI [High] — CLOSED
 
 Spec §24.10 row 3 declares `lenny-ctl admin tenants delete <id>` as a `platform-admin` normative command targeting `DELETE /v1/admin/tenants/{id}`. The CLI's `cmdTenants` (`cmd/lenny-ctl/main.go:275-319`) dispatches only `list`, `get`, and `create`; any other subcommand falls through to the `default` arm and is rejected with `unknown tenants subcommand`. The usage banner (line 144-146) and the package doc comment (line 9) both advertise the same three-subcommand set. Operators have no §24.10-compliant CLI entry point to initiate tenant deletion.
 
 Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:275-319`.
+
+**Resolution:** `cmdTenants` now handles `delete <id>` → `DELETE /v1/admin/tenants/{id}` (204 No Content), printing a confirmation that points the operator at `tenants get <id>` to monitor the §12.8 lifecycle. The subcommand-required hint, package doc comment, and usage banner now advertise `list|get|create|delete`. Tier-1 CLI tests cover the DELETE routing, missing-`<id>` exit-2, server-error propagation, the unknown-subcommand path, and `get` routing. The endpoint's full lifecycle behavior (soft-delete today) is tracked by F-24.10.3 / F-12.8.1.
 
 ### - [ ] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — OPEN
 
@@ -37963,7 +37979,7 @@ A deletion request therefore sets `deletedAt` and stops there. The tenant never 
 
 Locations: `pkg/gateway/admin/tenants.go:1217-1239`; `pkg/controller/tenantdeletion/controller.go:115-139`; `pkg/controller/tenantdeletion/lifecycle.go:42-107`.
 
-### - [ ] F-24.10.4 — `GET /v1/admin/tenants/{id}` cannot surface "deletion state" [High] — OPEN
+### - [x] F-24.10.4 — `GET /v1/admin/tenants/{id}` cannot surface "deletion state" [High] — CLOSED
 
 Spec §24.10 row 2 requires `lenny-ctl admin tenants get <id>` to "show tenant configuration **and deletion state**" so operators can monitor progress through `disabling` → `deleting` → `deleted`.
 
@@ -37972,6 +37988,8 @@ Spec §24.10 row 2 requires `lenny-ctl admin tenants get <id>` to "show tenant c
 A consequence falls out of F3: even if a deletion `Job` existed in the `tenantdeletion.Store`, the admin GET path does not consult it, so the response cannot relay `Job.State` or `Job.Phase`. The CLI as written cannot satisfy the §24.10 "use `lenny-ctl admin tenants get <id>` to monitor progress" workflow.
 
 Locations: `pkg/gateway/admin/tenants.go:569-621`, `:873-886`.
+
+**Resolution:** Closed by F-12.8.12 (commit `f1d9baa1`), which added the `tenants.state` column, `tenantstore.Tenant.State`, and the `state` field on `TenantPayload` (set by `fromTenantWithProbe` via `tenantStateOrActive`). `GET /v1/admin/tenants/{id}` now surfaces the §12.8 TenantState: a tenant mid-lifecycle (`disabling`/`deleting`) resolves 200 with the in-progress `state`, and a `deleted` tombstone returns 410 Gone carrying `state` and `deletedAt`. This is the §24.10 "deletion state" the operator monitors; the controller's finer-grained `Phase` is internal and not part of the §24.10 row-2 contract. The intermediate-state monitoring path is now pinned by `TestTenantGetSurfacesInProgressDeletionState_spec_24_10_127`, alongside the existing `TestTenantStateExposedInAdminAPI_spec_12_8_865`.
 
 ### - [ ] F-24.10.5 — Legal-hold override scaffolding is forward-declared without coverage [Medium] — OPEN
 

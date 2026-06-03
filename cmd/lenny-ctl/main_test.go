@@ -242,6 +242,67 @@ func TestAdminTenantsListUsesAdminPrefix(t *testing.T) {
 	}
 }
 
+// TestAdminTenantsGet covers `lenny-ctl admin tenants get <id>` mapping to
+// GET /v1/admin/tenants/{id}; the response carries the §12.8 `state`
+// field operators use to monitor the deletion lifecycle. spec: §24.10
+// line 127. F-24.10.1, F-24.10.4.
+func TestAdminTenantsGet(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"id":"acme","state":"deleting"}`,
+		"admin", "tenants", "get", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/tenants/acme" {
+		t.Errorf("request: %s %s, want GET /v1/admin/tenants/acme", got.method, got.path)
+	}
+}
+
+// TestAdminTenantsDelete covers `lenny-ctl admin tenants delete <id>`
+// mapping to DELETE /v1/admin/tenants/{id} (204 No Content), which
+// initiates the §12.8 deletion lifecycle. spec: §24.10 line 128.
+// F-24.10.1.
+func TestAdminTenantsDelete(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusNoContent, ``,
+		"admin", "tenants", "delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodDelete || got.path != "/v1/admin/tenants/acme" {
+		t.Errorf("request: %s %s, want DELETE /v1/admin/tenants/acme", got.method, got.path)
+	}
+}
+
+// TestAdminTenantsDeleteRequiresID asserts the §24.10 delete subcommand
+// rejects a missing <id> with exit 2 before any request. F-24.10.1.
+func TestAdminTenantsDeleteRequiresID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", "http://127.0.0.1:0", "admin", "tenants", "delete"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("tenants delete without <id>: exit %d, want 2", code)
+	}
+}
+
+// TestAdminTenantsDeletePropagatesError asserts a server-side rejection
+// (e.g. RESOURCE_NOT_FOUND) surfaces as a non-zero exit. F-24.10.1.
+func TestAdminTenantsDeletePropagatesError(t *testing.T) {
+	code, _ := runAgainstGateway(t, http.StatusNotFound,
+		`{"error":{"code":"RESOURCE_NOT_FOUND","message":"tenant not found"}}`,
+		"admin", "tenants", "delete", "ghost")
+	if code != 1 {
+		t.Errorf("tenants delete on missing tenant: exit %d, want 1", code)
+	}
+}
+
+// TestAdminTenantsUnknownSubcommand asserts the dispatcher rejects an
+// unrecognized tenants subcommand with exit 2. F-24.10.1.
+func TestAdminTenantsUnknownSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", "http://127.0.0.1:0", "admin", "tenants", "frobnicate"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("unknown tenants subcommand: exit %d, want 2", code)
+	}
+}
+
 func TestCircuitBreakersOpenRequiresLimitTier(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// No gateway needed: the flag validation fails before any request.

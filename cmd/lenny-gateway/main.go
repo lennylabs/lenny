@@ -1850,8 +1850,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file: %v", err)
 		}
-		bearerVerifier = jwt.NewMultiVerifier(rotatingVerifier, trusted)
-		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s)",
+		// spec: §17.4 line 182 — "the embedded OIDC provider refuses any
+		// audience claim not matching dev.local; the gateway rejects
+		// externally-issued tokens." The embedded provider's own Verify
+		// enforces the audience, but the gateway accepts the embedded key
+		// directly and would otherwise honor any aud claim signed under it.
+		// Wrap the embedded-key verifier in a ClaimChecker pinned to the
+		// embedded OIDC audience (dev.local) so a foreign-audience token —
+		// even one validly signed by the trusted key — is refused at the
+		// gateway. The Token Service path (rotatingVerifier) is unaffected.
+		// F-17.4.16.
+		bearerVerifier = jwt.NewMultiVerifier(rotatingVerifier, embeddedHMACVerifier(trusted))
+		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s); embedded tokens must carry aud=dev.local",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
 	// spec: §10.2 line 237 — wrap the verifier so the standard auth
@@ -7323,6 +7333,24 @@ func (e playgroundAuditEmitter) EmitMintRejected(ctx context.Context, ev playgro
 
 // splitCSV splits a comma-separated flag value into a trimmed,
 // non-empty slice. An empty input yields a nil slice.
+// embeddedOIDCAudience is the only audience the §17.4 embedded OIDC
+// provider issues. It mirrors pkg/embedded/oidc.Audience; the gateway
+// keeps the literal local so the production binary does not link the
+// embedded dev-only provider. spec: §17.4 line 182.
+const embeddedOIDCAudience = "dev.local"
+
+// embeddedHMACVerifier wraps the trusted embedded OIDC HMAC verifier so
+// the gateway refuses any token whose aud claim is not the embedded
+// provider's audience, even when the signature is valid. §17.4 line 182
+// requires the gateway to reject foreign-audience tokens; the embedded
+// provider's own Verify enforces this, but the gateway trusts the key
+// directly and must apply the same check on its side. F-17.4.16.
+func embeddedHMACVerifier(trusted jwt.Verifier) jwt.Verifier {
+	return jwt.NewClaimChecker(trusted, jwt.ExpectedClaims{
+		Audiences: []string{embeddedOIDCAudience},
+	})
+}
+
 func splitCSV(raw string) []string {
 	var out []string
 	for _, part := range strings.Split(raw, ",") {
