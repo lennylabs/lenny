@@ -37649,7 +37649,7 @@ The backing token-exchange endpoint (`POST /v1/oauth/token`, RFC 8693) that the 
 
 ---
 
-### - [ ] F-24.9.1 — `lenny-ctl admin users rotate-token` is not implemented [High] — OPEN
+### - [x] F-24.9.1 — `lenny-ctl admin users rotate-token` is not implemented [High] — CLOSED
 
 **Spec** (`spec/24_lenny-ctl-command-reference.md:119`):
 
@@ -37680,6 +37680,8 @@ The §17.4 bootstrap workflow (`spec/17_deployment-topology.md:472,634`) and the
 3. Add a thin Kubernetes Secret-patch step — either a `client-go` strategic-merge patch on `Secret/lenny-admin-token`, or a documented `kubectl patch` shell-out — keyed on `--namespace` (default the install namespace from `lenny-ctl install`).
 4. Surface the platform-admin RBAC requirement: the token-exchange endpoint already enforces caller verification, but the CLI should fail fast when the caller bearer is absent.
 5. Cover with a unit test that asserts the request body carries `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token=<current>`, and `requested_token_type` echoing the subject type.
+
+**Resolution:** New `cmd/lenny-ctl/users.go` adds the `admin users` resource with `rotate-token --user <name> [--namespace <ns>]`. It POSTs the RFC 8693 token-exchange to `/v1/oauth/token` (`subject_token` = the caller's current bearer, `subject_token_type`/`requested_token_type` = the JWT URN) and patches the `lenny-admin-token` Secret's `token` key via an injectable kubectl shell-out (default namespace `lenny-system`). It fails fast when no caller token is loaded (platform-admin requirement), and on a Secret-write failure it prints the rotated token plus the manual patch command because the server-side exchange already invalidated the old token. Commit 4dfd7865. Tier-1 tests assert the exchange body fields, namespace override, the missing-token and missing-user guards, the API-error path, and the Secret-write-failure rescue.
 
 ---
 
@@ -38291,8 +38293,10 @@ Spec (§24.16, lines 197 and 199) requires that the `--ops-server` flag has an e
 
 **Resolution:** Closed by F-24.0.6 (confirmed duplicate). `parseGlobalFlags` now honors `LENNY_API_URL`, `LENNY_OPS_URL`, and `LENNY_API_TOKEN`, with an explicit flag taking precedence. Commit f5a77e54.
 
-### - [ ] F-24.16.2 — Routing rule 3 (gateway-host fallback) is not implemented; auto-discovery errors out instead [High] — OPEN
+### - [x] F-24.16.2 — Routing rule 3 (gateway-host fallback) is not implemented; auto-discovery errors out instead [High] — CLOSED
 Spec (§24.16 line 201) requires that when auto-discovery fails (gateway unreachable or `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host on the assumption that gateway-hosted §25.3 operability endpoints still serve the request, and surfaces a warning for any ops-exclusive command. `cmd/lenny-ctl/ops.go:52–63` returns an error in both failure paths and `withOps` (lines 26–30) exits 2 without invoking the command. The test `TestOpsAutoDiscoveryMissingURLErrors` (`cmd/lenny-ctl/ops_test.go:281–296`) asserts the error-and-exit-2 behavior, which is the opposite of the spec's fallback rule. No code path attempts to route ops calls to the gateway host when `opsServiceURL` is missing.
+
+**Resolution:** `withOps` now applies routing rule 3: when `discoverOpsURL` fails (gateway unreachable or no `opsServiceURL`), it falls back to `gateway.BaseURL()`, prints a WARN naming the fallback target, and runs the command against the gateway host rather than aborting at exit 2. The old error-and-exit test was replaced by `TestOpsAutoDiscoveryMissingURLFallsBackToGateway` and `TestOpsAutoDiscoveryGatewayUnreachableFallsBack`. Commit 4dfd7865.
 
 ### - [x] F-24.16.3 — Documented global flags `--token`, `--timeout`, `--insecure-skip-verify`, `--output`, `--quiet` are absent [Medium] — CLOSED
 
@@ -38493,7 +38497,7 @@ The §24.18 surface is largely implemented. `lenny runtime init` faithfully real
 
 ### Findings
 
-### - [ ] F-24.18.1 — `lenny runtime validate` does not perform the §24.18 / §15.4.6 declared-vs-observed probe [High] — OPEN
+### - [x] F-24.18.1 — `lenny runtime validate` does not perform the §24.18 / §15.4.6 declared-vs-observed probe [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-5.1.11 — Both concern declared-vs-observed integrationLevel but target different components: F-24.18.1 is the validate CLI probe missing, while F-5.1.11 is gateway admission enforcement (RUNTIME_LEVEL_UNDERPERFORMS) missing.
 
@@ -38511,7 +38515,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Remediation.** Either invoke `lenny-compliance` from `runtimescaffold.Validate` (build/run the binary, parse its JSON report, surface the missing-capability list and `runtime_level_underperforms` exit), or fold the §15.4.6 categories into the validate subcommand directly. Either way, `validate` must start the runtime against the bundled fakes and report observed level.
 
-### - [ ] F-24.18.2 — `lenny runtime validate --report <path>` is not implemented [Medium] — OPEN
+**Resolution:** `lenny runtime validate --binary <adapter>` now runs the §15.4.6 probe. A new `runtimescaffold` probe drives the full `lenny-compliance` battery via `pkg/compliance.RunSuite`, derives the observed level from the gating checks (lifecycle handshake → full, MCP nonce → standard, else basic), and reconciles against the declared level: match (exit 0), underdeclared (WARN, exit 0), or `runtime_level_underperforms` with the missing-capability list (exit non-zero). A category failure at or below the declared level also fails the command; a missing harness degrades to static-only. Commit 4dfd7865. F-5.1.11 (gateway admission enforcement) is a distinct surface and stays OPEN.
+
+### - [x] F-24.18.2 — `lenny runtime validate --report <path>` is not implemented [Medium] — CLOSED
 
 **Spec (§15.4.6).** "Third-party runtime authors can ... run `lenny runtime validate --report <path>` to emit a machine-readable JSON report for inclusion in release artifacts."
 
@@ -38521,7 +38527,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Remediation.** Add `--report <path>` that writes the §15.4.6 report (the same structure `cmd/lenny-compliance --json` emits) to the named path. Naturally pairs with F1.
 
-### - [ ] F-24.18.3 — `lenny runtime publish` does not pass `--api-url` or honor an admin-token requirement explicitly [Medium] — OPEN
+**Resolution:** `lenny runtime validate --report <path>` writes a JSON `ValidateReport` carrying the static-validation result, the `integrationLevel` reconciliation block, and the full conformance battery (the document `lenny-compliance --json` emits). Commit 4dfd7865.
+
+### - [x] F-24.18.3 — `lenny runtime publish` does not pass `--api-url` or honor an admin-token requirement explicitly [Medium] — CLOSED
 
 **Spec (§24.18, line 232).** "Requires `--api-url` and an admin token."
 
@@ -38530,6 +38538,8 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 **Impact.** An author running `lenny runtime publish foo --image x` against a gateway with no credentials gets a 401 from the gateway rather than a CLI-side "no admin token configured for --api-url" diagnostic. Minor UX gap; the security boundary is still enforced server-side.
 
 **Remediation.** Either document that token discovery is handled by the shared `--api-url`/token mechanism elsewhere in §24, or surface a clearer up-front error from `cmdRuntimePublish` when the client lacks an admin token.
+
+**Resolution:** `cmdRuntimePublish` now fails fast with a CLI diagnostic naming the target `--api-url` when the client carries no credential (`!c.HasAuth()` — no bearer and no Embedded-Mode dev headers), before any `docker push` or gateway call. A new `ctl.Client.HasAuth`/`BaseURL` pair backs the check. Commit 4dfd7865.
 
 ### - [x] F-24.18.4 — `--skip-push` and `--manifest` flags on `publish` are undocumented in §24.18 [Low] — CLOSED
 
@@ -38573,7 +38583,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Impact.** None today because validate does not probe at all; becomes a deployment-packaging requirement once F1 is addressed.
 
-**Resolution:** Verify-closed; second-order consequence of F-24.18.1 (validate-probe missing, still OPEN). Per the finding's own framing: "None today because validate does not probe at all; becomes a deployment-packaging requirement once F1 is addressed." Packaging strategy will be decided as part of F-24.18.1 remediation.
+**Resolution:** Verify-closed. F-24.18.1 (commit 4dfd7865) chose the shell-out packaging strategy: `lenny runtime validate --binary` resolves the separately-installed `lenny-compliance` on PATH (the harness that hosts the fakes) and degrades to a static-only report when it is absent. The §15.4.6 "ship inside the binary" wording remains an Info-level packaging preference; the shell-out satisfies the functional requirement without embedding the fixtures into `lenny-ctl`.
 
 ### Conforming behavior (no findings)
 
