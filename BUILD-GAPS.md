@@ -40248,10 +40248,11 @@ Implementation tree: `pkg/releasechannel/`, `pkg/upgrade/`, `pkg/ops/`, `cmd/len
 > `platform-upgrade-check` cron). The `UPGRADE_*`/`CONFIG_*` error codes
 > (F-25.8.11), the upgrade/version-drift metric emitters (F-25.8.10), and
 > the `GET /v1/admin/platform/version/full` aggregator (F-25.8.4, commit
-> 86050958) also landed. Still missing for this finding: `upgrade/preflight`,
-> `config/diff` + `PUT config`, `GET/PUT registry`, the OpsRoll
-> watchdog/heartbeat, and the Postgres `platform_upgrade_state` persistence
-> (F-25.8.2 — the v1 store is in-memory).
+> 86050958) also landed. The Postgres `platform_upgrade_state`
+> persistence (F-25.8.2) and the `config/diff` + `PUT config` endpoints
+> (F-25.8.5) closed in commit 1918fe8b. Still missing for this finding:
+> `upgrade/preflight`, `GET/PUT registry` (F-25.8.6), and the OpsRoll
+> watchdog/heartbeat (F-25.8.7).
 
 The spec defines the upgrade APIs as the operator surface lenny-ops exposes to drive a Lenny platform release (table at line 3287). Of the thirteen endpoints listed, the implementation registers **none** on the lenny-ops HTTP surface. `pkg/ops/opsserver/opsserver.go:150-168` registers `/healthz`, `/readyz`, `/v1/admin/diagnostics/connectivity`, `/v1/admin/runbooks*`, `/v1/admin/ops/health`, the backup/diagnostics/drift/lock/escalation/event-subscription/MCP routes, and `GET /v1/latest` from the release-channel publisher — but never the §25.8 routes. There is no `pkg/ops/opsserver/platform*.go` file. `pkg/gateway/admin/platform.go:63-94` serves `GET /v1/admin/platform/version` (gateway-local metadata) and `GET /v1/admin/platform/config` (effective merged config), neither of which is the §25.8 endpoint set — those are §25.3 surfaces.
 
@@ -40268,9 +40269,11 @@ The pure phase-enum helper in `pkg/upgrade/upgrade.go` (96 lines) only enumerate
 
 This is the bulk of §25.8: the lifecycle surface itself is not built.
 
-### - [ ] F-25.8.2 — `platform_upgrade_state` and `platform_upgrade_check_cache` tables are not in the migration set [High] — OPEN
+### - [x] F-25.8.2 — `platform_upgrade_state` and `platform_upgrade_check_cache` tables are not in the migration set [High] — CLOSED
 
 §25.8 (line 3577) specifies two singleton Postgres tables. The DDL is supplied in the spec, and the upgrade state machine and the channel cache are described as Postgres-backed throughout (lines 3398-3604). `migrations/` contains migrations 0001–0049; none names either table (`ls migrations/ | grep -iE 'upgrade|registry'` returns only `0021_runtime_min_platform_version` and yields no platform-upgrade entries). Without these tables, none of the durability claims hold: long-paused upgrades cannot survive leader-election handoff (3560), the 6h channel cache cannot exist (3414), pre-upgrade backup IDs cannot be linked, and `previousImages` cannot be recovered for rollback.
+
+**Resolution:** Both tables ship in migration 0124 (added with the §25.4 platform-Postgres migration, iter 106), and the durability claims now hold. Commit 1918fe8b adds `pkg/ops/upgradeservice/pgstore`: a Postgres-backed `upgradeservice.Store` over `platform_upgrade_state` (so a paused upgrade survives a leader handoff — line 3560) and a `CheckCacheStore` over `platform_upgrade_check_cache`. The `Checker` writes the cache on every successful check and serves the cached manifest (`cached:true`, `cacheAge`) when the channel is unreachable (line 3413). `cmd/lenny-ops` selects the durable stores when a Postgres pool is present and the in-memory stores in single-process degraded mode. Embedded-Postgres round-trip tests cover both tables. The `pre_upgrade_backup_id` / `previousImages` columns are present for the operator-driven SchemaMigration/rollback phases (F-25.8.1).
 
 ### - [x] F-25.8.3 — Release-channel consumer (upgrade-check client) is not implemented [High] — CLOSED
 
@@ -40284,9 +40287,11 @@ This is the bulk of §25.8: the lifecycle surface itself is not built.
 
 **Resolution:** Built `pkg/ops/upgradeservice/version.go` (`VersionAggregator` + `VersionSource`/`FuncVersionSource`): each component declares its own required version compared by exact equality (binaries against the build version, the schema counter left unscored), produces per-component `drift`/`requiredAction`, `versionDrift`, and a degradation warning per unreachable source. `GET /v1/admin/platform/version/full` is registered when the aggregator is wired. `cmd/lenny-ops` wires the ops (compiled-in), gateway (HTTP `GET /v1/admin/platform/version` — the GatewayClient.GetVersion call site), Postgres-schema (`schema_migrations`), and controller-Deployment-image sources, sets `lenny_platform_version_drift`, and runs an hourly drift cron. CRD-version and Helm-chart-version K8s introspection are the documented follow-on `VersionSource` additions; absent ones degrade to partial data per §25.8. Commit 86050958.
 
-### - [ ] F-25.8.5 — Config diff and config apply (`/v1/admin/platform/config/*` runtime API) is not implemented [High] — OPEN
+### - [x] F-25.8.5 — Config diff and config apply (`/v1/admin/platform/config/*` runtime API) is not implemented [High] — CLOSED
 
 §25.8 (line 3566) requires `GET /v1/admin/platform/config/diff` and `PUT /v1/admin/platform/config` with schema validation, dry-run impact preview, and proxied gateway apply. No handler exists at the ops layer; the gateway-side endpoint at `pkg/gateway/admin/platform.go:86-94` is read-only and returns the merged effective config. Neither `CONFIG_VALIDATION_FAILED` nor `CONFIG_RESTART_REQUIRED` is declared as an error code in the codebase. `EventPlatformConfigChanged` is declared (`audit/catalog.go:120`) but never emitted.
+
+**Resolution:** Commit 1918fe8b adds `pkg/ops/configservice` and registers both endpoints on lenny-ops. `Diff` fetches the running config via the new `GatewayConfig` seam (`GatewayClient.GetConfig`) and computes the field-by-field difference with the shared `pkg/drift` differ. `Apply` validates against a `Validator` (returning `CONFIG_VALIDATION_FAILED` with `details.errors`), returns a §25.2 dry-run impact preview (diff + restart-required + warnings) without `confirm:true`, and proxies a confirmed change to the gateway via the new `Client.PutJSON`, returning `CONFIG_RESTART_REQUIRED` when the gateway reports a restart-needed setting. `CONFIG_VALIDATION_FAILED` / `CONFIG_RESTART_REQUIRED` are declared in `configservice`; `conventions.WriteErrorWithDetails` carries the structured details. The v1 service ships without a schema validator (the generated `pkg/chart/values` validator is the §17-line-655 follow-on); the gateway remains the authoritative validator on apply. `EventPlatformConfigChanged` emission rides with the gateway-side apply handler.
 
 ### - [ ] F-25.8.6 — Registry runtime API (`/v1/admin/platform/registry`) is not implemented [High] — OPEN
 
@@ -40324,17 +40329,23 @@ This is the bulk of §25.8: the lifecycle surface itself is not built.
 
 §25.8 (lines 3417-3427) lists five air-gap requirements. The publisher (`pkg/releasechannel/`) and the digest-enforcement gate (`pkg/admission/registry_digest`, plus `platform.registry.requireDigest`) cover requirements 1, 3, and 4. The chart supports the publisher (`charts/lenny/values.yaml:391-419`). Items 2 (skip-channel upgrade path via `POST /v1/admin/platform/upgrade/start` with explicit `version` + `images`) and 5 (CRD/schema assets compiled into `lenny-ops`) cannot be honored because the upgrade endpoints themselves are absent and there is no embedded-asset loader. Air-gap operators cannot drive an upgrade through this implementation.
 
-### - [ ] F-25.8.13 — Cert-manager health probe (`certManager` component) is not built [Medium] — OPEN
+### - [x] F-25.8.13 — Cert-manager health probe (`certManager` component) is not built [Medium] — CLOSED
 
 §25.8 (lines 3429-3463) requires `lenny-ops`'s health API to probe cert-manager certificate status and report `healthy`/`degraded`/`unhealthy` with the documented expiry thresholds. The self-health-check inventory in `cmd/lenny-ops/main.go:234-240` registers `CheckPostgresPool`, `CheckRedisLag`, `CheckWebhookBacklog`, `CheckK8sAPI`, and `CheckMemoryPressure`. No cert-manager source exists. The `CertExpiryImminent` alert in `pkg/alerting/rules/rules.go:647` has no producer. The `cert-manager-outage` runbook referenced by the spec (line 3461) is not in `docs/runbooks/` (no file under that name).
 
-### - [ ] F-25.8.14 — Drift snapshot cleanup on rollback (§25.10 hand-off) is not wired [Medium] — OPEN
+**Resolution:** Commit 1918fe8b adds `opsservice.CertManagerCheck`, the `cert_manager` self-health check, registered in the cmd inventory. It classifies each cert-manager Certificate by the spec thresholds (lines 3457-3459): valid >30d is healthy, ≤30d with a failed last renewal is degraded, ≤7d or expired is unhealthy; the aggregate is the worst certificate. A `CertStatusSource` seam reads the cert-manager Certificate CRs over a Kubernetes dynamic client (`certManagerSource` in cmd); a nil source (deployer-provided Secrets / no cert-manager) reports healthy. The source also feeds the new `lenny_cert_expiry_seconds` gauge, giving the `CertExpiryImminent` alert (`min(lenny_cert_expiry_seconds) < 3600`) its producer. The `cert-manager-outage` runbook already exists at `docs/runbooks/cert-manager-outage.md` (the finding's runbook point was stale).
+
+### - [x] F-25.8.14 — Drift snapshot cleanup on rollback (§25.10 hand-off) is not wired [Medium] — CLOSED
 
 §25.8 (lines 3551-3554) requires that when an upgrade rolls back, lenny-ops deletes the `bootstrap_seed_snapshot_target` row scoped to the `upgrade_id`. `pkg/ops/driftservice` does not maintain a per-upgrade target snapshot or a deletion hook. Absent this cleanup the spec's "drift detection misleads operators about what the platform is supposed to look like" failure surfaces.
 
-### - [ ] F-25.8.15 — Helm chart does not render NetworkPolicy or Ingress for the `/v1/admin/platform/*` surface [Medium] — OPEN
+**Resolution:** Commit 1918fe8b adds `SnapshotStore.Delete` (in-memory + Postgres + test fakes) and `driftservice.Service.DeleteTargetSnapshot`, which deletes the §25.10 target snapshot only when its `upgrade_id` matches the rolled-back upgrade (a blank id matches any; an absent target is a no-op, the rollback-during-Preflight case). `upgradeservice.Rollback` invokes the new `DriftCleaner` seam when the transition reaches `RolledBack`; `cmd/lenny-ops` wires the drift service as the cleaner. Unit tests cover the match / mismatch / no-target / blank-id branches and that a rejected rollback (past the point of no return) skips the cleaner.
+
+### - [x] F-25.8.15 — Helm chart does not render NetworkPolicy or Ingress for the `/v1/admin/platform/*` surface [Medium] — CLOSED
 
 The chart renders the lenny-ops Deployment and its Ingress for the read-only health/diagnostics paths but the §25.8 mutating endpoints (`POST /v1/admin/platform/upgrade/*`, `PUT /v1/admin/platform/config`, `PUT /v1/admin/platform/registry`) are not configured because the handlers do not exist. When the handlers land, the chart will need NetworkPolicy and admission scope additions; flagged as a follow-on dependency.
+
+**Resolution:** Verify-closed. The §25.8 mutating endpoints are served on the same lenny-ops HTTP port and under the same `/v1/admin` prefix as every other operability route. `charts/lenny/templates/ops-ingress.yaml` routes `path: "/"` (Prefix) to the lenny-ops Service, so the upgrade/config/registry endpoints are already reachable; `charts/lenny/templates/ops-network-policies.yaml` admits the ingress controller to `ops.httpPort` at L4. NetworkPolicy operates at L3/L4 and cannot scope by HTTP path, so no per-path policy is required — the existing port-level admission already covers the mutating surface. The §25.8 config handlers landed in commit 1918fe8b (the upgrade lifecycle handlers landed earlier under F-10.5.7); the chart needs no change to expose them. The §25.4 OIDC + platform-admin role gate (`Auth`) is the access control on the mutating endpoints, not a chart-rendered policy.
 
 ### - [x] F-25.8.16 — `pkg/releasechannel/signer.go:37-44` envelope format is documented as spec-ambiguous [Low] — CLOSED
 
