@@ -13422,7 +13422,7 @@ binary). Tested: `runPreflightCRDCheck` over a fake client
 (pass/stale/missing), script syntax + arg validation, make-target arg
 validation. Closed by this batch.
 
-### - [ ] F-10.5.5 — 05  Platform-upgrade audit events are catalogued but never emitted [High] — OPEN
+### - [x] F-10.5.5 — 05  Platform-upgrade audit events are catalogued but never emitted [High] — CLOSED
 
 `pkg/observability/audit/catalog.go:107–123` defines the §25.8 / §16.7 lifecycle events:
 
@@ -13437,6 +13437,27 @@ EventPlatformRegistryUpdated, EventPlatformSchemaMigrationRolledBack
 ```
 
 `grep -rn "EventPlatformUpgrade\|platform\.upgrade_" --include="*.go" pkg/ cmd/ | grep -v _test.go | grep -v catalog.go` returns **no matches** — no production code path emits any of these events. The `cmd/lenny-migrate/main.go` runner does not import `pkg/observability/audit` at all (`grep -n "audit" cmd/lenny-migrate/` returns nothing). A schema migration runs, fails, or rolls back without leaving an audit trail. The §24.13 line 151 promise that `lenny-ctl migrate down` is "Audited as `platform.schema_migration_rolled_back`" is unbacked.
+
+**Resolution (40313176):** The new `pkg/ops/upgradeservice` orchestrator
+(see F-10.5.7) emits every platform-upgrade lifecycle audit event on the
+transition that produces it: `platform.upgrade_started` (Start),
+`platform.upgrade_phase_advanced` (Preflight→OpsRoll),
+`platform.upgrade_ops_rolled` / `_crds_updated` / `_schema_migrated` /
+`_gateway_rolled` / `_controllers_rolled` (each Proceed exiting that
+phase), `platform.upgrade_completed` (Verification→Complete),
+`platform.upgrade_verified` (Verify), `platform.upgrade_paused` (Pause),
+and `platform.upgrade_rolled_back` (Rollback). The upgrade-check Checker
+emits `platform.version_checked` on every hourly cron evaluation. Events
+flow through an `AuditSink` seam (log-backed in lenny-ops until the
+audit-store client lands, mirroring backup/drift); a tier-1 test asserts
+every emitted type is in the §16.7 `audit.Catalog`. `platform.schema_-
+migration_rolled_back` was already emitted by F-10.5.3 (1a2a5ecb), so the
+§24.13 migrate-down promise is now backed. The remaining two catalog
+entries in this block — `platform.config_changed` and `platform.registry_-
+updated` — belong to the §25.8 `PUT /v1/admin/platform/config` and
+`PUT /v1/admin/platform/registry` config-management endpoints, a distinct
+surface tracked by F-25.8.1 (the broader §25.8 endpoint set), not the
+upgrade lifecycle this finding names.
 
 ### - [x] F-10.5.6 — 06  CRDs have no served/storage version conversion strategy; `lenny-crd-conversion` webhook is referenced but not packaged [Medium] — CLOSED
 
@@ -13454,7 +13475,7 @@ The single-version state is acceptable in v1 (no migrations across CRD versions)
 
 **Resolution (c3e76f69):** Closed by F-15.5.2 / F-17.2.4 (chart-packaging half) and F-15.5.3 (preflight half). `charts/lenny/templates/admission-policies/conversion-webhook.yaml` renders the `lenny-crd-conversion` Deployment/Service/PDB/Certificate unconditionally (Phase 3.5 baseline) and the new `conversion-webhook-availability` preflight check verifies it. The CRD `spec.conversion.strategy: Webhook` wiring and `x-kubernetes-preserve-unknown-fields` remain part of the §15.5 line 2436 graduation step (deferred until a second served CRD version exists; the static `charts/lenny/crds/` files cannot carry a templated caBundle/namespace), so the v1 single-version posture is unchanged.
 
-### - [ ] F-10.5.7 — 07  §25.8 platform-upgrade phase state machine has no orchestrator consumer [Medium] — OPEN
+### - [x] F-10.5.7 — 07  §25.8 platform-upgrade phase state machine has no orchestrator consumer [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-4.0.1 — Both concern the §25.8/§10.5 platform-upgrade state machine in pkg/upgrade, but F-10.5.7 is the missing orchestrator consumer and F-4.0.1 is the missing upgrade_progressed event emission; F-4.0.1 is also CLOSED.
 
@@ -13467,6 +13488,26 @@ Implementation:
 - The `GET /v1/admin/platform/upgrade-check` endpoint described at `pkg/alerting/rules/rules.go:1416` ("Informational; used to drive agent-initiated upgrade workflows") has no HTTP handler — `grep -rn "/v1/admin/platform/upgrade-check" pkg/ cmd/` only returns the comment.
 
 The state-machine library and the audit event names ship; no caller drives them. Consequence: the §25.8 agent-initiated upgrade workflow (the operator-facing benefit cited in §25.8) cannot run end-to-end.
+
+**Resolution (40313176):** New `pkg/ops/upgradeservice.Service` is the
+lenny-ops consumer the phase machine was missing: it drives
+`pkg/upgrade.Advance` / `AdvanceRollback` through the full §25.8
+progression over a singleton `platform_upgrade_state` (in-memory store;
+the Postgres-backed table — §25.4 line 1492, F-25.8.2 — is the documented
+durable seam). `cmd/lenny-ops/main.go` now constructs the orchestrator
+and passes it to `opsserver`, which registers the §25.8 lifecycle routes
+`POST /v1/admin/platform/upgrade/{start,proceed,pause,rollback,verify}`
+and `GET .../status` (unmapped 404 when unconfigured; `upgrade/start`
+already an idempotency required-key endpoint). The
+`platform_upgrade_check` cron (§25.4 line 1338) is implemented as the
+leader-only `platform-upgrade-check` ScheduledJob, and `GET
+/v1/admin/platform/upgrade-check` has a handler backed by the
+release-channel `Checker`. Each transition emits `upgrade_progressed`
+(via pkg/upgrade) and the §16.7 audit event (F-10.5.5). The remaining
+§25.8 endpoints (`version/full`, `preflight`, `config/diff`, `config`
+PUT, `registry` GET/PUT) and the Postgres persistence stay tracked under
+F-25.8.1 / F-25.8.2; the agent-initiated upgrade workflow now runs
+end-to-end through the orchestrator. ~25 tier-1/2/3 tests added.
 
 ### - [x] F-10.5.8 — 08  Mixed-version replica coexistence: no dual-writer harness, no DDL nullability lint [Medium] — CLOSED
 
@@ -39664,6 +39705,18 @@ Implementation tree: `pkg/releasechannel/`, `pkg/upgrade/`, `pkg/ops/`, `cmd/len
 ### Findings
 
 ### - [ ] F-25.8.1 — §25.8 upgrade orchestrator and the thirteen `/v1/admin/platform/*` endpoints are absent [High] — OPEN
+
+> **Partial progress (40313176, F-10.5.7/F-10.5.5):** the orchestrator
+> state machine driver now exists (`pkg/ops/upgradeservice`) and
+> `pkg/ops/opsserver/platform_upgrade.go` registers 7 of the 13 endpoints:
+> `POST /v1/admin/platform/upgrade/{start,proceed,pause,rollback,verify}`,
+> `GET .../status`, and `GET .../upgrade-check` (release-channel Checker +
+> `platform-upgrade-check` cron). The `UPGRADE_*` error codes and the
+> `lenny_platform_upgrade_available` emitter also landed. Still missing for
+> this finding: `version/full` aggregator, `upgrade/preflight`,
+> `config/diff` + `PUT config`, `GET/PUT registry`, the OpsRoll
+> watchdog/heartbeat, and the Postgres `platform_upgrade_state` persistence
+> (F-25.8.2 — the v1 store is in-memory).
 
 The spec defines the upgrade APIs as the operator surface lenny-ops exposes to drive a Lenny platform release (table at line 3287). Of the thirteen endpoints listed, the implementation registers **none** on the lenny-ops HTTP surface. `pkg/ops/opsserver/opsserver.go:150-168` registers `/healthz`, `/readyz`, `/v1/admin/diagnostics/connectivity`, `/v1/admin/runbooks*`, `/v1/admin/ops/health`, the backup/diagnostics/drift/lock/escalation/event-subscription/MCP routes, and `GET /v1/latest` from the release-channel publisher — but never the §25.8 routes. There is no `pkg/ops/opsserver/platform*.go` file. `pkg/gateway/admin/platform.go:63-94` serves `GET /v1/admin/platform/version` (gateway-local metadata) and `GET /v1/admin/platform/config` (effective merged config), neither of which is the §25.8 endpoint set — those are §25.3 surfaces.
 
