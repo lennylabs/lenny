@@ -75,6 +75,12 @@ var exactCatalog = map[string]ClassMapping{
 	"token.revoked":               authn(ActivityDelete),
 	"token.exchange_rate_limited": authn(ActivityUnknown),
 
+	// §24.11 operator session force-terminate → API Activity (6003),
+	// Delete: an admin terminates a session out of band. Explicit so the
+	// row carries a Delete activity rather than the generic `session.`
+	// prefix Unknown. spec: §24.11 line 136 — F-24.11.3.
+	"session.force_terminated": apiActivity(ActivityDelete),
+
 	// §16.7 impersonation → Account Change (3006).
 	"admin.impersonation_started": accountChange(ActivityCreate),
 	"admin.impersonation_ended":   accountChange(ActivityDelete),

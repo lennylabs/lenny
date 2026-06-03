@@ -130,6 +130,47 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §24.11 lines 135-136 — GetByID resolves a session by its
+	// global id under the platform-admin cross-tenant context
+	// (app.current_tenant = '__all__'), backing the admin
+	// session-investigation surface where the operator supplies only the
+	// id. It crosses the tenant boundary that the tenant-scoped Get
+	// enforces, and still returns ErrNotFound for a missing id. F-24.11.2.
+	t.Run("GetByID resolves across tenants", func(t *testing.T) {
+		a := freshTenant(t, ctx, pg)
+		b := freshTenant(t, ctx, pg)
+		idA, idB := newUUID(t), newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idA, TenantID: a, State: session.StateRunning,
+			RuntimeRef: "echo", PodAssignment: "pod-a",
+		}); err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idB, TenantID: b, State: session.StateCompleted, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+
+		gotA, err := store.GetByID(ctx, idA)
+		if err != nil {
+			t.Fatalf("GetByID A: %v", err)
+		}
+		if gotA.TenantID != a || gotA.State != session.StateRunning || gotA.PodAssignment != "pod-a" {
+			t.Errorf("GetByID A = %+v, want tenant %s running pod-a", gotA, a)
+		}
+		gotB, err := store.GetByID(ctx, idB)
+		if err != nil {
+			t.Fatalf("GetByID B: %v", err)
+		}
+		if gotB.TenantID != b {
+			t.Errorf("GetByID B tenant = %s, want %s", gotB.TenantID, b)
+		}
+		if _, err := store.GetByID(ctx, newUUID(t)); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("GetByID missing: want ErrNotFound, got %v", err)
+		}
+	})
+
 	t.Run("workspace plan round-trip", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		want := sessionstore.Session{

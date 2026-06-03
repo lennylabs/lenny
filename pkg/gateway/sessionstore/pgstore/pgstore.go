@@ -269,6 +269,32 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 	return out, nil
 }
 
+// GetByID resolves a session by its globally-unique id across every
+// tenant, backing the §24.11 platform-admin session-investigation
+// surface where the operator supplies only the session id. It runs
+// under the §4.2 platform-admin cross-tenant context
+// (`app.current_tenant = '__all__'`) so the lenny_tenant_isolation RLS
+// policy does not filter the lookup by tenant. The caller MUST gate
+// this on a platform-admin role. spec: §24.11 lines 135-136; §4.2
+// line 163.
+func (s *Store) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
+	var out sessionstore.Session
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid`, id)
+		sess, err := scanSession(row)
+		if err != nil {
+			return err
+		}
+		out = sess
+		return nil
+	})
+	if err != nil {
+		return sessionstore.Session{}, normalizeMiss(err)
+	}
+	return out, nil
+}
+
 // Update applies mutate to the row under SELECT ... FOR UPDATE, then
 // writes it back. UpdatedAt strictly advances on every successful
 // Update (clamped to the prior value + 1µs, the Postgres timestamptz

@@ -328,3 +328,20 @@ func TestConnectorEventsResolveToTypedClasses_spec_9_3_116(t *testing.T) {
 		}
 	}
 }
+
+// spec: §24.11 line 136 — F-24.11.3. The operator force-terminate event
+// resolves to API Activity with a Delete activity_id via an explicit
+// exact-catalog entry, not the generic `session.` prefix fallback (which
+// would yield ActivityUnknown).
+func TestSessionForceTerminatedResolvesToDelete_spec_24_11(t *testing.T) {
+	m, ok := LookupClass("session.force_terminated")
+	if !ok {
+		t.Fatal("session.force_terminated: no class mapping")
+	}
+	if m.ClassUID != ClassAPIActivity {
+		t.Errorf("class_uid = %d, want %d (API Activity)", m.ClassUID, ClassAPIActivity)
+	}
+	if m.ActivityID != ActivityDelete {
+		t.Errorf("activity_id = %d, want %d (Delete) — must not fall through to the session. prefix Unknown", m.ActivityID, ActivityDelete)
+	}
+}

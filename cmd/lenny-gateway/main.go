@@ -3653,6 +3653,7 @@ func main() {
 		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
 		WithSessions(sessions).
+		WithSessionAdmin(sessionAdminAdapter{store: sessions, onTerminal: sessionSrv.OnSessionTerminal}).
 		WithInteractions(interactions).
 		WithExperiments(experiments).
 		WithStickyFlusher(adminStickyFlusher).

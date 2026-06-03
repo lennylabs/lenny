@@ -8,10 +8,12 @@
 //
 //	lenny-ctl admin tenants list|get|create
 //	lenny-ctl admin runtimes list|get
+//	lenny-ctl admin sessions get|force-terminate
 //	lenny-ctl admin circuit-breakers list|open|close
 //
-// The §25.14 operability groups wrap the lenny-ops API:
+// The §25.14 / §24.15 operability groups wrap the gateway or lenny-ops API:
 //
+//	lenny-ctl operations list|get
 //	lenny-ctl runbooks list|get
 //	lenny-ctl locks list|get|acquire|release|steal
 //	lenny-ctl escalations list|create|resolve
@@ -19,6 +21,8 @@
 //	lenny-ctl drift report|validate|snapshot refresh|reconcile
 //	lenny-ctl backup list|get|create|verify|schedule|policy
 //	lenny-ctl restore safety-check|preview|execute|status|resume|confirm-legal-hold-ledger
+//	lenny-ctl logs pods <namespace> <name>
+//	lenny-ctl mcp-management tools|call
 //
 // Standalone commands:
 //
@@ -151,6 +155,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	case "migrate":
 		return cmdMigrate(ctx, client, rest[1:], stdout, stderr)
+	case "operations":
+		// §24.15 operations group: list active long-running operations and
+		// fetch one by id. Targets the gateway admin API (the Operations
+		// Inventory), not lenny-ops. spec: §24.15 line 181.
+		return cmdOperations(ctx, client, rest[1:], stdout, stderr)
 	case "slo":
 		// slo export renders the §16.10 OpenSLO documents from the
 		// embedded §16.5 SLO catalog and runs offline; it reaches no
@@ -186,6 +195,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "restore":
 		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
 			return cmdRestore(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "mcp-management":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdMCPManagement(ctx, ops, rest[1:], stdout, stderr)
 		})
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
@@ -239,6 +252,9 @@ Gateway commands:
   admin pools drain <name>              Drain a pool (no new assignments)
   admin pools sync-status <name>        Show Postgres↔CRD reconciliation state
   admin pools resume-reconciliation <name>  Clear PoolScalingAdmissionStuck state
+  admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
+  admin sessions force-terminate <id> [--reason <text>]
+                                        Force a stuck session to failed and release its pod (§24.11)
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
@@ -247,8 +263,11 @@ Gateway commands:
                                         Roll back the most recently applied migration at version N (§24.13)
   slo export [--format openslo] [--tier <tier1|tier2|tier3>]
                                         Print the §16.5 SLOs as OpenSLO v1 documents (offline, §16.10)
+  operations list [--status <s>] [--kind <k>] [--actor <a>] [--tenant <id>] [--operation-id <id>] [--limit <n>]
+                                        List active long-running operations with Progress Envelopes (§24.15)
+  operations get <id>                   Fetch a single operation by id (§24.15)
 
-Operability commands (§25.14, target lenny-ops):
+Operability commands (§25.14 / §24.15, target lenny-ops):
   runbooks list [--alert <name>]        List runbooks (optionally by alert)
   runbooks get <name>                   Print a runbook
   locks list                            List remediation locks
@@ -280,6 +299,8 @@ Operability commands (§25.14, target lenny-ops):
   restore status <id>                   Per-shard restore status
   restore resume <id>                   Resume a partially-completed restore
   restore confirm-legal-hold-ledger <id> --justification <text>
+  mcp-management tools                  List the management MCP tools (§24.15)
+  mcp-management call <tool> [--params <json>]   Invoke a management MCP tool (§24.15)
 
 Embedded Mode local commands (§24.19; identical to the lenny short name):
   up [--http-port <n>] [--https-port <n>]   Start the local stack (idempotent)
@@ -435,7 +456,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|circuit-breakers|erasure-jobs)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|sessions|circuit-breakers|erasure-jobs)")
 		return 2
 	}
 	switch args[0] {
@@ -445,6 +466,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdRuntimes(ctx, c, args[1:], stdout, stderr)
 	case "pools":
 		return cmdPools(ctx, c, args[1:], stdout, stderr)
+	case "sessions":
+		return cmdSessions(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breakers":
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
 	case "erasure-jobs":
@@ -565,6 +588,121 @@ func cmdErasureJobs(ctx context.Context, c *ctl.Client, args []string, stdout, s
 		printJSON(stdout, out)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown erasure-jobs subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// cmdSessions implements the §24.11 session-investigation group:
+// `sessions get <id>` (GET /v1/admin/sessions/{id}) and
+// `sessions force-terminate <id> [--reason <text>]` (POST
+// .../force-terminate). Both require platform-admin.
+// spec: §24.11 lines 135-136.
+func cmdSessions(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: sessions requires a subcommand (get|force-terminate)")
+		return 2
+	}
+	switch args[0] {
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: sessions get requires <id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/sessions/"+args[1], nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "force-terminate":
+		fs := flag.NewFlagSet("sessions force-terminate", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		reason := fs.String("reason", "", "optional justification recorded in the audit trail")
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: sessions force-terminate requires <id>")
+			return 2
+		}
+		id := args[1]
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+		var body any
+		if *reason != "" {
+			body = map[string]any{"reason": *reason}
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/sessions/"+id+"/force-terminate", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown sessions subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// cmdOperations implements the §24.15 operations group:
+// `operations list [--status|--kind|--actor|--tenant|--operation-id|--limit]`
+// (GET /v1/admin/operations, the §25.4 Inventory scatter-gather with a
+// Progress Envelope per record) and `operations get <id>` (GET
+// /v1/admin/operations/{id}). Both target the gateway admin API and
+// require platform-admin. spec: §24.15 line 181.
+func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: operations requires a subcommand (list|get)")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("operations list", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		status := fs.String("status", "", "filter by status (comma-separated)")
+		kind := fs.String("kind", "", "filter by operation kind (comma-separated)")
+		actor := fs.String("actor", "", "filter by actor subject")
+		tenant := fs.String("tenant", "", "filter by tenant id")
+		operationID := fs.String("operation-id", "", "filter by correlation operation id")
+		limit := fs.Int("limit", 0, "maximum number of operations to return")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		q := url.Values{}
+		for name, v := range map[string]string{
+			"status": *status, "kind": *kind, "actor": *actor,
+			"tenantId": *tenant, "operationId": *operationID,
+		} {
+			if v != "" {
+				q.Set(name, v)
+			}
+		}
+		if *limit > 0 {
+			q.Set("limit", strconv.Itoa(*limit))
+		}
+		path := "/v1/admin/operations"
+		if enc := q.Encode(); enc != "" {
+			path += "?" + enc
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", path, nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: operations get requires <id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/operations/"+args[1], nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown operations subcommand %q\n", args[0])
 		return 2
 	}
 	return 0

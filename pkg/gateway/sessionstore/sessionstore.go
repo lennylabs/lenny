@@ -813,6 +813,16 @@ type Store interface {
 	// cross-tenant misses — the store never leaks foreign sessions).
 	Get(ctx context.Context, tenantID, id string) (Session, error)
 
+	// GetByID returns the session row whose ID equals id, regardless of
+	// tenant. The session id is a globally-unique UUID, so this resolves
+	// at most one row. It backs the §24.11 platform-admin session
+	// investigation surface (`GET /v1/admin/sessions/{id}`,
+	// force-terminate), where the operator supplies only the session id.
+	// Returns ErrNotFound when no row exists. Unlike Get, this method
+	// deliberately crosses the tenant boundary and MUST only be reached
+	// from a platform-admin-gated path. spec: §24.11 lines 135-136.
+	GetByID(ctx context.Context, id string) (Session, error)
+
 	// Update writes new state to id within tenantID. Returns
 	// ErrNotFound when the row is missing. The store does NOT validate
 	// the transition — the caller (sessionserver) drives

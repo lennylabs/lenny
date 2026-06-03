@@ -5,11 +5,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 )
@@ -468,6 +470,55 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			map[string]any{"justification": justification}, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown restore subcommand %q\n", args[0])
+		return 2
+	}
+}
+
+// cmdMCPManagement implements the §24.15 mcp-management group: a thin
+// JSON-RPC client for the lenny-ops management MCP server mounted at
+// /mcp/management. `mcp-management tools` issues tools/list; `mcp-management
+// call <tool> [--params <json>]` issues tools/call. The raw JSON-RPC
+// envelope is printed so operators can script against the §25.12 tool
+// surface for local testing. spec: §24.15 line 193; §25.12.
+func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: mcp-management requires a subcommand (tools|call)")
+		return 2
+	}
+	switch args[0] {
+	case "tools":
+		req := map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+			"params": map[string]any{},
+		}
+		return opsSend(ctx, c, "POST", "/mcp/management", req, stdout, stderr)
+	case "call":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: mcp-management call requires <tool>")
+			return 2
+		}
+		tool := args[1]
+		fs := flag.NewFlagSet("mcp-management call", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		params := fs.String("params", "", "tool arguments as a JSON object")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+		arguments := json.RawMessage("{}")
+		if strings.TrimSpace(*params) != "" {
+			if !json.Valid([]byte(*params)) {
+				fmt.Fprintln(stderr, "lenny-ctl: --params must be a JSON object")
+				return 2
+			}
+			arguments = json.RawMessage(*params)
+		}
+		req := map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{"name": tool, "arguments": arguments},
+		}
+		return opsSend(ctx, c, "POST", "/mcp/management", req, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown mcp-management subcommand %q\n", args[0])
 		return 2
 	}
 }

@@ -242,6 +242,25 @@ func TestErasureRecoveryEventsKnownButNotCatalogued_spec_24_12(t *testing.T) {
 	}
 }
 
+// TestSessionForceTerminatedKnownButNotCatalogued asserts the §24.11
+// operator force-terminate event is recognized by IsKnownEventType so
+// audit-sink validators accept the row, while staying out of Catalog()
+// because §16.7 enumerates the session lifecycle terminals but not this
+// operator-driven force. spec: §24.11 line 136. F-24.11.3.
+func TestSessionForceTerminatedKnownButNotCatalogued_spec_24_11(t *testing.T) {
+	if string(EventSessionForceTerminated) != "session.force_terminated" {
+		t.Fatalf("event wire string = %q, want %q", EventSessionForceTerminated, "session.force_terminated")
+	}
+	if !IsKnownEventType(EventSessionForceTerminated) {
+		t.Error("session.force_terminated is emitted on the §11.7 audit path and must be a known event type")
+	}
+	for _, c := range Catalog() {
+		if c == EventSessionForceTerminated {
+			t.Error("session.force_terminated is a §24.11 operator event, not a §16.7 addition — it must not appear in Catalog()")
+		}
+	}
+}
+
 // TestEventTypesAreNonEmptyIdentifiers asserts every §16.7 event type
 // is a non-empty lower-case identifier. Almost every §16.7 event is
 // dot-namespaced; quota_failopen_started is the one spec exception,

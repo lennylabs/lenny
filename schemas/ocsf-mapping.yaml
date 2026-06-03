@@ -308,6 +308,14 @@ mappings:
     category_name: Findings
     activity_id: 1
     activity_name: Create
+  - event_type: session.force_terminated
+    match: exact
+    class_uid: 6003
+    class_name: API Activity
+    category_uid: 6
+    category_name: Application Activity
+    activity_id: 4
+    activity_name: Delete
   - event_type: token.exchange_rate_limited
     match: exact
     class_uid: 3002

@@ -84,6 +84,19 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 	return row, nil
 }
 
+// GetByID returns the session row whose ID equals id regardless of
+// tenant, backing the §24.11 platform-admin session-investigation
+// surface. spec: §24.11 lines 135-136.
+func (s *Store) GetByID(_ context.Context, id string) (sessionstore.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row, ok := s.sessions[id]
+	if !ok {
+		return sessionstore.Session{}, sessionstore.ErrNotFound
+	}
+	return row, nil
+}
+
 // Update applies mutate to the row in-place under the store lock,
 // then writes the resulting row back. Returns ErrNotFound when the
 // row is missing or tenant-mismatched.

@@ -168,6 +168,10 @@ type Router struct {
 	corrections             correctionstore.Store
 	dualControlThresh       float64
 	sessions                sessionstore.Store
+	// sessionAdmin backs the §24.11 platform-admin session-investigation
+	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
+	// them unregistered. spec: §24.11 lines 135-136.
+	sessionAdmin SessionAdmin
 	interactions            interactionstore.Store
 	experiments             experimentstore.Store
 	stickyFlusher           StickyFlusher
@@ -463,6 +467,15 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handleListOperations)))
 		mux.Handle("GET /v1/admin/operations/{id}",
 			r.requireAdmin(http.HandlerFunc(r.handleGetOperation)))
+	}
+	if r.sessionAdmin != nil {
+		// §24.11 platform-admin session investigation: read-through and
+		// the operator-driven forced terminal transition. Both resolve a
+		// session by its global id and are platform-admin-only.
+		mux.Handle("GET /v1/admin/sessions/{id}",
+			r.requireAdmin(http.HandlerFunc(r.handleGetSession)))
+		mux.Handle("POST /v1/admin/sessions/{id}/force-terminate",
+			r.requireAdmin(http.HandlerFunc(r.handleForceTerminateSession)))
 	}
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))

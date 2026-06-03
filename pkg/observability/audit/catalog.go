@@ -118,6 +118,17 @@ const (
 	// spec: §7.5 line 475, §7.3 line 387 — F-7.5.9.
 	EventSessionSetupCommandFailed EventType = "session.setup_command_failed"
 
+	// EventSessionForceTerminated is the §24.11 operator force-terminate
+	// action: a platform-admin terminates a stuck or unresponsive session
+	// through `POST /v1/admin/sessions/{id}/force-terminate`. The Detail
+	// carries `operator_sub`, `operator_tenant_id`, `session_id`,
+	// `previous_state`, and the optional `reason`. §16.7 does not
+	// enumerate this operability action (it is a §24.11 CLI surface, not a
+	// §25 lifecycle event), so it is recognized by IsKnownEventType via
+	// auxKnownEventTypes but excluded from Catalog(). spec: §24.11 line
+	// 136 — F-24.11.3.
+	EventSessionForceTerminated EventType = "session.force_terminated"
+
 	// §9.3 connector lifecycle audit events. The §15.1 admin connector
 	// CRUD endpoints (`POST /v1/admin/connectors`, `PUT`, `DELETE`) and
 	// the §9.3 OAuth-flow endpoints (authorize / callback) emit these
@@ -362,6 +373,10 @@ var auxKnownEventTypes = []EventType{
 	// Catalog(), which transcribes only the §16.7 enumeration. F-24.12.4.
 	EventGDPRErasureJobRetried,
 	EventGDPRProcessingRestrictionCleared,
+	// §24.11 session force-terminate operator action. §16.7 enumerates the
+	// session lifecycle terminals but not this operator-driven force, so it
+	// is recognized by IsKnownEventType yet excluded from Catalog(). F-24.11.3.
+	EventSessionForceTerminated,
 }
 
 // Catalog returns the §16.7 catalog of §25 audit event types. The

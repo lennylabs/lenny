@@ -425,6 +425,9 @@ func (c *countingStore) Get(ctx context.Context, tenantID, id string) (sessionst
 	c.gets++
 	return c.inner.Get(ctx, tenantID, id)
 }
+func (c *countingStore) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
+	return c.inner.GetByID(ctx, id)
+}
 func (c *countingStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	return c.inner.Update(ctx, tenantID, id, mutate)
 }

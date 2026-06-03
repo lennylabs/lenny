@@ -30,6 +30,31 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
+// spec: §24.11 lines 135-136 — GetByID resolves a session across tenants
+// for the platform-admin investigation surface, unlike the tenant-scoped
+// Get. F-24.11.2.
+func TestGetByIDResolvesAcrossTenants(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateRunning})
+
+	got, err := s.GetByID(ctx, "sess_1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.TenantID != "acme" || got.State != session.StateRunning {
+		t.Errorf("GetByID = %+v, want tenant acme / running", got)
+	}
+}
+
+func TestGetByIDMissingReturnsNotFound(t *testing.T) {
+	s := memstore.New()
+	_, err := s.GetByID(context.Background(), "missing")
+	if !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Errorf("GetByID missing: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestCreateRejectsDuplicate(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
