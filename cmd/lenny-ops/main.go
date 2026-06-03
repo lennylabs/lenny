@@ -187,6 +187,26 @@ func main() {
 			"line 3822 running-state cache that backs GET /v1/admin/drift. Default 60; "+
 			"0 disables caching (every report reads fresh). "+
 			"Override via LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS.")
+	// spec: §25.4 line 2396. ops.escalation.requireDurable rejects an
+	// escalation create with ESCALATION_NO_DURABLE_STORE when neither
+	// Postgres nor Redis accepts it, instead of buffering in memory — the
+	// conservative posture for deployers who prefer an explicit failure
+	// over a silent durability gap during a storage outage. Default false.
+	// F-25.4.7.
+	escalationRequireDurable := flag.Bool("escalation-require-durable",
+		envBool("LENNY_OPS_ESCALATION_REQUIRE_DURABLE", false),
+		"§25.4 ops.escalation.requireDurable — reject an escalation create with "+
+			"ESCALATION_NO_DURABLE_STORE when both Postgres and Redis are unavailable "+
+			"instead of buffering in memory. Override via LENNY_OPS_ESCALATION_REQUIRE_DURABLE.")
+	// spec: §25.4 line 2414. ops.escalation.reconciliationWritesPerSecond
+	// paces the leader-only flush that promotes buffered escalations to a
+	// recovered durable tier, so a large recovery does not spike Postgres.
+	// Default 20. F-25.4.7.
+	escalationReconcileWPS := flag.Int("escalation-reconciliation-writes-per-second",
+		envInt("LENNY_OPS_ESCALATION_RECONCILIATION_WRITES_PER_SECOND", 20),
+		"§25.4 ops.escalation.reconciliationWritesPerSecond — flush rate cap for the "+
+			"leader-only escalation reconciliation loop. Default 20. "+
+			"Override via LENNY_OPS_ESCALATION_RECONCILIATION_WRITES_PER_SECOND.")
 	// spec: §25.4 lines 1562-1564 + §17 security.oidc.issuerUrl (line 916).
 	// lenny-ops validates bearer JWTs with the same OIDC issuer the gateway
 	// admin API trusts and requires platform-admin or tenant-admin on every
@@ -454,7 +474,12 @@ func main() {
 	// in-memory or unconfigured backing store in this single-process
 	// degraded mode so the §25 endpoints serve and an agent can exercise
 	// them; the durable backing stores are documented seams.
-	escalationSvc := buildEscalationService(newStreamEscalationEmitter(opsEmitter, replicaID))
+	escalationSvc := buildEscalationService(
+		newStreamEscalationEmitter(opsEmitter, replicaID), pgPool, redisClient,
+		escalationConfig{
+			RequireDurable:                *escalationRequireDurable,
+			ReconciliationWritesPerSecond: *escalationReconcileWPS,
+		})
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
@@ -498,10 +523,24 @@ func main() {
 	// platform-upgrade-check cron register here; the escalation loop is
 	// wired as that subsystem is built.
 	svc, err := opsservice.New(opsservice.Config{
-		ReplicaID:          replicaID,
-		Elector:            elector,
-		Webhook:            webhook,
-		CronJobs:           cronJobs,
+		ReplicaID: replicaID,
+		Elector:   elector,
+		Webhook:   webhook,
+		CronJobs:  cronJobs,
+		// §25.4 lines 2407-2415: the leader-only escalation-flush
+		// reconciliation loop promotes in-memory-buffered escalations up to
+		// a recovered durable tier (preserving the authoring timestamp and
+		// the emitted flag), draining the Tier 3 buffer once Postgres or
+		// Redis is reachable again. F-25.4.7, F-25.4.16.
+		Reconcilers: opsservice.Reconcilers{
+			EscalationFlush: func(ctx context.Context) error {
+				n, err := escalationSvc.Flush(ctx)
+				if err == nil && n > 0 {
+					log.Printf("lenny-ops: escalation flush promoted %d buffered escalation(s) to durable storage", n)
+				}
+				return err
+			},
+		},
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
 		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {

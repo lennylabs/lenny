@@ -75,13 +75,31 @@ func (s *Server) handleCreateEscalation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// §25.4: a record in the in-memory Tier 3 buffer is a 202 with the
-	// X-Lenny-Persistence header; a durable record is a 201.
-	status := http.StatusCreated
-	if esc.Persistence == escalation.PersistenceBufferedMemory {
-		status = http.StatusAccepted
-	}
+	// X-Lenny-Persistence header and a durability warning in the body; a
+	// durable record is a 201.
 	w.Header().Set("X-Lenny-Persistence", esc.Persistence)
-	writeJSON(w, status, esc)
+	if esc.Persistence == escalation.PersistenceBufferedMemory {
+		writeJSON(w, http.StatusAccepted, escalationCreateResponse{
+			Escalation: *esc,
+			Warning: "Escalation stored in memory only. It will be lost if lenny-ops " +
+				"restarts before Postgres or Redis recovers. The escalation_created event " +
+				"has been emitted to the event stream so webhook subscribers will still receive it.",
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, esc)
+}
+
+// escalationCreateResponse augments a §25.4 escalation create response
+// with the durability warning the spec attaches to a Tier 3
+// (buffered-memory) record. The embedded Escalation promotes its fields
+// to the top level so the wire shape matches the durable-tier response
+// plus a warning field.
+//
+// spec: §25.4 lines 2388-2394.
+type escalationCreateResponse struct {
+	escalation.Escalation
+	Warning string `json:"warning,omitempty"`
 }
 
 // handleListEscalations serves GET /v1/admin/escalations: list the

@@ -30,6 +30,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	escpgstore "github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
+	escredisstore "github.com/lennylabs/lenny/pkg/ops/escalation/redisstore"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
@@ -494,14 +496,59 @@ func (e streamEscalationEmitter) EmitEscalationCreated(esc escalation.Escalation
 	return true
 }
 
-// buildEscalationService constructs the §25.4 escalation service over
-// the in-memory Tier 3 buffer, wired to emitter for the §25.17
-// escalation_created event stream. The Postgres ops_escalations table
-// and the Redis tier are documented seams: until they land the service
-// runs the in-memory buffer so the §25.4 escalation endpoints serve and
-// an agent can exercise them in a single-process degraded mode.
-func buildEscalationService(emitter escalation.Emitter) *escalation.Service {
-	return escalation.NewService(emitter)
+// escalationConfig carries the §25.4 escalation durability knobs the
+// lenny-ops binary exposes via flags / env.
+type escalationConfig struct {
+	// RequireDurable rejects a create with ESCALATION_NO_DURABLE_STORE when
+	// no durable tier accepts it (§25.4 line 2396 ops.escalation.requireDurable).
+	RequireDurable bool
+	// ReconciliationWritesPerSecond paces the §25.4 line 2414 flush.
+	ReconciliationWritesPerSecond int
+}
+
+// buildEscalationService constructs the §25.4 tiered escalation service.
+// The durable tiers are composed in §25.4 priority order over the
+// always-present in-memory Tier 3 buffer: the Postgres ops_escalations
+// table (migration 0122) when a pool is available, then the Redis hash
+// ops:escalations:{id} when a Redis client is available. Without either,
+// the service runs the in-memory buffer alone (single-process degraded
+// mode / dev). emitter publishes the §25.17 escalation_created event;
+// the audit sink records the remediation.escalation_persisted flush event
+// (logged until the lenny-ops audit-store client lands, matching the
+// backup and drift audit posture). The leader-only flush reconciler
+// (wired in main) promotes buffered records upward as a durable tier
+// recovers.
+//
+// spec: §25.4 lines 2376-2455.
+func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, redisClient redis.UniversalClient, cfg escalationConfig) *escalation.Service {
+	var durable []escalation.Store
+	if pgPool != nil {
+		durable = append(durable, escpgstore.New(pgPool))
+	}
+	if redisClient != nil {
+		durable = append(durable, escredisstore.New(redisClient))
+	}
+	return escalation.NewWithStores(escalation.Options{
+		Durable:                       durable,
+		Emitter:                       emitter,
+		Audit:                         escalationAuditSink{},
+		RequireDurable:                cfg.RequireDurable,
+		ReconciliationWritesPerSecond: cfg.ReconciliationWritesPerSecond,
+	})
+}
+
+// escalationAuditSink is the §25.4 line 2415 escalation-flush audit sink.
+// lenny-ops has no audit-store client in this single-process mode, so the
+// remediation.escalation_persisted event is logged until that path lands,
+// matching the backup logAuditSink and the drift / diagnostics-audit
+// posture. A future commit that wires the audit-append client swaps this
+// for one that writes the §11.7 append-only row. F-25.4.22.
+type escalationAuditSink struct{}
+
+func (escalationAuditSink) EscalationPersisted(_ context.Context, id, sourceTier, destTier string, durationMS int64) {
+	log.Printf("lenny-ops: audit remediation.escalation_persisted escalation=%s %s->%s duration_ms=%d — "+
+		"audit-append destination pending the audit-store wiring",
+		id, sourceTier, destTier, durationMS)
 }
 
 // buildIdempotencyStore returns the §25.4 idempotency store. When a

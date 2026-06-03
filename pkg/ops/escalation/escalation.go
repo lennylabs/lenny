@@ -5,18 +5,20 @@
 // remediation capabilities (requires cluster-admin access, or repeated
 // remediation has failed).
 //
-// §25.4 specifies a tiered create path (Postgres → Redis → in-memory)
-// so an escalation can always be recorded, including during the
-// storage outages that are most likely to trigger one. The v1 store
-// implemented here is the in-memory Tier 3 buffer: a capped ring of the
-// most recent escalations, supporting create, list with filtering,
-// status update, and the §25.4 escalation_created emission flag. The
-// Postgres and Redis tiers reuse this service's contract.
+// §25.4 specifies a tiered create path (Postgres → Redis → in-memory) so
+// an escalation can always be recorded, including during the storage
+// outages that are most likely to trigger one. The Service composes an
+// ordered set of durable Stores (the Postgres pgstore, then the Redis
+// redisstore) over the always-present in-memory MemStore: Create attempts
+// each tier in order, Get/List/Update read from the highest reachable
+// store, and a background reconciliation flush promotes buffered records
+// upward when a durable store recovers — preserving the authoring
+// timestamp and the exactly-once emission flag.
 //
 // Creating an escalation emits an escalation_created operational event
-// so webhook and SSE subscribers route it to PagerDuty, Slack, or any
-// external system; the platform provides the record, the routing is
-// the deployer's responsibility.
+// exactly once so webhook and SSE subscribers route it to PagerDuty,
+// Slack, or any external system; the platform provides the record, the
+// routing is the deployer's responsibility.
 package escalation
 
 import (
@@ -25,7 +27,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"sort"
 	"sync"
 	"time"
 )
@@ -67,6 +68,10 @@ const (
 	// ErrCodeInvalid is the malformed-request rejection.
 	ErrCodeInvalid = "ESCALATION_INVALID"
 )
+
+// defaultReconciliationWritesPerSecond is the §25.4 line 2414 default
+// flush rate (ops.escalation.reconciliationWritesPerSecond).
+const defaultReconciliationWritesPerSecond = 20
 
 // Error is a §25.4 escalation failure carrying the canonical error code
 // so the HTTP handler maps it to the documented status without
@@ -163,40 +168,92 @@ type Emitter interface {
 	EmitEscalationCreated(esc Escalation) bool
 }
 
-// Service is the §25.4 escalation service over an in-memory Tier 3
-// buffer. It is the create/list/update surface the HTTP handler calls.
-// Service is safe for concurrent use.
-type Service struct {
-	mu       sync.Mutex
-	byID     map[string]*Escalation
-	order    []string // creation order, for capped eviction
-	capacity int
-	emitter  Emitter
-	now      func() time.Time
+// Options configures a tiered escalation Service.
+type Options struct {
+	// Durable lists the durable persistence tiers in priority order
+	// (Postgres first, then Redis). May be empty for a memory-only
+	// deployment.
+	Durable []Store
+	// Emitter publishes escalation_created events; nil leaves records
+	// un-emitted for the retry loop.
+	Emitter Emitter
+	// Audit receives the remediation.escalation_persisted event on each
+	// reconciliation flush; nil drops it.
+	Audit AuditSink
+	// RequireDurable rejects a create with ESCALATION_NO_DURABLE_STORE
+	// when no durable tier accepts it, instead of buffering in memory
+	// (§25.4 line 2396 ops.escalation.requireDurable).
+	RequireDurable bool
+	// ReconciliationWritesPerSecond paces the flush so a large recovery
+	// does not spike Postgres (§25.4 line 2414). Zero applies the default
+	// of 20; a negative value disables pacing.
+	ReconciliationWritesPerSecond int
 }
 
-// bufferCapacity is the §25.4 Tier 3 in-memory buffer cap: the oldest
-// escalation is evicted when a new one would exceed it.
-const bufferCapacity = 100
+// Service is the §25.4 tiered escalation service. It is the
+// create/list/update surface the HTTP handler calls and owns the
+// reconciliation flush the leader replica drives. Service is safe for
+// concurrent use.
+type Service struct {
+	durable        []Store
+	mem            *MemStore
+	emitter        Emitter
+	audit          AuditSink
+	requireDurable bool
+	flushPerSec    int
 
-// NewService returns an escalation service backed by the in-memory
-// Tier 3 buffer. emitter publishes escalation_created events; a nil
-// emitter leaves escalations un-emitted.
+	clockMu sync.Mutex
+	now     func() time.Time
+	sleep   func(time.Duration)
+}
+
+// NewService returns a memory-only escalation service (Tier 3 buffer
+// only) wired to emitter. It is the single-process / dev constructor;
+// use NewWithStores to add the durable Postgres and Redis tiers.
 func NewService(emitter Emitter) *Service {
+	return NewWithStores(Options{Emitter: emitter})
+}
+
+// NewWithStores returns a tiered escalation service over opts.Durable
+// plus the always-present in-memory Tier 3 buffer.
+func NewWithStores(opts Options) *Service {
+	flushPerSec := opts.ReconciliationWritesPerSecond
+	if flushPerSec == 0 {
+		flushPerSec = defaultReconciliationWritesPerSecond
+	}
 	return &Service{
-		byID:     make(map[string]*Escalation),
-		capacity: bufferCapacity,
-		emitter:  emitter,
-		now:      func() time.Time { return time.Now().UTC() },
+		durable:        opts.Durable,
+		mem:            NewMemStore(),
+		emitter:        opts.Emitter,
+		audit:          opts.Audit,
+		requireDurable: opts.RequireDurable,
+		flushPerSec:    flushPerSec,
+		now:            func() time.Time { return time.Now().UTC() },
+		sleep:          time.Sleep,
 	}
 }
 
 // SetClock overrides the service clock; tests use it for deterministic
 // timestamps.
 func (s *Service) SetClock(now func() time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.clockMu.Lock()
+	defer s.clockMu.Unlock()
 	s.now = now
+}
+
+func (s *Service) clock() time.Time {
+	s.clockMu.Lock()
+	defer s.clockMu.Unlock()
+	return s.now()
+}
+
+// allStores returns the durable tiers followed by the in-memory buffer,
+// in read priority order.
+func (s *Service) allStores() []Store {
+	out := make([]Store, 0, len(s.durable)+1)
+	out = append(out, s.durable...)
+	out = append(out, s.mem)
+	return out
 }
 
 // validSeverity reports whether sev is a §25.4 escalation severity.
@@ -204,21 +261,23 @@ func validSeverity(sev string) bool {
 	return sev == SeverityCritical || sev == SeverityWarning || sev == SeverityInfo
 }
 
-// Create records a §25.4 escalation and emits the escalation_created
-// event. The v1 store is the in-memory Tier 3 buffer, so the record's
-// persistence is buffered-memory. Emission is attempted once; on
-// failure Emitted stays false and a background retry re-attempts it.
-func (s *Service) Create(_ context.Context, req CreateRequest) (*Escalation, error) {
+// Create records a §25.4 escalation. The create path attempts the
+// durable tiers in order, falling back to the in-memory buffer; the
+// record's Persistence reflects the tier that accepted it. Emission is
+// attempted exactly once before persistence so the stored record carries
+// the emitted flag; on failure Emitted stays false for the background
+// retry. When RequireDurable is set and no durable tier accepts the
+// record, Create returns ESCALATION_NO_DURABLE_STORE rather than
+// buffering in memory.
+func (s *Service) Create(ctx context.Context, req CreateRequest) (*Escalation, error) {
 	if req.Summary == "" {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "summary is required"}
 	}
 	if !validSeverity(req.Severity) {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "severity must be critical, warning, or info"}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	esc := &Escalation{
+	now := s.clock()
+	esc := Escalation{
 		ID:             newEscalationID(),
 		Severity:       req.Severity,
 		Source:         req.Source,
@@ -229,122 +288,184 @@ func (s *Service) Create(_ context.Context, req CreateRequest) (*Escalation, err
 		DiagnosticData: req.DiagnosticData,
 		FailedActions:  req.FailedActions,
 		Status:         StatusOpen,
-		Persistence:    PersistenceBufferedMemory,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	// §25.4 emission exactly-once: emit, then set emitted=true. On
-	// failure emitted stays false for the background retry.
+	// §25.4 emission exactly-once: emit, then persist with the flag set.
+	// On failure emitted stays false for the background retry.
 	if s.emitter != nil {
-		esc.Emitted = s.emitter.EmitEscalationCreated(*esc)
+		esc.Emitted = s.emitter.EmitEscalationCreated(esc)
 	}
-	s.byID[esc.ID] = esc
-	s.order = append(s.order, esc.ID)
-	s.evictLocked()
-	return cloneEscalation(esc), nil
-}
-
-// evictLocked drops the oldest escalations until the buffer is within
-// capacity. The caller holds s.mu.
-func (s *Service) evictLocked() {
-	for len(s.order) > s.capacity {
-		oldest := s.order[0]
-		s.order = s.order[1:]
-		delete(s.byID, oldest)
-	}
-}
-
-// Get returns a single §25.4 escalation by id, or ESCALATION_NOT_FOUND.
-func (s *Service) Get(_ context.Context, id string) (*Escalation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	esc, ok := s.byID[id]
-	if !ok {
-		return nil, &Error{Code: ErrCodeNotFound, Message: "no escalation " + id}
-	}
-	return cloneEscalation(esc), nil
-}
-
-// List returns the §25.4 escalations matching the filter, newest-first.
-// limit caps the page; a non-positive limit applies no cap.
-func (s *Service) List(_ context.Context, f Filter, limit int) ([]Escalation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	statuses := csvSet(f.Status)
-	severities := csvSet(f.Severity)
-	out := make([]Escalation, 0, len(s.byID))
-	for _, esc := range s.byID {
-		if len(statuses) > 0 && !statuses[esc.Status] {
+	// Tiered create: attempt each durable tier in priority order, falling
+	// back to the next on an unavailable store.
+	for _, st := range s.durable {
+		esc.Persistence = st.Tier()
+		err := st.Put(ctx, esc)
+		if err == nil {
+			return cloneEscalation(&esc), nil
+		}
+		if errors.Is(err, ErrStoreUnavailable) {
 			continue
 		}
-		if len(severities) > 0 && !severities[esc.Severity] {
+		return nil, err
+	}
+	// No durable tier accepted the record.
+	if s.requireDurable {
+		return nil, &Error{Code: ErrCodeNoDurableStore, Message: "both Postgres and Redis are unavailable"}
+	}
+	esc.Persistence = PersistenceBufferedMemory
+	if err := s.mem.Put(ctx, esc); err != nil {
+		return nil, err
+	}
+	return cloneEscalation(&esc), nil
+}
+
+// Get returns a single §25.4 escalation by id from the highest reachable
+// store that holds it, or ESCALATION_NOT_FOUND.
+func (s *Service) Get(ctx context.Context, id string) (*Escalation, error) {
+	for _, st := range s.allStores() {
+		esc, err := st.Get(ctx, id)
+		if errors.Is(err, ErrStoreUnavailable) {
 			continue
 		}
-		if !f.Since.IsZero() && esc.CreatedAt.Before(f.Since) {
+		if err != nil {
+			return nil, err
+		}
+		if esc != nil {
+			return esc, nil
+		}
+	}
+	return nil, &Error{Code: ErrCodeNotFound, Message: "no escalation " + id}
+}
+
+// List returns the §25.4 escalations matching the filter, newest-first,
+// read from the highest reachable store (§25.4 query-path tiering).
+func (s *Service) List(ctx context.Context, f Filter, limit int) ([]Escalation, error) {
+	for _, st := range s.allStores() {
+		list, err := st.List(ctx, f, limit)
+		if errors.Is(err, ErrStoreUnavailable) {
 			continue
 		}
-		out = append(out, *cloneEscalation(esc))
+		if err != nil {
+			return nil, err
+		}
+		return list, nil
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return nil, nil
 }
 
 // Update moves a §25.4 escalation to a new lifecycle status
-// (acknowledged or resolved). It stamps acknowledgedAt or resolvedAt
-// and returns ESCALATION_NOT_FOUND for an unknown id and
+// (acknowledged or resolved) in the highest reachable store that holds
+// it. It returns ESCALATION_NOT_FOUND for an unknown id and
 // ESCALATION_INVALID for an unrecognized status.
-func (s *Service) Update(_ context.Context, id string, req UpdateRequest) (*Escalation, error) {
+func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Escalation, error) {
 	if req.Status != StatusOpen && req.Status != StatusAcknowledged && req.Status != StatusResolved {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "status must be open, acknowledged, or resolved"}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	esc, ok := s.byID[id]
-	if !ok {
-		return nil, &Error{Code: ErrCodeNotFound, Message: "no escalation " + id}
-	}
-	now := s.now()
-	esc.Status = req.Status
-	esc.UpdatedAt = now
-	switch req.Status {
-	case StatusAcknowledged:
-		if esc.AcknowledgedAt == nil {
-			t := now
-			esc.AcknowledgedAt = &t
+	now := s.clock()
+	for _, st := range s.allStores() {
+		esc, err := st.SetStatus(ctx, id, req.Status, now)
+		if errors.Is(err, ErrStoreUnavailable) {
+			continue
 		}
-	case StatusResolved:
-		if esc.ResolvedAt == nil {
-			t := now
-			esc.ResolvedAt = &t
+		if err != nil {
+			return nil, err
+		}
+		if esc != nil {
+			return esc, nil
 		}
 	}
-	return cloneEscalation(esc), nil
+	return nil, &Error{Code: ErrCodeNotFound, Message: "no escalation " + id}
 }
 
 // RetryEmission re-attempts the §25.4 escalation_created publish for any
-// escalation whose emitted flag is still false. §25.4 has a background
-// goroutine call this every 30s until emission succeeds. It returns the
-// number of escalations that became emitted on this pass.
-func (s *Service) RetryEmission(context.Context) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// escalation whose emitted flag is still false, across every reachable
+// store. §25.4 has a background goroutine call this every 30s until
+// emission succeeds. It returns the number of escalations that became
+// emitted on this pass.
+func (s *Service) RetryEmission(ctx context.Context) int {
 	if s.emitter == nil {
 		return 0
 	}
 	emitted := 0
-	for _, esc := range s.byID {
-		if esc.Emitted {
+	for _, st := range s.allStores() {
+		pending, err := st.PendingEmission(ctx)
+		if err != nil {
 			continue
 		}
-		if s.emitter.EmitEscalationCreated(*esc) {
-			esc.Emitted = true
-			emitted++
+		for _, esc := range pending {
+			if s.emitter.EmitEscalationCreated(esc) {
+				if err := st.SetEmitted(ctx, esc.ID); err == nil {
+					emitted++
+				}
+			}
 		}
 	}
 	return emitted
+}
+
+// Flush is the §25.4 reconciliation pass: when a durable tier is
+// reachable, buffered in-memory escalations are promoted upward. The
+// original CreatedAt and the emitted flag are preserved across the move
+// (§25.4 lines 2411-2412); a destination that already holds the record
+// makes the flush a no-op (line 2413); each flush emits a
+// remediation.escalation_persisted audit event and is rate-limited to
+// the configured writes-per-second (lines 2414-2415). Flush returns the
+// number of escalations promoted.
+func (s *Service) Flush(ctx context.Context) (int, error) {
+	if len(s.durable) == 0 {
+		return 0, nil
+	}
+	buffered := s.mem.Buffered()
+	flushed := 0
+	for i, esc := range buffered {
+		if i > 0 {
+			s.pace()
+		}
+		start := time.Now()
+		dest, err := s.putDurable(ctx, &esc)
+		if err != nil {
+			if errors.Is(err, ErrStoreUnavailable) {
+				// No durable tier is reachable; stop and retry next pass.
+				break
+			}
+			return flushed, err
+		}
+		s.mem.Remove(esc.ID)
+		flushed++
+		if s.audit != nil {
+			s.audit.EscalationPersisted(ctx, esc.ID, PersistenceBufferedMemory, dest,
+				time.Since(start).Milliseconds())
+		}
+	}
+	return flushed, nil
+}
+
+// putDurable writes esc to the highest reachable durable tier, stamping
+// the destination tier onto its Persistence. It returns the destination
+// tier label, or ErrStoreUnavailable when no durable tier is reachable.
+func (s *Service) putDurable(ctx context.Context, esc *Escalation) (string, error) {
+	for _, st := range s.durable {
+		esc.Persistence = st.Tier()
+		err := st.Put(ctx, *esc)
+		if err == nil {
+			return st.Tier(), nil
+		}
+		if errors.Is(err, ErrStoreUnavailable) {
+			continue
+		}
+		return "", err
+	}
+	return "", ErrStoreUnavailable
+}
+
+// pace sleeps to keep the flush within flushPerSec writes per second. A
+// non-positive rate disables pacing.
+func (s *Service) pace() {
+	if s.flushPerSec <= 0 {
+		return
+	}
+	s.sleep(time.Second / time.Duration(s.flushPerSec))
 }
 
 // csvSet splits a comma-separated filter value into a set; an empty

@@ -188,6 +188,20 @@ var prodMigrationSchema = []struct {
 	// 0120 adds the §15.1 line 797 draining_since timestamp to
 	// sandbox_warm_pools so the pool-drain phase persists (F-15.1.8).
 	{migration: "0120", table: "sandbox_warm_pools", columns: []string{"draining_since"}},
+	// 0121-0125 add the remaining §25.4 / §25.8 / §25.9 / §25.11 ops_*
+	// platform-Postgres tables enumerated in §25.4 line 1455-1473
+	// (F-25.4.13). All platform-scoped (no RLS, no tenant column).
+	{migration: "0121", table: "ops_remediation_locks", create: true},
+	{migration: "0121", table: "ops_lock_epoch", create: true},
+	{migration: "0121", table: "ops_lock_conflicts", create: true},
+	{migration: "0122", table: "ops_escalations", create: true},
+	{migration: "0123", table: "ops_backups", create: true},
+	{migration: "0123", table: "ops_backup_schedule", create: true},
+	{migration: "0123", table: "ops_retention_policy", create: true},
+	{migration: "0123", table: "ops_restore_state", create: true},
+	{migration: "0124", table: "platform_upgrade_state", create: true},
+	{migration: "0124", table: "platform_upgrade_check_cache", create: true},
+	{migration: "0125", table: "audit_log_deferred_writes", create: true},
 }
 
 // spec: 12.2, 18.5

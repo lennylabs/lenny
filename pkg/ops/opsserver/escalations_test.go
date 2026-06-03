@@ -4,6 +4,7 @@ package opsserver_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
@@ -31,6 +32,30 @@ func TestCreateEscalationReturns202ForMemoryTier(t *testing.T) {
 	}
 	if body["status"] != "open" || body["source"] != "watchdog" {
 		t.Errorf("escalation = %v, want status=open source=watchdog", body)
+	}
+}
+
+func TestCreateEscalationTier3IncludesDurabilityWarning(t *testing.T) {
+	srv := escalationServer()
+	rec, body := doJSON(t, srv, http.MethodPost, "/v1/admin/escalations", nil,
+		map[string]any{"severity": "warning", "summary": "credential pool degraded"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	// §25.4 lines 2388-2394: the Tier 3 response carries a durability
+	// warning in the body alongside the escalation fields.
+	warning, _ := body["warning"].(string)
+	if warning == "" {
+		t.Fatal("Tier 3 response missing the durability warning")
+	}
+	for _, want := range []string{"memory only", "escalation_created"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning %q missing %q", warning, want)
+		}
+	}
+	// The escalation fields are still present at the top level.
+	if body["persistence"] != "buffered-memory" || body["id"] == nil {
+		t.Errorf("response = %v, want the escalation fields plus warning", body)
 	}
 }
 

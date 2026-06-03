@@ -2657,6 +2657,21 @@ ops:
   # tier-preset-overridden field. F-17.8.1.
   events:
     streamMaxLen: 10000
+  # escalation carries the §25.4 escalation-durability knobs. The
+  # escalation create path is tiered Postgres -> Redis -> in-memory so a
+  # structured escalation can always be recorded, including during the
+  # storage outages most likely to trigger one. requireDurable (§25.4
+  # line 2396) makes a create fail with ESCALATION_NO_DURABLE_STORE when
+  # neither Postgres nor Redis accepts it, instead of buffering in memory;
+  # the conservative posture for deployers who prefer an explicit failure
+  # over a silent durability gap. reconciliationWritesPerSecond (§25.4
+  # line 2414) paces the leader-only flush that promotes buffered
+  # escalations to a recovered durable tier so the recovery does not spike
+  # Postgres. The values render as --escalation-require-durable /
+  # --escalation-reconciliation-writes-per-second on lenny-ops. F-25.4.7.
+  escalation:
+    requireDurable: false
+    reconciliationWritesPerSecond: 20
   image:
     repository: ghcr.io/lennylabs/lenny-ops
     # tag defaults to the chart appVersion when left empty.

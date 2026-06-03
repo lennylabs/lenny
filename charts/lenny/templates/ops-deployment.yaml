@@ -131,6 +131,11 @@ spec:
             # the platform-scoped ops:events:stream (10k Tier 1, 50k Tier 2,
             # 100k Tier 3). Tier-preset overridden. F-17.8.1.
             - --events-stream-max-len={{ .Values.ops.events.streamMaxLen }}
+            # §25.4 lines 2396, 2414 ops.escalation — the escalation
+            # durability posture (reject vs buffer when no durable tier is
+            # reachable) and the leader-only reconciliation flush rate. F-25.4.7.
+            - --escalation-require-durable={{ .Values.ops.escalation.requireDurable }}
+            - --escalation-reconciliation-writes-per-second={{ .Values.ops.escalation.reconciliationWritesPerSecond }}
             # §25.4 lines 1562-1564 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
             {{- if .Values.security.oidc.issuerUrl }}

@@ -451,3 +451,32 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=100000
+
+  # spec: §25.4 lines 2396, 2414 — the escalation durability knobs render
+  # as flags. F-25.4.7.
+  - it: renders the escalation durability flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-require-durable=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-reconciliation-writes-per-second=20
+
+  - it: renders operator-overridden escalation durability flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.escalation.requireDurable: true
+      ops.escalation.reconciliationWritesPerSecond: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-require-durable=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-reconciliation-writes-per-second=5
