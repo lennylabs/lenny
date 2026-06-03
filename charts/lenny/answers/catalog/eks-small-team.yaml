@@ -1,0 +1,34 @@
+# §17.9.2 answer file: eks-small-team.
+#
+# Dimensions fixed: cluster=eks, backends=cloud-managed (RDS +
+# ElastiCache + S3), environment=prod, isolationProfile=sandboxed.
+# Cloud-managed backends omit PgBouncer, Redis Sentinel, and MinIO and
+# reference provider-native endpoints instead (§17.9.3).
+#
+# Layering: with presets/values-tier1.yaml or values-tier2.yaml
+# depending on load. Supply the RDS Proxy, ElastiCache, and S3 endpoints
+# in an overrides file (the placeholders below are replaced per
+# deployment).
+#   helm install lenny charts/lenny \
+#     -f charts/lenny/answers/catalog/eks-small-team.yaml \
+#     -f charts/lenny/presets/values-tier1.yaml \
+#     -f my-eks-overrides.yaml
+#
+# Leaves open: capacity tier, connection endpoints, bucket names.
+
+cluster: eks
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+postgres:
+  # external: an RDS Proxy fronts Postgres; the per-transaction
+  # lenny_tenant_guard trigger is the RLS checkout defense (§12.3).
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-rds-proxy.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-elasticache-primary.acme.cache.amazonaws.com:6379"
+objectStorage:
+  provider: s3
+  bucket: "REPLACE-acme-lenny-artifacts"
+  region: "us-east-1"

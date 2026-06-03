@@ -34623,7 +34623,7 @@ gateway store layers correctly avoid branching on backend.
 
 ---
 
-### - [ ] F-17.9.1 — §17.9.2 answer-file catalog is not implemented; the chart ships three tier-based files instead of the nine cluster-and-backend curated files [High] — OPEN
+### - [x] F-17.9.1 — §17.9.2 answer-file catalog is not implemented; the chart ships three tier-based files instead of the nine cluster-and-backend curated files [High] — CLOSED
 
 **Spec:** §17.9.2 (lines 1358–1378) enumerates the curated answer-file
 catalog `deploy/helm/lenny/answers/`:
@@ -34676,6 +34676,20 @@ choice is buried in deployer-written values overlays.
 - `/Users/joan/projects/lenny/charts/lenny/answers/tier3-prod.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/answers/README.md`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:38-80` (installAnswers struct lacks cluster/backends/isolationProfile)
+
+**Resolution (`1542c152`):** The §17.9.2 catalog now ships as nine curated
+Helm values fragments under `charts/lenny/answers/catalog/` (`laptop`,
+`docker-compose`, `eks-small-team`, `eks-production`, `gke-production`,
+`aks-production`, `openshift-self-managed`, `bare-metal-self-managed`,
+`airgap-self-managed`), each pinning the §17.9.1 cluster / backends /
+environment / isolationProfile axes and layered with `helm install -f`. The
+two missing composition axes are now top-level chart values: `cluster`
+(validated by the `lenny.clusterType` helper) and `isolationProfile`
+(F-17.9.10). Each fragment is linted against `values.schema.json` by
+`pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2 line 1374)
+and all nine render cleanly when layered with a tier preset. The catalog and
+the layering model are documented in `charts/lenny/answers/README.md`. The
+prior tier-based `--answers` files remain the separate §17.6 wizard input.
 
 ---
 
@@ -35006,7 +35020,7 @@ mechanism that prevents answer-file drift.
 
 ---
 
-### - [ ] F-17.9.8 — Wizard claims to auto-suggest an answer-file base from cluster detection (`eks-small-team.yaml` when AWS EKS is detected); no detection logic exists [Medium] — OPEN
+### - [x] F-17.9.8 — Wizard claims to auto-suggest an answer-file base from cluster detection (`eks-small-team.yaml` when AWS EKS is detected); no detection logic exists [Medium] — CLOSED
 
 **Spec:** §17.9.2 line 1376: "The `lenny-ctl install` wizard auto-
 suggests an answer-file base from the detection phase (e.g.,
@@ -35034,6 +35048,17 @@ label, `node.kubernetes.io/instance-type` patterns, the
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:54-57`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:561-602` (no detection)
+
+**Resolution (`1542c152`):** `install_detect.go` now infers the §17.9.1
+cluster-type dimension (`detectClusterType`): it reads the node providerID
+prefixes (`aws://` → eks, `gce://` → gke, `azure://` → aks, `kind://`/`k3s://`
+→ laptop), checks the OpenShift API surface (`clusterversions.config.openshift.io`,
+checked first so OpenShift-on-cloud maps to the self-managed file), and falls
+back to vanilla. The cluster type maps to the suggested §17.9.2 catalog base
+(EKS → `eks-small-team.yaml` per line 1376); the suggestion is surfaced in the
+detection summary and recorded on the `profile` field of a saved answer file.
+Tests cover each cloud, the OpenShift-on-AWS precedence, the k3s version-suffix
+path, and the vanilla fallback.
 
 ---
 
@@ -35082,7 +35107,7 @@ composition axes; its claimed effects do not materialise.
 
 ---
 
-### - [ ] F-17.9.10 — Isolation profile dimension (`baseline | sandboxed | hypervisor`) is not exposed as a Helm value; default RuntimeClass for seeded runtimes is hard-coded [Medium] — OPEN
+### - [x] F-17.9.10 — Isolation profile dimension (`baseline | sandboxed | hypervisor`) is not exposed as a Helm value; default RuntimeClass for seeded runtimes is hard-coded [Medium] — CLOSED
 
 **Spec:** §17.9.1 (line 1354): "Isolation profile: `baseline |
 sandboxed | hypervisor` → Drives: Default RuntimeClass for seeded
@@ -35112,9 +35137,21 @@ through `features.compliance`, which is a different axis.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/runtimescaffold/templates/`
   (all templates hard-code `isolationProfile: sandboxed`)
 
+**Resolution (`9c62a764`):** A top-level `isolationProfile` chart value
+(`baseline | sandboxed | hypervisor`) now exposes the §17.9.1 dimension. The
+`lenny.seededIsolationProfile` helper maps it to the §5.3 runtime profile
+(baseline→standard, sandboxed→sandboxed, hypervisor→microvm), and
+`reference-runtimes.yaml` renders the seeded runtimes' `isolationProfile` from
+it (a catalog entry may still override per runtime) instead of the hard-coded
+`sandboxed`. An unrecognized value fails the render. The default `sandboxed`
+preserves the historical posture. helm-unittest covers the default,
+baseline→standard, hypervisor→microvm, and the invalid-value failure. (The
+`runtimescaffold` templates are a separate developer-scaffold concern and stay
+per-runtime; this finding is the chart-wide seeded-runtime default.)
+
 ---
 
-### - [ ] F-17.9.11 — Airgap answer file requirements (`platform.registry.*` mirror, `preflight.skipNetworkProbes: true`) are not supported by the chart [Medium] — OPEN
+### - [x] F-17.9.11 — Airgap answer file requirements (`platform.registry.*` mirror, `preflight.skipNetworkProbes: true`) are not supported by the chart [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-17.9.19 — Both about airgap answer-file support but distinct: F-17.9.11 is the missing preflight.skipNetworkProbes value, F-17.9.19 is airgap not being a first-class composition value.
 
@@ -35145,6 +35182,18 @@ exists, but the airgap-specific preflight knob does not.
   (`platform.registry.*` present)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:880-895`
   (`preflight` block lacks `skipNetworkProbes`)
+
+**Resolution (`9c62a764`):** Added `preflight.skipNetworkProbes` (default
+false). `preflight.Config` gains `SkipNetworkProbes`; `pkg/preflight/run.go`
+gates the four backend-reachability checks (MinIO SSE, BYO-Redis maxmemory,
+OTLP collector TLS handshake, ops-admin internal-TLS handshake) on it while the
+cluster-API checks still run. The value is plumbed through the preflight Job
+template (`--skip-network-probes`) and the `lenny-preflight` binary. The new
+`charts/lenny/answers/catalog/airgap-self-managed.yaml` fragment sets it
+together with the `platform.registry.*` mirror (which already existed),
+completing the §17.9.2 airgap row. A `pkg/preflight` Go test asserts the four
+probes are dropped (and never dialed) under the flag, and helm-unittest covers
+the rendered flag and the NOTES airgap posture note.
 
 ---
 

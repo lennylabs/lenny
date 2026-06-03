@@ -834,6 +834,13 @@ func promptAnswers(r *bufio.Reader, w io.Writer, det clusterDetection) installAn
 	fmt.Fprintln(w, "Press Enter to accept the bracketed default for any question.")
 	fmt.Fprintln(w)
 
+	// spec: §17.9.2 line 1376 — record the §17.9.2 catalog answer-file base
+	// the detection phase suggests from the cluster type, so a captured
+	// answer file (--save-answers) documents the suggestion. It is advisory
+	// metadata; the non-interactive path does not load a second file from
+	// it. F-17.9.8.
+	a.Profile = det.suggestedAnswerFile
+
 	a.Release.Name = ask(r, w, "Release name", "lenny")
 	a.Release.Namespace = ask(r, w, "Release namespace", "lenny-system")
 	a.Environment = ask(r, w, "Target environment (local|dev|staging|prod)", "local")

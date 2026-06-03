@@ -1,0 +1,27 @@
+# §17.9.2 answer file: eks-production.
+#
+# Dimensions fixed: cluster=eks, backends=cloud-managed, environment=prod,
+# isolationProfile=sandboxed. Tier 3 capable: layer values-tier2.yaml or
+# values-tier3.yaml for the larger capacity envelope (§17.8.2).
+#
+# Layering: with presets/values-tier2.yaml or values-tier3.yaml. Supply
+# the RDS Proxy, ElastiCache, and S3 endpoints in an overrides file.
+#
+# Leaves open: capacity tier, connection endpoints, bucket names.
+
+cluster: eks
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+postgres:
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-rds-proxy.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
+  # readDsn routes read-only queries at the provider reader endpoint.
+  readDsn: "postgres://lenny@REPLACE-rds-proxy-ro.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-elasticache-primary.acme.cache.amazonaws.com:6379"
+objectStorage:
+  provider: s3
+  bucket: "REPLACE-acme-lenny-artifacts"
+  region: "us-east-1"

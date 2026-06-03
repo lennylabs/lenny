@@ -23,11 +23,45 @@ Each answer file pairs with the tier preset of the same tier under
 `charts/lenny/presets/`. The wizard selects the preset from the `tier`
 field, so the answer file and the preset stay consistent.
 
-The §17.9.2 spec catalog enumerates nine curated answer files keyed on
-the cluster type (laptop, k3d, kind, eks, gke, aks, openshift, vanilla,
-airgap-self-managed) and the backend composition. The three answer
-files above are the implemented subset of that catalog; the wider
-catalog rollout is tracked under F-17.9.1.
+## §17.9.2 composition catalog
+
+The files above are `lenny-ctl install --answers` inputs (the §17.6
+wizard question schema). The §17.9.2 composition catalog is a separate
+artifact: curated Helm values fragments under
+`charts/lenny/answers/catalog/`, layered directly with
+`helm install -f`. Each fragment pins the §17.9.1 orthogonal dimensions
+(cluster type, backends, environment, isolation profile) and leaves the
+capacity tier to a separate preset file, so an operator composes an
+install by layering:
+
+```
+helm install lenny charts/lenny \
+  -f charts/lenny/answers/catalog/eks-production.yaml \
+  -f charts/lenny/presets/values-tier2.yaml \
+  -f my-overrides.yaml
+```
+
+| Catalog file | Cluster | Backends | Environment | Isolation |
+|---|---|---|---|---|
+| `catalog/laptop.yaml` | laptop | embedded | local | baseline |
+| `catalog/docker-compose.yaml` | n/a | self-managed | dev | baseline |
+| `catalog/eks-small-team.yaml` | eks | cloud-managed | prod | sandboxed |
+| `catalog/eks-production.yaml` | eks | cloud-managed | prod | sandboxed |
+| `catalog/gke-production.yaml` | gke | cloud-managed | prod | sandboxed |
+| `catalog/aks-production.yaml` | aks | cloud-managed | prod | sandboxed |
+| `catalog/openshift-self-managed.yaml` | openshift | self-managed | prod | sandboxed |
+| `catalog/bare-metal-self-managed.yaml` | vanilla | self-managed | prod | sandboxed |
+| `catalog/airgap-self-managed.yaml` | vanilla | self-managed | prod | sandboxed |
+
+The cloud-managed fragments carry placeholder connection endpoints
+(marked `REPLACE-...`) that the operator overrides per deployment. The
+`airgap-self-managed.yaml` fragment additionally sets a private registry
+mirror (`platform.registry.*`) and `preflight.skipNetworkProbes: true`
+(§17.9.11). Each catalog fragment is linted against
+`charts/lenny/values.schema.json` by
+`pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2 line
+1374), and the wizard auto-suggests a catalog base from cluster
+detection (§17.9.2 line 1376; see the install wizard).
 
 ## Schema
 

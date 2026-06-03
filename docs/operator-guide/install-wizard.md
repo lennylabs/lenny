@@ -27,6 +27,16 @@ wizard:
 lenny-ctl install
 ```
 
+Before the first question the wizard runs a detection phase against the target
+cluster (unless `--offline` is set). It probes the Kubernetes version, the
+available RuntimeClasses, the cert-manager ClusterIssuers, the Prometheus
+Operator CRDs, and the NetworkPolicy API, and it infers the cluster type from
+the node provider IDs and the OpenShift API surface. The detection summary
+prints the inferred cluster type and the suggested §17.9.2 catalog answer-file
+base (for example `eks-small-team.yaml` when the nodes report `aws://` provider
+IDs); the suggestion is recorded on the `profile` field of a captured answer
+file. The TLS-strategy default is also detection-driven.
+
 The wizard prompts for one answer per line on standard input. Each prompt
 shows its default in brackets; press Enter to accept the default. The wizard
 asks for the release name and namespace, the target environment, the capacity
@@ -80,6 +90,16 @@ pairs with the tier preset of the same tier.
 | `tier1-local.yaml` | `local` | `tier1` | Local or development install. Uses the `dev` auth mode and the chart's in-memory store fallbacks. |
 | `tier2-prod.yaml` | `prod` | `tier2` | Mid-range production install. Uses OIDC auth and `${VAR}` references for the data-store connection strings. |
 | `tier3-prod.yaml` | `prod` | `tier3` | Largest production install. Enables the optional admission webhooks and a Kata agent namespace. |
+
+The §17.9.2 composition catalog under `charts/lenny/answers/catalog/` is a
+separate artifact: Helm values fragments layered directly with
+`helm install -f` (not the `--answers` wizard schema). Each fragment pins the
+§17.9.1 cluster type, backends, environment, and isolation profile and leaves
+the capacity tier to a separate preset. The detection phase infers the cluster
+type and prints the suggested catalog base (for example
+`charts/lenny/answers/catalog/eks-small-team.yaml` when the nodes report
+`aws://` provider IDs); the wizard records the suggestion on the `profile`
+field. See `charts/lenny/answers/README.md` for the full catalog.
 
 ### Answer-file schema
 

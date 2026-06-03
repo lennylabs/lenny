@@ -93,6 +93,56 @@ func TestPresetsConformToSchema_spec_17_9_2_1374(t *testing.T) {
 	}
 }
 
+// TestCatalogAnswerFilesConformToSchema lints every shipped §17.9.2
+// answer file against the schema and asserts the full curated catalog is
+// present. Answer files are chart-values fragments layered with `-f`, so
+// each must validate directly; a fragment that drifts out of sync with
+// the chart values (a renamed key, a removed top-level section) fails
+// here rather than at `helm install`. spec: §17.9.2 lines 1360-1374.
+// F-17.9.1.
+func TestCatalogAnswerFilesConformToSchema_spec_17_9_2_1374(t *testing.T) {
+	schema, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	root := repoRoot(t)
+	dir := filepath.Join(root, "charts", "lenny", "answers", "catalog")
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("glob catalog: %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		base := filepath.Base(f)
+		got[base] = true
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		if err := ValidateYAML(schema, data); err != nil {
+			t.Errorf("catalog answer file %s does not conform: %v", base, err)
+		}
+	}
+	// spec: §17.9.2 lines 1364-1372 — the curated catalog enumerates these
+	// nine files. A missing file means the documented composition is not
+	// reachable from the shipped chart.
+	for _, want := range []string{
+		"laptop.yaml",
+		"docker-compose.yaml",
+		"eks-small-team.yaml",
+		"eks-production.yaml",
+		"gke-production.yaml",
+		"aks-production.yaml",
+		"openshift-self-managed.yaml",
+		"bare-metal-self-managed.yaml",
+		"airgap-self-managed.yaml",
+	} {
+		if !got[want] {
+			t.Errorf("§17.9.2 catalog is missing %s", want)
+		}
+	}
+}
+
 func mustSchema(t *testing.T) []byte {
 	t.Helper()
 	s, err := Generate()

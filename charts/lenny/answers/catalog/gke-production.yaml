@@ -1,0 +1,26 @@
+# §17.9.2 answer file: gke-production.
+#
+# Dimensions fixed: cluster=gke, backends=cloud-managed (CloudSQL +
+# Memorystore + GCS), environment=prod, isolationProfile=sandboxed. GKE
+# Sandbox supplies the gVisor RuntimeClass for the sandboxed profile.
+#
+# Layering: with presets/values-tierN.yaml. Supply the CloudSQL,
+# Memorystore, and GCS endpoints in an overrides file. Cloud SQL Auth
+# Proxy does not pool; deploy PgBouncer or pgcat alongside it, or use
+# AlloyDB with built-in pooling (§17.9.3).
+#
+# Leaves open: capacity tier, connection endpoints, bucket names.
+
+cluster: gke
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+postgres:
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-cloudsql-proxy.acme.svc:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-memorystore.acme.internal:6378"
+objectStorage:
+  provider: gcs
+  bucket: "REPLACE-acme-lenny-artifacts"

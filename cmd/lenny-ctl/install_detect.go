@@ -51,6 +51,15 @@ type clusterDetection struct {
 	// networkPolicyAPI is true when networking.k8s.io/NetworkPolicy is
 	// served (a NetworkPolicy-supporting CNI is the §13.2 prerequisite).
 	networkPolicyAPI bool
+	// clusterType is the §17.9.1 cluster-type dimension inferred from the
+	// node providerIDs and the OpenShift API surface: openshift, eks, gke,
+	// aks, laptop, or vanilla. Empty when detection produced no signal.
+	clusterType string
+	// suggestedAnswerFile is the §17.9.2 catalog answer-file base the
+	// detected cluster type maps to (e.g. eks-small-team.yaml for EKS). The
+	// wizard records it on the Profile field so a captured answer file
+	// documents the suggestion. spec: §17.9.2 line 1376. F-17.9.8.
+	suggestedAnswerFile string
 	// notes carries per-probe diagnostics (absences, parse failures) so the
 	// summary explains why a capability reads as missing.
 	notes []string
@@ -163,7 +172,91 @@ func (d *kubectlDetector) detectWithoutLookup(ctx context.Context) clusterDetect
 		res.notes = append(res.notes, "NetworkPolicy API not detected; §13.2 isolation requires a NetworkPolicy-supporting CNI")
 	}
 
+	// spec: §17.9.2 line 1376 — infer the §17.9.1 cluster-type dimension and
+	// suggest the matching §17.9.2 catalog answer-file base. F-17.9.8.
+	res.clusterType, res.suggestedAnswerFile = d.detectClusterType(ctx, res.kubernetesVersion)
+	if res.clusterType == "vanilla" {
+		res.notes = append(res.notes, "cluster type not recognized as a managed cloud or laptop distribution; defaulting to the vanilla (generic Kubernetes) answer file")
+	}
+
 	return res
+}
+
+// clusterTypeAnswerFiles maps each §17.9.1 cluster-type dimension to the
+// §17.9.2 catalog answer-file base the wizard suggests for it. EKS maps to
+// the entry-level eks-small-team.yaml per the §17.9.2 line 1376 example.
+var clusterTypeAnswerFiles = map[string]string{
+	"openshift": "openshift-self-managed.yaml",
+	"eks":       "eks-small-team.yaml",
+	"gke":       "gke-production.yaml",
+	"aks":       "aks-production.yaml",
+	"laptop":    "laptop.yaml",
+	"vanilla":   "bare-metal-self-managed.yaml",
+}
+
+// detectClusterType infers the §17.9.1 cluster-type dimension and returns
+// it together with the suggested §17.9.2 catalog answer-file base.
+// OpenShift is checked first because an OpenShift cluster running on a
+// cloud provider still reports that provider's node providerIDs but should
+// map to the openshift self-managed answer file. A cloud provider is read
+// from the node providerID prefix; k3s is recognized from its version
+// build suffix even when the providerID is empty. An unrecognized cluster
+// falls back to vanilla. spec: §17.9.1 line 1351, §17.9.2 line 1376.
+func (d *kubectlDetector) detectClusterType(ctx context.Context, k8sVersion string) (clusterType, answerFile string) {
+	if out, err := d.run(ctx, d.kubectlArgs("get", "crd", "clusterversions.config.openshift.io", "-o", "name")...); err == nil && strings.TrimSpace(string(out)) != "" {
+		return "openshift", clusterTypeAnswerFiles["openshift"]
+	}
+	if out, err := d.run(ctx, d.kubectlArgs("get", "nodes", "-o", "json")...); err == nil {
+		switch parseNodeCloud(out) {
+		case "aws":
+			return "eks", clusterTypeAnswerFiles["eks"]
+		case "gce":
+			return "gke", clusterTypeAnswerFiles["gke"]
+		case "azure":
+			return "aks", clusterTypeAnswerFiles["aks"]
+		case "kind", "k3s":
+			return "laptop", clusterTypeAnswerFiles["laptop"]
+		}
+	}
+	// k3s reports its version with a +k3s build suffix (e.g. v1.29.4+k3s1)
+	// even on a single-node laptop install whose node carries no providerID.
+	if strings.Contains(strings.ToLower(k8sVersion), "k3s") {
+		return "laptop", clusterTypeAnswerFiles["laptop"]
+	}
+	return "vanilla", clusterTypeAnswerFiles["vanilla"]
+}
+
+// parseNodeCloud reads the providerID of the first node and returns the
+// cloud / distribution token its scheme identifies: aws, gce, azure, kind,
+// or k3s. An empty providerID (the bare-metal / self-managed case) yields
+// the empty string.
+func parseNodeCloud(out []byte) string {
+	var list struct {
+		Items []struct {
+			Spec struct {
+				ProviderID string `json:"providerID"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		return ""
+	}
+	for _, it := range list.Items {
+		pid := it.Spec.ProviderID
+		switch {
+		case strings.HasPrefix(pid, "aws://"):
+			return "aws"
+		case strings.HasPrefix(pid, "gce://"):
+			return "gce"
+		case strings.HasPrefix(pid, "azure://"):
+			return "azure"
+		case strings.HasPrefix(pid, "kind://"):
+			return "kind"
+		case strings.HasPrefix(pid, "k3s://"):
+			return "k3s"
+		}
+	}
+	return ""
 }
 
 // parseServerVersion extracts serverVersion.gitVersion from `kubectl version
@@ -251,6 +344,10 @@ func (d clusterDetection) summaryLines() []string {
 	}
 	lines := []string{"# Detection phase — cluster capability summary:"}
 	lines = append(lines, "#   Kubernetes version: "+orNone(d.kubernetesVersion))
+	lines = append(lines, "#   Cluster type: "+orNone(d.clusterType))
+	if d.suggestedAnswerFile != "" {
+		lines = append(lines, "#   Suggested answer file: charts/lenny/answers/catalog/"+d.suggestedAnswerFile)
+	}
 	lines = append(lines, "#   RuntimeClasses: "+orNone(strings.Join(d.runtimeClasses, ", ")))
 	issuers := "none"
 	if d.certManagerInstalled {

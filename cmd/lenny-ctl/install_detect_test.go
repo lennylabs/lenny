@@ -20,6 +20,14 @@ type fakeKubectl struct {
 	rcErr         error
 	prometheusErr error
 	netpol        string
+	// §17.9.2 cluster-type detection inputs (F-17.9.8). nodes is the
+	// `kubectl get nodes -o json` payload; openshiftCRD is the
+	// `get crd clusterversions.config.openshift.io -o name` output (a
+	// non-empty value marks the cluster as OpenShift).
+	nodes        []byte
+	nodesErr     error
+	openshiftCRD []byte
+	openshiftErr error
 }
 
 func (f fakeKubectl) run(_ context.Context, args ...string) ([]byte, error) {
@@ -34,8 +42,12 @@ func (f fakeKubectl) run(_ context.Context, args ...string) ([]byte, error) {
 		return f.runtimeClass, f.rcErr
 	case args[0] == "get" && strings.HasPrefix(args[1], "clusterissuers"):
 		return f.clusterIssuer, f.issuerErr
+	case args[0] == "get" && args[1] == "crd" && len(args) > 2 && strings.HasPrefix(args[2], "clusterversions"):
+		return f.openshiftCRD, f.openshiftErr
 	case args[0] == "get" && args[1] == "crd":
 		return nil, f.prometheusErr
+	case args[0] == "get" && args[1] == "nodes":
+		return f.nodes, f.nodesErr
 	case args[0] == "api-resources":
 		return []byte(f.netpol), nil
 	}
@@ -204,6 +216,102 @@ func TestDetectionSummaryRendersFindings(t *testing.T) {
 	skipped := clusterDetection{skipped: true}
 	if !strings.Contains(strings.Join(skipped.summaryLines(), "\n"), "skipped") {
 		t.Errorf("offline summary should report the skip")
+	}
+}
+
+// spec: §17.9.2 line 1376 — the detection phase infers the §17.9.1
+// cluster-type dimension from node providerIDs and the OpenShift API
+// surface, and suggests the matching §17.9.2 catalog answer-file base.
+// F-17.9.8.
+func TestDetectClusterTypeSuggestsAnswerFile_spec_17_9_2_1376(t *testing.T) {
+	nodesWith := func(providerID string) []byte {
+		return []byte(fmt.Sprintf(`{"items":[{"spec":{"providerID":%q}}]}`, providerID))
+	}
+	cases := []struct {
+		name        string
+		fk          fakeKubectl
+		wantType    string
+		wantAnswers string
+	}{
+		{
+			name:        "EKS from an aws:// providerID suggests eks-small-team",
+			fk:          fakeKubectl{version: "v1.29.4", nodes: nodesWith("aws:///us-east-1a/i-0abc")},
+			wantType:    "eks",
+			wantAnswers: "eks-small-team.yaml",
+		},
+		{
+			name:        "GKE from a gce:// providerID suggests gke-production",
+			fk:          fakeKubectl{version: "v1.29.4", nodes: nodesWith("gce://acme-project/us-central1-a/gke-node")},
+			wantType:    "gke",
+			wantAnswers: "gke-production.yaml",
+		},
+		{
+			name:        "AKS from an azure:// providerID suggests aks-production",
+			fk:          fakeKubectl{version: "v1.29.4", nodes: nodesWith("azure:///subscriptions/abc/vm")},
+			wantType:    "aks",
+			wantAnswers: "aks-production.yaml",
+		},
+		{
+			name:        "kind providerID suggests the laptop answer file",
+			fk:          fakeKubectl{version: "v1.29.4", nodes: nodesWith("kind://docker/kind/kind-control-plane")},
+			wantType:    "laptop",
+			wantAnswers: "laptop.yaml",
+		},
+		{
+			// OpenShift on AWS still reports aws:// node providerIDs, but the
+			// OpenShift API surface takes precedence so it maps to the
+			// openshift self-managed answer file rather than eks.
+			name: "OpenShift on AWS suggests openshift-self-managed",
+			fk: fakeKubectl{
+				version:      "v1.29.4",
+				openshiftCRD: []byte("customresourcedefinition.apiextensions.k8s.io/clusterversions.config.openshift.io\n"),
+				nodes:        nodesWith("aws:///us-east-1a/i-0abc"),
+			},
+			wantType:    "openshift",
+			wantAnswers: "openshift-self-managed.yaml",
+		},
+		{
+			name:        "k3s version suffix suggests the laptop answer file",
+			fk:          fakeKubectl{version: "v1.29.4+k3s1", nodes: nodesWith("")},
+			wantType:    "laptop",
+			wantAnswers: "laptop.yaml",
+		},
+		{
+			name:        "an empty providerID with no managed signal falls back to vanilla",
+			fk:          fakeKubectl{version: "v1.29.4", nodes: nodesWith("")},
+			wantType:    "vanilla",
+			wantAnswers: "bare-metal-self-managed.yaml",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := (&kubectlDetector{run: tc.fk.run}).detectWithoutLookup(context.Background())
+			if d.clusterType != tc.wantType {
+				t.Errorf("clusterType = %q, want %q", d.clusterType, tc.wantType)
+			}
+			if d.suggestedAnswerFile != tc.wantAnswers {
+				t.Errorf("suggestedAnswerFile = %q, want %q", d.suggestedAnswerFile, tc.wantAnswers)
+			}
+		})
+	}
+}
+
+// The detection summary surfaces the inferred cluster type and the
+// suggested catalog answer file so the operator sees the §17.9.2 line 1376
+// auto-suggestion before any question. F-17.9.8.
+func TestDetectionSummaryShowsClusterTypeSuggestion(t *testing.T) {
+	d := clusterDetection{
+		available:           true,
+		kubernetesVersion:   "v1.29.4",
+		clusterType:         "eks",
+		suggestedAnswerFile: "eks-small-team.yaml",
+		networkPolicyAPI:    true,
+	}
+	out := strings.Join(d.summaryLines(), "\n")
+	for _, want := range []string{"Cluster type: eks", "charts/lenny/answers/catalog/eks-small-team.yaml"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q:\n%s", want, out)
+		}
 	}
 }
 

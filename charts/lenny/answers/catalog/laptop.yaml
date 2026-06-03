@@ -1,0 +1,20 @@
+# §17.9.2 answer file: laptop.
+#
+# Dimensions fixed: cluster=laptop, backends=embedded, environment=local,
+# isolationProfile=baseline. This is the embedded-backends posture of
+# §17.9.6 (embedded Postgres, in-process Redis, local-disk artifact
+# storage), equivalent to `lenny up` (§17.4 Embedded Mode).
+#
+# Layering: used as-is, or with presets/values-tier1.yaml for capacity.
+#   helm install lenny charts/lenny \
+#     -f charts/lenny/answers/catalog/laptop.yaml \
+#     -f charts/lenny/presets/values-tier1.yaml
+#
+# Leaves open: capacity tier (a separate preset file).
+
+cluster: laptop
+backends: embedded
+environment: local
+# baseline (runc): a kind/k3s laptop cluster ships no gVisor or Kata
+# RuntimeClass, so the seeded runtimes default to the native runtime.
+isolationProfile: baseline

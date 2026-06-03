@@ -1,0 +1,31 @@
+# §17.9.2 answer file: bare-metal-self-managed.
+#
+# Dimensions fixed: cluster=vanilla (generic Kubernetes),
+# backends=self-managed, environment=prod, isolationProfile=sandboxed.
+# Self-managed backends deploy PgBouncer, Redis Sentinel, and MinIO as
+# Kubernetes workloads (§17.9.5). Use this on bare-metal or on-premises
+# Kubernetes without managed database/cache services.
+#
+# Layering: with presets/values-tierN.yaml. Supply the Sentinel and
+# MinIO endpoints in an overrides file.
+#
+# Leaves open: capacity tier, connection endpoints, bucket name.
+
+cluster: vanilla
+backends: self-managed
+environment: prod
+isolationProfile: sandboxed
+postgres:
+  connectionPooler: pgbouncer
+redis:
+  provider: sentinel
+  sentinelMaster: mymaster
+  sentinels:
+    - "REPLACE-redis-sentinel-0.redis:26379"
+    - "REPLACE-redis-sentinel-1.redis:26379"
+    - "REPLACE-redis-sentinel-2.redis:26379"
+objectStorage:
+  provider: minio
+minio:
+  endpoint: "REPLACE-minio.lenny-system:9000"
+  bucket: "lenny-artifacts"

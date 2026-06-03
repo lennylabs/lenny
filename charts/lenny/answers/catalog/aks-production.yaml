@@ -1,0 +1,28 @@
+# §17.9.2 answer file: aks-production.
+#
+# Dimensions fixed: cluster=aks, backends=cloud-managed (Azure Database
+# for PostgreSQL + Azure Cache for Redis + Azure Blob Storage),
+# environment=prod, isolationProfile=sandboxed.
+#
+# Layering: with presets/values-tierN.yaml. Supply the Azure Database,
+# Azure Cache, and Blob Storage endpoints in an overrides file. Azure
+# Blob requires the S3-compatible gateway or a thin ArtifactStore
+# implementation using the Azure SDK (§17.9.3).
+#
+# Leaves open: capacity tier, connection endpoints, container name.
+
+cluster: aks
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+postgres:
+  # Azure Database for PostgreSQL ships a built-in PgBouncer.
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-acme.postgres.database.azure.com:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-acme.redis.cache.windows.net:6380"
+objectStorage:
+  provider: azure
+  bucket: "REPLACE-acme-lenny-artifacts"
+  accountUrl: "https://REPLACE-acme.blob.core.windows.net"

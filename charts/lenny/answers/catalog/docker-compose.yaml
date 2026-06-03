@@ -1,0 +1,24 @@
+# §17.9.2 answer file: docker-compose.
+#
+# Dimensions fixed: cluster=n/a, backends=self-managed (containerized),
+# environment=dev, isolationProfile=baseline. The Compose-Mode developer
+# path of §17.4 runs containerized Postgres, Redis, and MinIO alongside
+# the gateway.
+#
+# Layering: paired with presets/values-tier1.yaml for Compose-Mode dev
+# installs. Supply the containerized backend endpoints in an overrides
+# file.
+#
+# Leaves open: cluster type (not applicable to Compose), capacity tier.
+
+backends: self-managed
+environment: dev
+isolationProfile: baseline
+postgres:
+  # A single dev Postgres container fronted by a local pooler.
+  connectionPooler: pgbouncer
+redis:
+  # A single dev Redis container reached over one URL.
+  provider: external
+objectStorage:
+  provider: minio

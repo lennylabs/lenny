@@ -1,0 +1,47 @@
+# §17.9.2 answer file: airgap-self-managed.
+#
+# Dimensions fixed: cluster=vanilla, backends=self-managed,
+# environment=prod, isolationProfile=sandboxed, a private registry
+# mirror (platform.registry.*), and preflight.skipNetworkProbes=true.
+# The airgap posture pulls every image from a private mirror and drops
+# the backend-reachability preflight probes that would otherwise require
+# egress to the managed backends (§17.9.2, §17.9.11).
+#
+# Layering: with presets/values-tierN.yaml. Set the mirror host,
+# pull-secret name, and the Sentinel and MinIO endpoints in an overrides
+# file (the placeholders below are replaced per deployment).
+#
+# Leaves open: capacity tier, mirror details, connection endpoints.
+
+cluster: vanilla
+backends: self-managed
+environment: prod
+isolationProfile: sandboxed
+platform:
+  registry:
+    # url is the private mirror every Lenny image is rewritten to.
+    url: "REPLACE-registry.acme.internal/lenny"
+    # pullSecretName names the imagePullSecret for the mirror.
+    pullSecretName: "acme-registry-pull"
+    # requireDigest pins every image by digest; the §17.2 / §25.8
+    # registry-digest preflight enforces it on an airgap install.
+    requireDigest: true
+postgres:
+  connectionPooler: pgbouncer
+redis:
+  provider: sentinel
+  sentinelMaster: mymaster
+  sentinels:
+    - "REPLACE-redis-sentinel-0.redis:26379"
+    - "REPLACE-redis-sentinel-1.redis:26379"
+    - "REPLACE-redis-sentinel-2.redis:26379"
+objectStorage:
+  provider: minio
+minio:
+  endpoint: "REPLACE-minio.lenny-system:9000"
+  bucket: "lenny-artifacts"
+preflight:
+  # skipNetworkProbes drops the MinIO, Redis, OTLP, and ops-admin
+  # backend-reachability probes; the cluster-API checks still run
+  # (§17.9.11).
+  skipNetworkProbes: true
