@@ -464,6 +464,38 @@ tests:
       - isKind:
           of: Job
 
+  # spec: §17.9.4 / §17.6 line 494 — the preflight Job feeds the
+  # cloud-object-storage-lifecycle check the objectStorage.* selectors.
+  # The default render passes provider=minio (the check self-skips, since
+  # MinIO lifecycle is configured by the post-install Job). F-17.9.3.
+  - it: passes the §17.9.4 object-storage lifecycle inputs (default minio)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-provider=minio"
+
+  - it: passes the §17.9.4 cloud object-storage selectors for provider=s3
+    set:
+      objectStorage.provider: s3
+      objectStorage.bucket: acme-artifacts
+      objectStorage.region: us-east-1
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-provider=s3"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-bucket=acme-artifacts"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-region=us-east-1"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

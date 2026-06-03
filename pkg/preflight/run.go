@@ -177,6 +177,29 @@ type Config struct {
 	// succeeds with no egress to the managed backends. spec: §17.9.2 line
 	// 1372. F-17.9.11.
 	SkipNetworkProbes bool
+	// ObjectStorage carries the §17.9.4 cloud object-storage lifecycle
+	// inputs (objectStorage.provider, objectStorage.bucket). An empty or
+	// `minio` Provider skips the cloud-object-storage-lifecycle check
+	// (MinIO lifecycle is configured by the post-install Job). F-17.9.3.
+	ObjectStorage ObjectStorageConfig
+	// CloudObjectStorageLifecycleProber, when non-nil and ObjectStorage
+	// names a cloud provider, reads the live §17.9.4 lifecycle posture
+	// through the provider SDK. A nil prober (skip-network-probes, or a
+	// provider whose SDK reader is not wired) routes the check through
+	// the advisory path. F-17.9.3.
+	CloudObjectStorageLifecycleProber CloudObjectStorageLifecycleProber
+}
+
+// ObjectStorageConfig carries the §17.9.4 chart objectStorage.* values
+// the cloud-object-storage-lifecycle check evaluates.
+//
+// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+type ObjectStorageConfig struct {
+	// Provider is the objectStorage.provider value
+	// (minio | s3 | gcs | azure).
+	Provider string
+	// Bucket is the cloud bucket / container name.
+	Bucket string
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -376,6 +399,28 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 				Bucket:            cfg.MinIOBucket,
 				ComplianceProfile: cfg.ComplianceProfile,
 				Prober:            cfg.MinIOEncryptionProber,
+			}.Decide(ctx),
+		})
+	}
+
+	// §17.9.4 / §17.6 line 494 — cloud object-storage lifecycle rules.
+	// The check self-skips for objectStorage.provider=minio (the
+	// post-install Job configures MinIO via `mc ilm add`). For a cloud
+	// provider it verifies bucket versioning + noncurrent-version /
+	// delete-marker expiration through a provider SDK read. The prober is
+	// nil under skip-network-probes (airgap) or for a provider without a
+	// wired SDK reader, which routes the check through its advisory path.
+	{
+		prober := cfg.CloudObjectStorageLifecycleProber
+		if cfg.SkipNetworkProbes {
+			prober = nil
+		}
+		report = append(report, CheckResult{
+			Name: "cloud-object-storage-lifecycle",
+			Decision: CloudObjectStorageLifecycleCheck{
+				Provider: cfg.ObjectStorage.Provider,
+				Bucket:   cfg.ObjectStorage.Bucket,
+				Prober:   prober,
 			}.Decide(ctx),
 		})
 	}

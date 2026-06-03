@@ -279,6 +279,13 @@ spec:
             - --minio-bucket={{ $minio.bucket }}
             - --minio-use-ssl={{ $useSSL }}
             {{- end }}
+            {{- /* §17.9.4 cloud object-storage lifecycle audit. Skipped
+            for provider=minio (the post-install Job configures it); for
+            s3/gcs/azure the preflight validates versioning + lifecycle
+            rules via the provider SDK. F-17.9.3. */}}
+            - --object-storage-provider={{ .Values.objectStorage.provider | default "minio" }}
+            - --object-storage-bucket={{ .Values.objectStorage.bucket | default "" }}
+            - --object-storage-region={{ .Values.objectStorage.region | default "" }}
             {{- if $checkRedis }}
             # §12.4 — verify the BYO Redis enforces maxmemory-policy=noeviction
             # so the billing stream and per-tenant counters cannot evict.

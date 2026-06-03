@@ -41,6 +41,9 @@ import (
 	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -120,6 +123,81 @@ func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool
 		}
 		return algo, nil
 	})
+}
+
+// s3LifecycleProber builds a CloudObjectStorageLifecycleProber that
+// reads the §17.9.4 lifecycle posture of an AWS S3 (or S3-compatible)
+// bucket via the AWS SDK: GetBucketVersioning for the versioning flag
+// and GetBucketLifecycleConfiguration for the noncurrent-version /
+// expired-object-delete-marker rules. Credentials resolve through the
+// default AWS chain (IRSA / instance profile / env). A
+// `NoSuchLifecycleConfiguration` API error maps to "no rules" rather
+// than "unreachable" so the check reports the missing-rule failure
+// instead of a transport failure.
+//
+// GCS and Azure are not wired in v1; the chart passes a nil prober for
+// those providers, which the check routes through its advisory path.
+//
+// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+func s3LifecycleProber(region string) preflight.CloudObjectStorageLifecycleProber {
+	return preflight.CloudObjectStorageLifecycleProbeFunc(func(ctx context.Context, bucket string) (preflight.CloudObjectStorageLifecycleStatus, error) {
+		var status preflight.CloudObjectStorageLifecycleStatus
+		opts := []func(*awsconfig.LoadOptions) error{}
+		if region != "" {
+			opts = append(opts, awsconfig.WithRegion(region))
+		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+		if err != nil {
+			return status, err
+		}
+		c := s3.NewFromConfig(awsCfg)
+		ver, err := c.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: &bucket})
+		if err != nil {
+			return status, err
+		}
+		status.VersioningEnabled = ver.Status == s3types.BucketVersioningStatusEnabled
+
+		lc, err := c.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &bucket})
+		if err != nil {
+			// S3 returns NoSuchLifecycleConfiguration when no rules are
+			// configured; that is an absent-rule signal, not a transport
+			// failure, so report the empty status with a nil error.
+			var coder interface{ ErrorCode() string }
+			if errors.As(err, &coder) && coder.ErrorCode() == "NoSuchLifecycleConfiguration" {
+				return status, nil
+			}
+			return status, err
+		}
+		for i := range lc.Rules {
+			rule := lc.Rules[i]
+			if rule.Status != s3types.ExpirationStatusEnabled {
+				continue
+			}
+			if rule.NoncurrentVersionExpiration != nil && rule.NoncurrentVersionExpiration.NoncurrentDays != nil {
+				days := int(*rule.NoncurrentVersionExpiration.NoncurrentDays)
+				if days > 0 && (status.NoncurrentVersionExpirationDays == 0 || days < status.NoncurrentVersionExpirationDays) {
+					status.NoncurrentVersionExpirationDays = days
+				}
+			}
+			if rule.Expiration != nil && rule.Expiration.ExpiredObjectDeleteMarker != nil && *rule.Expiration.ExpiredObjectDeleteMarker {
+				status.DeleteMarkerExpirationEnabled = true
+			}
+		}
+		return status, nil
+	})
+}
+
+// cloudLifecycleProber selects the §17.9.4 lifecycle prober for the
+// configured objectStorage.provider. Only S3 has a wired SDK reader in
+// v1; minio is configured by the post-install Job (the check self-skips)
+// and gcs/azure route through the advisory path (nil prober).
+//
+// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+func cloudLifecycleProber(provider, region string) preflight.CloudObjectStorageLifecycleProber {
+	if strings.EqualFold(strings.TrimSpace(provider), "s3") {
+		return s3LifecycleProber(region)
+	}
+	return nil
 }
 
 // certManagerVersionProber reads the cert-manager version from the
@@ -409,6 +487,12 @@ func main() {
 		"MinIO artifact bucket name for the §12.5 line 297 SSE audit. Empty skips the check.")
 	minioUseSSL := flag.Bool("minio-use-ssl", true,
 		"use TLS when probing MinIO for the §12.5 line 297 SSE audit.")
+	objectStorageProvider := flag.String("object-storage-provider", "",
+		"value of the objectStorage.provider chart value (minio | s3 | gcs | azure) for the §17.9.4 cloud lifecycle audit.")
+	objectStorageBucket := flag.String("object-storage-bucket", "",
+		"value of the objectStorage.bucket chart value for the §17.9.4 cloud lifecycle audit.")
+	objectStorageRegion := flag.String("object-storage-region", "",
+		"value of the objectStorage.region chart value (AWS region) for the §17.9.4 cloud lifecycle audit.")
 	redisURL := flag.String("redis-url", "",
 		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
@@ -538,7 +622,12 @@ func main() {
 		ComplianceProfile:      *complianceProfile,
 		MinIOBucket:            *minioBucket,
 		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
-		RedisConfigProber:      redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
+		ObjectStorage: preflight.ObjectStorageConfig{
+			Provider: *objectStorageProvider,
+			Bucket:   *objectStorageBucket,
+		},
+		CloudObjectStorageLifecycleProber: cloudLifecycleProber(*objectStorageProvider, *objectStorageRegion),
+		RedisConfigProber:                 redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 		ClusterCIDR: preflight.ClusterCIDRConfig{
 			KubeAPIServerCIDR:         *kubeAPIServerCIDR,
