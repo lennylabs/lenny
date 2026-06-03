@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
@@ -55,6 +56,29 @@ func TestDiagnoseSessionEndpoint(t *testing.T) {
 	first, _ := chain[0].(map[string]any)
 	if first["category"] != "OOM_KILLED" {
 		t.Errorf("cause category = %v, want OOM_KILLED", first["category"])
+	}
+}
+
+// TestDiagnoseSessionDegradedReturns207 — a diagnosis served with a
+// degradation envelope (a fallback source or an unenrichable field)
+// returns 207 Multi-Status, mirroring the DIAGNOSTICS_PARTIAL mapping.
+// spec: §25.6 lines 2908-2920. F-25.6.1.
+func TestDiagnoseSessionDegradedReturns207_spec_25_6_2908(t *testing.T) {
+	src := fakeDiagSource{session: diagnostics.SessionRecord{
+		SessionID: "sess-1", State: "failed", Found: true,
+		Degradation: &conventions.Degradation{
+			Level: conventions.DegradationDegraded, ActualSource: "postgres",
+			UnavailableFields: []string{"causeChain.podSignals"},
+		},
+	}}
+	srv := opsserver.New(opsserver.Options{Diagnostics: diagnostics.NewService(src)})
+	rec, body := doJSON(t, srv, http.MethodGet, "/v1/admin/diagnostics/sessions/sess-1", nil, nil)
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("status = %d, want 207; body=%v", rec.Code, body)
+	}
+	deg, _ := body["degradation"].(map[string]any)
+	if deg == nil || deg["actualSource"] != "postgres" {
+		t.Fatalf("want degradation envelope in body, got %v", body["degradation"])
 	}
 }
 

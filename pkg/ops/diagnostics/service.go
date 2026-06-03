@@ -171,6 +171,20 @@ type SessionRecord struct {
 	Signals      Signals
 	RetryHistory []RetryAttempt
 	Logs         *LogReference
+	// FailureClass and FailureReason are the §7.3 session-level
+	// terminal-failure fields (sessions.failure_class /
+	// failure_reason). The §25.6 cause chain cross-references them to
+	// append the session-state-derived BUDGET_EXPIRED / CREDENTIAL_FAILURE
+	// levels that pod signals alone cannot express. spec: §25.6 line 2890.
+	FailureClass  string
+	FailureReason string
+	// Degradation is the §25.6 partial-result envelope the data source
+	// sets when it served the record from a fallback source (Postgres
+	// outage → Kubernetes) or could not enrich every field (no
+	// Kubernetes connection → no pod exit/OOM signals). Nil means the
+	// record came from its primary source with full fidelity. spec:
+	// §25.6 lines 2908-2920. F-25.6.1.
+	Degradation *conventions.Degradation
 	// Found is false when no session of that id exists in any shard.
 	Found bool
 }
@@ -183,6 +197,12 @@ type PoolRecord struct {
 	Signals   PoolSignals
 	CRDSynced bool
 	CRDDetail string
+	// Degradation is the §25.6 partial-result envelope the data source
+	// sets when warm-pool fields were served from a fallback source or
+	// could not be read (no metrics source → no claim/replenishment
+	// rates, so the demand bottleneck cannot be classified). spec: §25.6
+	// lines 2908-2920. F-25.6.1.
+	Degradation *conventions.Degradation
 	// Found is false when no pool of that name is registered.
 	Found bool
 }
@@ -194,6 +214,11 @@ type CredentialPoolRecord struct {
 	Utilization float64
 	HotKeys     []string
 	RateLimited bool
+	// Degradation is the §25.6 partial-result envelope the data source
+	// sets when credential-pool fields were served from a fallback
+	// source or could not be fully read. spec: §25.6 lines 2908-2920.
+	// F-25.6.1.
+	Degradation *conventions.Degradation
 	// Found is false when no credential pool of that name exists.
 	Found bool
 }
@@ -247,6 +272,17 @@ func (s *Service) DiagnoseSession(ctx context.Context, sessionID string) (*Sessi
 		return nil, &Error{Code: ErrCodeSessionNotFound, Message: "no session " + sessionID}
 	}
 	chain := PodFailureChain(rec.Signals)
+	// spec: §25.6 line 2890 — the cause chain cross-references session
+	// state: when the session carries a budget- or credential-derived
+	// terminal failure, that reason is a deeper (or, with no pod signal,
+	// the proximate) cause level than the pod exit alone. F-25.6.6.
+	if cat, ok := SessionStateCause(rec.FailureClass, rec.FailureReason); ok {
+		chain = append(chain, CauseChainEntry{
+			Level:    len(chain),
+			Category: cat,
+			Summary:  causeSummary[cat],
+		})
+	}
 	if chain == nil {
 		chain = []CauseChainEntry{}
 	}
@@ -259,6 +295,7 @@ func (s *Service) DiagnoseSession(ctx context.Context, sessionID string) (*Sessi
 		RetryHistory:     rec.RetryHistory,
 		SuggestedActions: []conventions.SuggestedAction{},
 		RelatedLogs:      rec.Logs,
+		Degradation:      rec.Degradation,
 	}
 	if diag.RetryHistory == nil {
 		diag.RetryHistory = []RetryAttempt{}
@@ -282,6 +319,7 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 		Config:           rec.Config,
 		SuggestedActions: []conventions.SuggestedAction{},
 		CRDSyncStatus:    SyncStatus{Synced: rec.CRDSynced, Detail: rec.CRDDetail},
+		Degradation:      rec.Degradation,
 	}
 	// spec: §25.6 line 2865 — CRD_SYNC_LAG is a §25.6 bottleneck category
 	// derived from PoolRecord.CRDSynced, so pass it to the classifier as
@@ -391,6 +429,7 @@ func (s *Service) DiagnoseCredentialPool(ctx context.Context, poolName string) (
 		Utilization:      rec.Utilization,
 		HotKeys:          hotKeys,
 		SuggestedActions: []conventions.SuggestedAction{},
+		Degradation:      rec.Degradation,
 	}, nil
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
+	"github.com/lennylabs/lenny/pkg/ops/diagnostics/prodsource"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
@@ -49,6 +50,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/ops/opsidem/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
@@ -1177,36 +1179,46 @@ func (emptyRunningState) RunningState(context.Context, string) (map[string]any, 
 	return map[string]any{}, nil
 }
 
-// buildDiagnosticService constructs the §25.6 DiagnosticService. The
-// Postgres + Kubernetes API data source is a documented seam: until it
-// lands the service runs the unconfigured data source, which reports
-// sessions and pools as not-found. The §25.6 connectivity endpoint runs
-// from the dependency probes regardless, so connectivity diagnosis
-// works even in this degraded mode.
-func buildDiagnosticService() diagnostics.DiagnosticService {
-	return diagnostics.NewService(unconfiguredDiagnosticSource{})
+// diagnosticSourceDeps carries the live backends the §25.6 production
+// DataSource reads. Pool is the platform Postgres (sessions,
+// agent_pod_state, credential_leases); Clientset is the Kubernetes API
+// (pod failure signals); Gateway is the gateway admin API (warm-pool
+// config / CRD sync status); Probes are the §25.4 dependency probes
+// (connectivity). Each optional backend that is absent degrades the
+// affected diagnosis rather than failing it. F-25.6.1.
+type diagnosticSourceDeps struct {
+	Pool           *pgxpool.Pool
+	Clientset      kubernetes.Interface
+	Gateway        *gateway.Client
+	Probes         map[string]probe.Func
+	ProbeTimeout   time.Duration
+	AgentNamespace string
 }
 
-// unconfiguredDiagnosticSource is the §25.6 DataSource used until the
-// Postgres + Kubernetes API source is wired. It reports every session,
-// pool, and credential pool as not-found and runs no connectivity
-// probes — the correct cold-start behavior before a data source exists.
-type unconfiguredDiagnosticSource struct{}
-
-func (unconfiguredDiagnosticSource) Session(context.Context, string) (diagnostics.SessionRecord, error) {
-	return diagnostics.SessionRecord{Found: false}, nil
-}
-
-func (unconfiguredDiagnosticSource) Pool(context.Context, string) (diagnostics.PoolRecord, error) {
-	return diagnostics.PoolRecord{Found: false}, nil
-}
-
-func (unconfiguredDiagnosticSource) CredentialPool(context.Context, string) (diagnostics.CredentialPoolRecord, error) {
-	return diagnostics.CredentialPoolRecord{Found: false}, nil
-}
-
-func (unconfiguredDiagnosticSource) Connectivity(context.Context) ([]diagnostics.ConnectivityDependency, error) {
-	return nil, nil
+// buildDiagnosticService constructs the §25.6 DiagnosticService over the
+// production data source (prodsource.Source). The source reads sessions,
+// pod counts, and credential-pool load from Postgres; enriches pod
+// failure signals from the Kubernetes API; reads warm-pool config from
+// the gateway admin API; and runs the dependency probes for connectivity.
+// A backend that is not configured in a given deployment degrades the
+// affected fields (recorded in the §25.6 Degradation envelope) rather
+// than failing the diagnosis. With no Postgres the session/pool/credential
+// diagnoses report not-found while connectivity still probes. F-25.6.1.
+func buildDiagnosticService(deps diagnosticSourceDeps) diagnostics.DiagnosticService {
+	src := &prodsource.Source{
+		Conn:         prodsource.NewProbeConnectivity(deps.Probes, deps.ProbeTimeout),
+		PodNamespace: deps.AgentNamespace,
+	}
+	if deps.Pool != nil {
+		src.PG = prodsource.NewPGReader(deps.Pool)
+	}
+	if deps.Clientset != nil {
+		src.Pods = prodsource.NewK8sReader(deps.Clientset, deps.AgentNamespace)
+	}
+	if deps.Gateway != nil {
+		src.Pools = prodsource.NewGatewayPoolReader(deps.Gateway)
+	}
+	return diagnostics.NewService(src)
 }
 
 // buildReleaseChannelPublisher constructs the §25.8 release-channel

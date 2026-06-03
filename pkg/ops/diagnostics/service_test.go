@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 )
 
@@ -50,6 +51,91 @@ func TestDiagnoseSessionBuildsCauseChain(t *testing.T) {
 	// §25.6: exit 137 + OOM flag classifies as OOM_KILLED.
 	if diag.CauseChain[0].Category != diagnostics.CategoryOOMKilled {
 		t.Errorf("cause category = %q, want OOM_KILLED", diag.CauseChain[0].Category)
+	}
+}
+
+// TestDiagnoseSessionAppendsSessionStateCause — a pod crash that the
+// session also classifies as a budget failure yields a two-level cause
+// chain: the proximate pod exit (level 0) followed by the session-state
+// terminal reason (level 1). spec: §25.6 line 2890. F-25.6.6.
+func TestDiagnoseSessionAppendsSessionStateCause_spec_25_6_2890(t *testing.T) {
+	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
+		SessionID: "sess-1", State: "failed",
+		Signals:       diagnostics.Signals{ExitCode: 1},
+		FailureReason: "budget_exceeded",
+		Found:         true,
+	}})
+	diag, err := svc.DiagnoseSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if len(diag.CauseChain) != 2 {
+		t.Fatalf("cause chain has %d entries, want 2: %+v", len(diag.CauseChain), diag.CauseChain)
+	}
+	if diag.CauseChain[0].Category != diagnostics.CategoryPodCrash {
+		t.Errorf("level 0 = %q, want POD_CRASH", diag.CauseChain[0].Category)
+	}
+	if diag.CauseChain[1].Category != diagnostics.CategoryBudgetExpired || diag.CauseChain[1].Level != 1 {
+		t.Errorf("level 1 = %+v, want BUDGET_EXPIRED at level 1", diag.CauseChain[1])
+	}
+}
+
+// TestDiagnoseSessionCredentialFailureWithoutPod — a session that failed
+// for a credential reason with no pod signal yields a single
+// session-state cause level. spec: §25.6 line 2890. F-25.6.6.
+func TestDiagnoseSessionCredentialFailureWithoutPod_spec_25_6_2890(t *testing.T) {
+	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
+		SessionID: "sess-1", State: "failed",
+		FailureClass: "credential_error",
+		Found:        true,
+	}})
+	diag, err := svc.DiagnoseSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if len(diag.CauseChain) != 1 || diag.CauseChain[0].Category != diagnostics.CategoryCredentialFailure {
+		t.Fatalf("want a single CREDENTIAL_FAILURE level, got %+v", diag.CauseChain)
+	}
+}
+
+// TestDiagnoseSessionCopiesDegradation — a degradation envelope on the
+// record flows onto the diagnosis so the handler can return 207. spec:
+// §25.6 lines 2908-2920. F-25.6.1.
+func TestDiagnoseSessionCopiesDegradation_spec_25_6_2908(t *testing.T) {
+	deg := &conventions.Degradation{Level: conventions.DegradationDegraded, ActualSource: "postgres"}
+	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
+		SessionID: "sess-1", State: "failed", Found: true, Degradation: deg,
+	}})
+	diag, err := svc.DiagnoseSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if diag.Degradation == nil || diag.Degradation.ActualSource != "postgres" {
+		t.Fatalf("want degradation copied onto diagnosis, got %+v", diag.Degradation)
+	}
+}
+
+// TestSessionStateCause covers the §25.6 session-state cause mapping for
+// budget and credential failures and the no-match case. spec: §25.6 line
+// 2890. F-25.6.6.
+func TestSessionStateCause_spec_25_6_2890(t *testing.T) {
+	cases := []struct {
+		class, reason string
+		want          diagnostics.Category
+		ok            bool
+	}{
+		{"", "budget_exceeded", diagnostics.CategoryBudgetExpired, true},
+		{"", "delegation_budget_exceeded", diagnostics.CategoryBudgetExpired, true},
+		{"credential_error", "", diagnostics.CategoryCredentialFailure, true},
+		{"", "credential_pool_exhausted", diagnostics.CategoryCredentialFailure, true},
+		{"runtime_crash", "exit_137", "", false},
+		{"", "", "", false},
+	}
+	for _, c := range cases {
+		got, ok := diagnostics.SessionStateCause(c.class, c.reason)
+		if ok != c.ok || got != c.want {
+			t.Errorf("SessionStateCause(%q,%q) = (%q,%v), want (%q,%v)", c.class, c.reason, got, ok, c.want, c.ok)
+		}
 	}
 }
 

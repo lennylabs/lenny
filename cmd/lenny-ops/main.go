@@ -114,6 +114,9 @@ func main() {
 			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
 	leaderElectNS := flag.String("leader-election-namespace", envOr("LENNY_LEADER_ELECTION_NAMESPACE", "lenny-system"),
 		"namespace that holds the §25.4 lenny-ops-leader Lease")
+	agentNamespace := flag.String("agent-namespace", envOr("LENNY_AGENT_NAMESPACE", "lenny-system"),
+		"namespace agent pods run in; the §25.6 session diagnosis reads pod failure "+
+			"signals and stamps the relatedLogs reference against it")
 	runbookDir := flag.String("runbook-dir", envOr("LENNY_RUNBOOK_DIR", "docs/runbooks"),
 		"directory of §25.7 operational-runbook markdown files the runbook index serves")
 	backupImage := flag.String("backup-image", os.Getenv("LENNY_BACKUP_IMAGE"),
@@ -775,7 +778,19 @@ func main() {
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
 	}, pgPool, opsEmitter, auditRecorder)
-	diagnosticSvc := buildDiagnosticService()
+	diagnosticDeps := diagnosticSourceDeps{
+		Pool:           pgPool,
+		Gateway:        gwClient,
+		Probes:         probes,
+		ProbeTimeout:   2 * time.Second,
+		AgentNamespace: *agentNamespace,
+	}
+	// Assign through the nil check so a nil *kubernetes.Clientset does not
+	// become a non-nil kubernetes.Interface (the typed-nil interface trap).
+	if clientset != nil {
+		diagnosticDeps.Clientset = clientset
+	}
+	diagnosticSvc := buildDiagnosticService(diagnosticDeps)
 
 	// The §25.8 release-channel manifest publisher. Loaded from the
 	// operator-supplied key + manifest paths. When no key is configured
