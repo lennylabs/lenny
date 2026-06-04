@@ -272,6 +272,32 @@ func TestAdminTenantsDelete(t *testing.T) {
 	}
 }
 
+// TestAdminTenantsRotateErasureSalt covers `lenny-ctl admin tenants
+// rotate-erasure-salt <id>` mapping to POST
+// /v1/admin/tenants/{id}/rotate-erasure-salt. spec: §12.8 line 857.
+// F-12.8.5.
+func TestAdminTenantsRotateErasureSalt(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"tenantId":"acme","rotated":true}`,
+		"admin", "tenants", "rotate-erasure-salt", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/tenants/acme/rotate-erasure-salt" {
+		t.Errorf("request: %s %s, want POST /v1/admin/tenants/acme/rotate-erasure-salt", got.method, got.path)
+	}
+}
+
+// TestAdminTenantsRotateErasureSaltRequiresID asserts the rotate
+// subcommand rejects a missing <id> with exit 2 before any request.
+// F-12.8.5.
+func TestAdminTenantsRotateErasureSaltRequiresID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", "http://127.0.0.1:0", "admin", "tenants", "rotate-erasure-salt"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code: got %d, want 2; stderr=%s", code, stderr.String())
+	}
+}
+
 // TestAdminTenantsDeleteRequiresID asserts the §24.10 delete subcommand
 // rejects a missing <id> with exit 2 before any request. F-24.10.1.
 func TestAdminTenantsDeleteRequiresID(t *testing.T) {

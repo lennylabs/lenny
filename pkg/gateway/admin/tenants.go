@@ -175,6 +175,9 @@ type Router struct {
 	userPlayground          UserPlaygroundRevoker
 	erasureRunner           ErasureRunner
 	erasureJobs             erasurejob.Store
+	// saltRotator backs POST /v1/admin/tenants/{id}/rotate-erasure-salt
+	// (§12.8 line 857). Nil leaves the route unregistered. F-12.8.5.
+	saltRotator ErasureSaltRotator
 	artifactHolds           ArtifactLegalHolder
 	billing                 billingstore.Store
 	corrections             correctionstore.Store
@@ -440,6 +443,11 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetTenant)))
 		mux.Handle("PUT /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateTenant)))
 		mux.Handle("DELETE /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteTenant)))
+		if r.saltRotator != nil {
+			// §12.8 line 857: platform-admin compromise-response salt rotation.
+			mux.Handle("POST /v1/admin/tenants/{id}/rotate-erasure-salt",
+				r.requireAdmin(http.HandlerFunc(r.handleRotateErasureSalt)))
+		}
 		mux.Handle("GET /v1/admin/tenants/{id}/elicitation-content-integrity",
 			r.requireAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
 		mux.Handle("PUT /v1/admin/tenants/{id}/elicitation-content-integrity",

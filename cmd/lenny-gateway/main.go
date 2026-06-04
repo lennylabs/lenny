@@ -155,6 +155,7 @@ import (
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/erasurejob/saltlockpg"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -1816,6 +1817,14 @@ func main() {
 	}
 	log.Printf("lenny-gateway: §4 KMS provider = %s (environment=%s)",
 		kmsOpts.Provider, kmsOpts.Environment)
+
+	// spec: §12.8 line 845 — now that the KMS provider is resolved, wire it
+	// into the Postgres tenant store so the §12.8 erasure_salt is
+	// envelope-encrypted at rest (the store is built before the provider is
+	// resolved, so the injection is deferred to here). F-12.8.5.
+	if tps, ok := tenants.(*tenantpg.Store); ok {
+		tps.SetSaltKMS(kmsProvider)
+	}
 
 	// ----- §13.3 Token Service -----
 	// §4 KMS-envelope-backed JWT signer: the HMAC-SHA256 signing key is
@@ -4181,14 +4190,24 @@ func main() {
 			})
 		}
 		// §12.8: billing events are append-only, so the erasure job
-		// pseudonymizes them rather than deleting them. The Postgres
-		// billing store's pseudonymize path is deferred (it needs an
-		// UPDATE under the lenny_erasure role), so this attaches the
-		// BillingEraser only when the in-memory billing store is wired.
-		// The pseudonymize path operates on the durable ledger directly,
-		// so it asserts against billingLedger, not the failover pipeline.
+		// pseudonymizes them rather than deleting them. Both the in-memory
+		// and the Postgres billing stores implement the pseudonymize/count
+		// pair (the pg path rewrites under SET LOCAL lenny.erasure_mode), so
+		// the BillingEraser is attached whenever the ledger satisfies the
+		// erasure interface. The pseudonymize path operates on the durable
+		// ledger directly, so it asserts against billingLedger, not the
+		// failover pipeline.
 		if be, ok := billingLedger.(erasurejob.BillingErasureStore); ok {
-			erasureRunner = erasureRunner.WithBilling(erasurejob.NewBillingEraser(be, tenants))
+			billingEraser := erasurejob.NewBillingEraser(be, tenants)
+			// §12.8 line 856: on Postgres, serialize the per-user pseudonymize
+			// and the salt-rotation migration through the cross-replica
+			// `erasure_salt_migration:{tenant_id}` advisory lock.
+			if pgPool != nil {
+				billingEraser = billingEraser.WithRotationLock(saltlockpg.New(pgPool))
+			}
+			erasureRunner = erasureRunner.WithBilling(billingEraser)
+			// §12.8 line 857: platform-admin compromise-response salt rotation.
+			adminRouter = adminRouter.WithErasureSaltRotation(billingEraser)
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
 		// spec: §12.8 line 768 — publish the erasure-SLA gauges

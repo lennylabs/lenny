@@ -28,16 +28,91 @@ import (
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/envelope"
 )
 
 // Store is the Postgres-backed tenant registry. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
+	// kms envelope-encrypts the §12.8 erasure_salt at rest. A nil
+	// provider rejects any write that carries a non-empty salt: §12.8
+	// line 845 forbids storing the salt in plaintext. F-12.8.5.
+	kms kms.Provider
 }
+
+// Option configures a Store at construction.
+type Option func(*Store)
+
+// WithKMS wires the §12.8 line 845 envelope-encryption provider used to
+// seal the per-tenant erasure_salt at rest. Without it, a tenant write
+// carrying a non-empty ErasureSalt is rejected rather than persisted in
+// plaintext. F-12.8.5.
+func WithKMS(p kms.Provider) Option { return func(s *Store) { s.kms = p } }
+
+// SetSaltKMS injects the §12.8 line 845 envelope-encryption provider after
+// construction. It is a startup-only wiring hook for the gateway binary,
+// where the KMS provider is resolved after the tenant store is built; it
+// must be called before any erasure-salt read or write and is not safe to
+// call concurrently with store operations. F-12.8.5.
+func (s *Store) SetSaltKMS(p kms.Provider) { s.kms = p }
 
 // New returns a Store backed by pool. The pool must point at a
 // database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
+	s := &Store{pool: pool}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// saltKEKAlias is the per-tenant KEK alias used to envelope-encrypt the
+// §12.8 erasure_salt, matching the credential and connector-credential
+// stores so a tenant's KEK wraps all of its T4 secret material.
+func saltKEKAlias(tenantID string) string { return "tenant:" + tenantID }
+
+// sealSalt envelope-encrypts a §12.8 erasure salt for the erasure_salt
+// column. An empty salt seals to a NULL column — the §12.8 line 850
+// destroyed state. A non-empty salt with no KMS provider is rejected:
+// §12.8 line 845 forbids storing the salt in plaintext. F-12.8.5.
+func (s *Store) sealSalt(ctx context.Context, tenantID string, salt []byte) ([]byte, error) {
+	if len(salt) == 0 {
+		return nil, nil
+	}
+	if s.kms == nil {
+		return nil, errors.New("tenantstore/pgstore: erasure_salt requires a KMS provider; §12.8 line 845 forbids plaintext salt storage")
+	}
+	c, err := envelope.New(s.kms, saltKEKAlias(tenantID))
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := c.Seal(ctx, salt)
+	if err != nil {
+		return nil, fmt.Errorf("tenantstore/pgstore: seal erasure_salt: %w", err)
+	}
+	return envelope.Encode(sealed)
+}
+
+// openSalt reverses sealSalt. A NULL/empty blob is the §12.8 line 850
+// destroyed state and opens to a nil salt. F-12.8.5.
+func (s *Store) openSalt(ctx context.Context, tenantID string, blob []byte) ([]byte, error) {
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	if s.kms == nil {
+		return nil, errors.New("tenantstore/pgstore: erasure_salt is present but no KMS provider is wired to decrypt it")
+	}
+	c, err := envelope.New(s.kms, saltKEKAlias(tenantID))
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := envelope.Decode(blob)
+	if err != nil {
+		return nil, fmt.Errorf("tenantstore/pgstore: decode erasure_salt: %w", err)
+	}
+	return c.Open(ctx, sealed)
+}
 
 var (
 	_ tenantstore.Store   = (*Store)(nil)
@@ -49,7 +124,8 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	created_at, updated_at, deleted_at, min_isolation_profile,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 	experiment_targeting, credential_policy, rbac_config,
-	token_quota_per_window, quota_reset_period, state, gc_priority`
+	token_quota_per_window, quota_reset_period, state, gc_priority,
+	erasure_salt`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -142,20 +218,27 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	if state == "" {
 		state = tenantstore.TenantStateActive
 	}
+	// §12.8 line 845: a tenant carrying an erasure_salt at create time
+	// (rare; the salt is normally minted during an erasure job) has it
+	// envelope-encrypted before persist.
+	saltBlob, err := s.sealSalt(ctx, t.ID, t.ErasureSalt)
+	if err != nil {
+		return err
+	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO tenants (
 		id, display_name, compliance_profile, data_residency_region,
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 		experiment_targeting, credential_policy, rbac_config,
-		token_quota_per_window, quota_reset_period, state, gc_priority
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority))
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -169,11 +252,14 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 func (s *Store) Get(ctx context.Context, id string) (tenantstore.Tenant, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT `+selectList+` FROM tenants WHERE id = $1`, id)
-	t, err := scanTenant(row)
+	t, saltBlob, err := scanTenant(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tenantstore.Tenant{}, tenantstore.ErrNotFound
 	}
 	if err != nil {
+		return tenantstore.Tenant{}, err
+	}
+	if t.ErasureSalt, err = s.openSalt(ctx, t.ID, saltBlob); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	return t, nil
@@ -190,11 +276,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 
 	row := tx.QueryRow(ctx,
 		`SELECT `+selectList+` FROM tenants WHERE id = $1 FOR UPDATE`, id)
-	t, err := scanTenant(row)
+	t, saltBlob, err := scanTenant(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tenantstore.Tenant{}, tenantstore.ErrNotFound
 	}
 	if err != nil {
+		return tenantstore.Tenant{}, err
+	}
+	if t.ErasureSalt, err = s.openSalt(ctx, t.ID, saltBlob); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	prev := t.UpdatedAt
@@ -214,6 +303,13 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 	if err != nil {
 		return tenantstore.Tenant{}, err
 	}
+	// §12.8 line 845/850: re-seal the (possibly mutated) erasure_salt;
+	// a destroyed salt (nil) writes NULL, removing the KMS-wrapped
+	// ciphertext from the row.
+	newSaltBlob, err := s.sealSalt(ctx, id, t.ErasureSalt)
+	if err != nil {
+		return tenantstore.Tenant{}, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE tenants SET
 		display_name = $2, compliance_profile = $3, data_residency_region = $4,
 		workspace_tier = $5, max_concurrent_sessions = $6, storage_quota_bytes = $7,
@@ -222,14 +318,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		no_environment_policy = $13, experiment_targeting = $14,
 		credential_policy = $15, rbac_config = $16,
 		token_quota_per_window = $17, quota_reset_period = $18,
-		state = $19, gc_priority = $20 WHERE id = $1`,
+		state = $19, gc_priority = $20, erasure_salt = $21 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
 		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State),
-		gcPriorityOrDefault(t.GCPriority)); err != nil {
+		gcPriorityOrDefault(t.GCPriority), newSaltBlob); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -254,7 +350,10 @@ func (s *Store) List(ctx context.Context, filter tenantstore.ListFilter) ([]tena
 	defer rows.Close()
 	var out []tenantstore.Tenant
 	for rows.Next() {
-		t, err := scanTenant(rows)
+		// §12.8 line 847: only the erasure job reads the salt, so List
+		// (the admin tenant inventory) leaves ErasureSalt unopened rather
+		// than running a KMS decrypt per row.
+		t, _, err := scanTenant(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -306,14 +405,18 @@ func (s *Store) IsRegistered(tenantID string) (bool, error) {
 	return active, nil
 }
 
-// scanTenant reads one row in selectList order into a Tenant.
-func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
+// scanTenant reads one row in selectList order into a Tenant. The raw
+// (still envelope-encrypted) erasure_salt blob is returned separately so
+// the caller can openSalt it with the request context; ErasureSalt on
+// the returned Tenant is left nil. F-12.8.5.
+func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 	var (
 		t          tenantstore.Tenant
 		deletedAt  *time.Time
 		targeting  []byte
 		credPolicy []byte
 		rbacConfig []byte
+		saltBlob   []byte
 	)
 	if err := row.Scan(
 		&t.ID, &t.DisplayName, &t.ComplianceProfile, &t.DataResidencyRegion,
@@ -321,27 +424,27 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
-		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State, &t.GCPriority,
+		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State, &t.GCPriority, &saltBlob,
 	); err != nil {
-		return tenantstore.Tenant{}, err
+		return tenantstore.Tenant{}, nil, err
 	}
 	if deletedAt != nil {
 		t.DeletedAt = *deletedAt
 	}
 	if len(targeting) > 0 {
 		if err := json.Unmarshal(targeting, &t.ExperimentTargeting); err != nil {
-			return tenantstore.Tenant{}, fmt.Errorf("tenantstore: decode experimentTargeting: %w", err)
+			return tenantstore.Tenant{}, nil, fmt.Errorf("tenantstore: decode experimentTargeting: %w", err)
 		}
 	}
 	if len(credPolicy) > 0 {
 		if err := json.Unmarshal(credPolicy, &t.CredentialPolicy); err != nil {
-			return tenantstore.Tenant{}, fmt.Errorf("tenantstore: decode credentialPolicy: %w", err)
+			return tenantstore.Tenant{}, nil, fmt.Errorf("tenantstore: decode credentialPolicy: %w", err)
 		}
 	}
 	if len(rbacConfig) > 0 {
 		if err := json.Unmarshal(rbacConfig, &t.RBACConfig); err != nil {
-			return tenantstore.Tenant{}, fmt.Errorf("tenantstore: decode rbacConfig: %w", err)
+			return tenantstore.Tenant{}, nil, fmt.Errorf("tenantstore: decode rbacConfig: %w", err)
 		}
 	}
-	return t, nil
+	return t, saltBlob, nil
 }

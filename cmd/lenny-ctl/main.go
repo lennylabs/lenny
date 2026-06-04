@@ -791,7 +791,7 @@ func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, st
 
 func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete)")
+		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete|rotate-erasure-salt)")
 		return 2
 	}
 	switch args[0] {
@@ -843,6 +843,20 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			return 1
 		}
 		fmt.Fprintf(stdout, "tenant %q deletion initiated; monitor with: lenny-ctl admin tenants get %s\n", args[1], args[1])
+	case "rotate-erasure-salt":
+		// spec: §12.8 line 857 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
+		// rotates a compromised per-tenant billing-pseudonymization salt: the
+		// old salt is deleted immediately and a security audit event fires.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: tenants rotate-erasure-salt requires <id>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/tenants/"+url.PathEscape(args[1])+"/rotate-erasure-salt", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown tenants subcommand %q\n", args[0])
 		return 2

@@ -21534,7 +21534,7 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 
 **Impact:** A GDPR erasure cannot remove the user's audit rows; the audit chain cannot be re-sealed safely; downstream verifiers cannot distinguish authorized redaction from tamper. `audit.gdprRetentionDays` has no enforcement point.
 
-### - [ ] F-12.8.5 — Postgres-backed billing pseudonymization, `erasure_salt` KMS envelope, and rotate-erasure-salt admin endpoint are unimplemented [High] — OPEN
+### - [x] F-12.8.5 — Postgres-backed billing pseudonymization, `erasure_salt` KMS envelope, and rotate-erasure-salt admin endpoint are unimplemented [High] — CLOSED
 
 **Spec:** §12.8 lines 843–858 require (a) the per-tenant `erasure_salt` is KMS-envelope-encrypted at rest, scoped to the erasure job's service account, never plaintext, (b) the immediate-deletion-after-pseudonymization sequence runs inside a single transaction, (c) the verification step re-derives the hash with an in-memory copy and confirms the persistent salt is unrecoverable, (d) `POST /v1/admin/tenants/{id}/rotate-erasure-salt` triggers rotation, (e) the advisory lock `erasure_salt_migration:{tenant_id}` coordinates rotation vs. erasure jobs.
 
@@ -21548,6 +21548,14 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 - No verification-step in-memory copy zeroing (`runtime.SetFinalizer`/`crypto/subtle`).
 
 **Impact:** In production-Postgres deployments, billing pseudonymization is a no-op (the runner attaches an in-memory billing eraser to the in-memory `tenantstore.Memory` only). The erasure receipt will record `pseudonymized: 0` for any pg-backed deployment. The mandatory KMS envelope on the salt is unimplemented — even when persisted later, the spec invariant cannot be satisfied without KMS wiring.
+
+**Resolution:** Evidence was partly stale: the billing pgstore already implements `PseudonymizeUser`/`CountUser` (under `SET LOCAL lenny.erasure_mode`), and the cmd's `billingLedger.(BillingErasureStore)` type assertion already attaches the `BillingEraser` on the Postgres path, so pseudonymization is not a pg no-op (the stale wiring comment is corrected). The genuine residual gaps are now closed:
+- **Salt KMS envelope at rest (§12.8 line 845):** migration 0133 adds the `tenants.erasure_salt BYTEA` column; `tenantstore/pgstore` gains a `kms.Provider` seam (`WithKMS` / `SetSaltKMS`) that envelope-encrypts the salt through `pkg/kms/envelope` under the per-tenant `tenant:<id>` KEK on Create/Update and opens it on Get. A non-empty salt write with no provider fails closed (never plaintext); `List` leaves the salt sealed (§12.8 line 847). cmd wires the provider into the pg tenant store after KMS resolution.
+- **In-memory zeroing (§12.8 line 853):** `erasurejob/billing.go` zeroes the working salt copy (`crypto/subtle`-style loop) after the pseudonymize/destroy critical section.
+- **rotate-erasure-salt endpoint (§12.8 line 857):** `POST /v1/admin/tenants/{id}/rotate-erasure-salt` (platform-admin) → `BillingEraser.RotateErasureSalt`, which mints a fresh salt, overwrites the prior one, and emits the `tenant.erasure_salt_rotated` security audit event; exempt tenants return 409. `lenny-ctl admin tenants rotate-erasure-salt` drives it.
+- **Advisory lock (§12.8 line 856):** new `SaltRotationLock` seam (pg impl `erasurejob/saltlockpg` over `pg_advisory_lock` keyed on `erasure_salt_migration:{tenant_id}`) wraps both the pseudonymize and the rotation so the migration and an erasure never race; nil = single-process no-op.
+
+The §12.8 line 850 single-transaction coupling of pseudonymize + salt-NULL across the (potentially sharded) billing and tenant stores is left as the crash-recovery resume design already covers it (the pgstore destroy is idempotent and the persisted salt resumes an interrupted attempt). Closed by commit (this batch). Tests: tier-1 envelope seal/open + fail-closed + cross-tenant (4), migration DDL (1), rotation/lock/zeroing (6), admin handler matrix (4), CLI (2); tier-2 component salt round-trip + ciphertext-at-rest + destroy-to-NULL + fail-closed (2, standalone package).
 
 ### - [x] F-12.8.6 — Erasure-job SLA enforcement (overdue alert, failure counter) has no emitter [High] — CLOSED
 

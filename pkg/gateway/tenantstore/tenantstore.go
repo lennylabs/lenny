@@ -136,10 +136,9 @@ type Tenant struct {
 	// secret (256-bit). It is non-nil only transiently, while an
 	// erasure job pseudonymizes the tenant's billing events; the job
 	// destroys it immediately afterward so the pseudonymized records
-	// cannot be re-identified. Postgres persistence of this field is
-	// deferred with the rest of the §12.8 Postgres billing-erasure
-	// path: the salt must be KMS-envelope-encrypted, never stored
-	// plaintext.
+	// cannot be re-identified. The Postgres tenant store persists it in
+	// the erasure_salt column under §12.8 line 845 KMS envelope
+	// encryption (never plaintext); a destroyed salt is NULL. F-12.8.5.
 	ErasureSalt []byte
 
 	// CreatedAt is the UTC instant the tenant row was committed.
