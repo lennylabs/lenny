@@ -259,6 +259,44 @@ func TestExperimentStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.7 line 1092 / §4.2 line 165 — the platform-global
+	// PoolScalingController reads every experiment across tenants through
+	// ListAll, which uses the §4.2 platform-admin cross-tenant path
+	// (InAllTenants) rather than a single SET LOCAL app.current_tenant.
+	t.Run("list-all crosses tenants and is ordered by (tenant_id, id)", func(t *testing.T) {
+		a := freshTenant(t, ctx, pg)
+		b := freshTenant(t, ctx, pg)
+		if err := store.Create(ctx, validExperiment(a, "exp_x")); err != nil {
+			t.Fatalf("Create a/exp_x: %v", err)
+		}
+		if err := store.Create(ctx, validExperiment(b, "exp_y")); err != nil {
+			t.Fatalf("Create b/exp_y: %v", err)
+		}
+		all, err := store.ListAll(ctx)
+		if err != nil {
+			t.Fatalf("ListAll: %v", err)
+		}
+		seenA, seenB := false, false
+		for _, e := range all {
+			if e.TenantID == a && e.ID == "exp_x" {
+				seenA = true
+			}
+			if e.TenantID == b && e.ID == "exp_y" {
+				seenB = true
+			}
+		}
+		if !seenA || !seenB {
+			t.Errorf("ListAll missing cross-tenant rows: seenA=%v seenB=%v", seenA, seenB)
+		}
+		for i := 1; i < len(all); i++ {
+			prev, cur := all[i-1], all[i]
+			if prev.TenantID > cur.TenantID || (prev.TenantID == cur.TenantID && prev.ID > cur.ID) {
+				t.Fatalf("ListAll not ordered by (tenant_id, id) at %d: %q/%q then %q/%q",
+					i, prev.TenantID, prev.ID, cur.TenantID, cur.ID)
+			}
+		}
+	})
+
 	t.Run("delete removes the row and reports ErrNotFound when absent", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		if err := store.Create(ctx, validExperiment(tenant, "exp_delete")); err != nil {

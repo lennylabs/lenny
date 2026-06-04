@@ -206,6 +206,28 @@ func (m *Memory) List(_ context.Context, tenantID string) ([]Experiment, error) 
 	return out, nil
 }
 
+// ListAll returns every experiment across all tenants, ordered by
+// (tenantID, id). The §4.6.2 PoolScalingController is platform-global
+// and consults the experiment registry to size variant pools regardless
+// of the owning tenant; it reads through this cross-tenant accessor
+// rather than the per-tenant List. spec: §10.7 line 1092 — variant pool
+// lifecycle is managed by the controller across the whole platform.
+func (m *Memory) ListAll(_ context.Context) ([]Experiment, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Experiment, 0, len(m.experiments))
+	for _, e := range m.experiments {
+		out = append(out, cloneExperiment(e))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
 // Delete implements Store.
 func (m *Memory) Delete(_ context.Context, tenantID, id string) error {
 	m.mu.Lock()

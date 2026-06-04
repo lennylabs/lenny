@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -89,6 +90,25 @@ type PoolConfig struct {
 	// standard base pool. It is 0 when no variants are active and feeds
 	// the §4.6.2 base-pool adjustment (1 - Σ variant_weights).
 	SumActiveVariantWeights float64
+
+	// ForceZeroMinWarm pins the pool's minWarm to 0 regardless of
+	// observed demand. The §10.7 ExperimentVariantSource sets it for a
+	// paused experiment's variant pool: minWarm drops to 0 so no new warm
+	// pods are created, while MaxWarm is intentionally left at the pool's
+	// current ceiling so existing warm pods drain naturally rather than
+	// being pre-terminated and the SandboxWarmPool CRD is retained for
+	// re-activation. spec: §10.7 line 1102 (active → paused).
+	ForceZeroMinWarm bool
+
+	// DrainAndDelete marks a concluded experiment's variant pool for the
+	// §10.7 line 1104 full-drain-then-delete lifecycle: the
+	// SandboxWarmPool spec is driven to minWarm=0/maxWarm=0 to trigger a
+	// full drain, and once status.readyCount reaches 0 the
+	// PoolScalingController deletes the SandboxWarmPool CRD. The
+	// SandboxTemplate is retained (it may be referenced by other
+	// experiments or kept for audit). spec: §10.7 line 1104
+	// (active|paused → concluded).
+	DrainAndDelete bool
 
 	// Generation is the §4.6.2 pool_config_generation the admin API
 	// bumped on the last write to this pool. The reconciler stamps it
@@ -337,7 +357,15 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		if tmplErr != nil {
 			return tmplErr
 		}
-		warmErr := r.syncTuple(ctx, cfg, crdSandboxPool, now, r.syncWarmPool)
+		// spec: §10.7 line 1104 — a concluded experiment's variant pool is
+		// drained to 0/0 and its SandboxWarmPool deleted once readyCount
+		// reaches 0. The SandboxTemplate above is retained. Every other
+		// pool reconciles its SandboxWarmPool through the normal upsert.
+		warmApply := r.syncWarmPool
+		if cfg.DrainAndDelete {
+			warmApply = r.drainAndDeleteWarmPool
+		}
+		warmErr := r.syncTuple(ctx, cfg, crdSandboxPool, now, warmApply)
 		if warmErr != nil {
 			return warmErr
 		}
@@ -519,6 +547,45 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 	return nil
 }
 
+// drainAndDeleteWarmPool implements the §10.7 line 1104 conclude
+// lifecycle for a variant pool: it drives the SandboxWarmPool to a full
+// drain (minWarm=0, maxWarm=0) and, once status.readyCount has reached
+// 0, deletes the SandboxWarmPool CRD. The SandboxTemplate is left in
+// place by the caller. A SandboxWarmPool that is already gone is a
+// no-op, so a concluded experiment that lingers in the registry does
+// not churn after its pool has been reclaimed.
+func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig) error {
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
+	}
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(pool), pool); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get warm pool for drain-delete: %w", err)
+	}
+	// spec: §10.7 line 1104 — delete only once the pool has fully
+	// drained (readyCount == 0). Until then, hold the spec at 0/0 so the
+	// WarmPoolController keeps draining and never replenishes.
+	if pool.Status.ReadyCount <= 0 {
+		if err := r.Client.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete drained warm pool: %w", err)
+		}
+		return nil
+	}
+	if pool.Spec.MinWarm == 0 && pool.Spec.MaxWarm == 0 {
+		// Already draining; nothing to rewrite this pass.
+		return nil
+	}
+	pool.Spec.MinWarm = 0
+	pool.Spec.MaxWarm = 0
+	setConfigGenerationAnnotation(&pool.ObjectMeta, cfg.Generation)
+	if err := r.Client.Update(ctx, pool); err != nil {
+		return fmt.Errorf("drain warm pool: %w", err)
+	}
+	return nil
+}
+
 // evaluateBreaker runs the §6.1 SDK-warm circuit-breaker decision for
 // one pool. It reads the rolling demotion signal from the
 // DemotionRateSource and the persisted breaker state from the live
@@ -597,6 +664,12 @@ func timePtrEqual(a, b *metav1.Time) bool {
 // §4.6.2 scaling formula. A pool with no DemandSource, or one whose
 // demand has not yet converged, stays at its bootstrap minWarm.
 func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, error) {
+	// spec: §10.7 line 1102 — a paused experiment's variant pool pins
+	// minWarm to 0 regardless of any observed demand, short-circuiting
+	// the scaling formula so no new warm pods are created while paused.
+	if cfg.ForceZeroMinWarm {
+		return 0, nil
+	}
 	// A pool inside its §4.6.1 scale-to-zero window targets zero warm
 	// pods regardless of observed demand. The window is evaluated before
 	// the scaling formula so an off-hours pool short-circuits to zero.

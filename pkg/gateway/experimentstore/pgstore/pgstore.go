@@ -192,6 +192,39 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]experimentstore.Ex
 	return out, nil
 }
 
+// ListAll returns every experiment across all tenants, ordered by
+// (tenant_id, id). The §4.6.2 PoolScalingController is platform-global,
+// so it reads the per-tenant experiment_definitions through the §4.2
+// platform-admin cross-tenant path (InAllTenants sets the `__all__`
+// sentinel that the RLS policy treats as an unfiltered SELECT). spec:
+// §10.7 line 1092 — variant pool lifecycle is managed across the whole
+// platform; spec: §4.2 line 165 — the cross-tenant read still flows
+// through SET LOCAL so the pooler-mode guard holds.
+func (s *Store) ListAll(ctx context.Context) ([]experimentstore.Experiment, error) {
+	var out []experimentstore.Experiment
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT `+selectList+` FROM experiment_definitions
+			 ORDER BY tenant_id, id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			e, err := scanExperiment(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Delete removes the experiment row. Returns ErrNotFound when no
 // matching row exists.
 func (s *Store) Delete(ctx context.Context, tenantID, id string) error {

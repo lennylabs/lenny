@@ -14390,7 +14390,7 @@ Each requirement was traced through `pkg/experiment/`,
 
 ### Findings
 
-### - [ ] F-10.7.1 — 01  PoolScalingController is not wired into any binary; variant pools are never reconciled [High] — OPEN
+### - [x] F-10.7.1 — 01  PoolScalingController is not wired into any binary; variant pools are never reconciled [High] — CLOSED
 
 **Spec:** §10.7 lines 1092 and 1098–1106 — "PoolScalingController manages
 variant pool lifecycle automatically" and the full state-transition table
@@ -14421,6 +14421,30 @@ drain the variant pool; an `active → concluded` transition does not delete the
 `SandboxWarmPool` CRD or restore base-pool capacity. The Results API is
 internally consistent (gateway-only) but the underlying capacity machinery the
 spec mandates is unbuilt and unconnected.
+
+**Resolution:** The PoolScalingController library (`pkg/controller/poolscaling`)
+was already complete and tested (Reconciler, Runnable, strategy formulas,
+`ResolveVariantRoles`, `PoolStoreSource`); the gaps were the binary wiring and
+the experiment-aware config source. `cmd/lenny-controller` now registers
+`poolscaling.Runnable` whenever `--postgres-dsn` and an agent namespace are set,
+feeding it a `PoolStoreSource` wrapped by the new
+`poolscaling.ExperimentVariantSource`. The source reads every experiment across
+tenants via the new `experimentstore` `ListAll` (Memory + pgstore; the Postgres
+side uses the §4.2 platform-admin `InAllTenants` cross-tenant path) and rewrites
+the affected pools by §10.7 status: **active** variants are sized by the §4.6.2
+variant formula via `ResolveVariantRoles` (with base-pool `Σ variant_weights`
+reduction), **paused** variant pools pin minWarm to 0 through the new
+`PoolConfig.ForceZeroMinWarm` (maxWarm unchanged, CRD retained — spec line 1102),
+and **concluded** variant pools are flagged `PoolConfig.DrainAndDelete` so the
+new `Reconciler.drainAndDeleteWarmPool` drives the SandboxWarmPool to 0/0 and
+deletes it once `status.readyCount` reaches 0, retaining the SandboxTemplate
+(spec line 1104). Status precedence is active > paused > concluded; base-pool
+restoration on pause/conclude is automatic because their weights leave the active
+sum. The base pool is resolved by `PoolStoreBasePoolResolver` (the sole §5.2 pool
+warming the experiment's base runtime; ambiguous matches conservatively skip the
+adjustment rather than reduce the wrong pool). F-10.7.3 (built-in LaunchDarkly/
+Statsig/Unleash SDK providers) stays OPEN — it needs vendor SDK module
+dependencies and is independent of this wiring. Resolved this batch.
 
 ---
 

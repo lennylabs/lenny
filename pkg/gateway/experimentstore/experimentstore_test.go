@@ -71,6 +71,33 @@ func TestGetUnknownReturnsNotFound(t *testing.T) {
 	}
 }
 
+// spec: §10.7 line 1092 — the platform-global PoolScalingController
+// reads every experiment across tenants through ListAll, ordered by
+// (tenantID, id), unlike the tenant-scoped List.
+func TestListAllIsCrossTenantAndOrdered(t *testing.T) {
+	m := experimentstore.NewMemory()
+	if got, err := m.ListAll(context.Background()); err != nil || len(got) != 0 {
+		t.Fatalf("empty ListAll = (%d,%v), want (0,nil)", len(got), err)
+	}
+	_ = m.Create(context.Background(), validExperiment("globex", "exp_b"))
+	_ = m.Create(context.Background(), validExperiment("acme", "exp_b"))
+	_ = m.Create(context.Background(), validExperiment("acme", "exp_a"))
+
+	all, err := m.ListAll(context.Background())
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	want := []struct{ tenant, id string }{{"acme", "exp_a"}, {"acme", "exp_b"}, {"globex", "exp_b"}}
+	if len(all) != len(want) {
+		t.Fatalf("ListAll len = %d, want %d", len(all), len(want))
+	}
+	for i, w := range want {
+		if all[i].TenantID != w.tenant || all[i].ID != w.id {
+			t.Errorf("ListAll[%d] = (%s,%s), want (%s,%s)", i, all[i].TenantID, all[i].ID, w.tenant, w.id)
+		}
+	}
+}
+
 func TestGetIsTenantScoped(t *testing.T) {
 	m := experimentstore.NewMemory()
 	_ = m.Create(context.Background(), validExperiment("acme", "shared_id"))

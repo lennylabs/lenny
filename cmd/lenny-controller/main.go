@@ -50,12 +50,15 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
+	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
@@ -299,6 +302,12 @@ func main() {
 	var mirror *agentpodstatepg.Store
 	var sessionLookup warmpool.SessionLookup
 	var runtimeRegistry *runtimepg.Store
+	// §10.7 PoolScalingController inputs: the §5.2 pool registry is the
+	// source of truth for pool definitions, and the cross-tenant
+	// experiment registry drives the variant-pool lifecycle. Both require
+	// Postgres, so the controller is wired only under --postgres-dsn.
+	var poolScalingPools *poolstorepg.Store
+	var poolScalingExperiments *experimentstorepg.Store
 	if postgresDSN != "" {
 		pgPool, err := pgxpool.New(context.Background(), postgresDSN)
 		if err != nil {
@@ -314,6 +323,8 @@ func main() {
 		// registry the gateway reads at session creation. Requires the
 		// Postgres registry, so it is wired only under --postgres-dsn.
 		runtimeRegistry = runtimepg.New(pgPool)
+		poolScalingPools = poolstorepg.New(pgPool)
+		poolScalingExperiments = experimentstorepg.New(pgPool)
 	}
 
 	// §4.0 pool state manager: the controller emits §16.6
@@ -455,6 +466,36 @@ func main() {
 			OrphanTimeout: claimOrphanTimeout,
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up orphan-claim GC: %v", err)
+		}
+	}
+
+	// §4.6.2 / §10.7 PoolScalingController: reconcile the admin API's
+	// Postgres pool definitions into their SandboxTemplate +
+	// SandboxWarmPool CRD pair on a 30s timer, and manage the A/B
+	// experiment variant-pool lifecycle (active sizing, paused drain,
+	// concluded drain-and-delete) plus the base-pool adjustment. It is a
+	// leader-elected Runnable that needs the Postgres pool registry and a
+	// single target agent namespace for the derived CRDs (§5.1 pools are
+	// platform-global; their CRDs materialize in the agent namespace).
+	if poolScalingPools != nil && len(agentNamespaces) > 0 {
+		poolSource := poolscaling.PoolConfigSource(&poolscaling.PoolStoreSource{
+			Store:     poolScalingPools,
+			Namespace: agentNamespaces[0],
+		})
+		if poolScalingExperiments != nil {
+			poolSource = &poolscaling.ExperimentVariantSource{
+				Inner:       poolSource,
+				Experiments: poolScalingExperiments,
+				BasePools:   poolscaling.PoolStoreBasePoolResolver{Store: poolScalingPools},
+			}
+		}
+		if err := mgr.Add(&poolscaling.Runnable{
+			Reconciler: &poolscaling.Reconciler{
+				Client: mgr.GetClient(),
+				Source: poolSource,
+			},
+		}); err != nil {
+			log.Fatalf("lenny-controller: set up PoolScalingController: %v", err)
 		}
 	}
 
