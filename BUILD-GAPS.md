@@ -25545,17 +25545,35 @@ package green as resources adopt the contract. Resources chosen this
 batch have no SDK/CLI/integration PUT callers, so the blast radius stayed
 inside the admin package.
 
-The remaining admin PUT handlers (tenants, runtimes, users, environments,
-connectors, external-adapters, credential-pools, rbac-config,
+**Partial progress (2026-06-04, commit `88dbb39a`):** Two more resources
+now carry the full contract end to end — **users** and **environments**.
+`userstore.User` and `environmentstore.Environment` gained the integer
+`version` (starts at 1, `+1` per successful Update, round-tripped through
+pgstore + `Memory`); migration `0139` adds the column to `users` and
+`environments`. GET-single sets the `ETag` header, list responses carry a
+per-item `etag`, `PUT` runs `enforceIfMatch` before the dry-run branch,
+success returns the bumped tag, and `DELETE` honours
+`enforceIfMatchIfPresent`. The environment full-replace PUT carries the
+stored `version` forward inside the Update closure so the store increment
+stays monotonic. `adminETagGetPath` maps both PUT paths (tenant-scoped
+under `acme`) so `doAdminReq` keeps the package green; the one direct user
+PUT test and the tier4 environment PUT now send `If-Match`.
+
+The remaining admin PUT handlers (tenants, runtimes, connectors,
+external-adapters, credential-pools, rbac-config,
 elicitation-content-integrity, warm-count) and their GET ETag exposure
 still need the same treatment, and their non-pool stores still need a
-`version` column. The volume (the ~137 admin-PUT test sites plus the SDK,
-`lenny-ctl`, and tier3/tier4 PUT callers that must start sending
-`If-Match`) keeps the platform-wide rollout a multi-batch effort; the
-established pattern (migration `0138`, the three resources above, the
-`doAdminReq`/`adminETagGetPath` auto-injection) is the template for the
-rest. Per-resource manifestations F-9.3.13 (connectors) and F-24.4.3
-(pools, closed) trace here.
+`version` column. `tenants` (envelope-encrypted ~23-column store) and
+`runtimes` (heavily special-cased PUT handler) are the highest-risk
+remaining resources; `warm-count` has the §25.17 confirm-flag scale
+convention that needs spec reconciliation against §15.1 If-Match;
+`rbac-config` and `elicitation-content-integrity` are singleton configs.
+The volume (the SDK, `lenny-ctl`, tier3/tier4, and tier9 PUT callers that
+must start sending `If-Match`) keeps the platform-wide rollout a
+multi-batch effort; the established pattern (migrations `0138`/`0139`, the
+five resources above, the `doAdminReq`/`adminETagGetPath` auto-injection)
+is the template for the rest. Per-resource manifestations F-9.3.13
+(connectors) and F-24.4.3 (pools, closed) trace here.
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 
