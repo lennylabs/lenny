@@ -25617,7 +25617,7 @@ traces here.
   If-Match precondition (the main pool PUT already enforces §15.1). All
   admin PUT resources plus the tenant sub-resource PUTs now enforce the
   contract; migrations 0138-0142 complete the `version`-column rollout.
-  Closed by commit `58e5396e` (this batch).
+  Closed by commit `d07eac01` (this batch).
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 
