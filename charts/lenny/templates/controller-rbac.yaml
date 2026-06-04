@@ -75,6 +75,13 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
+  # Services: read-only, for the §13.2 NET-065 service-CIDR drift probe.
+  # The detector reads the `kubernetes` apiserver Service ClusterIP (the
+  # canonical first address of the cluster service range) to audit
+  # whether the broad-egress except blocks exclude the service CIDR.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
   # NetworkPolicies: read-only, for the §13.2 NET-022 drift detector
   # reading installed except blocks. The controller never writes
   # NetworkPolicies — remediation is an operator-run helm upgrade.

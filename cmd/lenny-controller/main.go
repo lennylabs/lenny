@@ -458,15 +458,21 @@ func main() {
 		}
 	}
 
-	// The §13.2 NET-022 cluster-CIDR drift detector is a leader-elected
-	// Runnable: every 5 minutes it compares the cluster's actual pod
-	// CIDRs against the broad-internet egress NetworkPolicies in the
-	// agent namespaces and increments lenny_network_policy_cidr_drift_total
-	// on drift. It runs only when --agent-namespaces is set.
-	if len(agentNamespaces) > 0 {
+	// The §13.2 NET-022 / NET-065 cluster-CIDR drift detector is a
+	// leader-elected Runnable: every 5 minutes it compares the cluster's
+	// actual pod CIDRs (Node spec.podCIDR) and service range (the
+	// `kubernetes` Service ClusterIP) against the broad-internet egress
+	// NetworkPolicies on the three audited surfaces — the agent
+	// `internet` profile in the agent namespaces plus the gateway
+	// `allow-gateway-egress-llm-upstream` and `lenny-ops-egress` rules in
+	// the release namespace — and increments
+	// lenny_network_policy_cidr_drift_total on drift. It runs whenever an
+	// agent or release namespace is configured.
+	if len(agentNamespaces) > 0 || leaderElectNS != "" {
 		if err := mgr.Add(&cidrdrift.Detector{
 			Client:          mgr.GetClient(),
 			AgentNamespaces: agentNamespaces,
+			SystemNamespace: leaderElectNS,
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up cluster-CIDR drift detector: %v", err)
 		}

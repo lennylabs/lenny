@@ -40,6 +40,16 @@ tests:
             resources: ["networkpolicies"]
             verbs: ["get", "list", "watch"]
 
+  - it: grants read-only Service access for the §13.2 NET-065 service-CIDR drift probe
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch"]
+
   - it: grants Sandbox create/update/delete and SandboxClaim list/delete for §4.6.1 cert-expiry replacement and orphan-claim GC
     documentIndex: 1
     asserts:

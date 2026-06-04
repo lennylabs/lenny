@@ -56,24 +56,57 @@ func internetPolicy(name string, except ...string) *networkingv1.NetworkPolicy {
 }
 
 // runScan runs one detector scan against a client seeded with objs and
-// returns the drift-counter delta for policyName observed across the
-// scan.
+// returns the (policyName, pod_cidr) drift-counter delta across the
+// scan. The detector audits the agent namespace only.
 func runScan(t *testing.T, policyName string, objs ...client.Object) float64 {
+	t.Helper()
+	return runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+		policyName, cidrdrift.FieldPodCIDR, objs...)
+}
+
+// runScanField runs one scan of the supplied detector (Client and Now
+// are filled in) against a client seeded with objs and returns the
+// (policyLabel, field) drift-counter delta.
+func runScanField(t *testing.T, d *cidrdrift.Detector, policyLabel, field string, objs ...client.Object) float64 {
 	t.Helper()
 	c := fake.NewClientBuilder().
 		WithScheme(detectorScheme(t)).
 		WithObjects(objs...).
 		Build()
-	d := &cidrdrift.Detector{
-		Client:          c,
-		AgentNamespaces: []string{agentNS},
-		Now:             func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) },
+	d.Client = c
+	if d.Now == nil {
+		d.Now = func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) }
 	}
-	before := cidrdrift.DriftCount(policyName)
+	before := cidrdrift.DriftCountField(policyLabel, field)
 	if err := d.ScanForTest(context.Background()); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	return cidrdrift.DriftCount(policyName) - before
+	return cidrdrift.DriftCountField(policyLabel, field) - before
+}
+
+const systemNS = "lenny-system"
+
+// kubernetesService builds the apiserver ClusterIP Service the §13.2
+// NET-065 service-CIDR probe reads. The first IP populates the legacy
+// single-stack ClusterIP field; all IPs populate the dual-stack
+// ClusterIPs field.
+func kubernetesService(clusterIPs ...string) *corev1.Service {
+	s := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "kubernetes", Namespace: "default"},
+		Spec:       corev1.ServiceSpec{ClusterIPs: clusterIPs},
+	}
+	if len(clusterIPs) > 0 {
+		s.Spec.ClusterIP = clusterIPs[0]
+	}
+	return s
+}
+
+// systemPolicy builds a broad-internet egress NetworkPolicy in the
+// release namespace (the gateway / lenny-ops surfaces NET-065 audits).
+func systemPolicy(name string, except ...string) *networkingv1.NetworkPolicy {
+	np := internetPolicy(name, except...)
+	np.Namespace = systemNS
+	return np
 }
 
 func TestDetectorIncrementsMetricOnDrift(t *testing.T) {
@@ -223,5 +256,144 @@ func TestDetectorNeedsLeaderElection(t *testing.T) {
 	d := &cidrdrift.Detector{}
 	if !d.NeedLeaderElection() {
 		t.Error("the cluster-CIDR drift detector must run only on the elected leader")
+	}
+}
+
+// spec: §13.2 NET-065 — the drift audit covers the cluster service CIDR
+// (probed via the `kubernetes` Service ClusterIP), reporting under the
+// service_cidr field. The node pod CIDR is excepted (no pod drift) but
+// the service IP is not, so exactly one service_cidr drift is recorded.
+func TestDetectorServiceCIDRDrift_spec_13_2_NET065(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(detectorScheme(t)).
+		WithObjects(
+			node("node-1", "10.244.0.0/16"),
+			kubernetesService("100.64.0.1"), // CGNAT service range, not excepted
+			internetPolicy("svc-drift-policy", "10.244.0.0/16"),
+		).
+		Build()
+	d := &cidrdrift.Detector{Client: c, AgentNamespaces: []string{agentNS}}
+
+	podBefore := cidrdrift.DriftCountField("svc-drift-policy", cidrdrift.FieldPodCIDR)
+	svcBefore := cidrdrift.DriftCountField("svc-drift-policy", cidrdrift.FieldServiceCIDR)
+	if err := d.ScanForTest(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if got := cidrdrift.DriftCountField("svc-drift-policy", cidrdrift.FieldServiceCIDR) - svcBefore; got != 1 {
+		t.Errorf("service_cidr drift delta = %v, want 1", got)
+	}
+	if got := cidrdrift.DriftCountField("svc-drift-policy", cidrdrift.FieldPodCIDR) - podBefore; got != 0 {
+		t.Errorf("pod_cidr drift delta = %v, want 0 (node CIDR is excepted)", got)
+	}
+}
+
+// spec: §13.2 NET-065 — a service CIDR the except block covers (here a
+// supernet of the apiserver ClusterIP) records no drift.
+func TestDetectorServiceCIDRCoveredNoDrift(t *testing.T) {
+	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+		"svc-clean-policy", cidrdrift.FieldServiceCIDR,
+		node("node-1", "10.244.0.0/16"),
+		kubernetesService("10.96.0.1"),
+		internetPolicy("svc-clean-policy", "10.244.0.0/16", "10.96.0.0/12"),
+	)
+	if delta != 0 {
+		t.Errorf("service_cidr drift delta = %v, want 0 (except supernets the service IP)", delta)
+	}
+}
+
+// spec: §13.2 NET-062 — the service-CIDR probe is dual-stack: each
+// ClusterIP is compared against the same-family broad peer. An IPv6
+// service IP missing from the ::/0 except block drifts.
+func TestDetectorServiceCIDRDualStack(t *testing.T) {
+	dualStack := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-v6-policy", Namespace: agentNS},
+		Spec: networkingv1.NetworkPolicySpec{
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{
+					{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{"10.96.0.0/12"}}},
+					{IPBlock: &networkingv1.IPBlock{CIDR: "::/0"}}, // no v6 except
+				},
+			}},
+		},
+	}
+	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+		"svc-v6-policy", cidrdrift.FieldServiceCIDR,
+		kubernetesService("10.96.0.1", "fd00:1234::1"),
+		dualStack,
+	)
+	// The IPv4 service IP is covered (10.96.0.0/12); the IPv6 one is not.
+	if delta != 1 {
+		t.Errorf("service_cidr drift delta = %v, want 1 (IPv6 service IP uncovered)", delta)
+	}
+}
+
+// spec: §13.2 NET-065 — the audit extends to the release namespace's
+// gateway `allow-gateway-egress-llm-upstream` rule, reported under the
+// canonical `gateway-llm-upstream` policy label rather than the object
+// name.
+func TestDetectorAuditsSystemGatewayRule_spec_13_2_NET065(t *testing.T) {
+	delta := runScanField(t,
+		&cidrdrift.Detector{AgentNamespaces: []string{agentNS}, SystemNamespace: systemNS},
+		"gateway-llm-upstream", cidrdrift.FieldPodCIDR,
+		node("node-1", "100.64.0.0/24"),
+		systemPolicy("allow-gateway-egress-llm-upstream", "10.0.0.0/8"),
+	)
+	if delta != 1 {
+		t.Errorf("gateway-llm-upstream pod_cidr drift delta = %v, want 1", delta)
+	}
+}
+
+// spec: §13.2 NET-065 — the `lenny-ops-egress` webhook rule in the
+// release namespace is audited and reported under the `ops-egress`
+// label. A missing cluster CIDR on this surface is the SSRF gap NET-065
+// closes.
+func TestDetectorAuditsSystemOpsEgressRule(t *testing.T) {
+	delta := runScanField(t,
+		&cidrdrift.Detector{AgentNamespaces: []string{agentNS}, SystemNamespace: systemNS},
+		"ops-egress", cidrdrift.FieldPodCIDR,
+		node("node-1", "100.64.0.0/24"),
+		systemPolicy("lenny-ops-egress", "10.0.0.0/8"),
+	)
+	if delta != 1 {
+		t.Errorf("ops-egress pod_cidr drift delta = %v, want 1", delta)
+	}
+}
+
+// spec: §13.2 NET-065 — the detector runs even with no agent namespaces
+// so long as the release namespace is configured, so the gateway and
+// ops surfaces are still audited on a control-plane-only configuration.
+func TestDetectorRunsForSystemNamespaceOnly(t *testing.T) {
+	delta := runScanField(t,
+		&cidrdrift.Detector{SystemNamespace: systemNS},
+		"ops-egress", cidrdrift.FieldServiceCIDR,
+		kubernetesService("100.64.0.1"),
+		systemPolicy("lenny-ops-egress", "10.0.0.0/8"),
+	)
+	if delta != 1 {
+		t.Errorf("ops-egress service_cidr drift delta = %v, want 1 (system-only audit ran)", delta)
+	}
+}
+
+// spec: §13.2 NET-065 — the service-CIDR audit runs even when no Node
+// reports a pod CIDR (a managed CNI), so the service surface is not
+// skipped along with the pod surface.
+func TestDetectorServiceCIDRDriftWithoutNodes(t *testing.T) {
+	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+		"nonode-svc-policy", cidrdrift.FieldServiceCIDR,
+		kubernetesService("100.64.0.1"),
+		internetPolicy("nonode-svc-policy"),
+	)
+	if delta != 1 {
+		t.Errorf("service_cidr drift delta = %v, want 1 with no nodes but a probed service IP", delta)
+	}
+}
+
+// spec: §13.2 NET-022 — the detector is disabled only when neither an
+// agent nor a release namespace is configured.
+func TestDetectorDisabledWhenNoNamespaces(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(detectorScheme(t)).Build()
+	d := &cidrdrift.Detector{Client: c}
+	if err := d.Start(context.Background()); err != nil {
+		t.Errorf("Start returned %v, want nil when both namespace sets are empty", err)
 	}
 }

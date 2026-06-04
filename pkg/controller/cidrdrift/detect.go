@@ -1,31 +1,78 @@
 // SPDX-License-Identifier: MIT
 
-// Package cidrdrift holds the §13.2 NET-022 cluster-CIDR drift
-// detector. The detector is a leader-elected goroutine that
+// Package cidrdrift holds the §13.2 NET-022 / NET-065 cluster-CIDR
+// drift detector. The detector is a leader-elected goroutine that
 // periodically compares the cluster's actual pod CIDRs (aggregated
-// from Node.spec.podCIDR / podCIDRs) against the `except` ipBlock
-// entries installed on the broad-internet egress NetworkPolicies in
-// agent namespaces.
+// from Node.spec.podCIDR / podCIDRs) and service CIDR (probed via the
+// `kubernetes` Service ClusterIP) against the `except` ipBlock entries
+// installed on the broad-internet egress NetworkPolicies of the three
+// audited surfaces: the agent `internet`-profile policy in agent
+// namespaces, the gateway `allow-gateway-egress-llm-upstream` rule, and
+// the `lenny-ops-egress` webhook rule in the release namespace.
 //
 // When the installed `except` exclusions do not cover an actual
-// cluster pod CIDR, agent pods granted broad egress can reach internal
+// cluster pod or service CIDR, agent pods (or a compromised
+// operability-plane pod) granted broad egress can reach internal
 // cluster IPs, which is a lateral-movement and internal-service
-// discovery risk (§13.2 NET-002/NET-022). The detector makes the drift
-// observable by incrementing lenny_network_policy_cidr_drift_total and
-// letting the NetworkPolicyCIDRDrift alert fire. It does not auto-patch
+// discovery risk (§13.2 NET-002 / NET-022 / NET-065). The detector
+// makes the drift observable by incrementing
+// lenny_network_policy_cidr_drift_total and letting the
+// NetworkPolicyCIDRDrift alert fire. It does not auto-patch
 // NetworkPolicies: §13.2 deliberately keeps NetworkPolicy write RBAC
 // off the controller, so remediation stays a `helm upgrade` the
 // operator runs.
 //
 // This file holds the pure comparison logic. detector.go holds the
-// controller-runtime adapter that lists Nodes and NetworkPolicies and
-// drives the metric.
+// controller-runtime adapter that lists Nodes, the `kubernetes`
+// Service, and NetworkPolicies and drives the metric.
 package cidrdrift
 
 import (
 	"fmt"
 	"net"
+	"strings"
 )
+
+// Field values for the lenny_network_policy_cidr_drift_total `field`
+// label (§13.2 NET-022 / NET-065). A pod-CIDR drift is a cluster pod
+// CIDR (aggregated from Node spec.podCIDR) uncovered by an except
+// block; a service-CIDR drift is the cluster service range (probed via
+// the `kubernetes` Service ClusterIP) uncovered by an except block.
+const (
+	FieldPodCIDR     = "pod_cidr"
+	FieldServiceCIDR = "service_cidr"
+)
+
+// Canonical lenny_network_policy_cidr_drift_total `policy` label values.
+// §13.2 NET-022 fixes the label to one of internet | gateway-llm-upstream
+// | ops-egress so the metric aggregates the three audited surfaces
+// regardless of the underlying NetworkPolicy object name (the agent
+// `internet`-profile policy is `allow-pod-egress-internet`, the gateway
+// rule is `allow-gateway-egress-llm-upstream`, the ops rule is
+// `lenny-ops-egress`).
+const (
+	policyLabelInternet   = "internet"
+	policyLabelGatewayLLM = "gateway-llm-upstream"
+	policyLabelOpsEgress  = "ops-egress"
+)
+
+// CanonicalPolicyLabel maps a NetworkPolicy object name to the §13.2
+// NET-022 `policy` metric label. The three audited surfaces collapse to
+// their canonical label; any other name is returned unchanged so a
+// deployer's bespoke broad-egress policy still reports under a stable
+// identifier.
+func CanonicalPolicyLabel(name string) string {
+	switch {
+	case name == "allow-gateway-egress-llm-upstream":
+		return policyLabelGatewayLLM
+	case name == "lenny-ops-egress":
+		return policyLabelOpsEgress
+	case strings.Contains(name, "internet"):
+		return policyLabelInternet
+	default:
+		return name
+	}
+}
 
 // broadIPv4CIDR and broadIPv6CIDR are the two `cidr` values that mark
 // an ipBlock peer as a broad-internet egress rule. §13.2 NET-062
@@ -83,8 +130,8 @@ func HasBroadInternetEgress(pe PolicyEgress) bool {
 	return false
 }
 
-// Finding is one detected drift: a cluster pod CIDR that is not
-// covered by the `except` block of a broad-internet egress
+// Finding is one detected drift: a cluster pod or service CIDR that is
+// not covered by the `except` block of a broad-internet egress
 // NetworkPolicy. Each Finding maps directly to one increment of
 // lenny_network_policy_cidr_drift_total.
 type Finding struct {
@@ -92,13 +139,17 @@ type Finding struct {
 	Namespace string
 	// Policy is the drifting NetworkPolicy's name.
 	Policy string
-	// ClusterCIDR is the actual cluster pod CIDR that the policy's
-	// `except` block fails to cover.
+	// ClusterCIDR is the actual cluster CIDR that the policy's `except`
+	// block fails to cover.
 	ClusterCIDR string
 	// Family is "ipv4" or "ipv6" — the address family of ClusterCIDR.
 	// It selects which parallel ipBlock peer should have carried the
 	// exclusion (§13.2 NET-062).
 	Family string
+	// Field is the §13.2 NET-022 drift category, FieldPodCIDR or
+	// FieldServiceCIDR, recorded on the lenny_network_policy_cidr_drift_total
+	// `field` label.
+	Field string
 }
 
 // addressFamily returns "ipv4" or "ipv6" for a parsed CIDR, or "" when
@@ -167,33 +218,53 @@ func cidrCoveredByExcept(want string, peers []IPBlockPeer) bool {
 }
 
 // Detect compares the actual cluster pod CIDRs against the installed
-// broad-internet egress NetworkPolicies and returns one Finding for
-// every (policy, cluster CIDR) pair where the policy's `except` block
-// fails to cover the CIDR.
+// broad-internet egress NetworkPolicies and returns one Finding (with
+// Field == FieldPodCIDR) for every (policy, cluster CIDR) pair where the
+// policy's `except` block fails to cover the CIDR.
 //
 // Inputs:
 //
 //   - clusterPodCIDRs is the deduplicated set of pod CIDRs aggregated
 //     from every Node's spec.podCIDR / podCIDRs.
-//   - policies is every NetworkPolicy the detector read from agent
-//     namespaces. Policies with no broad-internet egress peer are
-//     skipped — they are allowlist-only and carry no `except` block.
+//   - policies is every NetworkPolicy the detector read from the agent
+//     and release namespaces. Policies with no broad-internet egress
+//     peer are skipped — they are allowlist-only and carry no `except`
+//     block.
 //
 // A policy with broad egress but an empty `except` block drifts on
 // every cluster CIDR: the audit treats a missing exclusion exactly
 // like a stale one.
 func Detect(clusterPodCIDRs []string, policies []PolicyEgress) []Finding {
+	return detect(clusterPodCIDRs, FieldPodCIDR, policies)
+}
+
+// DetectServiceCIDRs is the §13.2 NET-065 service-CIDR counterpart of
+// Detect: it returns one Finding (with Field == FieldServiceCIDR) for
+// every (policy, service CIDR) pair the broad-internet `except` block
+// fails to cover. The cluster service range is probed via the
+// `kubernetes` Service ClusterIP(s), each compared as a host route — a
+// service IP outside every `except` block means a tenant-influenced URL
+// resolving to an in-cluster service IP could reach gateway/controller
+// pods directly, the SSRF surface NET-065 closes on clusters with
+// non-RFC1918 service CIDRs.
+func DetectServiceCIDRs(clusterServiceCIDRs []string, policies []PolicyEgress) []Finding {
+	return detect(clusterServiceCIDRs, FieldServiceCIDR, policies)
+}
+
+// detect runs the shared per-CIDR comparison and stamps the given field
+// on each Finding.
+func detect(cidrs []string, field string, policies []PolicyEgress) []Finding {
 	var findings []Finding
 	for _, pe := range policies {
 		if !HasBroadInternetEgress(pe) {
 			continue
 		}
-		for _, cidr := range clusterPodCIDRs {
+		for _, cidr := range cidrs {
 			fam := addressFamily(cidr)
 			if fam == "" {
-				// A node reporting an unparseable CIDR is a cluster-side
-				// fault, not policy drift; skip it rather than flag a
-				// false positive against the policy.
+				// An unparseable cluster CIDR is a cluster-side fault, not
+				// policy drift; skip it rather than flag a false positive
+				// against the policy.
 				continue
 			}
 			if !cidrCoveredByExcept(cidr, pe.IPBlocks) {
@@ -202,6 +273,7 @@ func Detect(clusterPodCIDRs []string, policies []PolicyEgress) []Finding {
 					Policy:      pe.Name,
 					ClusterCIDR: cidr,
 					Family:      fam,
+					Field:       field,
 				})
 			}
 		}

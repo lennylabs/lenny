@@ -5,12 +5,14 @@ package cidrdrift
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -23,10 +25,15 @@ import (
 // spec fixes the continuous drift goroutine at a 5-minute period.
 const DefaultInterval = 5 * time.Minute
 
-// fieldPodCIDR is the value of the lenny_network_policy_cidr_drift_total
-// `field` label for a pod-CIDR drift. The detector aggregates node
-// spec.podCIDR, so every Finding it reports is a pod-CIDR drift.
-const fieldPodCIDR = "pod_cidr"
+// kubernetesServiceNamespace / kubernetesServiceName identify the
+// always-present apiserver ClusterIP Service the detector probes for the
+// §13.2 NET-065 service-CIDR audit. Its ClusterIP is the canonical first
+// address of the cluster service range, so an `except` block that fails
+// to cover it has failed to exclude the service CIDR.
+const (
+	kubernetesServiceNamespace = "default"
+	kubernetesServiceName      = "kubernetes"
+)
 
 // driftTotal is the §16.1 lenny_network_policy_cidr_drift_total
 // counter. It is labelled `policy` (the drifting NetworkPolicy's name)
@@ -50,22 +57,31 @@ var driftTotal = func() *prometheus.CounterVec {
 	return c
 }()
 
-// Detector is the §13.2 NET-022 continuous cluster-CIDR drift
-// detector. It is a leader-elected manager.Runnable: on a 5-minute
-// timer it aggregates the cluster's pod CIDRs from Node objects, reads
-// the broad-internet egress NetworkPolicies in the configured agent
-// namespaces, and increments lenny_network_policy_cidr_drift_total for
-// every cluster CIDR an installed `except` block fails to cover.
+// Detector is the §13.2 NET-022 / NET-065 continuous cluster-CIDR
+// drift detector. It is a leader-elected manager.Runnable: on a
+// 5-minute timer it aggregates the cluster's pod CIDRs from Node
+// objects, probes the cluster service range from the `kubernetes`
+// Service ClusterIP, reads the broad-internet egress NetworkPolicies in
+// the configured agent namespaces and the release namespace (the
+// gateway and lenny-ops egress rules), and increments
+// lenny_network_policy_cidr_drift_total for every cluster pod or
+// service CIDR an installed `except` block fails to cover.
 type Detector struct {
 	// Client is the controller-runtime client. The detector needs
-	// get/list on Nodes (cluster-scoped) and get/list on
-	// NetworkPolicies in the agent namespaces.
+	// get/list on Nodes (cluster-scoped), get on the `kubernetes`
+	// Service, and get/list on NetworkPolicies in the audited
+	// namespaces.
 	Client client.Client
 	// AgentNamespaces is the set of namespaces that hold agent pods —
-	// the namespaces whose broad-internet egress NetworkPolicies the
-	// detector audits. An empty slice disables the detector (it logs
-	// and performs no scan).
+	// the namespaces whose broad-internet egress NetworkPolicies (the
+	// `internet` profile) the detector audits.
 	AgentNamespaces []string
+	// SystemNamespace is the release namespace (lenny-system) that holds
+	// the gateway `allow-gateway-egress-llm-upstream` and `lenny-ops-egress`
+	// broad-egress rules. §13.2 NET-065 requires the drift audit to cover
+	// these two surfaces in addition to the agent `internet` profile. An
+	// empty value scans the agent namespaces only.
+	SystemNamespace string
 	// Interval is the drift re-check cadence. A non-positive value
 	// selects DefaultInterval.
 	Interval time.Duration
@@ -93,8 +109,8 @@ func (d *Detector) Start(ctx context.Context) error {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	if len(d.AgentNamespaces) == 0 {
-		logger.Info("no agent namespaces configured; cluster-CIDR drift detection disabled")
+	if len(d.AgentNamespaces) == 0 && d.SystemNamespace == "" {
+		logger.Info("no agent or release namespaces configured; cluster-CIDR drift detection disabled")
 		return nil
 	}
 
@@ -117,44 +133,77 @@ func (d *Detector) Start(ctx context.Context) error {
 }
 
 // scan performs one drift-detection pass: it aggregates cluster pod
-// CIDRs, reads the agent-namespace NetworkPolicies, runs the pure
-// Detect comparison, and increments the drift counter per Finding.
+// CIDRs, probes the cluster service range, reads the broad-internet
+// egress NetworkPolicies across the agent and release namespaces, runs
+// the pure Detect / DetectServiceCIDRs comparisons, and increments the
+// drift counter per Finding.
 func (d *Detector) scan(ctx context.Context) error {
 	logger := log.FromContext(ctx).WithName("cidrdrift")
 
-	clusterCIDRs, err := d.clusterPodCIDRs(ctx)
+	podCIDRs, err := d.clusterPodCIDRs(ctx)
 	if err != nil {
 		return fmt.Errorf("aggregate cluster pod CIDRs: %w", err)
 	}
-	if len(clusterCIDRs) == 0 {
-		// No node reported a pod CIDR. This is normal on a control
-		// plane that has not yet scheduled nodes, or on a CNI that does
-		// not write spec.podCIDR; there is nothing to compare against.
-		logger.V(1).Info("no node pod CIDRs reported; skipping drift comparison")
+	serviceCIDRs, err := d.clusterServiceCIDRs(ctx)
+	if err != nil {
+		return fmt.Errorf("probe cluster service CIDR: %w", err)
+	}
+	if len(podCIDRs) == 0 && len(serviceCIDRs) == 0 {
+		// No node reported a pod CIDR and the apiserver Service carried
+		// no usable ClusterIP. Normal on a control plane that has not
+		// yet scheduled nodes; there is nothing to compare against.
+		logger.V(1).Info("no cluster pod or service CIDRs discovered; skipping drift comparison")
 		return nil
 	}
 
 	policies, err := d.broadEgressPolicies(ctx)
 	if err != nil {
-		return fmt.Errorf("read agent-namespace NetworkPolicies: %w", err)
+		return fmt.Errorf("read audited NetworkPolicies: %w", err)
 	}
 
-	findings := Detect(clusterCIDRs, policies)
+	if len(podCIDRs) == 0 && hasBroadEgress(policies) {
+		// §13.2 NET-022 gap: a managed CNI (EKS without VPC CNI metadata,
+		// GKE Autopilot) that does not write Node.spec.podCIDR leaves the
+		// pod-CIDR audit unable to run while broad-egress policies are in
+		// force. Surface it at Info so the silent-skip is observable
+		// rather than passing as clean; the operator must set
+		// egressCIDRs.excludeClusterPodCIDR explicitly.
+		logger.Info("no Node pod CIDRs reported but broad-egress policies are present; "+
+			"pod-CIDR drift detection cannot run on this cluster — set egressCIDRs.excludeClusterPodCIDR explicitly",
+			"policies", len(policies))
+	}
+
+	findings := Detect(podCIDRs, policies)
+	findings = append(findings, DetectServiceCIDRs(serviceCIDRs, policies)...)
 	for _, f := range findings {
-		driftTotal.WithLabelValues(f.Policy, fieldPodCIDR).Inc()
+		driftTotal.WithLabelValues(CanonicalPolicyLabel(f.Policy), f.Field).Inc()
 		logger.Info("cluster-CIDR drift detected",
 			"namespace", f.Namespace,
 			"policy", f.Policy,
+			"field", f.Field,
 			"clusterCIDR", f.ClusterCIDR,
 			"family", f.Family,
-			"remediation", "re-run helm upgrade with the corrected egressCIDRs.excludeClusterPodCIDR value")
+			"remediation", "re-run helm upgrade with the corrected egressCIDRs.excludeClusterPodCIDR / excludeClusterServiceCIDR value")
 	}
 	if len(findings) == 0 {
 		logger.V(1).Info("cluster-CIDR drift scan clean",
-			"clusterCIDRs", len(clusterCIDRs),
+			"podCIDRs", len(podCIDRs),
+			"serviceCIDRs", len(serviceCIDRs),
 			"policies", len(policies))
 	}
 	return nil
+}
+
+// hasBroadEgress reports whether any audited policy carries a
+// broad-internet egress peer — the precondition for the pod-CIDR audit
+// to be meaningful when no Node CIDRs were discovered.
+func hasBroadEgress(policies []PolicyEgress) bool {
+	for _, pe := range policies {
+		if HasBroadInternetEgress(pe) {
+			return true
+		}
+	}
+	return false
 }
 
 // clusterPodCIDRs aggregates the deduplicated, canonical-form pod
@@ -195,13 +244,32 @@ func (d *Detector) clusterPodCIDRs(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// broadEgressPolicies reads every NetworkPolicy in the configured
-// agent namespaces and reduces each to a PolicyEgress. Only the
-// ipBlock peers are extracted; pod and namespace selectors carry no
-// `except` block and are irrelevant to the CIDR audit.
+// auditNamespaces returns the deduplicated set of namespaces whose
+// NetworkPolicies the detector audits: the agent namespaces (the
+// `internet` profile) plus the release namespace (the gateway and
+// lenny-ops egress rules, §13.2 NET-065). The release namespace is
+// commonly also listed in AgentNamespaces in single-namespace
+// deployments, so it is added only when distinct.
+func (d *Detector) auditNamespaces() []string {
+	out := append([]string(nil), d.AgentNamespaces...)
+	if d.SystemNamespace == "" {
+		return out
+	}
+	for _, ns := range out {
+		if ns == d.SystemNamespace {
+			return out
+		}
+	}
+	return append(out, d.SystemNamespace)
+}
+
+// broadEgressPolicies reads every NetworkPolicy in the audited
+// namespaces and reduces each to a PolicyEgress. Only the ipBlock peers
+// are extracted; pod and namespace selectors carry no `except` block
+// and are irrelevant to the CIDR audit.
 func (d *Detector) broadEgressPolicies(ctx context.Context) ([]PolicyEgress, error) {
 	var out []PolicyEgress
-	for _, ns := range d.AgentNamespaces {
+	for _, ns := range d.auditNamespaces() {
 		var list networkingv1.NetworkPolicyList
 		if err := d.Client.List(ctx, &list, client.InNamespace(ns)); err != nil {
 			return nil, fmt.Errorf("list NetworkPolicies in %s: %w", ns, err)
@@ -211,6 +279,68 @@ func (d *Detector) broadEgressPolicies(ctx context.Context) ([]PolicyEgress, err
 		}
 	}
 	return out, nil
+}
+
+// clusterServiceCIDRs probes the cluster service range for the §13.2
+// NET-065 audit. It reads the always-present `kubernetes` apiserver
+// Service in the default namespace and returns its ClusterIP(s) as
+// host routes (/32 for IPv4, /128 for IPv6). The apiserver ClusterIP is
+// the canonical first address of the service CIDR, so a service IP that
+// no `except` block covers means the service range is unexcluded — the
+// drift NET-065 closes on clusters with non-RFC1918 service CIDRs. A
+// headless or absent Service contributes nothing rather than failing
+// the scan.
+func (d *Detector) clusterServiceCIDRs(ctx context.Context) ([]string, error) {
+	var svc corev1.Service
+	err := d.Client.Get(ctx, client.ObjectKey{
+		Namespace: kubernetesServiceNamespace,
+		Name:      kubernetesServiceName,
+	}, &svc)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ips := svc.Spec.ClusterIPs
+	if len(ips) == 0 && svc.Spec.ClusterIP != "" {
+		ips = []string{svc.Spec.ClusterIP}
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, raw := range ips {
+		if raw == "" || raw == corev1.ClusterIPNone {
+			continue
+		}
+		host, err := hostCIDR(raw)
+		if err != nil {
+			log.FromContext(ctx).WithName("cidrdrift").V(1).Info(
+				"skipping unparseable kubernetes Service ClusterIP", "clusterIP", raw)
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, host)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// hostCIDR renders a bare IP as a single-host CIDR (/32 for IPv4, /128
+// for IPv6) in canonical masked form so it can be compared against an
+// ipBlock `except` block by the same logic that audits pod CIDRs.
+func hostCIDR(ip string) (string, error) {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return "", fmt.Errorf("parse IP %q", ip)
+	}
+	suffix := "/128"
+	if parsed.To4() != nil {
+		suffix = "/32"
+	}
+	return NormalizeCIDR(ip + suffix)
 }
 
 // policyEgressOf reduces a NetworkPolicy to the PolicyEgress the

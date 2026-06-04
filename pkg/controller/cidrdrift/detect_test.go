@@ -193,3 +193,39 @@ func TestNormalizeCIDR(t *testing.T) {
 		t.Error("NormalizeCIDR should reject a non-CIDR string")
 	}
 }
+
+// spec: §13.2 NET-022 — Detect stamps pod_cidr and DetectServiceCIDRs
+// stamps service_cidr on the Finding.Field so the metric records the
+// right drift category.
+func TestDetectStampsField(t *testing.T) {
+	policies := []cidrdrift.PolicyEgress{{
+		Namespace: "lenny-agents",
+		Name:      "allow-pod-egress-internet",
+		IPBlocks:  []cidrdrift.IPBlockPeer{{CIDR: "0.0.0.0/0"}},
+	}}
+	pod := cidrdrift.Detect([]string{"100.64.0.0/24"}, policies)
+	if len(pod) != 1 || pod[0].Field != cidrdrift.FieldPodCIDR {
+		t.Fatalf("Detect field = %+v, want one finding with field pod_cidr", pod)
+	}
+	svc := cidrdrift.DetectServiceCIDRs([]string{"100.64.0.1/32"}, policies)
+	if len(svc) != 1 || svc[0].Field != cidrdrift.FieldServiceCIDR {
+		t.Fatalf("DetectServiceCIDRs field = %+v, want one finding with field service_cidr", svc)
+	}
+}
+
+// spec: §13.2 NET-022 — the `policy` metric label collapses the three
+// audited surfaces to internet | gateway-llm-upstream | ops-egress and
+// leaves any other policy name unchanged.
+func TestCanonicalPolicyLabel(t *testing.T) {
+	cases := map[string]string{
+		"allow-gateway-egress-llm-upstream": "gateway-llm-upstream",
+		"lenny-ops-egress":                  "ops-egress",
+		"allow-pod-egress-internet":         "internet",
+		"some-bespoke-broad-egress":         "some-bespoke-broad-egress",
+	}
+	for name, want := range cases {
+		if got := cidrdrift.CanonicalPolicyLabel(name); got != want {
+			t.Errorf("CanonicalPolicyLabel(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
