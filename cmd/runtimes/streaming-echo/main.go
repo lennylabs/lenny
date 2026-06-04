@@ -406,12 +406,17 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 	for _, p := range inbound.Input {
 		if p.Type == "text" && p.Inline != "" {
 			out = append(out, outputPart{
-				Type:    "text",
-				Inline:  fmt.Sprintf("[streaming-echo seq=%d] %s", n, p.Inline),
-				ID:      p.ID,
-				MimeTyp: p.MimeTyp,
+				SchemaVersion: outputPartSchemaVersion,
+				Type:          "text",
+				Inline:        fmt.Sprintf("[streaming-echo seq=%d] %s", n, p.Inline),
+				ID:            p.ID,
+				MimeTyp:       p.MimeTyp,
 			})
 		} else {
+			// §15.4.1 line 1499: stamp the producer schemaVersion even when
+			// echoing an input part verbatim, so every emitted OutputPart
+			// satisfies the required field. 15.4-MED-021.
+			p.SchemaVersion = outputPartSchemaVersion
 			out = append(out, p)
 		}
 	}
@@ -439,14 +444,24 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 }
 
 type outputPart struct {
-	Type        string         `json:"type"`
-	ID          string         `json:"id,omitempty"`
-	Inline      string         `json:"inline,omitempty"`
-	Ref         string         `json:"ref,omitempty"`
-	MimeTyp     string         `json:"mimeType,omitempty"`
-	Annotations map[string]any `json:"annotations,omitempty"`
-	Status      string         `json:"status,omitempty"`
+	// SchemaVersion is the §15.4.1 line 1499 producer obligation: a
+	// producer MUST set schemaVersion to the highest version required by
+	// the fields it emits. outputpart.schema.json:66 makes it required, so
+	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
+	// §15.4.1 line 1499-1501 / 15.4-MED-021.
+	SchemaVersion int            `json:"schemaVersion"`
+	Type          string         `json:"type"`
+	ID            string         `json:"id,omitempty"`
+	Inline        string         `json:"inline,omitempty"`
+	Ref           string         `json:"ref,omitempty"`
+	MimeTyp       string         `json:"mimeType,omitempty"`
+	Annotations   map[string]any `json:"annotations,omitempty"`
+	Status        string         `json:"status,omitempty"`
 }
+
+// outputPartSchemaVersion is the §15.4.1 OutputPart schema revision this
+// reference runtime emits. v1 text/blob parts require version 1.
+const outputPartSchemaVersion = 1
 
 type response struct {
 	Type   string       `json:"type"`

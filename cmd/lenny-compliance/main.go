@@ -377,9 +377,26 @@ func checkOutputPartSchemaCompliance(binary string, timeout time.Duration, verbo
 	return fmt.Sprintf("%d OutputPart(s) validate against %s", len(resp.Output), outputPartFile), nil
 }
 
+// heartbeatAckDeadline is the §15.4.6 line 2406 Basic-conformance bound:
+// the binary MUST write heartbeat_ack within 10s of receiving heartbeat.
+// The harness drives the adapter under this deadline (rather than the
+// generic test timeout) so a slow-starting runtime that acks at, say,
+// 20s is force-killed and fails the check instead of passing under the
+// 30s default. 15.4-MED-022.
+const heartbeatAckDeadline = 10 * time.Second
+
 func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, error) {
+	// spec: §15.4.6 line 2406 — bound the wait to the 10s ack deadline.
+	// A smaller caller timeout still wins so an aggressive overall budget
+	// is honored.
+	deadline := heartbeatAckDeadline
+	if timeout > 0 && timeout < deadline {
+		deadline = timeout
+	}
 	in := []string{`{"type":"heartbeat","ts":1234}`}
-	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
+	start := time.Now()
+	stdout, _, code, err := driveAdapter(binary, in, 1, deadline)
+	elapsed := time.Since(start)
 	if err != nil {
 		return "", err
 	}
@@ -387,7 +404,9 @@ func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, er
 		return "", fmt.Errorf("exit %d", code)
 	}
 	if len(stdout) == 0 {
-		return "", errors.New("no heartbeat_ack on stdout")
+		// driveAdapter force-killed the binary at the deadline before it
+		// produced an ack: the 10s bound was exceeded.
+		return "", fmt.Errorf("no heartbeat_ack within %s", deadline)
 	}
 	var ack struct {
 		Type string `json:"type"`
@@ -398,7 +417,7 @@ func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, er
 	if ack.Type != "heartbeat_ack" {
 		return "", fmt.Errorf("ack.type = %q, want \"heartbeat_ack\"", ack.Type)
 	}
-	return "heartbeat_ack received", nil
+	return fmt.Sprintf("heartbeat_ack received in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
 }
 
 func checkUnknownTypeIgnored(binary string, timeout time.Duration, _ bool) (string, error) {
@@ -420,24 +439,45 @@ func checkUnknownTypeIgnored(binary string, timeout time.Duration, _ bool) (stri
 	return "unknown type silently dropped; heartbeat still answered", nil
 }
 
+// shutdownDeadlineMs is the §15.4.6 line 2407 Basic-conformance shutdown
+// budget: "the binary exits cleanly before the deadline elapses (tested
+// with N = 5000)". The harness sends deadline_ms=5000 and asserts the
+// binary exits — cleanly (exit 0) — within that window rather than under
+// an unrelated 3s wall-clock guard. 15.4-MED-023.
+const shutdownDeadlineMs = 5000
+
 func checkShutdownDeadline(binary string, _ time.Duration, _ bool) (string, error) {
-	in := []string{`{"type":"shutdown","reason":"test","deadline_ms":500}`}
+	return runShutdownDeadlineCheck(binary, shutdownDeadlineMs)
+}
+
+// runShutdownDeadlineCheck drives binary with a shutdown frame carrying
+// deadlineMs and asserts the §15.4.6 line 2407 contract: a clean exit
+// (code 0) before the deadline elapses. The deadlineMs is a parameter so
+// tests can exercise the boundary fast; the public check passes the
+// spec's N=5000. spec: §15.4.6 line 2407. 15.4-MED-023.
+func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
+	deadline := time.Duration(deadlineMs) * time.Millisecond
+	in := []string{fmt.Sprintf(`{"type":"shutdown","reason":"test","deadline_ms":%d}`, deadlineMs)}
 	start := time.Now()
-	_, _, code, err := driveAdapter(binary, in, 0, 5*time.Second)
+	// Bound the harness wall clock just past the deadline so a runtime
+	// that ignores the deadline is force-killed (non-zero exit) and fails,
+	// matching the production adapter's SIGTERM-at-deadline behavior.
+	_, _, code, err := driveAdapter(binary, in, 0, deadline+2*time.Second)
+	elapsed := time.Since(start)
 	if err != nil {
 		return "", err
 	}
+	// spec: §15.4.6 line 2407 — a clean exit is exit code 0. A binary
+	// force-killed at the harness bound returns non-zero.
 	if code != 0 {
-		return "", fmt.Errorf("exit %d", code)
+		return "", fmt.Errorf("exit %d (must exit cleanly within the %s deadline)", code, deadline)
 	}
-	elapsed := time.Since(start)
-	// The adapter must exit. We don't enforce the deadline strictly here
-	// because OS-level scheduling adds noise; we just require it doesn't
-	// hang past a generous bound.
-	if elapsed > 3*time.Second {
-		return "", fmt.Errorf("exit took %v, expected well under the 500ms deadline", elapsed)
+	// spec: §15.4.6 line 2407 — the binary must exit *before* the deadline
+	// elapses, not merely before a looser guard.
+	if elapsed > deadline {
+		return "", fmt.Errorf("exit took %v, exceeds the %s deadline_ms", elapsed.Round(time.Millisecond), deadline)
 	}
-	return fmt.Sprintf("exit in %s", elapsed.Round(time.Millisecond)), nil
+	return fmt.Sprintf("clean exit in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
 }
 
 func checkSequentialMessages(binary string, timeout time.Duration, _ bool) (string, error) {

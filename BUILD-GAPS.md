@@ -27101,13 +27101,51 @@ regeneration (see F-15.4.1 progress) resolves the schema-drift items:
 and requires only those), **MED-014's cited over-strict cases are stale**
 (the schema now allows the `protocolVersion` and
 `provider`/`credentialsPath` fields the adapter emits), and **MED-015 is
-stale** (`protocolVersion` is now documented in the schema). The finding
-stays OPEN for the unimplemented adapter/runtime capabilities: MED-010
-(`draining` frame emission), MED-011/MED-012 (`task_complete` lifecycle +
-`taskId` manifest), MED-016 (`RUNTIME_CRASH` synthesis), MED-017–019
-(degradation annotations), MED-020 (type registry), MED-021
-(`schemaVersion` stamping in reference runtimes), and MED-022/MED-023
-(conformance deadline enforcement).
+stale** (`protocolVersion` is now documented in the schema).
+
+**Re-verification (commit `__MED_021_023_SHA__`).** Several more items are
+now stale, and three are closed this batch:
+- **MED-011 is stale** — `pkg/adapter/lifecyclechannel.go` implements the
+  full task lifecycle: `WithTaskLifecycle`, `RequestTaskComplete`
+  (`task_complete` + `task_complete_acknowledged` with the §4.7 line 708
+  ack-timeout), `SignalTaskReady` (`task_ready`), and a `TaskID` frame
+  field.
+- **MED-012 is stale** — `pkg/adapter/manifest.go` carries a `TaskID`
+  field set by `writeSessionManifest` (defaults to the session id in
+  session mode per §4.7).
+- **MED-020 is stale** — `pkg/adapter/lifecycle.go` returning
+  `Unimplemented` for `DemoteSDK` is correct for the pod-warm-only build
+  (no `preConnect: true` runtime exists); the 10s SIGKILL escalation lands
+  with SDK-warm support, per the finding's own framing.
+- **MED-019 (no wire leak)** — the gateway's `executor.OutputPart`
+  (`pkg/gateway/executor/executor.go:74`) carries only `Type`/`Text`/`Ref`,
+  so `protocolHints` never reaches the native wire; the
+  `pkg/gateway/outputpartfidelity` matrix additionally classifies
+  `protocolHints` as `dropped` for every external protocol. Active
+  consumption of hint *directives* (e.g. `preferResourceBlock`) is an
+  unbuilt translation enhancement, not a wire-leak defect.
+- **MED-021 CLOSED** — `cmd/runtimes/streaming-echo/main.go` now stamps
+  the required `schemaVersion` on every emitted OutputPart (text and
+  echoed-passthrough). `cred-shell-echo` was already compliant: it
+  delegates to `pkg/runtimekit/echocore`, which stamps `schemaVersion=1`.
+- **MED-022 CLOSED** — `checkHeartbeatAck` drives the adapter under the
+  §15.4.6 line 2406 10s deadline (instead of the 30s test timeout) so a
+  slow-acking runtime is force-killed and fails.
+- **MED-023 CLOSED** — `checkShutdownDeadline` sends `deadline_ms=5000`
+  (the §15.4.6 line 2407 `N=5000`) and asserts a clean exit (code 0)
+  before the deadline elapses, replacing the unrelated 3s wall-clock guard.
+
+The finding stays OPEN for items that require enriching the gateway's
+minimal `executor.OutputPart` ingress model (it currently carries no
+`schemaVersion`, `annotations`, or open-string `type`) and new
+consumer/caller wiring: **MED-010** (`draining` lifecycle-frame producer +
+a pool-drain caller), **MED-016** (`RUNTIME_CRASH` synthesis on non-zero
+runtime exit, across the socket/subprocess/embedded runtime models, routed
+to the gateway→client error path), **MED-017** (live `schema_version_ahead`
++ `blob_ref_unresolvable` emission on the parent `MessageEnvelope`), and
+**MED-018** (`unregistered_platform_type` ingress registry check). These
+share the OutputPart-model enrichment and are scoped for a focused
+follow-on batch.
 
 ### 15.4-MED-010 — `DRAINING` state and `draining` lifecycle frame never emitted by the adapter
 - Spec §15.4.2 lists `DRAINING` as a normative state (line 2037-2049). §15.4.3 capability matrix (line 2126) mandates "`DRAINING` state via lifecycle channel enables graceful shutdown coordination before `shutdown`" at Full level.
@@ -33163,7 +33201,7 @@ spec.
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 SHOULD cluster lives in the sibling F-17.4.12..F-17.4.18 entries.
 
-### - [ ] F-17.4.12 — Gateway does not use the embedded k3s cluster for session placement [Medium] — OPEN
+### - [ ] F-17.4.12 — Gateway does not use the embedded k3s cluster for session placement [Medium] — DEFERRED
 
 Spec line 168: "**Same platform code path as production.** Embedded Mode uses the
 production gateway, controllers, CRDs, and storage interfaces."
@@ -33184,6 +33222,28 @@ the gateway's in-process executor. The CRDs are installed and the controllers ar
 running, but no `SandboxClaim` or `Sandbox` is ever produced by a session start. The
 "production code path" is exercised for stores and identity only; the K8s scheduling /
 pod adapter / mTLS path is dead in Embedded Mode.
+
+**Deferred (blocked on runnable reference images).** The proposed fix — set
+`--agent-namespace` in `gatewayArgs()` when k3s is up — cannot land without
+regressing the working laptop path (rule O). Two facts make it harmful today:
+(1) every §26 reference runtime the embedded stack installs is pinned to a
+placeholder image digest (`pkg/embedded/stack/catalog.go` appends
+`placeholderDigest` to each `Image`), and the loud `lenny up` warning already
+records that those runtimes "cannot start a session until re-pinned"; and
+(2) there is no containerized echo runtime in the catalog — the §17.4
+zero-credential echo path (`LENNY_AGENT_RUNTIME=echo`, F-17.4.15) runs the
+runtime *in-process*, which is precisely the executor `--agent-namespace`
+would replace. With `--agent-namespace` set, every `lenny session new` would
+mint a `Sandbox` whose image is an unpullable placeholder, producing
+`ImagePullBackOff` and breaking session start outright. The in-process
+executor is the deliberate bridge until runnable reference images exist
+(blocked on **F-26.3.6**, the placeholder-digest reference catalog) and a
+pod-deployable echo image is published. Re-attempt once those land: thread an
+`AgentNamespace` through `gatewaySpec`/`gatewayArgs`, create the agent
+namespace in the embedded k3s, and gate the switch on the runnable-image
+precondition. (k3s is Linux-only — `k3s.SupportedPlatform()` is false on the
+darwin dev host — so the placement path is not integration-testable here
+either; the change needs a Linux CI lane to validate end-to-end.)
 
 ### - [x] F-17.4.13 — `lenny logs` cannot tail, cannot follow, and exposes fewer components than the spec [Medium] — CLOSED
 
