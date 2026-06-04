@@ -3918,7 +3918,7 @@ Consequence: scheduler placement and capacity planning under-account for the gVi
 
 **Resolution (`19d5ffad`):** `charts/lenny/templates/runtimeclasses.yaml` renders `node.k8s.io/v1` RuntimeClass objects with the §5.3 reference Pod Overhead (`overhead.podFixed`: sandboxed 200m/200Mi, microvm 500m/500Mi, standard none), gated on `runtimeClasses.create` (default `false`, since most deployers install RuntimeClasses out-of-band such as GKE Sandbox). Per-profile `enabled`/`name`/`handler`/`overhead`/`nodeSelector` are tunable in `values.yaml`; `sandboxed` is enabled by default within the block. The chart now provides the template that makes the SHOULD satisfiable. Six helm-unittest assertions in `tests/runtimeclasses_test.yaml`.
 
-### - [ ] F-5.3.8 — Kata `microvm` isolation has no end-to-end coverage in the implementation [Medium] — OPEN
+### - [x] F-5.3.8 — Kata `microvm` isolation has no end-to-end coverage in the implementation [Medium] — CLOSED
 
 Spec §5.3 row 3: `microvm` → `kata` is a first-class profile, used by §5.2 cross-tenant reuse, §6.4 T4 dedicated nodes, §7.1 derive monotonicity.
 
@@ -3931,6 +3931,8 @@ Implementation:
 - The §5.3 spec text ("Kata") and the chart label (`lenny-agents-kata`) suggest a deployer-ready Kata path, but the build provides only the enum and the field-validation gates.
 
 Consequence: microvm isolation passes type-checks but no production code path is end-to-end-verified to actually launch and slot-bind a Kata pod.
+
+**Resolution (commit `12430a85`):** Added the missing end-to-end coverage for the launch and slot-bind paths the consequence names; the substantive podspec mapping (microvm → kata RuntimeClass + §17.2 node isolation) was already unit-tested under F-17.2.1, so this finding's gap was the absent reconcile- and claim-level exercise plus a deployer-ready chart preset. (1) Launch: `pkg/controller/sandbox` reconcile test (`TestReconcileMicrovmLaunchesKataPod_spec_5_3_8`) drives a microvm Sandbox through the production `sandbox.Reconciler` against the envtest apiserver and asserts the created pod carries `runtimeClassName: kata`, the §17.2 control-2 `lenny.dev/node-pool=kata` required node affinity, and the control-3 `lenny.dev/isolation=kata:NoSchedule` toleration. (2) Slot-bind: `pkg/gateway/podclaim` test (`TestClaimSlotBindsKataMicrovmPod_spec_5_3_8`) has the gateway `SlotClaimer` bind a slot on a genuine Kata-RuntimeClass pod (the `kata` RuntimeClass pre-created so envtest admits it), confirming the SandboxClaim persists and the §5.2 tenant pin lands on the Kata pod. (3) Chart: a new `reference-runtimes_test.yaml` case confirms a per-catalog-entry `isolationProfile: microvm` pin renders, so a deployer can seed one Kata-isolated runtime alongside the sandboxed default — the §17.2 split-namespace (`lenny-agents` + `lenny-agents-kata`) topology a Tier 3 install provisions. The §5.2 cross-tenant-reuse (`allowCrossTenantReuse`) consumer of microvm remains gated on the absent task-mode lifecycle (F-5.2.1).
 
 ### - [ ] F-5.3.9 — `RuntimeProvider` abstraction (e.g., KubeVirt forward compatibility) is absent [Medium] — CLOSED
 
@@ -30845,7 +30847,7 @@ Cross-checked against:
 
 ---
 
-### - [ ] F-17.2.3 — 2-3  lenny-label-immutability webhook scoped to pods, but labels are stamped on the Sandbox CR [High] — OPEN
+### - [x] F-17.2.3 — 2-3  lenny-label-immutability webhook scoped to pods, but labels are stamped on the Sandbox CR [High] — CLOSED
 **Spec requirement** (§17.2 line 46, item 5): The webhook enforces immutability of `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` "on agent pods."
 
 **Implementation:**
@@ -30855,6 +30857,8 @@ Cross-checked against:
 - `/Users/joan/projects/lenny/pkg/gateway/podclaim/slotclaimer.go` lines 403–415 stamps `lenny.dev/tenant-id` on the **Sandbox** (`labelPatch` of type `lennyv1.Sandbox`), not the Pod.
 
 **Impact:** The webhook is in place but its rules apply to pod label transitions that never occur, because the labels live on the Sandbox CR. The "immutable agent-pod label" guarantee called out in §17.2 / §5.2 NET-003 does not bind at the pod layer. A controller that writes a Pod with arbitrary tenant or delivery-mode labels bypasses the gate. Either the controllers must stamp the labels onto Pods at creation, or the webhook must extend to the `lenny.dev/v1` `sandboxes` resource (and the rendering test at `/Users/joan/projects/lenny/charts/lenny/tests/admission-webhooks_test.yaml` lines 61–67 should track that pivot).
+
+**Resolution (commit `12430a85`):** Took resolution option (a) — stamp the labels onto agent pods — which is what §17.2 line 46 ("on agent pods") and §13.2 NET-003 (the NetworkPolicies select pods) mandate; the webhook is correctly pod-scoped and stays unchanged. The evidence was partly stale: `lenny.dev/delivery-mode` and `lenny.dev/egress-profile` already reach the pod via `sb.Labels` at pod creation (`warmpool.sandboxLabels` → `podspec.Build`, added by F-13.2.1 / F-13.2.11). The one residual gap was `lenny.dev/tenant-id`, set on the Sandbox at slot-claim time (after the pod already exists) and never propagated to the pod. New `podclaim.stampPodTenant` JSON-merge-patches the pin onto the agent pod as the gateway ServiceAccount (the one principal the `lenny-tenant-label-immutability` webhook authorizes for the `unset → {tenant_id}` edge per §5.2 line 392), tolerating a NotFound/Conflict so a terminating-or-unmaterialized pod never fails the claim. Wired into both warm-pod assignment paths — `Claimer.Claim` (session mode) and `SlotClaimer.reserveSlot` (concurrent/task) — so the pod-scoped webhook now sees the transition it guards. The `{tenant_id} → unassigned` return-to-pool reset is part of the §5.2 cross-tenant-reuse (task-mode) path that is itself absent (F-5.2.1) and rides on it. Tests: tier-2 podclaim (slot-claim + session-claim stamp the pod, idempotent re-stamp, missing-pod tolerated).
 
 ---
 
