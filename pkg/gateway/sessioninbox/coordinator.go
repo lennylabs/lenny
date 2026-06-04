@@ -4,8 +4,16 @@ package sessioninbox
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrMessagingUnavailable is returned by the incoming-message buffering
+// methods (EnqueueInbox / EnqueueDLQ) when the Coordinator is nil — the
+// gateway has no inbox/DLQ wired (no Redis). The §7.2 caller maps it to
+// a `DeliveryStatusError` receipt with `reason: inbox_unavailable`
+// rather than silently dropping the message.
+var ErrMessagingUnavailable = errors.New("sessioninbox: coordinator not wired")
 
 // DrainFailureRecorder records a §7.2 line 311 inbox-to-DLQ drain
 // failure for the `lenny_inbox_drain_failure_total{pool, session_state}`
@@ -125,6 +133,55 @@ func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID
 		preserved++
 	}
 	return preserved, nil
+}
+
+// EnqueueInbox buffers an incoming message in the session's inbox per
+// the §7.2 paths 3, 5, and 6 (input_required / runtime-busy /
+// suspended) routing. It returns the message the `maxInboxSize`
+// overflow policy evicted (nil when nothing was dropped) so the caller
+// can return a `dropped` delivery receipt with `reason: inbox_overflow`.
+// A nil msg.EnqueuedAt is stamped with the coordinator clock so FIFO
+// order and the durable-inbox per-message TTL are well defined.
+//
+// spec: §7.2 lines 319, 327, 329 (inbox buffering, queued receipt).
+func (c *Coordinator) EnqueueInbox(ctx context.Context, tenantID, sessionID string, msg Message) (dropped *Message, err error) {
+	if c == nil {
+		return nil, ErrMessagingUnavailable
+	}
+	if msg.EnqueuedAt.IsZero() {
+		msg.EnqueuedAt = c.now()
+	}
+	return c.inbox.Enqueue(ctx, tenantID, sessionID, msg)
+}
+
+// EnqueueDLQ buffers an incoming message in the session's dead-letter
+// queue per the §7.2 path 7 (recovering target) and the pre-running
+// inter-session row of the dead-letter-handling table. ttl bounds the
+// entry; a non-positive ttl selects DefaultDLQTTL. It returns the
+// message the `maxDLQSize` overflow policy evicted (nil when nothing
+// was dropped) so the caller can return a `dropped` delivery receipt
+// with `reason: dlq_overflow`.
+//
+// spec: §7.2 line 331; the dead-letter table recovering and pre-running
+// rows.
+func (c *Coordinator) EnqueueDLQ(ctx context.Context, tenantID, sessionID string, msg Message, ttl time.Duration) (dropped *Message, err error) {
+	if c == nil {
+		return nil, ErrMessagingUnavailable
+	}
+	if msg.EnqueuedAt.IsZero() {
+		msg.EnqueuedAt = c.now()
+	}
+	return c.dlq.Enqueue(ctx, tenantID, sessionID, msg, ttl)
+}
+
+// InboxLen returns the current depth of the session inbox, backing the
+// §15.4 delivery-receipt `queueDepth` field for a `queued` outcome. A
+// nil Coordinator returns 0.
+func (c *Coordinator) InboxLen(ctx context.Context, tenantID, sessionID string) (int, error) {
+	if c == nil {
+		return 0, nil
+	}
+	return c.inbox.Len(ctx, tenantID, sessionID)
 }
 
 // DrainOnTerminal performs the §7.2 line 343 / §7.3 line 425 inbox+DLQ

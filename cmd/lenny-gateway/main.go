@@ -3918,7 +3918,12 @@ func main() {
 			MaxInboundPerMinute: *messagingMaxInboundPerMinute,
 		},
 		MessagingRateCounter: rateLimiter,
-		Clock:                clockinject.Now,
+		// §7.2 paths 3/5/6/7 — the same inbox + DLQ coordinator the REST
+		// handler uses, so lenny/send_message buffers a message to a
+		// non-running target instead of forcing it onto the executor.
+		// F-7.2.5.
+		Messaging: messagingCoord,
+		Clock:     clockinject.Now,
 		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +
 		// counter fire regardless of which surface walked the tree.

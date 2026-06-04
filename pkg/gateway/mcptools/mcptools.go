@@ -61,6 +61,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
@@ -68,6 +69,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -443,6 +445,16 @@ type Deps struct {
 	// admission limits use. spec: §11.1. F-7.2.6.
 	MessagingRateCounter ratelimit.Counter
 
+	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
+	// lenny/send_message routes a message to a non-delivering target
+	// (input_required / suspended → inbox; recovering / pre-running →
+	// DLQ) instead of forcing it onto the executor, returning a
+	// `queued` delivery receipt per the §7.2 paths 3/5/6/7. A nil
+	// coordinator (no Redis) surfaces inbox_unavailable for those
+	// paths. The same coordinator backs the REST handler. spec: §7.2
+	// lines 313-331. F-7.2.5.
+	Messaging *sessioninbox.Coordinator
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -812,6 +824,49 @@ func Register(srv *mcp.Server, deps Deps) {
 			if !errors.Is(err, inputwait.ErrNotFound) {
 				return mcp.ToolResult{}, err
 			}
+		}
+		// spec: §7.2 paths 3/5/6/7 (lines 319-331) — an inter-session
+		// message to a target that is not reading from stdin is buffered,
+		// not delivered. Path 1 (inReplyTo) resolved above; terminal
+		// returned TARGET_TERMINAL above. Classify the remaining message
+		// by the target state: input_required / suspended → inbox;
+		// recovering (resume_pending / awaiting_client_action) and
+		// pre-running parent→child → DLQ. Only a `running` target falls
+		// through to the executor (path 2). The pod-adapter readiness
+		// signal and cross-replica forwarding are gated as in the REST
+		// path. F-7.2.5.
+		inputRequired := row.State == session.StateInputRequired ||
+			(deps.InputWaits != nil && len(deps.InputWaits.PendingForSession(row.ID)) > 0)
+		decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
+		if decision.Action == messagerouting.ActionBufferInbox || decision.Action == messagerouting.ActionBufferDLQ {
+			buffered := sessioninbox.Message{
+				MessageID:       messageID,
+				SenderSessionID: senderID,
+				Payload:         []byte(in.Message),
+				EnqueuedAt:      clock(),
+			}
+			var evicted *sessioninbox.Message
+			var berr error
+			overflowReason := session.DeliveryReasonInboxOverflow
+			if decision.Action == messagerouting.ActionBufferInbox {
+				evicted, berr = deps.Messaging.EnqueueInbox(ctx, tenant, row.ID, buffered)
+			} else {
+				evicted, berr = deps.Messaging.EnqueueDLQ(ctx, tenant, row.ID, buffered, 0)
+				overflowReason = session.DeliveryReasonDLQOverflow
+			}
+			if berr != nil {
+				// No inbox/DLQ wired (no Redis): surface inbox_unavailable
+				// rather than delivering to a non-running runtime.
+				return textResult(buildSendMessageReceiptStatusReason(messageID,
+					session.DeliveryStatusError, session.DeliveryReasonInboxUnavailable, clock())), nil
+			}
+			status := session.DeliveryStatusQueued
+			reason := session.DeliveryReason("")
+			if evicted != nil {
+				status = session.DeliveryStatusDropped
+				reason = overflowReason
+			}
+			return textResult(buildSendMessageReceiptStatusReason(messageID, status, reason, clock())), nil
 		}
 		if deps.Executor == nil {
 			return mcp.ToolResult{}, errors.New("no executor configured")
@@ -3954,7 +4009,17 @@ func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor
 // value for `rate_limited` — the status alone conveys the condition
 // (§15.4). spec: §15.4 lines 1725-1737; §7.2 line 371. F-7.2.6.
 func buildSendMessageReceiptStatus(messageID string, status session.DeliveryStatus, now time.Time) string {
-	receipt := session.DeliveryReceipt{MessageID: messageID, Status: status}
+	return buildSendMessageReceiptStatusReason(messageID, status, "", now)
+}
+
+// buildSendMessageReceiptStatusReason builds the §15.4 delivery_receipt
+// envelope for a non-`delivered` status that carries a §15.4 line 1739
+// reason — the §7.2 buffered-path outcomes (`queued`, `dropped` with
+// inbox_overflow / dlq_overflow, `error` with inbox_unavailable).
+// `deliveredAt` is set only for `delivered`. spec: §15.4 lines
+// 1725-1742; §7.2 lines 313-331. F-7.2.5.
+func buildSendMessageReceiptStatusReason(messageID string, status session.DeliveryStatus, reason session.DeliveryReason, now time.Time) string {
+	receipt := session.DeliveryReceipt{MessageID: messageID, Status: status, Reason: reason}
 	if status == session.DeliveryStatusDelivered {
 		receipt.DeliveredAt = now
 	}

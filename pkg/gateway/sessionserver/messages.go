@@ -3,15 +3,19 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
@@ -328,81 +332,158 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// spec: §7.2 paths 1-7 (lines 313-331) — select the delivery path
+	// for the non-reply messages. Path 1 (inReplyTo) was resolved
+	// above; "the first matching path wins". A synchronous in-process
+	// executor is `ready_for_input` by construction, so a `running`
+	// target without a concurrent `input_required` takes path 2 (direct
+	// delivery); the input_required / suspended / recovering targets
+	// buffer in the inbox or DLQ. The pod-adapter `ready_for_input`
+	// signal that distinguishes path 2 from path 5 (runtime-busy), the
+	// path-4 in-flight-tool interrupt, the path-6 pod-held
+	// resume-and-deliver, the cross-replica `ForwardMessage`, and the
+	// concurrent-workspace per-slot inbox are gated on the pod-adapter
+	// readiness model and §5.2 concurrent-workspace build-out; a
+	// coordinating replica that cannot drive them buffers and returns
+	// `queued`, which §7.2 sanctions. F-7.2.5.
+	deliveryStatus := session.DeliveryStatusDelivered
+	var deliveryReason session.DeliveryReason
+	queueDepth := 0
 	var out []executor.OutputPart
+
 	if len(msgs) > 0 {
-		o, err := s.executor.Send(r.Context(), row.ID, msgs)
-		if err != nil {
-			// spec: §16.3 line 342 / §16 error taxonomy — the executor (the
-			// pod) rejected the prompt; UPSTREAM marks it a downstream
-			// dependency failure on the `session.prompt` span.
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-			s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
-				"executor rejected the message batch",
-				map[string]any{"reason": err.Error()})
-			return
-		}
-		out = o
-	}
-
-	// §4.8 PostAgentOutput: run the chain over the agent's output parts
-	// before delivering the response to the client. A REJECT blocks
-	// delivery (and writes the §16.7 audit row); a MODIFY rewrites the
-	// parts that are transcribed, published, and returned. spec: §4.8
-	// line 1054.
-	if s.interceptors != nil && len(out) > 0 {
-		modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
-		if rejected {
-			return
-		}
-		out = modified
-	}
-
-	// Record the §15.1 transcript: inbound messages followed by the
-	// runtime's text response parts. Best-effort — a transcript
-	// write failure does not fail the message delivery.
-	if s.transcripts != nil {
-		entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
-		now := s.clock()
-		for _, m := range msgs {
-			entries = append(entries, transcriptstore.Entry{
-				Role: m.Role, Content: m.Content, Timestamp: now,
-			})
-		}
-		for _, p := range out {
-			if p.Type == "text" {
-				entries = append(entries, transcriptstore.Entry{
-					Role: "assistant", Content: p.Text, Timestamp: now,
-				})
+		inputRequired := row.State == session.StateInputRequired ||
+			(s.inputWaits != nil && len(s.inputWaits.PendingForSession(row.ID)) > 0)
+		immediate := false
+		for _, i := range deliverIdx {
+			if req.Messages[i].Delivery == "immediate" {
+				immediate = true
+				break
 			}
 		}
-		_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
-	}
+		decision := messagerouting.Classify(row.State, inputRequired, immediate, messagerouting.SourceExternal)
+		switch decision.Action {
+		case messagerouting.ActionDeliver:
+			o, err := s.executor.Send(r.Context(), row.ID, msgs)
+			if err != nil {
+				// spec: §16.3 line 342 / §16 error taxonomy — the executor
+				// (the pod) rejected the prompt; UPSTREAM marks it a
+				// downstream dependency failure on the `session.prompt`
+				// span.
+				tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
+				s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
+					"executor rejected the message batch",
+					map[string]any{"reason": err.Error()})
+				return
+			}
+			out = o
 
-	// Publish the §15.1 session events so SSE subscribers observe
-	// the message + response live.
-	for _, m := range msgs {
-		s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
-			"role": m.Role, "content": m.Content,
-		})
-	}
-	for _, p := range out {
-		s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
-			"type": p.Type, "text": p.Text, "ref": p.Ref,
-		})
-		// spec: §6.3 line 356, §16.1 line 15 — the first agent-streamed
-		// `response` event observed on this session is the §6.3 TTFT
-		// signal. recordTTFTOnce LoadOrStores so only the first event
-		// per session triggers the histogram observation.
-		s.recordTTFTOnce(row, "response")
+			// §4.8 PostAgentOutput: run the chain over the agent's output
+			// parts before delivering the response to the client. A
+			// REJECT blocks delivery (and writes the §16.7 audit row); a
+			// MODIFY rewrites the parts that are transcribed, published,
+			// and returned. spec: §4.8 line 1054.
+			if s.interceptors != nil && len(out) > 0 {
+				modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
+				if rejected {
+					return
+				}
+				out = modified
+			}
+
+			// Record the §15.1 transcript: inbound messages followed by
+			// the runtime's text response parts. Best-effort — a
+			// transcript write failure does not fail the message delivery.
+			if s.transcripts != nil {
+				entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
+				now := s.clock()
+				for _, m := range msgs {
+					entries = append(entries, transcriptstore.Entry{
+						Role: m.Role, Content: m.Content, Timestamp: now,
+					})
+				}
+				for _, p := range out {
+					if p.Type == "text" {
+						entries = append(entries, transcriptstore.Entry{
+							Role: "assistant", Content: p.Text, Timestamp: now,
+						})
+					}
+				}
+				_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
+			}
+
+			// Publish the §15.1 session events so SSE subscribers observe
+			// the message + response live.
+			for _, m := range msgs {
+				s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
+					"role": m.Role, "content": m.Content,
+				})
+			}
+			for _, p := range out {
+				s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
+					"type": p.Type, "text": p.Text, "ref": p.Ref,
+				})
+				// spec: §6.3 line 356, §16.1 line 15 — the first
+				// agent-streamed `response` event observed on this session
+				// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
+				// only the first event per session triggers the histogram.
+				s.recordTTFTOnce(row, "response")
+			}
+			deliveryStatus = session.DeliveryStatusDelivered
+
+		case messagerouting.ActionBufferInbox:
+			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
+			if berr != nil {
+				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
+					"session inbox is not available; message not buffered",
+					map[string]any{"reason": berr.Error()})
+				return
+			}
+			deliveryStatus = session.DeliveryStatusQueued
+			queueDepth = depth
+			if dropped {
+				deliveryStatus = session.DeliveryStatusDropped
+				deliveryReason = session.DeliveryReasonInboxOverflow
+			}
+
+		case messagerouting.ActionBufferDLQ:
+			dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
+			if berr != nil {
+				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
+					"session dead-letter queue is not available; message not buffered",
+					map[string]any{"reason": berr.Error()})
+				return
+			}
+			deliveryStatus = session.DeliveryStatusQueued
+			if dropped {
+				deliveryStatus = session.DeliveryStatusDropped
+				deliveryReason = session.DeliveryReasonDLQOverflow
+			}
+
+		case messagerouting.ActionRejectTerminal:
+			// spec: §7.2 dead-letter table terminal row.
+			s.writeError(w, http.StatusConflict, "TARGET_TERMINAL",
+				"target session is in terminal state "+string(row.State),
+				map[string]any{"targetState": string(row.State)})
+			return
+
+		case messagerouting.ActionRejectNotReady:
+			// spec: §7.2 line 339 pre-running external-client row. (The
+			// early pre-running guard above already covers this for REST;
+			// retained so the classifier's contract holds on every path.)
+			s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
+				"session has not yet entered running state; retry after start",
+				map[string]any{"currentState": string(row.State)})
+			return
+		}
 	}
 
 	// spec: §15.4 lines 1725-1737 — every send_message call returns a
 	// synchronous `delivery_receipt`. `messageId` defaults to the
 	// first inbound message's sender-supplied id; gateway-assigned
-	// ids carry the `msg_` prefix per §15.4 line 1784. The minimal
-	// gateway emits `status: "delivered"` after the executor returns;
-	// the queued / dropped / expired / rate_limited / error paths
-	// land with the §7.2 inbox + DLQ machinery (F-7.2.4). F-7.2.10.
+	// ids carry the `msg_` prefix per §15.4 line 1784. The status is
+	// the §7.2 path outcome computed above (delivered / queued /
+	// dropped). F-7.2.5, F-7.2.10.
 	messageID := ""
 	if len(req.Messages) > 0 {
 		messageID = req.Messages[0].ID
@@ -410,16 +491,78 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if messageID == "" {
 		messageID = "msg_" + session.NewID()
 	}
+	receipt := session.DeliveryReceipt{
+		MessageID: messageID,
+		Status:    deliveryStatus,
+		Reason:    deliveryReason,
+	}
+	if deliveryStatus == session.DeliveryStatusDelivered {
+		receipt.DeliveredAt = s.clock()
+	}
+	if deliveryStatus == session.DeliveryStatusQueued {
+		receipt.QueueDepth = queueDepth
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(MessageResponse{
-		DeliveryReceipt: session.DeliveryReceipt{
-			MessageID:   messageID,
-			Status:      session.DeliveryStatusDelivered,
-			DeliveredAt: s.clock(),
-		},
-		Output: out,
+		DeliveryReceipt: receipt,
+		Output:          out,
 	})
+}
+
+// bufferTarget selects the §7.2 destination for a buffered message:
+// the session inbox (paths 3/5/6) or the dead-letter queue (path 7).
+type bufferTarget int
+
+const (
+	bufferTargetInbox bufferTarget = iota
+	bufferTargetDLQ
+)
+
+// bufferIncomingMessages buffers the selected non-reply messages into
+// the session inbox or DLQ per the §7.2 routing decision. It returns
+// whether the overflow policy evicted any message (so the caller emits
+// a `dropped` receipt), the inbox depth after the enqueue (for the
+// `queued` receipt's `queueDepth`), and an error when the messaging
+// coordinator is not wired (the caller maps it to inbox_unavailable).
+// Each payload is serialized as the §15.4 MessageEnvelope so the
+// dequeue path on resume re-delivers the original wire form.
+//
+// spec: §7.2 lines 319-331 (inbox/DLQ buffering, queued/dropped receipts).
+func (s *Server) bufferIncomingMessages(ctx context.Context, row sessionstore.Session, all []MessagePayload, idx []int, target bufferTarget, ttl time.Duration) (dropped bool, depth int, err error) {
+	for _, i := range idx {
+		m := all[i]
+		payload, mErr := json.Marshal(m)
+		if mErr != nil {
+			return dropped, depth, mErr
+		}
+		id := m.ID
+		if id == "" {
+			id = "msg_" + session.NewID()
+		}
+		msg := sessioninbox.Message{
+			MessageID:  id,
+			Payload:    payload,
+			EnqueuedAt: s.clock(),
+		}
+		var evicted *sessioninbox.Message
+		switch target {
+		case bufferTargetInbox:
+			evicted, err = s.messaging.EnqueueInbox(ctx, row.TenantID, row.ID, msg)
+		case bufferTargetDLQ:
+			evicted, err = s.messaging.EnqueueDLQ(ctx, row.TenantID, row.ID, msg, ttl)
+		}
+		if err != nil {
+			return dropped, depth, err
+		}
+		if evicted != nil {
+			dropped = true
+		}
+	}
+	if target == bufferTargetInbox {
+		depth, _ = s.messaging.InboxLen(ctx, row.TenantID, row.ID)
+	}
+	return dropped, depth, nil
 }
 
 // isValidDelivery reports whether v is a §15.4 line 1715
