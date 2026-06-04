@@ -190,7 +190,7 @@ func TestHandlerHealthyReturns200(t *testing.T) {
 	agg.Register(healthy("a"))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health", nil)
 	rr := httptest.NewRecorder()
-	health.Handler(agg).ServeHTTP(rr, req)
+	health.Handler(agg, nil).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -212,7 +212,7 @@ func TestHandlerUnhealthyReturns200_spec_25_3_530(t *testing.T) {
 	for _, path := range []string{"/v1/admin/health", "/v1/admin/health/summary", "/v1/admin/health/redis"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
-		health.Handler(agg).ServeHTTP(rr, req)
+		health.Handler(agg, nil).ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Errorf("%s: got %d, want 200 (health endpoint never returns 5xx)", path, rr.Code)
 		}
@@ -220,7 +220,7 @@ func TestHandlerUnhealthyReturns200_spec_25_3_530(t *testing.T) {
 	// The full-report body still carries the unhealthy verdict.
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health", nil)
 	rr := httptest.NewRecorder()
-	health.Handler(agg).ServeHTTP(rr, req)
+	health.Handler(agg, nil).ServeHTTP(rr, req)
 	var report health.Report
 	_ = json.Unmarshal(rr.Body.Bytes(), &report)
 	if report.Status != health.StatusUnhealthy {
@@ -234,7 +234,7 @@ func TestHandlerSummary(t *testing.T) {
 	agg.Register(healthy("b"))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health/summary", nil)
 	rr := httptest.NewRecorder()
-	health.Handler(agg).ServeHTTP(rr, req)
+	health.Handler(agg, nil).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -253,7 +253,7 @@ func TestHandlerComponentEndpoint(t *testing.T) {
 	agg.Register(failing("blobstore", health.StatusDegraded))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health/blobstore", nil)
 	rr := httptest.NewRecorder()
-	health.Handler(agg).ServeHTTP(rr, req)
+	health.Handler(agg, nil).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK { // degraded → 200
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -268,7 +268,7 @@ func TestHandlerUnknownComponent404(t *testing.T) {
 	agg := health.NewAggregator()
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/health/missing", nil)
 	rr := httptest.NewRecorder()
-	health.Handler(agg).ServeHTTP(rr, req)
+	health.Handler(agg, nil).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown component: got %d, want 404", rr.Code)
 	}

@@ -43150,7 +43150,7 @@ The agent's Step 4 decision (line 5216) depends on the populated `suggestedActio
 
 ---
 
-### - [ ] F-25.17.8 — 17-08 — `GET /v1/admin/health/{pool}` lives on the gateway, not on lenny-ops; the §25.17 scenario crosses two hosts without saying so [Medium] — OPEN
+### - [x] F-25.17.8 — 17-08 — `GET /v1/admin/health/{pool}` lives on the gateway, not on lenny-ops; the §25.17 scenario crosses two hosts without saying so [Medium] — CLOSED
 
 **Spec:** §25.17 Step 6 (lines 5254–5256) shows the verification call:
 
@@ -43170,6 +43170,8 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 **Impact:** Severity Medium. The Step 6 verification path does not exist as written. The watchdog can use `GET /v1/admin/diagnostics/pools/{name}` (Step 6 line 5248) to confirm recovery, so the loop is not blocked, but the §25.17 promise of an alert-level "has resolved" check is unbacked. The cross-host hop without acknowledgment confuses agent authors writing against §25.17 as a contract; the gateway base URL is not the lenny-ops base URL.
 
 **Remediation sketch:** Either (a) reconcile §25.17 line 5255 to `GET /v1/admin/health/warmPools` (the real component name) and add a sentence noting the host change to the gateway admin API, or (b) implement a pool-keyed health endpoint on lenny-ops that returns `{pool, status, activeAlerts: [...], lastTransition}` and have the §16.5 alert evaluator publish active-alert state into a store it can read.
+
+**Resolution.** Took remediation (b), adapted to the gateway because the §25.17 worked example reads as a single-base-URL conversation and the `GET /v1/admin/health/{component}` route already lives on the gateway. The route now resolves a warm-pool name when no §25.4 health subsystem of that name is registered, returning the `{pool, status, phase, activeAlerts, lastTransition}` body (new `health.PoolHealth` / `health.FuncPoolHealthResolver` in `pkg/gateway/health/pools.go`). `activeAlerts` is the set of firing `WarmPool*`/`Pool*` alerts read from this replica's §25.13 in-process alert tracker (`evaluator.Firing()`, filtered by `health.IsWarmPoolAlert`, which excludes `CredentialPool*` and `PgBouncerPoolSaturated`); an empty list is the signal the §25.17 watchdog reads as "the WarmPoolExhausted alert has resolved". A draining pool or any firing warm-pool alert reports `degraded`, otherwise `healthy`. The tracker is late-bound into the resolver via an `atomic.Pointer` since it is constructed after the health handler; when §25.13 in-process tracking is disabled the firing set is empty and the pool reports from the pool store alone. Registered health subsystems still win the `{component}` route, and an unknown name still returns the §25.3 line 547 `UNKNOWN_HEALTH_COMPONENT` 404. The in-process tracker is rule-grained, so `activeAlerts` is the firing warm-pool set across all pools rather than per-pool-series (documented on `PoolHealth.ActiveAlerts`); the per-series attribution remains the Prometheus-backed surface. Commit f1e68e12.
 
 ---
 

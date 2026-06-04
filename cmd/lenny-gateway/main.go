@@ -46,6 +46,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -140,11 +141,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/childtoken"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
@@ -4784,7 +4785,39 @@ func main() {
 			Data:            data,
 		})
 	})
-	healthHandler := health.Handler(healthAgg)
+	// alertEvalPtr late-binds the §25.13 in-process alert tracker into the
+	// pool health resolver below; it is stored once the tracker is
+	// constructed further down in this function.
+	var alertEvalPtr atomic.Pointer[evaluator.Evaluator]
+	// spec: §25.17 line 5254 — the watchdog's recovery-verification call
+	// `GET /v1/admin/health/{pool}` resolves a warm-pool name to its pool
+	// health view (status + activeAlerts) when no health subsystem of that
+	// name is registered. The §16.5 warm-pool alerts come from this
+	// replica's in-process alert tracker, late-bound via alertEvalPtr
+	// because the tracker is constructed further below; until it is set
+	// (or when §25.13 in-process tracking is disabled) the firing set is
+	// empty and the pool reports healthy from the pool store alone.
+	poolHealthResolver := health.FuncPoolHealthResolver{
+		Pool: func(ctx context.Context, name string) (string, time.Time, bool) {
+			p, err := pools.Get(ctx, name)
+			if err != nil {
+				return "", time.Time{}, false
+			}
+			last := p.UpdatedAt
+			if p.IsDraining() && p.DrainingSince.After(last) {
+				last = p.DrainingSince
+			}
+			return p.Phase(), last, true
+		},
+		Firing: func() []string {
+			e := alertEvalPtr.Load()
+			if e == nil {
+				return nil
+			}
+			return e.Firing()
+		},
+	}
+	healthHandler := health.Handler(healthAgg, poolHealthResolver)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)
 	// spec: §15.1 line 589 — served `info.version` must reflect the
@@ -6658,6 +6691,10 @@ func main() {
 				OnRuleEvalDuration: alertingMx.ObserveRuleEvalDuration,
 			},
 		)
+		// spec: §25.17 line 5254 — expose the firing-alert set to the
+		// pool health resolver so GET /v1/admin/health/{pool} can report
+		// whether a warm-pool alert has resolved.
+		alertEvalPtr.Store(alertEvaluator)
 		go alertEvaluator.Run(watchdogCtx)
 	} else {
 		log.Printf("lenny-gateway: §25.13 in-process alert tracker disabled (gateway.healthTracker.useCompiledRules=false); /v1/admin/health falls back to dependency probes + circuit breaker state only")

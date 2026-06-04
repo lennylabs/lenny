@@ -18,6 +18,14 @@ import (
 // not sensitive) but the gateway mounts them behind the admin path
 // prefix so deployers can gate them with NetworkPolicy if desired.
 //
+// poolResolver, when non-nil, extends the {component} route to resolve a
+// warm-pool name to its §25.17 pool health view when no health subsystem
+// of that name is registered. This backs the §25.17 line 5254 watchdog
+// verification call `GET /v1/admin/health/default-gvisor`, which the
+// worked example reads as a same-host call alongside the rest of the
+// gateway admin health surface. A nil poolResolver keeps the prior
+// behaviour (an unknown name returns UNKNOWN_HEALTH_COMPONENT).
+//
 // The health endpoint itself never returns 5xx — a verdict of
 // `unhealthy` still returns 200 with the observed state in the body, so
 // an agent reading the endpoint can distinguish "the platform is
@@ -27,7 +35,7 @@ import (
 // it can observe." Liveness and readiness probes therefore must not key
 // on the health endpoint's HTTP status; they use the dedicated
 // /healthz / /readyz probes instead.
-func Handler(agg *Aggregator) http.Handler {
+func Handler(agg *Aggregator, poolResolver PoolHealthResolver) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/admin/health", func(w http.ResponseWriter, r *http.Request) {
 		report := agg.Report(r.Context())
@@ -48,6 +56,19 @@ func Handler(agg *Aggregator) http.Handler {
 		name := r.PathValue("component")
 		comp, ok := agg.Component(r.Context(), name)
 		if !ok {
+			// spec: §25.17 line 5254 — the watchdog verification call
+			// `GET /v1/admin/health/{pool}` resolves a warm-pool name
+			// when no health subsystem of that name is registered. The
+			// pool view (status + activeAlerts) is how the §25.17 loop
+			// confirms the WarmPoolExhausted alert has resolved.
+			if poolResolver != nil {
+				if ph, found := poolResolver.PoolHealth(r.Context(), name); found {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(ph)
+					return
+				}
+			}
 			// spec: §25.3 line 547 — UNKNOWN_HEALTH_COMPONENT (404) is
 			// the only error code the health surface returns. A missing
 			// component is a 4xx client error, not the forbidden 5xx.
