@@ -77,7 +77,7 @@ func TestCreateTenantRegulatedWithSIEMAllowed(t *testing.T) {
 	store := tenantstore.NewMemory()
 	router := admin.NewRouter(store, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-	}).WithSIEMConfigured(true)
+	}).WithSIEMConfigured(true).WithPgauditConfigured(true)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: "hipaa"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(

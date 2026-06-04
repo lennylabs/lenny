@@ -1029,6 +1029,19 @@ spec:
             - name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS
               value: {{ .Values.audit.siem.maxDeliveryLagSeconds | quote }}
             {{- end }}
+            # §11.7 item 5 audit.pgaudit — DDL/ROLE capture config. When
+            # enabled, the gateway runs the pgaudit extension/log-class
+            # startup preflight; with a sinkEndpoint set it satisfies the
+            # COMPLIANCE_PGAUDIT_REQUIRED gate for regulated-profile
+            # tenants. F-11.7.10.
+            {{- if and .Values.audit .Values.audit.pgaudit .Values.audit.pgaudit.enabled }}
+            - name: LENNY_AUDIT_PGAUDIT_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if and .Values.audit .Values.audit.pgaudit .Values.audit.pgaudit.sinkEndpoint }}
+            - name: LENNY_AUDIT_PGAUDIT_SINK_ENDPOINT
+              value: {{ .Values.audit.pgaudit.sinkEndpoint | quote }}
+            {{- end }}
             # §11.7 OCSF translator retry cadence / attempt budget / batch
             # size. The translator advances ocsf_translation_state and
             # multicasts each row to the SIEM forwarder. F-11.7.1 / F-11.7.11.

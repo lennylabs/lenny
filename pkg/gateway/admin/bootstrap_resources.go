@@ -271,6 +271,12 @@ func (r *Router) upsertEnvironments(req *http.Request, in []EnvironmentPayload, 
 					complianceSIEMRequiredMessage(row.ComplianceProfile), nil)
 				continue
 			}
+			// spec: §11.7 line 377 — and pgaudit DDL/ROLE capture configured.
+			if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requirePgauditForProfile(row.ComplianceProfile) {
+				out.add(i, p.Name, actionError, seedValidationCode,
+					compliancePgauditRequiredMessage(row.ComplianceProfile), nil)
+				continue
+			}
 		}
 		// spec: §12.9 — the environment tier override may only tighten the
 		// tenant's tier.

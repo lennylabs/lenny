@@ -17,9 +17,9 @@
 // pipeline, not a Postgres extension manager. Deployers run pgaudit
 // against their Postgres instance and point the shipper at the log
 // file; the shipper handles parsing, translation, and delivery. The
-// startup pre-flight (verifying the pgaudit extension is installed
-// and `pgaudit.log` is configured with DDL+ROLE classes) lives in the
-// follow-on F-11.7.10 work because it covers config enforcement.
+// §11.7 line 375 startup pre-flight (verifying the pgaudit extension is
+// installed and `pgaudit.log` is configured with the DDL and ROLE
+// classes) is implemented in preflight.go.
 //
 // spec: §4.4 line 232 — "pgaudit sink consumers" listed among OCSF
 // egress targets.

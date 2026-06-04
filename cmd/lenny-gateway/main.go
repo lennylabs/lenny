@@ -75,6 +75,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
+	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -616,6 +617,12 @@ func main() {
 	auditSIEMSecret := flag.String("audit-siem-secret",
 		os.Getenv("LENNY_AUDIT_SIEM_SECRET"),
 		"§11.7 SIEM HMAC shared secret. When set, the SIEM HTTP sink signs each OCSF batch with an HMAC-SHA256 X-Lenny-SIEM-Signature header so the receiver can authenticate the gateway. Override via LENNY_AUDIT_SIEM_SECRET. F-11.7.1.")
+	auditPgauditEnabled := flag.Bool("audit-pgaudit-enabled",
+		os.Getenv("LENNY_AUDIT_PGAUDIT_ENABLED") == "true",
+		"§11.7 item 5 audit.pgaudit.enabled: when true, the gateway startup preflight verifies the pgaudit extension is installed and pgaudit.log includes the DDL and ROLE classes (fatal in production with a regulated complianceProfile if the check fails). A regulated tenant additionally requires this true with audit.pgaudit.sinkEndpoint set, enforced at startup (fatal in production) and at regulated tenant/environment create/update (HTTP 422 COMPLIANCE_PGAUDIT_REQUIRED). Override via LENNY_AUDIT_PGAUDIT_ENABLED. F-11.7.10.")
+	auditPgauditSinkEndpoint := flag.String("audit-pgaudit-sink-endpoint",
+		os.Getenv("LENNY_AUDIT_PGAUDIT_SINK_ENDPOINT"),
+		"§11.7 item 5 audit.pgaudit.sinkEndpoint: the external append-only sink the pgaudit DDL/ROLE records stream to. Required (alongside audit.pgaudit.enabled) for any tenant with a regulated complianceProfile. Override via LENNY_AUDIT_PGAUDIT_SINK_ENDPOINT. F-11.7.10.")
 	auditSIEMFailureThresholdPercent := flag.Float64("audit-siem-failure-threshold-percent",
 		envFloat("LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT", 5),
 		"§11.7 item 4 audit.siem.failureThresholdPercent: when the SIEM delivery failure rate exceeds this percentage, the §25.3 health API reports the siem component degraded (default 5%). Override via LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT. F-11.7.16.")
@@ -1830,6 +1837,37 @@ func main() {
 			log.Printf("lenny-gateway: WARNING: %s (non-production, continuing)", err.Error())
 		} else {
 			log.Printf("lenny-gateway: WARNING: §11.7 SIEM compliance preflight could not list tenants: %v", err)
+		}
+	}
+
+	// spec: §11.7 line 377 — a regulated-profile tenant additionally
+	// requires audit.pgaudit.enabled with audit.pgaudit.sinkEndpoint
+	// configured; absence is a fatal startup error in production mode,
+	// symmetric with the SIEM gate above. F-11.7.10.
+	pgauditConfigured := *auditPgauditEnabled && *auditPgauditSinkEndpoint != ""
+	if err := admin.ValidatePgauditForRegulatedTenants(context.Background(), tenants, pgauditConfigured); err != nil {
+		if err.Error() == admin.PgauditStartupFatalMessage {
+			if os.Getenv("LENNY_ENV") == "production" {
+				log.Fatalf("lenny-gateway: %s", err.Error())
+			}
+			log.Printf("lenny-gateway: WARNING: %s (non-production, continuing)", err.Error())
+		} else {
+			log.Printf("lenny-gateway: WARNING: §11.7 pgaudit compliance preflight could not list tenants: %v", err)
+		}
+	}
+
+	// spec: §11.7 line 375 — when audit.pgaudit.enabled is true, verify
+	// the pgaudit extension is installed and pgaudit.log includes the DDL
+	// and ROLE classes. A failed check is fatal in production when a
+	// regulated tenant is present; otherwise it is logged. F-11.7.10.
+	if *auditPgauditEnabled && pgPool != nil {
+		if err := pgaudit.Preflight(context.Background(), pgPool); err != nil {
+			regulatedPresent := admin.ValidatePgauditForRegulatedTenants(
+				context.Background(), tenants, false) != nil
+			if regulatedPresent && os.Getenv("LENNY_ENV") == "production" {
+				log.Fatalf("lenny-gateway: FATAL: §11.7 pgaudit preflight failed with a regulated tenant present: %v", err)
+			}
+			log.Printf("lenny-gateway: WARNING: §11.7 pgaudit preflight failed: %v", err)
 		}
 	}
 
@@ -4131,6 +4169,12 @@ func main() {
 	// tenant create/update and environment creation with
 	// COMPLIANCE_SIEM_REQUIRED when SIEM is absent. F-11.7.2.
 	adminRouter = adminRouter.WithSIEMConfigured(*auditSIEMEndpoint != "")
+	// spec: §11.7 lines 374-379 — record whether pgaudit is fully
+	// configured (audit.pgaudit.enabled true and a sinkEndpoint set) so
+	// the admin compliance gate rejects regulated-profile tenant
+	// create/update and environment creation with COMPLIANCE_PGAUDIT_REQUIRED
+	// when it is not. F-11.7.10.
+	adminRouter = adminRouter.WithPgauditConfigured(*auditPgauditEnabled && *auditPgauditSinkEndpoint != "")
 	// §15.1 lines 891-892 / §24.13 lines 150-151: wire the
 	// schema-migration management endpoints when a Postgres DSN is set
 	// (the migrations the runner applies live in the same database).

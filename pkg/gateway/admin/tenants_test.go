@@ -43,15 +43,15 @@ func (r *recordingAudit) snapshot() []admin.AuditEvent {
 func newAdminServer(t *testing.T) (*admin.Router, *tenantstore.Memory) {
 	t.Helper()
 	store := tenantstore.NewMemory()
-	// §11.7 — the default test server runs with SIEM configured so the
-	// regulated-profile compliance gate (F-11.7.2) does not block tests
-	// that exercise unrelated tenant behaviour. The gate's own tests build
-	// a SIEM-unconfigured router explicitly.
+	// §11.7 — the default test server runs with SIEM and pgaudit configured
+	// so the regulated-profile compliance gates (F-11.7.2 / F-11.7.10) do
+	// not block tests that exercise unrelated tenant behaviour. The gates'
+	// own tests build an unconfigured router explicitly.
 	router := admin.NewRouter(store, admin.Options{
 		Clock: func() time.Time {
 			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		},
-	}).WithSIEMConfigured(true)
+	}).WithSIEMConfigured(true).WithPgauditConfigured(true)
 	return router, store
 }
 
@@ -790,11 +790,12 @@ func TestNoAuditEmissionOnFailures(t *testing.T) {
 func newAuditedAdminServer(t *testing.T) (*admin.Router, *recordingAudit) {
 	t.Helper()
 	audit := &recordingAudit{}
-	// §11.7 F-11.7.2 — SIEM configured by default; see newAdminServer.
+	// §11.7 F-11.7.2 / F-11.7.10 — SIEM and pgaudit configured by default;
+	// see newAdminServer.
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,
-	}).WithSIEMConfigured(true)
+	}).WithSIEMConfigured(true).WithPgauditConfigured(true)
 	return router, audit
 }
 

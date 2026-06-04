@@ -379,6 +379,15 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 			map[string]any{"tenantId": tenant, "complianceProfile": row.ComplianceProfile})
 		return
 	}
+	// spec: §11.7 line 377 — environment creation under a regulated tenant
+	// also re-checks pgaudit configuration on every request and rejects
+	// with COMPLIANCE_PGAUDIT_REQUIRED when pgaudit has become absent.
+	if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requirePgauditForProfile(row.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PGAUDIT_REQUIRED",
+			compliancePgauditRequiredMessage(row.ComplianceProfile),
+			map[string]any{"tenantId": tenant, "complianceProfile": row.ComplianceProfile})
+		return
+	}
 	if !r.requireEnvironmentTierOverride(w, req, tenant, body.WorkspaceTier) {
 		return
 	}

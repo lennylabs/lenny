@@ -221,6 +221,14 @@ type Router struct {
 	// COMPLIANCE_SIEM_REQUIRED when it is false. spec: §11.7 lines 445-451.
 	siemConfigured bool
 
+	// pgauditConfigured mirrors whether the platform has both
+	// `audit.pgaudit.enabled: true` and `audit.pgaudit.sinkEndpoint`
+	// configured. The §11.7 item-5 compliance gate rejects creating or
+	// updating a tenant to a regulated complianceProfile (and creating an
+	// environment under one) with COMPLIANCE_PGAUDIT_REQUIRED when it is
+	// false. spec: §11.7 lines 374-379.
+	pgauditConfigured bool
+
 	reconciliationResumer ReconciliationResumer
 	poolStatus            PoolStatusReader
 	crdGenerations        CRDGenerationReader
@@ -413,6 +421,36 @@ func complianceSIEMRequiredMessage(profile string) string {
 // configured. spec: §11.7 lines 445-451.
 func (r *Router) requireSIEMForProfile(profile string) bool {
 	return regulatedComplianceProfiles[profile] && !r.siemConfigured
+}
+
+// WithPgauditConfigured records whether the platform has both
+// `audit.pgaudit.enabled: true` and `audit.pgaudit.sinkEndpoint`
+// configured. When false, the §11.7 item-5 compliance gate rejects
+// creating or updating a tenant to a regulated complianceProfile (soc2,
+// fedramp, hipaa), and creating an environment under such a tenant, with
+// COMPLIANCE_PGAUDIT_REQUIRED (HTTP 422). The production gateway passes
+// `audit.pgaudit.enabled && audit.pgaudit.sinkEndpoint != ""`.
+// spec: §11.7 lines 374-379.
+func (r *Router) WithPgauditConfigured(configured bool) *Router {
+	r.pgauditConfigured = configured
+	return r
+}
+
+// compliancePgauditRequiredMessage is the §11.7 line 377 422 body for the
+// pgaudit hard-requirement gate.
+func compliancePgauditRequiredMessage(profile string) string {
+	return "tenant.complianceProfile '" + profile + "' requires audit.pgaudit.enabled to be true and " +
+		"audit.pgaudit.sinkEndpoint to be configured. pgaudit DDL/ROLE capture to an external append-only " +
+		"sink closes the residual tamper window between periodic grant checks; it is mandatory for a " +
+		"regulated compliance posture."
+}
+
+// requirePgauditForProfile reports whether the §11.7 item-5 gate must
+// reject an operation that lands a tenant on the given complianceProfile:
+// the profile is regulated (soc2, fedramp, hipaa) and pgaudit is not
+// fully configured. spec: §11.7 lines 374-379.
+func (r *Router) requirePgauditForProfile(profile string) bool {
+	return regulatedComplianceProfiles[profile] && !r.pgauditConfigured
 }
 
 // emit fires an audit event when an AuditSink is wired. Never
@@ -1176,6 +1214,34 @@ func ValidateSIEMForRegulatedTenants(ctx context.Context, tenants tenantstore.St
 	return nil
 }
 
+// PgauditStartupFatalMessage is the §11.7 line 377 fatal message the
+// gateway logs when it refuses to start with a regulated tenant and
+// pgaudit not fully configured (`audit.pgaudit.enabled` false or
+// `audit.pgaudit.sinkEndpoint` unset).
+const PgauditStartupFatalMessage = "FATAL: one or more tenants have a regulated complianceProfile but audit.pgaudit.enabled is not true with audit.pgaudit.sinkEndpoint configured. Enable pgaudit DDL/ROLE capture to an external sink or downgrade tenant complianceProfile to 'none' via POST /v1/admin/tenants/{id}/compliance-profile/decommission."
+
+// ValidatePgauditForRegulatedTenants enforces the §11.7 line 377 startup
+// gate: when any active tenant carries a regulated complianceProfile
+// (soc2, fedramp, hipaa) and pgaudit is not fully configured, it returns
+// an error carrying PgauditStartupFatalMessage so the production gateway
+// refuses to start. When pgauditConfigured is true the scan is skipped.
+// spec: §11.7 lines 374-379.
+func ValidatePgauditForRegulatedTenants(ctx context.Context, tenants tenantstore.Store, pgauditConfigured bool) error {
+	if pgauditConfigured {
+		return nil
+	}
+	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return err
+	}
+	for _, t := range rows {
+		if regulatedComplianceProfiles[t.ComplianceProfile] {
+			return errors.New(PgauditStartupFatalMessage)
+		}
+	}
+	return nil
+}
+
 // handleCreateTenant implements POST /v1/admin/tenants.
 func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	var body TenantPayload
@@ -1272,6 +1338,15 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	if r.requireSIEMForProfile(body.ComplianceProfile) {
 		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
 			complianceSIEMRequiredMessage(body.ComplianceProfile),
+			map[string]any{"field": "complianceProfile", "complianceProfile": body.ComplianceProfile})
+		return
+	}
+	// spec: §11.7 line 377 — a regulated complianceProfile additionally
+	// requires pgaudit DDL/ROLE capture to an external sink. The gate is
+	// unbypassable, symmetric with the SIEM requirement above.
+	if r.requirePgauditForProfile(body.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PGAUDIT_REQUIRED",
+			compliancePgauditRequiredMessage(body.ComplianceProfile),
 			map[string]any{"field": "complianceProfile", "complianceProfile": body.ComplianceProfile})
 		return
 	}
@@ -1502,6 +1577,15 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		if body.ComplianceProfile != nil && r.requireSIEMForProfile(*body.ComplianceProfile) {
 			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
 				complianceSIEMRequiredMessage(*body.ComplianceProfile),
+				map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
+			return
+		}
+		// spec: §11.7 line 377 — updating to a regulated complianceProfile
+		// with pgaudit not fully configured is rejected with
+		// COMPLIANCE_PGAUDIT_REQUIRED, symmetric with create.
+		if body.ComplianceProfile != nil && r.requirePgauditForProfile(*body.ComplianceProfile) {
+			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PGAUDIT_REQUIRED",
+				compliancePgauditRequiredMessage(*body.ComplianceProfile),
 				map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
 			return
 		}

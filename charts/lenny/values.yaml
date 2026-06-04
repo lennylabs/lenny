@@ -1330,6 +1330,18 @@ audit:
     # the alert compares against an operator-tunable threshold rather
     # than a literal. F-12.3.6 / F-12.3.17.
     maxDeliveryLagSeconds: 30
+  # §11.7 item 5 audit.pgaudit: pgaudit DDL/ROLE event capture to an
+  # external append-only sink. When `enabled` is true the gateway's
+  # startup preflight verifies the pgaudit extension is installed and
+  # pgaudit.log includes the DDL and ROLE classes (fatal in production
+  # with a regulated complianceProfile if the check fails). A tenant with
+  # a regulated complianceProfile (soc2, fedramp, hipaa) additionally
+  # requires `enabled: true` with `sinkEndpoint` set, enforced at startup
+  # (fatal in production) and at regulated tenant/environment create or
+  # update (HTTP 422 COMPLIANCE_PGAUDIT_REQUIRED). F-11.7.10.
+  pgaudit:
+    enabled: false
+    sinkEndpoint: ""
   # §11.7 OCSF translator: the background state machine that serializes
   # each audit row to the canonical OCSF v1.1.0 wire form and multicasts
   # it to the SIEM forwarder, advancing ocsf_translation_state. F-11.7.1
