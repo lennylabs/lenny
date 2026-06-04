@@ -4,6 +4,7 @@ package tenantdeletion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,6 +74,28 @@ type SoftDisabler interface {
 	SoftDisableTenant(ctx context.Context, tenantID string) error
 }
 
+// LegalHoldEnumerator is the §12.8 Phase 3.5 standard-path seam: it
+// returns every active legal hold scoped to the tenant (sessions,
+// artifacts, audit-range, workspace-snapshot). When nil, the controller
+// treats the tenant as unheld and advances straight to Phase 4 — the
+// fail-open posture is acceptable only for a deployment that has no
+// legal-hold surface wired. spec: §12.8 line 878.
+type LegalHoldEnumerator interface {
+	// ActiveTenantHolds enumerates the tenant's active legal holds. An
+	// empty result means the deletion may proceed into Phase 4.
+	ActiveTenantHolds(ctx context.Context, tenantID string) ([]HeldResource, error)
+}
+
+// DeletionBlockedSink receives the §12.8 admin.tenant.deletion_blocked
+// audit event the controller emits when Phase 3.5 pauses on an active
+// legal hold. It is optional and called once per block transition (not
+// on every re-evaluation pass). spec: §12.8 line 878.
+type DeletionBlockedSink interface {
+	// DeletionBlocked records that tenantID's deletion is paused on the
+	// given active holds.
+	DeletionBlocked(ctx context.Context, tenantID string, holds []HeldResource)
+}
+
 // Reconciler drives the §12.8 tenant-deletion lifecycle. Each call to
 // ReconcileTenant advances one job by one phase; the manager adapter
 // (runnable.go) reconciles every active job on a timer.
@@ -85,19 +108,33 @@ type Reconciler struct {
 	// Jobs is the §12.8 job registry the controller resumes from.
 	Jobs Store
 	// KMS drives the §12.9 per-tenant KMS key lifecycle. Phase 4a
-	// destroys the tenant key through it. Required.
+	// destroys the tenant key through it for a T4 tenant. Optional: a
+	// reconciler hosted with only a probe-capable kms.Provider (e.g. the
+	// gateway, whose provider is the §4 wrap/unwrap data path and cannot
+	// run control-plane DestroyKey) passes nil, in which case Phase 4a is
+	// a no-op and the T4 key is destroyed out-of-band against the cloud
+	// KMS API per §12.5 line 301. A non-T4 tenant never touches KMS.
 	KMS *tenantkms.Lifecycle
 
-	// Phase action seams. Eraser, Revoker, Cleaner, and Receipts are
-	// required; Disabler and Terminator are optional (a nil value
-	// makes the corresponding phase a no-op beyond the state
-	// transition).
+	// Phase action seams. Eraser and Receipts are required; Disabler,
+	// Terminator, Revoker, Cleaner, and LegalHolds are optional. A nil
+	// optional seam makes the corresponding phase a no-op beyond the
+	// state transition: Phase 4 (Eraser) is the substantive erasure that
+	// every deployment must wire, while graceful-shutdown (Phase 2),
+	// credential revocation (Phase 3), and CRD cleanup (Phase 5) degrade
+	// to the Phase 4 DeleteByTenant teardown when the host has no live
+	// seam (e.g. a gateway-hosted reconciler with no Kubernetes client
+	// for CRD cleanup). A nil LegalHolds advances Phase 3.5 unconditionally.
 	Disabler   SoftDisabler
 	Terminator SessionTerminator
 	Revoker    CredentialRevoker
 	Eraser     TenantEraser
 	Cleaner    CRDCleaner
 	Receipts   ReceiptSink
+	LegalHolds LegalHoldEnumerator
+	// Blocked receives the §12.8 admin.tenant.deletion_blocked event when
+	// Phase 3.5 pauses on an active hold. Optional.
+	Blocked DeletionBlockedSink
 
 	// Clock supplies the current time. Nil defaults to time.Now in UTC.
 	Clock func() time.Time
@@ -176,6 +213,13 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 	}
 
 	if err := r.runPhase(ctx, &job); err != nil {
+		// §12.8 Phase 3.5: an active legal hold pauses the deletion rather
+		// than failing it. The job stays at PhaseLegalHoldSegregation in
+		// state deleting; a later pass re-evaluates the ledger once the
+		// holds clear (or the operator force-deletes).
+		if errors.Is(err, ErrBlockedByLegalHold) {
+			return r.block(ctx, &job)
+		}
 		return r.fail(ctx, tenantID, job.Phase, err)
 	}
 
@@ -190,6 +234,10 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		j.Phase = next
 		j.State = stateForPhase(next)
 		j.UpdatedAt = now
+		// A phase advanced cleanly: clear any prior Phase 3.5 block so a
+		// hold that was released no longer leaves a stale blocked marker.
+		j.BlockedReason = ""
+		j.BlockedHolds = nil
 		// Carry forward the per-phase results accumulated on the local
 		// copy by runPhase (deleted counts, KMS outcome, receipt).
 		j.DeletedCounts = job.DeletedCounts
@@ -201,6 +249,30 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		return nil
 	})
 	return uerr
+}
+
+// block records the §12.8 Phase 3.5 standard-path pause on the job,
+// leaving Phase unchanged so a later pass re-evaluates the ledger. The
+// admin.tenant.deletion_blocked audit event is emitted once per block
+// transition (when the job was not already blocked), not on every pass,
+// so a long-held tenant does not flood the audit chain. block returns
+// nil so ReconcileAll continues advancing the other tenants.
+func (r *Reconciler) block(ctx context.Context, job *Job) error {
+	firstBlock := job.BlockedReason == ""
+	holds := append([]HeldResource(nil), job.BlockedHolds...)
+	if _, err := r.Jobs.Update(ctx, job.TenantID, func(j *Job) error {
+		j.BlockedReason = fmt.Sprintf("%d active legal hold(s) scoped to the tenant", len(holds))
+		j.BlockedHolds = append([]HeldResource(nil), holds...)
+		j.State = TenantDeleting
+		j.UpdatedAt = r.now()
+		return nil
+	}); err != nil {
+		return err
+	}
+	if firstBlock && r.Blocked != nil {
+		r.Blocked.DeletionBlocked(ctx, job.TenantID, holds)
+	}
+	return nil
 }
 
 // runPhase executes the action for job.Phase, mutating the in-memory
@@ -224,11 +296,36 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		return nil
 
 	case PhaseRevokeCredentials:
-		// §12.8 Phase 3: revoke OAuth tokens and credential leases.
-		if r.Revoker == nil {
-			return fmt.Errorf("tenantdeletion: Phase 3 requires a CredentialRevoker")
+		// §12.8 Phase 3: revoke OAuth tokens and credential leases. When
+		// no revoker is wired, the tenant's token and credential-pool rows
+		// are removed by Phase 4's DeleteByTenant a pass later, which also
+		// invalidates them.
+		if r.Revoker != nil {
+			return r.Revoker.RevokeTenantCredentials(ctx, job.TenantID)
 		}
-		return r.Revoker.RevokeTenantCredentials(ctx, job.TenantID)
+		return nil
+
+	case PhaseLegalHoldSegregation:
+		// §12.8 Phase 3.5 standard path: before any destructive operation,
+		// enumerate active tenant-scoped legal holds. If any are present,
+		// pause here (ErrBlockedByLegalHold) so Phase 4 / 4a never destroy
+		// held evidence — that would be spoliation. The override/escrow
+		// path is POST /v1/admin/tenants/{id}/force-delete. A nil
+		// enumerator advances unconditionally.
+		if r.LegalHolds == nil {
+			job.BlockedHolds = nil
+			return nil
+		}
+		holds, err := r.LegalHolds.ActiveTenantHolds(ctx, job.TenantID)
+		if err != nil {
+			return err
+		}
+		if len(holds) > 0 {
+			job.BlockedHolds = holds
+			return fmt.Errorf("%w: %d hold(s)", ErrBlockedByLegalHold, len(holds))
+		}
+		job.BlockedHolds = nil
+		return nil
 
 	case PhaseDeleteData:
 		// §12.8 Phase 4: DeleteByTenant across every store, in
@@ -254,11 +351,10 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		// for a non-T4 tenant and idempotent for an already-destroyed
 		// key. A failed KMS cleanup is surfaced in the receipt but
 		// §12.8 Phase 4a does not let it block the remaining phases —
-		// only a transport error from the KeyManager is returned.
-		if r.KMS == nil {
-			return fmt.Errorf("tenantdeletion: Phase 4a requires a TenantKMS lifecycle")
-		}
-		if job.WorkspaceTier != tenantkms.WorkspaceTierT4 {
+		// only a transport error from the KeyManager is returned. A nil
+		// KMS (probe-only host) or a non-T4 tenant skips the step; the
+		// receipt then records KMSKeyDestroyed=false.
+		if r.KMS == nil || job.WorkspaceTier != tenantkms.WorkspaceTierT4 {
 			return nil
 		}
 		info, err := r.KMS.DestroyForTenant(ctx, job.TenantID)
@@ -269,11 +365,14 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		return nil
 
 	case PhaseCleanCRDs:
-		// §12.8 Phase 5: remove tenant-scoped CRD instances.
-		if r.Cleaner == nil {
-			return fmt.Errorf("tenantdeletion: Phase 5 requires a CRDCleaner")
+		// §12.8 Phase 5: remove tenant-scoped CRD instances. Optional: a
+		// reconciler hosted without a Kubernetes client (e.g. in the
+		// gateway) relies on Phase 2 session termination and the warm-pool
+		// GC to reap the tenant's SandboxClaims.
+		if r.Cleaner != nil {
+			return r.Cleaner.CleanTenantCRDs(ctx, job.TenantID)
 		}
-		return r.Cleaner.CleanTenantCRDs(ctx, job.TenantID)
+		return nil
 
 	case PhaseProduceReceipt:
 		// §12.8 Phase 6: write the erasure receipt to the audit trail.

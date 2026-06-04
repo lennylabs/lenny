@@ -292,6 +292,14 @@ mappings:
     category_name: Discovery
     activity_id: 3
     activity_name: Update
+  - event_type: gdpr.tenant_erased
+    match: exact
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 4
+    activity_name: Delete
   - event_type: node.drain.forced
     match: exact
     class_uid: 6003
@@ -357,6 +365,22 @@ mappings:
     activity_id: 3
     activity_name: Update
   - event_type: admin.tenant.deleted
+    match: prefix
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 4
+    activity_name: Delete
+  - event_type: admin.tenant.deletion_initiated
+    match: prefix
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 4
+    activity_name: Delete
+  - event_type: admin.tenant.deletion_blocked
     match: prefix
     class_uid: 5001
     class_name: Entity Management

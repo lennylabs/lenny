@@ -74,6 +74,13 @@ const (
 	// PhaseRevokeCredentials — §12.8 Phase 3: revoke OAuth tokens and
 	// refresh tokens, invalidate credential pool leases.
 	PhaseRevokeCredentials Phase = "revoke_credentials"
+	// PhaseLegalHoldSegregation — §12.8 Phase 3.5: before any destructive
+	// Phase 4 / Phase 4a operation, enumerate active tenant-scoped legal
+	// holds. The standard path blocks the deletion while any hold is in
+	// force; the override path (POST /v1/admin/tenants/{id}/force-delete)
+	// segregates held evidence into a region-scoped escrow before
+	// proceeding. spec: §12.8 line 872, lines 878-889.
+	PhaseLegalHoldSegregation Phase = "legal_hold_segregation"
 	// PhaseDeleteData — §12.8 Phase 4: DeleteByTenant on every store
 	// in the erasure scope, in dependency order.
 	PhaseDeleteData Phase = "delete_data"
@@ -100,6 +107,7 @@ var phaseOrder = []Phase{
 	PhaseSoftDisable,
 	PhaseTerminateSessions,
 	PhaseRevokeCredentials,
+	PhaseLegalHoldSegregation,
 	PhaseDeleteData,
 	PhaseDestroyKMSKey,
 	PhaseCleanCRDs,
@@ -131,7 +139,7 @@ func stateForPhase(p Phase) TenantState {
 	switch p {
 	case PhaseSoftDisable, PhaseTerminateSessions:
 		return TenantDisabling
-	case PhaseRevokeCredentials, PhaseDeleteData, PhaseDestroyKMSKey, PhaseCleanCRDs:
+	case PhaseRevokeCredentials, PhaseLegalHoldSegregation, PhaseDeleteData, PhaseDestroyKMSKey, PhaseCleanCRDs:
 		return TenantDeleting
 	case PhaseProduceReceipt, PhaseCompleted:
 		// Phase 6 transitions the tenant to deleted on completion.
@@ -178,6 +186,28 @@ type Job struct {
 	Receipt *Receipt
 	// Failure carries the error reason when Phase is failed.
 	Failure string
+	// BlockedReason carries the §12.8 Phase 3.5 standard-path pause
+	// reason while one or more active legal holds prevent the deletion
+	// from advancing into Phase 4. It is empty once the holds clear (or
+	// the operator exercises the force-delete override). The job stays at
+	// PhaseLegalHoldSegregation, not PhaseFailed, while blocked so a later
+	// pass re-evaluates the ledger without an operator retry.
+	BlockedReason string
+	// BlockedHolds is the set of active tenant-scoped legal holds the
+	// §12.8 Phase 3.5 enumeration found, carried so the
+	// admin.tenant.deletion_blocked audit event can list the held
+	// resource IDs. Empty when the deletion is not blocked.
+	BlockedHolds []HeldResource
+}
+
+// HeldResource is one §12.8 Phase 3.5 active legal hold scoped to the
+// tenant under deletion. resourceType is one of session, artifact,
+// audit_range, or workspace_snapshot. spec: §12.8 line 878.
+type HeldResource struct {
+	// ResourceType is the §12.8 legal-hold ledger resource class.
+	ResourceType string
+	// ResourceID identifies the held resource within its type.
+	ResourceID string
 }
 
 // Receipt is the §12.8 Phase 6 erasure receipt: the audit-trail proof
@@ -204,6 +234,12 @@ var (
 	ErrAlreadyExists = errors.New("tenantdeletion: job already exists")
 	// ErrMissingTenantID — a job was created with an empty tenant id.
 	ErrMissingTenantID = errors.New("tenantdeletion: tenant ID required")
+	// ErrBlockedByLegalHold — §12.8 Phase 3.5 standard path: one or more
+	// active legal holds are scoped to the tenant, so the deletion pauses
+	// before Phase 4 rather than destroying held evidence. It is not a
+	// failure; the job stays at PhaseLegalHoldSegregation and a later pass
+	// re-evaluates the ledger once the holds clear.
+	ErrBlockedByLegalHold = errors.New("tenantdeletion: blocked by active legal hold")
 )
 
 // Store is the §12.8 tenant-deletion job registry. The controller
@@ -307,6 +343,11 @@ func cloneJob(j Job) Job {
 			dc[k] = v
 		}
 		j.DeletedCounts = dc
+	}
+	if j.BlockedHolds != nil {
+		bh := make([]HeldResource, len(j.BlockedHolds))
+		copy(bh, j.BlockedHolds)
+		j.BlockedHolds = bh
 	}
 	if j.Receipt != nil {
 		r := *j.Receipt

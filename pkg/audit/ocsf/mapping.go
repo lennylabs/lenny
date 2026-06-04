@@ -122,6 +122,9 @@ var exactCatalog = map[string]ClassMapping{
 	"gdpr.erasure_blocked_by_hold":                entityMgmt(ActivityUnknown),
 	"gdpr.legal_hold_overridden":                  entityMgmt(ActivityUpdate),
 	"gdpr.legal_hold_overridden_tenant":           entityMgmt(ActivityUpdate),
+	// §12.8 Phase 6 tenant-deletion erasure receipt → Entity Management
+	// (5001), Delete. Retained under audit.gdprRetentionDays. F-12.8.1.
+	"gdpr.tenant_erased": entityMgmt(ActivityDelete),
 	// §24.12 erasure-job operator recovery actions. A retry re-runs the
 	// DeleteByUser sequence (Delete); clearing the processing restriction
 	// is a state change on the user record (Update). F-24.12.4.
@@ -165,6 +168,9 @@ var prefixCatalog = []struct {
 	{"admin.tenant.created", entityMgmt(ActivityCreate)},
 	{"admin.tenant.updated", entityMgmt(ActivityUpdate)},
 	{"admin.tenant.deleted", entityMgmt(ActivityDelete)},
+	// §12.8 / §24.10 tenant-deletion lifecycle events. F-12.8.1, F-24.10.3.
+	{"admin.tenant.deletion_initiated", entityMgmt(ActivityDelete)},
+	{"admin.tenant.deletion_blocked", entityMgmt(ActivityDelete)},
 	{"admin.user.created", accountChange(ActivityCreate)},
 	{"admin.user.updated", accountChange(ActivityUpdate)},
 	{"admin.user.deleted", accountChange(ActivityDelete)},

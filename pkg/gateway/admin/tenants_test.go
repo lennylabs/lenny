@@ -588,25 +588,63 @@ func TestUpdateTenantMissing(t *testing.T) {
 	}
 }
 
-func TestDeleteTenantSoftDeletes(t *testing.T) {
+// spec: §12.8 line 865; §24.10 row 3 — DELETE initiates the async
+// tenant-deletion lifecycle by transitioning the tenant into
+// `disabling`. The background controller (not this handler) advances it
+// to `deleting` → `deleted` and sets the tombstone. F-12.8.1, F-24.10.3.
+func TestDeleteTenantInitiatesLifecycle_spec_24_10_509(t *testing.T) {
 	router, store := newAdminServer(t)
 	_ = store.Create(nil, tenantstore.Tenant{ID: "acme"})
 
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/admin/tenants/acme", nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("status: %d", rr.Code)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status: got %d, want 202 Accepted", rr.Code)
 	}
 	row, err := store.Get(req.Context(), "acme")
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
-	if row.DeletedAt.IsZero() {
-		t.Errorf("row should have DeletedAt set")
+	// The handler initiates the lifecycle; it does NOT tombstone the row
+	// (that is the controller's Phase 6 job). DeletedAt stays unset.
+	if !row.DeletedAt.IsZero() {
+		t.Errorf("DELETE must not tombstone the row directly; DeletedAt = %v", row.DeletedAt)
 	}
-	if row.IsActive() {
-		t.Errorf("row should not be active after delete")
+	if row.State != tenantstore.TenantStateDisabling {
+		t.Errorf("state after delete = %q, want disabling", row.State)
+	}
+}
+
+// A repeated DELETE on a tenant already mid-lifecycle is idempotent: it
+// re-accepts at 202 without rewinding the deletion phase.
+func TestDeleteTenantIdempotentMidLifecycle_spec_24_10_509(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", State: tenantstore.TenantStateDeleting})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/admin/tenants/acme", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status: got %d, want 202", rr.Code)
+	}
+	row, _ := store.Get(req.Context(), "acme")
+	if row.State != tenantstore.TenantStateDeleting {
+		t.Errorf("a re-issued delete must not rewind the phase; state = %q, want deleting", row.State)
+	}
+}
+
+// A DELETE on an already-tombstoned tenant reads as not-found.
+func TestDeleteTenantTombstoneNotFound_spec_24_10_509(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme"})
+	_ = store.SoftDelete(nil, "acme", time.Now().UTC())
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/admin/tenants/acme", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status on tombstoned tenant: got %d, want 404", rr.Code)
 	}
 }
 
@@ -680,12 +718,12 @@ func TestAuditEmissionOnTenantMutations(t *testing.T) {
 		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Delete
+	// Delete — initiates the §12.8 deletion lifecycle (202 Accepted).
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodDelete, "/v1/admin/tenants/acme", nil),
 	))
-	if rr.Code != http.StatusNoContent {
+	if rr.Code != http.StatusAccepted {
 		t.Fatalf("delete: status %d", rr.Code)
 	}
 
@@ -693,7 +731,7 @@ func TestAuditEmissionOnTenantMutations(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("expected 3 audit events, got %d (%+v)", len(events), events)
 	}
-	want := []string{"admin.tenant.created", "admin.tenant.updated", "admin.tenant.soft_deleted"}
+	want := []string{"admin.tenant.created", "admin.tenant.updated", "admin.tenant.deletion_initiated"}
 	for i, w := range want {
 		if events[i].Type != w {
 			t.Errorf("events[%d].Type: got %q, want %q", i, events[i].Type, w)

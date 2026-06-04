@@ -1766,12 +1766,50 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 	_ = json.NewEncoder(w).Encode(fromTenant(updated))
 }
 
-// handleDeleteTenant implements DELETE /v1/admin/tenants/{id}. The
-// minimal implementation soft-deletes per §12.8; full hard-delete
-// (the tenant-deletion controller) ships in Phase 13.
+// handleDeleteTenant implements DELETE /v1/admin/tenants/{id}. It
+// initiates the §12.8 / §24.10 row-3 tenant-deletion lifecycle by
+// transitioning the tenant from active into `disabling`; the background
+// tenant-deletion controller (wired in the gateway) then advances the
+// tenant through `disabling → deleting → deleted` asynchronously,
+// running the §12.8 phases (soft-disable, terminate sessions, revoke
+// credentials, legal-hold segregation, DeleteByTenant, KMS-key destroy,
+// CRD cleanup, erasure receipt). The handler returns 202 immediately;
+// operators monitor progress via GET /v1/admin/tenants/{id}.
+//
+// The transition is idempotent: a tenant already mid-lifecycle
+// (`disabling`/`deleting`) is re-accepted at 202 with its current state,
+// and a deletion request never restarts a lifecycle in flight. A
+// tombstoned (`deleted`) tenant reads as not-found.
+//
+// spec: §12.8 line 865; §24.10 row 3 ("Initiate tenant deletion
+// lifecycle ... runs asynchronously"). F-12.8.1, F-24.10.3.
 func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	if err := r.tenants.SoftDelete(req.Context(), id, r.clock()); err != nil {
+	row, err := r.tenants.Get(req.Context(), id)
+	if err != nil {
+		if errors.Is(err, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// A tombstoned tenant is already deleted; the lifecycle is terminal.
+	if tenantStateOrActive(row.State) == tenantstore.TenantStateDeleted || !row.DeletedAt.IsZero() {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+		return
+	}
+	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
+		// Only an active tenant transitions into the lifecycle; a tenant
+		// already disabling/deleting is left at its current phase so a
+		// repeated DELETE does not rewind it.
+		if t.State == "" || t.State == tenantstore.TenantStateActive {
+			t.State = tenantstore.TenantStateDisabling
+			t.UpdatedAt = r.clock()
+		}
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, tenantstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 			return
@@ -1786,8 +1824,12 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	r.emit(req.Context(), principal, "admin.tenant.soft_deleted", id, nil)
-	w.WriteHeader(http.StatusNoContent)
+	r.emit(req.Context(), principal, "admin.tenant.deletion_initiated", id,
+		map[string]any{"state": tenantStateOrActive(updated.State)})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"id":    id,
+		"state": tenantStateOrActive(updated.State),
+	})
 }
 
 // writeError writes the §15.1 / §25.2 canonical admin error envelope:

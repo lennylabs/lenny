@@ -88,6 +88,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
+	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
@@ -4330,6 +4331,81 @@ func main() {
 		// T3 72h bound the alert's scalar() compares against.
 		erasureSampler := erasurejob.NewSampler(erasureJobs, gwMetrics, 72*time.Hour, clockinject.Now)
 		go erasureSampler.Run(context.Background(), 30*time.Second)
+	}
+
+	// §12.8 tenant-deletion lifecycle. The gateway hosts the background
+	// reconciler that walks a tenant marked for deletion (state
+	// `disabling`/`deleting`, set by DELETE /v1/admin/tenants/{id})
+	// through the §12.8 phases: soft-disable, terminate sessions, revoke
+	// credentials, Phase 3.5 legal-hold segregation (standard blocking
+	// path), DeleteByTenant across the erasure-scope stores, Phase 4a KMS
+	// destroy (operator-driven on a probe-only host), CRD cleanup, and the
+	// erasure receipt. The persisted TenantState column is the durable
+	// anchor; an in-memory Job is reconstructed from it each pass. A
+	// Postgres advisory lock keeps the destructive loop on one replica.
+	// spec: §12.8 line 865, lines 872-889. F-12.8.1, F-24.10.3.
+	{
+		var tenantErasers []namedTenantEraser
+		if erasureLeaseStore != nil {
+			tenantErasers = append(tenantErasers, namedTenantEraser{"leases", erasureLeaseStore.DeleteByTenant})
+		}
+		if quotaCounter != nil {
+			tenantErasers = append(tenantErasers, namedTenantEraser{"quota", quotaCounter.DeleteByTenant})
+		}
+		if memories != nil {
+			mem := memories
+			tenantErasers = append(tenantErasers, namedTenantEraser{"memory", func(ctx context.Context, tenantID string) (int, error) {
+				return 0, mem.DeleteByTenant(ctx, tenantID)
+			}})
+		}
+		tenantErasers = append(tenantErasers,
+			namedTenantEraser{"eval_results", evals.DeleteByTenant},
+			namedTenantEraser{"interactions", interactions.DeleteByTenant},
+			// SessionStore is the FK parent of the session-keyed stores
+			// above, so it is erased after them (§12.8 Phase 4 order).
+			namedTenantEraser{"sessions", sessions.DeleteByTenant},
+		)
+		if pgPool != nil {
+			tenantErasers = append(tenantErasers,
+				namedTenantEraser{"tokens", issuedtokenstore.New(pgPool).DeleteByTenant})
+		}
+		tenantErasers = append(tenantErasers,
+			namedTenantEraser{"credential_pool", credentialPools.DeleteByTenant})
+
+		deletionReconciler := &tenantdeletion.Reconciler{
+			Jobs:     tenantdeletion.NewMemory(),
+			Eraser:   &tenantEraser{erasers: tenantErasers},
+			Disabler: tenantStateDisabler{tenants: tenants, clock: clockinject.Now},
+			Clock:    clockinject.Now,
+		}
+		if auditAppender != nil {
+			deletionReconciler.Receipts = auditReceiptSink{appender: auditAppender, clock: clockinject.Now}
+			deletionReconciler.Blocked = tenantDeletionBlockedSink{appender: auditAppender, clock: clockinject.Now}
+		}
+		// §12.8 Phase 3.5 standard path: enumerate active tenant-scoped
+		// legal holds (session + artifact) so the deletion pauses rather
+		// than destroying held evidence.
+		holdEnum := tenantHoldEnumerator{sessions: sessions}
+		if artifactCatalog != nil {
+			holdEnum.artifacts = artifactCatalog
+		}
+		deletionReconciler.LegalHolds = holdEnum
+
+		// The receipt sink is required by the reconciler; without an audit
+		// appender (a minimal no-audit posture) the lifecycle cannot write
+		// its §12.8 Phase 6 proof, so the runner is only started when one
+		// is wired.
+		if deletionReconciler.Receipts != nil {
+			runner := &tenantDeletionRunner{
+				reconciler: deletionReconciler,
+				tenants:    tenants,
+				clock:      clockinject.Now,
+				interval:   30 * time.Second,
+				pool:       pgPool,
+			}
+			go runner.Start(context.Background())
+			log.Printf("lenny-gateway: §12.8 tenant-deletion controller started (erasure stores: %d)", len(tenantErasers))
+		}
 	}
 	if pgPool != nil {
 		// §13.3 operator-initiated token revocation, durable in the
