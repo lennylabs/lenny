@@ -131,6 +131,19 @@ run: ## §17.4 Source Mode: gateway + in-memory stores + built-in echo runtime. 
 	@LENNY_AGENT_BINARY="$(LENNY_AGENT_BINARY)" ./bin/lenny-gateway --addr :8080 --dev-mode \
 		$(if $(LENNY_AGENT_BINARY),,--agent-runtime echo)
 
+.PHONY: compose
+compose: ## §17.4 Compose Mode: full local stack (gateway + echo agent + Postgres + Redis + MinIO) via docker compose.
+	docker compose up
+
+.PHONY: compose-down
+compose-down: ## §17.4 tear down the Compose Mode stack and its volumes.
+	docker compose down -v
+
+.PHONY: compose-tls
+compose-tls: ## §17.4 credential-testing profile: generate self-signed mTLS material, then start with LENNY_DEV_TLS=true.
+	@scripts/dev-certs.sh ./lenny-data/certs
+	LENNY_DEV_TLS=true docker compose --profile credentials up
+
 .PHONY: test-smoke
 test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...

@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: MIT
+
+# §17.4 Compose Mode — full local stack.
+#
+#   docker compose up
+#
+# Starts the production gateway against real Postgres, Redis, and MinIO
+# backends, with the built-in echo runtime serving as the single agent
+# (the §17.4 line 262 zero-credential mode). The gateway runs the
+# controller simulation and the echo agent in-process, the same
+# substitution Source Mode (`make run`) makes for a full Kubernetes pod
+# path; the production CRD/controller/pod-scheduling path is exercised by
+# Embedded Mode (`lenny up`). What Compose Mode adds over Source Mode is
+# the real infrastructure dependencies (Postgres, Redis, MinIO) in place
+# of the in-memory stores.
+#
+# Profiles:
+#   (default)        gateway + echo agent + Postgres + Redis + MinIO
+#   credentials      self-signed mTLS material under ./lenny-data/certs
+#                    (use `make compose-tls`); sets LENNY_DEV_TLS=true
+#   observability    Prometheus + Grafana + Jaeger
+#   smoke            one-shot smoke test (`docker compose run smoke-test`)
+#
+# All traffic in the default profile is plain HTTP. Do not configure real
+# LLM provider credentials without the credentials profile (see §17.4 and
+# compose/README.md).
+
+services:
+
+  # Real Postgres for sessions, transcripts, tenants, and runtimes. The
+  # pgvector base preloads the extension migration 0044 needs. The
+  # migrate one-shot below applies the schema before the gateway starts.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: lenny
+      POSTGRES_PASSWORD: lenny
+      POSTGRES_DB: lenny
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lenny"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # Real Redis for quota, rate-limit, coordination, and pub/sub. AUTH and
+  # TLS are deliberately omitted (the gateway runs with
+  # --redis-allow-insecure); §12.4 mandates both in production, where the
+  # Helm chart applies them.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # Single MinIO container for §4.5 artifact storage.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: lenny
+      MINIO_ROOT_PASSWORD: lenny-secret
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - minio-data:/data
+
+  # One-shot: create the artifact bucket the gateway writes to. The
+  # blobstore client does not create the bucket itself, so this runs
+  # before the gateway.
+  minio-setup:
+    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 lenny lenny-secret &&
+        mc mb --ignore-existing local/lenny-artifacts
+    restart: "no"
+
+  # One-shot: apply the embedded Postgres schema before the gateway
+  # connects. The gateway requires the migrations/ schema to be present
+  # (it does not auto-migrate).
+  migrate:
+    build:
+      context: .
+      args:
+        BINARY: lenny-migrate
+    command: ["up"]
+    environment:
+      LENNY_POSTGRES_DSN: "postgres://lenny:lenny@postgres:5432/lenny?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The production gateway, dev mode, wired to the embedded backends. The
+  # built-in echo runtime is the single agent (§17.4 line 262).
+  gateway:
+    build:
+      context: .
+      args:
+        BINARY: lenny-gateway
+    command:
+      - "--addr=:8080"
+      - "--dev-mode"
+      - "--no-environment-policy=allow-all"
+      - "--agent-runtime=echo"
+      - "--redis-allow-insecure"
+    environment:
+      LENNY_DEV_MODE: "true"
+      # §17.4 credential-testing profile sets this to true (make
+      # compose-tls). The gateway listener stays plain HTTP in this
+      # bundle; the credentials profile pre-stages mTLS material under
+      # ./lenny-data/certs for store-to-store TLS and forward use.
+      LENNY_DEV_TLS: "${LENNY_DEV_TLS:-false}"
+      LENNY_POSTGRES_DSN: "postgres://lenny:lenny@postgres:5432/lenny?sslmode=disable"
+      LENNY_REDIS_URL: "redis://redis:6379"
+      LENNY_MINIO_ENDPOINT: "minio:9000"
+      LENNY_MINIO_ACCESS_KEY: "lenny"
+      LENNY_MINIO_SECRET_KEY: "lenny-secret"
+      LENNY_MINIO_BUCKET: "lenny-artifacts"
+      LENNY_MINIO_USE_SSL: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio-setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./lenny-data/certs:/lenny-data/certs:ro
+
+  # §17.4 line 276 Compose Mode smoke test: create an echo session, send
+  # a prompt, verify the response, and exit. Run with
+  # `docker compose run smoke-test`; it is profiled out of `up`.
+  smoke-test:
+    profiles: ["smoke"]
+    image: curlimages/curl:8.11.1
+    depends_on:
+      gateway:
+        condition: service_started
+    entrypoint: ["sh", "/smoke-test.sh"]
+    environment:
+      LENNY_BASE_URL: "http://gateway:8080"
+    volumes:
+      - ./compose/smoke-test.sh:/smoke-test.sh:ro
+
+  # §17.4 credentials profile: generate self-signed mTLS material under
+  # ./lenny-data/certs on first run. `make compose-tls` also runs the
+  # host-side scripts/dev-certs.sh; this in-container generator covers a
+  # bare `docker compose --profile credentials up`.
+  dev-certs:
+    profiles: ["credentials"]
+    image: alpine/openssl:3.3.2
+    entrypoint: ["sh", "/dev-certs.sh", "/lenny-data/certs"]
+    volumes:
+      - ./scripts/dev-certs.sh:/dev-certs.sh:ro
+      - ./lenny-data/certs:/lenny-data/certs
+    restart: "no"
+
+  # §17.4 line 258 optional observability containers.
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./compose/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    volumes:
+      - ./compose/grafana/provisioning:/etc/grafana/provisioning:ro
+
+  jaeger:
+    profiles: ["observability"]
+    image: jaegertracing/all-in-one:1.66.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+
+volumes:
+  postgres-data:
+  minio-data:

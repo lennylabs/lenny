@@ -1,6 +1,11 @@
 .DS_Store
 tmp/
 
+# §17.4 local dev data directory. Source Mode and Compose Mode write
+# artifacts and self-signed mTLS material (./lenny-data/certs/) here.
+# Never committed.
+/lenny-data/
+
 # Built Go binaries left in the repo root by `go build` against package
 # subdirectories. The names match the cmd/ and tests/tier7b_load_kind/scenarios/
 # package directories.

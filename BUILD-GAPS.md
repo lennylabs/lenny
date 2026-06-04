@@ -32825,7 +32825,7 @@ batches: an **embedded SQLite** session/metadata store (no SQLite backend exists
 tree — every store interface would need a new implementation), and the in-process
 **controller-sim** goroutine. Deferred until the SQLite store lands.
 
-### - [ ] F-17.4.3 — Compose Mode (`docker compose up`) bundle does not exist [High] — OPEN
+### - [x] F-17.4.3 — Compose Mode (`docker compose up`) bundle does not exist [High] — CLOSED
 
 Spec lines 213–227 describe a Compose Mode that starts gateway, controller-sim, a
 single agent pod, Postgres, Redis, and MinIO; spec line 216 even shows the literal
@@ -32840,7 +32840,24 @@ harness; it has no `gateway`, `controller`, `agent`, or controller-sim service.
 Operators who follow the spec verbatim get "no configuration file provided" from
 `docker compose up`.
 
-### - [ ] F-17.4.4 — Credential-testing profile (`make compose-tls`, profile `credentials`) is absent [High] — OPEN
+**Resolution:** New top-level `docker-compose.yml` provisions Postgres, Redis,
+and MinIO, applies the schema via a `lenny-migrate` one-shot, and starts the
+production gateway (built from the existing `Dockerfile`, `BINARY=lenny-gateway`)
+in dev mode against those backends with the §17.4 line 262 built-in echo runtime
+as the single agent. The gateway runs the controller simulation and the echo
+agent in-process (the same substitution Source Mode makes; the production
+CRD/controller/pod path is Embedded Mode), so what Compose Mode adds over Source
+Mode is the real Postgres/Redis/MinIO dependencies. A `smoke` profile carries the
+`docker compose run smoke-test` counterpart of `make test-smoke`
+(`compose/smoke-test.sh`, whose HTTP flow mirrors the verified
+`TestSourceModeSmoke_spec_17_4_276`), and an `observability` profile adds
+Prometheus (10s gateway scrape), Grafana (provisioned datasource + dashboard),
+and Jaeger (§17.4 line 258). `make compose` / `make compose-down` wrap it.
+Validated with `docker compose config` (all profiles), the smoke script run
+end-to-end against a live gateway, and the tier-3 contract test
+`tests/tier3_contract/compose_mode`.
+
+### - [x] F-17.4.4 — Credential-testing profile (`make compose-tls`, profile `credentials`) is absent [High] — CLOSED
 
 Spec lines 236–254 describe a `credentials` Compose profile and a `make compose-tls`
 alias that enable `LENNY_DEV_TLS=true`, generate self-signed mTLS material under
@@ -32850,6 +32867,19 @@ per-process / CI.
 Grep across the tree finds neither `compose-tls`, nor `LENNY_DEV_TLS`, nor a
 `credentials` profile, nor any `./lenny-data/certs/` generation
 (`grep -rn "LENNY_DEV_TLS\|compose-tls" .` returns no Go / Makefile / yaml matches).
+
+**Resolution:** `make compose-tls` runs `scripts/dev-certs.sh ./lenny-data/certs`
+(an openssl CA+leaf generator, idempotent unless `ca.crt` is deleted, SAN covers
+the loopback names and compose service hostnames) then
+`LENNY_DEV_TLS=true docker compose --profile credentials up`. The `credentials`
+profile carries a `dev-certs` service that runs the same script in-container for a
+bare `docker compose --profile credentials up`, and the gateway reads
+`LENNY_DEV_TLS` (default false; set true by the make target). The macOS / Linux /
+per-process / CI trust-store setup is documented in `compose/README.md`. The
+gateway listener stays plain HTTP in this bundle (full gateway TLS serving is the
+§17.4 ingress-terminated posture, F-17.4.5); the profile pre-stages the mTLS
+material so real LLM credentials are never configured without it. Cert generation
+verified by running `dev-certs.sh` and checking the chain with `openssl verify`.
 
 ### - [x] F-17.4.5 — Dev-mode guard rail #1 — hard startup assertion not implemented [High] — CLOSED
 

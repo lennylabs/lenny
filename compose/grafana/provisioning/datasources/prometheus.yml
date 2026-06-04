@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+#
+# §17.4 line 258 Grafana datasource for the Compose Mode observability
+# profile. Points Grafana at the Prometheus container.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
