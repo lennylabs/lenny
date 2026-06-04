@@ -1174,6 +1174,11 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 		if err != nil {
 			return nil, err
 		}
+		// spec: §11.7 line 119 / §16.1 line 80 — the policy_name and pool
+		// labels come from the per-delegation context the resolver does not
+		// see (it is keyed only on tenant + interceptorRef).
+		scanCtx.PolicyName = pol.Name
+		scanCtx.Pool = req.PoolRef
 		params.Scan = export.ContentScan{
 			Enabled:     true,
 			MaxFileSize: pol.ContentPolicy.MaxExportedFileSize,

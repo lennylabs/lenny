@@ -3552,11 +3552,7 @@ func main() {
 	// registry's adapter client), validates + persists them to the §4.5
 	// blob store, and stamps the §14 child WorkspacePlan. It is wired only
 	// when the pod registry exists; a delegation that declares fileExport
-	// without it fails closed with EXPORT_NOT_CONFIGURED. The §8.3
-	// scanExportedFiles interceptor resolver is not yet wired, so a policy
-	// that mandates the export scan fails closed with
-	// EXPORT_FILE_SCAN_UNAVAILABLE until the interceptor registry lands.
-	// F-8.7.1.
+	// without it fails closed with EXPORT_NOT_CONFIGURED. F-8.7.1.
 	var exportMaterializer delegation.ExportMaterializer
 	if podRegistry != nil {
 		exportMaterializer = export.NewMaterializer(
@@ -3565,6 +3561,21 @@ func main() {
 			mcpDelegationAuditor{sink: auditSink},
 		)
 	}
+	// §8.3 lines 160-181 / §13.5 mitigation 4: the per-file export-scan
+	// resolver routes each exported file through the DelegationPolicy's
+	// contentPolicy.interceptorRef at PreExportMaterialization. The
+	// resolver looks the ref up among the PreDelegation interceptors
+	// registered on policyChain (§4.8 line 1038: the same named interceptor
+	// in force on the parent's policy) and stamps an observer that emits
+	// the §11.7 delegation.export_file_scan_rejected / export_scan_failed_open
+	// audit events and the §16.1 lenny_export_file_scans_total /
+	// _duration_seconds metrics. A scanExportedFiles: true policy whose
+	// interceptorRef names no registered interceptor still fails closed
+	// with EXPORT_FILE_SCAN_UNAVAILABLE. F-13.5.5.
+	exportScanResolver := delegation.NewChainExportScanResolver(
+		policyChain,
+		policy.NewExportScanObserver(auditAppender, gwMetrics, nil),
+	)
 	// §13.3 revocation cache: the auth middleware rejects a token whose
 	// jti is in this set, and the §8.2 line 61 child-token exchange reads
 	// the parent (actor) token's jti against it inside the minting step.
@@ -3581,13 +3592,14 @@ func main() {
 		Clock:       clockinject.Now,
 	})
 	delegationSvc := delegation.NewService(sessions, delegation.Options{
-		Experiments:        experiments,
-		Runtimes:           runtimes,
-		Policies:           delegationPolicies,
-		Clock:              clockinject.Now,
-		ExportMaterializer: exportMaterializer,
-		TreeBudgetReserver: treeBudgetReserver,
-		ChildTokenMinter:   childTokenMinter,
+		Experiments:             experiments,
+		Runtimes:                runtimes,
+		Policies:                delegationPolicies,
+		Clock:                   clockinject.Now,
+		ExportMaterializer:      exportMaterializer,
+		ExportScanChainResolver: exportScanResolver,
+		TreeBudgetReserver:      treeBudgetReserver,
+		ChildTokenMinter:        childTokenMinter,
 		// §11.1 line 9 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,

@@ -278,6 +278,54 @@ func (sc ExportScanContext) emit(ctx context.Context, tenantID, sessionID, fileP
 	})
 }
 
+// ExportScanChainFor builds the §8.7 per-file export-scan chain for the
+// DelegationPolicy contentPolicy.interceptorRef named ref. Per §4.8 lines
+// 1038, 1050 the PreExportMaterialization phase is not independently
+// registerable: the interceptor invoked is always the same named
+// interceptor already in force on the parent's DelegationPolicy at the
+// PreDelegation phase. This method finds that interceptor by name among
+// the chain's registered PreDelegation interceptors and returns a
+// single-interceptor Chain that runs it at PhasePreExportMaterialization.
+// ok is false when ref is empty or no PreDelegation interceptor with that
+// name is registered; the caller then fails the export closed per §8.3
+// rule 1 (scanExportedFiles requires a resolvable interceptorRef).
+//
+// The returned chain inherits this chain's fail-open escalation config so
+// a per-file scan's fail-open / fail-closed posture matches the
+// delegation path's (§8.3 rule 5 keys the weakening cooldown on the
+// interceptor's failPolicy, not on the phase).
+//
+// spec: §4.8 lines 1036-1050; §8.3 lines 160-181.
+func (c *Chain) ExportScanChainFor(ref string) (*Chain, bool) {
+	if ref == "" {
+		return nil, false
+	}
+	var found Interceptor
+	// §4.8 line 1036: contentPolicy.interceptorRef hooks the PreDelegation
+	// phase, so the named interceptor is registered there.
+	for _, e := range c.byPhase[PhasePreDelegation] {
+		if e.ic.Name() == ref {
+			found = e.ic
+			break
+		}
+	}
+	if found == nil {
+		return nil, false
+	}
+	sub := NewChain()
+	// Register cannot fail: found already passed the priority/phase gate
+	// at PreDelegation, and PhasePreExportMaterialization is neither
+	// PreAuth nor an unknown phase.
+	_ = sub.Register(PhasePreExportMaterialization, found)
+	c.failMu.Lock()
+	enabled, maxN, window, observer, clock := c.failEnabled, c.failOpenMax, c.failOpenWindow, c.failObserver, c.failClock
+	c.failMu.Unlock()
+	if enabled {
+		sub.SetFailOpenEscalation(maxN, window, observer, clock)
+	}
+	return sub, true
+}
+
 // RunPreExportMaterialization runs the PhasePreExportMaterialization
 // interceptor chain over a delegation's exported files, per §8.7. It is
 // the gateway's per-file content-scan entry point: the delegation

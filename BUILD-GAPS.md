@@ -2395,7 +2395,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   admin connector store), insert the two `Chain.Run` calls and add
   the codes. Severity Medium.
 
-### - [ ] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — DEFERRED
+### - [x] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — CLOSED
 
 > **Re-deferred (commit d6a197a9, F-8.7.1):** The §8.7 fileExport
 > materialization path now exists and is wired into `Service.Delegate`,
@@ -2453,6 +2453,20 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   emit `delegation.export_scan_failed_open` from the caller on
   fail-open skip. Severity Medium — the policy primitive exists, the
   consumer does not.
+
+**Resolution:** Unblocked by F-13.5.5 (this batch) — the re-deferral note's
+sole remaining blocker ("building that interceptor-ref registry and wiring
+it into the resolver") is now satisfied. The per-file invocation, the
+pre-call `maxExportedFileSize` gate, the immutable-field check, the distinct
+`EXPORT_FILE_SCAN_UNAVAILABLE` code (F-8.7.8), and the
+`delegation.export_scan_failed_open` emit (F-8.7.9, via
+`policy.ExportScanObserver`) all landed with F-8.7.1. The named-interceptorRef
+lookup (`interceptor.Chain.ExportScanChainFor`, resolving the ref against the
+registered PreDelegation interceptor per §4.8 line 1038) and the
+`delegation.ChainExportScanResolver` are wired into `cmd/lenny-gateway`, so a
+`scanExportedFiles: true` policy now routes each exported file through its
+`interceptorRef` interceptor at `PreExportMaterialization` instead of failing
+closed. Closed by F-13.5.5.
 
 ### - [x] F-4.8.16 — `interceptor.fail_open_escalated` / `_restored` not implemented (Missing) [Medium] — CLOSED
 
@@ -24492,7 +24506,7 @@ per-target inbound aggregate (`n > MaxInboundPerMinute`) so N compromised
 siblings cannot exceed the target's inbound brake. An exceeded limit returns
 a `RATE_LIMITED` delivery receipt rather than a tool error (§7.2 line 371).
 
-### - [ ] F-13.5.5 — `scanExportedFiles` path: helper built, never called [High] — OPEN
+### - [x] F-13.5.5 — `scanExportedFiles` path: helper built, never called [High] — CLOSED
 
 §13.5 mitigation 4: per-file content scanning when
 `contentPolicy.scanExportedFiles: true`.
@@ -24527,6 +24541,25 @@ Additionally, the metrics catalog defines
 (pkg/observability/metrics/catalog.go:136–137), but `RunPreExportMaterialization`
 records neither — search for `RecordExportFileScan` or `ExportFileScan` as
 a metric-recorder method returns zero hits.
+
+**Resolution:** Mostly stale, with one residual wiring gap now closed. The
+two original claims no longer hold: `RunPreExportMaterialization` is called
+in production from `pkg/gateway/delegation/export/export.go` (the §8.7
+materialization path built by F-8.7.1), and the §16.1 metrics are recorded
+by `policy.ExportScanObserver` (`IncExportFileScan` /
+`ObserveExportFileScanDuration`). The residual gap was that the §8.3
+`contentPolicy.interceptorRef` resolver was never wired in
+`cmd/lenny-gateway`, so a `scanExportedFiles: true` policy failed closed
+with `EXPORT_FILE_SCAN_UNAVAILABLE` in production. This batch adds
+`interceptor.Chain.ExportScanChainFor` (finds the named PreDelegation
+interceptor and re-runs it at `PreExportMaterialization` per §4.8 line 1038,
+inheriting the fail-open escalation config) and a
+`delegation.ChainExportScanResolver` that pairs it with an observer-bearing
+`ExportScanContext`; the gateway now constructs the resolver from
+`policyChain` + `policy.NewExportScanObserver(auditAppender, gwMetrics)` and
+passes it into the delegation service. `materializeExport` stamps the §11.7
+`policy_name` and §16.1 `pool` labels from the per-delegation context. An
+unresolvable ref still fails closed. Commit pending.
 
 ### - [x] F-13.5.6 — PreDelegation/PreMessageDelivery REJECTs are not audited [High] — CLOSED
 
