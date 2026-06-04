@@ -2050,6 +2050,19 @@ gateway:
   # populate it.
   serviceAccount:
     annotations: {}
+  # adminToken configures the §17.6 initial admin credential. On bootstrap
+  # the gateway creates the lenny-admin platform-admin user and writes its
+  # generated token to a Secret in the release namespace, idempotently
+  # (re-runs preserve the existing token). Disable to run with no
+  # pre-provisioned admin credential (an external IdP supplies admin
+  # identities instead). F-17.6.3.
+  adminToken:
+    enabled: true
+    # secretName is the §17.6 line 463 Secret name. The chart restricts
+    # the gateway SA's get/update/patch to exactly this Secret.
+    secretName: lenny-admin-token
+    # tenant is the tenant the lenny-admin user and token are scoped to.
+    tenant: default
   # podDisruptionBudget configures the §4.1 / §17.1 PDB on the gateway
   # Deployment. The §17.1 cross-reference mandates maxUnavailable: 1 at
   # every tier so voluntary disruptions (kubectl drain, autoscaler node

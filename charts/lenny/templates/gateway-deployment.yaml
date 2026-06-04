@@ -562,6 +562,20 @@ spec:
             # lenny_gateway_max_sessions_per_replica gauge at startup.
             - name: LENNY_MAX_SESSIONS_PER_REPLICA
               value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
+            # §17.6 lines 455-474 — the initial admin credential. On
+            # bootstrap the gateway provisions the lenny-admin user and
+            # writes its token to the lenny-admin-token Secret in this
+            # namespace (the admin-token Role grants the gateway SA
+            # get/create/patch on that Secret). Set adminToken.enabled
+            # false to disable provisioning entirely. F-17.6.3.
+            {{- if not .Values.gateway.adminToken.enabled }}
+            - name: LENNY_ADMIN_TOKEN_DISABLED
+              value: "true"
+            {{- end }}
+            - name: LENNY_ADMIN_TOKEN_SECRET_NAME
+              value: {{ .Values.gateway.adminToken.secretName | quote }}
+            - name: LENNY_ADMIN_TOKEN_TENANT
+              value: {{ .Values.gateway.adminToken.tenant | quote }}
             # §16.5 line 623 — slo.validated gates the gateway's
             # provisional-SLO startup warning. False (the default) emits
             # the §16.5 warning at startup so an operator running
@@ -1338,4 +1352,46 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
       lenny.dev/component: gateway
+{{- end }}
+{{- if .Values.gateway.adminToken.enabled }}
+---
+# §17.6 line 474 — the gateway provisions the initial admin credential by
+# writing the lenny-admin-token Secret in the release namespace. This
+# namespaced Role grants the gateway SA the minimal Secret access the spec
+# mandates (create/get/patch) and nothing broader: `create` cannot be
+# name-restricted, but the read/write verbs are confined to the single
+# admin-token Secret by resourceNames. Rendered last so the document
+# ordering of the SA/ClusterRole/Deployment/Services/PDB above is
+# unchanged. F-17.6.3.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-gateway-admin-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["{{ .Values.gateway.adminToken.secretName }}"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-gateway-admin-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-gateway-admin-token
+subjects:
+  - kind: ServiceAccount
+    name: lenny-gateway
+    namespace: {{ .Release.Namespace }}
 {{- end }}

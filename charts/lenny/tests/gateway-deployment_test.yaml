@@ -324,10 +324,10 @@ tests:
       - notExists:
           path: metadata.annotations["lenny.dev/sa-token-audience"]
 
-  - it: renders the service account, cluster role, binding, deployment, services, and the §4.1 PodDisruptionBudget by default
+  - it: renders the service account, cluster role, binding, deployment, services, the §4.1 PodDisruptionBudget, and the §17.6 admin-token Role/RoleBinding by default
     asserts:
       - hasDocuments:
-          count: 7
+          count: 9
 
   - it: renders the §4.1 PodDisruptionBudget with maxUnavailable 1 and the gateway selector
     documentSelector:
@@ -355,11 +355,11 @@ tests:
       gateway.podDisruptionBudget.enabled: false
     asserts:
       - hasDocuments:
-          count: 6
-      # The PDB document is the seventh document on the default render
-      # (after SA, ClusterRole, ClusterRoleBinding, Deployment, Service,
-      # headless Service). When the opt-out is set the document count
-      # drops to six, so no PodDisruptionBudget is rendered.
+          count: 8
+      # The default render is nine documents (SA, ClusterRole,
+      # ClusterRoleBinding, Deployment, Service, headless Service, PDB, and
+      # the §17.6 admin-token Role + RoleBinding). With the PDB opt-out set
+      # the count drops to eight, so no PodDisruptionBudget is rendered.
 
   - it: renders a Deployment named lenny-gateway
     documentSelector:
@@ -806,10 +806,13 @@ tests:
       #   base billing.redisStreamMaxLen=0 renders) + LENNY_CAPACITY_TIER
       #   (§17.8.2, F-17.8.5/F-17.8.7 — always rendered;
       #   LENNY_SINGLE_TENANT_REDIS_TOPOLOGY is empty by default and not
-      #   rendered) = 67.
+      #   rendered)
+      # + LENNY_ADMIN_TOKEN_SECRET_NAME / LENNY_ADMIN_TOKEN_TENANT (§17.6
+      #   lines 455-474, F-17.6.3 — always rendered when adminToken.enabled;
+      #   LENNY_ADMIN_TOKEN_DISABLED renders only when disabled) = 69.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 67
+          count: 69
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -2509,6 +2512,71 @@ tests:
           content:
             name: LENNY_OPS_SERVICE_URL
           any: true
+  # spec: §17.6 lines 455-474 / F-17.6.3 — the gateway provisions the
+  # initial admin credential and needs minimal Secret RBAC to write the
+  # lenny-admin-token Secret.
+  - it: renders the §17.6 admin-token Role and confines get/update/patch to the lenny-admin-token Secret
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-admin-token
+      - equal:
+          path: rules[0].verbs
+          value: ["create"]
+      - equal:
+          path: rules[1].resourceNames
+          value: ["lenny-admin-token"]
+      - equal:
+          path: rules[1].verbs
+          value: ["get", "update", "patch"]
+  - it: renders the §17.6 admin-token RoleBinding to the gateway ServiceAccount
+    documentSelector:
+      path: kind
+      value: RoleBinding
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-admin-token
+      - equal:
+          path: roleRef.name
+          value: lenny-gateway-admin-token
+      - equal:
+          path: subjects[0].name
+          value: lenny-gateway
+  - it: renders the admin-token env on the gateway container
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ADMIN_TOKEN_SECRET_NAME
+            value: lenny-admin-token
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ADMIN_TOKEN_DISABLED
+            value: "true"
+  - it: omits the admin-token Role and sets LENNY_ADMIN_TOKEN_DISABLED when adminToken.enabled is false
+    set:
+      gateway.adminToken.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 7
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ADMIN_TOKEN_DISABLED
+            value: "true"
+        documentSelector:
+          path: kind
+          value: Deployment
+
+
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
