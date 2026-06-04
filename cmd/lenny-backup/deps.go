@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
 
 	"github.com/lennylabs/lenny/pkg/ops/backup/runner"
 )
@@ -28,11 +29,15 @@ type depsInput struct {
 
 // deps holds the §25.11 backup-run dependencies: the MinIO uploader,
 // the Postgres-backed reporter, and the unwrapped data key. close
-// releases the Postgres pool.
+// releases the Postgres pool. The MinIO client and bucket are retained
+// so the verify and restore-test read paths can build a Downloader
+// against the same backup bucket.
 type deps struct {
 	uploader     *runner.MinIOUploader
 	reporter     *pgReporter
 	dataKey      []byte
+	minioClient  *minio.Client
+	bucket       string
 	configExport func(ctx context.Context) ([]byte, error)
 	crdExport    func(ctx context.Context) ([]byte, error)
 	closeFn      func()
@@ -88,9 +93,11 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 	}
 
 	return &deps{
-		uploader: uploader,
-		reporter: &pgReporter{pool: pool},
-		dataKey:  dataKey,
+		uploader:    uploader,
+		reporter:    &pgReporter{pool: pool},
+		dataKey:     dataKey,
+		minioClient: client,
+		bucket:      in.minioBucket,
 		// The config and CRD exports are wired when the gateway admin API
 		// and a Kubernetes connection are available to the Job; until then
 		// the run produces empty config/CRD components, which is the

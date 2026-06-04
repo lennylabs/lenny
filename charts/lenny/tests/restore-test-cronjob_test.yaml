@@ -173,6 +173,40 @@ tests:
           path: spec.failedJobsHistoryLimit
           value: 2
 
+  # spec: §25.11 lines 4128-4256 — the restore-test Job reaches the
+  # ops_backups / ops_restore_test_results tables (report DSN) and the
+  # backup bucket (MinIO), and restores into the scratch Postgres.
+  # F-17.3.6.
+  - it: wires the report DSN, MinIO credentials, and scratch DSN env
+    set:
+      backups:
+        restoreTest:
+          enabled: true
+          scratchDSN: postgres://scratch:5432/restore
+        onDemand:
+          minioEndpoint: minio:9000
+          minioBucket: lenny-backups
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: LENNY_OPS_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-backup-postgres
+                key: postgres-dsn
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BACKUP_SCRATCH_DSN
+            value: postgres://scratch:5432/restore
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BACKUP_MINIO_ENDPOINT
+            value: minio:9000
+
   - it: grants the verification Job scratch-namespace and Job control
     set:
       backups:

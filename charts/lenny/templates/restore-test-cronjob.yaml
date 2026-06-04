@@ -154,6 +154,45 @@ spec:
                 - --namespace={{ .Release.Namespace }}
                 - --backup-selector={{ .Values.backups.restoreTest.backupSelector }}
                 - --artifact-sample-size={{ .Values.backups.verification.artifactSampleSize }}
+                {{- if .Values.backups.encryption.kmsKeyId }}
+                - --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+                {{- end }}
+              env:
+                # The verify and restore-test read paths reach the
+                # ops_backups / ops_restore_test_results tables (report DSN)
+                # and the §25.11 backup bucket (MinIO). The DSN and MinIO
+                # credentials come from the same Secrets the backup Jobs
+                # mount; the scratch DSN points at a throwaway Postgres the
+                # Job restores into for the actual test restore.
+                - name: HOSTNAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: LENNY_BACKUP_MINIO_ENDPOINT
+                  value: {{ .Values.backups.onDemand.minioEndpoint | quote }}
+                - name: LENNY_BACKUP_MINIO_BUCKET
+                  value: {{ .Values.backups.onDemand.minioBucket | quote }}
+                {{- if .Values.backups.encryption.kmsKeyId }}
+                - name: LENNY_BACKUP_KMS_KEY_ID
+                  value: {{ .Values.backups.encryption.kmsKeyId | quote }}
+                {{- end }}
+                - name: LENNY_OPS_POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-postgres
+                      key: postgres-dsn
+                - name: LENNY_BACKUP_SCRATCH_DSN
+                  value: {{ .Values.backups.restoreTest.scratchDSN | quote }}
+                - name: LENNY_BACKUP_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-minio
+                      key: minio-access-key
+                - name: LENNY_BACKUP_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-minio
+                      key: minio-secret-key
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

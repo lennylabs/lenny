@@ -80,9 +80,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	mode := fs.String("mode", "full",
-		"backup run mode: full, postgres, config, or retention (retention-only enforcement)")
+		"run mode: full, postgres, config, retention, verify, or restore-test")
 	backupID := fs.String("backup-id", os.Getenv("LENNY_BACKUP_ID"),
-		"the ops_backups row id this run writes to (required for a backup run)")
+		"the ops_backups row id this run writes to (required for a backup or verify run)")
 	shardList := newStringList(fs, "postgres-shard",
 		"a Postgres shard connection string; repeat once per shard")
 	excludeList := newStringList(fs, "exclude-table",
@@ -106,13 +106,37 @@ func run(args []string, stdout, stderr io.Writer) int {
 	reportDSN := fs.String("report-dsn", os.Getenv("LENNY_OPS_POSTGRES_DSN"),
 		"the lenny-ops Postgres DSN for the §25.11 step-8 ops_backups update")
 	pgDumpPath := fs.String("pg-dump-path", "pg_dump", "the pg_dump executable")
+	pgRestorePath := fs.String("pg-restore-path", "pg_restore",
+		"the pg_restore executable used by the verify and restore-test modes")
 	preRestoreRetainDays := fs.Int("pre-restore-retain-days", 7,
 		"the §25.11 backups.retention.preRestoreRetainDays window")
 	timeout := fs.Duration("timeout", 2*time.Hour,
 		"hard deadline for the run, matching the Job activeDeadlineSeconds")
 
+	// §25.11 verify and restore-test flags.
+	namespace := fs.String("namespace", os.Getenv("LENNY_NAMESPACE"),
+		"the release namespace the restore-test Job runs in (used for the scratch namespace name)")
+	backupSelector := fs.String("backup-selector", os.Getenv("LENNY_BACKUP_SELECTOR"),
+		"the §25.11 restore-test backup type selector; the latest matching backup is restored (empty = any type)")
+	artifactSampleSize := fs.Int("artifact-sample-size", 100,
+		"the §25.11 number of ArtifactStore object keys the restore-test sampled-HEAD check probes")
+	scratchDSN := fs.String("scratch-dsn", os.Getenv("LENNY_BACKUP_SCRATCH_DSN"),
+		"the scratch Postgres DSN the restore-test restores into; empty verifies readability only")
+	jobName := fs.String("job-name", os.Getenv("HOSTNAME"),
+		"the restore-test result row id (defaults to the pod HOSTNAME)")
+	replicationEndpoint := fs.String("replication-endpoint", os.Getenv("LENNY_BACKUP_REPLICATION_ENDPOINT"),
+		"the off-cluster ArtifactStore replication-target MinIO endpoint for the §25.11 sampled-HEAD check; empty skips it")
+	replicationBucket := fs.String("replication-bucket", os.Getenv("LENNY_BACKUP_REPLICATION_BUCKET"),
+		"the replication-target bucket the sampled-HEAD check probes")
+	replicationAccessKey := fs.String("replication-access-key", os.Getenv("LENNY_BACKUP_REPLICATION_ACCESS_KEY"),
+		"the replication-target MinIO access key")
+	replicationSecretKey := fs.String("replication-secret-key", os.Getenv("LENNY_BACKUP_REPLICATION_SECRET_KEY"),
+		"the replication-target MinIO secret key")
+	replicationTLS := fs.Bool("replication-tls", true, "connect to the replication target over TLS")
+
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: lenny-backup --mode <full|postgres|config|retention> [flags]")
+		fmt.Fprintln(stderr,
+			"usage: lenny-backup --mode <full|postgres|config|retention|verify|restore-test> [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -153,6 +177,37 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "lenny-backup: retention enforcement pruned %d backups: %s\n",
 			len(pruned), strings.Join(pruned, ", "))
 		return exitOK
+	}
+
+	// §25.11 Backup Verification: download, checksum, pg_restore --list.
+	if *mode == "verify" {
+		return runVerify(ctx, deps, *backupID, *pgRestorePath, stdout, stderr)
+	}
+
+	// §25.11 Test Restore: the monthly lenny-restore-test CronJob. It
+	// selects the latest backup matching the selector, verifies it,
+	// restores it into the scratch Postgres, samples the ArtifactStore
+	// replication target, and records the outcome for the lenny-ops
+	// restore-test gauges.
+	if *mode == "restore-test" {
+		_ = *namespace // the scratch namespace is provisioned by the Job; the binary only logs it
+		if *namespace != "" {
+			fmt.Fprintf(stdout, "lenny-backup: restore-test for namespace %s\n", *namespace)
+		}
+		return runRestoreTest(ctx, deps, restoreTestParams{
+			jobName:       *jobName,
+			selector:      *backupSelector,
+			sampleSize:    *artifactSampleSize,
+			scratchDSN:    *scratchDSN,
+			pgRestorePath: *pgRestorePath,
+			replication: replicationConfig{
+				endpoint:  *replicationEndpoint,
+				bucket:    *replicationBucket,
+				accessKey: *replicationAccessKey,
+				secretKey: *replicationSecretKey,
+				useTLS:    *replicationTLS,
+			},
+		}, stdout, stderr)
 	}
 
 	// A backup run.

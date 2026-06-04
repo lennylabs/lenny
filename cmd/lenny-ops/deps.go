@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
+	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 	backupk8slauncher "github.com/lennylabs/lenny/pkg/ops/backup/k8slauncher"
 	backuppgstore "github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/baselinestore"
@@ -629,6 +630,22 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 				return sampleBackupMetrics(ctx, svc)
 			},
 		},
+		{
+			// spec: §25.11 lines 4098, 4254-4256 — publish the restore-test
+			// gauges (lenny_restore_test_success / _duration_seconds /
+			// _artifact_success_rate) and the cumulative
+			// _artifact_missing_total counter from the ops_restore_test_results
+			// rows the lenny-restore-test CronJob writes. Leader-gated; the
+			// §16.9 /metrics exposition scrapes them. F-17.3.6.
+			Name:       "restore-test-metrics",
+			Expression: "* * * * *",
+			Run: func(ctx context.Context) error {
+				if deps.Pool == nil {
+					return nil
+				}
+				return sampleRestoreTestMetrics(ctx, restoretest.NewPGStore(deps.Pool))
+			},
+		},
 	}
 	return svc, jobs
 }
@@ -650,6 +667,77 @@ var backupLastSuccessfulTimestamp = func() *prometheus.GaugeVec {
 	metrics.MustRegister(prometheus.DefaultRegisterer, g)
 	return g
 }()
+
+// restoreTestSuccess is the §25.11 / §16.1 lenny_restore_test_success
+// gauge: the pass/fail flag of the latest automated test restore. The
+// short-lived lenny-restore-test Job records its outcome in
+// ops_restore_test_results; the leader lenny-ops replica re-exposes the
+// latest run here so the §16.1 restore-test gate has a source. F-17.3.6.
+var restoreTestSuccess = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_restore_test_success",
+		Help: "§25.11 pass (1) / fail (0) flag of the latest automated restore test.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// restoreTestDuration is the §25.11 lenny_restore_test_duration_seconds
+// gauge: the wall-clock seconds of the latest automated test restore.
+var restoreTestDuration = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_restore_test_duration_seconds",
+		Help: "§25.11 elapsed seconds of the latest automated restore test.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// restoreTestArtifactRate is the §25.11 line 4098
+// lenny_restore_test_artifact_success_rate gauge: the sampled-HEAD
+// ArtifactStore success rate of the latest test restore. It is published
+// only when the latest run actually ran the sampled-HEAD check.
+var restoreTestArtifactRate = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_restore_test_artifact_success_rate",
+		Help: "§25.11 sampled-HEAD ArtifactStore success rate of the latest restore test.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}()
+
+// restoreTestArtifactMissing is the §25.11 line 4098
+// lenny_restore_test_artifact_missing_total counter: the cumulative
+// count of sampled ArtifactStore objects absent at the replication
+// target across every recorded test restore. The sampler advances it by
+// the delta against the durable cumulative total so it stays monotonic
+// within the process.
+var restoreTestArtifactMissing = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_restore_test_artifact_missing_total",
+		Help: "§25.11 sampled ArtifactStore objects absent at the replication target across restore tests.",
+	}, []string{})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+// lastRestoreTestArtifactMissing tracks the cumulative artifact-missing
+// total already published so the sampler advances the monotonic counter
+// by the delta. The restore-test sampler is single-threaded
+// (leader-gated cron), so no synchronization is required.
+var lastRestoreTestArtifactMissing int64
 
 // dataResidencyViolationTotal is the §12.8 line 936
 // lenny_data_residency_violation_total{operation} counter incremented on
@@ -758,6 +846,50 @@ func sampleBackupMetrics(ctx context.Context, svc *backup.Service) error {
 	}
 	for typ, at := range times {
 		backupLastSuccessfulTimestamp.WithLabelValues(typ).Set(float64(at.Unix()))
+	}
+	return nil
+}
+
+// sampleRestoreTestMetrics reads the latest §25.11 test-restore result
+// from store and publishes the restore-test gauges plus the cumulative
+// artifact-missing counter. A store with no recorded run leaves the
+// gauges unset rather than reporting a zero that reads as a failed
+// restore before the first run. spec: §25.11 lines 4098, 4254-4256.
+func sampleRestoreTestMetrics(ctx context.Context, store restoretest.Store) error {
+	if store == nil {
+		return nil
+	}
+	latest, ok, err := store.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if restoreTestSuccess != nil {
+			v := 0.0
+			if latest.Success {
+				v = 1.0
+			}
+			restoreTestSuccess.WithLabelValues().Set(v)
+		}
+		if restoreTestDuration != nil {
+			restoreTestDuration.WithLabelValues().Set(latest.DurationSeconds())
+		}
+		// The artifact success rate is meaningful only when the latest run
+		// actually ran the sampled-HEAD check; otherwise the series stays
+		// absent until the first replication-checked run.
+		if latest.ArtifactChecked && restoreTestArtifactRate != nil {
+			restoreTestArtifactRate.WithLabelValues().Set(latest.ArtifactSuccessRate)
+		}
+	}
+	if restoreTestArtifactMissing != nil {
+		total, err := store.TotalArtifactMissing(ctx)
+		if err != nil {
+			return err
+		}
+		if delta := total - lastRestoreTestArtifactMissing; delta > 0 {
+			restoreTestArtifactMissing.WithLabelValues().Add(float64(delta))
+			lastRestoreTestArtifactMissing = total
+		}
 	}
 	return nil
 }

@@ -74,6 +74,31 @@ func (r *pgReporter) BackupFailed(ctx context.Context, backupID, errMsg string) 
 	return nil
 }
 
+// MarkVerified implements runner.VerifyReporter: it records the §25.11
+// Backup Verification success on the ops_backups row (status:verified).
+func (r *pgReporter) MarkVerified(ctx context.Context, backupID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE ops_backups SET status = $2, error = '' WHERE id = $1`,
+		backupID, backup.StatusVerified)
+	if err != nil {
+		return fmt.Errorf("mark backup %s verified: %w", backupID, err)
+	}
+	return nil
+}
+
+// MarkVerificationFailed implements runner.VerifyReporter: it records a
+// failed §25.11 Backup Verification (status:verification_failed) with
+// the failure reason.
+func (r *pgReporter) MarkVerificationFailed(ctx context.Context, backupID, reason string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE ops_backups SET status = $2, error = $3 WHERE id = $1`,
+		backupID, backup.StatusVerificationFailed, reason)
+	if err != nil {
+		return fmt.Errorf("mark backup %s verification_failed: %w", backupID, err)
+	}
+	return nil
+}
+
 // RetentionInputs implements runner.RetentionStore: it reads every
 // completed backup and the singleton retention policy for the §25.11
 // post-backup retention enforcement.

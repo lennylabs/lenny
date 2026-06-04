@@ -3553,6 +3553,11 @@ backups:
     # restores the most recent successful full backup; a literal backup
     # id pins a specific backup.
     backupSelector: "latest-full"
+    # scratchDSN points the §25.11 Test Restore at a throwaway Postgres
+    # the Job restores the backup into to prove it is actually
+    # restorable. Empty verifies the dump is readable (pg_restore --list)
+    # without performing a live restore.
+    scratchDSN: ""
     # historyLimits bound how many finished test-restore Jobs the
     # CronJob retains for post-mortem inspection.
     successfulJobsHistoryLimit: 3

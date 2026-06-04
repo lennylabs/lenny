@@ -31826,7 +31826,7 @@ marker; the leader-only `ReconcileRunningRestores` driver retries steps
 
 ---
 
-### - [ ] F-17.3.6 — 3.5 — lenny-backup binary cannot perform a restore, verify, or test-restore run [High] — OPEN
+### - [x] F-17.3.6 — 3.5 — lenny-backup binary cannot perform a restore, verify, or test-restore run [High] — CLOSED
 
 Spec — §17.3 "Backup schedule" bullet 3 requires the
 `lenny-restore-test` CronJob to run end-to-end test restores and
@@ -31885,6 +31885,41 @@ measured RTO exceeds targets" cannot fire because no measurement
 ever runs. The `RESTORE_INCOMPATIBLE` / `BACKUP_VERIFICATION_FAILED`
 spec error codes are defined (`pkg/ops/backup/service.go:39–40`)
 but cannot surface from a real restore path.
+
+**Resolution:** Added the §25.11 verify and restore-test read paths to
+the lenny-backup binary. `pkg/ops/backup/runner.RunVerify` (download,
+SHA-256 check, `pg_restore --list`, status verified/verification_failed)
+and `RunRestoreTest` (select the latest backup matching the selector,
+verify, restore into a scratch Postgres, sampled-HEAD ArtifactStore
+check against the §25.11 99% floor) run behind seams (`Downloader`,
+`ArchiveOpener`, `DumpInspector`, `ScratchRestorer`, `ArtifactSampler`,
+`BackupResolver`) with production implementations (`TarGzOpener` reverses
+`TarGzArchiver`; `ExecDumpInspector`/`ExecScratchRestorer` drive
+`pg_restore`; `MinIODownloader`/`MinIOArtifactSampler`). `cmd/lenny-backup`
+now registers `--mode=verify`/`--mode=restore-test` plus `--namespace`,
+`--backup-selector` (handles `latest-<type>` and literal ids),
+`--artifact-sample-size`, `--scratch-dsn`, `--pg-restore-path`,
+`--job-name`, and the replication-target flags, so the CronJob args parse
+and dispatch instead of exiting `exitUsage`. The short-lived Job records
+its outcome in the new `ops_restore_test_results` table (migration 0136,
+`pkg/ops/backup/restoretest` store); the leader `lenny-ops` replica's new
+`restore-test-metrics` sampler re-exposes it as
+`lenny_restore_test_success` / `_duration_seconds` /
+`_artifact_success_rate` gauges and the cumulative
+`_artifact_missing_total` counter (mirroring the
+`lenny_backup_last_successful_timestamp` path). The restore-test CronJob
+template now wires the report DSN, MinIO credentials, KMS data key, and
+scratch DSN env. `BACKUP_VERIFICATION_FAILED` now surfaces from the
+checksum/readability gates. The replication-target artifact-key resolution
+exactness (blob-URI → object-key) and a fully-provisioned scratch
+namespace remain deployment-configured extensions; the binary HEADs the
+recorded `artifact_store.uri` keys when a replication endpoint is
+configured. Commit `<pending>`. Tests: tier-1 runner (15: verify
+happy/checksum/unreadable/config-only/download/resolve, restore-test
+happy/below-floor/at-floor/no-backup/scratch-fail/readability-only/store-error,
+opener round-trip plaintext+encrypted, exec error paths), tier-1
+restoretest store (2), tier-1 cmd verify/restore-test dispatch (2), tier-1
+ops sampler (3), migration DDL (1), helm-unittest env (1).
 
 ---
 

@@ -80,6 +80,43 @@ func TestRunFullBackupRequiresShards(t *testing.T) {
 	}
 }
 
+// spec: §25.11 lines 4128-4133 — verify mode dispatches to the §25.11
+// Backup Verification flow and requires a backup id. F-17.3.6.
+func TestRunVerifyModeRequiresBackupID_spec_25_11(t *testing.T) {
+	code, _, stderr := runArgs("--mode", "verify",
+		"--minio-endpoint", "minio:9000", "--minio-bucket", "lenny-backups",
+		"--report-dsn", "postgres://u:p@127.0.0.1:1/lenny", "--minio-tls=false")
+	if code != exitUsage {
+		t.Errorf("exit = %d, want %d when --backup-id is missing for verify", code, exitUsage)
+	}
+	if !strings.Contains(stderr, "backup-id is required for a verify run") {
+		t.Errorf("stderr = %q, want the verify backup-id usage message", stderr)
+	}
+}
+
+// spec: §25.11 lines 4254-4256 — the restore-test CronJob flags
+// (--namespace, --backup-selector, --artifact-sample-size) are
+// registered, so the monthly Job no longer exits usage(2) before
+// performing a restore. F-17.3.6.
+func TestRunRestoreTestModeParsesCronJobFlags_spec_25_11(t *testing.T) {
+	code, _, stderr := runArgs("--mode", "restore-test",
+		"--namespace", "lenny-system",
+		"--backup-selector", "full",
+		"--artifact-sample-size", "100",
+		"--minio-endpoint", "minio:9000", "--minio-bucket", "lenny-backups",
+		"--report-dsn", "postgres://u:p@127.0.0.1:1/lenny", "--minio-tls=false",
+		"--timeout", "5s")
+	if strings.Contains(stderr, "flag provided but not defined") {
+		t.Fatalf("a restore-test CronJob flag is unregistered: %q", stderr)
+	}
+	// The unreachable report DSN makes the run fail, but it must dispatch
+	// into the restore-test flow rather than reject the invocation as a
+	// usage error.
+	if code != exitFailure {
+		t.Errorf("exit = %d, want %d (dispatched to restore-test, DB unreachable)", code, exitFailure)
+	}
+}
+
 func TestStringListFlagRepeats(t *testing.T) {
 	l := &stringList{}
 	if err := l.Set("a"); err != nil {
