@@ -1821,6 +1821,30 @@ func TestStatelessMetricsNilSafe_spec_5_2_573(t *testing.T) {
 	m.SetStatelessConcurrentActive("any", 7)
 }
 
+// spec: §6.2 line 179 — the lenny_adapter_leaked_slots gauge is per-pod
+// (labeled pod_id, pool), set when a concurrent-workspace slot's cleanup
+// does not reclaim it, and zeroed when the pod is drained for replacement.
+func TestAdapterLeakedSlotsGauge_spec_6_2_179(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetAdapterLeakedSlots("pod-a", "default-gvisor", 2)
+	body := scrapeMetrics(t, m)
+	if want := `lenny_adapter_leaked_slots{pod_id="pod-a",pool="default-gvisor"} 2`; !strings.Contains(body, want) {
+		t.Errorf("/metrics missing %q", want)
+	}
+	// The drain path zeroes the pod's series.
+	m.SetAdapterLeakedSlots("pod-a", "default-gvisor", 0)
+	body = scrapeMetrics(t, m)
+	if want := `lenny_adapter_leaked_slots{pod_id="pod-a",pool="default-gvisor"} 0`; !strings.Contains(body, want) {
+		t.Errorf("/metrics missing zeroed series %q", want)
+	}
+	// Nil receiver must not panic (the producer calls from the slot path).
+	var nilM *gatewaymetrics.Metrics
+	nilM.SetAdapterLeakedSlots("pod-a", "p", 1)
+}
+
 // TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 line
 // 569 / §16.1 line 124 lenny_task_reuse_count histogram registration +
 // observation + the in-process TaskReuseQuantile helper the

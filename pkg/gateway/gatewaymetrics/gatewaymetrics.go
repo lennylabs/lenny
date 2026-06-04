@@ -311,6 +311,10 @@ type Metrics struct {
 	// Postgres after a Redis restart. Labels: `pod` and `pool` (both
 	// bounded — at most one rehydration per pod per Redis restart).
 	slotRehydration *prometheus.CounterVec
+	// adapterLeakedSlots is the §6.2 line 179 per-pod count of
+	// concurrent-workspace slots whose cleanup timed out and are leaked
+	// (not reclaimed until pod termination). Labels: `pod_id`, `pool`.
+	adapterLeakedSlots *prometheus.GaugeVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -1643,6 +1647,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §6.2 line 179 — `lenny_adapter_leaked_slots` is the per-pod count of
+	// concurrent-workspace slots whose cleanup timed out and remain counted
+	// in active_slots until the pod terminates. Labels: `pod_id`, `pool`.
+	adapterLeakedSlots, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_adapter_leaked_slots",
+		Help: "Concurrent-workspace leaked slots per pod awaiting pod termination (§6.2 line 179).",
+	}, []string{"pod_id", "pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -2301,7 +2315,7 @@ func New() (*Metrics, error) {
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
-		slotRehydration, slotPodReplacement,
+		slotRehydration, slotPodReplacement, adapterLeakedSlots,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
@@ -2509,6 +2523,7 @@ func New() (*Metrics, error) {
 		slotFailure:                          slotFailure,
 		slotRehydration:                      slotRehydration,
 		slotPodReplacement:                   slotPodReplacement,
+		adapterLeakedSlots:                   adapterLeakedSlots,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		sigkillStreams:                       sigkillStreams,
@@ -3499,6 +3514,18 @@ func (m *Metrics) IncSlotPodReplacement(pool string) {
 		return
 	}
 	m.slotPodReplacement.WithLabelValues(pool).Inc()
+}
+
+// SetAdapterLeakedSlots sets the §6.2 line 179 `lenny_adapter_leaked_slots`
+// gauge for podID to count: the number of slots on the pod whose cleanup
+// timed out and remain counted in active_slots until the pod terminates.
+// Called by the concurrent-workspace slot path when a slot is leaked (and
+// to zero a pod's series when it terminates). spec: §6.2 line 179.
+func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {
+	if m == nil {
+		return
+	}
+	m.adapterLeakedSlots.WithLabelValues(podID, pool).Set(count)
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

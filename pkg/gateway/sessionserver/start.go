@@ -27,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -1137,7 +1138,7 @@ type slotBinder interface {
 // that threads the server's binder, slot-health tracker, and replacement
 // metric into applySlotRetryPolicy.
 func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error) {
-	return applySlotRetryPolicy(ctx, s.podBinder, s.slotHealth, s.slotReplacement, req)
+	return applySlotRetryPolicy(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement, s.slotLeakGauge, req)
 }
 
 // applySlotRetryPolicy is the §5.2 "Concurrent-workspace slot retry
@@ -1155,8 +1156,10 @@ func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindR
 //   - A transient reason retries once on a fresh slot.
 //
 // spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2 line 165
-// (slot_active → draining on the unhealthy-slot threshold).
-func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, replacement func(pool string), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
+// (slot_active → draining on the unhealthy-slot threshold); §6.2 line 176/179
+// (a slot whose cleanup does not reclaim it is leaked and feeds the per-pod
+// lenny_adapter_leaked_slots gauge).
+func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, slots *slotstate.Registry, replacement func(pool string), leakGauge func(pod, pool string, leaked int), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxSlotRetries; attempt++ {
 		result, err := binder.BindSlot(ctx, req)
@@ -1182,6 +1185,17 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		// pod's active_slots is not leaked by the failed attempt.
 		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
 			log.Printf("sessionserver: §5.2 release failed slot %s on pod %s: %v", sbe.SlotID, sbe.Pod, relErr)
+			// spec: §6.2 line 176/179 — the reservation could not be reclaimed,
+			// so the slot is leaked: it remains counted in active_slots until
+			// the pod terminates. Record it for the per-pod
+			// lenny_adapter_leaked_slots gauge. The slot is already counted
+			// toward the ceil(maxConcurrent/2) unhealthy threshold via
+			// RecordFailure below, so it is not also recorded in the rolling
+			// fail/leak window — a single bad slot counts once.
+			leaked := slots.MarkLeaked(sbe.SlotID, sbe.Pod, req.Pool)
+			if leakGauge != nil {
+				leakGauge(sbe.Pod, req.Pool, leaked)
+			}
 		}
 		// Account the failure toward the pod's §5.2 rolling fail/leak window
 		// and retire the whole pod when it crosses the unhealthy threshold.
@@ -1194,6 +1208,13 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 				replacement(req.Pool)
 			}
 			health.Forget(sbe.Pod)
+			// spec: §6.2 line 179 — the drained pod is being replaced; its
+			// leaked slots are reclaimed with it, so drop the per-pod leaked
+			// tracking and zero the gauge series.
+			slots.ForgetPod(sbe.Pod)
+			if leakGauge != nil {
+				leakGauge(sbe.Pod, req.Pool, 0)
+			}
 		}
 		if reason.NonRetryable() || attempt == maxSlotRetries {
 			return nil, &podsession.SlotFailedError{

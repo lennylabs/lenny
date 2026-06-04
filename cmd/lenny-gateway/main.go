@@ -3514,6 +3514,11 @@ func main() {
 		// concurrent-workspace slot retry policy drains an unhealthy pod
 		// (ceil(maxConcurrent/2) slots failed or leaked in the window).
 		SlotReplacement: gwMetrics.IncSlotPodReplacement,
+		// §6.2 line 179 — per-pod leaked-slot gauge, set when a
+		// concurrent-workspace slot's cleanup does not reclaim it.
+		SlotLeakGauge: func(pod, pool string, leaked int) {
+			gwMetrics.SetAdapterLeakedSlots(pod, pool, float64(leaked))
+		},
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,

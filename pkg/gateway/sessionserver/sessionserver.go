@@ -70,13 +70,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 	"github.com/lennylabs/lenny/pkg/task"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -306,11 +307,21 @@ type Server struct {
 	// threshold. Never nil after New (defaults to a fresh Tracker).
 	// spec: §5.2 "whole-pod replacement trigger".
 	slotHealth *slothealth.Tracker
+	// slotStates tracks each concurrent-workspace slot's §6.2 per-slot
+	// sub-state so the gateway can report the per-pod leaked-slot count when
+	// a slot's cleanup does not reclaim it. Never nil after New (defaults to
+	// a fresh Registry). spec: §6.2 lines 170-176, line 179.
+	slotStates *slotstate.Registry
 	// slotReplacement, when set, increments
 	// lenny_slot_pod_replacement_total{pool} when the slot retry policy
 	// drains an unhealthy concurrent-mode pod for replacement. Nil disables
 	// the emission. spec: §5.2 "whole-pod replacement trigger".
 	slotReplacement func(pool string)
+	// slotLeakGauge, when set, publishes the §6.2 line 179
+	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
+	// the pod's slots whose cleanup timed out and remain counted in
+	// active_slots until the pod terminates. Nil disables the emission.
+	slotLeakGauge func(pod, pool string, leaked int)
 	// observeStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
@@ -1260,6 +1271,13 @@ type Options struct {
 	// Nil disables the emission. spec: §5.2 "whole-pod replacement trigger".
 	SlotReplacement func(pool string)
 
+	// SlotLeakGauge, when set, publishes the §6.2 line 179
+	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
+	// a pod's concurrent-workspace slots whose cleanup timed out and remain
+	// counted in active_slots until the pod terminates. Nil disables the
+	// emission. spec: §6.2 line 179.
+	SlotLeakGauge func(pod, pool string, leaked int)
+
 	// ObserveStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm session startup latency (pod claim through
 	// agent session ready, excluding upload and workspace
@@ -1405,7 +1423,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		credRouter:               opts.CredentialRouter,
 		preclaimMismatch:         opts.PreclaimMismatch,
 		slotHealth:               slothealth.New(),
+		slotStates:               slotstate.NewRegistry(),
 		slotReplacement:          opts.SlotReplacement,
+		slotLeakGauge:            opts.SlotLeakGauge,
 		observeStartupDuration:   opts.ObserveStartupDuration,
 		observeStartupPhase:      opts.ObserveStartupPhase,
 		observeTimeToFirstToken:  opts.ObserveTimeToFirstToken,

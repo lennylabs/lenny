@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
+	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 
 // fakeSlotBinder records the calls applySlotRetryPolicy makes and replays a
@@ -25,6 +26,10 @@ type fakeSlotBinder struct {
 
 	released [][2]string // (pod, slotID)
 	drained  []string
+
+	// releaseErr, when non-nil, makes ReleaseSlotReservation fail so the
+	// failed slot is not reclaimed — the §6.2 line 176/179 leak path.
+	releaseErr error
 }
 
 func (f *fakeSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBindRequest) (*podsession.BindResult, error) {
@@ -43,7 +48,7 @@ func (f *fakeSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBindReques
 
 func (f *fakeSlotBinder) ReleaseSlotReservation(_ context.Context, pod, slotID string) error {
 	f.released = append(f.released, [2]string{pod, slotID})
-	return nil
+	return f.releaseErr
 }
 
 func (f *fakeSlotBinder) DrainSandbox(_ context.Context, pod string) error {
@@ -70,7 +75,7 @@ func TestSlotRetryTransientThenSuccess_spec_5_2(t *testing.T) {
 		errs:    []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
 	}
 	health := slothealth.New()
-	res, err := applySlotRetryPolicy(context.Background(), binder, health, nil, req("pool-x", 4))
+	res, err := applySlotRetryPolicy(context.Background(), binder, health, nil, nil, nil, req("pool-x", 4))
 	if err != nil {
 		t.Fatalf("expected success after one retry, got %v", err)
 	}
@@ -97,7 +102,7 @@ func TestSlotRetryNonRetryableNoRetry_spec_5_2(t *testing.T) {
 		errs: []error{slotBindErr("pod-b", "sess-1", "workspace_prep", codes.InvalidArgument)},
 	}
 	health := slothealth.New()
-	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, req("pool-x", 4))
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, nil, nil, req("pool-x", 4))
 	var sf *podsession.SlotFailedError
 	if !errors.As(err, &sf) {
 		t.Fatalf("expected *SlotFailedError, got %v", err)
@@ -126,7 +131,7 @@ func TestSlotRetryExhaustedReturnsStructuredError_spec_5_2(t *testing.T) {
 		},
 	}
 	health := slothealth.New()
-	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, req("pool-x", 8))
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, nil, nil, req("pool-x", 8))
 	var sf *podsession.SlotFailedError
 	if !errors.As(err, &sf) {
 		t.Fatalf("expected *SlotFailedError, got %v", err)
@@ -156,7 +161,7 @@ func TestSlotRetryDrainsUnhealthyPod_spec_5_2(t *testing.T) {
 	var replacements []string
 	repl := func(pool string) { replacements = append(replacements, pool) }
 
-	_, err := applySlotRetryPolicy(context.Background(), binder, health, repl, req("pool-x", 2))
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, repl, nil, req("pool-x", 2))
 	var sf *podsession.SlotFailedError
 	if !errors.As(err, &sf) {
 		t.Fatalf("expected *SlotFailedError after exhausted retry, got %v", err)
@@ -169,13 +174,100 @@ func TestSlotRetryDrainsUnhealthyPod_spec_5_2(t *testing.T) {
 	}
 }
 
+// spec: §6.2 line 176/179 — when the failed slot's reservation cannot be
+// reclaimed, the slot is leaked: it is recorded in the per-slot registry and
+// the per-pod lenny_adapter_leaked_slots gauge is published. The leak is not
+// double-counted toward the unhealthy threshold (the slot is already a
+// failed slot), so a single failure below threshold does not drain.
+func TestSlotRetryLeakOnReleaseFailure_spec_6_2(t *testing.T) {
+	// One transient failure, then a success on retry — but the failed slot's
+	// release errors so it is leaked. maxConcurrent=4 → threshold 2, so the
+	// pod is not drained and the leaked slot persists in the gauge.
+	binder := &fakeSlotBinder{
+		results:    []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-a", SlotID: "sess-1"}},
+		errs:       []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
+		releaseErr: errors.New("slot cleanup timed out"),
+	}
+	health := slothealth.New()
+	slots := slotstate.NewRegistry()
+	var gauge []struct {
+		pod, pool string
+		leaked    int
+	}
+	leakGauge := func(pod, pool string, leaked int) {
+		gauge = append(gauge, struct {
+			pod, pool string
+			leaked    int
+		}{pod, pool, leaked})
+	}
+
+	res, err := applySlotRetryPolicy(context.Background(), binder, health, slots, nil, leakGauge, req("pool-x", 4))
+	if err != nil {
+		t.Fatalf("expected success after retry, got %v", err)
+	}
+	if res == nil || res.SandboxName != "pod-a" {
+		t.Fatalf("unexpected result %+v", res)
+	}
+	// The leaked slot is recorded for the pod and published to the gauge.
+	if got := slots.LeakedCount("pod-a"); got != 1 {
+		t.Errorf("registry leaked count for pod-a = %d, want 1", got)
+	}
+	if st, ok := slots.State("sess-1"); !ok || st != slotstate.Leaked {
+		t.Errorf("slot sess-1 state = %q ok=%v, want leaked/true", st, ok)
+	}
+	if len(gauge) != 1 || gauge[0].pod != "pod-a" || gauge[0].pool != "pool-x" || gauge[0].leaked != 1 {
+		t.Errorf("leak gauge = %+v, want one set of pod-a/pool-x/1", gauge)
+	}
+	// Below threshold: a single failed/leaked slot must not drain the pod.
+	if len(binder.drained) != 0 {
+		t.Errorf("drained = %v, want none (one leak is below the maxConcurrent=4 threshold)", binder.drained)
+	}
+}
+
+// spec: §6.2 line 179 — when a pod with a leaked slot crosses the unhealthy
+// threshold and is drained for replacement, its leaked-slot tracking is
+// cleared and the gauge series is zeroed (the leaked slots are reclaimed
+// with the terminated pod).
+func TestSlotRetryDrainClearsLeakGauge_spec_6_2(t *testing.T) {
+	// maxConcurrent=2 → threshold 1: a single failure trips it. Two pods so
+	// each attempt lands on a distinct pod, both fail, both leak on a failing
+	// release, and both drain — the drain zeroes each pod's leak gauge.
+	binder := &fakeSlotBinder{
+		errs: []error{
+			slotBindErr("pod-d", "sess-1", "session_start", codes.Unavailable),
+			slotBindErr("pod-e", "sess-1", "session_start", codes.Unavailable),
+		},
+		releaseErr: errors.New("slot cleanup timed out"),
+	}
+	health := slothealth.New()
+	slots := slotstate.NewRegistry()
+	var lastGauge = -1
+	leakGauge := func(_, _ string, leaked int) { lastGauge = leaked }
+
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, slots, func(string) {}, leakGauge, req("pool-x", 2))
+	var sf *podsession.SlotFailedError
+	if !errors.As(err, &sf) {
+		t.Fatalf("expected *SlotFailedError after exhausted retry, got %v", err)
+	}
+	if len(binder.drained) != 2 {
+		t.Fatalf("drained = %v, want both pods drained on the threshold", binder.drained)
+	}
+	if slots.LeakedCount("pod-d") != 0 || slots.LeakedCount("pod-e") != 0 {
+		t.Errorf("drained pods' leaked slots must be cleared, got pod-d=%d pod-e=%d",
+			slots.LeakedCount("pod-d"), slots.LeakedCount("pod-e"))
+	}
+	if lastGauge != 0 {
+		t.Errorf("gauge must be zeroed on drain, last value = %d", lastGauge)
+	}
+}
+
 // spec: §5.2 line 519 — a reservation-exhaustion sentinel is not a slot
 // failure: it is returned unchanged (no release, no record, no retry) so
 // the handler maps it to WARM_POOL_EXHAUSTED.
 func TestSlotRetryPassesThroughExhaustionSentinel_spec_5_2(t *testing.T) {
 	binder := &fakeSlotBinder{errs: []error{podclaim.ErrNoConcurrentSlot}}
 	health := slothealth.New()
-	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, req("pool-x", 4))
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, nil, nil, nil, req("pool-x", 4))
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
 		t.Fatalf("expected ErrNoConcurrentSlot unchanged, got %v", err)
 	}
