@@ -69,6 +69,7 @@ import (
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
@@ -6589,12 +6590,20 @@ func main() {
 
 	// §4.0 / §25.13: the per-replica in-process alert tracker drives the
 	// §16.5 catalog through inactive → pending → firing and emits
-	// alert_fired / alert_resolved through the shared EventEmitter. With
-	// no PromQL backend wired the tracker uses NoopExprEvaluator, which
-	// keeps every rule inactive — the fall-back posture for a
-	// Prometheus-less deployment. The wiring is unconditional so a
-	// future commit that supplies a real ExprEvaluator only swaps the
-	// backend, not the surface.
+	// alert_fired / alert_resolved through the shared EventEmitter. The
+	// expression backend is inproceval, which evaluates the instant-vector
+	// subset of the §16.5 catalog against this replica's own metric
+	// registry (gwMetrics.Gatherer) — the per-replica fallback the spec
+	// mandates when Prometheus is unreachable. Expressions needing a
+	// time-series history (rate/increase/histogram_quantile) or label-set
+	// joins resolve to ErrUnsupportedExpr, which the evaluator treats as
+	// "preserve state", so those alerts stay with Prometheus and never
+	// fire spuriously from the fallback.
+	//
+	// spec: §25.13 line 4676 — "The in-process alert state tracker
+	// (Section 25.3, Health API) evaluates these expressions against the
+	// in-process metric registry. This is the per-replica fallback used
+	// when Prometheus is unreachable." F-25.13.6.
 	//
 	// spec: §25.13 line 4798 — operators can suppress the in-process
 	// tracker entirely via `gateway.healthTracker.useCompiledRules:
@@ -6603,7 +6612,7 @@ func main() {
 	if *healthTrackerUseCompiledRules {
 		alertEvaluator := evaluator.NewWithEmitter(
 			rules.Catalog(),
-			evaluator.NoopExprEvaluator{},
+			inproceval.New(gwMetrics.Gatherer()),
 			evaluator.EventEmitOptions{
 				Emitter:            opsEmitter,
 				Source:             "//lenny.dev/gateway/" + replica,

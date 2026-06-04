@@ -40228,6 +40228,8 @@ Implementation: `pkg/gateway/health/health.go` line 137 `Aggregator.Report()` ru
 
 **Deferred (this batch):** the alert-state-derived health verdict requires an in-process `ExprEvaluator` that resolves the §16.5 PromQL alert expressions against the gateway's in-process metric registry (`rate(...)`, `histogram_quantile(...)`, and label-aggregated comparisons over instantaneous registry values). Building that registry-backed PromQL evaluator and wiring `pkg/alerting/evaluator` into the gateway is the explicit subject of OPEN **F-25.13.6** ("In-process alert tracker has no Prometheus-backed `ExprEvaluator`; not wired into gateway"). F-25.3.3 unblocks once F-25.13.6 lands the evaluator; the severity→status mapping (`warning` firing → degraded, `critical` firing → unhealthy) and the `HealthService` tracker then layer on top.
 
+**Re-deferred (rule N, after F-25.13.6 closed):** the evaluator blocker is now cleared — `pkg/alerting/inproceval` evaluates the §16.5 catalogue against the in-process registry and the gateway runs the `alertEvaluator` tracker. The remaining F-25.3.3 work is independent of the evaluator and not a clean drop-in: the spec verdict is "no firing alerts **for this component**", but `pkg/alerting/rules.Rule` carries no component association (no `Component`/category field; grep confirms none), and `pkg/gateway/health` aggregates per-subsystem `Checker`s by name. Deriving per-component health from firing alerts therefore requires (a) a rule→health-component mapping across the full ~167-rule catalogue, (b) exposing the live tracker's firing-set + per-rule severity to the `Aggregator`, and (c) layering the severity→status precedence onto `Report()`. That mapping is a judgment-heavy, catalogue-wide design step in its own right; building a partial or name-heuristic mapping now would yield a half-correct health verdict. Tracked as a dedicated batch rather than chased as a second-order unblock.
+
 ### - [x] F-25.3.4 — Dependency-probe set is partial. (High) [Medium] — CLOSED
 
 Spec: line 441 — "Lightweight dependency probes. TCP connect + single-query probes against Postgres (`SELECT 1`), Redis (`PING`), MinIO (`HeadBucket`), K8s API server (`/healthz`), cert-manager (certificate status), and registered connectors. Each probe has a hard timeout of 2 seconds. Probes run in parallel."
@@ -42297,7 +42299,7 @@ Evidence:
 
 **Resolution:** `conventions.ThresholdSource` enum (`operator-customized | compiled-in-defaults`) + `Degradation.ThresholdSource` field added (`pkg/ops/conventions/conventions.go`). The gateway's in-process `health.Aggregator.Report` and `recommendations.CapacityService.GetRecommendations` now stamp the `§25.4` envelope with `thresholdSource=compiled-in-defaults` and a `degradationLevelFor`-derived `level`. `lenny-ops` can override the envelope with `operator-customized` when the aggregated response derives from the operator's Prometheus rule set. Closed in commit c4f70777.
 
-### - [ ] F-25.13.6 — 06  In-process alert tracker has no Prometheus-backed `ExprEvaluator`; not wired into gateway [High] — OPEN
+### - [x] F-25.13.6 — 06  In-process alert tracker has no Prometheus-backed `ExprEvaluator`; not wired into gateway [High] — CLOSED
 
 §25.13 line 4676 commits the gateway binary to:
 
@@ -42308,6 +42310,8 @@ Evidence:
 Evidence:
 - `/Users/joan/projects/lenny/pkg/alerting/evaluator/evaluator.go:9-13` — comment confirming production wiring deferred.
 - `grep -rn "evaluator.New\|alerting/evaluator" cmd/lenny-gateway pkg/gateway` returns no production hits.
+
+**Resolution:** New `pkg/alerting/inproceval` is the production `ExprEvaluator` the §25.13 line 4676 fallback needs: it evaluates the instant-vector subset of the §16.5 catalog directly against the gateway's in-process Prometheus registry (`gwMetrics.Gatherer()`) — selectors with `=`/`!=` matchers, `min`/`max`/`sum`/`count`/`avg` aggregations with `by` grouping, scalar comparisons, `scalar()` readbacks, vector/scalar division, and constant RHS arithmetic. Expressions that need a time-series history (`rate`/`increase`/`time()`/`histogram_quantile`/`count_over_time`), label-set joins (`on()`/`group_left`/`unless`), or boolean composition (`and`/`or`) return `ErrUnsupportedExpr`, which the evaluator state machine treats as "preserve state", so those alerts stay with Prometheus and the fallback never fires them spuriously. A metric absent from the registry resolves to inactive (PromQL instant-vector semantics), so external-only alerts (`up{job=...}`, `kube_*`) never fire from the fallback. `cmd/lenny-gateway/main.go` now constructs the alert tracker with `inproceval.New(gwMetrics.Gatherer())` in place of `NoopExprEvaluator` (the wiring, the `OnRuleEvalDuration` histogram, and the `healthTracker.useCompiledRules` disable were already present). Resolved in commit {COMMIT}.
 
 ### - [x] F-25.13.7 — 07  Catalog code-level rule fields exceed Go struct definition in spec, but spec sample is also under-specified [Medium] — CLOSED
 
