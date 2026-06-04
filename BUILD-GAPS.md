@@ -16308,19 +16308,19 @@ Consequence: a half-open TCP connection between a gateway replica and a pod can 
 
 **Resolution:** `cmd/lenny-gateway/main.go` now ships `--adapter-keepalive-time-ms` (default 10000) and `--adapter-keepalive-timeout-ms` (default 5000) plus `LENNY_ADAPTER_KEEPALIVE_TIME_MS` / `LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS` env vars, threading the values through `grpc.WithKeepaliveParams(keepalive.ClientParameters{...})` on the binder's adapter dials. `cmd/lenny-adapter/main.go` mirrors the flag surface and applies both `KeepaliveParams` (matching server timer) and `KeepaliveEnforcementPolicy` so the gateway pings are accepted. Tier-1 `TestEnvIntOr_spec_11_3` covers the env-helper edges. Committed in this batch.
 
-### - [x] F-11.3.13 — Coordinator-hold timeout (`adapter.coordinatorHoldTimeoutSeconds`, 120s) is absent [Medium] — DEFERRED
+### - [x] F-11.3.13 — Coordinator-hold timeout (`adapter.coordinatorHoldTimeoutSeconds`, 120s) is absent [Medium] — CLOSED
 
 Spec §11.3 line 207: the adapter holds in `coordinator_hold` for up to 120s awaiting a new coordinator before failing.
 
 The metric `lenny_adapter_coordinator_hold` is declared (`pkg/observability/metrics/catalog.go:223`), but `grep -rn "coordinatorHold\|CoordinatorHold\|adapter.*hold" --include="*.go" pkg/adapter pkg/gateway` returns no implementation. There is no `coordinator_hold` state in the adapter (`pkg/adapter/server.go`) and no timer that fails a hold past 120s.
 
-**Deferred:** the cited blocker F-10.4.2 is now CLOSED (commit `77d7a1c7`), but that work is the gateway→client SSE *reattach-frame synthesis* (§10.4 lines 391-397), a distinct layer from the adapter-side `coordinator_hold` state this finding needs. The real blocker is F-10.1.4 (Coordinator-loss detection / hold state / `AdapterTerminating`, High, OPEN): the pod adapter has no `coordinator_hold` state to start a 120s timer against, and no coordinator-loss detector to enter it. Re-deferred against F-10.1.4.
+**Resolution:** Closed by F-10.1.4 (commit `6b4dc934`). The §10.1/§11.3-line-207 coordinator-hold state now lives in `pkg/adapter/holdstate.go`: the configurable `coordinatorHoldTimeoutSeconds` (default 120s, `--coordinator-hold-timeout-seconds` / `LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS`) arms a timer on coordinator-connection loss, the `lenny_adapter_coordinator_hold` gauge is set via the new `setCoordinatorHold` emitter, and the hold fails into `AdapterTerminating(coordinator_lost)` + self-termination when no new coordinator fences within the window.
 
 ### - [x] F-11.3.14 — `CoordinatorFence` RPC and its 5s hard-coded timeout are not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Metrics for it exist (`lenny_coordinator_fence_retry_total`, `lenny_coordinator_fence_relinquished_total` — `pkg/observability/metrics/catalog.go:225-226`), but `grep -rn "CoordinatorFence" --include="*.go" --include="*.proto"` matches only the metric catalogue. No RPC, no client, no enforcement.
 
-**Deferred:** F-10.4.2 (the gateway→client SSE reattach synthesis) is now CLOSED (commit `77d7a1c7`), but the `CoordinatorFence` RPC is the §10.1 adapter-side hand-off arbitration step, which still depends on F-10.1.7 (CheckpointBarrier, High, OPEN) and the adapter coordinator-loss path (F-10.1.4, High, OPEN). Re-deferred against those; the closed reattach-synthesis finding is the client-facing layer, not the arbitration RPC.
+**Deferred:** the adapter-side `CoordinatorFence` RPC + gap detection now exist (`pkg/adapter/coordination.go`) and the adapter coordinator-loss/hold path landed under F-10.1.4 (commit `6b4dc934`, CLOSED). The remaining gap is the gateway-*side* issuance: a `CoordinatorFence` client wrapper with the 5s hard-coded timeout and retry/relinquish enforcement, plus its barrier-target driver. That belongs to the gateway-side handoff RPC wiring tracked under the still-OPEN F-10.1.7 (CheckpointBarrier protocol) / F-10.1.16 (`coordinator_handoff_stale` emit). Re-deferred against F-10.1.7.
 
 ### - [x] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — DEFERRED
 
