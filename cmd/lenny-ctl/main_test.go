@@ -522,6 +522,45 @@ func TestBootstrapRequiresFromValues(t *testing.T) {
 	}
 }
 
+// spec: §17.6 line 473 — a first run (the gateway created the Secret)
+// prints the first-use prompt with the retrieve command; a re-run prints
+// the "already exists" notice. F-24.1.7.
+func TestBootstrapAdminTokenFirstUsePrompt_spec_17_6_473(t *testing.T) {
+	path := writeSeedFile(t, "bootstrap-values.json", `{"tenants":[]}`)
+
+	created := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"adminToken":{"secretCreated":true,"secretNamespace":"lenny-system","secretName":"lenny-admin-token"}}`))
+	}))
+	defer created.Close()
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--api-url", created.URL, "--token", "t",
+		"bootstrap", "--from-values", path, "--wait-timeout", "0"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bootstrap: exit %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Initial admin token written to Secret lenny-system/lenny-admin-token") {
+		t.Errorf("first-run prompt missing; stderr=%q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "kubectl get secret lenny-admin-token -n lenny-system") {
+		t.Errorf("retrieve command missing; stderr=%q", stderr.String())
+	}
+
+	existing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"adminToken":{"secretCreated":false,"secretNamespace":"lenny-system","secretName":"lenny-admin-token"}}`))
+	}))
+	defer existing.Close()
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"--api-url", existing.URL, "--token", "t",
+		"bootstrap", "--from-values", path, "--wait-timeout", "0"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bootstrap re-run: exit %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Admin token Secret already exists") {
+		t.Errorf("re-run notice missing; stderr=%q", stderr.String())
+	}
+}
+
 func TestBootstrapAppliesJSONSeedFile(t *testing.T) {
 	path := writeSeedFile(t, "bootstrap-values.json",
 		`{"tenants":[{"id":"acme","displayName":"Acme Corp"}]}`)

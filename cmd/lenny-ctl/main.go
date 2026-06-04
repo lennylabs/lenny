@@ -1687,9 +1687,37 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	// spec: §17.6 lines 449-450 — log INFO/WARN per skipped resource so
 	// operators see why a re-run left existing resources unchanged.
 	out.logSkips(stderr)
+	// spec: §17.6 line 473 — the first-use prompt. On a first run (the
+	// gateway created the Secret) print where to retrieve the token; on a
+	// re-run print the no-change notice. Printed to stderr so a script
+	// parsing the JSON result on stdout is unaffected.
+	out.printAdminTokenPrompt(stderr, quiet)
 	// spec: §17.6 line 420 — exit 0 = all seeded, 1 = validation error,
 	// 2 = partial failure.
 	return out.exitCode()
+}
+
+// printAdminTokenPrompt prints the §17.6 line 473 first-use prompt. The
+// "Retrieve with" command is always printed on a fresh Secret (a
+// one-time onboarding pointer the operator must not miss); the "already
+// exists" notice is suppressed under --quiet as routine re-run noise.
+// F-24.1.7.
+func (b bootstrapResult) printAdminTokenPrompt(stderr io.Writer, quiet bool) {
+	if b.AdminToken == nil {
+		return
+	}
+	ns := b.AdminToken.SecretNamespace
+	name := b.AdminToken.SecretName
+	if b.AdminToken.SecretCreated {
+		fmt.Fprintf(stderr,
+			"Initial admin token written to Secret %s/%s. Retrieve with: "+
+				"kubectl get secret %s -n %s -o jsonpath='{.data.token}' | base64 -d\n",
+			ns, name, name, ns)
+		return
+	}
+	if !quiet {
+		fmt.Fprintln(stderr, "Admin token Secret already exists — no changes.")
+	}
 }
 
 // bootstrapQuery builds the dryRun/forceUpdate query string.
@@ -1708,13 +1736,22 @@ func bootstrapQuery(dryRun, forceUpdate bool) string {
 // CLI decodes only the fields it needs to log skips and compute the exit
 // code, keeping the client thin (no dependency on the gateway package).
 type bootstrapResult struct {
-	Tenants            bootstrapSection `json:"tenants"`
-	Runtimes           bootstrapSection `json:"runtimes"`
-	Users              bootstrapSection `json:"users"`
-	Pools              bootstrapSection `json:"pools"`
-	CredentialPools    bootstrapSection `json:"credentialPools"`
-	DelegationPolicies bootstrapSection `json:"delegationPolicies"`
-	Environments       bootstrapSection `json:"environments"`
+	Tenants            bootstrapSection     `json:"tenants"`
+	Runtimes           bootstrapSection     `json:"runtimes"`
+	Users              bootstrapSection     `json:"users"`
+	Pools              bootstrapSection     `json:"pools"`
+	CredentialPools    bootstrapSection     `json:"credentialPools"`
+	DelegationPolicies bootstrapSection     `json:"delegationPolicies"`
+	Environments       bootstrapSection     `json:"environments"`
+	AdminToken         *bootstrapAdminToken `json:"adminToken"`
+}
+
+// bootstrapAdminToken mirrors the §17.6 admin-credential section the
+// gateway returns so the CLI can print the first-use prompt. F-24.1.7.
+type bootstrapAdminToken struct {
+	SecretCreated   bool   `json:"secretCreated"`
+	SecretNamespace string `json:"secretNamespace"`
+	SecretName      string `json:"secretName"`
 }
 
 type bootstrapSection struct {
