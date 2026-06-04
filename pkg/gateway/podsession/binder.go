@@ -449,7 +449,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy)
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy, false)
 	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()

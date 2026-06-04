@@ -482,6 +482,9 @@ func main() {
 	uploadMaxBytesPerSession := flag.Int64("upload-max-bytes-per-session",
 		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
 		"§11.1 line 11 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
+	midSessionUploadEnabled := flag.Bool("mid-session-upload",
+		envFlag("LENNY_MID_SESSION_UPLOAD"),
+		"§7.4 line 433 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")
 	// spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests
@@ -3552,6 +3555,8 @@ func main() {
 		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
 		MaxConcurrentUploadsGlobal:     *uploadMaxConcurrentGlobal,
 		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
+		// spec: §7.4 line 433 — mid-session upload deployer policy. F-7.4.6.
+		MidSessionUploadEnabled: *midSessionUploadEnabled,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §5.2 — whole-pod replacement counter, incremented when the

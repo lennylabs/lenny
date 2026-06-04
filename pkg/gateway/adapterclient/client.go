@@ -217,11 +217,17 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // advisories the adapter raised during materialization (per §7.4 line
 // 459 `workspace_plan_strip_components_skip`). The slice is nil when
 // the materialization had nothing to report. F-7.4.15.
-func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy) ([]*adapterv1.WorkspacePlanWarning, error) {
+//
+// midSession marks a §7.4 line 433 mid-session upload: the adapter overlays
+// the plan's sources onto the running session's existing /workspace/current
+// and signals the runtime once promotion completes, rather than replacing
+// the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
 	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
 		ArchivePolicy: archive,
+		MidSession:    midSession,
 	})
 	if err != nil {
 		return nil, err

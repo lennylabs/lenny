@@ -14,6 +14,7 @@
     { "$ref": "#/$defs/credentials_rotated" },
     { "$ref": "#/$defs/credentials_acknowledged" },
     { "$ref": "#/$defs/deadline_approaching" },
+    { "$ref": "#/$defs/files_updated" },
     { "$ref": "#/$defs/terminate" },
     { "$ref": "#/$defs/task_complete" },
     { "$ref": "#/$defs/task_ready" },
@@ -163,6 +164,16 @@
         "trigger": { "enum": ["session_age", "budget", "idle"] }
       },
       "required": ["type", "remainingMs", "trigger"],
+      "additionalProperties": false
+    },
+    "files_updated": {
+      "title": "files_updated",
+      "description": "Adapter → runtime. A §7.4 mid-session upload promoted new files into /workspace/current. Sent only after the atomic overlay completes, so the runtime never observes partially-written files. The agent re-reads the workspace. One-way: no acknowledgement is expected.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "files_updated" }
+      },
+      "required": ["type"],
       "additionalProperties": false
     },
     "terminate": {

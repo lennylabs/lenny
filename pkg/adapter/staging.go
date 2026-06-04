@@ -188,13 +188,41 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	}
 	sources := req.GetWorkspacePlan().GetSources()
 	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
-	warnings, err := workspace.MaterializeWithPolicy(s.WorkspaceRoot, s.StagingDir,
-		sources, archive)
+	// spec: §7.4 line 433 — a mid-session upload overlays the sources onto
+	// the running session's existing /workspace/current rather than
+	// replacing the whole tree, then signals the runtime once promotion
+	// completes. The pre-start path (mid_session false) keeps the §4.7
+	// whole-tree promotion the assignment sequence relies on. F-7.4.6.
+	midSession := req.GetMidSession()
+	span.SetAttributes(attribute.Bool("workspace.mid_session", midSession))
+	var (
+		warnings []workspace.Warning
+		err      error
+	)
+	if midSession {
+		warnings, err = workspace.MaterializeOverlayWithPolicy(s.WorkspaceRoot, s.StagingDir,
+			sources, archive)
+	} else {
+		warnings, err = workspace.MaterializeWithPolicy(s.WorkspaceRoot, s.StagingDir,
+			sources, archive)
+	}
 	if err != nil {
 		// §16.3: a plan the adapter cannot materialize (invalid source,
 		// containment violation) is PERMANENT.
 		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
+	}
+	// spec: §7.4 line 433 — "The runtime adapter receives a FilesUpdated
+	// notification only after promotion, so the agent never sees
+	// partially-written files." The overlay above is already promoted, so
+	// the signal is safe to emit now. It is best-effort: a not-connected
+	// channel (no Full-level runtime, or the pre-start path) is benign,
+	// and the promoted files are already on disk regardless. F-7.4.6.
+	if midSession && s.Lifecycle != nil {
+		if sigErr := s.Lifecycle.SignalFilesUpdated(); sigErr != nil {
+			log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v",
+				req.GetSessionId().GetValue(), sigErr)
+		}
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto
 	// the FinalizeWorkspaceResponse so the gateway can republish the

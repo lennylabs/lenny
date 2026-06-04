@@ -527,6 +527,18 @@ func (lc *LifecycleChannel) SignalTaskReady(taskID string) error {
 	})
 }
 
+// SignalFilesUpdated tells the runtime that a §7.4 mid-session upload
+// promoted new files into /workspace/current, so the agent re-reads the
+// workspace. The adapter sends it only after the atomic overlay completes,
+// so the runtime never observes partially written files. One-way: the
+// runtime is not required to acknowledge. When no runtime is connected
+// (the pre-start path, before the agent dials the channel) writeFrame
+// returns errLifecycleNotConnected, which the caller treats as a no-op.
+// spec: §7.4 line 433 — F-7.4.6.
+func (lc *LifecycleChannel) SignalFilesUpdated() error {
+	return lc.writeFrame(lifecycleFrame{Type: "files_updated"})
+}
+
 // Supports reports whether the runtime declared a capability in the
 // handshake. It returns false before the handshake completes.
 func (lc *LifecycleChannel) Supports(capability string) bool {

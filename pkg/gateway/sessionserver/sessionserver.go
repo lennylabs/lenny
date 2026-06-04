@@ -496,6 +496,14 @@ type Server struct {
 	// posture); every call site tolerates a nil limiter. spec: §11.1
 	// lines 10-11. F-11.1.5, F-11.1.6.
 	uploadLimits *uploadLimiter
+
+	// midSessionUploadEnabled is the §7.4 line 433 deployer policy that,
+	// together with the bound runtime's capabilities.midSessionUpload flag,
+	// admits uploads into an already-running session via
+	// POST /v1/sessions/{id}/upload-to-session. False (the default) keeps
+	// mid-session uploads off platform-wide regardless of the runtime flag.
+	// spec: §7.4 line 433 — F-7.4.6.
+	midSessionUploadEnabled bool
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -1212,6 +1220,13 @@ type Options struct {
 	// and the minimal gateway). spec: §16.1 — F-13.4.12.
 	UploadMetrics UploadHandlerMetrics
 
+	// MidSessionUploadEnabled is the §7.4 line 433 deployer policy that
+	// admits mid-session uploads (POST /v1/sessions/{id}/upload-to-session)
+	// when the bound runtime also declares capabilities.midSessionUpload.
+	// False (the default) keeps the surface closed platform-wide. spec:
+	// §7.4 line 433 — F-7.4.6.
+	MidSessionUploadEnabled bool
+
 	// MaxConcurrentUploadsPerSession is the §11.1 line 10 per-session
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once a session already holds this many
@@ -1417,6 +1432,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		policyAuditSink:          opts.PolicyAuditSink,
 		uploadSubsystem:          opts.UploadSubsystem,
 		uploadMetrics:            opts.UploadMetrics,
+		midSessionUploadEnabled:  opts.MidSessionUploadEnabled,
 		resumeWindow:             opts.ResumeWindow,
 		sessionLogHook:           opts.SessionLogHook,
 		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
@@ -1585,6 +1601,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manage(s.handleUploadToSession))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))

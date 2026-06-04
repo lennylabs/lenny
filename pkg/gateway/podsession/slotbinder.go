@@ -114,7 +114,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 				fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 		}
-		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy)
+		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy, false)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)

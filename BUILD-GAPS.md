@@ -6760,7 +6760,7 @@ A client uploading a tar to `/upload` receives the blob URI back; the gateway ha
 
 **Resolution:** Closed by F-7.1.9 (this batch). `POST /v1/sessions/{id}/upload-archive` is now registered, backed by the shared `runUpload` pipeline, and returns `UploadResponse{IsArchive: true}` so the §7.4 extraction pipeline (F-7.4.1 / F-7.4.2 / F-7.4.11) can pick up the blob without re-sniffing bytes. Archive parsing and the §13.4 ceilings remain tracked under F-7.4.1 / F-7.4.2 / F-7.4.11; the endpoint-presence half of this finding is satisfied.
 
-### - [ ] F-7.4.6 — Mid-session upload is unreachable: the runtime capability flag is never set [High] — OPEN
+### - [x] F-7.4.6 — Mid-session upload is unreachable: the runtime capability flag is never set [High] — CLOSED
 
 Spec: §7.4 line 433 — "If the runtime declares `capabilities.midSessionUpload: true` and the deployer policy allows it, clients can call `upload_to_session(session_id, files)` during an active session."
 
@@ -6773,6 +6773,13 @@ Consequences:
 - There is no `upload_to_session` MCP tool registered (search of `pkg/gateway/mcptools` returns no hits).
 - There is no `FilesUpdated` adapter RPC or notification mechanism (no proto definition, no client invocation).
 - The staging → validation → promotion → notification pipeline the spec describes for mid-session uploads is absent.
+
+**Resolution:** Built the §7.4 line 433 mid-session upload end to end.
+- **Capability + discovery:** `runtimestore.RuntimeCapabilities` gains `MidSessionUpload` (persists through the existing capabilities JSONB), and `GET /v1/runtimes` surfaces it via a new `capabilities.midSessionUpload` discovery field (the §7.4 footnote's discovery path).
+- **Deployer policy + reachability:** new `MidSessionUploadEnabled` gateway option (`--mid-session-upload` / `LENNY_MID_SESSION_UPLOAD`, default off). A new bearer-authed `POST /v1/sessions/{id}/upload-to-session` resolves the bound runtime's capability and, only when both the capability and the policy are set, passes `Capabilities{midSessionUpload}` into the precondition so `EndpointUpload` admits `StateRunning`.
+- **Pipeline + notification:** the endpoint streams the files to the running pod's adapter (`PrepareWorkspace`), then `FinalizeWorkspace` with a new proto `mid_session` flag. The adapter's new `MaterializeOverlayWithPolicy` builds the sources in `/workspace/staging`, validates symlink containment, then atomically per-file overlays them onto `/workspace/current` (preserving the agent's existing files), and emits a `files_updated` lifecycle signal (`LifecycleChannel.SignalFilesUpdated`, added to the lifecycle-events schema) only after promotion. The pre-start whole-tree path is unchanged (`mid_session` false).
+
+The `upload_to_session` MCP-tool wrapper is the §15.2 client-tool catalog surface tracked under F-15.2.3; the REST operation, capability gate, and FilesUpdated pipeline this finding names are complete. Closes the F-7.4.19 deferral (bearer-vs-uploadToken: the mid-session surface is a separate bearer-authed endpoint that never touches the uploadToken, per §7.4 line 435). Commit {COMMIT_F746}.
 
 ### - [x] F-7.4.7 — Upload token TTL is decoupled from `maxCreatedStateTimeoutSeconds` [High] — CLOSED
 
@@ -6889,13 +6896,13 @@ This is a "noteworthy" rather than a defect: the spec does not require Content-T
 
 **Resolution (positive confirmation, no code change):** Re-verified the spec text: §7.4 and §13 do not enumerate any Content-Type allowlist, magic-number requirement, or declared-vs-actual match. The finding itself classifies the observation as "noteworthy rather than a defect". Per rule F (code fixes must cite a spec section), the absence of a normative requirement means no code change is warranted. The §13.4 size/structure ceilings the spec does mandate are tracked under F-7.4.2 (Phase 2 archive ceilings).
 
-### - [ ] F-7.4.19 — §7.4 explicit precondition: "upload-archive" tokens not reissued for mid-session [Info] — DEFERRED
+### - [x] F-7.4.19 — §7.4 explicit precondition: "upload-archive" tokens not reissued for mid-session [Info] — CLOSED
 
 Spec: §7.4 line 435 — "Mid-session uploads (after `FinalizeWorkspace`) use the caller's normal session-scoped bearer credential instead; the `uploadToken` is not reissued."
 
 Implementation: irrelevant until F6 lands. Once mid-session upload is wired, the bearer-vs-uploadToken branch must select between the two credentials based on session state. No design seam exists for this in `verifyUploadToken` today.
 
-**Deferred:** explicitly gated on F-7.4.6 (mid-session upload runtime capability). Will pair with that work.
+**Resolution:** Closed by F-7.4.6 (this batch). The mid-session surface landed as a distinct bearer-authed endpoint (`POST /v1/sessions/{id}/upload-to-session`, gated by `PermManageOwnSessions`) rather than a state-branch inside `verifyUploadToken`: it never reads or reissues the `uploadToken`, so the §7.4 line 435 "uses the caller's normal session-scoped bearer credential; the uploadToken is not reissued" precondition holds by construction. The pre-start `/upload` endpoint keeps its uploadToken auth. Commit {COMMIT_F746}.
 
 ### - [x] F-7.4.20 — `pkg/upload` package is dead code [Info] — CLOSED
 

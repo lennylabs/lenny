@@ -1726,6 +1726,16 @@ type FinalizeWorkspaceRequest struct {
 	// message means "platform defaults" (symlinks rejected). spec: §7.4
 	// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
 	ArchivePolicy *ArchivePolicy `protobuf:"bytes,3,opt,name=archive_policy,json=archivePolicy,proto3" json:"archive_policy,omitempty"`
+	// mid_session marks a §7.4 line 433 mid-session upload: the session is
+	// already running and the named sources are overlaid onto the existing
+	// /workspace/current rather than replacing the whole tree. The adapter
+	// builds the sources in /workspace/staging, validates them, atomically
+	// moves each entry onto /workspace/current (preserving the agent's
+	// existing files), then emits a `files_updated` lifecycle signal to the
+	// runtime so the agent re-reads the workspace only after promotion. The
+	// proto3 default false is the pre-start whole-tree materialization the
+	// §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
+	MidSession    bool `protobuf:"varint,4,opt,name=mid_session,json=midSession,proto3" json:"mid_session,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1779,6 +1789,13 @@ func (x *FinalizeWorkspaceRequest) GetArchivePolicy() *ArchivePolicy {
 		return x.ArchivePolicy
 	}
 	return nil
+}
+
+func (x *FinalizeWorkspaceRequest) GetMidSession() bool {
+	if x != nil {
+		return x.MidSession
+	}
+	return false
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
@@ -5217,12 +5234,14 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x05chunk\x18\x03 \x01(\fR\x05chunk\"`\n" +
 	"\x18PrepareWorkspaceResponse\x12!\n" +
 	"\fstaged_bytes\x18\x01 \x01(\x03R\vstagedBytes\x12!\n" +
-	"\fstaged_files\x18\x02 \x01(\x05R\vstagedFiles\"\xe6\x01\n" +
+	"\fstaged_files\x18\x02 \x01(\x05R\vstagedFiles\"\x87\x02\n" +
 	"\x18FinalizeWorkspaceRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12F\n" +
 	"\x0eworkspace_plan\x18\x02 \x01(\v2\x1f.lenny.adapter.v1.WorkspacePlanR\rworkspacePlan\x12F\n" +
-	"\x0earchive_policy\x18\x03 \x01(\v2\x1f.lenny.adapter.v1.ArchivePolicyR\rarchivePolicy\"]\n" +
+	"\x0earchive_policy\x18\x03 \x01(\v2\x1f.lenny.adapter.v1.ArchivePolicyR\rarchivePolicy\x12\x1f\n" +
+	"\vmid_session\x18\x04 \x01(\bR\n" +
+	"midSession\"]\n" +
 	"\rArchivePolicy\x12%\n" +
 	"\x0eallow_symlinks\x18\x01 \x01(\bR\rallowSymlinks\x12%\n" +
 	"\x0eworkspace_root\x18\x02 \x01(\tR\rworkspaceRoot\"{\n" +

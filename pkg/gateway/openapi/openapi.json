@@ -211,6 +211,34 @@
           "isArchive":   { "type": "boolean", "description": "True when the body was uploaded via /upload-archive; consumed by the §7.4 extraction pipeline." }
         }
       },
+      "UploadToSessionRequest": {
+        "type": "object",
+        "required": ["files"],
+        "description": "§7.4 mid-session upload payload: the files to overlay onto a running session's /workspace/current.",
+        "properties": {
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["path", "content"],
+              "properties": {
+                "path":    { "type": "string", "description": "Workspace-relative destination; absolute paths and `..` traversal are rejected." },
+                "content": { "type": "string", "description": "Base64-encoded file bytes." },
+                "mode":    { "type": "string", "description": "Optional octal file mode (e.g. \"0644\")." }
+              }
+            }
+          }
+        }
+      },
+      "UploadToSessionResponse": {
+        "type": "object",
+        "required": ["status", "files"],
+        "properties": {
+          "status": { "type": "string", "description": "\"filesUpdated\" once the overlay is promoted and the runtime is signaled." },
+          "files":  { "type": "integer", "description": "Number of files promoted into the workspace." }
+        }
+      },
       "ExtendRetentionRequest": {
         "type": "object",
         "required": ["ttlSeconds"],
@@ -715,6 +743,27 @@
           "403": { "description": "UPLOAD_TOKEN_MISMATCH" },
           "410": { "description": "UPLOAD_TOKEN_CONSUMED" },
           "413": { "description": "PAYLOAD_TOO_LARGE" }
+        }
+      }
+    },
+    "/v1/sessions/{id}/upload-to-session": {
+      "post": {
+        "operationId": "postV1SessionsByIdUploadToSession",
+        "summary": "Upload files into a running session's workspace (mid-session upload)",
+        "description": "The §7.4 mid-session upload surface. Admitted only when the bound runtime declares capabilities.midSessionUpload and the deployer policy permits it; uses the caller's session-scoped bearer credential (no uploadToken). The gateway streams the files into the pod's /workspace/staging and overlays them onto /workspace/current, signaling the runtime once promotion completes so the agent never sees partially-written files.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadToSessionRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Files promoted and the runtime signaled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadToSessionResponse" } } } },
+          "400": { "description": "VALIDATION_ERROR — empty file set, bad base64, or path traversal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "RESOURCE_NOT_FOUND" },
+          "409": { "description": "INVALID_STATE_TRANSITION (runtime/policy does not permit mid-session upload) or TARGET_NOT_READY (no live pod binding)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "413": { "description": "PAYLOAD_TOO_LARGE" },
+          "502": { "description": "UPSTREAM_ERROR — the pod failed to stage or materialize the upload" }
         }
       }
     },

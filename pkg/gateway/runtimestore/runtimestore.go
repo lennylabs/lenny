@@ -352,6 +352,15 @@ type RuntimeCapabilities struct {
 	// companion runtime-level SDKWarmBlockingPaths governs the demotion
 	// decision (§5.1 lines 22-24).
 	PreConnect bool `json:"preConnect,omitempty"`
+
+	// MidSessionUpload is the §7.4 line 433 capabilities.midSessionUpload
+	// flag. When true (and the deployer policy permits it) clients may
+	// upload files into the workspace of an already-running session via
+	// the mid-session upload surface; the adapter overlays the files onto
+	// /workspace/current and signals the runtime once promotion completes.
+	// Clients discover the flag through the GET /v1/runtimes capabilities
+	// block. Default false. spec: §7.4 line 433 — F-7.4.6.
+	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
 }
 
 // Clone returns a deep copy of the capabilities so the store never

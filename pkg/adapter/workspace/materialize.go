@@ -164,6 +164,80 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 	// intended final root (archive.WorkspaceRoot) at extraction time; the
 	// definitive check runs against root after promotion.
 	buildDir := promotionBuildDir(root, stagingDir)
+	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive)
+	if err != nil {
+		return warnings, err
+	}
+
+	// spec: §7.4 line 433 — atomic staging→current promotion.
+	promo, err := promoteStaging(buildDir, root)
+	if err != nil {
+		_ = os.RemoveAll(buildDir)
+		return warnings, err
+	}
+	// spec: §7.4 symlink-handling bullet — re-validate every symlink against
+	// its promoted location under root; an escape rolls the promotion back.
+	if err := revalidatePromotedSymlinks(root); err != nil {
+		promo.rollback()
+		return warnings, err
+	}
+	promo.commit()
+	return warnings, nil
+}
+
+// MaterializeOverlayWithPolicy is the §7.4 line 433 mid-session upload
+// path. The session is already running, so unlike MaterializeWithPolicy it
+// must not replace the whole workspace: the resolved sources are overlaid
+// onto the existing /workspace/current, preserving the files the agent has
+// created since session start. The sources are built in /workspace/staging
+// and validated exactly as the pre-start path, then each built file,
+// symlink, and directory is moved into its final location under root with
+// an atomic per-file rename so the runtime never observes a partially
+// written file. A build failure or a symlink-containment violation aborts
+// before any entry is moved, so the live workspace is left untouched.
+//
+// archive carries the same §13.4 per-Runtime opt-ins as the pre-start
+// path; warnings are returned identically. spec: §7.4 line 433 and the
+// §7.4 symlink-handling bullet — F-7.4.6, F-7.4.12.
+func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+	root = filepath.Clean(root)
+	if archive.WorkspaceRoot == "" {
+		archive.WorkspaceRoot = root
+	}
+	buildDir := promotionBuildDir(root, stagingDir)
+	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive)
+	if err != nil {
+		return warnings, err
+	}
+	// The build tree is transient: every entry is moved out by the overlay
+	// below, and anything left behind on an error path is debris. Clear it
+	// unconditionally on return.
+	defer func() { _ = os.RemoveAll(buildDir) }()
+
+	// spec: §7.4 symlink-handling bullet — validate every built symlink
+	// against its FINAL location under root before any entry is moved, so a
+	// traversal escape aborts the overlay with the live workspace untouched.
+	// The overlay places each build entry at root/<rel>, so the symlink's
+	// resolved location matches the validation root used here.
+	if err := revalidateBuildSymlinks(buildDir, root); err != nil {
+		return warnings, err
+	}
+	// spec: §7.4 line 433 — overlay each built entry onto the existing
+	// workspace root with an atomic per-file move.
+	if err := overlayTree(buildDir, root); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
+}
+
+// buildResolvedTree lays the workspace sources down in buildDir in plan
+// order and returns the §14 advisory warnings raised during the build. A
+// failure in any source clears the partial build tree and returns, so the
+// caller's workspace root is never touched (§7.4 line 460). It is the
+// shared first half of both the whole-tree promotion (MaterializeWithPolicy)
+// and the mid-session overlay (MaterializeOverlayWithPolicy). spec: §7.4
+// lines 433, 459, 460; §14 line 338 — F-7.4.6, F-7.4.12, F-14.1.9.
+func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
 	if err := os.RemoveAll(buildDir); err != nil {
 		return nil, fmt.Errorf("clear workspace staging %q: %w", buildDir, err)
 	}
@@ -209,21 +283,82 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 			seen[rel] = i
 		}
 	}
-
-	// spec: §7.4 line 433 — atomic staging→current promotion.
-	promo, err := promoteStaging(buildDir, root)
-	if err != nil {
-		_ = os.RemoveAll(buildDir)
-		return warnings, err
-	}
-	// spec: §7.4 symlink-handling bullet — re-validate every symlink against
-	// its promoted location under root; an escape rolls the promotion back.
-	if err := revalidatePromotedSymlinks(root); err != nil {
-		promo.rollback()
-		return warnings, err
-	}
-	promo.commit()
 	return warnings, nil
+}
+
+// revalidateBuildSymlinks re-resolves every symlink in the build tree
+// against its eventual location under root and fails when any target
+// escapes root or traverses a forbidden pseudo-filesystem mount. The
+// overlay places a build symlink at root/<rel>, so validating the build
+// symlink's target against root reproduces the §7.4 post-promotion check
+// before anything is moved. spec: §7.4 symlink-handling bullet — F-7.4.6.
+func revalidateBuildSymlinks(buildDir, root string) error {
+	buildDir = filepath.Clean(buildDir)
+	root = filepath.Clean(root)
+	return filepath.WalkDir(buildDir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			return fmt.Errorf("read staged symlink %q: %w", p, err)
+		}
+		rel, err := filepath.Rel(buildDir, p)
+		if err != nil {
+			return fmt.Errorf("locate staged symlink %q: %w", p, err)
+		}
+		return upload.ValidateSymlinkTarget(filepath.ToSlash(rel), target, filepath.ToSlash(root))
+	})
+}
+
+// overlayTree moves every entry of the build tree onto root, creating
+// missing parent directories and atomically renaming each regular file and
+// symlink into place. Existing directories under root are preserved (their
+// mode is not changed); a directory absent under root is created with the
+// build entry's mode. filepath.WalkDir reads each directory's entries up
+// front, so renaming leaf entries out of the build tree mid-walk is safe.
+// spec: §7.4 line 433 — F-7.4.6.
+func overlayTree(build, root string) error {
+	build = filepath.Clean(build)
+	root = filepath.Clean(root)
+	return filepath.WalkDir(build, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if p == build {
+			return nil
+		}
+		rel, err := filepath.Rel(build, p)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(root, rel)
+		if d.IsDir() {
+			info, ierr := d.Info()
+			if ierr != nil {
+				return ierr
+			}
+			switch _, serr := os.Lstat(dst); {
+			case errors.Is(serr, os.ErrNotExist):
+				if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+					return fmt.Errorf("overlay directory %q: %w", rel, err)
+				}
+			case serr != nil:
+				return fmt.Errorf("stat overlay target %q: %w", rel, serr)
+			}
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), promotionStagingMode); err != nil {
+			return fmt.Errorf("create overlay parent for %q: %w", rel, err)
+		}
+		if err := os.Rename(p, dst); err != nil {
+			return fmt.Errorf("overlay %q: %w", rel, err)
+		}
+		return nil
+	})
 }
 
 // promotionBuildDir returns the §7.4 /workspace/staging build tree as a

@@ -90,6 +90,34 @@ type RuntimeDiscoveryEntry struct {
 	// when the runtime declares no minimum. spec: §5.1 line 197; §27.4
 	// line 176. F-27.4.6.
 	MinPlatformVersion string `json:"minPlatformVersion,omitempty"`
+	// Capabilities surfaces the client-relevant subset of the §5.1
+	// runtime capabilities block. §7.4 line 433 directs clients to check
+	// the `midSessionUpload` capability here before attempting a
+	// mid-session upload. Omitted when the runtime declares no
+	// client-relevant capability. spec: §7.4 line 433 — F-7.4.6.
+	Capabilities *RuntimeDiscoveryCapabilities `json:"capabilities,omitempty"`
+}
+
+// RuntimeDiscoveryCapabilities is the client-facing subset of the §5.1
+// capabilities block surfaced on GET /v1/runtimes. It carries only the
+// flags a client acts on before session interaction; warm-pool-internal
+// flags (preConnect) are not advertised. spec: §7.4 line 433 — F-7.4.6.
+type RuntimeDiscoveryCapabilities struct {
+	// MidSessionUpload mirrors §5.1 capabilities.midSessionUpload: the
+	// runtime accepts file uploads into an already-running session's
+	// workspace. spec: §7.4 line 433.
+	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
+}
+
+// discoveryCapabilities projects a runtime's §5.1 capabilities block onto
+// the client-facing discovery subset, returning nil when no client-relevant
+// capability is set so the JSON envelope omits an empty object. spec: §7.4
+// line 433 — F-7.4.6.
+func discoveryCapabilities(rt runtimestore.Runtime) *RuntimeDiscoveryCapabilities {
+	if rt.Capabilities == nil || !rt.Capabilities.MidSessionUpload {
+		return nil
+	}
+	return &RuntimeDiscoveryCapabilities{MidSessionUpload: rt.Capabilities.MidSessionUpload}
 }
 
 // mcpEndpointFor returns the §9.1 discovery pointer for runtime
@@ -152,6 +180,7 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 			McpEndpoint:          mcpEndpointFor(rt),
 			RuntimeOptionsSchema: rt.RuntimeOptionsSchema,
 			MinPlatformVersion:   rt.MinPlatformVersion,
+			Capabilities:         discoveryCapabilities(rt),
 		})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{

@@ -534,6 +534,16 @@ message FinalizeWorkspaceRequest {
   // message means "platform defaults" (symlinks rejected). spec: §7.4
   // lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
   ArchivePolicy archive_policy = 3;
+  // mid_session marks a §7.4 line 433 mid-session upload: the session is
+  // already running and the named sources are overlaid onto the existing
+  // /workspace/current rather than replacing the whole tree. The adapter
+  // builds the sources in /workspace/staging, validates them, atomically
+  // moves each entry onto /workspace/current (preserving the agent's
+  // existing files), then emits a `files_updated` lifecycle signal to the
+  // runtime so the agent re-reads the workspace only after promotion. The
+  // proto3 default false is the pre-start whole-tree materialization the
+  // §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
+  bool mid_session = 4;
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
