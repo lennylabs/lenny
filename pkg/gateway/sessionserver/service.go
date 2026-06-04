@@ -31,6 +31,97 @@ type ServiceError struct {
 
 func (e *ServiceError) Error() string { return e.Code + ": " + e.Message }
 
+// ServiceResult is the raw outcome of a successful in-process service
+// dispatch: the HTTP status the REST surface wrote, the response body
+// bytes verbatim, and the response Content-Type. The §15.2 MCP tool
+// projects Body onto its wire format (a JSON tool result for a JSON body,
+// a base64 content block for a binary blob), so the two surfaces return
+// byte-identical payloads. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+type ServiceResult struct {
+	Status      int
+	Body        []byte
+	ContentType string
+}
+
+// serviceMux returns the cached routing handler the in-process service
+// layer dispatches through. It is the same handler the public REST
+// surface mounts, so an overlapping operation invoked from the §15.2 MCP
+// tool runs the identical route, validation, and response shaping — the
+// §15.2.1 rule-1 "implemented exactly once" guarantee, with no parallel
+// route table to drift. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+func (s *Server) serviceMux() http.Handler {
+	s.serviceHandlerOnce.Do(func() {
+		s.serviceHandler = s.Handler()
+	})
+	return s.serviceHandler
+}
+
+// ServiceCall dispatches one overlapping REST operation in-process and
+// returns the raw 2xx result, or a typed ServiceError carrying the §16.3
+// code/category/HTTP-status/retryable the REST surface would have
+// written. The caller's authenticated principal rides on ctx exactly as
+// it does on a real request (the §10.2 permission gate runs and admits a
+// roleless dev principal); tenantID is stamped on the synthetic request's
+// X-Lenny-Tenant-ID header for the principal-less transport.
+//
+// target is the full request target including any query string (for
+// example "/v1/sessions/abc/start" or "/v1/sessions?state=running").
+// body and contentType are empty for a GET. headers carries any
+// operation-specific request headers (for example the §7.1
+// X-Lenny-Upload-Token an upload requires); a nil map sets none. A 2xx
+// returns the result and a nil error; any other status is decoded as the
+// §15.1 error envelope.
+//
+// spec: §15.2.1 rule 1 line 1380; rule 3 line 1384 (shared error
+// envelope). F-15.2.3.
+func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (ServiceResult, *ServiceError) {
+	var reader *bytes.Reader
+	if len(body) > 0 {
+		reader = bytes.NewReader(body)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, target, reader).WithContext(ctx)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if tenantID != "" {
+		req.Header.Set("X-Lenny-Tenant-ID", tenantID)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	s.serviceMux().ServeHTTP(rec, req)
+
+	if rec.Code >= 200 && rec.Code < 300 {
+		return ServiceResult{
+			Status:      rec.Code,
+			Body:        rec.Body.Bytes(),
+			ContentType: rec.Header().Get("Content-Type"),
+		}, nil
+	}
+
+	var env errorEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || env.Error.Code == "" {
+		return ServiceResult{}, &ServiceError{
+			HTTPStatus: rec.Code,
+			Code:       "INTERNAL_ERROR",
+			Category:   "INTERNAL",
+			Message:    rec.Body.String(),
+			Retryable:  rec.Code >= http.StatusInternalServerError,
+		}
+	}
+	return ServiceResult{}, &ServiceError{
+		HTTPStatus: rec.Code,
+		Code:       env.Error.Code,
+		Category:   env.Error.Category,
+		Message:    env.Error.Message,
+		Retryable:  env.Error.Retryable,
+		Details:    env.Error.Details,
+	}
+}
+
 // CreateSessionService runs the full §15.1 session-creation flow for an
 // already-decoded request and returns the same CreateSessionResponse the
 // REST `POST /v1/sessions` handler returns, or a typed ServiceError. It is

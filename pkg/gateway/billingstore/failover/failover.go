@@ -303,6 +303,15 @@ func (p *Pipeline) Since(ctx context.Context, tenantID string, since uint64, lim
 	return p.primary.Since(ctx, tenantID, since, limit)
 }
 
+// SessionTotals implements billingstore.Store. Per-session usage is read
+// from the durable primary store; events still buffered behind a primary
+// outage have not been renumbered yet and are intentionally excluded, the
+// same gap-then-replay contract Since honours. spec: §15.1; §11.2.1.
+// F-15.2.3.
+func (p *Pipeline) SessionTotals(ctx context.Context, tenantID, sessionID string) (billingstore.SessionUsage, error) {
+	return p.primary.SessionTotals(ctx, tenantID, sessionID)
+}
+
 // PseudonymizeUser implements billingstore.Store. It rewrites the
 // durable ledger through the primary store and then pseudonymizes any
 // matching events still sitting in the Tier 2 write-ahead buffer, so a

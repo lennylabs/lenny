@@ -116,15 +116,22 @@ func jsonReader(w http.ResponseWriter, r *http.Request) interface {
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
-	store           sessionstore.Store
-	clock           func() time.Time
-	idFn            func() string
-	deriveAuditSink DeriveAuditSink
-	uploadIssuer    *uploadtoken.Issuer
-	uploadVerifier  *uploadtoken.Verifier
-	blobs           blobstore.Store
-	executor        executor.Executor
-	transcripts     transcriptstore.Store
+	store sessionstore.Store
+	clock func() time.Time
+	idFn  func() string
+	// serviceHandlerOnce/serviceHandler cache the routing handler the
+	// §15.2.1 rule-1 in-process service layer (ServiceCall) dispatches
+	// through, so the MCP tool surface reuses the exact REST routes and
+	// handlers rather than a parallel table that could drift. spec:
+	// §15.2.1 rule 1 line 1380. F-15.2.3.
+	serviceHandlerOnce sync.Once
+	serviceHandler     http.Handler
+	deriveAuditSink    DeriveAuditSink
+	uploadIssuer       *uploadtoken.Issuer
+	uploadVerifier     *uploadtoken.Verifier
+	blobs              blobstore.Store
+	executor           executor.Executor
+	transcripts        transcriptstore.Store
 	// artifacts is the §12.5 artifact catalog. The §8.10 archive
 	// materialization reads it (ListBySession) to populate the §8.8
 	// TaskResult.output.artifactRefs for a completed child. Nil when the
@@ -1612,6 +1619,12 @@ func (s *Server) Handler() http.Handler {
 	// target; session logs over the durable event store, content-
 	// negotiated SSE / JSON envelope with the `--since` filter.
 	mux.HandleFunc("GET /v1/sessions/{id}/logs", read(s.handleLogs))
+	// spec: §15.1 line 598 — per-session artifact listing (the §15.2
+	// list_artifacts tool's REST equivalent) and reconciled per-session
+	// token usage (the §15.2 get_token_usage tool's REST equivalent). The
+	// usage route self-gates on view_usage like GET /v1/usage. F-15.2.3.
+	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", read(s.handleListArtifacts))
+	mux.HandleFunc("GET /v1/sessions/{id}/usage", s.handleSessionUsage)
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))

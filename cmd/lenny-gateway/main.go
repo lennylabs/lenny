@@ -3863,7 +3863,11 @@ func main() {
 		// through the gateway's shared §15.1 session-creation service so
 		// the MCP surface runs the same admission gates and returns the
 		// same envelope the REST POST /v1/sessions handler does. F-15.2.4.
-		SessionCreator:             sessionSrv,
+		SessionCreator: sessionSrv,
+		// spec: §15.2 lines 1284-1306 — route the overlapping client-facing
+		// lifecycle/read tools through the same shared service layer so the
+		// MCP surface runs the identical REST routes and validation. F-15.2.3.
+		SessionService:             sessionSrv,
 		Executor:                   exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,

@@ -268,6 +268,18 @@ type Store interface {
 	// limit of zero or less applies no cap.
 	Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error)
 
+	// SessionTotals returns the reconciled token + compute usage for one
+	// session: the sum of tokens_input, tokens_output, and pod_minutes
+	// across the session's billing events after §11.2.1 corrections are
+	// applied (a correction supersedes the referenced original rather than
+	// adding to it). It backs the §15.1 GET /v1/sessions/{id}/usage
+	// endpoint and the §15.2 get_token_usage MCP tool. A session with no
+	// billing events returns the zero SessionUsage and a nil error.
+	//
+	// spec: §15.1 (per-session usage); §11.2.1 (correction semantics).
+	// F-15.2.3.
+	SessionTotals(ctx context.Context, tenantID, sessionID string) (SessionUsage, error)
+
 	// PseudonymizeUser rewrites every billing event in tenantID owned
 	// by userID, replacing the user id with its §12.8 salted-hash
 	// pseudonym. Billing events are append-only per §11.2.1, so the
@@ -469,6 +481,44 @@ func (m *Memory) DeleteOlderThan(_ context.Context, tenantID string, cutoff time
 		m.events[tenantID] = kept
 	}
 	return removed, nil
+}
+
+// SessionUsage is the reconciled per-session token + compute total the
+// §15.1 GET /v1/sessions/{id}/usage endpoint and the §15.2
+// get_token_usage MCP tool report. spec: §15.1; §11.2.1. F-15.2.3.
+type SessionUsage struct {
+	TokensInput  uint64  `json:"tokensInput"`
+	TokensOutput uint64  `json:"tokensOutput"`
+	PodMinutes   float64 `json:"podMinutes"`
+	EventCount   int     `json:"eventCount"`
+}
+
+// SumSessionUsage reconciles §11.2.1 corrections across the supplied
+// ledger and sums the token + compute usage for sessionID. The caller
+// supplies the full set of events that could carry a correction for the
+// session (for the durable stores this is the session-scoped row set,
+// whose corrections reference originals in the same set). spec: §11.2.1.
+// F-15.2.3.
+func SumSessionUsage(events []Event, sessionID string) SessionUsage {
+	var u SessionUsage
+	for _, e := range ReconcileLedger(events) {
+		if e.SessionID != sessionID {
+			continue
+		}
+		u.TokensInput += e.TokensInput
+		u.TokensOutput += e.TokensOutput
+		u.PodMinutes += e.PodMinutes
+		u.EventCount++
+	}
+	return u
+}
+
+// SessionTotals implements Store.
+func (m *Memory) SessionTotals(_ context.Context, tenantID, sessionID string) (SessionUsage, error) {
+	m.mu.Lock()
+	events := append([]Event(nil), m.events[tenantID]...)
+	m.mu.Unlock()
+	return SumSessionUsage(events, sessionID), nil
 }
 
 // Since implements Store.

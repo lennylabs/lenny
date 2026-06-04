@@ -154,6 +154,40 @@ func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit 
 	return out, nil
 }
 
+// SessionTotals returns the reconciled per-session token + compute usage.
+// It loads the session-scoped rows (originals and their §11.2.1
+// corrections, which carry the same session_id) in sequence order and
+// reconciles them in-process so a correction supersedes its original
+// rather than double-counting. spec: §15.1; §11.2.1. F-15.2.3.
+func (s *Store) SessionTotals(ctx context.Context, tenantID, sessionID string) (billingstore.SessionUsage, error) {
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return billingstore.SessionUsage{}, err
+	}
+	var events []billingstore.Event
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT `+selectList+` FROM billing_events
+			WHERE tenant_id = $1 AND session_id = $2
+			ORDER BY sequence_number`, tenantID, sessionID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			e, err := scanEvent(rows, tenantID)
+			if err != nil {
+				return err
+			}
+			events = append(events, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return billingstore.SessionUsage{}, err
+	}
+	return billingstore.SumSessionUsage(events, sessionID), nil
+}
+
 // scanEvent reads one row in selectList order into an Event.
 func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	var (

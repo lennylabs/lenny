@@ -257,6 +257,18 @@ type Deps struct {
 	// create path. spec: §15.2.1 rule 1 line 1380. F-15.2.4.
 	SessionCreator SessionCreator
 
+	// SessionService is the §15.2.1 rule-1 shared service layer the
+	// overlapping client-facing lifecycle/read tools dispatch through
+	// (create_and_start_session, start_session, finalize_workspace,
+	// terminate_session, resume_session, get_session_status, list_sessions,
+	// get_session_logs, list_artifacts, get_token_usage, download_artifact,
+	// upload_files). When nil those tools are not registered (the minimal
+	// in-process gateway / unit suite). Production wires *sessionserver.Server,
+	// so the MCP surface runs the identical REST route, validation, and
+	// response shaping. spec: §15.2 lines 1284-1306; §15.2.1 rule 1 line
+	// 1380. F-15.2.3.
+	SessionService SessionService
+
 	// Executor routes messages to runtimes.
 	Executor executor.Executor
 
@@ -2756,6 +2768,14 @@ func Register(srv *mcp.Server, deps Deps) {
 	if deps.Memory != nil {
 		registerMemoryTools(srv, deps, tenant, clock)
 	}
+
+	// spec: §15.2 lines 1284-1306 — the remaining client-facing tools
+	// (create_and_start_session, start_session, finalize_workspace,
+	// terminate_session, resume_session, get_session_status, list_sessions,
+	// get_session_logs, list_artifacts, get_token_usage, download_artifact,
+	// upload_files). Each dispatches through the §15.2.1 rule-1 shared
+	// service layer so the MCP and REST surfaces cannot diverge. F-15.2.3.
+	registerClientFacingTools(srv, deps, tenant)
 }
 
 // taskHandle is the §8.2 return envelope for lenny/delegate_task. The
