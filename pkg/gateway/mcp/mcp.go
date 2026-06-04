@@ -17,8 +17,15 @@
 // gateway services keeps the REST and MCP surfaces in lockstep per
 // the §15.2.1 REST/MCP consistency contract.
 //
-// Streaming (the MCP Streamable-HTTP SSE channel) is post-v1 in this
-// minimal adapter — every method returns a single JSON-RPC response.
+// The §15.2 Streamable HTTP SSE channel (stream.go) carries
+// session-scoped events to attached clients: an `attach_session`
+// tools/call sent with `Accept: text/event-stream` is upgraded to a
+// per-session SSE stream sourced from the §15.1 event bus, with each
+// frame's SeqNum on the SSE `id:` line, resumeFromSeq / Last-Event-ID
+// replay, a gap_detected stream-control frame, and the 20s keepalive.
+// The per-kind MCP wire projection (notifications/tasks/statusUpdate,
+// elicitation/create, MCP Tasks final-state) is the follow-on tracked
+// under F-15.2.13.
 package mcp
 
 import (
@@ -222,6 +229,11 @@ type Server struct {
 	// off, so a non-playground MCP WebSocket client serves frames without
 	// it. spec: §27.3.1 line 167; §27.5.4.
 	wsAuth wsAuthConfig
+	// attach carries the §15.2 Streamable HTTP SSE channel wiring. A zero
+	// value (Events == nil) leaves attach streaming off, so an
+	// `attach_session` tools/call falls through to the registered snapshot
+	// handler on every transport. spec: §15.2 lines 1331-1333. F-15.2.2.
+	attach AttachConfig
 }
 
 // SetResultInterceptor installs the §4.8 PreToolResult hook. A nil
@@ -338,6 +350,16 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		s.WriteLennyError(w, req.ID, errInvalidParams, "VALIDATION_ERROR", "params is not a valid tools/call object", nil)
+		return
+	}
+	// spec: §15.2 lines 1331-1333 — when attach streaming is wired and the
+	// caller requested the Streamable HTTP SSE channel, an attach_session
+	// tools/call is upgraded to the per-session event stream instead of a
+	// single JSON-RPC response. A caller that did not ask for
+	// text/event-stream (a WebSocket frame or a plain JSON POST) falls
+	// through to the registered snapshot handler below. F-15.2.2, F-9.1.7.
+	if params.Name == AttachToolName && s.attach.Events != nil && wantsEventStream(r) {
+		s.handleAttachStream(w, r, req, params.Arguments)
 		return
 	}
 	handler, ok := s.handlers[params.Name]

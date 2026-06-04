@@ -3920,6 +3920,40 @@ func main() {
 		TreeCycleObserver: mcpToolsTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
 	})
 
+	// spec: §15.2 lines 1331-1333 — wire the Streamable HTTP SSE channel
+	// into the MCP transport so an attach_session tools/call sent with
+	// Accept: text/event-stream is upgraded to the per-session event
+	// stream (sourced from the same §15.1 event bus the REST
+	// GET /v1/sessions/{id}/events path tails). Tenant is the
+	// authenticated principal's so the bus enforces the §7.2 binding; the
+	// Authorize gate runs the §4.2 session-store Get before any SSE byte
+	// is written so a missing or foreign session surfaces as a normal
+	// JSON-RPC RESOURCE_NOT_FOUND rather than a half-open stream.
+	// F-15.2.2, F-9.1.7.
+	mcpSrv.SetAttach(mcp.AttachConfig{
+		Events: eventBus,
+		TenantFromRequest: func(r *http.Request) string {
+			if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
+				return p.TenantID
+			}
+			return ""
+		},
+		Authorize: func(ctx context.Context, tenantID, sessionID string) error {
+			if tenantID == "" {
+				return mcp.NewToolError("UNAUTHORIZED",
+					"attach_session: tenant could not be resolved; auth chain must precede MCP dispatch", nil)
+			}
+			if _, err := sessions.Get(ctx, tenantID, sessionID); err != nil {
+				if errors.Is(err, sessionstore.ErrNotFound) {
+					return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
+				}
+				return mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
+			}
+			return nil
+		},
+		Now: clockinject.Now,
+	})
+
 	// §13.3 revocation cache: the auth middleware rejects a token
 	// whose jti is in this set. It is rehydrated from the Postgres
 	// issued-token index below. The propagator wraps the cache with

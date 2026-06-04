@@ -543,6 +543,44 @@ func Register(srv *mcp.Server, deps Deps) {
 		srv.SetResultInterceptor(ri)
 	}
 
+	// spec: §15.2 lines 1289, 1331 — attach_session. The streaming
+	// Streamable HTTP SSE channel is intercepted in the transport layer
+	// (mcp.Server.handleAttachStream) when the client sends Accept:
+	// text/event-stream; this handler is the non-streaming snapshot a
+	// WebSocket or plain-JSON caller receives, carrying the session's
+	// current state and the resumeFromSeq cursor (the durable last_seq)
+	// to reconnect the stream with. Registered whenever the session store
+	// is wired so the tool is discoverable in tools/list on every
+	// transport. F-15.2.2.
+	if deps.Store != nil {
+		srv.RegisterTool(mcp.Tool{
+			Name:        mcp.AttachToolName,
+			Description: "Attach to a running session's event stream. Reconnect with Accept: text/event-stream to stream events; optional resumeFromSeq replays buffered events with SeqNum greater than the cursor before live delivery.",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"resumeFromSeq":{"type":"integer","minimum":0,"description":"§15.2 event-stream resume: replay buffered events with SeqNum greater than this cursor before live delivery."}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			tenant := callerTenantID(ctx, tenant)
+			var in struct {
+				SessionID string `json:"sessionId"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, errInvalidArgs(err)
+			}
+			if in.SessionID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", nil)
+			}
+			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if err != nil {
+				return mcp.ToolResult{}, errSessionLookup(err)
+			}
+			out, _ := json.Marshal(map[string]any{
+				"sessionId":     row.ID,
+				"state":         string(row.State),
+				"resumeFromSeq": row.LastSeq,
+			})
+			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: string(out)}}}, nil
+		})
+	}
+
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
