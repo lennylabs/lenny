@@ -7814,7 +7814,7 @@ delegation rather than persisting an unenrolled child. The MCP shim
 already injects the same `sessionSrv` value as the router, so REST
 and MCP delegation share the routing logic.
 
-### - [ ] F-8.2.11 — Virtual MCP child interface and its lifecycle (storage, replay on resume, pending-elicitation hold) is not implemented [Medium] — OPEN
+### - [x] F-8.2.11 — Virtual MCP child interface and its lifecycle (storage, replay on resume, pending-elicitation hold) is not implemented [Medium] — CLOSED
 
 Spec §8.2 lines 96-113 describe the virtual MCP child interface as the central abstraction the parent sees, with:
 - Per-session in-memory storage in the gateway replica that owns the root session.
@@ -7829,6 +7829,8 @@ Implementation:
 - The §8.2 line 116 list of per-node memory components (virtual child interface, event buffer, elicitation state, task metadata) has no allocation site in code; the §8.2 `maxTreeMemoryBytes` field is not represented anywhere.
 
 Consequence: the parent's "what does this delegation look like from the agent's perspective" model is a series of REST-shaped session reads rather than the spec's virtual MCP interface. Pending-elicitation continuity across parent failover is broken: a parent that fails mid-elicitation will resume with no record of the pending request. The §8.2 explicit guarantee that pod addresses, internal endpoints, and raw credentials are hidden by the virtual interface is achieved only by virtue of the in-memory child not existing at all.
+
+**Resolution:** Stale across the board — every §8.2 lines 96-130 requirement is implemented by sibling findings closed after this one was filed; re-verified each against the current tree this batch. The parent-facing virtual child surface ("Task status/result, Elicitation forwarding, Cancellation, Message delivery via `lenny/send_message`") is the gateway MCP tool set keyed by child session id (`lenny/send_message`, `lenny/cancel_child`, `lenny/get_task_tree`, `lenny/await_children`, `lenny/request_elicitation`/`respond_to_elicitation` in `pkg/gateway/mcptools`); the spec's "gateway-hosted virtual MCP server" is the gateway MCP endpoint, not a per-child server process. Reconstruction-from-SessionStore on parent failure and re-injection on resume are `Server.emitChildrenReattached` (`pkg/gateway/sessionserver/start.go`), which enumerates the child rows, carries each child's current state and §8.8 result, and — contrary to the stale evidence — populates `reattachedChild.PendingRequestID` from `inputWaits`/`interactionstore` so a pending elicitation is held across failover and replayed on resume (F-7.2.16, F-7.2.13, F-8.10.4). The §8.2 per-node memory model is `treebudget.PerNodeMemoryBytes = 12 KB` and `DefaultMaxTreeMemoryBytes = 2 MB` with the atomic Redis counter + `BUDGET_EXHAUSTED` rejection (F-8.2.12) and completed-subtree offload to `session_tree_archive` behind a per-replica LRU stub with the memory decrement (F-8.2.13). The §8.2 "what the parent never sees" boundary holds: the `reattachedChild` schema exposes only `session_id`/`state`/`pending_request_id`/`result`/`delegation_lease_id` and leaks no pod address, internal endpoint, or credential. Added two regression guards in `virtual_child_internal_test.go` pinning the field-set boundary and the pending-elicitation replay so a future regression on either breaks the build.
 
 ### - [x] F-8.2.12 — `maxTreeMemoryBytes` budget, atomic Redis counter, and `BUDGET_EXHAUSTED` rejection are not implemented [Medium] — CLOSED
 
