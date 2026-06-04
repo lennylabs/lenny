@@ -58,7 +58,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -167,6 +169,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
@@ -801,6 +804,16 @@ func main() {
 	gcTombstoneRetentionSeconds := flag.Int("gc-tombstone-retention-seconds",
 		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
 		"§12.5 line 341 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
+	// spec: §12.5 lines 317, 332 — the gateway-singleton background sweeps
+	// (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
+	// retranscribe worker, legal-hold reconciler, T4 KMS probe) run under a
+	// single leader-elected `lenny-gateway-leader` Lease so exactly one
+	// gateway replica is the GC writer at a time. Default true; the lease
+	// is only used when the gateway resolves an in-cluster config, so a
+	// single-process dev gateway (or `=false`) always runs the sweeps.
+	gatewayLeaderElection := flag.Bool("gateway-leader-election",
+		envBool("LENNY_GATEWAY_LEADER_ELECTION", true),
+		"§12.5 lines 317, 332: when true (default), gate the gateway-singleton background sweeps (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4 KMS probe) under the lenny-gateway-leader Kubernetes Lease so exactly one gateway replica runs them. Falls back to always-run when the gateway is not in-cluster. Override via LENNY_GATEWAY_LEADER_ELECTION.")
 	// spec: §12.5 line 307 (STO-021) — the leader-elected continuous T4
 	// KMS availability probe. The cadence floor (60s) and the
 	// token-bucket rate ceiling keep a large T4 fleet from bursting the
@@ -5611,6 +5624,46 @@ func main() {
 		adminRouter = adminRouter.WithArtifactReplication(replCtrl)
 	}
 
+	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
+	// spec: §12.5 lines 317, 332 — the artifact-GC orchestrator and the
+	// other gateway-singleton sweeps below (tombstone hard-prune,
+	// audit-retention pruner, EventBus retranscribe worker, legal-hold
+	// reconciler, T4 KMS probe) run under a single leader-elected
+	// lenny-gateway-leader Lease so exactly one gateway replica is the GC
+	// writer at a time, with the §4.6.1 25s crash-failover bound. The
+	// per-row `WHERE deleted_at IS NULL` guards (rules 2-6) keep the bounded
+	// failover window safe; this lease provides the steady-state
+	// single-writer guarantee. When the gateway is not in-cluster (single-
+	// process dev, tests, or `--gateway-leader-election=false`), the
+	// AlwaysLeader fallback runs every sweep exactly as before.
+	var leaderElector gatewayleader.Elector = gatewayleader.AlwaysLeader{}
+	if *gatewayLeaderElection {
+		if cfg, err := rest.InClusterConfig(); err != nil {
+			log.Printf("lenny-gateway: §12.5 no in-cluster config (%v); GC sweeps run un-elected (single-replica mode)", err)
+		} else if cs, err := kubernetes.NewForConfig(cfg); err != nil {
+			log.Printf("lenny-gateway: §12.5 build leader-election clientset: %v; GC sweeps run un-elected", err)
+		} else {
+			identity := os.Getenv("POD_NAME")
+			if identity == "" {
+				if h, herr := os.Hostname(); herr == nil {
+					identity = h
+				}
+			}
+			le, lerr := gatewayleader.NewLeaseElector(*gatewayNamespace, identity,
+				cs.CoreV1(), cs.CoordinationV1(), gatewayleader.LeaseTimings{})
+			if lerr != nil {
+				log.Printf("lenny-gateway: §12.5 build lenny-gateway-leader elector: %v; GC sweeps run un-elected", lerr)
+			} else {
+				leaderElector = le
+				log.Printf("lenny-gateway: §12.5 gateway-singleton sweeps gated under the %s Lease in namespace %q (identity %q)",
+					gatewayleader.LeaseName, *gatewayNamespace, identity)
+			}
+		}
+	}
+	// leaderGate collects every gateway-singleton sweep; registered jobs run
+	// only while this replica holds the lease (or always, under AlwaysLeader).
+	leaderGate := gatewayleader.NewGate(leaderElector)
+
 	// ----- §7.1 artifact-retention GC -----
 	// Collects the workspace snapshot, transcript, and blobs of every
 	// terminal session past its retention TTL; a §12.8 legal hold
@@ -5687,15 +5740,17 @@ func main() {
 			}
 			log.Printf("lenny-gateway: §12.5 gcPriority=high immediate sweep for tenant %q collected %d session(s)", tenantID, collected)
 		}
-		go retGC.Run(watchdogCtx, func(collected int, err error) {
-			if err != nil {
-				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)
-				return
-			}
-			if collected > 0 {
-				log.Printf("lenny-gateway: retention-GC collected artifacts for %d sessions past their §7.1 retention TTL",
-					collected)
-			}
+		leaderGate.Add("artifact-gc", func(ctx context.Context) {
+			retGC.Run(ctx, func(collected int, err error) {
+				if err != nil {
+					log.Printf("lenny-gateway: retention-GC sweep error: %v", err)
+					return
+				}
+				if collected > 0 {
+					log.Printf("lenny-gateway: retention-GC collected artifacts for %d sessions past their §7.1 retention TTL",
+						collected)
+				}
+			})
 		})
 
 		// §16.4 lines 378-382 audit-retention pruner: only constructed
@@ -5705,14 +5760,16 @@ func main() {
 		if auditPruner != nil {
 			log.Printf("lenny-gateway: §16.4 audit-retention sweep cadence %s (retention %d days, gdpr.* %d days)",
 				time.Duration(*auditRetentionPruneIntervalSeconds)*time.Second, effectiveAuditRetentionDays, *gdprRetentionDays)
-			go auditPruner.Run(watchdogCtx, func(pruned int, err error) {
-				if err != nil {
-					log.Printf("lenny-gateway: §16.4 audit-retention sweep error: %v", err)
-					return
-				}
-				if pruned > 0 {
-					log.Printf("lenny-gateway: §16.4 audit-retention sweep pruned %d audit rows past their retention window", pruned)
-				}
+			leaderGate.Add("audit-retention", func(ctx context.Context) {
+				auditPruner.Run(ctx, func(pruned int, err error) {
+					if err != nil {
+						log.Printf("lenny-gateway: §16.4 audit-retention sweep error: %v", err)
+						return
+					}
+					if pruned > 0 {
+						log.Printf("lenny-gateway: §16.4 audit-retention sweep pruned %d audit rows past their retention window", pruned)
+					}
+				})
 			})
 		}
 
@@ -5726,7 +5783,9 @@ func main() {
 		if eventBusRetranscriber != nil {
 			log.Printf("lenny-gateway: §12.6 EventBus retranscribe sweep cadence %s (maxRetryAttempts %d, duplicateInjectionFactor %d)",
 				time.Duration(*eventBusRetryIntervalSeconds)*time.Second, *eventBusMaxRetryAttempts, *eventBusDuplicateInjectionFactor)
-			go eventBusRetranscriber.Run(watchdogCtx)
+			leaderGate.Add("eventbus-retranscribe", func(ctx context.Context) {
+				eventBusRetranscriber.Run(ctx)
+			})
 		}
 
 		// §12.5 ll. 341 hard-prune sweep: every gc.cycleIntervalSeconds
@@ -5736,19 +5795,19 @@ func main() {
 		// mode in-memory deployment has no Postgres catalog and skips
 		// the sweep entirely.
 		if blobsCataloged != nil {
-			go func() {
+			leaderGate.Add("tombstone-hard-prune", func(ctx context.Context) {
 				ticker := time.NewTicker(gcInterval)
 				defer ticker.Stop()
 				for {
 					select {
-					case <-watchdogCtx.Done():
+					case <-ctx.Done():
 						return
 					case <-ticker.C:
 						// §12.5 ll. 341: the single hard-prune pass sweeps
 						// both GC-managed row classes — artifact_store
 						// catalog rows and partial-checkpoint manifest rows
 						// — on the same deleted_at retention predicate.
-						count, err := blobsCataloged.HardPrune(watchdogCtx, clockinject.Now())
+						count, err := blobsCataloged.HardPrune(ctx, clockinject.Now())
 						if err != nil {
 							log.Printf("lenny-gateway: §12.5 hard-prune sweep error: %v", err)
 						} else {
@@ -5764,7 +5823,7 @@ func main() {
 						// whose soft-delete tombstone predates
 						// now - gc.tombstoneRetentionSeconds.
 						pmCutoff := clockinject.Now().Add(-gcTombstoneRetention)
-						pmCount, pmErr := hardPrunePartialManifests(watchdogCtx, partialManifests, pmCutoff)
+						pmCount, pmErr := hardPrunePartialManifests(ctx, partialManifests, pmCutoff)
 						if pmErr != nil {
 							log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune sweep error: %v", pmErr)
 							continue
@@ -5776,7 +5835,7 @@ func main() {
 						}
 					}
 				}
-			}()
+			})
 		}
 
 		// §12.8 line 739 legal-hold reconciler: co-located with the
@@ -5793,14 +5852,16 @@ func main() {
 			recon := legalholdreconciler.New(artifactCatalog, auditAppender, gwMetrics, legalholdreconciler.Options{
 				Clock: clockinject.Now,
 			})
-			go recon.Run(watchdogCtx, func(emitted int, err error) {
-				if err != nil {
-					log.Printf("lenny-gateway: §12.8 legal-hold reconciler sweep error: %v", err)
-					return
-				}
-				if emitted > 0 {
-					log.Printf("lenny-gateway: §12.8 legal-hold reconciler emitted %d checkpoint-gap audit rows", emitted)
-				}
+			leaderGate.Add("legal-hold-reconciler", func(ctx context.Context) {
+				recon.Run(ctx, func(emitted int, err error) {
+					if err != nil {
+						log.Printf("lenny-gateway: §12.8 legal-hold reconciler sweep error: %v", err)
+						return
+					}
+					if emitted > 0 {
+						log.Printf("lenny-gateway: §12.8 legal-hold reconciler emitted %d checkpoint-gap audit rows", emitted)
+					}
+				})
 			})
 		}
 	}
@@ -5831,12 +5892,19 @@ func main() {
 		}
 		log.Printf("lenny-gateway: §12.5 continuous T4 KMS probe interval=%ds rate=%.1f/s",
 			*t4KmsProbeIntervalSeconds, *t4KmsProbeRateLimit)
-		go func() {
-			if err := prober.Start(watchdogCtx); err != nil {
+		leaderGate.Add("t4-kms-probe", func(ctx context.Context) {
+			if err := prober.Start(ctx); err != nil {
 				log.Printf("lenny-gateway: §12.5 T4 KMS probe loop exited: %v", err)
 			}
-		}()
+		})
 	}
+
+	// spec: §12.5 lines 317, 332 — drive the lenny-gateway-leader election
+	// and run every registered gateway-singleton sweep only while this
+	// replica holds the lease (or always, under the AlwaysLeader fallback).
+	// Started after every leaderGate.Add above so the full set is gated.
+	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len())
+	go leaderGate.Run(watchdogCtx)
 
 	// ----- §10.1 session-coordination lease sweeper -----
 	// Active only with Redis: it renews this replica's lease on every

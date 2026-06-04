@@ -324,10 +324,10 @@ tests:
       - notExists:
           path: metadata.annotations["lenny.dev/sa-token-audience"]
 
-  - it: renders the service account, cluster role, binding, deployment, services, the §4.1 PodDisruptionBudget, and the §17.6 admin-token Role/RoleBinding by default
+  - it: renders the service account, cluster role, binding, deployment, services, the §4.1 PodDisruptionBudget, the §17.6 admin-token Role/RoleBinding, and the §12.5 leader-election Role/RoleBinding by default
     asserts:
       - hasDocuments:
-          count: 9
+          count: 11
 
   - it: renders the §4.1 PodDisruptionBudget with maxUnavailable 1 and the gateway selector
     documentSelector:
@@ -355,11 +355,12 @@ tests:
       gateway.podDisruptionBudget.enabled: false
     asserts:
       - hasDocuments:
-          count: 8
-      # The default render is nine documents (SA, ClusterRole,
-      # ClusterRoleBinding, Deployment, Service, headless Service, PDB, and
-      # the §17.6 admin-token Role + RoleBinding). With the PDB opt-out set
-      # the count drops to eight, so no PodDisruptionBudget is rendered.
+          count: 10
+      # The default render is eleven documents (SA, ClusterRole,
+      # ClusterRoleBinding, Deployment, Service, headless Service, PDB, the
+      # §17.6 admin-token Role + RoleBinding, and the §12.5 leader-election
+      # Role + RoleBinding). With the PDB opt-out set the count drops to ten,
+      # so no PodDisruptionBudget is rendered.
 
   - it: renders a Deployment named lenny-gateway
     documentSelector:
@@ -814,10 +815,12 @@ tests:
       #   LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS /
       #   LENNY_EVENTBUS_DROP_ALERT_THRESHOLD /
       #   LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR (§12.6 lines 683-699,
-      #   F-12.6.22 / F-12.6.23 — all four render at their defaults) = 73.
+      #   F-12.6.22 / F-12.6.23 — all four render at their defaults)
+      # + LENNY_GATEWAY_LEADER_ELECTION (§12.5 lines 317, 332, F-12.5.10 —
+      #   gc.leaderElection defaults to true and renders) = 74.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 73
+          count: 74
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1105,6 +1108,61 @@ tests:
           content:
             name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
             value: "172800"
+
+  # spec: §12.5 lines 317, 332 / F-12.5.10 — the gateway-singleton sweeps
+  # run under the lenny-gateway-leader Lease. The namespaced Role grants
+  # the gateway ServiceAccount the coordination.k8s.io Lease verbs
+  # client-go's leader election needs.
+  - it: grants the leader-election Role the coordination.k8s.io Lease verbs
+    # Selected by the leases rule so the §17.6 admin-token Role (kind Role,
+    # secrets) does not collide with this lookup.
+    documentSelector:
+      path: rules[0].resources[0]
+      value: leases
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-leader-election
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: coordination.k8s.io
+      - contains:
+          path: rules[0].verbs
+          content: create
+      - contains:
+          path: rules[0].verbs
+          content: update
+
+  - it: binds the leader-election Role to the lenny-gateway ServiceAccount
+    documentSelector:
+      path: roleRef.name
+      value: lenny-gateway-leader-election
+    asserts:
+      - isKind:
+          of: RoleBinding
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-leader-election
+      - equal:
+          path: subjects[0].name
+          value: lenny-gateway
+
+  # spec: §12.5 lines 317, 332 / F-12.5.10 — gc.leaderElection flows to the
+  # gateway env so operators can force un-elected single-replica operation.
+  - it: renders LENNY_GATEWAY_LEADER_ELECTION when gc.leaderElection is set
+    set:
+      gc.leaderElection: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LEADER_ELECTION
+            value: "false"
 
   # spec: §12.5 line 307 (STO-021) / F-12.5.4 — the continuous T4 KMS
   # probe cadence and rate ceiling default to 300s and 10 probes/sec and
@@ -2545,9 +2603,12 @@ tests:
   # initial admin credential and needs minimal Secret RBAC to write the
   # lenny-admin-token Secret.
   - it: renders the §17.6 admin-token Role and confines get/update/patch to the lenny-admin-token Secret
+    # Selected by the secrets rule so the §12.5 leader-election Role (which
+    # also has kind Role but operates on coordination.k8s.io leases) does
+    # not collide with this kind-based lookup.
     documentSelector:
-      path: kind
-      value: Role
+      path: rules[0].resources[0]
+      value: secrets
     asserts:
       - equal:
           path: metadata.name
@@ -2563,8 +2624,8 @@ tests:
           value: ["get", "update", "patch"]
   - it: renders the §17.6 admin-token RoleBinding to the gateway ServiceAccount
     documentSelector:
-      path: kind
-      value: RoleBinding
+      path: roleRef.name
+      value: lenny-gateway-admin-token
     asserts:
       - equal:
           path: metadata.name
@@ -2595,7 +2656,7 @@ tests:
       gateway.adminToken.enabled: false
     asserts:
       - hasDocuments:
-          count: 7
+          count: 9
       - contains:
           path: spec.template.spec.containers[0].env
           content:

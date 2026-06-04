@@ -765,6 +765,15 @@ spec:
             - name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
               value: {{ .tombstoneRetentionSeconds | quote }}
             {{- end }}
+            # §12.5 lines 317, 332 — gc.leaderElection: gate the
+            # gateway-singleton sweeps under the lenny-gateway-leader Lease
+            # so exactly one replica is the GC writer. Defaults to true in
+            # the binary; set false to run un-elected (single-replica
+            # deployments). F-12.5.10.
+            {{- if hasKey . "leaderElection" }}
+            - name: LENNY_GATEWAY_LEADER_ELECTION
+              value: {{ .leaderElection | quote }}
+            {{- end }}
             {{- end }}
             {{- with .Values.storage }}
             # §12.5 line 307 (STO-021) — the leader-elected continuous T4
@@ -1417,3 +1426,46 @@ subjects:
     name: lenny-gateway
     namespace: {{ .Release.Namespace }}
 {{- end }}
+---
+# spec: §12.5 lines 317, 332 — the gateway-singleton background sweeps
+# (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
+# retranscribe worker, legal-hold reconciler, T4 KMS probe) run under a
+# single leader-elected `lenny-gateway-leader` Lease scoped to the gateway
+# Deployment's namespace, so exactly one gateway replica is the GC writer
+# at a time (§12.5 line 332 single-writer model, with the §4.6.1 25s
+# crash-failover bound). This namespaced Role grants the gateway
+# ServiceAccount the coordination.k8s.io Lease verbs client-go's leader
+# election needs, plus the Event verbs it emits on leadership transitions.
+# Mirrors the lenny-controller-leader-election Role. Always rendered so the
+# in-cluster gateway can acquire the Lease; the binary only uses it when it
+# resolves an in-cluster config (single-process dev runs un-elected).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-gateway-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-gateway-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-gateway-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: lenny-gateway
+    namespace: {{ .Release.Namespace }}

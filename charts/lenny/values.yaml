@@ -647,6 +647,16 @@ gc:
   # without affecting GC correctness.
   # spec: §12.5 line 341 (default 86400 / 24 hours).
   tombstoneRetentionSeconds: 86400
+  # leaderElection gates the gateway-singleton background sweeps (artifact
+  # GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe
+  # worker, legal-hold reconciler, T4 KMS probe) under a single
+  # leader-elected lenny-gateway-leader Lease so exactly one gateway replica
+  # is the GC writer at a time (§12.5 line 332 single-writer model). The
+  # gateway uses the Lease only when it resolves an in-cluster config, so a
+  # single-process dev gateway always runs the sweeps. Set false to force
+  # un-elected operation on a single-replica deployment.
+  # spec: §12.5 lines 317, 332.
+  leaderElection: true
 
 # kms configures the §4 envelope-encryption KEK provider for both the
 # gateway and the Token Service. The gateway wraps §4.9 connector
