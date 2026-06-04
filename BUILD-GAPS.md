@@ -45046,7 +45046,7 @@ same §27.5.4 principal extractor the revocation watch keys on — and
 applies the redactor to each response frame before `conn.Write`. A
 non-playground MCP client (a headless agent) is never redacted. The
 `app.js` inspector comment now describes a behavior that exists. Closed
-by commit COMMIT_27_9. Tests: 5 tier-1 internal (scalar scrub at depth +
+by commit c77089bd. Tests: 5 tier-1 internal (scalar scrub at depth +
 in arrays, schema/id preservation, non-JSON passthrough, marker set,
 egress gate) + 2 tier-2 component over the live WS handler (playground
 schema-safe egress, non-playground unredacted).
@@ -45076,7 +45076,7 @@ the combined `playground-config` row rather than surfaced under the name
 `enabled && apiKey && !devMode && !acknowledged` conjunction), so the
 operator-visible preflight report now carries the exact row name. The
 warning is emitted exactly once (removed from `CheckPlaygroundConfig`).
-Closed by commit COMMIT_27_9. Tests: 5 tier-1 (warning fires, ack
+Closed by commit c77089bd. Tests: 5 tier-1 (warning fires, ack
 suppresses, dev-mode escape, disabled-gate silence, config-no-longer-emits).
 
 ### - [x] F-27.9.3 — 1 — `playground.acknowledgeApiKeyMode` Helm value not declared in `values.yaml` [Medium] — CLOSED
