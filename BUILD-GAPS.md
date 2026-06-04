@@ -6779,7 +6779,7 @@ Consequences:
 - **Deployer policy + reachability:** new `MidSessionUploadEnabled` gateway option (`--mid-session-upload` / `LENNY_MID_SESSION_UPLOAD`, default off). A new bearer-authed `POST /v1/sessions/{id}/upload-to-session` resolves the bound runtime's capability and, only when both the capability and the policy are set, passes `Capabilities{midSessionUpload}` into the precondition so `EndpointUpload` admits `StateRunning`.
 - **Pipeline + notification:** the endpoint streams the files to the running pod's adapter (`PrepareWorkspace`), then `FinalizeWorkspace` with a new proto `mid_session` flag. The adapter's new `MaterializeOverlayWithPolicy` builds the sources in `/workspace/staging`, validates symlink containment, then atomically per-file overlays them onto `/workspace/current` (preserving the agent's existing files), and emits a `files_updated` lifecycle signal (`LifecycleChannel.SignalFilesUpdated`, added to the lifecycle-events schema) only after promotion. The pre-start whole-tree path is unchanged (`mid_session` false).
 
-The `upload_to_session` MCP-tool wrapper is the §15.2 client-tool catalog surface tracked under F-15.2.3; the REST operation, capability gate, and FilesUpdated pipeline this finding names are complete. Closes the F-7.4.19 deferral (bearer-vs-uploadToken: the mid-session surface is a separate bearer-authed endpoint that never touches the uploadToken, per §7.4 line 435). Commit {COMMIT_F746}.
+The `upload_to_session` MCP-tool wrapper is the §15.2 client-tool catalog surface tracked under F-15.2.3; the REST operation, capability gate, and FilesUpdated pipeline this finding names are complete. Closes the F-7.4.19 deferral (bearer-vs-uploadToken: the mid-session surface is a separate bearer-authed endpoint that never touches the uploadToken, per §7.4 line 435). Commit fab15e14.
 
 ### - [x] F-7.4.7 — Upload token TTL is decoupled from `maxCreatedStateTimeoutSeconds` [High] — CLOSED
 
@@ -6902,7 +6902,7 @@ Spec: §7.4 line 435 — "Mid-session uploads (after `FinalizeWorkspace`) use th
 
 Implementation: irrelevant until F6 lands. Once mid-session upload is wired, the bearer-vs-uploadToken branch must select between the two credentials based on session state. No design seam exists for this in `verifyUploadToken` today.
 
-**Resolution:** Closed by F-7.4.6 (this batch). The mid-session surface landed as a distinct bearer-authed endpoint (`POST /v1/sessions/{id}/upload-to-session`, gated by `PermManageOwnSessions`) rather than a state-branch inside `verifyUploadToken`: it never reads or reissues the `uploadToken`, so the §7.4 line 435 "uses the caller's normal session-scoped bearer credential; the uploadToken is not reissued" precondition holds by construction. The pre-start `/upload` endpoint keeps its uploadToken auth. Commit {COMMIT_F746}.
+**Resolution:** Closed by F-7.4.6 (this batch). The mid-session surface landed as a distinct bearer-authed endpoint (`POST /v1/sessions/{id}/upload-to-session`, gated by `PermManageOwnSessions`) rather than a state-branch inside `verifyUploadToken`: it never reads or reissues the `uploadToken`, so the §7.4 line 435 "uses the caller's normal session-scoped bearer credential; the uploadToken is not reissued" precondition holds by construction. The pre-start `/upload` endpoint keeps its uploadToken auth. Commit fab15e14.
 
 ### - [x] F-7.4.20 — `pkg/upload` package is dead code [Info] — CLOSED
 
