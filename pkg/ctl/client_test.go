@@ -194,6 +194,54 @@ func TestStreamSurfacesAPIError(t *testing.T) {
 	}
 }
 
+// TestGetCopiesTextBody verifies the §24.15 pod-log proxy primitive: Get
+// opens a bounded GET, carries the bearer, and copies the text/plain
+// response body verbatim to the writer. spec: §24.15 line 192; §25.4.
+func TestGetCopiesTextBody(t *testing.T) {
+	const logLines = "2026-06-04T00:00:00Z line one\n2026-06-04T00:00:01Z line two\n"
+	var sawBearer string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawBearer = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(logLines))
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL, Bearer: "tok-logs"})
+	var buf bytes.Buffer
+	if err := c.Get(context.Background(), "/v1/admin/logs/pods/ns/pod", &buf); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if buf.String() != logLines {
+		t.Errorf("body: got %q, want %q", buf.String(), logLines)
+	}
+	if sawBearer != "Bearer tok-logs" {
+		t.Errorf("Authorization header: got %q", sawBearer)
+	}
+}
+
+// TestGetSurfacesAPIError verifies a non-2xx Get returns the decoded
+// §15.1 error envelope (e.g. the §25.4 404 POD_NOT_FOUND) and copies no
+// body to the writer.
+func TestGetSurfacesAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"POD_NOT_FOUND","message":"no pod ns/ghost"}}`))
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL})
+	var buf bytes.Buffer
+	err := c.Get(context.Background(), "/v1/admin/logs/pods/ns/ghost", &buf)
+	var apiErr *ctl.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound || apiErr.Code != "POD_NOT_FOUND" {
+		t.Fatalf("Get error: got %v, want APIError 404 POD_NOT_FOUND", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("error response should not copy a body: %q", buf.String())
+	}
+}
+
 // TestStreamCancelledContextReturnsNil verifies an operator interrupt
 // (cancelled ctx) is the normal tail-exit path and surfaces as success.
 func TestStreamCancelledContextReturnsNil(t *testing.T) {

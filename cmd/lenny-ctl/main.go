@@ -102,28 +102,34 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
+	ctx := context.Background()
+	// §24.15 line 192: `lenny-ctl logs pods <namespace> <name>` proxies a
+	// pod's container logs from lenny-ops (GET /v1/admin/logs/pods/...).
+	// This clustered operability command is distinct from the §24.19
+	// embedded `logs <component>` stack-log tailer that localcli claims
+	// below. The `pods` subcommand disambiguates the two: `pods` is never a
+	// valid embedded component, so a clustered proxy invocation cannot
+	// shadow the embedded tailer and the embedded `logs <component>` form
+	// still reaches localcli unchanged.
+	if rest[0] == "logs" && len(rest) > 1 && rest[1] == "pods" {
+		return withOps(ctx, flags, newClient(flags), stderr, func(ops *ctl.Client) int {
+			return cmdLogs(ctx, ops, rest[2:], stdout, stderr)
+		})
+	}
 	// §24.19 line 266 / §24.9 line 120: `lenny-ctl <local-command>`
 	// behaves identically to `lenny <local-command>` against the
 	// Embedded Mode stack. The gateway-targeting global flags do not
 	// apply to local commands, so delegate the raw arguments after the
 	// command name.
 	if localcli.Local(rest[0]) {
-		return localcli.Run(context.Background(), rest[0], rest[1:], stdout, stderr)
+		return localcli.Run(ctx, rest[0], rest[1:], stdout, stderr)
 	}
 	// §24.16 line 205: only the "json" output format is supported.
 	if flags.output != "" && flags.output != "json" {
 		fmt.Fprintf(stderr, "lenny-ctl: unsupported --output %q (only \"json\" is supported)\n", flags.output)
 		return 2
 	}
-	client := ctl.New(ctl.Options{
-		BaseURL:            flags.apiURL,
-		Bearer:             flags.bearer,
-		DevTenant:          flags.devTenant,
-		DevRoles:           flags.devRoles,
-		Timeout:            flags.timeout,
-		InsecureSkipVerify: flags.insecure,
-	})
-	ctx := context.Background()
+	client := newClient(flags)
 
 	switch rest[0] {
 	case "health":
@@ -380,6 +386,8 @@ Operability commands (§25.14 / §24.15, target lenny-ops):
   restore status <id>                   Per-shard restore status
   restore resume <id>                   Resume a partially-completed restore
   restore confirm-legal-hold-ledger <id> --justification <text>
+  logs pods <namespace> <name> [--container <c>] [--since <d>] [--tail <n>] [--previous]
+                                        Proxy a pod's container logs from lenny-ops (§24.15, §25.4)
   mcp-management tools                  List the management MCP tools (§24.15)
   mcp-management call <tool> [--params <json>]   Invoke a management MCP tool (§24.15)
 
@@ -508,6 +516,20 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 		break
 	}
 	return f, args[i:]
+}
+
+// newClient builds the gateway-targeting ctl.Client from the parsed
+// global flags. It is the single construction site so the §24.16 auth and
+// transport options stay consistent across every command path.
+func newClient(flags globalFlags) *ctl.Client {
+	return ctl.New(ctl.Options{
+		BaseURL:            flags.apiURL,
+		Bearer:             flags.bearer,
+		DevTenant:          flags.devTenant,
+		DevRoles:           flags.devRoles,
+		Timeout:            flags.timeout,
+		InsecureSkipVerify: flags.insecure,
+	})
 }
 
 func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int {

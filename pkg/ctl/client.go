@@ -197,6 +197,35 @@ func (c *Client) Stream(ctx context.Context, path string, w io.Writer) error {
 	return nil
 }
 
+// Get issues a bounded GET against path and copies the response body to
+// w. Unlike Stream it keeps the per-request Timeout, because the response
+// is a finite document rather than a long-lived stream, and it sets no
+// streaming Accept header. It backs the §24.15 `lenny-ctl logs pods`
+// pod-log proxy, whose upstream (GET /v1/admin/logs/pods/{ns}/{name} on
+// lenny-ops) returns the raw container log as text/plain.
+// spec: §24.15 line 192; §25.4 lines 2528-2534.
+func (c *Client) Get(ctx context.Context, path string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("lenny-ctl: build request: %w", err)
+	}
+	c.applyAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("lenny-ctl: GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		return parseAPIError(resp.StatusCode, raw)
+	}
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("lenny-ctl: GET %s: %w", path, err)
+	}
+	return nil
+}
+
 // applyAuth adds the §10.2 auth headers to a request.
 func (c *Client) applyAuth(req *http.Request) {
 	if c.bearer != "" {

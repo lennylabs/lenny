@@ -563,6 +563,51 @@ func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout,
 	}
 }
 
+// cmdLogs implements the §24.15 `lenny-ctl logs pods <namespace> <name>`
+// pod-log proxy. It streams the §25.4 log-proxy endpoint
+// (GET /v1/admin/logs/pods/{namespace}/{name} on lenny-ops) to stdout as
+// raw text. The args slice is everything after `logs pods`: the namespace,
+// the pod name, then the optional query flags. spec: §24.15 line 192;
+// §25.4 lines 2528-2534.
+func cmdLogs(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 {
+		fmt.Fprintln(stderr, "lenny-ctl: logs pods requires <namespace> <name>")
+		return 2
+	}
+	namespace, name := args[0], args[1]
+	fs := flag.NewFlagSet("logs pods", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	container := fs.String("container", "", "container name in a multi-container pod")
+	since := fs.String("since", "", "return logs newer than a duration (e.g. 5m) or a number of seconds")
+	tail := fs.Int("tail", -1, "return only the last N lines")
+	previous := fs.Bool("previous", false, "return logs from the previously terminated container instance")
+	if err := fs.Parse(args[2:]); err != nil {
+		return 2
+	}
+	q := url.Values{}
+	if *container != "" {
+		q.Set("container", *container)
+	}
+	if *since != "" {
+		q.Set("since", *since)
+	}
+	if *tail >= 0 {
+		q.Set("tail", strconv.Itoa(*tail))
+	}
+	if *previous {
+		q.Set("previous", "true")
+	}
+	path := "/v1/admin/logs/pods/" + url.PathEscape(namespace) + "/" + url.PathEscape(name)
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	if err := c.Get(ctx, path, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
 // opsGet issues a GET to lenny-ops and prints the JSON response.
 func opsGet(ctx context.Context, c *ctl.Client, path string, stdout, stderr io.Writer) int {
 	var out map[string]any
