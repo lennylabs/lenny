@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -148,4 +149,35 @@ type userTokenRevoker struct {
 // user as revoked and returns the JTIs it revoked.
 func (u *userTokenRevoker) RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error) {
 	return u.store.RevokeBySubject(ctx, tenantID, subject, reason, at)
+}
+
+// adminIssuedTokens adapts the §13.3 issued-token store plus the
+// revocation cache to admintoken.IssuedTokens. It records each minted
+// §17.6 admin token so the token is revocable, and on rotation marks the
+// prior token revoked in Postgres and pushes the revocation onto the
+// cross-replica cache so the old token stops validating immediately (the
+// §17.6 line 472 no-grace-period guarantee). spec: §17.6 line 472 —
+// F-17.6.3.
+type adminIssuedTokens struct {
+	store *issuedtokenstore.Store
+	cache admin.RevocationCache
+}
+
+func (a adminIssuedTokens) Record(ctx context.Context, rec admintoken.MintedToken) error {
+	return a.store.Record(ctx, issuedtokenstore.IssuedToken{
+		JTI:       rec.JTI,
+		TenantID:  rec.TenantID,
+		Subject:   rec.Subject,
+		TokenHash: rec.TokenHash,
+		IssuedAt:  rec.IssuedAt,
+		ExpiresAt: rec.ExpiresAt,
+	})
+}
+
+func (a adminIssuedTokens) Revoke(ctx context.Context, tenantID, jti, reason string, at time.Time) error {
+	err := a.store.Revoke(ctx, tenantID, jti, reason, at)
+	if a.cache != nil {
+		a.cache.Revoke(jti)
+	}
+	return err
 }

@@ -94,6 +94,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
+	"github.com/lennylabs/lenny/pkg/gateway/admintoken/k8ssecret"
 	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
@@ -961,6 +963,18 @@ func main() {
 		"§10.4 name of the gateway PodDisruptionBudget object for the periodic poller. Override via LENNY_GATEWAY_PDB_NAME.")
 	gatewayServiceName := flag.String("gateway-service-name", envOr("LENNY_GATEWAY_SERVICE_NAME", "lenny-gateway"),
 		"§12.4 line 224 name of the gateway Service whose Endpoints object the fail-open cached_replica_count poller reads. Override via LENNY_GATEWAY_SERVICE_NAME.")
+	// spec: §17.6 lines 455-474 — the initial admin credential. The
+	// bootstrap flow provisions a platform-admin user (lenny-admin) and
+	// writes its generated token to a Secret in the gateway namespace.
+	// F-17.6.3.
+	adminTokenDisabled := flag.Bool("admin-token-disabled", envBool("LENNY_ADMIN_TOKEN_DISABLED", false),
+		"§17.6 disable initial-admin-credential provisioning (no lenny-admin user or lenny-admin-token Secret is created on bootstrap). Override via LENNY_ADMIN_TOKEN_DISABLED.")
+	adminTokenNamespace := flag.String("admin-token-namespace", envOr("LENNY_ADMIN_TOKEN_NAMESPACE", os.Getenv("POD_NAMESPACE")),
+		"§17.6 line 463 namespace for the lenny-admin-token Secret (defaults to the gateway's own namespace / POD_NAMESPACE). Override via LENNY_ADMIN_TOKEN_NAMESPACE.")
+	adminTokenSecretName := flag.String("admin-token-secret-name", envOr("LENNY_ADMIN_TOKEN_SECRET_NAME", "lenny-admin-token"),
+		"§17.6 line 463 name of the initial-admin-token Secret. Override via LENNY_ADMIN_TOKEN_SECRET_NAME.")
+	adminTokenTenant := flag.String("admin-token-tenant", envOr("LENNY_ADMIN_TOKEN_TENANT", "default"),
+		"§17.6 tenant the initial lenny-admin user and token are scoped to. Override via LENNY_ADMIN_TOKEN_TENANT.")
 	// spec: §10.4 line 389 — operator-tunable SSE replay-buffer depth.
 	// Default 512 events matches the §10.4 reconnect-window assumption
 	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated
@@ -4144,6 +4158,31 @@ func main() {
 		// fans out to every replica's cache over Redis pub/sub, not just
 		// the replica that served the request.
 		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(pgPool), revProp)
+	}
+	// spec: §17.6 lines 455-474 — the initial admin credential. Wired
+	// when the gateway has both an in-cluster client (to write the
+	// Secret) and a durable token store (so the minted token is
+	// revocable on rotation). A deployment lacking either, or with
+	// --admin-token-disabled, skips provisioning; the bootstrap response
+	// then carries no adminToken section and the CLI prints no prompt.
+	// F-17.6.3 / F-24.1.7.
+	if !*adminTokenDisabled && clusterClient != nil && pgPool != nil && *adminTokenNamespace != "" {
+		adminTokenProv, atErr := admintoken.New(admintoken.Config{
+			Namespace:   *adminTokenNamespace,
+			SecretName:  *adminTokenSecretName,
+			AdminTenant: *adminTokenTenant,
+			Issuer:      *bearerExpectedIssuer,
+			Audience:    expectedAuds,
+		}, jwtSigner, users,
+			k8ssecret.New(clusterClient),
+			adminIssuedTokens{store: issuedtokenstore.New(pgPool), cache: revProp},
+			clockinject.Now)
+		if atErr != nil {
+			log.Fatalf("lenny-gateway: initial admin credential: %v", atErr)
+		}
+		adminRouter = adminRouter.WithAdminTokenProvisioner(adminTokenProv)
+		log.Printf("lenny-gateway: initial admin credential active (Secret %s/%s, user %s)",
+			*adminTokenNamespace, *adminTokenSecretName, adminTokenProv.Username())
 	}
 	// §11.4 full_revoke fan-out. Each dependency is independently
 	// optional: the pod terminator is wired only with warm-pod placement
