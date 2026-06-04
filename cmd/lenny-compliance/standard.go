@@ -34,19 +34,7 @@ func runStandardBattery(binary string, timeout time.Duration, verbose bool) Repo
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	basic := []struct {
-		name string
-		spec string
-		fn   func(string, time.Duration, bool) (string, error)
-	}{
-		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
-		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
-		{"message_emits_response", "15.4", checkMessageEmitsResponse},
-		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
-		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
-		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
-		{"sequential_messages_handled", "15.4", checkSequentialMessages},
-	}
+	basic := basicCases()
 	standard := []struct {
 		name string
 		spec string

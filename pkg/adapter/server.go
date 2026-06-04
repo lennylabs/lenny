@@ -244,6 +244,21 @@ type Server struct {
 	// primary terminal-notification surfaces.
 	PostMortemDir string
 
+	// HeartbeatInterval is the §15.4.1 line 1442 cadence at which the
+	// Attach loop sends a `{type:heartbeat,ts}` liveness ping to the
+	// runtime. Zero (the default) disables heartbeats — the in-process
+	// dev executor and tests that construct a bare Server send none.
+	// cmd/lenny-adapter sets it for the production sidecar so a hung
+	// runtime is detected by liveness probe, not only by stream close.
+	// spec: §15.4.1 lines 1442, 1826, 2061.
+	HeartbeatInterval time.Duration
+	// HeartbeatAckTimeout is the §15.4.1 line 1826 window the runtime has
+	// to answer a heartbeat with `heartbeat_ack`. When the window elapses
+	// with no ack the adapter considers the process hung and sends SIGTERM
+	// (RuntimeProcess.Interrupt with hard=false). Zero selects the spec
+	// default (10s) whenever HeartbeatInterval > 0.
+	HeartbeatAckTimeout time.Duration
+
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 

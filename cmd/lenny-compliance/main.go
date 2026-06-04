@@ -99,6 +99,34 @@ func (r Report) failedCount() int { return r.Summary.Failed }
 
 // runBasicBattery runs every Basic-level conformance check against the
 // adapter binary and assembles the Report.
+// checkCase is one named conformance check tagged with the spec section
+// that defines it. The Basic battery is shared by the Standard and Full
+// batteries, so it lives in one place to keep the three in sync.
+type checkCase struct {
+	name string
+	spec string
+	fn   func(string, time.Duration, bool) (string, error)
+}
+
+// basicCases is the §15.4.6 Basic-level conformance battery, run as-is by
+// every level. The two schema checks implement the §15.4.6 line 2405
+// ("the response matches schemas/lenny-adapter-jsonl.schema.json") and
+// line 2408 ("Every OutputPart ... validates against
+// schemas/outputpart.schema.json") conformance categories.
+func basicCases() []checkCase {
+	return []checkCase{
+		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
+		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
+		{"message_emits_response", "15.4", checkMessageEmitsResponse},
+		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
+		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
+		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
+		{"sequential_messages_handled", "15.4", checkSequentialMessages},
+		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
+		{"outputpart_schema_compliance", "15.4.6", checkOutputPartSchemaCompliance},
+	}
+}
+
 func runBasicBattery(binary string, timeout time.Duration, verbose bool) Report {
 	r := Report{
 		Harness:   "lenny-compliance/" + harnessVersion,
@@ -107,21 +135,7 @@ func runBasicBattery(binary string, timeout time.Duration, verbose bool) Report 
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	cases := []struct {
-		name string
-		spec string
-		fn   func(string, time.Duration, bool) (string, error)
-	}{
-		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
-		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
-		{"message_emits_response", "15.4", checkMessageEmitsResponse},
-		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
-		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
-		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
-		{"sequential_messages_handled", "15.4", checkSequentialMessages},
-	}
-
-	for _, c := range cases {
+	for _, c := range basicCases() {
 		detail, err := c.fn(binary, timeout, verbose)
 		r.recordCheck(c.name, c.spec, detail, err)
 	}
@@ -298,6 +312,69 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 		return fmt.Sprintf("stdout=%q", stdout[0]), nil
 	}
 	return "response.type=response, output[0].type=" + resp.Output[0].Type, nil
+}
+
+// checkResponseMatchesJSONLSchema validates that the runtime's response
+// frame matches the published adapter JSONL schema. spec: §15.4.6 line
+// 2405 ("The response matches schemas/lenny-adapter-jsonl.schema.json").
+func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	if err := validateJSONLFrame([]byte(stdout[0])); err != nil {
+		return "", err
+	}
+	if verbose {
+		return fmt.Sprintf("validated against %s: %s", jsonlSchemaFile, stdout[0]), nil
+	}
+	return "response validates against " + jsonlSchemaFile, nil
+}
+
+// checkOutputPartSchemaCompliance validates every OutputPart in the
+// runtime's response against the published OutputPart schema. A
+// text-shorthand response (no output array) carries no OutputParts to
+// validate and passes. spec: §15.4.6 line 2408.
+func checkOutputPartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	var resp struct {
+		Type   string            `json:"type"`
+		Output []json.RawMessage `json:"output"`
+		Text   string            `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(stdout[0]), &resp); err != nil {
+		return "", fmt.Errorf("response not JSON: %w", err)
+	}
+	if resp.Type != "response" {
+		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
+	}
+	if len(resp.Output) == 0 {
+		// spec: §15.4.1 — the Basic shorthand {type:response,text:"..."}
+		// emits no OutputPart array; the adapter normalizes it. There is
+		// nothing to validate against the OutputPart schema.
+		return "no OutputParts emitted (text shorthand)", nil
+	}
+	for i, part := range resp.Output {
+		if err := validateOutputPart(part); err != nil {
+			return "", fmt.Errorf("output[%d]: %w", i, err)
+		}
+	}
+	return fmt.Sprintf("%d OutputPart(s) validate against %s", len(resp.Output), outputPartFile), nil
 }
 
 func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, error) {

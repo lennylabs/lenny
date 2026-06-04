@@ -26832,28 +26832,46 @@ Implementation tree audited: `pkg/adapter/`, `pkg/runtime/`, `pkg/runtimekit/`, 
 
 Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requirements (adapter↔binary protocol, RPC lifecycle state machine, integration levels, sample echo runtime, runtime-author roadmap, conformance suite); grep + read each candidate source; cross-check against committed JSON Schemas and proto.
 
-### - [ ] F-15.4.1 — MUST violations, missing security, correctness gaps [High] — OPEN
+### - [x] F-15.4.1 — MUST violations, missing security, correctness gaps [High] — CLOSED
 
-**Progress (stays OPEN).** The schema half of this cluster is resolved:
-`schemas/lifecycle-events.schema.json` has been regenerated to camelCase
-with the correct field names, the previously-missing frames, and the
-relaxed required-sets — so **15.4-HIGH-001, 002, 003, 004 are stale**
-(the schema now matches the spec text and the adapter wire). **HIGH-008
-is also resolved**: `cmd/lenny-ctl/runtimescaffold/probe.go` drives the
-`lenny-compliance` battery from `lenny runtime validate` (via
-`pkg/compliance.RunSuite`) and surfaces `runtime_level_underperforms`.
-**HIGH-007 is resolved this batch**: `pkg/gateway/mcptools` now rejects a
-`lenny/output` part that sets both `inline` and `ref`
-(`OUTPUTPART_INLINE_REF_CONFLICT`) or exceeds 50 MB
-(`OUTPUTPART_TOO_LARGE`), and the §4.7 sidecar scanner buffer is raised
-16 MB → 50 MB so a legal large part frames (closes 15.4-INFO-031). The
-finding stays OPEN for **HIGH-005** (the `set_tracing_context` JSONL
-intercept; the adapter does not proxy `delegate_task` today, so the
-spec's "attach to subsequent delegate_task gRPC requests" mechanism needs
-an architectural decision) and **HIGH-006 / HIGH-009** (the periodic
-heartbeat sender + ack-overdue SIGTERM, which needs adapter write
-serialization; and the conformance harness JSON-Schema validation). Those
-three are a dedicated adapter/harness batch.
+**Resolution.** The schema half (15.4-HIGH-001/002/003/004) was resolved
+earlier by the `schemas/lifecycle-events.schema.json` regeneration, and
+HIGH-007/HIGH-008 in prior batches. This batch closed the three remaining
+HIGH items:
+
+- **HIGH-006** (heartbeat sender + ack-overdue SIGTERM). New
+  `pkg/adapter/heartbeat.go` `heartbeatMonitor`: the Attach loop sends a
+  `{"type":"heartbeat","ts":<unix>}` frame to the runtime every
+  `HeartbeatInterval` and arms a single ack deadline on the first unacked
+  beat; a `heartbeat_ack` (consumed, never relayed per §15.4.1 line 1453)
+  disarms it, and an elapsed deadline closes a `hung` channel. The Attach
+  select then SIGTERMs the runtime (`Runtime.Interrupt` hard=false) and
+  ends the stream with `DeadlineExceeded`. `cmd/lenny-adapter` wires the
+  `--heartbeat-interval-seconds` (default 30) / `--heartbeat-ack-timeout-seconds`
+  (default 10, §15.4.1 line 1826) flags; a zero interval keeps the dev
+  in-process executor and bare-Server tests heartbeat-free.
+- **HIGH-005** (outbound `set_tracing_context` JSONL frame). New
+  `pkg/adapter/tracingcontext.go`: the Attach loop intercepts the
+  `set_tracing_context` stdout frame and forwards it to the gateway's
+  existing `lenny/set_tracing_context` platform tool via the
+  `PlatformForwarder`, injecting the bound `sessionId`. The architectural
+  decision (the finding flagged one was needed): the adapter — not the
+  runtime's MCP client — makes the gateway call, so the frame works at all
+  tiers including Basic (no MCP), and the gateway merges into the session
+  row + enforces §8.3, which `lenny/delegate_task` already consumes. The
+  frame is consumed, never relayed.
+- **HIGH-009** (conformance harness validates against the published JSON
+  Schemas). New `schemas/embed.go` exposes the schemas as an `embed.FS`;
+  `cmd/lenny-compliance/schemavalidate.go` compiles
+  `lenny-adapter-jsonl.schema.json` + `outputpart.schema.json` from it and
+  the Basic battery (shared by Standard/Full via the new `basicCases()`)
+  gains `response_matches_jsonl_schema` (§15.4.6 line 2405) and
+  `outputpart_schema_compliance` (line 2408).
+
+Resolved in commit {COMMIT_SHA}. (15.4-LOW-028's SDK emit path stays under
+the already-CLOSED F-15.4.3 — it needs a new public SDK outbound-emit API,
+mirroring the equally-unused `outboundStatus`; the adapter-side consumer
+HIGH-005 mandates is in force.)
 
 ### 15.4-HIGH-001 — `schemas/lifecycle-events.schema.json` field casing diverges from spec and implementation
 - Spec uses **camelCase** lifecycle-channel fields throughout §15.4.4 pseudocode and supporting §4.7 prose: `checkpointId`, `interruptId`, `deadlineMs`, `leaseId`, `credentialsPath` (spec lines 2287–2310).

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -145,23 +146,41 @@ func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
 }
 
 // fakePlatformForwarder records the session id it is forwarded with and
-// returns a canned catalog / result. spec: §9.1 lines 14-31. F-9.1.1.
+// returns a canned catalog / result. The mutex guards the captured call
+// so a test reading it after a concurrent server-goroutine forward (the
+// Attach loop's set_tracing_context path) stays race-free. spec: §9.1
+// lines 14-31. F-9.1.1.
 type fakePlatformForwarder struct {
 	list       []mcp.Tool
 	result     json.RawMessage
+	mu         sync.Mutex
 	gotSession string
 	gotTool    string
+	gotArgs    json.RawMessage
 }
 
 func (f *fakePlatformForwarder) ListPlatformTools(_ context.Context, sessionID string) ([]mcp.Tool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.gotSession = sessionID
 	return f.list, nil
 }
 
-func (f *fakePlatformForwarder) CallPlatformTool(_ context.Context, sessionID, toolName string, _ json.RawMessage) (json.RawMessage, error) {
+func (f *fakePlatformForwarder) CallPlatformTool(_ context.Context, sessionID, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.gotSession = sessionID
 	f.gotTool = toolName
+	f.gotArgs = append(json.RawMessage(nil), arguments...)
 	return f.result, nil
+}
+
+// lastCall returns the most recent CallPlatformTool arguments under the
+// lock, for assertions in tests that forward from a server goroutine.
+func (f *fakePlatformForwarder) lastCall() (session, tool string, args json.RawMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotSession, f.gotTool, f.gotArgs
 }
 
 // spec: §9.1 lines 8-31 — when a PlatformForwarder is wired, the platform

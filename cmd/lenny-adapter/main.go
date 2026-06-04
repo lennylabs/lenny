@@ -161,6 +161,12 @@ func main() {
 	postMortemDir := flag.String("post-mortem-dir",
 		os.Getenv("LENNY_POST_MORTEM_DIR"),
 		"§10.1 line 50 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
+	heartbeatIntervalSec := flag.Int("heartbeat-interval-seconds",
+		envIntOr("LENNY_ADAPTER_HEARTBEAT_INTERVAL_SECONDS", 30),
+		"§15.4.1 line 1442 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
+	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
+		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
+		"§15.4.1 line 1826 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -237,6 +243,11 @@ func main() {
 	// returns to receive the AdapterTerminating event.
 	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
 	adapterSrv.PostMortemDir = *postMortemDir
+	// spec: §15.4.1 lines 1442/1826 — production sidecar probes runtime
+	// liveness with heartbeats and SIGTERMs a process that misses the ack
+	// window. A zero interval disables the probe.
+	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
+	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
 	// §6.4 line 409: decode the inline shared-asset set the controller
 	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
 	// materialize it into the read-only /workspace/shared tree.

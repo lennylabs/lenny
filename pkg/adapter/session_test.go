@@ -5,6 +5,7 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,7 +16,13 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
+// fakeRuntime is the test double for RuntimeProcess. The §15.4.1
+// heartbeat monitor writes frames and may interrupt from a background
+// goroutine while a test reads the recorded slices, so the recording
+// fields are guarded by mu; use the *Snapshot accessors from a test that
+// runs alongside an active Attach loop.
 type fakeRuntime struct {
+	mu           sync.Mutex
 	started      []string
 	startErr     error
 	envelopes    [][]byte
@@ -31,6 +38,8 @@ type fakeRuntime struct {
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.startErr != nil {
 		return f.startErr
 	}
@@ -39,12 +48,20 @@ func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
 }
 
 func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	f.mu.Lock()
 	if f.writeErr != nil {
-		return f.writeErr
+		err := f.writeErr
+		f.mu.Unlock()
+		return err
 	}
 	f.envelopes = append(f.envelopes, envelope)
-	if f.echoInput && f.output != nil {
-		f.output <- append([]byte(nil), envelope...)
+	echo := f.echoInput && f.output != nil
+	out := f.output
+	f.mu.Unlock()
+	// Echo outside the lock so a blocking channel send never stalls a
+	// concurrent reader of the recorded slices.
+	if echo {
+		out <- append([]byte(nil), envelope...)
 	}
 	return nil
 }
@@ -62,6 +79,8 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 }
 
 func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.interruptErr != nil {
 		return f.interruptErr
 	}
@@ -70,12 +89,32 @@ func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 }
 
 func (f *fakeRuntime) Close(ctx context.Context, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.closed = append(f.closed, sessionID)
 	if dl, ok := ctx.Deadline(); ok {
 		f.closeHadDL = true
 		f.closeCtxDL = time.Until(dl)
 	}
 	return nil
+}
+
+// interruptsSnapshot returns a copy of the recorded Interrupt hard flags
+// under the lock, for tests that read alongside a live Attach loop.
+func (f *fakeRuntime) interruptsSnapshot() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bool(nil), f.interrupts...)
+}
+
+// envelopesSnapshot returns a copy of the frames written to the runtime
+// under the lock.
+func (f *fakeRuntime) envelopesSnapshot() [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]byte, len(f.envelopes))
+	copy(out, f.envelopes)
+	return out
 }
 
 // sessionServer builds an adapter Server wired to a fresh workspace

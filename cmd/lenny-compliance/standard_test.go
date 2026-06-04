@@ -67,9 +67,9 @@ func TestStandardBatteryIsBasicPlusStandard(t *testing.T) {
 	if r.Level != "standard" {
 		t.Errorf("report level = %q, want standard", r.Level)
 	}
-	// 7 Basic checks + 4 Standard checks.
-	if r.Summary.Total != 11 {
-		t.Errorf("total checks = %d, want 11 (7 basic + 4 standard)", r.Summary.Total)
+	// 9 Basic checks + 4 Standard checks.
+	if r.Summary.Total != 13 {
+		t.Errorf("total checks = %d, want 13 (9 basic + 4 standard)", r.Summary.Total)
 	}
 	if r.Summary.Failed != 0 {
 		for _, c := range r.Checks {
@@ -110,7 +110,8 @@ func TestStandardBatteryReusesBasicChecks(t *testing.T) {
 		"binary_exists_and_executes", "empty_stdin_exits_cleanly",
 		"message_emits_response", "heartbeat_emits_ack",
 		"unknown_type_ignored", "shutdown_exits_within_deadline",
-		"sequential_messages_handled",
+		"sequential_messages_handled", "response_matches_jsonl_schema",
+		"outputpart_schema_compliance",
 	}
 	got := map[string]Check{}
 	for _, c := range r.Checks {

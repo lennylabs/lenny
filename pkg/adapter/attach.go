@@ -49,6 +49,15 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
 	}
 
+	// spec: §15.4.1 lines 1442/1826 — the adapter probes runtime liveness
+	// with periodic heartbeats and SIGTERMs a process that misses the ack
+	// deadline. Disabled (hbHung == nil) unless HeartbeatInterval is set.
+	hb := s.startHeartbeat(ctx, sessionID)
+	var hbHung <-chan struct{}
+	if hb != nil {
+		hbHung = hb.hung
+	}
+
 	// The receive loop forwards client envelopes to the runtime's
 	// stdin; it runs concurrently with the send loop below. recvErr is
 	// buffered so the loop's final send never blocks once the send
@@ -64,6 +73,24 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			if !ok {
 				// The runtime's output ended; the session is done.
 				return nil
+			}
+			// spec: §15.4.1 line 1453 — heartbeat_ack is protocol-level
+			// with no content payload; it answers the adapter's liveness
+			// probe and is never relayed to the gateway.
+			if hb != nil && jsonlFrameType(line) == "heartbeat_ack" {
+				hb.ack()
+				continue
+			}
+			// spec: §15.4.1 line 1455 — set_tracing_context is an outbound
+			// protocol frame the adapter consumes (it registers the
+			// tracing identifiers with the gateway for delegation
+			// propagation) and never relays as content. Available at all
+			// tiers, so even a Basic runtime with no MCP access reaches the
+			// same gateway registration the lenny/set_tracing_context MCP
+			// tool performs.
+			if jsonlFrameType(line) == "set_tracing_context" {
+				s.handleSetTracingContext(ctx, sessionID, line)
+				continue
 			}
 			// §15.4.1: an adapter-local tool_call is answered by the
 			// adapter itself and never relayed to the gateway. A relayed
@@ -95,6 +122,13 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				continue
 			}
 			return err
+		case <-hbHung:
+			// spec: §15.4.1 line 1826 — the runtime missed the heartbeat
+			// ack deadline. The adapter SIGTERMs the hung process and ends
+			// the stream with DeadlineExceeded so the gateway sees the
+			// unresponsive-agent escalation rather than a clean close.
+			s.onHeartbeatHung(ctx, sessionID)
+			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; sent SIGTERM (§15.4.1 line 1826)")
 		case <-ctx.Done():
 			return ctx.Err()
 		}
