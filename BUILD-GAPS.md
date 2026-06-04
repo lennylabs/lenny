@@ -10201,7 +10201,7 @@ previously-dead `delegation-max-level-recovery-seconds` /
 `delegation-max-tree-recovery-seconds` flags now feed the orchestrator.
 The traversal runs detached from the request because it is bounded by
 `maxTreeRecoverySeconds` (600s), not the HTTP deadline. Commit
-`515f881f`. (F-8.2.24 is already closed as the §8.2-side duplicate of
+`4cc6f317`. (F-8.2.24 is already closed as the §8.2-side duplicate of
 this finding.)
 
 ---
