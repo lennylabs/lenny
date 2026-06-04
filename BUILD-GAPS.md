@@ -12542,7 +12542,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution (commit `02369575`):** Added `adapter.WithServerName` (a `TLSConfigMod` pinning `tls.Config.ServerName`) and variadic mods on `adapter.TLSClientOption`, plus `gatewaycontrol.GatewayDNSName = "lenny-gateway.lenny-system.svc"` (the spec line 322 DNS SAN). The canonical adapter→gateway dial composes `adapter.TLSClientOption(cert, key, ca, adapter.WithServerName(gatewaycontrol.GatewayDNSName))`, so Go's verification refuses any cluster-CA-signed certificate (Token Service, controller, other `lenny-system` workloads) whose SAN does not cover the gateway DNS name, rather than falling back to the dial-target host. The production adapter→gateway dial itself is the documented §8.6 lease-extend SEAM (`pkg/adapter/leaseextend.go` `HandleBudgetExhaustion` has no production caller yet; the LLM-proxy trigger lands with F-8.6.6), which now has the spec-mandated ServerName-pinning mechanism to compose. Unit tests cover the mod, the variadic application, and the pinned DNS constant.
 
-### - [ ] F-10.3.3 — 10.3-G3. Gateway-to-interceptor mTLS link missing entirely [High] — OPEN
+### - [x] F-10.3.3 — 10.3-G3. Gateway-to-interceptor mTLS link missing entirely [High] — CLOSED
 
 **Spec lines:** 326–332 (NET-063), 308–314 (lifecycle row "In-cluster interceptors").
 **Evidence:**
@@ -12552,6 +12552,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - The gateway has no interceptor-client wiring, no `tls.Config.ServerName`-pinned dialer, and no SPIFFE-namespace allowlist enforcement (`spiffe.ValidateInterceptor` exists in `pkg/mtls/spiffe/spiffe.go` lines 176–202 but has no caller).
 
 **Impact:** The NET-063 boundary is undefined at runtime. A pod that lands in any interceptor namespace with matching service labels can observe or mutate the gateway's policy-mediated MCP envelopes.
+
+**Resolution (commit `5eee9d30`):** The interceptor-client wiring was partly stale (`dialInterceptor` already existed), but it performed neither SPIFFE/DNS-SAN peer validation nor metric emission. New `spiffe.InterceptorPeerVerifier` validates the interceptor leaf's `spiffe://<trust-domain>/interceptor/{namespace}/{pod}` URI SAN against `--spiffe-trust-domain` and the new `--interceptor-namespaces` allowlist (and the §10.3 deny list), wrapping each rejection in a typed `*VerifyError`. New `pkg/mtls/interceptordial` builds the dial credentials: it pins `tls.Config.ServerName` to the endpoint host so Go's chain verification refuses any cluster-CA cert whose DNS SAN does not cover the registered endpoint (spec line 328), installs the verifier for in-cluster (`.svc`) endpoints only (external interceptors per spec line 322 keep CA+DNS-only), and times every handshake into the §16.1 `lenny_interceptor_mtls_handshake_duration_seconds{result}` histogram (`ClassifyResult` → success/san_mismatch/cert_expired/cert_missing/tls_error). `dialInterceptor` logs `interceptor_identity_mismatch` on the OnMismatch hook, completing the deferred half noted under F-10.3.13. The chart's new `lenny.interceptorCertificate` helper emits one cert-manager `Certificate` per declared `gateway.interceptorNamespaces` entry (SPIFFE URI + DNS SANs, ClusterIssuer ref) alongside the existing egress NetworkPolicy, and the gateway Deployment passes `--interceptor-namespaces`. CA possession is now necessary but not sufficient on the interceptor hop (spec line 332). Closes F-10.3.19 (metric instrumentation).
 
 ### - [x] F-10.3.4 — 10.3-G4. `global.spiffeTrustDomain` ships with a hard-coded default and no chart-side `required` guard [High] — CLOSED
 
@@ -12758,13 +12760,15 @@ gauge-cleared-on-missing).
 
 **Resolution:** New `charts/lenny/templates/admission-policies/kyverno-agent-sa-rolebinding-policy.yaml` ships a Kyverno `ClusterPolicy` (`lenny-disallow-agent-sa-rolebindings`, `Enforce` mode) matching `RoleBinding`/`ClusterRoleBinding` and denying any binding that grants a ServiceAccount in an agent namespace. Two deny conditions cover both an explicit-namespace SA subject (ClusterRoleBindings + cross-namespace RoleBindings) and a RoleBinding in an agent namespace whose SA subject omits a namespace (RBAC defaults it to the binding's). The agent-namespace value list is derived from `.Values.agentNamespaces`; gated by the new `admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled` value (default true under the Kyverno block). Gatekeeper users configure an equivalent ConstraintTemplate. F-10.3.18.
 
-### - [ ] F-10.3.19 — 10.3-G19. `lenny_interceptor_mtls_handshake_duration_seconds` metric is uninstrumented [Medium] — DEFERRED
+### - [x] F-10.3.19 — 10.3-G19. `lenny_interceptor_mtls_handshake_duration_seconds` metric is uninstrumented [Medium] — CLOSED
 
 **Spec lines:** 332 ("Handshake outcomes are instrumented via `lenny_interceptor_mtls_handshake_duration_seconds{result}`").
 **Evidence:** `pkg/observability/metrics/catalog.go:106` registers the metric in the catalog and `pkg/alerting/rules/rules.go:1262` defines the alert, but a grep for the metric name across `pkg/` returns no `Observe(...)`/`Record(...)` call. The `result` label values (`success`, `san_mismatch`, `cert_expired`, `cert_missing`, `tls_error`) are documented in `tests/tier9_security/reviews/full-system-review.md` but never produced.
 **Impact:** The `InterceptorMTLSHandshakeFailure` alert is structurally a no-op until the interceptor mTLS link (gap G3) is wired and the metric is emitted.
 
 **Deferred:** The metric labels a gateway→interceptor handshake outcome, but the gateway↔interceptor mTLS link (NET-063) does not yet exist — F-10.3.3 (G3) tracks wiring it. There is no handshake to instrument until that link lands, so emitting the counter now would require fabricating an outcome from a code path that never runs. Will be wired alongside F-10.3.3.
+
+**Resolution (commit `5eee9d30`):** Unblocked by F-10.3.3 (this batch). The new `pkg/mtls/interceptordial.timedCreds` wraps the interceptor dial's transport credentials and observes `gatewaymetrics.Metrics.ObserveInterceptorMTLSHandshake(result, seconds)` on every `ClientHandshake`. `ClassifyResult` maps the handshake error onto the spec's five `result` labels (`success`, `san_mismatch`, `cert_expired`, `cert_missing`, `tls_error`), driving the §16.5 `InterceptorMTLSHandshakeFailure` alert off a live series. Covered by `TestInterceptorMTLSHandshakeMetric_spec_10_3_332` (gatewaymetrics) and the `interceptordial` handshake tests that assert the observed label end-to-end.
 
 ### - [x] F-10.3.20 — 10.3-G20. Projected SA token `expirationSeconds: 900` not configured on agent-pod template [High] — CLOSED
 
