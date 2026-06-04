@@ -26832,7 +26832,7 @@ Spec text on the `MessageEnvelope` field at §15.4.1 (line 1694) explicitly says
 - **`audit_log.event_schema_version`** — left as `TEXT` deliberately. §11.7 line 365 defines `event_schema_version` as a **per-event-type string version token** (`credential.leased@v1`), published as the `schemas/audit-events/v*.json` registry and folded into the §11.7 hash-chain canonical tuple. It is a distinct field from the billing/EventStore `schema_version uint32` (§11.7 line 82). Retyping it to INT would contradict §11.7 and break the audit hash chain; per Rule B the spec is authoritative, so no change.
 - **`TaskRecord`** — not persisted to Postgres in v1 (no table); §15.5's rule scopes to "Postgres-persisted record types", so it is vacuously satisfied here. The in-flight struct already carries `SchemaVersion`; durable TaskRecord persistence is tracked under §8.8, not §15.5.
 
-Tests: tier-1 static migration-content tests (0131/0132), tier-1 in-memory store stamping/normalization tests (transcript + checkpoint), tier-2 component column-existence coverage and a transcript-pgstore round-trip subtest. Resolution commit in this batch.
+Tests: tier-1 static migration-content tests (0131/0132), tier-1 in-memory store stamping/normalization tests (transcript + checkpoint), tier-2 component column-existence coverage and a transcript-pgstore round-trip subtest. Resolution commit `9e8f5edf`.
 
 ### - [x] F-15.5.7 — REST error envelope OpenAPI schema is missing `category` and `retryable` [High] — CLOSED
 
