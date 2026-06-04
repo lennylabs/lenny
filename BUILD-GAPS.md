@@ -25746,7 +25746,7 @@ gate (reject + 3 admit paths); tier-2 admin handler (transition/report,
 cap, live-only count, 404 missing/deleted, idempotent, GET phase);
 tier-2 component drain round-trip + prod-columns + migration text.
 
-### - [ ] F-15.1.9 — `?dryRun=true` query parameter is not implemented [High] — OPEN
+### - [x] F-15.1.9 — `?dryRun=true` query parameter is not implemented [High] — CLOSED
 Spec (§15.1 lines 1140–1206) defines `?dryRun=true` for "most admin
 POST and PUT endpoints" with a detailed contract: full validation, no
 persistence, no audit (except `bootstrap`), `X-Dry-Run: true` header on
@@ -25763,6 +25763,33 @@ admin endpoints inspect `?dryRun=true`; no handler writes
 circuit-breaker simulation response shapes are entirely absent. Bootstrap
 `?dryRun=true` does not emit the spec-mandated `platform.bootstrap_applied`
 audit event with `dryRun: true`.
+
+**Resolution:** Implemented `?dryRun=true` across the entire §15.1
+supported-endpoints table (lines 1182–1201). Each POST/PUT handler now
+short-circuits after full validation and before any persistence or audit
+emission, returning the computed resource representation with the
+`X-Dry-Run: true` response header via the shared `writeDryRun` helper
+(`pkg/gateway/admin/experiments.go`). Covered: runtimes, connectors,
+delegation-policies, external-adapters, pools, credential-pools
+(create + update; the field-merge logic for each update was extracted
+into a shared `applyXUpdate` helper so the preview and the real write
+share one implementation), environments (create + update, returning the
+spec `{resource, preview}` body with `matchedRuntimes`,
+`matchedConnectors`, and `unmatchedSelectorTerms` evaluated against the
+live runtime/connector registries), and the circuit-breaker
+`open`/`close` action endpoints (returning the reduced simulation object
+with the `{currentState, predictedState, wouldChangeState}` block,
+honouring the §11.6 scope-immutability rule and the idempotent-no-op
+`wouldChangeState` semantics without writing Redis). The pool PUT
+resolves `dryRun` after its `If-Match` precondition, so `dryRun=true` +
+a stale ETag still returns `412`. Experiments dryRun and bootstrap
+dryRun (which emits `platform.bootstrap_applied` with `dryRun: true` and
+the `X-Dry-Run` header) were already implemented by prior batches; the
+finding's bootstrap claim was stale. 41 tier-1 dry-run tests assert the
+status code, `X-Dry-Run` header, computed body / preview / simulation
+shapes, and — the key correctness guarantee — that no row is created on
+a dry-run create and the stored row is unchanged on a dry-run update,
+with no audit emission. Closed by this batch.
 
 ### - [x] F-15.1.10 — Correlation / agent headers are dropped on the floor [High] — CLOSED
 Spec (§15.1 lines 935–938): every admin-API request accepts

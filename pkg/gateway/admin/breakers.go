@@ -116,11 +116,139 @@ func (r *Router) handleListBreakers(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"circuit_breakers": out})
 }
 
+// BreakerSimulation is the §15.1 dry-run simulation block the
+// circuit-breaker open/close endpoints return under ?dryRun=true.
+// spec: §15.1 line 1140 (circuit-breaker dryRun).
+type BreakerSimulation struct {
+	CurrentState     string `json:"currentState"`
+	PredictedState   string `json:"predictedState"`
+	WouldChangeState bool   `json:"wouldChangeState"`
+}
+
+// OpenBreakerDryRun is the reduced §15.1 dry-run response for POST
+// /open — exactly name, state, reason, limit_tier, scope, plus the
+// simulation block. No audit-like fields are populated because no state
+// mutation occurs. spec: §15.1 line 1140.
+type OpenBreakerDryRun struct {
+	Name       string            `json:"name"`
+	State      string            `json:"state"`
+	Reason     string            `json:"reason"`
+	LimitTier  string            `json:"limit_tier"`
+	Scope      ScopePayload      `json:"scope"`
+	Simulation BreakerSimulation `json:"simulation"`
+}
+
+// CloseBreakerDryRun is the reduced §15.1 dry-run response for POST
+// /close — exactly name, state, limit_tier, scope (the latter two read
+// from the persisted breaker), plus the simulation block.
+// spec: §15.1 line 1140.
+type CloseBreakerDryRun struct {
+	Name       string            `json:"name"`
+	State      string            `json:"state"`
+	LimitTier  string            `json:"limit_tier"`
+	Scope      ScopePayload      `json:"scope"`
+	Simulation BreakerSimulation `json:"simulation"`
+}
+
+// dryRunOpenBreaker simulates POST .../open: it validates the body and
+// the §11.6 scope-immutability rule against any persisted breaker, reads
+// the current Redis state, and returns the reduced simulation object
+// without writing or auditing. spec: §15.1 line 1140.
+func (r *Router) dryRunOpenBreaker(w http.ResponseWriter, req *http.Request, name string, body OpenBreakerRequest) {
+	b := circuitbreaker.Breaker{
+		Name:      name,
+		State:     circuitbreaker.StateOpen,
+		Reason:    body.Reason,
+		LimitTier: circuitbreaker.LimitTier(body.LimitTier),
+		Scope: circuitbreaker.Scope{
+			Runtime:       body.Scope.Runtime,
+			Pool:          body.Scope.Pool,
+			Connector:     body.Scope.Connector,
+			OperationType: circuitbreaker.OperationType(body.Scope.OperationType),
+		},
+	}
+	if err := b.Validate(); err != nil {
+		var se *circuitbreaker.ScopeError
+		if errors.As(err, &se) {
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_BREAKER_SCOPE", err.Error(),
+				map[string]any{"field": se.Field, "reason": se.Reason})
+			return
+		}
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	currentState := "not_registered"
+	wouldChange := true
+	if existing, err := r.breakers.Get(req.Context(), name); err == nil {
+		// §11.6 immutability: the persisted (limit_tier, scope) cannot
+		// change between opens. Surface the same mismatch the real Open
+		// would return rather than previewing an invalid transition.
+		if !circuitbreaker.ScopeMatches(existing, b) {
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_BREAKER_SCOPE",
+				breakerstore.ErrScopeImmutable.Error(), nil)
+			return
+		}
+		currentState = string(existing.State)
+		if existing.State == circuitbreaker.StateOpen {
+			wouldChange = false // idempotent no-op
+		}
+	}
+	writeDryRun(w, http.StatusOK, OpenBreakerDryRun{
+		Name:      name,
+		State:     string(circuitbreaker.StateOpen),
+		Reason:    body.Reason,
+		LimitTier: body.LimitTier,
+		Scope:     body.Scope,
+		Simulation: BreakerSimulation{
+			CurrentState:     currentState,
+			PredictedState:   string(circuitbreaker.StateOpen),
+			WouldChangeState: wouldChange,
+		},
+	})
+}
+
+// dryRunCloseBreaker simulates POST .../close: it validates the breaker
+// exists in Redis and returns the reduced simulation object without
+// writing or auditing. spec: §15.1 line 1140.
+func (r *Router) dryRunCloseBreaker(w http.ResponseWriter, req *http.Request, name string) {
+	existing, err := r.breakers.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, breakerstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "breaker not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeDryRun(w, http.StatusOK, CloseBreakerDryRun{
+		Name:      name,
+		State:     string(circuitbreaker.StateClosed),
+		LimitTier: string(existing.LimitTier),
+		Scope: ScopePayload{
+			Runtime:       existing.Scope.Runtime,
+			Pool:          existing.Scope.Pool,
+			Connector:     existing.Scope.Connector,
+			OperationType: string(existing.Scope.OperationType),
+		},
+		Simulation: BreakerSimulation{
+			CurrentState:     string(existing.State),
+			PredictedState:   string(circuitbreaker.StateClosed),
+			WouldChangeState: existing.State == circuitbreaker.StateOpen,
+		},
+	})
+}
+
 func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body OpenBreakerRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true simulates the open (idempotency
+	// + persisted-scope conflict) without writing Redis or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		r.dryRunOpenBreaker(w, req, name, body)
 		return
 	}
 	principal, ok := authmw.FromContext(req.Context())
@@ -188,6 +316,12 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) handleCloseBreaker(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	// spec: §15.1 line 1140 — ?dryRun=true simulates the close without
+	// writing Redis or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		r.dryRunCloseBreaker(w, req, name)
+		return
+	}
 	closed, err := r.breakers.Close(req.Context(), name)
 	if err != nil {
 		if errors.Is(err, breakerstore.ErrNotFound) {

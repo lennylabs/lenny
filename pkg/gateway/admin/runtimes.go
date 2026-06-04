@@ -814,6 +814,11 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	// §5.1: a runtime with an agentInterface gets a write-time
 	// auto-generated A2A agent card stored as a publishedMetadata entry.
 	r.applyGeneratedCard(&rt, rt.CreatedAt)
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		writeDryRun(w, http.StatusCreated, fromRuntime(rt))
+		return
+	}
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -894,6 +899,108 @@ func (r *Router) handleGetRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromRuntime(row))
+}
+
+// applyRuntimeUpdate merges a §15.1 UpdateRuntimeRequest onto a runtime
+// in place, applying the §5.1 field-merge rules and regenerating the
+// auto-generated A2A agent card. It is the single merge implementation
+// shared by the real store Update closure and the dry-run preview, so
+// the preview reflects exactly what a persisted update would produce.
+// agentInterfaceSet / newAgentInterface carry the parsed agentInterface
+// tri-state resolved by the handler before the store transaction opens.
+func (r *Router) applyRuntimeUpdate(rt *runtimestore.Runtime, body UpdateRuntimeRequest, agentInterfaceSet bool, newAgentInterface *runtimestore.AgentInterface) error {
+	if body.Image != nil {
+		rt.Image = *body.Image
+	}
+	if body.ExecutionMode != nil {
+		rt.ExecutionMode = runtimestore.ExecutionMode(*body.ExecutionMode)
+	}
+	if body.IsolationProfile != nil {
+		rt.IsolationProfile = isolation.Profile(*body.IsolationProfile)
+	}
+	if body.IntegrationLevel != nil {
+		rt.IntegrationLevel = runtimestore.IntegrationLevel(*body.IntegrationLevel)
+	}
+	if body.WorkspaceTier != nil {
+		rt.WorkspaceTier = runtimestore.WorkspaceTier(*body.WorkspaceTier)
+	}
+	if body.AllowedResourceClasses != nil {
+		rt.AllowedResourceClasses = *body.AllowedResourceClasses
+	}
+	if body.SupportedProviders != nil {
+		rt.SupportedProviders = *body.SupportedProviders
+	}
+	if body.CredentialCapabilities != nil {
+		rt.CredentialCapabilities = body.CredentialCapabilities
+	}
+	if body.AllowSelfRecursion != nil {
+		rt.AllowSelfRecursion = *body.AllowSelfRecursion
+	}
+	if body.Description != nil {
+		rt.Description = *body.Description
+	}
+	if body.Labels != nil {
+		rt.Labels = *body.Labels
+	}
+	if body.DelegationPolicyRef != nil {
+		rt.DelegationPolicyRef = *body.DelegationPolicyRef
+	}
+	if agentInterfaceSet {
+		// §5.1: type:mcp runtimes do not carry an agentInterface.
+		if rt.Type == runtimestore.TypeMCP && newAgentInterface != nil {
+			return errAgentInterfaceOnMCP
+		}
+		rt.AgentInterface = newAgentInterface
+	}
+	if body.PublishedMetadata != nil {
+		rt.PublishedMetadata = *body.PublishedMetadata
+	}
+	if body.CapabilityInferenceMode != nil {
+		rt.CapabilityInferenceMode = capabilityinference.Mode(*body.CapabilityInferenceMode)
+	}
+	if body.ToolCapabilityOverrides != nil {
+		rt.ToolCapabilityOverrides = *body.ToolCapabilityOverrides
+	}
+	if body.SetupPolicy != nil {
+		rt.SetupPolicy = body.SetupPolicy
+	}
+	if body.Limits != nil {
+		rt.Limits = body.Limits
+	}
+	if body.SetupCommandPolicy != nil {
+		rt.SetupCommandPolicy = body.SetupCommandPolicy
+	}
+	if body.DefaultPoolConfig != nil {
+		rt.DefaultPoolConfig = body.DefaultPoolConfig
+	}
+	if body.WorkspaceDefaults != nil {
+		rt.WorkspaceDefaults = body.WorkspaceDefaults
+	}
+	if body.SharedAssets != nil {
+		rt.SharedAssets = *body.SharedAssets
+	}
+	if len(body.RuntimeOptionsSchema) > 0 {
+		rt.RuntimeOptionsSchema = body.RuntimeOptionsSchema
+	}
+	if body.Capabilities != nil {
+		rt.Capabilities = body.Capabilities
+	}
+	if body.SDKWarmBlockingPaths != nil {
+		rt.SDKWarmBlockingPaths = *body.SDKWarmBlockingPaths
+	}
+	if body.MinPlatformVersion != nil {
+		rt.MinPlatformVersion = *body.MinPlatformVersion
+	}
+	if body.TaskPolicy != nil {
+		rt.TaskPolicy = body.TaskPolicy
+	}
+	if body.BaseRuntime != nil {
+		rt.BaseRuntime = *body.BaseRuntime
+	}
+	// §5.1: regenerate the auto-generated A2A agent card at write
+	// time whenever the runtime carries an agentInterface.
+	r.applyGeneratedCard(rt, r.clock())
+	return nil
 }
 
 func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
@@ -1064,99 +1171,32 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
-		if body.Image != nil {
-			rt.Image = *body.Image
-		}
-		if body.ExecutionMode != nil {
-			rt.ExecutionMode = runtimestore.ExecutionMode(*body.ExecutionMode)
-		}
-		if body.IsolationProfile != nil {
-			rt.IsolationProfile = isolation.Profile(*body.IsolationProfile)
-		}
-		if body.IntegrationLevel != nil {
-			rt.IntegrationLevel = runtimestore.IntegrationLevel(*body.IntegrationLevel)
-		}
-		if body.WorkspaceTier != nil {
-			rt.WorkspaceTier = runtimestore.WorkspaceTier(*body.WorkspaceTier)
-		}
-		if body.AllowedResourceClasses != nil {
-			rt.AllowedResourceClasses = *body.AllowedResourceClasses
-		}
-		if body.SupportedProviders != nil {
-			rt.SupportedProviders = *body.SupportedProviders
-		}
-		if body.CredentialCapabilities != nil {
-			rt.CredentialCapabilities = body.CredentialCapabilities
-		}
-		if body.AllowSelfRecursion != nil {
-			rt.AllowSelfRecursion = *body.AllowSelfRecursion
-		}
-		if body.Description != nil {
-			rt.Description = *body.Description
-		}
-		if body.Labels != nil {
-			rt.Labels = *body.Labels
-		}
-		if body.DelegationPolicyRef != nil {
-			rt.DelegationPolicyRef = *body.DelegationPolicyRef
-		}
-		if agentInterfaceSet {
-			// §5.1: type:mcp runtimes do not carry an agentInterface.
-			if rt.Type == runtimestore.TypeMCP && newAgentInterface != nil {
-				return errAgentInterfaceOnMCP
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The PUT resolves the current runtime first so the preview reflects
+	// applying the body onto the stored record; a missing runtime 404s
+	// ahead of the dry-run branch.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gerr := r.runtimes.Get(req.Context(), name)
+		if gerr != nil {
+			if errors.Is(gerr, runtimestore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
+				return
 			}
-			rt.AgentInterface = newAgentInterface
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
 		}
-		if body.PublishedMetadata != nil {
-			rt.PublishedMetadata = *body.PublishedMetadata
+		preview := current
+		if err := r.applyRuntimeUpdate(&preview, body, agentInterfaceSet, newAgentInterface); err != nil {
+			// The only error the merge returns is errAgentInterfaceOnMCP
+			// (§5.1: type:mcp runtimes carry no agentInterface), a 400.
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
 		}
-		if body.CapabilityInferenceMode != nil {
-			rt.CapabilityInferenceMode = capabilityinference.Mode(*body.CapabilityInferenceMode)
-		}
-		if body.ToolCapabilityOverrides != nil {
-			rt.ToolCapabilityOverrides = *body.ToolCapabilityOverrides
-		}
-		if body.SetupPolicy != nil {
-			rt.SetupPolicy = body.SetupPolicy
-		}
-		if body.Limits != nil {
-			rt.Limits = body.Limits
-		}
-		if body.SetupCommandPolicy != nil {
-			rt.SetupCommandPolicy = body.SetupCommandPolicy
-		}
-		if body.DefaultPoolConfig != nil {
-			rt.DefaultPoolConfig = body.DefaultPoolConfig
-		}
-		if body.WorkspaceDefaults != nil {
-			rt.WorkspaceDefaults = body.WorkspaceDefaults
-		}
-		if body.SharedAssets != nil {
-			rt.SharedAssets = *body.SharedAssets
-		}
-		if len(body.RuntimeOptionsSchema) > 0 {
-			rt.RuntimeOptionsSchema = body.RuntimeOptionsSchema
-		}
-		if body.Capabilities != nil {
-			rt.Capabilities = body.Capabilities
-		}
-		if body.SDKWarmBlockingPaths != nil {
-			rt.SDKWarmBlockingPaths = *body.SDKWarmBlockingPaths
-		}
-		if body.MinPlatformVersion != nil {
-			rt.MinPlatformVersion = *body.MinPlatformVersion
-		}
-		if body.TaskPolicy != nil {
-			rt.TaskPolicy = body.TaskPolicy
-		}
-		if body.BaseRuntime != nil {
-			rt.BaseRuntime = *body.BaseRuntime
-		}
-		// §5.1: regenerate the auto-generated A2A agent card at write
-		// time whenever the runtime carries an agentInterface.
-		r.applyGeneratedCard(rt, r.clock())
-		return nil
+		writeDryRun(w, http.StatusOK, fromRuntime(preview))
+		return
+	}
+	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
+		return r.applyRuntimeUpdate(rt, body, agentInterfaceSet, newAgentInterface)
 	})
 	if err != nil {
 		if errors.Is(err, runtimestore.ErrNotFound) {

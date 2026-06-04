@@ -58,10 +58,10 @@ type ExternalAdapterPayload struct {
 	// Status is read-only on the wire — the store owns the lifecycle
 	// transition (§15 line 1414). A value supplied on create/update is
 	// ignored.
-	Status         string                    `json:"status,omitempty"`
-	LastValidation *ValidationReportPayload  `json:"lastValidation,omitempty"`
-	CreatedAt      string                    `json:"createdAt,omitempty"`
-	UpdatedAt      string                    `json:"updatedAt,omitempty"`
+	Status         string                   `json:"status,omitempty"`
+	LastValidation *ValidationReportPayload `json:"lastValidation,omitempty"`
+	CreatedAt      string                   `json:"createdAt,omitempty"`
+	UpdatedAt      string                   `json:"updatedAt,omitempty"`
 }
 
 // ValidationReportPayload is the validate-run outcome on the wire.
@@ -146,6 +146,20 @@ func (r *Router) handleCreateExternalAdapter(w http.ResponseWriter, req *http.Re
 		Level:       body.Level,
 		CreatedAt:   r.clock(),
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := externaladapterstore.Validate(a); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		// §15 line 1414 — a newly registered adapter enters
+		// pending_validation; the preview reports the same status the
+		// persisted record would carry.
+		a.Status = externaladapterstore.StatusPendingValidation
+		a.UpdatedAt = a.CreatedAt
+		writeDryRun(w, http.StatusCreated, fromExternalAdapter(a))
+		return
+	}
 	if err := r.externalAdapters.Create(req.Context(), a); err != nil {
 		if errors.Is(err, externaladapterstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT", "external adapter with this name already exists", nil)
@@ -194,6 +208,39 @@ func (r *Router) handleGetExternalAdapter(w http.ResponseWriter, req *http.Reque
 	_ = json.NewEncoder(w).Encode(fromExternalAdapter(a))
 }
 
+// applyExternalAdapterUpdate merges a §15.1 ExternalAdapterPayload onto
+// an adapter in place and returns the §15.4 structural validation result.
+// A change to the adapter under test (binary or level) resets the gate to
+// pending_validation. It is the single merge implementation shared by the
+// real store Update closure and the dry-run preview.
+func applyExternalAdapterUpdate(a *externaladapterstore.ExternalAdapter, body ExternalAdapterPayload) error {
+	if body.DisplayName != "" {
+		a.DisplayName = body.DisplayName
+	}
+	if body.Protocol != "" {
+		a.Protocol = body.Protocol
+	}
+	if body.PathPrefix != "" {
+		a.PathPrefix = body.PathPrefix
+	}
+	// A change to the adapter under test (binary or level) invalidates
+	// the prior validation. Reset to pending_validation so the gate is
+	// re-run before the adapter receives traffic (§15.1 line 1199
+	// "Validates update"; §15 line 1414).
+	if (body.BinaryPath != "" && body.BinaryPath != a.BinaryPath) ||
+		(body.Level != "" && body.Level != a.Level) {
+		if body.BinaryPath != "" {
+			a.BinaryPath = body.BinaryPath
+		}
+		if body.Level != "" {
+			a.Level = body.Level
+		}
+		a.Status = externaladapterstore.StatusPendingValidation
+		a.LastValidation = nil
+	}
+	return externaladapterstore.Validate(*a)
+}
+
 func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body ExternalAdapterPayload
@@ -206,32 +253,30 @@ func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Re
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "admin handler reached without authenticated principal", nil)
 		return
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The PUT resolves the current adapter first so the preview reflects
+	// applying the body onto the stored record; a missing adapter 404s
+	// ahead of the dry-run branch.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gerr := r.externalAdapters.Get(req.Context(), name)
+		if gerr != nil {
+			if errors.Is(gerr, externaladapterstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "external adapter not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		preview := current
+		if err := applyExternalAdapterUpdate(&preview, body); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusOK, fromExternalAdapter(preview))
+		return
+	}
 	updated, err := r.externalAdapters.Update(req.Context(), name, func(a *externaladapterstore.ExternalAdapter) error {
-		if body.DisplayName != "" {
-			a.DisplayName = body.DisplayName
-		}
-		if body.Protocol != "" {
-			a.Protocol = body.Protocol
-		}
-		if body.PathPrefix != "" {
-			a.PathPrefix = body.PathPrefix
-		}
-		// A change to the adapter under test (binary or level) invalidates
-		// the prior validation. Reset to pending_validation so the gate is
-		// re-run before the adapter receives traffic (§15.1 line 1199
-		// "Validates update"; §15 line 1414).
-		if (body.BinaryPath != "" && body.BinaryPath != a.BinaryPath) ||
-			(body.Level != "" && body.Level != a.Level) {
-			if body.BinaryPath != "" {
-				a.BinaryPath = body.BinaryPath
-			}
-			if body.Level != "" {
-				a.Level = body.Level
-			}
-			a.Status = externaladapterstore.StatusPendingValidation
-			a.LastValidation = nil
-		}
-		return externaladapterstore.Validate(*a)
+		return applyExternalAdapterUpdate(a, body)
 	})
 	if err != nil {
 		if errors.Is(err, externaladapterstore.ErrNotFound) {

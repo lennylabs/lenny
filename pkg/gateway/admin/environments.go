@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
@@ -346,6 +349,122 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 	}
 }
 
+// EnvironmentDryRunPreview is the §15.1 environments dry-run preview
+// object. It lists the runtimes and connectors the environment's §10.6
+// selectors admit at evaluation time and any selector terms that matched
+// zero resources (a likely label-key or label-value typo).
+type EnvironmentDryRunPreview struct {
+	MatchedRuntimes        []string `json:"matchedRuntimes"`
+	MatchedConnectors      []string `json:"matchedConnectors"`
+	UnmatchedSelectorTerms []string `json:"unmatchedSelectorTerms"`
+}
+
+// EnvironmentDryRunResponse is the §15.1 environments dry-run body: the
+// computed resource alongside the selector preview. spec: §15.1 line 1140.
+type EnvironmentDryRunResponse struct {
+	Resource EnvironmentPayload       `json:"resource"`
+	Preview  EnvironmentDryRunPreview `json:"preview"`
+}
+
+// selectorTerm is one label term of an environment selector paired with
+// a single-term selector that evaluates it in isolation, so a term that
+// admits zero candidates is reported as an unmatched (likely typo) term.
+type selectorTerm struct {
+	label string
+	sel   environment.Selector
+}
+
+// selectorTerms decomposes a selector into its individual label terms
+// (matchLabels entries and matchExpressions requirements). The types,
+// include, and exclude overrides are not label terms and are skipped.
+func selectorTerms(s environment.Selector) []selectorTerm {
+	terms := make([]selectorTerm, 0, len(s.MatchLabels)+len(s.MatchExpressions))
+	for k, v := range s.MatchLabels {
+		terms = append(terms, selectorTerm{
+			label: k + "=" + v,
+			sel:   environment.Selector{MatchLabels: map[string]string{k: v}},
+		})
+	}
+	for _, req := range s.MatchExpressions {
+		terms = append(terms, selectorTerm{
+			label: formatRequirement(req),
+			sel:   environment.Selector{MatchExpressions: []environment.Requirement{req}},
+		})
+	}
+	return terms
+}
+
+// formatRequirement renders a matchExpressions requirement as a readable
+// selector term for the dry-run preview.
+func formatRequirement(req environment.Requirement) string {
+	switch req.Operator {
+	case environment.OpExists:
+		return req.Key + " exists"
+	case environment.OpDoesNotExist:
+		return req.Key + " does not exist"
+	case environment.OpNotIn:
+		return req.Key + " notin (" + strings.Join(req.Values, ", ") + ")"
+	default: // OpIn
+		return req.Key + " in (" + strings.Join(req.Values, ", ") + ")"
+	}
+}
+
+// environmentDryRunPreview evaluates the environment's §10.6 selectors
+// against the current runtime and connector registries for the §15.1
+// dry-run preview. It performs no writes. spec: §15.1 line 1140.
+func (r *Router) environmentDryRunPreview(ctx context.Context, env environmentstore.Environment) EnvironmentDryRunPreview {
+	preview := EnvironmentDryRunPreview{
+		MatchedRuntimes:        []string{},
+		MatchedConnectors:      []string{},
+		UnmatchedSelectorTerms: []string{},
+	}
+	if r.runtimes != nil {
+		runtimes, _ := r.runtimes.List(ctx, runtimestore.ListFilter{})
+		for _, rt := range runtimes {
+			if env.RuntimeSelector.Matches(environment.Candidate{Name: rt.Name, Type: string(rt.Type), Labels: rt.Labels}) {
+				preview.MatchedRuntimes = append(preview.MatchedRuntimes, rt.Name)
+			}
+		}
+		for _, term := range selectorTerms(env.RuntimeSelector) {
+			if !anyRuntimeMatches(runtimes, term.sel) {
+				preview.UnmatchedSelectorTerms = append(preview.UnmatchedSelectorTerms, term.label)
+			}
+		}
+	}
+	if r.connectors != nil {
+		connectors, _ := r.connectors.List(ctx, env.TenantID, connectorstore.ListFilter{})
+		for _, c := range connectors {
+			if env.ConnectorSelector.Selector.Matches(environment.Candidate{Name: c.ID, Labels: c.Labels}) {
+				preview.MatchedConnectors = append(preview.MatchedConnectors, c.ID)
+			}
+		}
+		for _, term := range selectorTerms(env.ConnectorSelector.Selector) {
+			if !anyConnectorMatches(connectors, term.sel) {
+				preview.UnmatchedSelectorTerms = append(preview.UnmatchedSelectorTerms, term.label)
+			}
+		}
+	}
+	return preview
+}
+
+func anyRuntimeMatches(rts []runtimestore.Runtime, sel environment.Selector) bool {
+	for _, rt := range rts {
+		if sel.Matches(environment.Candidate{Name: rt.Name, Type: string(rt.Type), Labels: rt.Labels}) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyConnectorMatches(cs []connectorstore.Connector, sel environment.Selector) bool {
+	for _, c := range cs {
+		if sel.Matches(environment.Candidate{Name: c.ID, Labels: c.Labels}) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Request) {
 	var body EnvironmentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -392,6 +511,19 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	env := toEnvironment(body, tenant)
+	// spec: §15.1 line 1140 — ?dryRun=true validates the definition and
+	// returns the selector preview without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := env.Validate(); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusCreated, EnvironmentDryRunResponse{
+			Resource: fromEnvironment(env),
+			Preview:  r.environmentDryRunPreview(req.Context(), env),
+		})
+		return
+	}
 	if err := r.environments.Create(req.Context(), env); err != nil {
 		if errors.Is(err, environmentstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -472,6 +604,33 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	desired := toEnvironment(body, tenant)
+	// spec: §15.1 line 1140 — ?dryRun=true validates the merged definition
+	// and returns the selector preview without persisting or auditing. The
+	// current row is resolved so the preview reflects the real (unchanged)
+	// name and creation time, and so a missing environment 404s as the real
+	// path does.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gErr := r.environments.Get(req.Context(), tenant, name)
+		if gErr != nil {
+			if errors.Is(gErr, environmentstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "environment not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gErr.Error(), nil)
+			return
+		}
+		desired.Name = current.Name
+		desired.CreatedAt = current.CreatedAt
+		if err := desired.Validate(); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusOK, EnvironmentDryRunResponse{
+			Resource: fromEnvironment(desired),
+			Preview:  r.environmentDryRunPreview(req.Context(), desired),
+		})
+		return
+	}
 	updated, err := r.environments.Update(req.Context(), tenant, name, func(e *environmentstore.Environment) error {
 		desired.Name = e.Name
 		desired.CreatedAt = e.CreatedAt

@@ -369,6 +369,35 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 	return pl
 }
 
+// validatePoolForStore runs the §5.2 / §5.3 / §13.2 store-side pool
+// invariants that poolstore.Create enforces, so the §15.1 dry-run create
+// preview rejects exactly what a persisted create would. It mirrors the
+// inline checks in poolstore.Memory.Create plus the exported validators.
+func validatePoolForStore(p poolstore.Pool) error {
+	if err := poolstore.ValidateName(p.Name); err != nil {
+		return err
+	}
+	if p.WarmCount < 0 {
+		return errors.New("poolstore: warmCount must be >= 0")
+	}
+	if p.MaxSessionAgeSeconds < 0 {
+		return errors.New("poolstore: maxSessionAgeSeconds must be >= 0")
+	}
+	if p.IsolationProfile == isolation.ProfileStandard && !p.AllowStandardIsolation {
+		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
+	}
+	if err := poolstore.ValidateEgressIsolation(p); err != nil {
+		return err
+	}
+	if err := poolstore.ValidateConcurrentConfig(p); err != nil {
+		return err
+	}
+	if err := poolstore.ValidateTaskPolicy(p); err != nil {
+		return err
+	}
+	return poolstore.ValidateElicitationPolicy(p)
+}
+
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
 func (r *Router) WithPools(s poolstore.Store) *Router {
 	r.pools = s
@@ -473,6 +502,21 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"runtimeRef": body.RuntimeRef, "workspaceTier": string(runtimeTier)})
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The remaining store-side validations (the checks Create would run)
+	// run here so the dry run is exhaustive; the preview carries the
+	// generation a persisted create would stamp (the §15.1 line 1207 ETag).
+	if req.URL.Query().Get("dryRun") == "true" {
+		if perr := validatePoolForStore(pl); perr != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", perr.Error(), nil)
+			return
+		}
+		if pl.Generation == 0 {
+			pl.Generation = 1
+		}
+		writeDryRun(w, http.StatusCreated, fromPool(pl))
 		return
 	}
 	if err := r.pools.Create(req.Context(), pl); err != nil {
@@ -741,6 +785,66 @@ func (r *Router) handleResumeReconciliation(w http.ResponseWriter, req *http.Req
 	})
 }
 
+// applyPoolUpdateMerge merges a §15.1 UpdatePoolRequest onto a pool in
+// place, applying the partial-update rule that an omitted (nil) field
+// leaves the stored value unchanged. It is the single merge implementation
+// shared by the real store Update closure and the dry-run preview.
+func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
+	if body.RuntimeRef != nil {
+		p.RuntimeRef = *body.RuntimeRef
+	}
+	if body.IsolationProfile != nil {
+		p.IsolationProfile = isolation.Profile(*body.IsolationProfile)
+	}
+	if body.ExecutionMode != nil {
+		p.ExecutionMode = runtimestore.ExecutionMode(*body.ExecutionMode)
+	}
+	if body.ResourceClass != nil {
+		p.ResourceClass = *body.ResourceClass
+	}
+	if body.WarmCount != nil {
+		p.WarmCount = *body.WarmCount
+	}
+	if body.MaxSessionAgeSeconds != nil {
+		p.MaxSessionAgeSeconds = *body.MaxSessionAgeSeconds
+	}
+	if body.AllowStandardIsolation != nil {
+		p.AllowStandardIsolation = *body.AllowStandardIsolation
+	}
+	if body.EgressProfile != nil {
+		p.EgressProfile = egress.Profile(*body.EgressProfile)
+	}
+	if body.ConcurrencyStyle != nil {
+		p.ConcurrencyStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
+	}
+	if body.MaxConcurrent != nil {
+		p.MaxConcurrent = *body.MaxConcurrent
+	}
+	if body.AcknowledgeProcessLevelIsolation != nil {
+		p.AcknowledgeProcessLevelIsolation = *body.AcknowledgeProcessLevelIsolation
+	}
+	if body.CleanupTimeoutSeconds != nil {
+		p.CleanupTimeoutSeconds = *body.CleanupTimeoutSeconds
+	}
+	if body.AllowCrossTenantReuse != nil {
+		p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
+	}
+	if body.ClearTaskPolicy {
+		p.TaskPolicy = nil
+	} else if body.TaskPolicy != nil {
+		p.TaskPolicy = taskPolicyFromWire(body.TaskPolicy)
+	}
+	if body.ElicitationDepthPolicy != nil {
+		p.ElicitationDepthPolicy = elicitation.DepthPolicy(*body.ElicitationDepthPolicy)
+	}
+	if body.ElicitationSuppressAtDepth != nil {
+		p.ElicitationSuppressAtDepth = *body.ElicitationSuppressAtDepth
+	}
+	if body.URLModeElicitation != nil {
+		p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
+	}
+}
+
 func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body UpdatePoolRequest
@@ -765,7 +869,10 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	if !enforceIfMatch(w, req, current.Generation) {
 		return
 	}
-	r.applyPoolUpdate(w, req, name, body)
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The dry-run flag is resolved here, after the If-Match precondition, so
+	// dryRun=true combined with a stale If-Match still returns 412 above.
+	r.applyPoolUpdate(w, req, name, body, req.URL.Query().Get("dryRun") == "true")
 }
 
 // WarmCountRequest is the §25.17 PUT /v1/admin/pools/{name}/warm-count
@@ -818,14 +925,19 @@ func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	warmCount := *body.MinWarm
-	r.applyPoolUpdate(w, req, name, UpdatePoolRequest{WarmCount: &warmCount})
+	// spec: §25.17 — the warm-count sub-route does not support the §15.1
+	// ?dryRun=true query convention; it has its own confirm-flag preview.
+	r.applyPoolUpdate(w, req, name, UpdatePoolRequest{WarmCount: &warmCount}, false)
 }
 
 // applyPoolUpdate validates the §15.1 pool-update body, applies it, emits
 // the audit event, and writes the §4.6.2 sync-status response. It is the
 // shared core of the PUT /v1/admin/pools/{name} handler and the §25.17
-// warm-count sub-route.
-func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) {
+// warm-count sub-route. When dryRun is true the full validation runs but
+// the merged pool is previewed without persisting or auditing (§15.1 line
+// 1140); the warm-count sub-route always passes dryRun=false because it
+// does not support the query-parameter dry run.
+func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest, dryRun bool) {
 	if body.IsolationProfile != nil && *body.IsolationProfile != "" &&
 		!isolation.IsValid(isolation.Profile(*body.IsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -945,60 +1057,41 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			}
 		}
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The dry-run branch runs after the full validation above (and, in
+	// handleUpdatePool, after the If-Match precondition) so a stale If-Match
+	// combined with dryRun=true still returns 412 before this point. The
+	// preview reflects applying the body onto the current pool with the
+	// generation a persisted update would stamp (the §15.1 line 1210 ETag).
+	if dryRun {
+		current, gerr := r.pools.Get(req.Context(), name)
+		if gerr != nil {
+			if errors.Is(gerr, poolstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		preview := current
+		applyPoolUpdateMerge(&preview, body)
+		// Run the same store-side validations a persisted update would, so
+		// the dry run rejects exactly what a real PUT would reject.
+		if perr := validatePoolForStore(preview); perr != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", perr.Error(), nil)
+			return
+		}
+		// A persisted update bumps pool_config_generation; the preview
+		// carries the bumped value so the ETag matches a real success.
+		preview.Generation = current.Generation + 1
+		w.Header().Set("ETag", formatETag(preview.Generation))
+		payload := fromPool(preview)
+		payload.SyncStatus = r.resolveSyncStatus(req.Context(), preview)
+		writeDryRun(w, http.StatusOK, payload)
+		return
+	}
 	updated, err := r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {
-		if body.RuntimeRef != nil {
-			p.RuntimeRef = *body.RuntimeRef
-		}
-		if body.IsolationProfile != nil {
-			p.IsolationProfile = isolation.Profile(*body.IsolationProfile)
-		}
-		if body.ExecutionMode != nil {
-			p.ExecutionMode = runtimestore.ExecutionMode(*body.ExecutionMode)
-		}
-		if body.ResourceClass != nil {
-			p.ResourceClass = *body.ResourceClass
-		}
-		if body.WarmCount != nil {
-			p.WarmCount = *body.WarmCount
-		}
-		if body.MaxSessionAgeSeconds != nil {
-			p.MaxSessionAgeSeconds = *body.MaxSessionAgeSeconds
-		}
-		if body.AllowStandardIsolation != nil {
-			p.AllowStandardIsolation = *body.AllowStandardIsolation
-		}
-		if body.EgressProfile != nil {
-			p.EgressProfile = egress.Profile(*body.EgressProfile)
-		}
-		if body.ConcurrencyStyle != nil {
-			p.ConcurrencyStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
-		}
-		if body.MaxConcurrent != nil {
-			p.MaxConcurrent = *body.MaxConcurrent
-		}
-		if body.AcknowledgeProcessLevelIsolation != nil {
-			p.AcknowledgeProcessLevelIsolation = *body.AcknowledgeProcessLevelIsolation
-		}
-		if body.CleanupTimeoutSeconds != nil {
-			p.CleanupTimeoutSeconds = *body.CleanupTimeoutSeconds
-		}
-		if body.AllowCrossTenantReuse != nil {
-			p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
-		}
-		if body.ClearTaskPolicy {
-			p.TaskPolicy = nil
-		} else if body.TaskPolicy != nil {
-			p.TaskPolicy = taskPolicyFromWire(body.TaskPolicy)
-		}
-		if body.ElicitationDepthPolicy != nil {
-			p.ElicitationDepthPolicy = elicitation.DepthPolicy(*body.ElicitationDepthPolicy)
-		}
-		if body.ElicitationSuppressAtDepth != nil {
-			p.ElicitationSuppressAtDepth = *body.ElicitationSuppressAtDepth
-		}
-		if body.URLModeElicitation != nil {
-			p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
-		}
+		applyPoolUpdateMerge(p, body)
 		return nil
 	})
 	if err != nil {

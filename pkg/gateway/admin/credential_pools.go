@@ -434,6 +434,18 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		CreatedAt:                  r.clock(),
 	}
 	pool.UpdatedAt = pool.CreatedAt
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if verr := credentialpoolstore.Validate(pool); verr != nil {
+			if writeProxyEndpointError(w, verr) {
+				return
+			}
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusCreated, fromCredentialPool(pool))
+		return
+	}
 	if err := r.credentialPools.Create(req.Context(), pool); err != nil {
 		if errors.Is(err, credentialpoolstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -530,6 +542,27 @@ func (r *Router) enrichCredentialHealth(payload *CredentialPoolPayload, row cred
 	}
 }
 
+// applyCredentialPoolUpdate merges a §15.1 CredentialPoolPayload onto a
+// credential pool in place — a full replace of the mutable fields — while
+// carrying forward the §4.9 per-credential revocation state by id. It is
+// the single merge implementation shared by the real store Update closure
+// and the dry-run preview.
+func applyCredentialPoolUpdate(p *credentialpoolstore.CredentialPool, body CredentialPoolPayload) {
+	p.Provider = body.Provider
+	p.Credentials = preserveRevocations(p.Credentials, toCredentials(body.Credentials))
+	p.AssignmentStrategy = body.AssignmentStrategy
+	p.MaxConcurrentSessions = body.MaxConcurrentSessions
+	p.CooldownOnRateLimitSeconds = body.CooldownOnRateLimitSeconds
+	p.LeaseTTLSeconds = body.LeaseTTLSeconds
+	p.RenewBeforeBufferSeconds = body.RenewBeforeBufferSeconds
+	p.HostPatterns = body.HostPatterns
+	p.DeliveryMode = body.DeliveryMode
+	p.ProxyDialect = body.ProxyDialect
+	p.ProxyEndpoint = body.ProxyEndpoint
+	p.CacheScope = body.CacheScope
+	p.CachePolicy = toCachePolicy(body.CachePolicy)
+}
+
 // handleUpdateCredentialPool implements PUT — a full replace of the
 // mutable fields (provider, credentials, strategy, limits, host
 // patterns).
@@ -572,20 +605,35 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 			return
 		}
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The PUT resolves the current pool first so the preview reflects
+	// applying the body onto the stored record (preserving §4.9 revocation
+	// state); a missing pool 404s ahead of the dry-run branch.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
+		if gerr != nil {
+			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		preview := current
+		applyCredentialPoolUpdate(&preview, body)
+		preview.TenantID = tenant
+		if verr := credentialpoolstore.Validate(preview); verr != nil {
+			if writeProxyEndpointError(w, verr) {
+				return
+			}
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusOK, fromCredentialPool(preview))
+		return
+	}
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
-		p.Provider = body.Provider
-		p.Credentials = preserveRevocations(p.Credentials, toCredentials(body.Credentials))
-		p.AssignmentStrategy = body.AssignmentStrategy
-		p.MaxConcurrentSessions = body.MaxConcurrentSessions
-		p.CooldownOnRateLimitSeconds = body.CooldownOnRateLimitSeconds
-		p.LeaseTTLSeconds = body.LeaseTTLSeconds
-		p.RenewBeforeBufferSeconds = body.RenewBeforeBufferSeconds
-		p.HostPatterns = body.HostPatterns
-		p.DeliveryMode = body.DeliveryMode
-		p.ProxyDialect = body.ProxyDialect
-		p.ProxyEndpoint = body.ProxyEndpoint
-		p.CacheScope = body.CacheScope
-		p.CachePolicy = toCachePolicy(body.CachePolicy)
+		applyCredentialPoolUpdate(p, body)
 		return nil
 	})
 	if err != nil {

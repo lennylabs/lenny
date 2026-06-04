@@ -193,6 +193,15 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 	}
 	p.UpdatedAt = p.CreatedAt
 	delegationpolicystore.ApplyDefaults(&p)
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := delegationpolicystore.Validate(p); err != nil {
+			writeDelegationPolicyStoreError(w, err)
+			return
+		}
+		writeDryRun(w, http.StatusCreated, fromDelegationPolicy(p))
+		return
+	}
 	if err := r.delegationPolicies.Create(req.Context(), p); err != nil {
 		if errors.Is(err, delegationpolicystore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -275,6 +284,35 @@ func delegationPolicyListScope(p authmw.Principal, req *http.Request) string {
 	return delegationpolicystore.AllTenantsSentinel
 }
 
+// applyDelegationPolicyUpdate merges a §15.1 DelegationPolicyPayload onto
+// a policy in place — a full replace of the mutable fields (rules,
+// contentPolicy, allowSelfRecursion) — and server-mints the §8.3
+// scanExportedFiles weakening transition timestamp from the policy's
+// prior scan state. It is the single merge implementation shared by the
+// real store Update closure and the dry-run preview, so the preview
+// reflects exactly what a persisted update would produce.
+func (r *Router) applyDelegationPolicyUpdate(p *delegationpolicystore.DelegationPolicy, body DelegationPolicyPayload) {
+	oldScan := p.ContentPolicy.ScanExportedFiles
+	p.Rules = toDelegationRules(body.Rules)
+	p.ContentPolicy = toContentPolicy(body.ContentPolicy)
+	p.AllowSelfRecursion = body.AllowSelfRecursion
+	delegationpolicystore.ApplyDefaults(p)
+	// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — server-mint the
+	// scanExportedFiles weakening transition timestamp so the
+	// gateway can enforce INTERCEPTOR_WEAKENING_COOLDOWN at
+	// `delegate_task` time. A `true → false` flip stamps the
+	// row with the gateway clock; a `false → true` strengthen
+	// clears any prior stamp so subsequent delegations admit
+	// immediately. The field is admin-API-immutable per
+	// §8.3 SEC-013 — the wire payload does not expose it.
+	switch {
+	case oldScan && !p.ContentPolicy.ScanExportedFiles:
+		p.ScanExportedFilesWeakenedAt = r.clock()
+	case !oldScan && p.ContentPolicy.ScanExportedFiles:
+		p.ScanExportedFilesWeakenedAt = time.Time{}
+	}
+}
+
 // handleUpdateDelegationPolicy implements PUT — a full replace of the
 // mutable fields (rules, contentPolicy, allowSelfRecursion).
 func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.Request) {
@@ -295,27 +333,34 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The PUT resolves the current policy first so the preview reflects
+	// applying the body onto the stored record; a missing policy 404s
+	// ahead of the dry-run branch.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gerr := r.delegationPolicies.Get(req.Context(), tenantID, name)
+		if gerr != nil {
+			if errors.Is(gerr, delegationpolicystore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		preview := current
+		r.applyDelegationPolicyUpdate(&preview, body)
+		preview.TenantID = tenantID
+		if err := delegationpolicystore.Validate(preview); err != nil {
+			writeDelegationPolicyStoreError(w, err)
+			return
+		}
+		writeDryRun(w, http.StatusOK, fromDelegationPolicy(preview))
+		return
+	}
 	var oldScan bool
 	updated, err := r.delegationPolicies.Update(req.Context(), tenantID, name, func(p *delegationpolicystore.DelegationPolicy) error {
 		oldScan = p.ContentPolicy.ScanExportedFiles
-		p.Rules = toDelegationRules(body.Rules)
-		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
-		p.AllowSelfRecursion = body.AllowSelfRecursion
-		delegationpolicystore.ApplyDefaults(p)
-		// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — server-mint the
-		// scanExportedFiles weakening transition timestamp so the
-		// gateway can enforce INTERCEPTOR_WEAKENING_COOLDOWN at
-		// `delegate_task` time. A `true → false` flip stamps the
-		// row with the gateway clock; a `false → true` strengthen
-		// clears any prior stamp so subsequent delegations admit
-		// immediately. The field is admin-API-immutable per
-		// §8.3 SEC-013 — the wire payload does not expose it.
-		switch {
-		case oldScan && !p.ContentPolicy.ScanExportedFiles:
-			p.ScanExportedFilesWeakenedAt = r.clock()
-		case !oldScan && p.ContentPolicy.ScanExportedFiles:
-			p.ScanExportedFilesWeakenedAt = time.Time{}
-		}
+		r.applyDelegationPolicyUpdate(p, body)
 		return nil
 	})
 	if err != nil {

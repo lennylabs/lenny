@@ -125,6 +125,15 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		c.Visibility = "tenant"
 	}
 	c.UpdatedAt = c.CreatedAt
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := c.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusCreated, fromConnector(c))
+		return
+	}
 	if err := r.connectors.Create(req.Context(), c); err != nil {
 		if errors.Is(err, connectorstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -192,6 +201,31 @@ func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(fromConnector(row))
 }
 
+// applyConnectorUpdate merges a §15.1 ConnectorPayload onto a connector
+// in place, applying the partial-update rule that an omitted (zero) field
+// leaves the stored value unchanged. It is the single merge implementation
+// shared by the real store Update closure and the dry-run preview.
+func applyConnectorUpdate(c *connectorstore.Connector, body ConnectorPayload) {
+	if body.DisplayName != "" {
+		c.DisplayName = body.DisplayName
+	}
+	if body.MCPServerURL != "" {
+		c.MCPServerURL = body.MCPServerURL
+	}
+	if body.Transport != "" {
+		c.Transport = body.Transport
+	}
+	if body.Visibility != "" {
+		c.Visibility = body.Visibility
+	}
+	if body.Labels != nil {
+		c.Labels = body.Labels
+	}
+	if body.Auth != nil {
+		c.Auth = toConnectorAuth(body.Auth)
+	}
+}
+
 func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("name")
 	var body ConnectorPayload
@@ -210,25 +244,31 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The PUT resolves the current connector first so the preview reflects
+	// applying the body onto the stored record; a missing connector 404s
+	// ahead of the dry-run branch.
+	if req.URL.Query().Get("dryRun") == "true" {
+		current, gerr := r.connectors.Get(req.Context(), tenantID, id)
+		if gerr != nil {
+			if errors.Is(gerr, connectorstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		applyConnectorUpdate(&current, body)
+		current.TenantID = tenantID
+		if err := current.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+		writeDryRun(w, http.StatusOK, fromConnector(current))
+		return
+	}
 	updated, err := r.connectors.Update(req.Context(), tenantID, id, func(c *connectorstore.Connector) error {
-		if body.DisplayName != "" {
-			c.DisplayName = body.DisplayName
-		}
-		if body.MCPServerURL != "" {
-			c.MCPServerURL = body.MCPServerURL
-		}
-		if body.Transport != "" {
-			c.Transport = body.Transport
-		}
-		if body.Visibility != "" {
-			c.Visibility = body.Visibility
-		}
-		if body.Labels != nil {
-			c.Labels = body.Labels
-		}
-		if body.Auth != nil {
-			c.Auth = toConnectorAuth(body.Auth)
-		}
+		applyConnectorUpdate(c, body)
 		return nil
 	})
 	if err != nil {
