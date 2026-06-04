@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -244,6 +245,84 @@ func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "runc" {
 		t.Errorf("dev-mode runtimeClassName = %v, want runc", pod.Spec.RuntimeClassName)
 	}
+}
+
+// TestReconcileMicrovmLaunchesKataPod_spec_5_3_8 drives a microvm
+// Sandbox through the production reconciler and confirms it launches a
+// genuine Kata pod end-to-end: the §5.3 row-3 RuntimeClass (kata) plus
+// the §17.2 lines 97-101 dedicated-node isolation (hard node affinity on
+// lenny.dev/node-pool=kata and the lenny.dev/isolation=kata:NoSchedule
+// toleration). Before F-5.3.8, microvm isolation was type-checked and
+// the podspec builder was unit-tested, but no controller-level reconcile
+// drove a Kata pod to creation through the apiserver.
+//
+// spec: §5.3 row 3 (microvm → kata); §17.2 lines 97-101 (Kata node isolation).
+func TestReconcileMicrovmLaunchesKataPod_spec_5_3_8(t *testing.T) {
+	s := newScheme(t)
+	sb := sandboxCR("")
+	sb.Spec.IsolationProfile = "microvm"
+	c := newClient(t, s, sb, runtimeCR())
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a Kata-isolated backing pod: %v", err)
+	}
+	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "kata" {
+		t.Fatalf("runtimeClassName = %v, want kata", pod.Spec.RuntimeClassName)
+	}
+
+	// §17.2 control 2: hard node affinity pinning the pod to the Kata pool.
+	if !podHasKataNodeAffinity(&pod) {
+		t.Errorf("Kata pod missing the required %s=%s node affinity (§17.2 control 2)",
+			podspec.KataNodePoolLabelKey, podspec.KataNodePoolValue)
+	}
+	// §17.2 control 3: toleration for the dedicated-node taint.
+	if !podHasKataToleration(&pod) {
+		t.Errorf("Kata pod missing the %s=%s:NoSchedule toleration (§17.2 control 3)",
+			podspec.KataIsolationTaintKey, podspec.KataIsolationTaintValue)
+	}
+}
+
+// podHasKataNodeAffinity reports whether pod carries the §17.2 control-2
+// required node affinity matching the Kata node pool.
+func podHasKataNodeAffinity(pod *corev1.Pod) bool {
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
+		return false
+	}
+	req := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if req == nil {
+		return false
+	}
+	for _, term := range req.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == podspec.KataNodePoolLabelKey &&
+				expr.Operator == corev1.NodeSelectorOpIn {
+				for _, v := range expr.Values {
+					if v == podspec.KataNodePoolValue {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// podHasKataToleration reports whether pod tolerates the §17.2 control-3
+// dedicated-node taint.
+func podHasKataToleration(pod *corev1.Pod) bool {
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == podspec.KataIsolationTaintKey &&
+			tol.Value == podspec.KataIsolationTaintValue &&
+			tol.Effect == corev1.TaintEffectNoSchedule {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReconcileCreatesPodForNewSandbox(t *testing.T) {

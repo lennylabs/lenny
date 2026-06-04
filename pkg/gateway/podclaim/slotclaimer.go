@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
@@ -74,6 +76,41 @@ func gatewayStatusPatch(name, namespace, phase string, activeSlots int32, tenant
 // in (*SlotClaimer).Claim below so the lenny-t4-node-isolation webhook
 // has a stable predicate to match on.
 const LabelTenant = "lenny.dev/tenant-id"
+
+// stampPodTenant lands the §5.2 line 392 tenant pin on the agent *pod*
+// (not only the Sandbox CR) at first assignment, so the pod-scoped
+// lenny-tenant-label-immutability ValidatingAdmissionWebhook (§17.2 item
+// 5) actually sees the `unset → {tenant_id}` transition it is meant to
+// guard. The webhook authorizes that transition only for the gateway
+// ServiceAccount, which is the identity this gateway-side write carries,
+// so the Kubernetes-layer half of the two-layer tenant pin binds where
+// the spec places it: on the pod whose labels the §13.2 NET-003
+// NetworkPolicies select. A pod that is absent at claim time
+// (terminating, or not yet materialized by the Sandbox reconciler) is
+// tolerated — the label is moot without a pod and the pin still stands
+// on Sandbox.status; the next assignment re-stamps it. A conflict is the
+// spec-intended idempotency (a competing writer set the same value).
+//
+// A JSON-merge patch is used rather than an SSA Apply so a missing pod
+// returns NotFound instead of being created label-only (which would fail
+// pod validation). The patch is keyed by the Sandbox name because the
+// §4.6.1 reconciler names the backing pod identically to its Sandbox.
+//
+// spec: §5.2 line 392 (Kubernetes-layer tenant pin) / §17.2 line 46
+// (immutable labels enforced on agent pods) / §13.2 NET-003. F-17.2.3.
+func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tenantID string) error {
+	if tenantID == "" {
+		return nil
+	}
+	body := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, LabelTenant, tenantID)
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
+		return nil
+	}
+	return err
+}
 
 // ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
 type ConcurrencyStyle string
@@ -472,6 +509,14 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 			sb.Labels = map[string]string{}
 		}
 		sb.Labels[LabelTenant] = req.TenantID
+	}
+
+	// §17.2 item 5 / §5.2 line 392: mirror the pin onto the agent pod so
+	// the pod-scoped lenny-tenant-label-immutability webhook binds. The
+	// Sandbox-label patch above is application-layer bookkeeping; the
+	// webhook only guards pods. F-17.2.3.
+	if err := stampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
+		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 	}
 
 	return &SlotResult{

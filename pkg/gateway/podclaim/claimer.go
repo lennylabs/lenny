@@ -102,6 +102,14 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (*lennyv1.Sandbox
 			_ = c.Client.Delete(ctx, claim)
 			return nil, err
 		}
+		// §5.2 line 392 / §17.2 item 5: a warm-pool pod is labeled with
+		// its tenant on first assignment by the gateway so the pod-scoped
+		// lenny-tenant-label-immutability webhook backstops the pin at the
+		// Kubernetes layer (the §13.2 NET-003 NetworkPolicies select pods,
+		// not Sandboxes). A missing pod is tolerated by the helper. F-17.2.3.
+		if err := stampPodTenant(ctx, c.Client, c.Namespace, sb.Name, req.TenantID); err != nil {
+			return nil, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
+		}
 		return claim, nil
 	}
 	return nil, ErrNoIdlePod

@@ -440,6 +440,28 @@ tests:
           path: spec.isolationProfile
           value: microvm
 
+  # A single catalog entry may pin isolationProfile: microvm to seed one
+  # Kata-isolated runtime alongside the sandboxed default — the §17.2
+  # split-namespace topology (lenny-agents + lenny-agents-kata) a Tier 3
+  # install provisions. The per-entry pin overrides the chart-wide
+  # default, so a deployer-ready Kata seeding path exists without flipping
+  # every runtime to microvm. F-5.3.8.
+  - it: honors a per-catalog-entry microvm (Kata) isolation pin
+    set:
+      referenceRuntimes.catalog:
+        - name: kata-coder
+          image: ghcr.io/lennylabs/runtime-kata-coder@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          integrationLevel: full
+          isolationProfile: microvm
+          supportedProviders: [anthropic_direct]
+    documentSelector:
+      path: metadata.name
+      value: kata-coder
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: microvm
+
   # An out-of-range dimension fails the render rather than silently
   # dropping every seeded runtime onto the wrong RuntimeClass. F-17.9.10.
   - it: fails the render for an unknown isolationProfile dimension
