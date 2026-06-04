@@ -134,3 +134,7 @@ run: ## §17.4 Source Mode: gateway + in-memory stores + built-in echo runtime. 
 .PHONY: test-smoke
 test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...
+
+.PHONY: test-smoke-embedded
+test-smoke-embedded: ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new -> down. Needs LENNY_EMBEDDED_SMOKE=1 on a Linux host with a pullable runtime image.
+	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} go test -tags smoke -count=1 -timeout 600s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...

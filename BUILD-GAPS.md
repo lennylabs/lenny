@@ -32973,7 +32973,7 @@ implementation makes no concession to the common no-Docker-daemon case beyond th
 
 **Resolution:** `cmdImageImport` pre-resolves `docker` via the new `lookPathDocker` shim before starting `docker save`; a missing binary now surfaces a wrapped diagnostic that names the `--file <tar>` fallback and gives concrete `podman save` and `skopeo copy` recipes the operator can paste. Tier-1 test `TestImageImportSuggestsTarFallbackWhenDockerMissing_spec_24_19_1` exercises the branch with a stubbed PATH lookup and seeded ctr environment.
 
-### - [ ] F-17.4.18 — No end-to-end smoke test exercises `lenny up` → `lenny session new` → `lenny down` [Medium] — OPEN
+### - [x] F-17.4.18 — No end-to-end smoke test exercises `lenny up` → `lenny session new` → `lenny down` [Medium] — CLOSED
 
 The repository has unit tests for every subsystem (`pkg/embedded/{k3s,postgres,redis,
 oidc,tlsgen,stack}/*_test.go`) but no integration test that drives the documented
@@ -32985,6 +32985,24 @@ the supervisor.
 This leaves the spec's "Ready to use in < 60s" claim (line 150) untested. The
 existing 6-minute foreground timeout in `lifecycle.go` line 99 also contradicts the
 60-second steady-state aspiration without any benchmark to validate the lower bound.
+
+**Resolution (this batch):** New `tests/testinfra/embedded` helper drives the real
+`cmd/lenny` binary (`Build` compiles it; `Run` executes a verb under a timeout against
+a temporary `LENNY_HOME`), and `tests/tier4_integration/embedded_mode_smoke_test.go`
+(`//go:build smoke`, `TestEmbeddedModeSmoke_spec_17_4_18`) drives the documented
+quick-start sequence end to end: `lenny up` → `lenny status` → `lenny session new
+--runtime <rt>` (asserts a non-empty session id) → `lenny down --purge` (asserts the
+state directory is removed), logging the bring-up wall-clock. It is the end-to-end
+counterpart to the existing Source Mode `source_mode_smoke_test.go`. Because the
+bring-up downloads and runs k3s + PostgreSQL (Linux-only, §17.4 line 224) and session
+start pulls a runtime image the reference catalog ships placeholder-pinned,
+`embedded.SkipUnlessAvailable` gates the test behind a Linux host plus a
+`LENNY_EMBEDDED_SMOKE` opt-in (and `LENNY_EMBEDDED_SMOKE_RUNTIME` selects a runtime
+whose image is pullable), mirroring the envtest / kind opt-in convention; it skips
+cleanly elsewhere. Wired into a new `make test-smoke-embedded` target. The skip-gate
+and runtime-selector logic carry runnable unit tests (`embedded_test.go`). The
+steady-state `< 60s` benchmark the harness now enables remains a follow-on
+measurement (noted under the already-closed F-17.4.21).
 
 ---
 
@@ -43380,7 +43398,7 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 
 ---
 
-### - [ ] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — OPEN
+### - [x] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — DEFERRED
 
 **Spec:** §26.2 lines 95–114 specify the reference `WorkspacePlan` and the CLI that produces it:
 
@@ -43399,9 +43417,26 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 
 **Remediation sketch:** Extend `cmd/lenny/session.go` to parse `--workspace`, `--attach`, and a positional prompt; when `--workspace` is set, walk the directory honoring `.lennyignore` (falling back to `.gitignore`), stream a tar.gz to the gateway upload API, then POST `/v1/sessions/start` with an `uploadArchive` source referencing the upload. `--attach` then opens the MCP WebSocket per §26.2 line 130 and streams runtime output. The server side already accepts the plan; the client just needs to build it.
 
+**Deferred (this batch — blocked on an unfiled gateway gap):** The finding's "the
+server side already accepts the plan; the client just needs to build it" premise does
+not hold against the current gateway. The CLI lives at `pkg/embedded/localcli/session.go`
+now (not `cmd/lenny/session.go`), but the substantive block is the upload-binding
+ordering. A `§14` `uploadArchive` source carries a server-generated `uploadRef`
+(`lenny-blob://…`) that is only minted by `POST /v1/sessions/{id}/upload-archive`,
+which requires an existing session id. The plan that references that `uploadRef` is
+submitted at create: §15.1 scopes the inner `workspacePlan` to `POST /v1/sessions` and
+`POST /v1/sessions/start` only (line 979), `handleFinalize` accepts no plan body, and
+no `PUT`/`PATCH` plan-rebind endpoint exists — the plan is immutable after create. So
+there is no client call ordering that attaches a post-create upload into a session's
+workspace plan. Closing this needs a gateway-side change first (a plan-rebind /
+finalize-with-plan path, or implicit materialization of the session's staged archive),
+which is a gateway design decision outside this client-facing finding's scope. The
+`--attach` interactive-stream half additionally depends on the §15.2 Streamable-HTTP /
+SSE surface (F-15.2.2, OPEN). Re-attempt once a gateway upload-binding path lands.
+
 ---
 
-### - [ ] F-26.2.5 — 2-05 — V1 ships no built-in `github` VCS credential provider; §26.2's `vcs.github.read` / `vcs.github.write` scopes have no implementation [Medium] — OPEN
+### - [x] F-26.2.5 — 2-05 — V1 ships no built-in `github` VCS credential provider; §26.2's `vcs.github.read` / `vcs.github.write` scopes have no implementation [Medium] — DEFERRED
 
 **Spec:** §26.2 line 119:
 
@@ -43419,7 +43454,21 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 **Remediation sketch:** Implement a built-in `github` `CredentialProvider` in `/Users/joan/projects/lenny/pkg/credential/`, register a default `github` credential pool template the chart and `lenny up` create at install, and ship a `git-credential-lenny` helper in the coding-agent reference image that calls the gateway's token endpoint. Document the operator setup to bind a GitHub App / PAT to the default credential pool.
 
-**Progress (commit fc33ef83, finding stays OPEN):** The gateway-side half is now wired by F-14.1.6/F-14.1.7 — `pkg/gateway/vcscred.StoreResolver` materializes a `github` direct-mode token from a tenant's VCS credential pool (host→pool binding + Kubernetes Secret read) and the gateway clones/pins refs with it, honoring the §4.9 `ProviderGitHub` `{token, expiresAt}` materializedConfig. The remaining F-26.2.5 scope is the install-time deliverables this finding names: a default `github` credential pool template the chart / `lenny up` create at install, and (for in-pod git over the gateway, distinct from the gateway-side gitClone path) a `git-credential-lenny` helper in the reference image. Stays OPEN for those.
+**Progress (commit fc33ef83, finding stays OPEN):** The gateway-side half is now wired by F-14.1.6/F-14.1.7 — `pkg/gateway/vcscred.StoreResolver` materializes a `github` direct-mode token from a tenant's VCS credential pool (host→pool binding + Kubernetes Secret read) and the gateway clones/pins refs with it, honoring the §4.9 `ProviderGitHub` `{token, expiresAt}` materializedConfig. The remaining F-26.2.5 scope is the install-time deliverables this finding names: a default `github` credential pool template the chart / `lenny up` create at install, and (for in-pod git over the gateway, distinct from the gateway-side gitClone path) a `git-credential-lenny` helper in the reference image.
+
+**Deferred (this batch):** Of the two remaining deliverables, the default-pool seed is
+tractable (a `bootstrap.credentialPools` entry gated on operator-supplied Secret;
+`charts/lenny/values.yaml` `bootstrap.credentialPools` is the existing seam, validated
+by `credentialpool-egress-guard.yaml`). The `git-credential-lenny` helper is blocked:
+§26.2 line 119 says in-pod `git` "uses an HTTPS credential helper that calls the
+gateway's token endpoint", but no gateway endpoint returns the materialized VCS token
+to the pod — `pkg/gateway/vcscred` materializes the GitHub token gateway-side only, for
+the gateway's own clone, and the canonical `POST /v1/oauth/token` mints Lenny bearer
+tokens, not provider tokens. Shipping the helper requires first defining (and
+implementing) the in-pod VCS-token endpoint contract the spec describes only in prose.
+Since the finding cannot close until both land, it is deferred as a unit; re-attempt
+once the in-pod VCS-token endpoint exists, building the helper and the default-pool seed
+together.
 
 ---
 
