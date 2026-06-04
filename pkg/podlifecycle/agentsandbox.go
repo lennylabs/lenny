@@ -15,6 +15,20 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 )
 
+// Compile-time binding of the §17.1 row 9 / §4.6.1 named default
+// implementation (`kubernetes-sigs/agent-sandbox` CRDs) to the
+// forward-compatibility interfaces. These assertions are the machine-
+// checked statement that the agent-sandbox types are the v1 PoolReader,
+// PodLifecycleManager, and PoolManager — a breaking upstream change or
+// an alternative backend swaps the implementations behind these
+// interfaces with every consumer untouched. spec:
+// spec/04_system-components.md lines 333-363; §17.1 row 9. F-17.1.11.
+var (
+	_ PoolReader          = (*AgentSandboxPoolReader)(nil)
+	_ PodLifecycleManager = (*AgentSandboxPodLifecycleManager)(nil)
+	_ PoolManager         = (*AgentSandboxPoolManager)(nil)
+)
+
 // AgentSandboxPoolReader is the v1 default PoolReader: a thin
 // translator over the lenny.dev/v1 SandboxTemplate / SandboxWarmPool /
 // Sandbox CRDs. spec: spec/04_system-components.md line 359.
@@ -609,18 +623,18 @@ func firstNonEmpty(values ...string) string {
 // §6.2.
 func allowedTransition(from, to PodState) bool {
 	allowed := map[PodState]sets.Set[PodState]{
-		PodStateWarming:        sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
-		PodStateSDKConnecting:  sets.New(PodStateIdle, PodStateFailed),
-		PodStateIdle:           sets.New(PodStateClaimed, PodStateSlotActive, PodStateDraining, PodStateTerminated),
-		PodStateClaimed:        sets.New(PodStateReceivingUploads, PodStateRunningSetup, PodStateAttached, PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateSlotActive:     sets.New(PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateReceivingUploads: sets.New(PodStateFinalizingWorkspace, PodStateFailed),
+		PodStateWarming:             sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
+		PodStateSDKConnecting:       sets.New(PodStateIdle, PodStateFailed),
+		PodStateIdle:                sets.New(PodStateClaimed, PodStateSlotActive, PodStateDraining, PodStateTerminated),
+		PodStateClaimed:             sets.New(PodStateReceivingUploads, PodStateRunningSetup, PodStateAttached, PodStateIdle, PodStateDraining, PodStateFailed),
+		PodStateSlotActive:          sets.New(PodStateIdle, PodStateDraining, PodStateFailed),
+		PodStateReceivingUploads:    sets.New(PodStateFinalizingWorkspace, PodStateFailed),
 		PodStateFinalizingWorkspace: sets.New(PodStateRunningSetup, PodStateStartingSession, PodStateFailed),
-		PodStateRunningSetup:   sets.New(PodStateStartingSession, PodStateFailed),
-		PodStateStartingSession: sets.New(PodStateAttached, PodStateFailed),
-		PodStateAttached:       sets.New(PodStateTaskCleanup, PodStateCompleted, PodStateFailed, PodStateCancelled, PodStateExpired, PodStateDraining),
-		PodStateTaskCleanup:    sets.New(PodStateIdle, PodStateDraining, PodStateTerminated),
-		PodStateDraining:       sets.New(PodStateTerminated),
+		PodStateRunningSetup:        sets.New(PodStateStartingSession, PodStateFailed),
+		PodStateStartingSession:     sets.New(PodStateAttached, PodStateFailed),
+		PodStateAttached:            sets.New(PodStateTaskCleanup, PodStateCompleted, PodStateFailed, PodStateCancelled, PodStateExpired, PodStateDraining),
+		PodStateTaskCleanup:         sets.New(PodStateIdle, PodStateDraining, PodStateTerminated),
+		PodStateDraining:            sets.New(PodStateTerminated),
 	}
 	if next, ok := allowed[from]; ok {
 		return next.Has(to)

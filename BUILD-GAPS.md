@@ -31155,7 +31155,7 @@ managed out of band are unaffected. The `lenny-backup-sa` and backup
 Jobs that consume these Secrets remain tracked under F-17.1.5.
 F-17.1.10 (commit c625edae).
 
-### - [ ] F-17.1.11 — 11 — `PoolManager` interface and `kubernetes-sigs/agent-sandbox` default implementation are absent [Medium] — OPEN
+### - [x] F-17.1.11 — 11 — `PoolManager` interface and `kubernetes-sigs/agent-sandbox` default implementation are absent [Medium] — CLOSED
 
 Spec row 9: "Manages pod lifecycle via `PoolManager` interface
 (default implementation: `kubernetes-sigs/agent-sandbox` CRDs)."
@@ -31169,7 +31169,28 @@ binding. The functional outcome is the same — pods are created — but
 the spec's pluggable interface and the named default implementation
 are not present.
 
-### - [x] F-17.1.12 — 12 — `core_deployment_inventory_test.go` integration suite is absent [Medium] — CLOSED
+**Resolution (this batch):** Evidence is stale — the §4.6.1
+forward-compatibility indirection landed after this finding was filed.
+`pkg/podlifecycle/interfaces.go` defines the abstract `PoolReader`,
+`PodLifecycleManager`, and the controller-facing `PoolManager`
+interfaces with the method signatures taken verbatim from §4.6.1
+(lines 333-363), and `pkg/podlifecycle/agentsandbox.go` carries the
+named default `kubernetes-sigs/agent-sandbox` binding
+(`AgentSandboxPoolReader` / `AgentSandboxPodLifecycleManager` /
+`AgentSandboxPoolManager`, each documented as "the v1 default"). The
+finding's grep claim (`agent-sandbox` / `PoolManager interface` return
+no matches) is wrong: both strings appear throughout that package. This
+batch adds the previously-missing compile-time binding assertions
+(`var _ PoolManager = (*AgentSandboxPoolManager)(nil)` and the two
+siblings) so the §17.1 row 9 "named default implementation" claim is
+machine-checked, plus a tier-1 test
+(`TestAgentSandboxIsTheDefaultPoolManager_spec_17_1`) pinning the
+binding and the §4.6.1 `PoolReader` embedding. The gateway already
+consumes the indirection (`AgentSandboxPodLifecycleManager` in
+`cmd/lenny-gateway`); migrating the WarmPoolController's full
+orchestration behind `PoolManager` is the explicit v1 follow-on the
+`AgentSandboxPoolManager` doc comment names, and the indirection layer
+that makes the §4.6 fallback tractable is now present and bound.
 
 Spec §17.2 line 84 (cross-cut with §17.1) names "A parallel suite
 (`tests/integration/core_deployment_inventory_test.go`) covers the
