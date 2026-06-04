@@ -1113,7 +1113,7 @@ groups:
             description: Either P99 audit advisory-lock acquisition exceeds the 50ms SLO for more than 5 min, or audit concurrency timeouts are sustained. Postgres I/O may be saturated or a stuck transaction is holding the lock.
             summary: Audit advisory-lock contention exceeds SLO
         - alert: EventBusPublishDropped
-          expr: rate(lenny_event_bus_publish_dropped_total[5m]) * 60 > 10
+          expr: rate(lenny_event_bus_publish_dropped_total[5m]) * 60 > scalar(lenny_event_bus_drop_alert_threshold)
           for: 5m
           labels:
             severity: warning

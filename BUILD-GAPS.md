@@ -21149,7 +21149,7 @@ type Event = cloudevents.Event
 
 ---
 
-### - [ ] F-12.6.22 — `Retranscriber` and audit-write path are not wired into production [Medium] — OPEN
+### - [x] F-12.6.22 — `Retranscriber` and audit-write path are not wired into production [Medium] — CLOSED
 
 **Spec.** §12.6 line 685: "A leader-elected background worker co-located with the gateway (same leader-election primitive as the §4.6 pool controllers, scoped with lock key `lenny.gateway.eventbus.retranscribe.leader`) sweeps the audit shards every `eventBus.retryInterval` (Helm value, default: 60 s)."
 
@@ -21159,9 +21159,11 @@ type Event = cloudevents.Event
 
 **Fix.** Wire `RedisEventBus` (F10) and `Retranscriber` into `cmd/lenny-gateway/main.go`; bind the retranscriber to a leader-election lock; thread the Helm-driven `RetranscribeConfig` through.
 
+**Resolution.** `cmd/lenny-gateway/main.go` now constructs the §12.6 `RedisEventBus` (over the existing `securityBus` Redis pub/sub substrate) and the leader-elected `Retranscriber` inside the durable-audit (`pgPool != nil`) block, gated on `securityBus != nil` (no Redis EventBus to re-publish to without Redis). The worker reads failed-publish rows from the `auditstore.Store` `RetranscribeStore` and runs as `go eventBusRetranscriber.Run(watchdogCtx)` next to the artifact-GC and audit-retention sweeps. Like every other gateway background sweep today, single-active-writer leader gating rides on the cross-cutting §10.1/§12.5 gateway-leader lease (tracked under F-12.5.10); the republish is idempotent (downstream dedups by CloudEvents `id`), so transient multi-replica overlap during failover is safe. New `pkg/gateway/eventbus/prommetrics.go` registers the §16.1 EventBus metric family (`lenny_event_bus_publish_total` / `_publish_duration_seconds` / `_publish_dropped_total` / `_handler_duration_seconds` / `_handler_error_total` / `_retranscribe_attempts_total`) against the gateway registry so the previously catalog-only series move at runtime. The first-publish path on the audit-write itself (the separate "F10") remains its own work item; the retranscribe correctness layer this finding names is now live. Closed by commit (see below); F-12.6.23 closed in the same batch.
+
 ---
 
-### - [ ] F-12.6.23 — spec-required `eventBus.*` and `storeRouter.*` Helm values do not exist [Medium] — DEFERRED
+### - [x] F-12.6.23 — spec-required `eventBus.*` and `storeRouter.*` Helm values do not exist [Medium] — CLOSED
 
 **Spec.** §12.6 surfaces these as Helm values: `storeRouter.maxScatterGatherConcurrency` (default 16), `storeRouter.scatterGatherPerShardTimeoutSeconds` (default 10), `storeRouter.scatterGatherAggregateTimeoutSeconds` (default 120), `eventBus.duplicateInjectionFactor`, `eventBus.dropAlertThreshold`, `eventBus.retryInterval`, `eventBus.maxRetryAttempts`.
 
@@ -21172,6 +21174,8 @@ type Event = cloudevents.Event
 **Fix.** Add the value keys to `charts/lenny/values.yaml` with the documented defaults; thread them through `templates/deployment.yaml` as env vars or a ConfigMap; consume them in the gateway main when constructing `Retranscriber` and any future scatter-gather helper.
 
 **Deferred (`1da8eda8`).** The `storeRouter.*` half landed with F-12.6.18: `storeRouter.maxScatterGatherConcurrency` / `scatterGatherPerShardTimeoutSeconds` / `scatterGatherAggregateTimeoutSeconds` are in `values.yaml`, render into `LENNY_SCATTER_*` env, and the gateway consumes them into the router's `ScatterConfig`. The `eventBus.*` half (`duplicateInjectionFactor`, `dropAlertThreshold`, `retryInterval`, `maxRetryAttempts`) is blocked on **F-12.6.22**: the §12.6 `RedisEventBus` and the leader-elected `Retranscriber` are not constructed in any production binary, so rendering those values as env would produce unconsumed knobs (the gateway's `eventBus` symbol is the unrelated §7 session SSE bus). Re-attempt once F-12.6.22 wires the EventBus + Retranscriber, threading the four `eventBus.*` values into the `RetranscribeConfig` and the drop-alert/duplicate-injection config at that point.
+
+**Resolution (rule N — directly unblocked by F-12.6.22 this batch).** The `eventBus.*` half now lands: `charts/lenny/values.yaml` carries `eventBus.{retryInterval, maxRetryAttempts, dropAlertThreshold, duplicateInjectionFactor}` (defaults 60 / 5 / 10 / 1), `values.schema.json` admits the `eventBus` object, and the gateway deployment renders `LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS` / `_MAX_RETRY_ATTEMPTS` / `_DROP_ALERT_THRESHOLD` / `_DUPLICATE_INJECTION_FACTOR`. The gateway consumes them: `retryInterval` + `maxRetryAttempts` into the new `Retranscriber`'s `RetranscribeConfig`; `duplicateInjectionFactor` via `eventbus.WithDuplicateInjectionFactor` on the `RedisEventBus` (§12.6 line 699 test-only re-send loop, default 1 is a no-op); and `dropAlertThreshold` onto a new startup-set `lenny_event_bus_drop_alert_threshold` gauge that the §16.5 `EventBusPublishDropped` alert now reads via `scalar(...)` instead of the previously baked-in literal 10 (same pattern as F-11.2.23 / F-25.13.2). Closed by F-12.6.22's batch.
 
 ---
 

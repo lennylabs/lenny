@@ -81,6 +81,9 @@
     "etcdEncryption": {
       "type": "object"
     },
+    "eventBus": {
+      "type": "object"
+    },
     "features": {
       "type": "object"
     },

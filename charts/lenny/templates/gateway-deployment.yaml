@@ -900,6 +900,28 @@ spec:
               value: {{ .Values.storeRouter.scatterGatherAggregateTimeoutSeconds | quote }}
             {{- end }}
             {{- end }}
+            # §12.6 lines 683-699 eventBus.* — the EventBus retranscribe
+            # worker cadence/ceiling, the EventBusPublishDropped alert
+            # threshold gauge, and the test-only duplicate-injection factor.
+            # F-12.6.22 / F-12.6.23.
+            {{- if .Values.eventBus }}
+            {{- if hasKey .Values.eventBus "retryInterval" }}
+            - name: LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS
+              value: {{ .Values.eventBus.retryInterval | quote }}
+            {{- end }}
+            {{- if hasKey .Values.eventBus "maxRetryAttempts" }}
+            - name: LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS
+              value: {{ .Values.eventBus.maxRetryAttempts | quote }}
+            {{- end }}
+            {{- if hasKey .Values.eventBus "dropAlertThreshold" }}
+            - name: LENNY_EVENTBUS_DROP_ALERT_THRESHOLD
+              value: {{ .Values.eventBus.dropAlertThreshold | quote }}
+            {{- end }}
+            {{- if hasKey .Values.eventBus "duplicateInjectionFactor" }}
+            - name: LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR
+              value: {{ .Values.eventBus.duplicateInjectionFactor | quote }}
+            {{- end }}
+            {{- end }}
             # §12.3 line 101 audit.startupChainCheckEntries — the
             # most-recent N audit rows per tenant re-verified by the
             # startup chain-continuity check. F-12.3.9.

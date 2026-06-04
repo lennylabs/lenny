@@ -1140,6 +1140,29 @@ storeRouter:
   # line 558), capping worst-case latency when many shards are slow.
   scatterGatherAggregateTimeoutSeconds: 120
 
+# eventBus configures the §12.6 control-plane EventBus and its
+# leader-elected retranscribe worker (the durable correctness layer that
+# re-publishes every audit row whose first CloudEvents publish failed).
+eventBus:
+  # retryInterval is the retranscribe-worker sweep cadence in seconds
+  # (§12.6 line 685, default 60). Each sweep re-publishes audit rows in
+  # eventbus_publish_state IN ('failed','retry_pending').
+  retryInterval: 60
+  # maxRetryAttempts is the retry_count ceiling (§12.6 line 689, default
+  # 5) above which a failed-publish row stops being swept and needs a
+  # manual republish via the §25.9 admin endpoint.
+  maxRetryAttempts: 5
+  # dropAlertThreshold is the per-minute dropped-publish rate (§12.6 line
+  # 683, default 10) above which the §16.5 EventBusPublishDropped alert
+  # fires. The gateway emits it on lenny_event_bus_drop_alert_threshold,
+  # which the bundled alert reads via scalar(...).
+  dropAlertThreshold: 10
+  # duplicateInjectionFactor is a TEST-ONLY staging knob (§12.6 line 699):
+  # when greater than 1 the EventBus re-sends every successful publish
+  # this many times so the dedup integration test can assert no doubled
+  # side effects. Leave at 1 in production.
+  duplicateInjectionFactor: 1
+
 # billing configures the §11.2.1 billing-event publisher sink. The v1
 # default writes events synchronously to Postgres with a Redis stream
 # failover buffer ([§11.2.1 Postgres / Redis-stream failover path]).

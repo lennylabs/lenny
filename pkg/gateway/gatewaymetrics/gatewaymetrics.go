@@ -42,6 +42,11 @@ type Metrics struct {
 	// 5%) the BillingCorrectionRateHigh alert reads via
 	// scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 	billingCorrectionRateThreshold prometheus.Gauge
+	// eventBusDropAlertThreshold is the §12.6 line 683 / §16.5 startup-set
+	// gauge that exposes the deployer-configurable per-minute dropped-
+	// publish ceiling (default 10/min) the EventBusPublishDropped alert
+	// reads via scalar(lenny_event_bus_drop_alert_threshold). F-12.6.23.
+	eventBusDropAlertThreshold prometheus.Gauge
 	// gatewayQueueDepthThreshold / gatewayLatencyThresholdSeconds /
 	// credentialPoolLowThreshold expose the §25.13 line 4737
 	// tier-dependent alert thresholds as startup-set gauges. The
@@ -801,6 +806,20 @@ func New() (*Metrics, error) {
 	billingCorrectionRateThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_billing_correction_rate_threshold",
 		Help: "Deployer-configurable BillingCorrectionRateHigh alert threshold as a fraction (§11.2.1 / §16.5; default 0.05).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §12.6 line 683 — "the EventBusPublishDropped alert fires when
+	// dropped-event rate exceeds eventBus.dropAlertThreshold (default
+	// 10/min)". The §16.5 alert evaluates
+	// rate(lenny_event_bus_publish_dropped_total[5m]) * 60 >
+	// scalar(lenny_event_bus_drop_alert_threshold); the gateway emits this
+	// gauge at startup from the eventBus.dropAlertThreshold Helm value.
+	// F-12.6.23.
+	eventBusDropAlertThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_event_bus_drop_alert_threshold",
+		Help: "Deployer-configurable EventBusPublishDropped per-minute alert threshold (§12.6 line 683 / §16.5; default 10).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -2341,6 +2360,13 @@ func New() (*Metrics, error) {
 	// evaluates to NaN until the gateway main has wired the configuration.
 	billingCorrectionRateThresholdChild := billingCorrectionRateThreshold.WithLabelValues()
 	billingCorrectionRateThresholdChild.Set(0.05)
+	// §12.6 line 683 / §16.5: pre-materialize the EventBus drop-alert
+	// threshold gauge with the default (10/min) so
+	// scalar(lenny_event_bus_drop_alert_threshold) in the
+	// EventBusPublishDropped expression resolves to a finite value before
+	// the gateway main has called SetEventBusDropAlertThreshold. F-12.6.23.
+	eventBusDropAlertThresholdChild := eventBusDropAlertThreshold.WithLabelValues()
+	eventBusDropAlertThresholdChild.Set(10)
 	// spec: §25.13 line 4737 / §16.5 — pre-materialize the §25.13
 	// tier-dependent threshold gauges with their base-Helm defaults so
 	// scalar(...) in the bundled alert expressions evaluates to a
@@ -2384,6 +2410,7 @@ func New() (*Metrics, error) {
 		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections,
 		replayBufferUtilization, pdbBlockedEvictions,
 		billingCorrectionRateThreshold,
+		eventBusDropAlertThreshold,
 		gatewayQueueDepthThreshold,
 		gatewayLatencyThresholdSeconds,
 		credentialPoolLowThreshold,
@@ -2404,6 +2431,7 @@ func New() (*Metrics, error) {
 		streamCeiling:                        streamCeilingChild,
 		replicaCount:                         replicaCountChild,
 		billingCorrectionRateThreshold:       billingCorrectionRateThresholdChild,
+		eventBusDropAlertThreshold:           eventBusDropAlertThresholdChild,
 		gatewayQueueDepthThreshold:           gatewayQueueDepthThresholdChild,
 		gatewayLatencyThresholdSeconds:       gatewayLatencyThresholdSecondsChild,
 		credentialPoolLowThreshold:           credentialPoolLowThresholdChild,
@@ -4038,6 +4066,18 @@ func (m *Metrics) SetReplicaCount(value int) {
 // scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 func (m *Metrics) SetBillingCorrectionRateThreshold(value float64) {
 	m.billingCorrectionRateThreshold.Set(value)
+}
+
+// SetEventBusDropAlertThreshold emits the §12.6 line 683 / §16.5
+// lenny_event_bus_drop_alert_threshold gauge. The value is the
+// deployer-configurable per-minute dropped-publish ceiling (default 10)
+// above which `EventBusPublishDropped` fires; the alert reads it via
+// scalar(lenny_event_bus_drop_alert_threshold). F-12.6.23.
+func (m *Metrics) SetEventBusDropAlertThreshold(value float64) {
+	if m == nil {
+		return
+	}
+	m.eventBusDropAlertThreshold.Set(value)
 }
 
 // SetAuditSIEMConfigured emits the §16.4 / §16.5 lenny_audit_siem_configured

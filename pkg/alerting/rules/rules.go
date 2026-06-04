@@ -1482,7 +1482,7 @@ func warningAlerts() []Rule {
 		},
 		{
 			Name:        "EventBusPublishDropped",
-			Expr:        `rate(lenny_event_bus_publish_dropped_total[5m]) * 60 > 10`,
+			Expr:        `rate(lenny_event_bus_publish_dropped_total[5m]) * 60 > scalar(lenny_event_bus_drop_alert_threshold)`,
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "EventBus publishes dropped after durable commit",

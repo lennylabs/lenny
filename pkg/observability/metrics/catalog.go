@@ -364,6 +364,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_credential_pool_low_threshold", TypeGauge, "Configured CredentialPoolLow utilisation-fraction ceiling"},
 	{"lenny_artifact_gc_backlog_threshold", TypeGauge, "Configured ArtifactGCBacklog backlog ceiling"},
 	{"lenny_billing_correction_rate_threshold", TypeGauge, "Configured BillingCorrectionRateHigh rate ceiling"},
+	{"lenny_event_bus_drop_alert_threshold", TypeGauge, "Configured EventBusPublishDropped per-minute drop ceiling, read by the alert via scalar(...)"},
 	{"lenny_controller_workqueue_max_depth", TypeGauge, "Configured controller work-queue max depth, read by ControllerWorkQueueDepthHigh"},
 	{"lenny_erasure_job_deadline_seconds", TypeGauge, "Configured erasure-job deadline, read by ErasureJobOverdue"},
 	{"lenny_tenant_deletion_sla_seconds", TypeGauge, "Configured tenant-deletion SLA, read by TenantDeletionOverdue"},

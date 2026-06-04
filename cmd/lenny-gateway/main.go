@@ -158,6 +158,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob/saltlockpg"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
@@ -922,6 +923,18 @@ func main() {
 		"§16.4 audit.retentionDays: the general (non-gdpr) Postgres audit-log retention window in days, used when --audit-retention-preset is custom. Emitted at startup on the lenny_audit_retention_days gauge so the §16.5 AuditRetentionLow alert can evaluate. Override via LENNY_AUDIT_RETENTION_DAYS.")
 	auditRetentionPruneIntervalSeconds := flag.Int("audit-retention-prune-interval-seconds", envInt("LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS", 3600),
 		"§16.4 line 378 audit-retention sweep cadence in seconds: how often the leader-elected pruner deletes audit rows past audit.retentionDays (gdpr.* rows held under audit.gdprRetentionDays, undelivered rows held by the SIEM delivery guard). Clamped up to a 60s floor. Override via LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS.")
+	// §12.6 lines 685-689 EventBus retranscribe worker + line 683/699
+	// publish-drop knobs. These mirror the eventBus.* Helm values; the
+	// gateway consumes them when constructing the §12.6 RedisEventBus and
+	// the leader-elected retranscribe worker. F-12.6.22 / F-12.6.23.
+	eventBusRetryIntervalSeconds := flag.Int("eventbus-retry-interval-seconds", envInt("LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS", 60),
+		"§12.6 line 685 eventBus.retryInterval: the retranscribe-worker sweep cadence in seconds (default 60). The worker re-publishes audit rows whose first EventBus publish failed. Override via LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS.")
+	eventBusMaxRetryAttempts := flag.Int("eventbus-max-retry-attempts", envInt("LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS", 5),
+		"§12.6 line 689 eventBus.maxRetryAttempts: the retry_count ceiling above which a failed-publish audit row stops being swept and needs a manual republish (default 5). Override via LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS.")
+	eventBusDuplicateInjectionFactor := flag.Int("eventbus-duplicate-injection-factor", envInt("LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR", 1),
+		"§12.6 line 699 eventBus.duplicateInjectionFactor: a test-only staging knob; the EventBus re-sends every successful publish this many times so the dedup integration test can assert no doubled side effects. 1 (the default) disables injection. Override via LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR.")
+	eventBusDropAlertThreshold := flag.Int("eventbus-drop-alert-threshold", envInt("LENNY_EVENTBUS_DROP_ALERT_THRESHOLD", 10),
+		"§12.6 line 683 eventBus.dropAlertThreshold: the per-minute dropped-publish rate above which the §16.5 EventBusPublishDropped alert fires (default 10/min). Emitted at startup on the lenny_event_bus_drop_alert_threshold gauge the alert reads via scalar(...). Override via LENNY_EVENTBUS_DROP_ALERT_THRESHOLD.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -2576,6 +2589,17 @@ func main() {
 	}
 	gwMetrics.SetBillingCorrectionRateThreshold(*billingCorrectionRateThreshold)
 
+	// spec: §12.6 line 683 / §16.5 — publish the operator-configured
+	// EventBusPublishDropped per-minute threshold so the bundled alert's
+	// scalar(lenny_event_bus_drop_alert_threshold) resolves to the
+	// eventBus.dropAlertThreshold Helm value rather than a literal. A
+	// non-positive value would make the alert fire on any drop, so it is
+	// clamped to the spec default. F-12.6.23.
+	if *eventBusDropAlertThreshold <= 0 {
+		log.Fatalf("lenny-gateway: --eventbus-drop-alert-threshold must be a positive per-minute rate (got %d) (§12.6 line 683)", *eventBusDropAlertThreshold)
+	}
+	gwMetrics.SetEventBusDropAlertThreshold(float64(*eventBusDropAlertThreshold))
+
 	// §12.3 line 76 — wire the billing_flush_pressure callback now that
 	// the metric registry exists (the billing Pipeline was constructed
 	// earlier). F-12.3.13.
@@ -2647,14 +2671,15 @@ func main() {
 	// restart. Both the admin router and the §10.7 ExperimentRouter
 	// rejection reporter commit events to it.
 	var (
-		auditSink            admin.AuditSink
-		wireAudit            func(*admin.Router) *admin.Router
-		auditAppender        policy.AuditAppender
-		auditValidator       *auditscope.Validator
-		ocsfTranslationStore ocsf.TranslationStore
-		siemDeliveryStore    siem.DeliveryStore
-		auditBatchBuffer     *auditbatch.Buffer
-		auditPruner          *auditretention.Pruner
+		auditSink             admin.AuditSink
+		wireAudit             func(*admin.Router) *admin.Router
+		auditAppender         policy.AuditAppender
+		auditValidator        *auditscope.Validator
+		ocsfTranslationStore  ocsf.TranslationStore
+		siemDeliveryStore     siem.DeliveryStore
+		auditBatchBuffer      *auditbatch.Buffer
+		auditPruner           *auditretention.Pruner
+		eventBusRetranscriber *eventbus.Retranscriber
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2729,6 +2754,32 @@ func main() {
 				Interval:          time.Duration(*auditRetentionPruneIntervalSeconds) * time.Second,
 				Clock:             clockinject.Now,
 			})
+		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
+		// durable correctness layer that re-publishes every audit row whose
+		// first EventBus publish failed (eventbus_publish_state IN
+		// ('failed','retry_pending')) even when the in-memory replay buffer
+		// was lost. It is constructed only when both a durable audit chain
+		// (pgPool) and a real pub/sub substrate (securityBus / Redis) exist:
+		// with no Redis there is no EventBus to re-publish to. The worker
+		// drives the §12.6 RedisEventBus as its publisher, reads the failed
+		// rows from the auditstore RetranscribeStore, and sweeps every
+		// eventBus.retryInterval. F-12.6.22 / F-12.6.23.
+		if securityBus != nil {
+			eventBusMetrics, err := eventbus.NewPromMetrics(gwMetrics.Registerer())
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.6 EventBus metrics: %v", err)
+			}
+			eventBusPublisher := eventbus.NewRedisEventBus(
+				securityBus, eventBusMetrics,
+				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor))
+			eventBusRetranscriber = eventbus.NewRetranscriber(
+				pgAudit, eventBusPublisher,
+				eventbus.RetranscribeConfig{
+					RetryInterval:    time.Duration(*eventBusRetryIntervalSeconds) * time.Second,
+					MaxRetryAttempts: *eventBusMaxRetryAttempts,
+				},
+				eventBusMetrics)
+		}
 	} else {
 		auditChains := audit.NewChainSet()
 		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
@@ -3260,7 +3311,7 @@ func main() {
 		TreeRecoveryTreeTimeout:  time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
 		TreeRecoveryMetrics:      gwMetrics,
 		UploadTokenIssuer:        uploadIssuer,
-		UploadTokenVerifier:     uploadVerifier,
+		UploadTokenVerifier:      uploadVerifier,
 		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
 		UploadTokenTTL: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Blobs:          blobs,
@@ -5645,6 +5696,19 @@ func main() {
 					log.Printf("lenny-gateway: §16.4 audit-retention sweep pruned %d audit rows past their retention window", pruned)
 				}
 			})
+		}
+
+		// spec: §12.6 lines 685-689 EventBus retranscribe worker. Like the
+		// artifact GC and audit-retention pruner above, production gates the
+		// sweep under the §10.1 / §12.5 gateway-leader lease (F-12.5.10) so
+		// exactly one replica re-publishes at a time; the republish is
+		// idempotent (downstream dedups by CloudEvents id), so a transient
+		// multi-replica overlap during failover is safe. Only constructed
+		// when a durable audit chain and a Redis EventBus both exist.
+		if eventBusRetranscriber != nil {
+			log.Printf("lenny-gateway: §12.6 EventBus retranscribe sweep cadence %s (maxRetryAttempts %d, duplicateInjectionFactor %d)",
+				time.Duration(*eventBusRetryIntervalSeconds)*time.Second, *eventBusMaxRetryAttempts, *eventBusDuplicateInjectionFactor)
+			go eventBusRetranscriber.Run(watchdogCtx)
 		}
 
 		// §12.5 ll. 341 hard-prune sweep: every gc.cycleIntervalSeconds

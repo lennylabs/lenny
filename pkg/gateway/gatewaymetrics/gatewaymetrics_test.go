@@ -263,10 +263,34 @@ func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
 		// in the alert expression never evaluates to NaN even before
 		// SetBillingCorrectionRateThreshold runs. F-11.2.23.
 		"lenny_billing_correction_rate_threshold 0.05",
+		// spec: §12.6 line 683 / §16.5 EventBusPublishDropped —
+		// pre-materialize the drop-alert threshold gauge with the spec
+		// default (10/min) so scalar(lenny_event_bus_drop_alert_threshold)
+		// in the alert expression never evaluates to NaN before
+		// SetEventBusDropAlertThreshold runs. F-12.6.23.
+		"lenny_event_bus_drop_alert_threshold 10",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
 		}
+	}
+}
+
+// spec: §12.6 line 683 / §16.5 — SetEventBusDropAlertThreshold drives the
+// lenny_event_bus_drop_alert_threshold gauge that the EventBusPublishDropped
+// alert reads via scalar(...). The deployer-configured eventBus.dropAlertThreshold
+// must round-trip through /metrics so the alert evaluates against the
+// chart-provided rate rather than the previously baked-in literal 10. F-12.6.23.
+func TestSetEventBusDropAlertThreshold_spec_12_6_683(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetEventBusDropAlertThreshold(25)
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_event_bus_drop_alert_threshold 25") {
+		t.Fatalf("/metrics missing updated drop-alert threshold gauge\n---\n%s", rr.Body.String())
 	}
 }
 

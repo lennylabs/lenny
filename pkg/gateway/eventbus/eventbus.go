@@ -205,6 +205,30 @@ type RedisEventBus struct {
 	buffer    []replayEntry
 	bufferCap int
 	draining  bool
+
+	// dupFactor is the §12.6 line 699 test-only eventBus.duplicateInjectionFactor:
+	// the total number of times a successful publish re-sends the
+	// byte-identical envelope so the staging duplicate-injection test can
+	// assert no doubled handler side effects. 1 (the default) is a no-op.
+	dupFactor int
+}
+
+// Option customizes a RedisEventBus at construction.
+type Option func(*RedisEventBus)
+
+// WithDuplicateInjectionFactor sets the §12.6 line 699 test-only
+// eventBus.duplicateInjectionFactor. A factor of n re-sends every
+// successful publish n times total (n-1 extra byte-identical copies);
+// values below 1 are clamped to 1 (the no-op default). The extra copies
+// are best-effort — their send errors are ignored because the factor is
+// a staging-only dedup-test affordance, not a delivery guarantee.
+func WithDuplicateInjectionFactor(n int) Option {
+	return func(b *RedisEventBus) {
+		if n < 1 {
+			n = 1
+		}
+		b.dupFactor = n
+	}
 }
 
 // Compile-time assertions that RedisEventBus satisfies the §12.6 EventBus
@@ -217,17 +241,21 @@ var (
 // NewRedisEventBus returns a RedisEventBus over the pubsub substrate. A
 // nil pubsub.Bus is the in-process single-replica mode: Publish records
 // metrics and returns nil, Subscribe blocks until cancelled.
-func NewRedisEventBus(bus *pubsub.Bus, metrics BusMetrics) *RedisEventBus {
+func NewRedisEventBus(bus *pubsub.Bus, metrics BusMetrics, opts ...Option) *RedisEventBus {
 	b := &RedisEventBus{
 		bus:       bus,
 		metrics:   metrics,
 		now:       time.Now,
 		bufferCap: defaultReplayBufferCap,
+		dupFactor: 1,
 	}
 	// pubsub.Bus.Publish guards a nil receiver, so this closure is safe
 	// in the in-process single-replica mode.
 	b.send = func(ctx context.Context, channel string, payload []byte) error {
 		return bus.Publish(ctx, channel, payload)
+	}
+	for _, opt := range opts {
+		opt(b)
 	}
 	return b
 }
@@ -281,6 +309,15 @@ func (b *RedisEventBus) Publish(ctx context.Context, tenantID TenantID, topic Ev
 		}
 		b.bufferAppend(replayEntry{channel: channel, payload: payload})
 		return &PublishError{Type: errType, Err: sendErr}
+	}
+	// §12.6 line 699 duplicate-injection test: re-send the byte-identical
+	// envelope (dupFactor-1) extra times so downstream dedup by CloudEvents
+	// id can be exercised in staging. The default factor 1 skips this loop.
+	// Extra-copy errors are intentionally ignored — the factor is a
+	// test-only affordance, and buffering a failed duplicate would corrupt
+	// the FIFO replay ordering of genuine first-publish failures.
+	for i := 1; i < b.dupFactor; i++ {
+		_ = b.send(ctx, channel, payload)
 	}
 	b.drainReplayBuffer(ctx)
 	return nil
