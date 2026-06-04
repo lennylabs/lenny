@@ -17806,7 +17806,7 @@ Art. 44–46 constraint the spec explicitly invokes.
 **Severity:** High — a fail-closed control the spec names; without it
 the residency boundary is porous.
 
-### - [ ] F-11.7.10 — 10  No pgaudit DDL/ROLE capture wiring, no `audit.pgaudit.enabled` enforcement at startup or at regulated-tenant create/update [High] — OPEN
+### - [x] F-11.7.10 — 10  No pgaudit DDL/ROLE capture wiring, no `audit.pgaudit.enabled` enforcement at startup or at regulated-tenant create/update [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-4.4.20 — Both report pgaudit is unimplemented; **F-4.4.20 (closed by commit f1eb20e) lands the §4.4 line 232 sink-consumer half — log shipper, parser, OCSF translator, `lenny_pgaudit_grant_events_total` emitter, lenny-ops wiring.** The §11.7 item 5 config-enforcement half remains the residual work on this finding: (a) startup pre-flight that verifies the pgaudit extension is installed and `pgaudit.log` includes DDL+ROLE classes, (b) the regulated-tenant create/update guard that returns `422 COMPLIANCE_PGAUDIT_REQUIRED` when `audit.pgaudit.enabled` is false on a compliance profile that requires it, and (c) the production fatal-on-missing-config check. Those three pieces are scoped to a §11.7 batch.
 
@@ -17841,6 +17841,43 @@ not closed by item 5 either. The `PgAuditSinkDeliveryFailed` alert
 never fires because the metric is never populated.
 
 **Severity:** High — regulated-profile compliance requirement.
+
+**Resolution (commit `2c89b304`):** The §4.4 line 232 sink-consumer half
+was already landed (F-4.4.20). This batch closes the §11.7 item-5
+config-enforcement residual the duplicate note scoped — all three pieces,
+mirroring the existing `COMPLIANCE_SIEM_REQUIRED` gate:
+- **(a) Startup preflight (§11.7 line 375):** new `pgaudit.Preflight`
+  (`pkg/audit/pgaudit/preflight.go`) verifies the `pgaudit` extension is
+  installed (`pg_extension`) and that `pgaudit.log` includes both the
+  `ddl` and `role` classes (`logClassesCoverDDLAndRole` handles `all`,
+  subtractive `-class`, and the unset/NULL GUC). `cmd/lenny-gateway` runs
+  it when `--audit-pgaudit-enabled`; a failure is fatal in production mode
+  when a regulated tenant is present, else logged.
+- **(b) Regulated-tenant create/update guard (§11.7 line 377):** new
+  `Router.requirePgauditForProfile` + `WithPgauditConfigured`; tenant
+  create, tenant update, environment create, and bootstrap-seed now reject
+  a regulated complianceProfile (soc2/fedramp/hipaa) that lacks
+  `audit.pgaudit.enabled` + `sinkEndpoint` with HTTP 422
+  `COMPLIANCE_PGAUDIT_REQUIRED` (the code was already in the
+  `errorclassify` table).
+- **(c) Production fatal startup check (§11.7 line 377):**
+  `admin.ValidatePgauditForRegulatedTenants` mirrors
+  `ValidateSIEMForRegulatedTenants` — the gateway refuses to start in
+  production when any active tenant is regulated and pgaudit is not fully
+  configured.
+- **Config surface (was "no chart key"):** `--audit-pgaudit-enabled` /
+  `--audit-pgaudit-sink-endpoint` gateway flags (+ env), and
+  `audit.pgaudit.{enabled,sinkEndpoint}` chart values rendered into the
+  gateway deployment env (mirroring `audit.siem`).
+
+The `lenny_pgaudit_grant_events_total` emitter + `PgAuditSinkDeliveryFailed`
+alert population are the §4.4 shipper's metric surface (the shipper runs in
+lenny-ops via `--pgaudit-log-file`), tracked with the §4.4 pgaudit
+shipper work rather than this config-enforcement finding. Tests: tier-1
+preflight (5 settings pass / extension-missing / 7 missing-class cases incl.
+NULL and `all,-role`) + admin gate (create/update/environment reject,
+both-configured allow, unregulated allow, startup-scan matrix); helm-unittest
+gateway-deployment 148 cases pass.
 
 ### - [x] F-11.7.11 — 11  OCSF translator state machine is implemented but never advanced; rows ship-stuck in `pending` [Medium] — CLOSED
 
@@ -20926,7 +20963,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.4 — `ClusterRegistry` and `RemotePodOperations` are not implemented [High] — OPEN
+### - [x] F-12.6.4 — `ClusterRegistry` and `RemotePodOperations` are not implemented [High] — CLOSED
 
 **Spec.** §12.6 lines 584–624 define `ClusterRegistry`, `RemotePodOperations`, `ClusterInfo`, `ClusterSelectionRequest`, the v1 `LocalClusterRegistry`, the cross-cluster mTLS transport contract, the `CACertBundle` rotation procedure, the cross-cluster `PodRecord` compatibility invariants, and the version-negotiation handshake. The build-phase table (line 720) assigns this interface to Phase 9.
 
@@ -20935,6 +20972,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** Phase 9 — `lenny/delegate_task` cross-cluster routing per the build-phase table — has no compile target; adding it later means more than landing a `LocalClusterRegistry` (the cross-cluster `PodRecord` invariants and the typed `RemotePodOperations` subset are load-bearing for compile-time enforcement of the cross-cluster security contract).
 
 **Fix.** Land the `ClusterRegistry` interface, `RemotePodOperations` subset, the `LocalClusterRegistry` v1 implementation (which returns the in-process `CRDPodRegistry` from `ClusterClient`), and the `ClusterInfo`/`ClusterSelectionRequest` types. Even with single-cluster v1, the interface keeps the §12.6 multi-cluster security contract enforceable.
+
+**Resolution (commit `2a644535`):** Landed `pkg/podregistry/clusterregistry.go` with the §12.6 lines 589-607 interfaces and the v1 implementation. `RemotePodOperations` (`GetPod`/`ClaimPod`/`ReleasePod`/`ListPodsByPool`) is the restricted PodRegistry subset permitted over cross-cluster connections; the compile-time `var _ RemotePodOperations = (PodRegistry)(nil)` proves PodRegistry is a superset (§12.6 line 611), so the cross-cluster security contract — `DeletePod`/`UpdatePodState`/`CreatePod`/`CountByState`/`WatchPods` are unreachable through a `ClusterClient` — is enforced at compile time (§12.6 line 614 requirement 4). `ClusterInfo` carries `ClusterID`, endpoint, `CACertBundle` (remote CA chain, both old+new during the §12.6 line 616 overlap window), capacity, and health; `ClusterSelectionRequest` carries affinity hints + resource requirements. `LocalClusterRegistry` is the single-cluster v1: `ClusterClient` returns the in-process `PodRegistry` (the existing `CRDPodRegistry` satisfies it) with no network transport — the line 614 mTLS contract applies only to remote clients — and `SelectCluster` ignores the request and returns `LocalClusterID()` (§12.6 lines 430, 586). The `ClaimOpts.ClusterID *ClusterID` field already existed (F-12.6.8). Cross-cluster routing remains Phase 9; no production binary constructs the registry yet, so wiring it in would be dead code. Tests: 5 tier-1 (list/default-id/get/select-ignores-request/client-delegation+restricted-surface).
 
 ---
 
@@ -22592,7 +22631,7 @@ Evidence:
   (`/sessions/{slotId}/`, `/artifacts/{slotId}/`, §6.4 lines 394-397)
   remains tracked under F-6.4.2 (concurrent-workspace mode).
 
-### - [ ] F-13.1.3 — 1-02 — Adapter-agent boundary nonce-only fallback (HMAC challenge-response) and `SO_PEERCRED` self-test are unimplemented [High] — OPEN
+### - [x] F-13.1.3 — 1-02 — Adapter-agent boundary nonce-only fallback (HMAC challenge-response) and `SO_PEERCRED` self-test are unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.7.8, F-4.7.9 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
 
@@ -22660,6 +22699,42 @@ Evidence:
   `lenny_adapter_sopeercred_disabled_total` / `_selftest_failed_total`
   metric
 - spec/13_security-model.md:14; spec/04_system-components.md:870-888
+
+**Resolution (verified — closed by F-4.7.8 + F-4.7.9):** The finding's own
+duplicate annotation decomposes it: "F-13.1.3 spans both the SO_PEERCRED
+startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9
+each cover one half." Both halves are now implemented, wired, and tested
+(`go test ./pkg/adapter/... ./pkg/adapter/mcp/` green this batch):
+
+- **Self-test (F-4.7.8, closed):** `adapter.PeercredSelftest`
+  (`pkg/adapter/peercred_linux.go`) runs the §4.7 lines 870-877 loopback
+  `@lenny-sopeercred-selftest` UID-match check before READY;
+  `cmd/lenny-adapter/main.go:187` calls it, increments
+  `lenny_adapter_sopeercred_selftest_failed_total`, and `log.Fatal`s so the
+  pod CrashLoopBackOffs when `--require-so-peercred` (default `true`,
+  main.go:120) is set. No-op on non-Linux.
+- **HMAC challenge-response fallback (F-4.7.9, closed):**
+  `pkg/adapter/mcp/challenge.go` generates a per-connection 128-bit
+  `adapterChallenge`, validates the agent's
+  `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` constant-time
+  within the 500 ms `ChallengeTimeout`, and closes the socket on any
+  mismatch/timeout (§4.7 lines 879-883). `platformmcp.go:30` sets
+  `RequireChallenge` on the platform `mcp.Server` from
+  `Server.NonceOnlyMode`, which `cmd/lenny-adapter` wires from
+  `--require-so-peercred=false`. Both `lenny_adapter_sopeercred_*_total`
+  counters are registered (`pkg/adapter/metrics.go`).
+
+The §13.1 line 14 boundary contract (SO_PEERCRED UID check + manifest nonce
+primary; nonce + per-connection HMAC challenge-response fallback) is fully
+met, so the finding's named consequence — the boundary collapsing to a
+replayable static nonce "with no per-connection forward security" — is
+eliminated. The one residual sub-bullet (the `SOPeercredDisabled`/
+`SecurityDegradedMode` Kubernetes pod condition, an operator-visible
+degraded-mode signal beyond the already-emitted counter) is the §4.7
+escalation-observability item tracked under **F-4.7.15** (DEFERRED: the
+adapter has no in-cluster Kubernetes client, so a pod-condition writer needs
+a clientset + RBAC + controller reconciler — a standalone effort that does
+not affect the §13.1 security boundary).
 
 ### - [x] F-13.1.4 — 1-03 — `lenny-preflight` does not verify `fsGroup` / `supplementalGroups` presence on agent-pod templates [High] — CLOSED
 
