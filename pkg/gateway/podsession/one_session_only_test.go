@@ -9,7 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )

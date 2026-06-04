@@ -10,7 +10,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	dmi "github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // DirectModeIsolation returns the Decider for the

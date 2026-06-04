@@ -22,7 +22,7 @@ metadata:
   name: runc
 handler: runc
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: echo-runtime-sidecar
@@ -34,7 +34,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: echo-runtime-embedded
@@ -46,7 +46,7 @@ spec:
   isolationProfile: standard
   deploymentModel: embedded
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: echo-template-sidecar
@@ -56,7 +56,7 @@ spec:
   isolationProfile: standard
   executionMode: session
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: echo-template-embedded
@@ -66,7 +66,7 @@ spec:
   isolationProfile: standard
   executionMode: session
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: echo-pool-sidecar
@@ -76,7 +76,7 @@ spec:
   minWarm: 1
   maxWarm: 2
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: echo-pool-embedded
@@ -92,7 +92,7 @@ spec:
 # credential delivery path actually runs against it. Production
 # installs reject this runtime via the lenny-pod-security webhook;
 # the e2e overlay deploys it explicitly for the tier-9 scaffolds.
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: cred-shell-echo-runtime
@@ -110,7 +110,7 @@ spec:
   # reconciler alongside the adapter + runtime pair.
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: cred-shell-echo-template
@@ -129,7 +129,7 @@ spec:
   isolationProfile: standard
   executionMode: session
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: cred-shell-echo-pool
@@ -143,7 +143,7 @@ spec:
 # Standard-level runtime calls lenny/request_elicitation on every
 # inbound message so the §9.2 chain walker exercises the
 # tamper-detect path end to end.
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: elicitation-echo-runtime
@@ -155,7 +155,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: elicitation-echo-template
@@ -165,7 +165,7 @@ spec:
   isolationProfile: standard
   executionMode: session
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: elicitation-echo-pool

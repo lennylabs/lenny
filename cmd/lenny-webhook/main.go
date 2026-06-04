@@ -55,7 +55,7 @@ import (
 
 	cosignverify "github.com/lennylabs/lenny/pkg/admission/cosign_verify"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	obsmetrics "github.com/lennylabs/lenny/pkg/observability/metrics"
@@ -64,7 +64,7 @@ import (
 )
 
 // buildScheme assembles the scheme the admission client uses to decode
-// the lenny.dev/v1 resources the webhooks read.
+// the lenny.dev/v1alpha1 resources the webhooks read.
 func buildScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(s))

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-package v1_test
+package v1alpha1_test
 
 import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §4.6 — the lenny.dev/v1 CRD API types.
+// spec: §4.6 — the lenny.dev/v1alpha1 CRD API types.
 
 func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -29,8 +29,10 @@ func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 			t.Errorf("%T is not registered with the scheme: %v", obj, err)
 			continue
 		}
-		if len(gvks) == 0 || gvks[0].Group != "lenny.dev" || gvks[0].Version != "v1" {
-			t.Errorf("%T: registered as %v, want group lenny.dev version v1", obj, gvks)
+		// spec: §15.5 line 2433 — CRDs ship initially at v1alpha1 and
+		// follow the graduation path v1alpha1 → v1beta1 → v1.
+		if len(gvks) == 0 || gvks[0].Group != "lenny.dev" || gvks[0].Version != "v1alpha1" {
+			t.Errorf("%T: registered as %v, want group lenny.dev version v1alpha1", obj, gvks)
 		}
 	}
 }

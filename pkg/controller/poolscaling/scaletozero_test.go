@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // spec: §4.6.1 line 400 — scaleToZero sets minWarm:0 while the cron

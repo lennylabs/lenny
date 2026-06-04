@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package v1
+package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -504,7 +504,7 @@ type RuntimeStatus struct {
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
 // +kubebuilder:printcolumn:name="Level",type=string,JSONPath=`.spec.integrationLevel`
 
-// Runtime is the lenny.dev/v1 declaration of a registered agent
+// Runtime is the lenny.dev/v1alpha1 declaration of a registered agent
 // runtime (§5.1). Runtimes are platform-global, so the resource is
 // cluster-scoped.
 type Runtime struct {

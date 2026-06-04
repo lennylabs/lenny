@@ -47,7 +47,7 @@ import (
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
@@ -70,7 +70,7 @@ import (
 )
 
 // buildScheme assembles the runtime scheme the manager uses: the
-// Kubernetes built-in types plus the lenny.dev/v1 CRDs the controllers
+// Kubernetes built-in types plus the lenny.dev/v1alpha1 CRDs the controllers
 // reconcile.
 //
 // apiextensions.k8s.io/v1 is also registered so the §10 line 437

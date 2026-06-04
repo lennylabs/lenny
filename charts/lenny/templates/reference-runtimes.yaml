@@ -39,7 +39,7 @@ the image-pull footprint without hand-editing the catalog. F-17.6.10.
 {{- range .Values.referenceRuntimes.catalog }}
 {{- if or (eq (len $include) 0) (has .name $include) }}
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: {{ .name }}

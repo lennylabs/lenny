@@ -14,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
 )
 
@@ -102,7 +102,7 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 		Request: &admissionv1.AdmissionRequest{
 			UID:       "review-2",
 			Operation: admissionv1.Create,
-			Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: "SandboxTemplate"},
+			Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxTemplate"},
 			Object:    runtime.RawExtension{Raw: tmplRaw},
 		},
 	}

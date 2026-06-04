@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // TestEncodeSharedAssets_RoundTripsThroughAdapterDecode confirms the §6.4

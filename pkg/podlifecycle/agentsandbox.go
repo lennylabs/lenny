@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // Compile-time binding of the §17.1 row 9 / §4.6.1 named default
@@ -30,7 +30,7 @@ var (
 )
 
 // AgentSandboxPoolReader is the v1 default PoolReader: a thin
-// translator over the lenny.dev/v1 SandboxTemplate / SandboxWarmPool /
+// translator over the lenny.dev/v1alpha1 SandboxTemplate / SandboxWarmPool /
 // Sandbox CRDs. spec: spec/04_system-components.md line 359.
 type AgentSandboxPoolReader struct {
 	// Client is the controller-runtime client every read uses.

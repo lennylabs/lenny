@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
@@ -84,7 +84,7 @@ func TestCheckTerminationGracePeriods_spec_5_2_516(t *testing.T) {
 	}
 }
 
-// lennyClient builds a fake client with both the clientgo and lenny.dev/v1
+// lennyClient builds a fake client with both the clientgo and lenny.dev/v1alpha1
 // schemes registered so SandboxTemplate listing works.
 func lennyClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()

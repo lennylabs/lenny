@@ -34,11 +34,11 @@ spec:
     - jsonPath: .status.readyCount
       name: Ready
       type: integer
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          SandboxWarmPool is the lenny.dev/v1 record of warm-count management
+          SandboxWarmPool is the lenny.dev/v1alpha1 record of warm-count management
           for one pool (§5.2). The PoolScalingController owns the scaling
           parameters; the WarmPoolController reconciles warm pods toward them.
         properties:

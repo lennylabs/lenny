@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package v1
+package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -190,7 +190,7 @@ type SandboxWarmPoolStatus struct {
 // +kubebuilder:printcolumn:name="Warm",type=integer,JSONPath=`.status.warmCount`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyCount`
 
-// SandboxWarmPool is the lenny.dev/v1 record of warm-count management
+// SandboxWarmPool is the lenny.dev/v1alpha1 record of warm-count management
 // for one pool (§5.2). The PoolScalingController owns the scaling
 // parameters; the WarmPoolController reconciles warm pods toward them.
 type SandboxWarmPool struct {

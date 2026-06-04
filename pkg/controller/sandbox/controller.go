@@ -28,7 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"

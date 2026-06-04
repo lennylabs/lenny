@@ -73,7 +73,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"

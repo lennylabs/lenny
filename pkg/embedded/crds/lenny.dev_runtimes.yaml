@@ -31,11 +31,11 @@ spec:
     - jsonPath: .spec.integrationLevel
       name: Level
       type: string
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          Runtime is the lenny.dev/v1 declaration of a registered agent
+          Runtime is the lenny.dev/v1alpha1 declaration of a registered agent
           runtime (§5.1). Runtimes are platform-global, so the resource is
           cluster-scoped.
         properties:

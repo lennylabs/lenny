@@ -40,7 +40,7 @@ webhooks:
           values: ["true"]
     rules:
       - apiGroups: ["lenny.dev"]
-        apiVersions: ["v1"]
+        apiVersions: ["v1alpha1"]
         resources: ["sandboxtemplates"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced

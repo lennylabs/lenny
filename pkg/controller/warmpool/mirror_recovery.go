@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // MirrorReconciler is the §4.6.1 "WarmPoolController mirror reconciliation

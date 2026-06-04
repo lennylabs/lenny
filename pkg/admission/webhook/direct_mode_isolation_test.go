@@ -14,7 +14,7 @@ import (
 
 	dmi "github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // templateObject marshals a SandboxTemplate with the given
@@ -41,7 +41,7 @@ func directModeDecide(tenancyMode string, devMode bool, obj runtime.RawExtension
 	decide := webhook.DirectModeIsolation(tenancyMode, devMode)
 	return decide(context.Background(), &admissionv1.AdmissionRequest{
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: "SandboxTemplate"},
+		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxTemplate"},
 		Object:    obj,
 	})
 }

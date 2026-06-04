@@ -320,7 +320,7 @@ func TestSandboxFinalizerHang(t *testing.T) {
 // are the CRD-required fields; their referents need not exist for the
 // claim-guard tests, which key on the Sandbox name via .spec.sandboxRef.
 func sandboxManifest(name, ns string) string {
-	return fmt.Sprintf(`apiVersion: lenny.dev/v1
+	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: Sandbox
 metadata:
   name: %s
@@ -336,7 +336,7 @@ spec:
 // sandboxClaimManifest renders a SandboxClaim CR binding sessionID to
 // the Sandbox named by sandboxRef.
 func sandboxClaimManifest(name, ns, sandboxRef, sessionID string) string {
-	return fmt.Sprintf(`apiVersion: lenny.dev/v1
+	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: SandboxClaim
 metadata:
   name: %s
@@ -352,7 +352,7 @@ spec:
 // sandboxClaimWithFinalizer renders a SandboxClaim carrying a single
 // finalizer, used by the finalizer-hang test.
 func sandboxClaimWithFinalizer(name, ns, sandboxRef, sessionID, finalizer string) string {
-	return fmt.Sprintf(`apiVersion: lenny.dev/v1
+	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: SandboxClaim
 metadata:
   name: %s

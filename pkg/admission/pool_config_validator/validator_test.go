@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	pcv "github.com/lennylabs/lenny/pkg/admission/pool_config_validator"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // spec: §4.6.2/§4.6.3 (spec/04_system-components.md) and §5.2

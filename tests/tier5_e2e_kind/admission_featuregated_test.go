@@ -190,7 +190,7 @@ func TestAdmissionDirectModeIsolation(t *testing.T) {
 	// real AdmissionReview through the webhook Service and proves the
 	// webhook plane is reachable and admits a valid template. The apply
 	// is a server-side dry-run so nothing persists.
-	const goodTemplate = `apiVersion: lenny.dev/v1
+	const goodTemplate = `apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: e2e-direct-mode-goodtemplate

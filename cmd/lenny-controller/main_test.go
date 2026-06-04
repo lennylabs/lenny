@@ -8,11 +8,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // TestBuildSchemeRegistersControllerTypes confirms the manager scheme
-// resolves every lenny.dev/v1 CRD the controllers reconcile and the
+// resolves every lenny.dev/v1alpha1 CRD the controllers reconcile and the
 // core types the shared cache lists, so a missing AddToScheme call is
 // caught before the binary starts.
 func TestBuildSchemeRegistersControllerTypes(t *testing.T) {

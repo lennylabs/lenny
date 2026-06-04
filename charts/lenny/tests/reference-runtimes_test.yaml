@@ -7,7 +7,7 @@ tests:
       - hasDocuments:
           count: 9
 
-  - it: renders each entry as a lenny.dev/v1 Runtime
+  - it: renders each entry as a lenny.dev/v1alpha1 Runtime
     documentSelector:
       path: metadata.name
       value: claude-code
@@ -16,7 +16,7 @@ tests:
           of: Runtime
       - equal:
           path: apiVersion
-          value: lenny.dev/v1
+          value: lenny.dev/v1alpha1
       - equal:
           path: metadata.labels["lenny.dev/reference-runtime"]
           value: "true"

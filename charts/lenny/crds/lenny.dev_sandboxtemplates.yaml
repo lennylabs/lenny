@@ -28,11 +28,11 @@ spec:
     - jsonPath: .spec.isolationProfile
       name: Isolation
       type: string
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          SandboxTemplate is the lenny.dev/v1 declaration of one warmable pool
+          SandboxTemplate is the lenny.dev/v1alpha1 declaration of one warmable pool
           (§5.2). The PoolScalingController reconciles it from the Postgres
           pool definitions; the WarmPoolController warms pods against it.
         properties:
@@ -193,7 +193,7 @@ spec:
                 - large
                 type: string
               runtimeRef:
-                description: RuntimeRef names the lenny.dev/v1 Runtime this pool warms.
+                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
                 type: string
               spiffeBinding:
                 description: |-

@@ -32,7 +32,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/gateway/events"

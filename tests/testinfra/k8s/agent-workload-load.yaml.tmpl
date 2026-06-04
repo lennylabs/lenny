@@ -36,7 +36,7 @@
 # matches without an explicit override on every scenario.
 
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: load-session-runtime
@@ -48,7 +48,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: load-session-template
@@ -58,7 +58,7 @@ spec:
   isolationProfile: standard
   executionMode: session
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: load-session-pool
@@ -71,7 +71,7 @@ spec:
 # concurrent-workspace: one pod hosts multiple sessions, each with
 # its own materialized workspace. The deployer acknowledges that
 # slots share the pod's process namespace.
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: load-cworkspace-runtime
@@ -83,7 +83,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: load-cworkspace-template
@@ -98,7 +98,7 @@ spec:
     acknowledgeProcessLevelIsolation: true
     cleanupTimeoutSeconds: 60
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: load-cworkspace-pool
@@ -112,7 +112,7 @@ spec:
 # per-session state, routed through a Service. No workspace
 # materialization, so the per-slot cost is lower than
 # concurrent-workspace.
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: load-cstateless-runtime
@@ -124,7 +124,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: load-cstateless-template
@@ -136,7 +136,7 @@ spec:
   concurrencyStyle: stateless
   maxConcurrent: ${LOAD_CSTATELESS_SLOTS}
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: load-cstateless-pool
@@ -149,7 +149,7 @@ spec:
 # task: one-shot task execution with pod-reuse policy. Pods cycle
 # through multiple tasks (up to MaxTasksPerPod) before retirement,
 # with a between-task workspace scrub.
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: load-task-runtime
@@ -161,7 +161,7 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: load-task-template
@@ -175,7 +175,7 @@ spec:
     maxTasksPerPod: ${LOAD_TASK_MAX_PER_POD}
     onCleanupFailure: warn
 ---
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: load-task-pool

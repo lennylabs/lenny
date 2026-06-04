@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package crds embeds the lenny.dev/v1 CustomResourceDefinition
+// Package crds embeds the lenny.dev/v1alpha1 CustomResourceDefinition
 // manifests so the §17.4 Embedded Mode stack can install them into the
 // embedded Kubernetes API server without a checkout of the Helm chart.
 // The .yaml files are copies of charts/lenny/crds/; the chart copies

@@ -57,7 +57,7 @@ func TestAdmissionPolicy(t *testing.T) {
 	// A SandboxWarmPool with minWarm > maxWarm. Both fields satisfy the
 	// CRD's `minimum: 0` OpenAPI bound, so the request reaches the
 	// webhook rather than being rejected by schema validation first.
-	const badPool = `apiVersion: lenny.dev/v1
+	const badPool = `apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: e2e-admission-badpool

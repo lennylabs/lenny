@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package v1
+package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,7 +67,7 @@ type SandboxClaimStatus struct {
 // +kubebuilder:printcolumn:name="Session",type=string,JSONPath=`.spec.sessionId`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 
-// SandboxClaim is the lenny.dev/v1 record binding a session to a
+// SandboxClaim is the lenny.dev/v1alpha1 record binding a session to a
 // claimed Sandbox pod (§4.6). Gateway replicas create it with
 // optimistic locking so exactly one wins a contested pod.
 type SandboxClaim struct {

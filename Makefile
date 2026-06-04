@@ -52,9 +52,9 @@ runtime-images: ## Build container images for the §4.7 reference runtimes
 .PHONY: generate
 generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules
 	@echo "  controller-gen object → pkg/apis DeepCopy"
-	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1/...
+	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1alpha1/...
 	@echo "  controller-gen crd → charts/lenny/crds"
-	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1/... output:crd:dir=charts/lenny/crds
+	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1alpha1/... output:crd:dir=charts/lenny/crds
 	@echo "  gen-alerting-rules → charts/lenny/files/alerting-rules.yaml"
 	@go run ./cmd/gen-alerting-rules
 

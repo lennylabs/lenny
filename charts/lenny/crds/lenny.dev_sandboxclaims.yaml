@@ -28,11 +28,11 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          SandboxClaim is the lenny.dev/v1 record binding a session to a
+          SandboxClaim is the lenny.dev/v1alpha1 record binding a session to a
           claimed Sandbox pod (§4.6). Gateway replicas create it with
           optimistic locking so exactly one wins a contested pod.
         properties:

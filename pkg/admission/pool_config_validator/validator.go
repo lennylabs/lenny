@@ -43,7 +43,7 @@ import (
 	cron "github.com/robfig/cron/v3"
 
 	"github.com/lennylabs/lenny/pkg/admission/label_immutability"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // scaleToZeroCronParser matches the five-field standard cron grammar

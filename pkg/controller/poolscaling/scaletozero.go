@@ -8,7 +8,7 @@ import (
 
 	cron "github.com/robfig/cron/v3"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // scaleToZeroParser parses the standard five-field cron expressions the

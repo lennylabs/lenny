@@ -15,7 +15,7 @@ import (
 
 	pcv "github.com/lennylabs/lenny/pkg/admission/pool_config_validator"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // spec: §4.6.3 (spec/04_system-components.md) — the
@@ -43,7 +43,7 @@ func poolConfigReqAs(t *testing.T, kind string, obj any, username string) *admis
 	return &admissionv1.AdmissionRequest{
 		UID:       "test-uid",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: kind},
+		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: kind},
 		Object:    runtime.RawExtension{Raw: raw},
 		UserInfo:  authnv1.UserInfo{Username: username},
 	}
@@ -324,7 +324,7 @@ func TestPoolConfigValidatorRejectsMalformedObject(t *testing.T) {
 	req := &admissionv1.AdmissionRequest{
 		UID:       "test-uid",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: "SandboxWarmPool"},
+		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxWarmPool"},
 		Object:    runtime.RawExtension{Raw: []byte("{not json")},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)

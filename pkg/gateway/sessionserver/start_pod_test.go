@@ -28,7 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"

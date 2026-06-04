@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package v1
+package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -21,7 +21,7 @@ const FinalizerSessionCleanup = "lenny.dev/session-cleanup"
 // created from the pool's SandboxTemplate, and these fields pin the
 // per-pod identity the controller and gateway resolve against.
 type SandboxSpec struct {
-	// RuntimeRef names the lenny.dev/v1 Runtime this pod runs.
+	// RuntimeRef names the lenny.dev/v1alpha1 Runtime this pod runs.
 	// +kubebuilder:validation:Required
 	RuntimeRef string `json:"runtimeRef"`
 
@@ -156,7 +156,7 @@ type SandboxStatus struct {
 // +kubebuilder:printcolumn:name="Pool",type=string,JSONPath=`.spec.poolRef`
 // +kubebuilder:printcolumn:name="Pod",type=string,JSONPath=`.status.podName`
 
-// Sandbox is the lenny.dev/v1 record of one managed agent pod (§4.6).
+// Sandbox is the lenny.dev/v1alpha1 record of one managed agent pod (§4.6).
 // The status subresource carries the §6.2 authoritative pod state
 // machine; the gateway claims pods by referencing them from a
 // SandboxClaim.

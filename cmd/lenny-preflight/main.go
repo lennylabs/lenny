@@ -59,7 +59,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
@@ -651,7 +651,7 @@ func main() {
 	}
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	// Register lenny.dev/v1 so the §5.2 line 516 node-drain-timeout
+	// Register lenny.dev/v1alpha1 so the §5.2 line 516 node-drain-timeout
 	// warning can list SandboxTemplate pools.
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
 	// spec: §10 line 443 — the crd-schema-version check fetches the

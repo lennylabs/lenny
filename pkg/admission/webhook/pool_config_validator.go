@@ -11,7 +11,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	pcv "github.com/lennylabs/lenny/pkg/admission/pool_config_validator"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // PoolConfigMetricsSink receives the §16.1 line 129

@@ -64,6 +64,43 @@ func TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437(t *testing.T) {
 	}
 }
 
+// spec: §15.5 line 2433 — "All Lenny CRDs ... ship initially at
+// v1alpha1 and follow the graduation path v1alpha1 → v1beta1 → v1."
+// Every shipped CRD MUST therefore serve and store exactly the
+// v1alpha1 version; a CRD published directly at v1 forfeits the
+// graduation gates §15.5 item 4 requires. F-15.5.1.
+func TestEmbeddedCRDsServeV1Alpha1_spec_15_5_2433(t *testing.T) {
+	crds := embeddedCRDs(t)
+	if len(crds) == 0 {
+		t.Fatal("expected at least one embedded CRD")
+	}
+	for _, crd := range crds {
+		if len(crd.Spec.Versions) != 1 {
+			t.Errorf("CRD %s: serves %d versions %v; the initial graduation state is a single v1alpha1 version",
+				crd.Name, len(crd.Spec.Versions), versionNames(crd))
+			continue
+		}
+		v := crd.Spec.Versions[0]
+		if v.Name != "v1alpha1" {
+			t.Errorf("CRD %s: served version %q; want v1alpha1 (§15.5 line 2433)", crd.Name, v.Name)
+		}
+		if !v.Served {
+			t.Errorf("CRD %s: version %s is not served", crd.Name, v.Name)
+		}
+		if !v.Storage {
+			t.Errorf("CRD %s: version %s is not the storage version", crd.Name, v.Name)
+		}
+	}
+}
+
+func versionNames(crd apiextensionsv1.CustomResourceDefinition) []string {
+	out := make([]string, 0, len(crd.Spec.Versions))
+	for _, v := range crd.Spec.Versions {
+		out = append(out, v.Name)
+	}
+	return out
+}
+
 // spec: §10 line 437 — every embedded CRD MUST carry
 // `x-kubernetes-preserve-unknown-fields: true` on extensible sub-objects
 // (spec, status) so an older controller does not crash on fields a

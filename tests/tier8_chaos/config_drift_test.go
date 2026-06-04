@@ -378,7 +378,7 @@ func TestSchemaMigrationDirtyFlag(t *testing.T) {
 // template need not exist for the pool-config validator (it inspects
 // only the SandboxWarmPool spec, not the template).
 func warmPoolManifest(name, ns string, minWarm, maxWarm int) string {
-	return fmt.Sprintf(`apiVersion: lenny.dev/v1
+	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: %s

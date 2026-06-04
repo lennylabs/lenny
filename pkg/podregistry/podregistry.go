@@ -122,7 +122,7 @@ type StateCounts map[string]int
 type PodSpec struct {
 	PoolID PoolID
 
-	// RuntimeDefinitionRef names the lenny.dev/v1 Runtime the new pod
+	// RuntimeDefinitionRef names the lenny.dev/v1alpha1 Runtime the new pod
 	// runs. CreatePod stamps it onto Sandbox.spec.runtimeRef, which is a
 	// required field — a pod created without it fails CRD validation.
 	RuntimeDefinitionRef string

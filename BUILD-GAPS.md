@@ -27116,7 +27116,7 @@ Summary by severity: **9 High** (HIGH-001…009), **14 Medium** (MED-010…023),
 
 ---
 
-### - [ ] F-15.5.1 — CRDs ship at `v1` instead of `v1alpha1` — graduation path skipped end to end [High] — OPEN
+### - [x] F-15.5.1 — CRDs ship at `v1` instead of `v1alpha1` — graduation path skipped end to end [High] — CLOSED
 
 `spec/15_external-api-surface.md:2433` is normative: "All Lenny CRDs ... ship initially at **`v1alpha1`** and follow the graduation path `v1alpha1` → `v1beta1` → `v1`."
 
@@ -27133,6 +27133,8 @@ Same five files mirrored under `pkg/embedded/crds/`.
 `BUILD-PROGRESS.md:34` openly states: "the chart-side ConversionWebhookConfiguration is unwired because every Lenny CRD ships at a single `v1` version, so no conversion is required yet." `spec/18_build-sequence.md:756` still lists a `v1alpha1 → v1beta1` and `v1beta1 → v1` graduation path that the implementation has already short-circuited. The spec text presumes `v1alpha1` is the v1-release state; implementation shipping `v1` directly forfeits the "60 days of no breaking changes" and "GA load-test sign-off" gates required for `v1beta1 → v1` per §15.5.
 
 Either the spec must be reworked to permit a direct-to-`v1` initial publish (with the graduation criteria deleted) or the implementation must roll the CRDs back to `v1alpha1` and add the served-version graduation path. As shipped, the implementation contradicts §15.5 item 4.
+
+**Resolution (commit `<PENDING>`):** Per Rule B the spec is authoritative, so the implementation rolled back to the §15.5 line 2433 initial graduation state: every Lenny CRD now serves and stores a single `v1alpha1` version. The Go API package moved `pkg/apis/lenny/v1` → `pkg/apis/lenny/v1alpha1` (all 73 import sites use the `lennyv1` alias, so the rename was a path-string change), `GroupVersion.Version` is now `v1alpha1`, and the `controller-gen` paths in the Makefile track the new directory. The five `charts/lenny/crds/` manifests and their `pkg/embedded/crds/` mirrors now declare `name: v1alpha1` (manual `lenny.dev/schema-version` annotations and `x-kubernetes-preserve-unknown-fields` customizations preserved by surgical edit rather than blind regeneration). Functional version literals were updated everywhere they matter: the two CRD-targeting admission webhooks (`pool-config-validator`, `direct-mode-isolation`) now match `apiVersions: ["v1alpha1"]` so they keep intercepting pool writes; the `reference-runtimes` template, kind/load-test workload manifests, and the cycle-detection runbook all emit `lenny.dev/v1alpha1`. The conversion-webhook chart wiring stays deferred (single served version needs no conversion, per the F-15.5.2 / F-15.5.3 resolution notes), which is exactly the v1alpha1 posture §15.5 prescribes. The release URL `releases.lenny.dev/v1` and the per-event-type `event_schema_version` token were left untouched (neither is the CRD API version). Tests: new `TestEmbeddedCRDsServeV1Alpha1_spec_15_5_2433` asserts the single-served-`v1alpha1` posture across all CRDs; `TestAddToSchemeRegistersAllKinds` now expects `lenny.dev/v1alpha1`; the `reference-runtimes` helm-unittest asserts the rendered `apiVersion`. `go build ./...` green, 829 helm-unittest cases pass.
 
 ### - [x] F-15.5.2 — Conversion-webhook deployment procedure has no chart template, no Service, no CRD `spec.conversion.webhook` wiring [High] — CLOSED
 

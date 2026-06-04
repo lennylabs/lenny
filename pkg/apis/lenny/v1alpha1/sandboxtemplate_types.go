@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package v1
+package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -112,7 +112,7 @@ type ConcurrentWorkspacePolicy struct {
 // PoolScalingController owns spec.*, reconciling it from the Postgres
 // pool definitions that the admin API treats as the source of truth.
 type SandboxTemplateSpec struct {
-	// RuntimeRef names the lenny.dev/v1 Runtime this pool warms.
+	// RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
 	// +kubebuilder:validation:Required
 	RuntimeRef string `json:"runtimeRef"`
 
@@ -288,7 +288,7 @@ type SandboxTemplateStatus struct {
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.executionMode`
 // +kubebuilder:printcolumn:name="Isolation",type=string,JSONPath=`.spec.isolationProfile`
 
-// SandboxTemplate is the lenny.dev/v1 declaration of one warmable pool
+// SandboxTemplate is the lenny.dev/v1alpha1 declaration of one warmable pool
 // (§5.2). The PoolScalingController reconciles it from the Postgres
 // pool definitions; the WarmPoolController warms pods against it.
 type SandboxTemplate struct {

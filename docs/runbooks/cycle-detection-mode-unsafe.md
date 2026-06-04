@@ -121,7 +121,7 @@ Run `helm upgrade`. The render writes the new value to the rendered gateway conf
 For each runtime that legitimately needs self-recursion, the runtime author updates the `Runtime` resource:
 
 ```yaml
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: <runtime_name>
@@ -132,7 +132,7 @@ spec:
 The tenant operator updates the `DelegationPolicy` resource for the affected runtime:
 
 ```yaml
-apiVersion: lenny.dev/v1
+apiVersion: lenny.dev/v1alpha1
 kind: DelegationPolicy
 metadata:
   name: <policy_name>
