@@ -63,19 +63,27 @@ type recordedRevoke struct {
 	tenant, jti, reason string
 }
 
-type fakeRevoker struct {
-	mu      sync.Mutex
-	revoked []recordedRevoke
+type fakeIssued struct {
+	mu       sync.Mutex
+	recorded []admintoken.MintedToken
+	revoked  []recordedRevoke
 }
 
-func (f *fakeRevoker) Revoke(_ context.Context, tenant, jti, reason string, _ time.Time) error {
+func (f *fakeIssued) Record(_ context.Context, rec admintoken.MintedToken) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recorded = append(f.recorded, rec)
+	return nil
+}
+
+func (f *fakeIssued) Revoke(_ context.Context, tenant, jti, reason string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.revoked = append(f.revoked, recordedRevoke{tenant, jti, reason})
 	return nil
 }
 
-func newProvisioner(t *testing.T, secrets admintoken.SecretStore, rev admintoken.Revoker) (*admintoken.Provisioner, *jwt.HMACSigner, userstore.Store) {
+func newProvisioner(t *testing.T, secrets admintoken.SecretStore, rev admintoken.IssuedTokens) (*admintoken.Provisioner, *jwt.HMACSigner, userstore.Store) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("k", []byte("admin-token-secret"))
 	users := userstore.NewMemory()
@@ -181,7 +189,7 @@ func TestProvisionIsIdempotent_spec_17_6_459(t *testing.T) {
 // and revokes the superseded token's jti immediately. F-17.6.3.
 func TestRotateMintsAndRevokesPrevious_spec_17_6_472(t *testing.T) {
 	secrets := newFakeSecrets()
-	rev := &fakeRevoker{}
+	rev := &fakeIssued{}
 	p, signer, _ := newProvisioner(t, secrets, rev)
 
 	if _, err := p.Provision(context.Background()); err != nil {
@@ -217,13 +225,21 @@ func TestRotateMintsAndRevokesPrevious_spec_17_6_472(t *testing.T) {
 	if rev.revoked[0].reason != "admin_token_rotated" {
 		t.Errorf("revoke reason = %q", rev.revoked[0].reason)
 	}
+	// Both the provisioned and rotated tokens were recorded so they are
+	// revocable; the recorded hashes match the tokens written to the Secret.
+	if len(rev.recorded) != 2 {
+		t.Fatalf("recorded tokens = %d, want 2 (provision + rotate)", len(rev.recorded))
+	}
+	if rev.recorded[1].JTI == oldClaims.JWTID {
+		t.Error("rotated token reused the prior jti")
+	}
 }
 
 // Rotate with no existing Secret provisions one fresh (an operator
 // rotating before the first bootstrap). spec: §17.6 line 472.
 func TestRotateWithoutExistingSecretCreates(t *testing.T) {
 	secrets := newFakeSecrets()
-	rev := &fakeRevoker{}
+	rev := &fakeIssued{}
 	p, _, _ := newProvisioner(t, secrets, rev)
 
 	res, err := p.Rotate(context.Background())

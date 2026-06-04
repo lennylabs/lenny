@@ -19,6 +19,7 @@ package admintoken
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -72,12 +73,27 @@ type SecretStore interface {
 	Update(ctx context.Context, namespace, name string, data map[string][]byte) error
 }
 
-// Revoker invalidates a superseded admin token by its jti. The
-// production wiring passes the §13.3 issued-token revoker so a rotated
-// token is rejected on the next request. Optional: a nil revoker leaves
-// Rotate's new-token write intact but skips immediate invalidation of
-// the old token, which then lapses only at its own expiry.
-type Revoker interface {
+// MintedToken is the §13.3 issued-token record the provisioner writes at
+// mint time so a later rotation can revoke the token by its jti.
+type MintedToken struct {
+	TenantID  string
+	Subject   string
+	JTI       string
+	TokenHash []byte
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+}
+
+// IssuedTokens records minted admin tokens and revokes superseded ones.
+// The production wiring passes the §13.3 issued-token store: recording at
+// mint makes the token revocable, and Revoke on rotation marks the prior
+// token revoked so the gateway rejects it on the next request (the §17.6
+// line 472 "immediately invalidated, not a grace period" guarantee).
+// Optional: a nil store leaves the token un-revocable, so a rotated token
+// then lapses only at its own expiry. The degraded behavior is acceptable
+// for dev/in-memory deployments that have no durable token store.
+type IssuedTokens interface {
+	Record(ctx context.Context, rec MintedToken) error
 	Revoke(ctx context.Context, tenantID, jti, reason string, at time.Time) error
 }
 
@@ -115,14 +131,14 @@ type Provisioner struct {
 	signer  Signer
 	users   userstore.Store
 	secrets SecretStore
-	revoker Revoker
+	issued  IssuedTokens
 	now     func() time.Time
 }
 
 // New builds a Provisioner. signer, users, and secrets are required;
-// revoker is optional (see Revoker). clock defaults to time.Now when
+// issued is optional (see IssuedTokens). clock defaults to time.Now when
 // nil.
-func New(cfg Config, signer Signer, users userstore.Store, secrets SecretStore, revoker Revoker, clock func() time.Time) (*Provisioner, error) {
+func New(cfg Config, signer Signer, users userstore.Store, secrets SecretStore, issued IssuedTokens, clock func() time.Time) (*Provisioner, error) {
 	if signer == nil {
 		return nil, errors.New("admintoken: signer is required")
 	}
@@ -146,7 +162,7 @@ func New(cfg Config, signer Signer, users userstore.Store, secrets SecretStore, 
 		signer:  signer,
 		users:   users,
 		secrets: secrets,
-		revoker: revoker,
+		issued:  issued,
 		now:     clock,
 	}, nil
 }
@@ -294,6 +310,23 @@ func (p *Provisioner) mint(ctx context.Context) (token, jti string, createdAt ti
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("admintoken: sign token: %w", err)
 	}
+	// Record the token in the §13.3 issued-token store so a later
+	// rotation can revoke it. A record failure aborts the mint: an
+	// un-recorded token could not be revoked, which would silently break
+	// the §17.6 line 472 rotation guarantee.
+	if p.issued != nil {
+		sum := sha256.Sum256([]byte(token))
+		if rerr := p.issued.Record(ctx, MintedToken{
+			TenantID:  p.cfg.AdminTenant,
+			Subject:   p.cfg.Username,
+			JTI:       jti,
+			TokenHash: sum[:],
+			IssuedAt:  now,
+			ExpiresAt: now.Add(p.cfg.TokenTTL),
+		}); rerr != nil {
+			return "", "", time.Time{}, fmt.Errorf("admintoken: record token: %w", rerr)
+		}
+	}
 	return token, jti, now, nil
 }
 
@@ -302,7 +335,7 @@ func (p *Provisioner) mint(ctx context.Context) (token, jti string, createdAt ti
 // before the jti field existed, or a Secret with no revoker wired, is a
 // best-effort no-op: the old token then lapses only at its own expiry.
 func (p *Provisioner) revokePrevious(ctx context.Context, prev map[string][]byte) {
-	if p.revoker == nil {
+	if p.issued == nil {
 		return
 	}
 	jti := string(prev[jtiKey])
@@ -312,7 +345,7 @@ func (p *Provisioner) revokePrevious(ctx context.Context, prev map[string][]byte
 	// Revocation is best-effort: a failure here must not block the
 	// already-committed Secret patch. The next reconcile re-attempts via
 	// the standard revocation propagation path.
-	_ = p.revoker.Revoke(ctx, p.cfg.AdminTenant, jti, "admin_token_rotated", p.now().UTC())
+	_ = p.issued.Revoke(ctx, p.cfg.AdminTenant, jti, "admin_token_rotated", p.now().UTC())
 }
 
 // secretData builds the §17.6 line 470 Secret `data` map.
