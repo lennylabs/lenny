@@ -64,6 +64,15 @@ spec:
           env:
             - name: LENNY_POSTGRES_DSN
               value: {{ $pg.dsn | quote }}
+            # §24.13 line 150: record the applying Job name in the
+            # schema_migration_phase table so `lenny-ctl migrate status`
+            # reports `migrationJobName`. The downward API resolves the
+            # generated Job name (the `job-name` label Kubernetes stamps
+            # on the Job's pods).
+            - name: LENNY_MIGRATION_JOB_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['job-name']
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

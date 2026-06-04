@@ -111,3 +111,21 @@ func TestMigrateUnknownCommand_spec_24_13(t *testing.T) {
 		t.Errorf("only down/goto are fenced, not %q: %q", "frobnicate", stderr)
 	}
 }
+
+// TestMigrateUpAcceptsJobName_spec_24_13_150 verifies the --job-name flag
+// (the §24.13 line 150 `migrationJobName` source) parses on the `up`
+// command and the run falls through to the DSN check rather than failing
+// to parse. The phase write itself runs only after a successful up
+// against a real database, so the no-DSN path stops at the DSN gate.
+func TestMigrateUpAcceptsJobName_spec_24_13_150(t *testing.T) {
+	code, _, stderr := runMigrate(t, "--job-name", "lenny-migrate-7", "up")
+	if code != 2 {
+		t.Fatalf("exit code: got %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "--postgres-dsn is required") {
+		t.Errorf("up with --job-name should reach the DSN check: %q", stderr)
+	}
+	if strings.Contains(stderr, "flag provided but not defined") {
+		t.Errorf("--job-name must be a defined flag: %q", stderr)
+	}
+}

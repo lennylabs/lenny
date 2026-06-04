@@ -31,6 +31,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
@@ -38,6 +39,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -45,6 +47,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/lennylabs/lenny/migrations"
+	"github.com/lennylabs/lenny/pkg/schemamigrate"
 )
 
 func main() {
@@ -65,6 +68,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"acknowledge the destructive down/goto bypasses the audited §24.13 rollback path (required for down/goto).")
 	confirm := fs.Bool("confirm", false,
 		"confirm a destructive down/goto operation (required for down/goto).")
+	// §24.13 line 150: the Kubernetes Job that applied a migration is
+	// recorded in the phase-tracking table and surfaced as
+	// `migrationJobName` in `lenny-ctl migrate status`. The chart wires
+	// this from the downward API (metadata.labels['job-name']) so the
+	// status surface attributes each applied version to its Job. Empty is
+	// allowed (off-cluster / manual runs); the field is then omitted.
+	jobName := fs.String("job-name", os.Getenv("LENNY_MIGRATION_JOB_NAME"),
+		"name of the Kubernetes Job applying these migrations, recorded for `migrate status` (or set LENNY_MIGRATION_JOB_NAME).")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: lenny-migrate [--postgres-dsn DSN] [--break-glass --confirm] <up|version|down|goto VERSION>")
 		fmt.Fprintln(stderr, "  (down and goto require --break-glass --confirm before the command; use `lenny-ctl migrate down` for audited rollbacks)")
@@ -101,11 +112,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch cmd {
 	case "up":
+		// Capture the pre-run version so the end-of-run phase write only
+		// stamps the versions this Job advanced through. spec: §24.13
+		// line 150 ("phase reflects the last migration Job that completed
+		// successfully").
+		prev, _, prevErr := m.Version()
+		hadPrev := prevErr == nil
 		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			fmt.Fprintf(stderr, "lenny-migrate: up: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "lenny-migrate: schema is up to date")
+		recordMigrationPhases(*dsn, *jobName, prev, hadPrev, m, stderr)
 	case "down":
 		if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			fmt.Fprintf(stderr, "lenny-migrate: down: %v\n", err)
@@ -167,6 +185,34 @@ func requireBreakGlass(cmd string, breakGlass, confirm bool, stderr io.Writer) i
 	fmt.Fprintln(stderr,
 		"lenny-migrate: for a routine, audited rollback use `lenny-ctl migrate down --version <N> --confirm`.")
 	return 2
+}
+
+// recordMigrationPhases UPSERTs a `complete` / `not_run` phase row for
+// every migration version this `up` run advanced through, recording the
+// applied-at timestamp and the Job name so `lenny-ctl migrate status`
+// reports the real expand-contract state instead of the synthesized
+// projection. A read of the post-run version or a phase-table write that
+// fails is logged and ignored: the schema migration itself succeeded, and
+// the phase data is advisory for the status surface — failing the
+// pre-deploy hook over it would block the deployment. spec: §24.13
+// line 150.
+func recordMigrationPhases(dsn, jobName string, prev uint, hadPrev bool, m *migrate.Migrate, stderr io.Writer) {
+	cur, _, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return // No migration applied (empty embed); nothing to record.
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny-migrate: phase tracking (non-fatal): read version: %v\n", err)
+		return
+	}
+	sm, err := schemamigrate.New(dsn)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny-migrate: phase tracking (non-fatal): %v\n", err)
+		return
+	}
+	if err := sm.RecordRun(context.Background(), prev, hadPrev, cur, jobName, time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "lenny-migrate: phase tracking (non-fatal): %v\n", err)
+	}
 }
 
 // newMigrator builds a migrate.Migrate over the embedded migrations

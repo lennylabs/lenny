@@ -47,6 +47,21 @@ tests:
           path: spec.template.spec.containers[0].env[0].value
           value: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
 
+  # spec: §24.13 line 150 / F-24.13.4 — the applying Job name is recorded
+  # in the schema_migration_phase table and surfaced as `migrationJobName`
+  # in `lenny-ctl migrate status`. The downward API supplies the generated
+  # Job name from the pod's `job-name` label.
+  - it: wires the Job name via the downward API for migrate status
+    set:
+      postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: LENNY_MIGRATION_JOB_NAME
+      - equal:
+          path: spec.template.spec.containers[0].env[1].valueFrom.fieldRef.fieldPath
+          value: metadata.labels['job-name']
+
   - it: applies the restricted pod security posture
     set:
       postgres.dsn: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"

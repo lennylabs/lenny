@@ -74,6 +74,41 @@ func TestMigrationStatus_spec_15_1_891(t *testing.T) {
 	}
 }
 
+// spec: §24.13 line 150 — the status response surfaces the Job-recorded
+// expand-contract fields (appliedAt, gateCheckResult, migrationJobName)
+// for an applied migration. F-24.13.4.
+func TestMigrationStatusSurfacesRecordedPhase_spec_24_13_150(t *testing.T) {
+	mgr := &fakeMigrationManager{status: schemamigrate.StatusReport{
+		CurrentVersion: 3,
+		Migrations: []schemamigrate.MigrationStatus{
+			{
+				Version:          3,
+				Phase:            "phase3_applied",
+				AppliedAt:        "2026-06-04T12:00:00Z",
+				GateCheckResult:  "fail:7_rows",
+				MigrationJobName: "lenny-migrate-42",
+			},
+		},
+	}}
+	router, _ := newMigrationAdmin(t, mgr)
+	rr := migrateReq(t, router.Handler(), http.MethodGet, "/v1/admin/schema/migrations/status", nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var out schemamigrate.StatusReport
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Migrations) != 1 {
+		t.Fatalf("want 1 migration, got %d", len(out.Migrations))
+	}
+	m := out.Migrations[0]
+	if m.Phase != "phase3_applied" || m.GateCheckResult != "fail:7_rows" ||
+		m.AppliedAt != "2026-06-04T12:00:00Z" || m.MigrationJobName != "lenny-migrate-42" {
+		t.Errorf("recorded phase fields not surfaced: %+v", m)
+	}
+}
+
 // spec: §10.2 — both endpoints require platform-admin.
 func TestMigrationStatusRejectsNonAdmin_spec_10_2(t *testing.T) {
 	router, _ := newMigrationAdmin(t, &fakeMigrationManager{})
