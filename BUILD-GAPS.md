@@ -6677,7 +6677,7 @@ Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload
 
 ### Findings
 
-### - [ ] F-7.4.1 — Archive extraction runs in the pod adapter, not in the gateway [High] — OPEN
+### - [ ] F-7.4.1 — Archive extraction runs in the pod adapter, not in the gateway [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-13.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -6688,6 +6688,26 @@ Implementation: archive entries are decoded and written to disk by `pkg/adapter/
 There is no Upload Handler subsystem in the gateway. No goroutine pool, no concurrency limit, no circuit breaker around archive parsing. The trust-boundary inversion the spec mandates is reversed in practice: a hostile archive runs inside the agent pod's adapter rather than inside the gateway's isolated subsystem.
 
 This regresses the §13.4 trust model (`spec/13_security-model.md:652`: "Upload-side validation is enforced by the gateway's Upload Handler subsystem … pod binaries neither decompress archives nor canonicalize paths on untrusted input").
+
+**Deferred:** this is a trust-boundary inversion that requires rearchitecting
+the workspace-materialization pipeline, not a wire-up. To satisfy §7.4 line 448
+/ §13.4 line 652 the gateway's Upload Handler subsystem (limiter + breaker
+already exist) must decompress, canonicalize, and §13.4-validate the archive
+in-gateway, then hand the pod only pre-extracted canonicalized files — the pod
+adapter must stop decompressing entirely. That means lifting the extractor out
+of `pkg/adapter/workspace/uploadarchive.go` into a gateway-side package, moving
+the staging→promotion / collision-detection / strip-components / symlink
+re-validation / warning-emission machinery (and their FinalizeWorkspace warning
+plumbing) across the trust boundary, rewriting each `uploadArchive` plan source
+into extracted `uploadFile`/`mkdir` sources before `PrepareWorkspace`, and
+unwinding a large body of pod-side archive tests (F-7.4.2/.3/.4/.12/.13). It is
+a multi-batch architectural effort comparable to the §12.8 tenant-deletion
+cluster, and a half-done version that leaves the pod decompressing would not
+satisfy the trust model. Closes alongside F-13.4.1 (same defect). The §13.4
+ceilings, non-regular/symlink rejection, atomic staging→promotion, and
+extraction-abort cleanup are all enforced today on the pod-side path
+(F-7.4.2/.3/.4/.12/.13), so the security ceilings hold; only the *location* of
+extraction is wrong.
 
 ### - [x] F-7.4.2 — §13.4 archive ceilings are not enforced at extraction [High] — CLOSED
 
@@ -20236,7 +20256,7 @@ because the fix is a v1 interface change (not a per-call defense addition).
   resolved request tenant (see F-12.5.8) rather than relying on a per-caller
   comparison.
 
-### - [ ] F-12.5.10 — gateway-level GC orchestrator (leader-elected) is missing (§12.5 lines 317, 318, 320, 331–339) [High] — OPEN
+### - [x] F-12.5.10 — gateway-level GC orchestrator (leader-elected) is missing (§12.5 lines 317, 318, 320, 331–339) [High] — CLOSED
 
 §12.5 lines 317–321 mandate a leader-elected goroutine inside the gateway
 that runs every `gc.cycleIntervalSeconds` (default 900s), and lines 331–339
@@ -20267,6 +20287,39 @@ Consequence: the entire §12.5 GC concurrency model is unbacked. The
 `lenny_artifact_gc_backlog`) is silent because no live code computes that
 gauge. The spec's "convergent, idempotent, single-writer" guarantee (line 339)
 is vacuous: there is no writer.
+
+**Resolution:** The GC *orchestrator* half was already stale — the §12.5
+sweeps had landed (artifact-GC soft-delete via `blobsCataloged.SoftDeleteSession`
+with the tombstone deadline, the §12.5 line 341 hard-prune of both
+`artifact_store` and `partial_manifest` rows, and the gc.cycleInterval /
+gc.tombstoneRetention chart values, per F-12.5.11 / F-12.5.19). The genuine
+residual this finding names — the `lenny-gateway-leader` Lease so exactly one
+replica is the GC writer (§12.5 lines 317, 332) — was missing: every sweep ran
+unconditionally via `go X.Run(watchdogCtx, …)` while comments claimed
+leader-election. This batch lands the primitive. New `pkg/gateway/gatewayleader`
+provides a client-go Lease-based `LeaseElector` (lease name
+`lenny-gateway-leader`, 15s+10s = 25s §4.6.1 crash-failover bound,
+`ReleaseOnCancel` for the near-zero clean-shutdown handoff), an `AlwaysLeader`
+fallback (single-process dev / non-cluster), and a `Gate` that launches every
+registered sweep with a leader-scoped context on acquisition and tears them down
+(context cancel) on loss. `cmd/lenny-gateway/main.go` now resolves an in-cluster
+clientset (`rest.InClusterConfig`, gated by `--gateway-leader-election`, default
+true; falls back to AlwaysLeader off-cluster), builds the elector with
+POD_NAME/POD_NAMESPACE identity, and registers the six gateway-singleton sweeps
+the spec/comments tie to the lease (artifact-GC, tombstone hard-prune,
+audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4
+KMS probe) on the `Gate` instead of launching them un-elected — so the §12.5
+line 339 single-writer guarantee is now real for all six, with the per-row
+`WHERE deleted_at IS NULL` guards (rules 2-6) covering the bounded failover
+window. The chart adds the namespaced `lenny-gateway-leader-election`
+Role/RoleBinding (coordination.k8s.io leases verbs, mirroring
+`lenny-controller-leader-election`) and the `gc.leaderElection` value
+(`LENNY_GATEWAY_LEADER_ELECTION`). The `lenny_artifact_gc_backlog` *gauge*
+remains a tracked §16.1 metric-emission residual (it needs a pending-eligible
+count query, distinct from the writer this finding is about). Tests: 6 tier-1
+(`gatewayleader` AlwaysLeader run/stop, Gate run-all/nil-job/loss-and-reacquire,
+lease constants + timings) and 4 tier-2 helm-unittest (Role verbs, RoleBinding
+subject, env var, document-count). Commit (see below).
 
 ### - [x] F-12.5.11 — tombstone hard-prune sweep is unwired; spec'd metric never emitted (§12.5 line 341) [High] — CLOSED
 
@@ -23802,7 +23855,7 @@ Implementation surveyed:
 - `pkg/blobstore/blobstore.go`
 - `pkg/audit/audit.go`, `pkg/audit/ocsf/`, `pkg/observability/metrics/catalog.go`
 
-### - [ ] F-13.4.1 — Archive extraction runs in the pod adapter, not the gateway Upload Handler [High] — OPEN
+### - [ ] F-13.4.1 — Archive extraction runs in the pod adapter, not the gateway Upload Handler [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-7.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -23839,6 +23892,14 @@ see canonicalised, validated content. Every archive-extraction bug that the
 spec assigns to the gateway's isolated subsystem instead runs in the pod, with
 no isolation from the agent process. Cluster-wide DoS bounds are also lost
 because there is no per-gateway upload concurrency cap.
+
+**Deferred:** duplicate of F-7.4.1 (same trust-boundary inversion). See the
+F-7.4.1 deferral note — it is a multi-batch rearchitecture of the
+workspace-materialization pipeline, not a wire-up. The per-gateway Upload
+Handler concurrency cap + breaker this finding also names already exist
+(`uploadSubsystem` limiter/breaker in `pkg/gateway/sessionserver/upload.go`);
+the missing piece is moving the decompression+canonicalization itself into the
+gateway. Will close together with F-7.4.1.
 
 ### - [x] F-13.4.2 — None of the §13.4 normative archive ceilings are enforced on the extraction path [High] — CLOSED
 
@@ -43877,9 +43938,21 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 ### Findings
 
-### - [ ] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — OPEN
+### - [ ] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — DEFERRED
 
 `cmd/runtimes/` contains only the in-tree echo/MCP reference runtimes (`echo`, `streaming-echo`, `cred-shell-echo`, `delegation-echo`, `elicitation-echo`, `echo-embedded`, `mcp-reference`). There is no `cmd/runtimes/openai-assistants/` directory and no producer of an `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0` image in this repo, even though `pkg/embedded/stack/catalog.go:82-86` and `charts/lenny/values.yaml:734-737` register that image as a §26 reference runtime. §26.10 ("Bootstrap: on session start, adapter creates a Thread on OpenAI with the assistant ID … appends to the thread and starts a Run … streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes") describes work that has no implementation. §18 also lists `openai-assistants` among the nine first-party reference runtimes ("packaged, signed, and registered with the gateway via `lenny-ctl admin runtimes register`"); the package/sign step has no source artifact to build. Treated as Medium because the runtime is published as part of the spec's reference catalog and may live in an external `github.com/lennylabs/runtime-openai-assistants` repository per §26.10's **Repository** field. If so, this audit only flags the missing in-monorepo build target; the gap is informational against the in-tree implementation surfaces.
+
+**Deferred:** by the finding's own framing this is informational against the
+in-tree surfaces — §26.10 names a **Repository** field, so the runtime is built
+and signed in an external repo, not the monorepo. Implementing a real
+OpenAI-Assistants adapter in-tree would require live OpenAI Threads/Runs API
+integration (Thread bootstrap, Run streaming, `code_interpreter`/`file_search`
+tool-call envelope mapping, Files-API forwarding) that cannot be exercised
+without the external service and is out of scope for the in-monorepo build. All
+in-tree registration surfaces are already correct (catalog, chart Runtime CR
+with `runtimeOptionsSchemaRef`/`capabilities`/`credentialCapabilities`,
+compliance baseline — F-26.10.2/.3/.4/.5). The binary itself stays an external
+artifact.
 
 ### - [x] F-26.10.2 — Registered `Runtime` record omits the §26.10 `runtimeOptionsSchema` (Medium) [Medium] — CLOSED
 
@@ -43923,12 +43996,25 @@ Reviewed: 2026-05-23
 
 ### Findings
 
-### - [ ] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — OPEN
+### - [ ] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — DEFERRED
 
 Spec §26.11 documents the `crewai` reference runtime as a first-class catalogue entry that bootstraps `crew.kickoff(...)`, streams agent-internal thoughts and tool calls, and maps `Task.delegate` to `lenny/delegate_task`. The repository ships no `cmd/runtimes/crewai/` adapter package (`ls /Users/joan/projects/lenny/cmd/runtimes/` lists only `cred-shell-echo`, `delegation-echo`, `echo`, `echo-embedded`, `elicitation-echo`, `mcp-reference`, `streaming-echo`). `tests/spec-map.json` (`spec/26.11`) points at `cmd/runtimes/crewai` and reports `tests: []`, and `tests/spec-map-exceptions.yaml:177-179` records the gap with `reason: deferred, justification: The crewai reference runtime is built in Wave 6 (Phase 11)`. The current branch is on Wave 5 (per repository state), so this is a known deferral rather than a regression; calling it Medium because the spec section is in force and the binary is the artefact the section describes.
 
 - Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:453-479`
 - Evidence: missing `/Users/joan/projects/lenny/cmd/runtimes/crewai/`; `/Users/joan/projects/lenny/tests/spec-map.json:3031-3040`; `/Users/joan/projects/lenny/tests/spec-map-exceptions.yaml:177-179`
+
+**Deferred:** the finding itself records this as a known Wave-6 (Phase 11)
+deferral tracked in `tests/spec-map-exceptions.yaml:177-179` ("The crewai
+reference runtime is built in Wave 6 (Phase 11)") — a designed schedule
+deferral, not a regression. A real CrewAI runtime is a Python, sandboxed,
+integration-level `full` adapter that imports `runtimeOptions.crewModule`,
+resolves the `Crew` object, calls `crew.kickoff(...)`, and maps `Task.delegate`
+onto `lenny/delegate_task`; it depends on the external CrewAI framework and
+cannot be implemented or exercised meaningfully in-tree at this wave. The in-tree
+registration surfaces (catalog, chart Runtime CR with
+`runtimeOptionsSchemaRef`/`delegationPolicyRef`/`capabilities`, conformance
+fixtures) are already in place (F-26.11.2/.3/.4). Re-DEFERRED to its existing
+Wave-6 exception.
 
 ### - [x] F-26.11.2 — Required §26.11 Runtime fields are not encoded in any installable manifest [Medium] — CLOSED
 
