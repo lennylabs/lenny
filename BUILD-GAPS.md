@@ -33214,7 +33214,7 @@ without manual `lenny-ctl admin pools create` calls outside the chart.
 
 ---
 
-### - [ ] F-17.6.3 — Initial admin token Secret (`lenny-admin-token`) is not created [High] — OPEN
+### - [x] F-17.6.3 — Initial admin token Secret (`lenny-admin-token`) is not created [High] — CLOSED
 
 **Spec:** §17.6 lines 455–474 define a fail-safe initial admin credential
 mechanism: the bootstrap Job creates an initial `platform-admin` user
@@ -33250,6 +33250,8 @@ authenticating the bootstrap Job itself (lines 415–474).
 - `/Users/joan/projects/lenny/charts/lenny/templates/bootstrap-job.yaml` (no Secret-create step)
 - `/Users/joan/projects/lenny/pkg/gateway/admin/bootstrap.go` (no admin-user / token creation)
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go` (no `admin users rotate-token` subcommand; see lines 73-122)
+
+**Resolution:** New `pkg/gateway/admintoken.Provisioner` provisions the §17.6 initial credential: it ensures the `lenny-admin` platform-admin user, mints a gateway-signed `user_bearer` token (recorded in `issued_tokens` so it is revocable), and writes/preserves the `lenny-system/lenny-admin-token` Secret with the §17.6 labels + `{token, created_at}` data idempotently (re-runs preserve the existing token). `handleBootstrap` provisions after seeding (skipped on dry-run) and returns `adminToken.secretCreated`. `Rotate` (exposed at `POST /v1/admin/users/{user}/rotate-token`) mints a fresh token, patches the Secret, and revokes the prior jti immediately across replicas. The gateway is the actor (signer + k8s client + issued-token store); `k8ssecret.Store` adapts the controller-runtime client, gated behind `--admin-token-*` flags and a least-privilege namespaced Role (create on Secrets, get/update/patch confined to `lenny-admin-token`). The bootstrap chicken-and-egg is resolved: the operator-token-authenticated bootstrap call triggers provisioning. Commits c7… (61b82757, b234b6ab, 6cf0f33e, f369bcd8, dffe1a96).
 
 ---
 
@@ -33611,7 +33613,7 @@ the `kubectl-lenny` name (via krew) and bundled in the `lenny-*` archive.
 
 **Resolution:** Closed by F-24.0.2 (confirmed duplicate). A signed standalone `lenny-ctl_<tag>_<os>_<arch>` archive is now published and `dist/brew/lenny-ctl.rb` installs the `lenny-ctl` binary. Commit 4b666d57.
 
-### - [ ] F-17.6.14 — `lenny-ctl bootstrap` does not log `first-use` token-retrieval prompt [Medium] — DEFERRED
+### - [x] F-17.6.14 — `lenny-ctl bootstrap` does not log `first-use` token-retrieval prompt [Medium] — CLOSED
 
 **Spec:** §17.6 line 473: bootstrap CLI prints `"Initial admin token written
 to Secret lenny-system/lenny-admin-token. Retrieve with: kubectl get secret
@@ -33630,6 +33632,8 @@ fails.
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:485-547`
 
 **Deferred (batch 27036a8f):** Blocked on F-17.6.3. The first-use vs re-run log lines announce that the `lenny-system/lenny-admin-token` Secret was written, but no code path creates that Secret yet (F-17.6.3, still OPEN). Emitting the log line before the Secret-creation mechanism exists would mislead the operator. Re-attempt once F-17.6.3 lands the admin-token Secret + idempotent creation path.
+
+**Resolution:** Unblocked and closed by F-17.6.3/F-24.1.7 (this batch). F-17.6.3 lands the gateway-side Secret creation + idempotent re-run path, so `lenny-ctl bootstrap` now prints the §17.6 line 473 first-use prompt on a fresh Secret and the "already exists" notice on a re-run, both keyed off the gateway's `adminToken.secretCreated` response signal (so the log line never fires before the Secret actually exists). Closed by F-24.1.7 (duplicate first-use-prompt requirement).
 
 ---
 
@@ -36498,7 +36502,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ---
 
-### - [ ] F-24.1.7 — (Medium) — First-use admin-token retrieval prompt is unimplemented [Medium] — OPEN
+### - [x] F-24.1.7 — (Medium) — First-use admin-token retrieval prompt is unimplemented [Medium] — CLOSED
 
 **Spec (R13):** §17.6:455-474 places the responsibility on the bootstrap Job ("The bootstrap Job creates an initial `platform-admin` user (username: `lenny-admin`) with a generated API token. … `lenny-ctl bootstrap` prints a post-run message: \"Initial admin token written to Secret lenny-system/lenny-admin-token. Retrieve with: …\""). The CLI behavior is part of the §24.1 contract because the Helm Job's container runs `lenny-ctl bootstrap`.
 
@@ -36508,6 +36512,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 - The chart's `bootstrap-job.yaml` consumes a pre-existing `operatorTokenSecret`; it does not provision one.
 
 **Impact:** Fresh installs that follow the documented onboarding path "run `helm install`, then read the token from `lenny-system/lenny-admin-token`" find no Secret. The first-use experience documented in §17.6:473 does not exist. This is on the boundary between §24.1 (CLI) and §17.6 (Helm) — recorded here because §24.1 is the index for the CLI command, and the §17.6 prose explicitly names `lenny-ctl bootstrap` as the surface that prints the prompt.
+
+**Resolution:** Closed by F-17.6.3 (this batch). The bootstrap admin endpoint now provisions the credential and returns `adminToken.secretCreated`; `lenny-ctl bootstrap` prints the exact §17.6 line 473 first-use prompt (`Initial admin token written to Secret …/…. Retrieve with: kubectl get secret … | base64 -d`) on a first run and `Admin token Secret already exists — no changes.` on a re-run, to stderr so a script parsing the JSON result is unaffected. Tier-1 CLI test `TestBootstrapAdminTokenFirstUsePrompt_spec_17_6_473` covers both branches. Commits f369bcd8, b234b6ab.
 
 ---
 
