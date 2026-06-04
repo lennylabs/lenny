@@ -11916,7 +11916,7 @@ backend's probe row. Closes duplicates F-12.1.4, F-12.2.10, F-12.8.9.
 
 ---
 
-### - [ ] F-9.4.4 — (High) — `MemoryStore.DeleteByTenant` is never called from any tenant-deletion site [High] — DEFERRED
+### - [x] F-9.4.4 — (High) — `MemoryStore.DeleteByTenant` is never called from any tenant-deletion site [High] — CLOSED
 
 Spec wording (§9.4 line 196): "**Erasure contract (mandatory).** `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error` are **mandatory** interface methods, not optional extension points. They are invoked by the erasure job ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) and must synchronously remove every persisted memory record that matches the supplied scope before returning `nil`."
 
@@ -11944,6 +11944,19 @@ would contradict §12.8's soft-delete/hard-purge separation (Rule F). The
 MemoryStore implementation half is complete (`InMemory` + `pgstore`
 `DeleteByTenant`); deferred until the §12.8 Phase-4 tenant-deletion
 controller lands as its own batch.
+
+**Resolution (65df24ad):** Unblocked by F-12.8.1, which landed the §12.8
+Phase-4 tenant-deletion controller as a gateway-hosted background
+reconciler. The Phase-4 `TenantEraser`
+(`cmd/lenny-gateway/tenantdeletion.go`, wired in `main.go`) now composes
+`memories.DeleteByTenant` into the dependency-ordered erase set
+(`namedTenantEraser{"memory", …}`, wired whenever a MemoryStore backend
+is present), so an offboarded tenant's `agent_memory` rows are
+synchronously purged during deletion ahead of the SessionStore FK parent.
+The soft-delete/hard-purge separation §12.8 mandates is preserved: DELETE
+only transitions the tenant to `disabling`; the controller runs the
+destructive `DeleteByTenant` sweep. The implementation half was already
+complete; this batch supplied the production invocation site.
 
 ---
 
@@ -21516,7 +21529,7 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 
 ### Findings
 
-### - [ ] F-12.8.1 — Tenant-deletion lifecycle (§12.8 Phases 1–6) is not wired into any running process [High] — OPEN
+### - [x] F-12.8.1 — Tenant-deletion lifecycle (§12.8 Phases 1–6) is not wired into any running process [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-24.10.3 — F-12.8.1 and F-24.10.3 both report the tenant-deletion lifecycle controller is not wired/initiated; F-24.10.4 is a distinct defect about GET tenant not surfacing deletion state.
 
@@ -21534,7 +21547,29 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 - `/Users/joan/projects/lenny/cmd/lenny-controller/main.go` — no `tenantdeletion` import or wiring.
 - `pkg/controller/tenantdeletion/{controller,runnable}_test.go` — only consumers.
 
-### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — OPEN
+**Resolution (65df24ad):** The reconciler is now hosted as a background
+loop inside `lenny-gateway`, which owns the §12.8 erasure-scope stores,
+the KMS lifecycle, and the audit appender (the K8s `lenny-controller`
+has no store access, so the gateway is the correct host). The new
+`tenantDeletionRunner` (`cmd/lenny-gateway/tenantdeletion.go`)
+reconstructs an in-memory `tenantdeletion.Job` from the persisted
+`TenantState` each pass, advances one phase via `Reconciler.ReconcileAll`,
+syncs the job state back onto the tenant row, and tombstones the row
+(state `deleted` + `deletedAt`) at Phase 6 — all under a `pg_try_advisory_lock`
+single-flight guard so the destructive loop runs on one replica. The
+`TenantEraser` composes `DeleteByTenant` across leases, quota, memory,
+eval, interactions, sessions, tokens, and credential pools in §12.8
+Phase 4 dependency order; the receipt is written as a `gdpr.tenant_erased`
+audit event. A new §12.8 Phase 3.5 standard (blocking) path was added to
+the controller (`PhaseLegalHoldSegregation`): it enumerates active
+tenant-scoped holds and pauses the deletion before any destructive
+operation; the override/escrow path is F-12.8.2 (deferred).
+Revoker/Cleaner/KMS were relaxed to optional because a
+probe-only gateway cannot run control-plane Phase 4a KMS destroy
+(operator-driven per §12.5 line 301) and has no k8s client for CRD
+cleanup. Closes the DELETE-side initiation jointly with F-24.10.3.
+
+### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-24.10.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
 
@@ -21549,6 +21584,24 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 - `grep -rn "gdpr.legal_hold_overridden_tenant"` outside `pkg/observability/audit/catalog.go` and `pkg/audit/ocsf/mapping.go` returns no emitter.
 
 **Impact:** A tenant-scope legal hold cannot be honored during deletion. The "destroying held evidence is spoliation" invariant the spec marks as mandatory and fail-closed has no enforcement path.
+
+**Deferred (65df24ad):** The mandatory fail-closed half of this invariant
+is now enforced: F-12.8.1 added §12.8 Phase 3.5 to the controller, which
+enumerates active tenant-scoped holds (session + artifact) and **pauses**
+the deletion (`admin.tenant.deletion_blocked`) before any destructive
+Phase 4 / 4a operation rather than destroying held evidence. The
+remaining override/escrow path (`POST /v1/admin/tenants/{id}/force-delete`,
+re-encrypt under the region-scoped `legal_hold_escrow_kek`
+`platform:legal_hold_escrow:<region>`, migrate ciphertext to a
+`COMPLIANCE`-mode object-lock escrow bucket, emit
+`legal_hold.escrow_region_resolved` / `legal_hold.escrowed` /
+`gdpr.legal_hold_overridden_tenant`) is a large, separable subsystem that
+depends on (a) a region-scoped escrow KMS keyring + escrow bucket not
+present in v1, and (b) the §12.8 line 885 CMP-058 platform-tenant audit
+residency routing (`PlatformPostgres(region)` /
+`PLATFORM_AUDIT_REGION_UNRESOLVABLE`), which is itself OPEN as F-11.7.9.
+Deferred pending that infrastructure; the spoliation-protection invariant
+is satisfied in the interim by the Phase 3.5 block.
 
 ### - [x] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — CLOSED
 
@@ -38487,7 +38540,7 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:275-319`.
 
 **Resolution:** `cmdTenants` now handles `delete <id>` → `DELETE /v1/admin/tenants/{id}` (204 No Content), printing a confirmation that points the operator at `tenants get <id>` to monitor the §12.8 lifecycle. The subcommand-required hint, package doc comment, and usage banner now advertise `list|get|create|delete`. Tier-1 CLI tests cover the DELETE routing, missing-`<id>` exit-2, server-error propagation, the unknown-subcommand path, and `get` routing. The endpoint's full lifecycle behavior (soft-delete today) is tracked by F-24.10.3 / F-12.8.1.
 
-### - [ ] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — OPEN
+### - [ ] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-12.8.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
 
@@ -38502,7 +38555,15 @@ The error code `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` named by the spec does not 
 
 Locations: `cmd/lenny-ctl/main.go:275-319`; `pkg/gateway/admin/tenants.go:257-276`; `pkg/controller/tenantdeletion/lifecycle.go:99-107`; `pkg/observability/audit/catalog.go:183-184`; `pkg/alerting/rules/rules.go:382-389`, `:983-989`.
 
-### - [ ] F-24.10.3 — `DELETE /v1/admin/tenants/{id}` does not initiate the §12.8 deletion lifecycle [High] — OPEN
+**Deferred (65df24ad):** Duplicate of F-12.8.2 (the controller + escrow
+half of the force-delete path). The plain DELETE lifecycle now exists
+(F-24.10.3), and §12.8 Phase 3.5 now adds the standard-path legal-hold
+block (`TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` semantics enforced in the
+controller as a pause), but the `force-delete` endpoint + CLI + escrow
+re-encryption depend on the region-scoped escrow KEK/bucket and CMP-058
+platform-audit residency routing (F-11.7.9, OPEN). Deferred with F-12.8.2.
+
+### - [x] F-24.10.3 — `DELETE /v1/admin/tenants/{id}` does not initiate the §12.8 deletion lifecycle [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-12.8.1 — F-12.8.1 and F-24.10.3 both report the tenant-deletion lifecycle controller is not wired/initiated; F-24.10.4 is a distinct defect about GET tenant not surfacing deletion state.
 
@@ -38513,6 +38574,18 @@ Spec §24.10 row 3 binds `lenny-ctl admin tenants delete` to `DELETE /v1/admin/t
 A deletion request therefore sets `deletedAt` and stops there. The tenant never advances through `disabling`/`deleting`/`deleted`; Phase 1 soft-disable (reject new sessions, API keys, sign-ups), Phase 2 session termination, Phase 3 credential revocation, Phase 4 `DeleteByTenant`, Phase 4a KMS-key destruction, Phase 5 CRD cleanup, and Phase 6 erasure receipt are never executed. The §12.8 SLA timers (T3 72h / T4 4h) are not started; the `lenny_tenant_deletion_duration_seconds` histogram and the `TenantDeletionDurationHighRisk` alert are not exercised by any production deletion.
 
 Locations: `pkg/gateway/admin/tenants.go:1217-1239`; `pkg/controller/tenantdeletion/controller.go:115-139`; `pkg/controller/tenantdeletion/lifecycle.go:42-107`.
+
+**Resolution (65df24ad):** `handleDeleteTenant` now reads the tenant,
+rejects a tombstone as not-found, and transitions an active tenant
+`active → disabling` (idempotent for a tenant already mid-lifecycle),
+returning `202 Accepted` with the new state and emitting
+`admin.tenant.deletion_initiated`. The gateway-hosted tenant-deletion
+controller (F-12.8.1) picks up any tenant in `disabling`/`deleting` and
+advances it through `disabling → deleting → deleted` asynchronously,
+running Phases 1–6 (including the new Phase 3.5 legal-hold block). The
+soft-delete tombstone is now written by the controller's Phase 6, not by
+the handler. Operators monitor progress via `GET /v1/admin/tenants/{id}`
+(F-24.10.4). The §12.8 SLA clock starts at the `disabling` transition.
 
 ### - [x] F-24.10.4 — `GET /v1/admin/tenants/{id}` cannot surface "deletion state" [High] — CLOSED
 
@@ -38526,7 +38599,7 @@ Locations: `pkg/gateway/admin/tenants.go:569-621`, `:873-886`.
 
 **Resolution:** Closed by F-12.8.12 (commit `f1d9baa1`), which added the `tenants.state` column, `tenantstore.Tenant.State`, and the `state` field on `TenantPayload` (set by `fromTenantWithProbe` via `tenantStateOrActive`). `GET /v1/admin/tenants/{id}` now surfaces the §12.8 TenantState: a tenant mid-lifecycle (`disabling`/`deleting`) resolves 200 with the in-progress `state`, and a `deleted` tombstone returns 410 Gone carrying `state` and `deletedAt`. This is the §24.10 "deletion state" the operator monitors; the controller's finer-grained `Phase` is internal and not part of the §24.10 row-2 contract. The intermediate-state monitoring path is now pinned by `TestTenantGetSurfacesInProgressDeletionState_spec_24_10_127`, alongside the existing `TestTenantStateExposedInAdminAPI_spec_12_8_865`.
 
-### - [ ] F-24.10.5 — Legal-hold override scaffolding is forward-declared without coverage [Medium] — OPEN
+### - [ ] F-24.10.5 — Legal-hold override scaffolding is forward-declared without coverage [Medium] — DEFERRED
 
 The audit event types `gdpr.legal_hold_overridden_tenant` and `legal_hold.escrow_region_resolved` (`pkg/observability/audit/catalog.go:183-184`), the OCSF mapping (`pkg/audit/ocsf/mapping.go:94`), the alert rules `LegalHoldOverrideUsedTenant` and `LegalHoldEscrowResidencyViolation` (`pkg/alerting/rules/rules.go:382-389`, `:983-989`), and the metric `lenny_legal_hold_escrow_region_unresolvable_total` (`pkg/observability/metrics/catalog.go:283`) are declared but no production code emits, increments, or otherwise references them. The PromQL alert expressions watch counters that no code path increments; the catalog entries describe a flow that does not run.
 
@@ -38535,6 +38608,14 @@ The closest live precedent is `pkg/gateway/admin/erasure.go:46,:117`, which impl
 This finding is dependent on F2 (a force-delete handler must exist to wire these emitters), but it is reported separately because the alert/metric scaffolding has already shipped to operators and would silently never fire even if the handler were added without re-routing the emitters.
 
 Locations: `pkg/observability/audit/catalog.go:183-184`; `pkg/audit/ocsf/mapping.go:94`; `pkg/alerting/rules/rules.go:382-389`, `:983-989`; `pkg/observability/metrics/catalog.go:283`; `tests/tier8_chaos/scaffolds_test.go:327-329` (logs-only stub for `TestLegalHoldOverrideFlow`).
+
+**Deferred (65df24ad):** Dependent on F-12.8.2 (the force-delete handler
+that would emit `gdpr.legal_hold_overridden_tenant` /
+`legal_hold.escrow_region_resolved` and increment
+`lenny_legal_hold_escrow_region_unresolvable_total`). F-12.8.1 added the
+adjacent `admin.tenant.deletion_blocked` emitter (standard Phase 3.5
+path), but the override-specific scaffolding still has no producer until
+the escrow path ships. Deferred with F-12.8.2 / F-24.10.2.
 
 ### - [x] F-24.10.6 — CLI documentation drift on §24.10 [Low] — CLOSED
 
