@@ -26868,7 +26868,7 @@ HIGH items:
   gains `response_matches_jsonl_schema` (§15.4.6 line 2405) and
   `outputpart_schema_compliance` (line 2408).
 
-Resolved in commit {COMMIT_SHA}. (15.4-LOW-028's SDK emit path stays under
+Resolved in commit a7b22bc0. (15.4-LOW-028's SDK emit path stays under
 the already-CLOSED F-15.4.3 — it needs a new public SDK outbound-emit API,
 mirroring the equally-unused `outboundStatus`; the adapter-side consumer
 HIGH-005 mandates is in force.)
