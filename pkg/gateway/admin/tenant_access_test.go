@@ -181,7 +181,7 @@ func TestListRuntimesTenantScoped(t *testing.T) {
 		t.Fatalf("tenant-admin list: status %d, body %s", rr.Code, rr.Body.String())
 	}
 	var scoped struct {
-		Runtimes []admin.RuntimePayload `json:"runtimes"`
+		Runtimes []admin.RuntimePayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &scoped)
 	if len(scoped.Runtimes) != 2 {
@@ -191,7 +191,7 @@ func TestListRuntimesTenantScoped(t *testing.T) {
 	// A platform-admin sees every runtime, unfiltered.
 	rrP := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes", nil, withAdminPrincipal)
 	var all struct {
-		Runtimes []admin.RuntimePayload `json:"runtimes"`
+		Runtimes []admin.RuntimePayload `json:"items"`
 	}
 	_ = json.Unmarshal(rrP.Body.Bytes(), &all)
 	if len(all.Runtimes) != 3 {
@@ -245,7 +245,7 @@ func TestListPoolsTenantScoped(t *testing.T) {
 		t.Fatalf("tenant-admin list: status %d, body %s", rr.Code, rr.Body.String())
 	}
 	var scoped struct {
-		Pools []admin.PoolPayload `json:"pools"`
+		Pools []admin.PoolPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &scoped)
 	if len(scoped.Pools) != 1 || scoped.Pools[0].Name != "pool-a" {

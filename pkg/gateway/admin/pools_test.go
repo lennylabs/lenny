@@ -227,7 +227,7 @@ func TestListPoolsFilterByRuntime(t *testing.T) {
 		t.Fatalf("status: %d", rr.Code)
 	}
 	var resp struct {
-		Pools []admin.PoolPayload `json:"pools"`
+		Pools []admin.PoolPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Pools) != 1 || resp.Pools[0].Name != "a" {

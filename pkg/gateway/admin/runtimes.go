@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/agentcard"
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/semver"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -874,8 +875,18 @@ func (r *Router) handleListRuntimes(w http.ResponseWriter, req *http.Request) {
 	for _, rt := range rows {
 		out = append(out, fromRuntime(rt))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"runtimes": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(rt RuntimePayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return rt.Name, rt.Name
+			case "updated_at":
+				return rt.UpdatedAt, rt.Name
+			default:
+				return rt.CreatedAt, rt.Name
+			}
+		})
 }
 
 func (r *Router) handleGetRuntime(w http.ResponseWriter, req *http.Request) {

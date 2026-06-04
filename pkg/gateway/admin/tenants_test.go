@@ -512,7 +512,7 @@ func TestListTenants(t *testing.T) {
 		t.Fatalf("status: %d", rr.Code)
 	}
 	var resp struct {
-		Tenants []admin.TenantPayload `json:"tenants"`
+		Tenants []admin.TenantPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Tenants) != 1 || resp.Tenants[0].ID != "acme" {

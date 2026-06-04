@@ -85,7 +85,7 @@ func TestPoolListCarriesPerItemETag_spec_15_1_1209(t *testing.T) {
 		t.Fatalf("list: %d body=%s", rr.Code, rr.Body.String())
 	}
 	var page struct {
-		Pools []admin.PoolPayload `json:"pools"`
+		Pools []admin.PoolPayload `json:"items"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode list: %v body=%s", err, rr.Body.String())

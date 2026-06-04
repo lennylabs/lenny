@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -644,8 +645,18 @@ func (r *Router) handleListPools(w http.ResponseWriter, req *http.Request) {
 	for _, p := range rows {
 		out = append(out, fromPool(p))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"pools": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(p PoolPayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return p.Name, p.Name
+			case "updated_at":
+				return p.UpdatedAt, p.Name
+			default:
+				return p.CreatedAt, p.Name
+			}
+		})
 }
 
 func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {

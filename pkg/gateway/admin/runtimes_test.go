@@ -195,7 +195,7 @@ func TestListRuntimesFilterByType(t *testing.T) {
 		t.Fatalf("status: %d", rr.Code)
 	}
 	var resp struct {
-		Runtimes []admin.RuntimePayload `json:"runtimes"`
+		Runtimes []admin.RuntimePayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Runtimes) != 1 || resp.Runtimes[0].Name != "b-mcp" {

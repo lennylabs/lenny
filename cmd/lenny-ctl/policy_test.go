@@ -54,10 +54,10 @@ func TestPolicyAuditIsolation_ReportsViolation_spec_24_14(t *testing.T) {
 	f := policyFixture{
 		policies: `{"delegationPolicies":[{"name":"team","tenantId":"acme",
 			"rules":[{"target":{"types":["agent"]},"allow":true}]}]}`,
-		pools: `{"pools":[
+		pools: `{"items":[
 			{"name":"kata-pool","runtimeRef":"coder","isolationProfile":"microvm"},
 			{"name":"runc-pool","runtimeRef":"chat","isolationProfile":"standard"}]}`,
-		runtimes: `{"runtimes":[
+		runtimes: `{"items":[
 			{"name":"coder","type":"agent","labels":{}},
 			{"name":"chat","type":"agent","labels":{}}]}`,
 	}
@@ -87,10 +87,10 @@ func TestPolicyAuditIsolation_Clean_spec_24_14(t *testing.T) {
 	f := policyFixture{
 		policies: `{"delegationPolicies":[{"name":"team",
 			"rules":[{"target":{"types":["agent"]},"allow":true}]}]}`,
-		pools: `{"pools":[
+		pools: `{"items":[
 			{"name":"kata-a","runtimeRef":"coder","isolationProfile":"microvm"},
 			{"name":"kata-b","runtimeRef":"chat","isolationProfile":"microvm"}]}`,
-		runtimes: `{"runtimes":[
+		runtimes: `{"items":[
 			{"name":"coder","type":"agent"},{"name":"chat","type":"agent"}]}`,
 	}
 	code, report, stderrOut := runPolicyAudit(t, f)
@@ -109,11 +109,11 @@ func TestPolicyAuditIsolation_LabelMatchAcrossRuntimes_spec_24_14(t *testing.T) 
 	f := policyFixture{
 		policies: `{"delegationPolicies":[{"name":"plat",
 			"rules":[{"target":{"matchLabels":{"team":"platform"}},"allow":true}]}]}`,
-		pools: `{"pools":[
+		pools: `{"items":[
 			{"name":"kata","runtimeRef":"coder","isolationProfile":"microvm"},
 			{"name":"runc-in","runtimeRef":"chat","isolationProfile":"standard"},
 			{"name":"runc-out","runtimeRef":"ext","isolationProfile":"standard"}]}`,
-		runtimes: `{"runtimes":[
+		runtimes: `{"items":[
 			{"name":"coder","type":"agent","labels":{"team":"platform"}},
 			{"name":"chat","type":"agent","labels":{"team":"platform"}},
 			{"name":"ext","type":"agent","labels":{"team":"support"}}]}`,

@@ -55,27 +55,19 @@ type targetWire struct {
 	Types       []string          `json:"types"`
 }
 
-// poolListWire is the GET /v1/admin/pools envelope (only the fields the
-// audit needs).
-type poolListWire struct {
-	Pools []poolWire `json:"pools"`
-}
-
+// poolWire is one item of the GET /v1/admin/pools §15.1 paginated
+// envelope (only the fields the isolation audit needs).
 type poolWire struct {
 	Name             string `json:"name"`
 	RuntimeRef       string `json:"runtimeRef"`
 	IsolationProfile string `json:"isolationProfile"`
 }
 
-// runtimeListWire is the GET /v1/admin/runtimes envelope. The audit
-// resolves each pool's runtimeRef to the runtime's type and labels —
-// the §8.3 match candidate a DelegationPolicy rule evaluates — because
-// the rule matches the runtime a delegation targets, and the pool
-// supplies that runtime's isolation profile.
-type runtimeListWire struct {
-	Runtimes []runtimeWire `json:"runtimes"`
-}
-
+// runtimeWire is one item of the GET /v1/admin/runtimes §15.1 paginated
+// envelope. The audit resolves each pool's runtimeRef to the runtime's
+// type and labels — the §8.3 match candidate a DelegationPolicy rule
+// evaluates — because the rule matches the runtime a delegation targets,
+// and the pool supplies that runtime's isolation profile.
 type runtimeWire struct {
 	Name   string            `json:"name"`
 	Type   string            `json:"type"`
@@ -112,18 +104,22 @@ func cmdPolicyAuditIsolation(ctx context.Context, c *ctl.Client, args []string, 
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	var pools poolListWire
-	if err := c.Do(ctx, "GET", "/v1/admin/pools", nil, &pools); err != nil {
+	// spec: §15.1 lines 1228-1253 — /v1/admin/pools and /v1/admin/runtimes
+	// return the canonical cursor-paginated envelope. The isolation audit
+	// joins the full inventory, so it walks every page rather than reading
+	// a single 50-item default page. F-15.1.6.
+	pools, err := listAllAdmin[poolWire](ctx, c, "/v1/admin/pools")
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	var runtimes runtimeListWire
-	if err := c.Do(ctx, "GET", "/v1/admin/runtimes", nil, &runtimes); err != nil {
+	runtimes, err := listAllAdmin[runtimeWire](ctx, c, "/v1/admin/runtimes")
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 
-	violations := auditIsolation(policies.DelegationPolicies, pools.Pools, runtimes.Runtimes)
+	violations := auditIsolation(policies.DelegationPolicies, pools, runtimes)
 
 	out := make([]isolationViolationOut, 0, len(violations))
 	for _, v := range violations {

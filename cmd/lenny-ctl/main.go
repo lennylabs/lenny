@@ -826,12 +826,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 	}
 	switch args[0] {
 	case "list":
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/tenants", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return printItemList(ctx, c, "/v1/admin/tenants", stdout, stderr)
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: tenants get requires <id>")
@@ -901,12 +896,7 @@ func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 	}
 	switch args[0] {
 	case "list":
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/runtimes", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return printItemList(ctx, c, "/v1/admin/runtimes", stdout, stderr)
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: runtimes get requires <name>")
@@ -1053,12 +1043,7 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	}
 	switch args[0] {
 	case "list":
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/pools", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return printItemList(ctx, c, "/v1/admin/pools", stdout, stderr)
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: pools get requires <name>")
@@ -1875,4 +1860,72 @@ func printJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+// listAllItems walks every page of a §15.1 cursor-paginated admin
+// collection (spec §15.1 lines 1228-1253) and accumulates the `items`
+// arrays into one slice. The CLI shows the full inventory rather than a
+// single 50-item page, so it follows `cursor` until `hasMore` is false,
+// requesting the 200-item maximum per page to minimise round trips.
+//
+// spec: §15.1 lines 1228-1253. F-15.1.6.
+func listAllItems(ctx context.Context, c *ctl.Client, path string) ([]json.RawMessage, error) {
+	var all []json.RawMessage
+	cursor := ""
+	for {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		page := path + sep + "limit=200"
+		if cursor != "" {
+			page += "&cursor=" + url.QueryEscape(cursor)
+		}
+		var env struct {
+			Items   []json.RawMessage `json:"items"`
+			Cursor  string            `json:"cursor"`
+			HasMore bool              `json:"hasMore"`
+		}
+		if err := c.Do(ctx, "GET", page, nil, &env); err != nil {
+			return nil, err
+		}
+		all = append(all, env.Items...)
+		if !env.HasMore || env.Cursor == "" {
+			return all, nil
+		}
+		cursor = env.Cursor
+	}
+}
+
+// listAllAdmin walks every page of a §15.1 paginated admin collection
+// and decodes each item into T, returning the full typed inventory.
+func listAllAdmin[T any](ctx context.Context, c *ctl.Client, path string) ([]T, error) {
+	raws, err := listAllItems(ctx, c, path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(raws))
+	for _, raw := range raws {
+		var v T
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// printItemList renders the full inventory of a §15.1 paginated admin
+// collection under a single `{items: [...]}` envelope.
+func printItemList(ctx context.Context, c *ctl.Client, path string, stdout, stderr io.Writer) int {
+	items, err := listAllItems(ctx, c, path)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if items == nil {
+		items = []json.RawMessage{}
+	}
+	printJSON(stdout, map[string]any{"items": items})
+	return 0
 }

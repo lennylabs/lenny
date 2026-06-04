@@ -41,14 +41,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
-	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
@@ -132,17 +133,17 @@ type AuditEvent struct {
 // only the resources the gateway has stores for; future commits add
 // users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants        tenantstore.Store
-	runtimes       runtimestore.Store
-	users          userstore.Store
-	pools          poolstore.Store
-	breakers       breakerstore.Store
-	connectors     connectorstore.Store
+	tenants    tenantstore.Store
+	runtimes   runtimestore.Store
+	users      userstore.Store
+	pools      poolstore.Store
+	breakers   breakerstore.Store
+	connectors connectorstore.Store
 	// externalAdapters / adapterValidator back the §15.1 / §24.8
 	// external-protocol adapter registry CRUD and validate gate.
 	externalAdapters externaladapterstore.Store
 	adapterValidator AdapterValidator
-	connectorOAuth *ConnectorOAuth
+	connectorOAuth   *ConnectorOAuth
 	// connectorTester / connectorCreds / connectorTestLimiter back the
 	// §15.1 `POST /v1/admin/connectors/{name}/test` live-connectivity
 	// endpoint. A nil connectorTester leaves the route unregistered.
@@ -168,39 +169,39 @@ type Router struct {
 	// adminToken provisions/rotates the §17.6 initial admin credential
 	// (lenny-admin + lenny-admin-token Secret). Nil leaves the bootstrap
 	// admin-token step and the rotate-token route inactive. F-17.6.3.
-	adminToken AdminTokenProvisioner
-	userPods                UserPodTerminator
-	userLeases              UserLeaseRevoker
-	userTokens              UserTokenRevoker
-	userPlayground          UserPlaygroundRevoker
-	erasureRunner           ErasureRunner
-	erasureJobs             erasurejob.Store
+	adminToken     AdminTokenProvisioner
+	userPods       UserPodTerminator
+	userLeases     UserLeaseRevoker
+	userTokens     UserTokenRevoker
+	userPlayground UserPlaygroundRevoker
+	erasureRunner  ErasureRunner
+	erasureJobs    erasurejob.Store
 	// saltRotator backs POST /v1/admin/tenants/{id}/rotate-erasure-salt
 	// (§12.8 line 857). Nil leaves the route unregistered. F-12.8.5.
-	saltRotator ErasureSaltRotator
-	artifactHolds           ArtifactLegalHolder
-	billing                 billingstore.Store
-	corrections             correctionstore.Store
-	dualControlThresh       float64
+	saltRotator       ErasureSaltRotator
+	artifactHolds     ArtifactLegalHolder
+	billing           billingstore.Store
+	corrections       correctionstore.Store
+	dualControlThresh float64
 	// approverNotifier delivers the §11.2.1 dual-control approval
 	// notification to eligible approvers via the configured
 	// billing.approverNotificationWebhook. Nil leaves the notification
 	// step inactive (the workflow still records the pending request).
 	// spec: §11.2.1 line 175. F-11.2.14.
 	approverNotifier ApproverNotifier
-	sessions                sessionstore.Store
+	sessions         sessionstore.Store
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
 	// them unregistered. spec: §24.11 lines 135-136.
-	sessionAdmin SessionAdmin
-	interactions            interactionstore.Store
-	experiments             experimentstore.Store
-	stickyFlusher           StickyFlusher
-	environments            environmentstore.Store
-	evals                   evalstore.Store
-	clock                   func() time.Time
-	audit                   AuditSink
-	metrics                 RBACConfigMetrics
+	sessionAdmin  SessionAdmin
+	interactions  interactionstore.Store
+	experiments   experimentstore.Store
+	stickyFlusher StickyFlusher
+	environments  environmentstore.Store
+	evals         evalstore.Store
+	clock         func() time.Time
+	audit         AuditSink
+	metrics       RBACConfigMetrics
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -1425,8 +1426,19 @@ func (r *Router) handleListTenants(w http.ResponseWriter, req *http.Request) {
 	for _, t := range rows {
 		out = append(out, fromTenant(t))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"tenants": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// The id is the §15.1 line 1236 `name` sort field and the tiebreaker.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(t TenantPayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return t.ID, t.ID
+			case "updated_at":
+				return t.UpdatedAt, t.ID
+			default:
+				return t.CreatedAt, t.ID
+			}
+		})
 }
 
 // handleGetTenant implements GET /v1/admin/tenants/{id}.
