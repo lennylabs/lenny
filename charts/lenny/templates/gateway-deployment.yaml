@@ -427,6 +427,14 @@ spec:
             # validation layers on top of CA chain verification.
             # F-10.3.1.
             - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain }}
+            {{- with .Values.gateway.interceptorNamespaces }}
+            # §10.3 line 328 (NET-063): the interceptor-namespace
+            # allowlist the gateway enforces against each in-cluster
+            # interceptor certificate's
+            # spiffe://<trust-domain>/interceptor/{namespace}/{pod} URI
+            # SAN on every outbound handshake. F-10.3.3.
+            - --interceptor-namespaces={{ join "," . }}
+            {{- end }}
             {{- with .Values.global.saTokenAudience }}
             # §10.3 line 334: validate the projected SA token's
             # deployment-specific audience claim on every pod→gateway

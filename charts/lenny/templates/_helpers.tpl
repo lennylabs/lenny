@@ -172,6 +172,59 @@ spec:
 {{- end -}}
 
 {{/*
+lenny.interceptorCertificate renders one §10.3 NET-063 in-cluster
+interceptor cert-manager Certificate (spec line 327). The certificate
+lands in the interceptor's own namespace and carries two SANs: a SPIFFE
+URI spiffe://<trust-domain>/interceptor/<namespace>/<serviceName> and a
+DNS SAN <serviceName>.<namespace>.svc(.clusterDomain). The gateway
+validates both on every outbound handshake (NET-063): the SPIFFE URI via
+the InterceptorPeerVerifier and the DNS SAN via the pinned
+tls.Config.ServerName.
+
+Invoke with a dict carrying the root context and the interceptor
+namespace:
+
+    {{- include "lenny.interceptorCertificate" (dict "root" $ "namespace" "acme-interceptors") }}
+*/}}
+{{- define "lenny.interceptorCertificate" -}}
+{{- $ := .root -}}
+{{- $namespace := .namespace -}}
+{{- $m := $.Values.mtls -}}
+{{- $ic := $m.interceptorCertificates -}}
+{{- $trustDomain := required "global.spiffeTrustDomain is required to render the §10.3 NET-063 interceptor Certificate (it is the host of the spiffe:// URI SAN); set it to a deployment-unique value." $.Values.global.spiffeTrustDomain -}}
+{{- $svc := $ic.serviceName -}}
+{{- $clusterDomain := $ic.clusterDomain -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-interceptor-tls
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  secretName: lenny-interceptor-tls
+  duration: {{ printf "%dh" (int $m.leafDurationHours) }}
+  renewBefore: {{ printf "%dh" (int $m.leafRenewBeforeHours) }}
+  commonName: {{ $svc }}.{{ $namespace }}.svc
+  dnsNames:
+    - {{ $svc }}.{{ $namespace }}.svc
+    - {{ $svc }}.{{ $namespace }}.svc.{{ $clusterDomain }}
+  uris:
+    - spiffe://{{ $trustDomain }}/interceptor/{{ $namespace }}/{{ $svc }}
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $ic.issuerRef.name }}
+    kind: {{ $ic.issuerRef.kind }}
+{{- end -}}
+
+{{/*
 lenny.monitoring.validateFormat fails the render when monitoring.format
 is not one of the §16.9 / §25.13 allow-list values (prometheusrule,
 configmap, both). Without this guard a typo (e.g. "prometheus-rule")

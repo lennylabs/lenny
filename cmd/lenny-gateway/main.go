@@ -116,8 +116,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	correctionpg "github.com/lennylabs/lenny/pkg/gateway/correctionstore/pgstore"
@@ -260,6 +260,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/mtls/interceptordial"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
@@ -698,6 +699,8 @@ func main() {
 		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
+	interceptorNamespaces := flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),
+		"§10.3 NET-063 comma-separated gateway.interceptorNamespaces allowlist. When --spiffe-trust-domain is set and a §4.8 external interceptor endpoint resolves to an in-cluster Service (a .svc host), the gateway validates the interceptor certificate's spiffe://<trust-domain>/interceptor/{namespace}/{pod} URI SAN on every outbound handshake and rejects the connection unless {namespace} is in this list, the trust domain matches, and the certificate is not on the §10.3 deny list. The endpoint host is pinned as tls.Config.ServerName so a co-located non-interceptor pod's certificate fails DNS-SAN verification. Empty accepts any namespace in the trust domain.")
 	saTokenAudience := flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
 		"§10.3 line 334 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
@@ -3015,6 +3018,18 @@ func main() {
 		}
 	}
 
+	// §10.3 NET-063: the shared interceptor peer-validation context for
+	// every gateway→interceptor dial below. The deny list is the same
+	// per-replica set the propagator drives (F-10.3.7); the observer is
+	// the §16.1 handshake histogram. F-10.3.3.
+	mtlsDeny := mtlsdenylist.New()
+	interceptorID := interceptorIdentity{
+		trustDomain: *spiffeTrustDomain,
+		namespaces:  splitAndTrim(*interceptorNamespaces),
+		denyList:    mtlsDeny,
+		observe:     gwMetrics.ObserveInterceptorMTLSHandshake,
+	}
+
 	// §4.8 line 1019: register each deployer-supplied external
 	// interceptor. The gateway dials the service's endpoint, builds the
 	// generated RequestInterceptor client, and registers an External on
@@ -3026,7 +3041,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: --external-interceptor: %v", err)
 		}
-		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA)
+		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA, interceptorID)
 		if err != nil {
 			log.Fatalf("lenny-gateway: dial external interceptor %q at %s: %v", spec.Name, spec.Endpoint, err)
 		}
@@ -3055,7 +3070,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: --guardrails-classifier: %v", err)
 		}
-		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA)
+		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA, interceptorID)
 		if err != nil {
 			log.Fatalf("lenny-gateway: dial guardrails classifier %q at %s: %v", spec.Name, spec.Endpoint, err)
 		}
@@ -3681,11 +3696,11 @@ func main() {
 	}))
 
 	// §10.3 mTLS certificate deny list: the per-replica SPIFFE-URI deny
-	// set checked on every mTLS handshake. Its propagator carries an
-	// Add or Remove across replicas over Redis pub/sub. The deny list is
-	// a single-replica primitive; the propagator owns the fan-out the
-	// package doc defers to a wrapping controller.
-	mtlsDeny := mtlsdenylist.New()
+	// set checked on every mTLS handshake (declared earlier so the
+	// §10.3 NET-063 interceptor dials can consult it). Its propagator
+	// carries an Add or Remove across replicas over Redis pub/sub. The
+	// deny list is a single-replica primitive; the propagator owns the
+	// fan-out the package doc defers to a wrapping controller.
 	mtlsDenyProp := mtlsdenylistprop.New(mtlsDeny, securityBus, mtlsdenylistprop.WithErrorHandler(func(err error) {
 		log.Printf("lenny-gateway: mTLS deny-list pub/sub publish failed: %v", err)
 	}))
@@ -8050,13 +8065,33 @@ func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn,
 	return grpc.NewClient(addr, transport)
 }
 
+// interceptorIdentity carries the §10.3 NET-063 peer-validation inputs a
+// dialInterceptor call needs: the SPIFFE trust domain, the
+// interceptor-namespace allowlist, the shared revocation deny list, and
+// the §16.1 handshake-metric observer. The zero value disables SPIFFE
+// validation (trust domain empty), leaving the existing CA-only dial.
+type interceptorIdentity struct {
+	trustDomain string
+	namespaces  []string
+	denyList    spiffe.DenyChecker
+	observe     interceptordial.Observer
+}
+
 // dialInterceptor dials a §4.8 external RequestInterceptor service. mTLS
 // is used when cert/key/ca are all set; with all three empty the dial
 // falls through to plaintext for dev mode. The §13.2 NET-058
 // NetworkPolicy that scopes egress to the interceptor namespace is
 // templated by the Helm chart; this dial assumes that egress is
 // permitted.
-func dialInterceptor(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, error) {
+//
+// For an in-cluster interceptor (a .svc endpoint host) with a configured
+// SPIFFE trust domain, the dial pins tls.Config.ServerName to the
+// endpoint host (DNS-SAN validation, spec §10.3 line 328) and installs a
+// spiffe.InterceptorPeerVerifier that validates the SPIFFE-URI SAN
+// against the trust domain and namespace allowlist and rejects revoked
+// certificates (NET-063). Every mTLS handshake outcome is timed into the
+// §16.1 lenny_interceptor_mtls_handshake_duration_seconds histogram.
+func dialInterceptor(addr, certPath, keyPath, caPath string, id interceptorIdentity) (*grpc.ClientConn, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("interceptor endpoint is empty")
 	}
@@ -8083,10 +8118,31 @@ func dialInterceptor(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, 
 		if !pool.AppendCertsFromPEM(caPEM) {
 			return nil, fmt.Errorf("external-interceptor CA bundle %q parsed no certificates", caPath)
 		}
-		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			GetClientCertificate: reloader.GetClientCertificate,
-			RootCAs:              pool,
-			MinVersion:           tls.VersionTLS13,
+		host := addr
+		if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+			host = h
+		}
+		// spec: §10.3 line 328 (NET-063) — only an in-cluster
+		// interceptor presents a SPIFFE identity; an external endpoint
+		// (public FQDN or raw IP) is out of NET-063 scope (spec line 322)
+		// and keeps CA + DNS-SAN validation only.
+		var verifier *spiffe.InterceptorPeerVerifier
+		if id.trustDomain != "" && interceptordial.InCluster(host) {
+			verifier = &spiffe.InterceptorPeerVerifier{
+				TrustDomain: id.trustDomain,
+				Namespaces:  id.namespaces,
+				DenyList:    id.denyList,
+				OnMismatch: func(reason spiffe.MismatchReason, uri string, err error) {
+					log.Printf("lenny-gateway: §10.3 NET-063 interceptor_identity_mismatch endpoint=%s reason=%s uri=%q: %v", addr, reason, uri, err)
+				},
+			}
+		}
+		transport = grpc.WithTransportCredentials(interceptordial.Credentials(interceptordial.Options{
+			Reloader:   reloader,
+			RootCAs:    pool,
+			ServerName: host,
+			Verifier:   verifier,
+			Observe:    id.observe,
 		}))
 	}
 	return grpc.NewClient(addr, transport)

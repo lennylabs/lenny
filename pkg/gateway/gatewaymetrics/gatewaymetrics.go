@@ -650,6 +650,13 @@ type Metrics struct {
 	// is per file regardless of decision). A sustained P99 > 1s flags
 	// the interceptor as being on the delegation hot path. F-8.7.10.
 	exportFileScanDuration *prometheus.HistogramVec
+	// interceptorMTLSHandshake is the §16.1 line 50
+	// lenny_interceptor_mtls_handshake_duration_seconds histogram
+	// labeled by `result` (success, san_mismatch, cert_expired,
+	// cert_missing, tls_error) — the wall-clock duration and outcome of
+	// the §10.3 NET-063 gateway→in-cluster-interceptor TLS handshake.
+	// The §16.5 InterceptorMTLSHandshakeFailure alert reads it. F-10.3.3.
+	interceptorMTLSHandshake *prometheus.HistogramVec
 
 	// memoryStoreOperationDuration is the §9.4 / §16.1 line 151
 	// MemoryStore per-operation duration histogram. Labels: `operation`
@@ -2165,6 +2172,19 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §10.3 NET-063 / §16.1 line 50 — gateway→in-cluster-interceptor
+	// TLS 1.3 handshake latency and outcome. Buckets span sub-
+	// millisecond to a few seconds so a slow or failing handshake is
+	// observable; the `result` label distinguishes the spec's distinct
+	// rejection paths. F-10.3.3.
+	interceptorMTLSHandshake, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_interceptor_mtls_handshake_duration_seconds",
+		Help:    "§10.3 NET-063 gateway→interceptor mTLS handshake latency and outcome (§16.1 line 50).",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+	}, []string{"result"})
+	if err != nil {
+		return nil, err
+	}
 	// §9.4 line 200 / §16.1 line 151 — MemoryStore per-operation
 	// duration histogram. Six operation labels (write, query, delete,
 	// list, delete_by_user, delete_by_tenant); backend distinguishes
@@ -2281,6 +2301,7 @@ func New() (*Metrics, error) {
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
 		delegationLeaseExtension,
 		exportFileScans, exportFileScanDuration,
+		interceptorMTLSHandshake,
 		memoryStoreOperationDuration, memoryStoreErrors,
 		memoryStoreRecordCount, memoryStoreUserOverThreshold,
 		timeDriftGauge)
@@ -2506,6 +2527,7 @@ func New() (*Metrics, error) {
 		delegationLeaseExtension:             delegationLeaseExtension,
 		exportFileScans:                      exportFileScans,
 		exportFileScanDuration:               exportFileScanDuration,
+		interceptorMTLSHandshake:             interceptorMTLSHandshake,
 		memoryStoreOperationDuration:         memoryStoreOperationDuration,
 		memoryStoreErrors:                    memoryStoreErrors,
 		memoryStoreRecordCount:               memoryStoreRecordCount,
@@ -2572,6 +2594,17 @@ func (m *Metrics) ObserveExportFileScanDuration(pool, tenantID, interceptorRef s
 		return
 	}
 	m.exportFileScanDuration.WithLabelValues(pool, tenantID, interceptorRef).Observe(seconds)
+}
+
+// ObserveInterceptorMTLSHandshake records a §10.3 NET-063
+// gateway→in-cluster-interceptor TLS handshake outcome. `result` is one
+// of success, san_mismatch, cert_expired, cert_missing, tls_error. spec:
+// §10.3 line 332; §16.1 line 50; F-10.3.3.
+func (m *Metrics) ObserveInterceptorMTLSHandshake(result string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.interceptorMTLSHandshake.WithLabelValues(result).Observe(seconds)
 }
 
 // IncStatelessRequest records a §5.2 line 573 stateless-pool request.

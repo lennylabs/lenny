@@ -183,6 +183,32 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --spiffe-trust-domain=cluster.local
 
+  # spec: §10.3 line 328 (NET-063) — the interceptor-namespace allowlist
+  # the gateway enforces against each in-cluster interceptor's SPIFFE URI
+  # SAN. Rendered only when gateway.interceptorNamespaces is non-empty.
+  # F-10.3.3.
+  - it: omits --interceptor-namespaces by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --interceptor-namespaces
+
+  - it: renders --interceptor-namespaces from gateway.interceptorNamespaces
+    set:
+      gateway.interceptorNamespaces:
+        - acme-interceptors
+        - globex-interceptors
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --interceptor-namespaces=acme-interceptors,globex-interceptors
+
   # spec: §8.6 line 712 — the auto-mode lease-extension rate-limit
   # deployment default renders only when set; the spec default (no limit)
   # omits the flag. F-8.6.7.

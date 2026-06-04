@@ -1558,6 +1558,35 @@ mtls:
   # renews a component certificate. §10.3 renews at 2/3 of lifetime, so
   # the default 8h on a 24h certificate matches that ratio.
   leafRenewBeforeHours: 8
+  # interceptorCertificates drives the §10.3 NET-063 in-cluster
+  # interceptor certificate (spec line 327). For each namespace declared
+  # in gateway.interceptorNamespaces, the chart emits a cert-manager
+  # Certificate in that namespace carrying a SPIFFE URI SAN
+  # spiffe://<global.spiffeTrustDomain>/interceptor/<namespace>/<serviceName>
+  # and a DNS SAN <serviceName>.<namespace>.svc(.clusterDomain) so the
+  # gateway's NET-063 peer validation (SPIFFE-URI + DNS-SAN) succeeds.
+  interceptorCertificates:
+    # enabled renders the per-namespace interceptor Certificates. The
+    # rendering is additionally gated on mtls.enabled,
+    # global.spiffeTrustDomain being set, and gateway.interceptorNamespaces
+    # being non-empty, so a stock install (no interceptors) emits nothing.
+    enabled: true
+    # serviceName is the interceptor Service name the gateway dials and
+    # the SPIFFE URI pod-name segment. It must match the deployer's
+    # interceptor Service and the registered RequestInterceptor endpoint
+    # host so the DNS SAN and tls.Config.ServerName agree.
+    serviceName: lenny-interceptor
+    # clusterDomain is the in-cluster DNS suffix for the DNS SAN.
+    clusterDomain: cluster.local
+    # issuerRef references the cluster-internal CA. Because the
+    # Certificate lands in the interceptor's namespace (not the release
+    # namespace where the namespaced lenny-mtls-ca Issuer lives), it
+    # defaults to a ClusterIssuer the deployer wires to the same CA. Set
+    # kind: Issuer with a namespace-local issuer name when the interceptor
+    # shares the release namespace.
+    issuerRef:
+      name: lenny-mtls-ca
+      kind: ClusterIssuer
 
 # certmanager is the §10.3 line 304 gate for the cert-manager prerequisite.
 # cert-manager is a cluster-wide, CRD-owning operator that jetstack

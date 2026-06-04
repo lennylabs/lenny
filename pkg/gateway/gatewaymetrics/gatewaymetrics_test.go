@@ -492,6 +492,44 @@ func TestOrphanCleanupAndTreeRecoveryMetricsRegistered_spec_8_10_7(t *testing.T)
 	}
 }
 
+// TestInterceptorMTLSHandshakeMetric_spec_10_3_332 covers the §10.3
+// NET-063 / §16.1 line 50 interceptor mTLS handshake histogram: each
+// observed `result` registers a labeled series so the §16.5
+// InterceptorMTLSHandshakeFailure alert evaluates on live data rather
+// than an always-empty counter. F-10.3.3.
+func TestInterceptorMTLSHandshakeMetric_spec_10_3_332(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveInterceptorMTLSHandshake("success", 0.012)
+	m.ObserveInterceptorMTLSHandshake("san_mismatch", 0.004)
+	m.ObserveInterceptorMTLSHandshake("cert_missing", 0.001)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_interceptor_mtls_handshake_duration_seconds_count{result="success"} 1`,
+		`lenny_interceptor_mtls_handshake_duration_seconds_count{result="san_mismatch"} 1`,
+		`lenny_interceptor_mtls_handshake_duration_seconds_count{result="cert_missing"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// TestInterceptorMTLSHandshakeMetricNilSafe pins the nil-receiver
+// short-circuit so a dial without a metrics handle does not panic.
+func TestInterceptorMTLSHandshakeMetricNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.ObserveInterceptorMTLSHandshake("success", 1.0)
+}
+
 // TestOrphanMetricsNilSafe pins the nil-receiver short-circuits on the
 // §8.10 setters so a caller without a metrics handle does not panic.
 // F-8.10.7.

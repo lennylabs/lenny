@@ -120,6 +120,103 @@ func (v AgentPeerVerifier) report(reason MismatchReason, uri string, err error) 
 	}
 }
 
+// VerifyError wraps a §10.3 peer-verification failure with the
+// classified MismatchReason so a caller (for example the gateway's
+// §16.1 lenny_interceptor_mtls_handshake_duration_seconds emitter) can
+// map the handshake outcome onto a metric label without string-matching
+// the message. It satisfies errors.As against itself and Unwraps to the
+// underlying cause.
+type VerifyError struct {
+	Reason MismatchReason
+	Err    error
+}
+
+func (e *VerifyError) Error() string { return e.Err.Error() }
+func (e *VerifyError) Unwrap() error { return e.Err }
+
+// InterceptorPeerVerifier validates an outbound in-cluster-interceptor
+// mTLS peer per §10.3 NET-063 (spec lines 326-332): the interceptor
+// certificate's SPIFFE URI SAN MUST parse as
+// spiffe://<trust-domain>/interceptor/{namespace}/{pod-name} with the
+// trust domain equal to the configured global.spiffeTrustDomain and the
+// {namespace} equal to one of the entries declared in
+// gateway.interceptorNamespaces, and the certificate MUST NOT be on the
+// §10.3 revocation deny list. The DNS-SAN half of the check (spec line
+// 328) is enforced separately by pinning tls.Config.ServerName to the
+// registered endpoint so Go's standard chain verification refuses any
+// cluster-CA-signed certificate whose SAN does not cover it. Possession
+// of a valid cluster-CA certificate is necessary but never sufficient
+// (spec line 332): a co-located non-interceptor pod that obtains a
+// cluster-CA certificate is rejected at the handshake.
+//
+// The zero value is not usable: TrustDomain must be set. The gateway
+// installs VerifyPeerCertificate on the interceptor dial's tls.Config so
+// the check runs at TLS handshake time, before any gRPC frame is sent.
+type InterceptorPeerVerifier struct {
+	// TrustDomain is the single trust-domain anchor the interceptor's
+	// SPIFFE URI must match (global.spiffeTrustDomain). Required.
+	TrustDomain string
+
+	// Namespaces is the gateway.interceptorNamespaces allowlist. The
+	// interceptor URI's namespace segment must equal one of the entries.
+	// Empty accepts any namespace in the trust domain (trust-domain-only
+	// validation).
+	Namespaces []string
+
+	// PodName optionally narrows the accepted identity to a specific pod
+	// name. Empty accepts any interceptor pod in an allowed namespace.
+	PodName string
+
+	// DenyList, when non-nil, is consulted for every parsed identity so a
+	// certificate revoked between rotations is rejected at handshake
+	// (spec line 352). A nil deny list disables the revocation check.
+	DenyList DenyChecker
+
+	// OnMismatch, when non-nil, is invoked on every rejection so the
+	// caller can emit the spec's interceptor_identity_mismatch log. It is
+	// never called on success.
+	OnMismatch func(reason MismatchReason, uri string, err error)
+}
+
+// VerifyPeerCertificate matches the tls.Config.VerifyPeerCertificate
+// signature. It runs after the standard chain verification and applies
+// the §10.3 NET-063 SPIFFE identity check on top of CA trust. Returning
+// a non-nil error aborts the handshake with no gRPC response. Every
+// returned error is a *VerifyError carrying the classified reason.
+// spec: §10.3 line 328 (NET-063); §10.3 line 352 (deny list)
+func (v InterceptorPeerVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	leaf, err := leafCertificate(rawCerts, verifiedChains)
+	if err != nil {
+		return v.fail(ReasonNoCertificate, "", err)
+	}
+	uri, ok := spiffeURI(leaf)
+	if !ok {
+		return v.fail(ReasonNoSPIFFESAN, "", errors.New("spiffe: interceptor certificate has no spiffe:// URI SAN (§10.3 NET-063)"))
+	}
+	id, err := Parse(uri)
+	if err != nil {
+		return v.fail(ReasonMalformedURI, uri, err)
+	}
+	if err := ValidateInterceptor(id, InterceptorExpectation{
+		TrustDomain: v.TrustDomain,
+		Namespaces:  v.Namespaces,
+		PodName:     v.PodName,
+	}); err != nil {
+		return v.fail(ReasonIdentityMismatch, uri, err)
+	}
+	if v.DenyList != nil && v.DenyList.Contains(uri) {
+		return v.fail(ReasonRevoked, uri, fmt.Errorf("spiffe: interceptor certificate %q is on the §10.3 revocation deny list", uri))
+	}
+	return nil
+}
+
+func (v InterceptorPeerVerifier) fail(reason MismatchReason, uri string, err error) error {
+	if v.OnMismatch != nil {
+		v.OnMismatch(reason, uri, err)
+	}
+	return &VerifyError{Reason: reason, Err: err}
+}
+
 // leafCertificate returns the peer's leaf certificate. It prefers the
 // verified chain (populated under RequireAndVerifyClientCert) so the
 // returned certificate is the one the CA trust path accepted, and falls
