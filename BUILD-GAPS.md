@@ -25494,7 +25494,7 @@ rate-limit headers, correlation headers).
 
 **Resolution:** Section-marker heading with no actionable body; the individual MUST-class §15.1 findings are tracked at F-15.1.2 through F-15.1.15. Closed as a placeholder heading (same disposition as F-15.1.16).
 
-### - [ ] F-15.1.2 — ETag-based optimistic concurrency is entirely missing [High] — OPEN
+### - [x] F-15.1.2 — ETag-based optimistic concurrency is entirely missing [High] — CLOSED
 Spec (§15.1 "ETag-based optimistic concurrency", lines 1207–1224) requires
 **every admin PUT** to read `If-Match` and reject with `412 ETAG_MISMATCH`
 on a stale version or `428 ETAG_REQUIRED` when the header is absent; GET
@@ -25597,6 +25597,27 @@ land with the `tenants` batch. The established pattern (migrations
 `doAdminReq`/`adminETagGetPath` auto-injection, and the `PutIfMatch` CLI
 helper) is the template for the rest. F-24.4.3 (pools, closed) also
 traces here.
+
+- **Resolution:** The rollout is complete. The final batch added the
+  §15.1 lines 1207-1224 contract to the last admin resources — **tenants**
+  (`tenantstore` + envelope-encrypted pgstore, migration `0141`) and
+  **runtimes** (`runtimestore` + pgstore, migration `0142`) — each store
+  gaining an integer `version` (init 1, `+1` per Update **and** SoftDelete,
+  round-tripped through pgstore + `Memory`). Their GET sets the `ETag`
+  header, lists carry a per-item `etag`, the `PUT` runs `enforceIfMatch`
+  before the runtime dry-run branch (so `dryRun + If-Match` pre-validates
+  and a missing If-Match is 428 on either path), success returns the
+  bumped tag, and DELETE honours `enforceIfMatchIfPresent`. The §10.6
+  **rbac-config** and §9.2 **elicitation-content-integrity** sub-resources
+  enforce the same contract against the tenant row's shared version. The
+  §25.17 **warm-count** action sub-route (`PUT
+  /v1/admin/pools/{name}/warm-count`) is reconciled as **exempt**: §15.1
+  groups it with the `drain` / `force-terminate` action endpoints and it
+  carries the §25.2 confirm-flag dry-run/confirm convention rather than an
+  If-Match precondition (the main pool PUT already enforces §15.1). All
+  admin PUT resources plus the tenant sub-resource PUTs now enforce the
+  contract; migrations 0138-0142 complete the `version`-column rollout.
+  Closed by commit `58e5396e` (this batch).
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 

@@ -125,7 +125,7 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 	experiment_targeting, credential_policy, rbac_config,
 	token_quota_per_window, quota_reset_period, state, gc_priority,
-	erasure_salt`
+	erasure_salt, version`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -225,20 +225,25 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	if err != nil {
 		return err
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	version := t.Version
+	if version == 0 {
+		version = 1
+	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO tenants (
 		id, display_name, compliance_profile, data_residency_region,
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 		experiment_targeting, credential_policy, rbac_config,
-		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt, version
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob)
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob, version)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -291,6 +296,8 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		return tenantstore.Tenant{}, err
 	}
 	t.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	t.Version++
 	targeting, err := marshalTargeting(t.ExperimentTargeting)
 	if err != nil {
 		return tenantstore.Tenant{}, err
@@ -318,14 +325,14 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		no_environment_policy = $13, experiment_targeting = $14,
 		credential_policy = $15, rbac_config = $16,
 		token_quota_per_window = $17, quota_reset_period = $18,
-		state = $19, gc_priority = $20, erasure_salt = $21 WHERE id = $1`,
+		state = $19, gc_priority = $20, erasure_salt = $21, version = $22 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
 		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State),
-		gcPriorityOrDefault(t.GCPriority), newSaltBlob); err != nil {
+		gcPriorityOrDefault(t.GCPriority), newSaltBlob, t.Version); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -367,9 +374,10 @@ func (s *Store) List(ctx context.Context, filter tenantstore.ListFilter) ([]tena
 func (s *Store) SoftDelete(ctx context.Context, id string, at time.Time) error {
 	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
 	// TenantState advances to `deleted` alongside the deleted_at marker.
+	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE tenants SET deleted_at = $2, updated_at = $2, state = 'deleted'
-		 WHERE id = $1 AND deleted_at IS NULL`, id, at)
+		`UPDATE tenants SET deleted_at = $2, updated_at = $2, state = 'deleted',
+		 version = version + 1 WHERE id = $1 AND deleted_at IS NULL`, id, at)
 	if err != nil {
 		return err
 	}
@@ -425,6 +433,7 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
 		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State, &t.GCPriority, &saltBlob,
+		&t.Version,
 	); err != nil {
 		return tenantstore.Tenant{}, nil, err
 	}

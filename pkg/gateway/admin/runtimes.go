@@ -81,6 +81,12 @@ type RuntimePayload struct {
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. A list consumer reads it per item to supply
+	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1
+	// line 1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // runtimeFromPayload builds a runtimestore.Runtime from a §15.1
@@ -673,6 +679,8 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		BaseRuntime:             r.BaseRuntime,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		ETag: formatETag(r.Version),
 	}
 	if !r.DeletedAt.IsZero() {
 		out.DeletedAt = rfc3339Nano(r.DeletedAt)
@@ -908,6 +916,9 @@ func (r *Router) handleGetRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	// spec: §15.1 line 1209 — GET carries the ETag header so the client can
+	// use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromRuntime(row))
 }
@@ -1182,21 +1193,27 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The PUT resolves the current runtime first so the preview reflects
-	// applying the body onto the stored record; a missing runtime 404s
-	// ahead of the dry-run branch.
-	if req.URL.Query().Get("dryRun") == "true" {
-		current, gerr := r.runtimes.Get(req.Context(), name)
-		if gerr != nil {
-			if errors.Is(gerr, runtimestore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// Resolve the current runtime so the entity tag (its version) is known
+	// before the dry-run branch and the persisted write; a missing runtime
+	// 404s ahead of the precondition. The dry-run branch reuses this record
+	// to build its preview, so the missing If-Match is 428 on either path.
+	currentRuntime, gerr := r.runtimes.Get(req.Context(), name)
+	if gerr != nil {
+		if errors.Is(gerr, runtimestore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
 			return
 		}
-		preview := current
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, currentRuntime.Version) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// The preview reflects applying the body onto the stored record.
+	if req.URL.Query().Get("dryRun") == "true" {
+		preview := currentRuntime
 		if err := r.applyRuntimeUpdate(&preview, body, agentInterfaceSet, newAgentInterface); err != nil {
 			// The only error the merge returns is errAgentInterfaceOnMCP
 			// (§5.1: type:mcp runtimes carry no agentInterface), a 400.
@@ -1230,12 +1247,33 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 	r.emit(req.Context(), principal, "admin.runtime.updated", name, map[string]any{
 		"changedFields": changedRuntimeFields(body),
 	})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromRuntime(updated))
 }
 
 func (r *Router) handleDeleteRuntime(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// the current runtime only when the caller supplies the precondition so
+	// the unconditional delete path stays a single store operation; a
+	// missing runtime 404s ahead of the precondition.
+	if strings.TrimSpace(req.Header.Get("If-Match")) != "" {
+		current, gerr := r.runtimes.Get(req.Context(), name)
+		if gerr != nil {
+			if errors.Is(gerr, runtimestore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		if !enforceIfMatchIfPresent(w, req, current.Version) {
+			return
+		}
+	}
 	if err := r.runtimes.SoftDelete(req.Context(), name, r.clock()); err != nil {
 		if errors.Is(err, runtimestore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)

@@ -1013,6 +1013,12 @@ type TenantPayload struct {
 	UpdatedAt               string                       `json:"updatedAt,omitempty"`
 	DeletedAt               string                       `json:"deletedAt,omitempty"`
 	T4KmsLastProbeSuccessAt string                       `json:"t4KmsLastProbeSuccessAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. A list consumer reads it per item to supply
+	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1
+	// line 1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // fromTenant maps a stored row to the wire payload. If probe is
@@ -1050,6 +1056,8 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		ETag: formatETag(t.Version),
 	}
 	if t.ExperimentTargeting.Configured() {
 		et := t.ExperimentTargeting.Clone()
@@ -1464,6 +1472,9 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"tenantId": id, "state": tenantStateOrActive(row.State), "deletedAt": rfc3339Nano(row.DeletedAt)})
 		return
 	}
+	// spec: §15.1 line 1209 — GET carries the ETag header so the client can
+	// use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromTenantWithProbe(row, r.kmsProbe))
 }
@@ -1563,19 +1574,27 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// Resolve the current tenant so the entity tag (its version) is known
+	// before applying the mutation; a missing tenant 404s ahead of the
+	// precondition. The same row backs the §11.7 / §12.9 ratchet checks
+	// below.
+	current, err := r.tenants.Get(req.Context(), id)
+	if err != nil {
+		if errors.Is(err, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
 	// §11.7 / §12.9 ratchet checks: complianceProfile and workspaceTier
 	// may be tightened in place but never lowered through the generic
 	// update endpoint. Both compare against the tenant's current row.
 	if body.ComplianceProfile != nil || body.WorkspaceTier != nil {
-		current, err := r.tenants.Get(req.Context(), id)
-		if err != nil {
-			if errors.Is(err, tenantstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
 		if body.ComplianceProfile != nil &&
 			isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
 			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED",
@@ -1709,6 +1728,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		"changedFields": changedFields(body),
 	})
 	r.emitBillingErasureExemptRegulated(req.Context(), principal, updated)
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromTenantWithProbe(updated, r.kmsProbe))
 }
@@ -1899,6 +1921,10 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 	// A tombstoned tenant is already deleted; the lifecycle is terminal.
 	if tenantStateOrActive(row.State) == tenantstore.TenantStateDeleted || !row.DeletedAt.IsZero() {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match when present.
+	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return
 	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {

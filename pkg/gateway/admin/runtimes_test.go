@@ -42,6 +42,11 @@ func runtimeRequest(t *testing.T, h http.Handler, method, path string, body any)
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
+	// spec: §15.1 lines 1207-1211 — runtime PUTs enforce If-Match. A test
+	// that is not driving the precondition reaches the handler by carrying
+	// the runtime's current ETag; one that exercises the precondition sets
+	// If-Match explicitly and is left untouched.
+	injectAdminIfMatch(t, h, req)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

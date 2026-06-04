@@ -50,6 +50,7 @@ func TestRBACConfigPutAllowAll(t *testing.T) {
 	body, _ := json.Marshal(admin.RBACConfigPayload{NoEnvironmentPolicy: "allow-all"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -70,6 +71,7 @@ func TestRBACConfigPutDenyAllNoWarning(t *testing.T) {
 	body, _ := json.Marshal(admin.RBACConfigPayload{NoEnvironmentPolicy: "deny-all"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -97,6 +99,7 @@ func TestRBACConfigPutOmittedIsDenyAll(t *testing.T) {
 	router, tenants := newRBACConfigAdmin(t)
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader([]byte(`{}`))))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -136,6 +139,7 @@ func TestRBACConfigRoundTripsExtraFields_spec_10_6_665(t *testing.T) {
 	})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -258,6 +262,7 @@ func TestRBACConfigAllowAllRecordsMetric(t *testing.T) {
 		body, _ := json.Marshal(admin.RBACConfigPayload{NoEnvironmentPolicy: policy})
 		req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 			"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+		injectAdminIfMatch(t, router.Handler(), req)
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {

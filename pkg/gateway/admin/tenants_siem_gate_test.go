@@ -112,8 +112,10 @@ func TestUpdateTenantToRegulatedWithoutSIEMRejected(t *testing.T) {
 	profile := "hipaa" // soc2 -> hipaa is a tighten, not a downgrade
 	body, _ := json.Marshal(admin.UpdateTenantRequest{ComplianceProfile: &profile})
 	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body))))
+	req := withAdminPrincipal(
+		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
+	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
 	}

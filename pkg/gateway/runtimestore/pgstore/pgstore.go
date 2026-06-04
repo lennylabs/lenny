@@ -44,7 +44,7 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 	supported_providers, credential_capabilities, limits, setup_command_policy,
 	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-	sdk_warm_blocking_paths, workspace_tier`
+	sdk_warm_blocking_paths, workspace_tier, version`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -230,6 +230,11 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	version := r.Version
+	if version == 0 {
+		version = 1
+	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO runtime_definitions (
 		name, type, image, execution_mode, isolation_profile,
 		integration_level, description, created_at, updated_at, deleted_at, labels,
@@ -238,8 +243,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 		supported_providers, credential_capabilities, limits, setup_command_policy,
 		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-		sdk_warm_blocking_paths, workspace_tier
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)`,
+		sdk_warm_blocking_paths, workspace_tier, version
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -253,7 +258,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
-		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier))
+		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier), version)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -300,6 +305,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		return runtimestore.Runtime{}, err
 	}
 	r.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	r.Version++
 	if _, err := tx.Exec(ctx, `UPDATE runtime_definitions SET
 		type = $2, image = $3, execution_mode = $4, isolation_profile = $5,
 		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9,
@@ -311,7 +318,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		credential_capabilities = $23, limits = $24, setup_command_policy = $25,
 		default_pool_config = $26, workspace_defaults = $27,
 		runtime_options_schema = $28, shared_assets = $29,
-		sdk_warm_blocking_paths = $30, workspace_tier = $31
+		sdk_warm_blocking_paths = $30, workspace_tier = $31, version = $32
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -327,7 +334,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
-		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier)); err != nil {
+		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier), r.Version); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -379,9 +386,10 @@ func (s *Store) List(ctx context.Context, filter runtimestore.ListFilter) ([]run
 // SoftDelete sets deleted_at on the row. It is idempotent:
 // soft-deleting an already-deleted runtime is a no-op success.
 func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error {
+	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE runtime_definitions SET deleted_at = $2, updated_at = $2
-		 WHERE name = $1 AND deleted_at IS NULL`, name, at)
+		`UPDATE runtime_definitions SET deleted_at = $2, updated_at = $2,
+		 version = version + 1 WHERE name = $1 AND deleted_at IS NULL`, name, at)
 	if err != nil {
 		return err
 	}
@@ -426,7 +434,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&supportedProvidersRaw, &credentialCapabilitiesRaw, &limitsRaw,
 		&setupCommandPolicyRaw, &defaultPoolConfigRaw, &workspaceDefaultsRaw,
 		&runtimeOptionsSchemaRaw, &sharedAssetsRaw, &sdkWarmBlockingPathsRaw,
-		&workspaceTier,
+		&workspaceTier, &r.Version,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}

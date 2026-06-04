@@ -83,6 +83,7 @@ func TestUpdateTenantT4ToT3StillRatcheted(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"workspaceTier": "T3"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {

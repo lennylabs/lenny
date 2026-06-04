@@ -70,6 +70,7 @@ func TestUpdateTenantSetsQuotaResetPeriod_spec_11_2_31(t *testing.T) {
 	period := "daily"
 	update, _ := json.Marshal(admin.UpdateTenantRequest{QuotaResetPeriod: &period})
 	ureq := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(update)))
+	injectAdminIfMatch(t, router.Handler(), ureq)
 	urr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(urr, ureq)
 	if urr.Code != http.StatusOK {

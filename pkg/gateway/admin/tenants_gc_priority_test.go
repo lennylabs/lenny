@@ -81,6 +81,7 @@ func TestUpdateTenantSetsGCPriority_spec_12_5_317(t *testing.T) {
 	prio := "high"
 	update, _ := json.Marshal(admin.UpdateTenantRequest{GCPriority: &prio})
 	ureq := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(update)))
+	injectAdminIfMatch(t, router.Handler(), ureq)
 	urr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(urr, ureq)
 	if urr.Code != http.StatusOK {

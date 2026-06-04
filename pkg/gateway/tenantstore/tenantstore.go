@@ -159,6 +159,16 @@ type Tenant struct {
 	// (a row written before the lifecycle column existed) is read as
 	// `active`. spec: §12.8 line 865.
 	State string
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful write (Update and
+	// SoftDelete). The quoted decimal version is the tenant's strong
+	// entity tag, enforced on PUT via the If-Match precondition and
+	// exposed on GET/list. The tenant's §10.6 rbac-config and §9.2
+	// elicitation-content-integrity sub-resources share this version
+	// because they are stored on the tenant row. spec: §15.1 lines
+	// 1207-1213.
+	Version int64
 }
 
 // IsActive reports whether the tenant has not been soft-deleted.
@@ -464,6 +474,10 @@ func (m *Memory) Create(_ context.Context, t Tenant) error {
 	if t.State == "" {
 		t.State = TenantStateActive
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if t.Version == 0 {
+		t.Version = 1
+	}
 	m.tenants[t.ID] = cloneTenant(t)
 	return nil
 }
@@ -512,6 +526,8 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Tenant) error
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	row.Version++
 	m.tenants[id] = row
 	return cloneTenant(row), nil
 }
@@ -548,6 +564,8 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
 	// TenantState is `deleted`.
 	row.State = TenantStateDeleted
+	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	row.Version++
 	m.tenants[id] = row
 	return nil
 }

@@ -62,6 +62,11 @@ func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.
 	}
 	stored := effectiveStoredMode(row)
 	effective := r.resolveElicitationEffective(stored)
+	// spec: §15.1 line 1209 — the elicitation-content-integrity
+	// sub-resource's ETag is the tenant row's version, since the mode is
+	// stored on the tenant. GET carries it so the next PUT can supply
+	// If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(elicitationIntegrityResponse{
 		TenantID:      row.ID,
@@ -132,6 +137,22 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 		}
 	}
 
+	// spec: §15.1 lines 1207-1211 — the elicitation-content-integrity PUT
+	// enforces If-Match against the tenant row's version (the
+	// sub-resource's entity tag). A missing tenant 404s ahead of the
+	// precondition.
+	current, gerr := r.tenants.Get(req.Context(), id)
+	if gerr != nil {
+		if errors.Is(gerr, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
 	// previousStoredRaw captures the tenant's literal stored value
 	// before the update so the audit row can distinguish "first write"
 	// (null) from "explicit prior value". The §16.7 line 675 payload
@@ -187,6 +208,8 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 			"changed_by_tenant_id":     principal.TenantID,
 			"changed_at":               r.clock().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(elicitationIntegrityResponse{
 		TenantID:      updated.ID,

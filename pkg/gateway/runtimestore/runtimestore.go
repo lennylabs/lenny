@@ -219,6 +219,13 @@ type Runtime struct {
 	// implementation refuses to register pods against soft-deleted
 	// runtimes but keeps the row for audit.
 	DeletedAt time.Time
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful write (Update and
+	// SoftDelete). The quoted decimal version is the runtime's strong
+	// entity tag, enforced on PUT via the If-Match precondition and
+	// exposed on GET/list. spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // IsActive reports whether the runtime has not been soft-deleted.
@@ -1288,6 +1295,10 @@ func (m *Memory) Create(_ context.Context, r Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if r.Version == 0 {
+		r.Version = 1
+	}
 	m.runtimes[r.Name] = cloneRuntime(r)
 	return nil
 }
@@ -1321,6 +1332,8 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Runtime) er
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	row.Version++
 	m.runtimes[name] = cloneRuntime(row)
 	return cloneRuntime(row), nil
 }
@@ -1356,6 +1369,8 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
+	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	row.Version++
 	m.runtimes[name] = row
 	return nil
 }

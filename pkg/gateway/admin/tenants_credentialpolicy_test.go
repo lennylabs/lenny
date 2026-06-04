@@ -109,6 +109,7 @@ func TestUpdateTenantSetsCredentialPolicy(t *testing.T) {
 		},
 	})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

@@ -150,6 +150,10 @@ func (r *Router) handleGetRBACConfig(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — the rbac-config sub-resource's ETag is the
+	// tenant row's version, since the configuration is stored on the
+	// tenant. GET carries it so the next PUT can supply If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rbacConfigPayload(row))
 }
@@ -189,6 +193,21 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, nil)
 		return
 	}
+	// spec: §15.1 lines 1207-1211 — the rbac-config PUT enforces If-Match
+	// against the tenant row's version (the sub-resource's entity tag). A
+	// missing tenant 404s ahead of the precondition.
+	current, gerr := r.tenants.Get(req.Context(), tenant)
+	if gerr != nil {
+		if errors.Is(gerr, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
 	rbac := toRBACConfig(body)
 	updated, err := r.tenants.Update(req.Context(), tenant, func(t *tenantstore.Tenant) error {
 		t.NoEnvironmentPolicy = policy
@@ -218,6 +237,8 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 			r.metrics.RecordNoEnvironmentPolicyAllowAll(tenant)
 		}
 	}
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rbacConfigPayload(updated))
 }

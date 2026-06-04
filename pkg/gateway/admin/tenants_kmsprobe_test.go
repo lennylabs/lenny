@@ -74,6 +74,7 @@ func TestUpdateTenantT4PromotionProbeSuccess(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"workspaceTier": "T4"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -103,6 +104,7 @@ func TestUpdateTenantT4PromotionProbeFailureRejects(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"workspaceTier": "T4"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -139,6 +141,7 @@ func TestUpdateTenantT4IdempotentReassertProbe(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"workspaceTier": "T4"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -157,6 +160,7 @@ func TestUpdateTenantNonT4DoesNotProbe(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"workspaceTier": "T3"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 

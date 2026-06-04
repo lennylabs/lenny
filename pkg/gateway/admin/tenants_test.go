@@ -314,6 +314,7 @@ func TestUpdateTenantSetsExperimentTargeting(t *testing.T) {
 		},
 	})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -562,6 +563,7 @@ func TestUpdateTenantMergesFields(t *testing.T) {
 	dn := "Acme Holdings"
 	body, _ := json.Marshal(admin.UpdateTenantRequest{DisplayName: &dn})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -711,9 +713,11 @@ func TestAuditEmissionOnTenantMutations(t *testing.T) {
 	dn := "Acme Inc"
 	body, _ = json.Marshal(admin.UpdateTenantRequest{DisplayName: &dn})
 	rr = httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+	updReq := withAdminPrincipal(
 		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)),
-	))
+	)
+	injectAdminIfMatch(t, router.Handler(), updReq)
+	router.Handler().ServeHTTP(rr, updReq)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -899,9 +903,11 @@ func TestUpdateTenantToExemptRegulatedEmitsComplianceEvent(t *testing.T) {
 	policy := "exempt"
 	updBody, _ := json.Marshal(admin.UpdateTenantRequest{BillingErasurePolicy: &policy})
 	rr = httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+	updReq := withAdminPrincipal(
 		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(updBody)),
-	))
+	)
+	injectAdminIfMatch(t, router.Handler(), updReq)
+	router.Handler().ServeHTTP(rr, updReq)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -979,6 +985,7 @@ func putComplianceProfile(t *testing.T, h http.Handler, id, profile string) *htt
 	t.Helper()
 	body, _ := json.Marshal(admin.UpdateTenantRequest{ComplianceProfile: &profile})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/"+id, bytes.NewReader(body)))
+	injectAdminIfMatch(t, h, req)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
@@ -1061,6 +1068,7 @@ func putWorkspaceTier(t *testing.T, h http.Handler, id, tier string) *httptest.R
 	t.Helper()
 	body, _ := json.Marshal(admin.UpdateTenantRequest{WorkspaceTier: &tier})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/"+id, bytes.NewReader(body)))
+	injectAdminIfMatch(t, h, req)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

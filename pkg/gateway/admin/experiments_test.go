@@ -77,6 +77,30 @@ func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as 
 	return rr
 }
 
+// injectAdminIfMatch fills in the §15.1 If-Match header on a pre-built
+// admin PUT request from the resource's current ETag, so a test that is
+// not exercising the precondition itself still reaches the handler. It is
+// a no-op for a non-PUT request, a request that already carries If-Match,
+// or a path with no ETag-bearing GET (adminETagGetPath returns ""). The
+// GET reuses the request's context so it carries the same authenticated
+// principal. spec: §15.1 lines 1207-1211.
+func injectAdminIfMatch(t *testing.T, h http.Handler, req *http.Request) {
+	t.Helper()
+	if req.Method != http.MethodPut || req.Header.Get("If-Match") != "" {
+		return
+	}
+	getPath := adminETagGetPath(req.URL.RequestURI())
+	if getPath == "" {
+		return
+	}
+	g := httptest.NewRequest(http.MethodGet, getPath, nil).WithContext(req.Context())
+	grr := httptest.NewRecorder()
+	h.ServeHTTP(grr, g)
+	if etag := grr.Header().Get("ETag"); etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+}
+
 // adminETagGetPath maps a PUT path to the GET path that returns the
 // resource's current ETag, or "" when the route does not enforce
 // If-Match. Pools read straight off the same path; experiments need the
@@ -119,6 +143,36 @@ func adminETagGetPath(putPath string) string {
 			return putPath[:i]
 		}
 		return putPath
+	}
+	// The tenant resource PUT and its rbac-config / elicitation-content-
+	// integrity sub-resource PUTs all carry the tenant row's version as
+	// their entity tag, and each sub-resource GET reads off the same path,
+	// so the lookup returns the PUT path verbatim (query stripped).
+	if strings.HasPrefix(putPath, "/v1/admin/tenants/") {
+		p := putPath
+		if i := strings.IndexByte(p, '?'); i >= 0 {
+			p = p[:i]
+		}
+		rest := strings.TrimPrefix(p, "/v1/admin/tenants/")
+		// A bare {id} or the rbac-config / elicitation-content-integrity
+		// sub-resource; other tenant sub-paths are not If-Match PUTs.
+		if rest != "" && (!strings.Contains(rest, "/") ||
+			strings.HasSuffix(p, "/rbac-config") ||
+			strings.HasSuffix(p, "/elicitation-content-integrity")) {
+			return p
+		}
+		return ""
+	}
+	// Runtimes are platform-global; the GET reads by name. Only the
+	// top-level resource PUT enforces If-Match (the /tenant-access and
+	// /regenerate-cards sub-routes are POST/DELETE), so a name carrying a
+	// further path segment is not an ETag-bearing PUT.
+	if strings.HasPrefix(putPath, "/v1/admin/runtimes/") {
+		name := etagResourceName(putPath, "/v1/admin/runtimes/")
+		if name == "" {
+			return ""
+		}
+		return "/v1/admin/runtimes/" + name
 	}
 	// Environments and users are tenant-scoped under acme in the fixtures.
 	// A platform-admin GET requires the tenantId query; a tenant-admin

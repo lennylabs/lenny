@@ -55,6 +55,7 @@ func TestPutElicitationIntegrityEnforceNeedsNoJustification(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"mode": "enforce"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -109,6 +110,7 @@ func TestPutElicitationIntegrityWeakensWithJustification_spec_9_2_F_9_2_9(t *tes
 	body, _ := json.Marshal(map[string]string{"mode": "off", "justification": "staging tenant, integrity tooling offline"})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
 		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), req)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -179,8 +181,10 @@ func TestPutElicitationIntegrityRecordsPriorModeAndFloor_spec_9_2_F_9_2_9(t *tes
 	// First write: from null → enforce, under a detect-only floor.
 	body1, _ := json.Marshal(map[string]string{"mode": "enforce"})
 	rr1 := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr1, withAdminPrincipal(httptest.NewRequest(http.MethodPut,
-		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body1))))
+	req1 := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body1)))
+	injectAdminIfMatch(t, router.Handler(), req1)
+	router.Handler().ServeHTTP(rr1, req1)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("first PUT status %d, body %s", rr1.Code, rr1.Body.String())
 	}
@@ -188,8 +192,10 @@ func TestPutElicitationIntegrityRecordsPriorModeAndFloor_spec_9_2_F_9_2_9(t *tes
 	// write still emits, with previous_stored_mode = "enforce".
 	body2, _ := json.Marshal(map[string]string{"mode": "enforce"})
 	rr2 := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr2, withAdminPrincipal(httptest.NewRequest(http.MethodPut,
-		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body2))))
+	req2 := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body2)))
+	injectAdminIfMatch(t, router.Handler(), req2)
+	router.Handler().ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("second PUT status %d", rr2.Code)
 	}
@@ -299,8 +305,10 @@ func TestGetElicitationIntegrityPlatformFloorClampsEffective(t *testing.T) {
 	router = router.WithElicitationFloor("off")
 	body, _ := json.Marshal(map[string]string{"mode": "off", "justification": "staging tenant"})
 	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, withAdminPrincipal(httptest.NewRequest(http.MethodPut,
-		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body))))
+	putReq := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), putReq)
+	router.Handler().ServeHTTP(rr, putReq)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("PUT status %d, body %s", rr.Code, rr.Body.String())
 	}
