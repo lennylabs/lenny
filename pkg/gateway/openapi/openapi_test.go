@@ -376,6 +376,48 @@ func TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972(t *testing.T) {
 	}
 }
 
+// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated list
+// envelope `{items, cursor, hasMore, total}` is the SDK-generator input
+// for GET /v1/sessions, and the cursor/limit/sort query params are
+// advertised. F-15.1.6.
+func TestSessionsListUsesCanonicalPaginationEnvelope_spec_15_1_1228(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	get, _ := parsed["paths"].(map[string]any)["/v1/sessions"].(map[string]any)["get"].(map[string]any)
+	if get == nil {
+		t.Fatal("paths./v1/sessions.get missing")
+	}
+	paramNames := map[string]bool{}
+	for _, p := range get["parameters"].([]any) {
+		paramNames[p.(map[string]any)["name"].(string)] = true
+	}
+	for _, want := range []string{"cursor", "limit", "sort"} {
+		if !paramNames[want] {
+			t.Errorf("GET /v1/sessions must advertise the %q query param", want)
+		}
+	}
+	schema := get["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	required := map[string]bool{}
+	for _, r := range schema["required"].([]any) {
+		required[r.(string)] = true
+	}
+	if !required["items"] || !required["hasMore"] {
+		t.Errorf("200 schema.required must include items and hasMore, got %v", schema["required"])
+	}
+	props, _ := schema["properties"].(map[string]any)
+	for _, want := range []string{"items", "cursor", "hasMore", "total"} {
+		if _, ok := props[want]; !ok {
+			t.Errorf("200 schema.properties missing canonical field %q", want)
+		}
+	}
+	if _, legacy := props["sessions"]; legacy {
+		t.Error("200 schema must not carry the legacy `sessions` field")
+	}
+}
+
 func TestDocumentReturnsCopy(t *testing.T) {
 	a := openapi.Document()
 	b := openapi.Document()

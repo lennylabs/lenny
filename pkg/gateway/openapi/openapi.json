@@ -458,7 +458,10 @@
         "parameters": [
           { "name": "state",      "in": "query", "schema": { "type": "string" } },
           { "name": "runtime",    "in": "query", "schema": { "type": "string" } },
-          { "name": "failureClass", "in": "query", "schema": { "type": "string" } }
+          { "name": "failureClass", "in": "query", "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "description": "Opaque cursor from a previous page's response. Omit for the first page.", "schema": { "type": "string" } },
+          { "name": "limit",  "in": "query", "description": "Items per page. Minimum 1, maximum 200; values outside the range are clamped. Default 50.", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "sort",   "in": "query", "description": "Sort field and direction as field:asc|desc. Supported fields: created_at, updated_at. Default created_at:desc.", "schema": { "type": "string", "default": "created_at:desc" } }
         ],
         "responses": {
           "200": {
@@ -467,8 +470,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "required": ["items", "hasMore"],
                   "properties": {
-                    "sessions": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } }
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } },
+                    "cursor": { "type": "string", "nullable": true, "description": "§15.1 line 1251 — opaque cursor for the next page; null when no more results." },
+                    "hasMore": { "type": "boolean", "description": "§15.1 line 1251 — true when additional pages exist beyond this one." },
+                    "total": { "type": "integer", "description": "§15.1 line 1252 — total match count across all pages; present only when cheaply computable." }
                   }
                 }
               }
