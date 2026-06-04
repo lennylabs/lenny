@@ -263,7 +263,7 @@ func TestListAndDeleteExternalAdapter(t *testing.T) {
 		t.Fatalf("list: %d", listRR.Code)
 	}
 	var list struct {
-		ExternalAdapters []admin.ExternalAdapterPayload `json:"externalAdapters"`
+		ExternalAdapters []admin.ExternalAdapterPayload `json:"items"`
 	}
 	if err := json.Unmarshal(listRR.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)

@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
@@ -114,8 +115,18 @@ func (r *Router) handleListCustomRoles(w http.ResponseWriter, req *http.Request)
 	for _, role := range rows {
 		out = append(out, fromCustomRole(role))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"roles": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(x CustomRolePayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return x.Name, x.Name
+			case "updated_at":
+				return x.UpdatedAt, x.Name
+			default:
+				return x.CreatedAt, x.Name
+			}
+		})
 }
 
 func (r *Router) handleGetCustomRole(w http.ResponseWriter, req *http.Request) {

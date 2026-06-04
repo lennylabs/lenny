@@ -125,7 +125,7 @@ func TestListUsersTenantScoped(t *testing.T) {
 		t.Fatalf("status: %d", rr.Code)
 	}
 	var resp struct {
-		Users []admin.UserPayload `json:"users"`
+		Users []admin.UserPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Users) != 1 || resp.Users[0].Subject != "a" {

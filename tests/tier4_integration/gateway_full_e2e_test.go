@@ -90,7 +90,7 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("list tenants: %d", code)
 	}
-	if list, _ := tenants["tenants"].([]any); len(list) == 0 {
+	if list, _ := tenants["items"].([]any); len(list) == 0 {
 		t.Error("bootstrapped tenant not listed")
 	}
 

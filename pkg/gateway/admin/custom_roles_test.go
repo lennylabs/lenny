@@ -146,7 +146,7 @@ func TestListCustomRoles(t *testing.T) {
 		t.Fatalf("list: status %d", rr.Code)
 	}
 	var resp struct {
-		Roles []admin.CustomRolePayload `json:"roles"`
+		Roles []admin.CustomRolePayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Roles) != 2 {

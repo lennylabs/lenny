@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 )
 
 // ApproverNotifier delivers a §11.2.1 dual-control approval
@@ -285,8 +286,15 @@ func (r *Router) handleListBillingCorrections(w http.ResponseWriter, req *http.R
 	for _, c := range rows {
 		out = append(out, correctionPayload(c))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"billing_corrections": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// Corrections carry no created_at; submitted_at is the §15.1 line 1236
+	// creation-time sort field, defaulting to descending. F-15.1.6.
+	writePaginatedList(w, req, r.clock(), out,
+		[]string{"submitted_at"},
+		pagination.Sort{Field: "submitted_at", Direction: pagination.DirectionDesc},
+		func(c billingCorrectionPayload, _ pagination.Sort) (string, string) {
+			return c.SubmittedAt, c.ID
+		})
 }
 
 // handleGetBillingCorrection implements GET /v1/admin/billing-corrections/{id}.

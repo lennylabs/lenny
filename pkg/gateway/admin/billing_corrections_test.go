@@ -423,7 +423,7 @@ func TestListAndGetCorrections(t *testing.T) {
 		t.Fatalf("list: status %d", listRR.Code)
 	}
 	var listResp struct {
-		BillingCorrections []map[string]any `json:"billing_corrections"`
+		BillingCorrections []map[string]any `json:"items"`
 	}
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode list: %v", err)

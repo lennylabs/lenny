@@ -128,7 +128,7 @@ func TestListExperiments(t *testing.T) {
 		t.Fatalf("list: status %d", rr.Code)
 	}
 	var resp struct {
-		Experiments []admin.ExperimentPayload `json:"experiments"`
+		Experiments []admin.ExperimentPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Experiments) != 2 {

@@ -367,7 +367,7 @@ func TestListCredentialPools(t *testing.T) {
 		t.Fatalf("list: status %d", rr.Code)
 	}
 	var resp struct {
-		CredentialPools []admin.CredentialPoolPayload `json:"credentialPools"`
+		CredentialPools []admin.CredentialPoolPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.CredentialPools) != 2 {

@@ -52,7 +52,7 @@ func runPolicyAudit(t *testing.T, f policyFixture, args ...string) (int, map[str
 // (parent) and a runc pool (target) is a monotonicity violation.
 func TestPolicyAuditIsolation_ReportsViolation_spec_24_14(t *testing.T) {
 	f := policyFixture{
-		policies: `{"delegationPolicies":[{"name":"team","tenantId":"acme",
+		policies: `{"items":[{"name":"team","tenantId":"acme",
 			"rules":[{"target":{"types":["agent"]},"allow":true}]}]}`,
 		pools: `{"items":[
 			{"name":"kata-pool","runtimeRef":"coder","isolationProfile":"microvm"},
@@ -85,7 +85,7 @@ func TestPolicyAuditIsolation_ReportsViolation_spec_24_14(t *testing.T) {
 // when every matched pool is at least as restrictive as its peers.
 func TestPolicyAuditIsolation_Clean_spec_24_14(t *testing.T) {
 	f := policyFixture{
-		policies: `{"delegationPolicies":[{"name":"team",
+		policies: `{"items":[{"name":"team",
 			"rules":[{"target":{"types":["agent"]},"allow":true}]}]}`,
 		pools: `{"items":[
 			{"name":"kata-a","runtimeRef":"coder","isolationProfile":"microvm"},
@@ -107,7 +107,7 @@ func TestPolicyAuditIsolation_Clean_spec_24_14(t *testing.T) {
 // pools whose runtime carries the label.
 func TestPolicyAuditIsolation_LabelMatchAcrossRuntimes_spec_24_14(t *testing.T) {
 	f := policyFixture{
-		policies: `{"delegationPolicies":[{"name":"plat",
+		policies: `{"items":[{"name":"plat",
 			"rules":[{"target":{"matchLabels":{"team":"platform"}},"allow":true}]}]}`,
 		pools: `{"items":[
 			{"name":"kata","runtimeRef":"coder","isolationProfile":"microvm"},

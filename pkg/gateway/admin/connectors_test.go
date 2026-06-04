@@ -153,7 +153,7 @@ func TestListConnectors(t *testing.T) {
 		t.Fatalf("status: %d", rr.Code)
 	}
 	var resp struct {
-		Connectors []admin.ConnectorPayload `json:"connectors"`
+		Connectors []admin.ConnectorPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Connectors) != 1 {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 )
 
 // CredentialPoolPayload is the §4.9 / §15.1 admin CredentialPool wire
@@ -487,8 +488,18 @@ func (r *Router) handleListCredentialPools(w http.ResponseWriter, req *http.Requ
 	for _, p := range rows {
 		out = append(out, fromCredentialPool(p))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"credentialPools": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(x CredentialPoolPayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return x.Name, x.Name
+			case "updated_at":
+				return x.UpdatedAt, x.Name
+			default:
+				return x.CreatedAt, x.Name
+			}
+		})
 }
 
 func (r *Router) handleGetCredentialPool(w http.ResponseWriter, req *http.Request) {

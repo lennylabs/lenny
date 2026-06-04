@@ -33,11 +33,8 @@ func cmdPolicy(ctx context.Context, c *ctl.Client, args []string, stdout, stderr
 	}
 }
 
-// policyListWire is the GET /v1/admin/delegation-policies envelope.
-type policyListWire struct {
-	DelegationPolicies []policyWire `json:"delegationPolicies"`
-}
-
+// policyWire is one item of the GET /v1/admin/delegation-policies §15.1
+// paginated envelope.
 type policyWire struct {
 	Name     string     `json:"name"`
 	TenantID string     `json:"tenantId"`
@@ -99,15 +96,16 @@ func cmdPolicyAuditIsolation(ctx context.Context, c *ctl.Client, args []string, 
 		return 2
 	}
 
-	var policies policyListWire
-	if err := c.Do(ctx, "GET", "/v1/admin/delegation-policies", nil, &policies); err != nil {
+	// spec: §15.1 lines 1228-1253 — the delegation-policies, pools, and
+	// runtimes admin collections return the canonical cursor-paginated
+	// envelope. The isolation audit joins the full inventory, so it walks
+	// every page rather than reading a single 50-item default page.
+	// F-15.1.6.
+	policies, err := listAllAdmin[policyWire](ctx, c, "/v1/admin/delegation-policies")
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	// spec: §15.1 lines 1228-1253 — /v1/admin/pools and /v1/admin/runtimes
-	// return the canonical cursor-paginated envelope. The isolation audit
-	// joins the full inventory, so it walks every page rather than reading
-	// a single 50-item default page. F-15.1.6.
 	pools, err := listAllAdmin[poolWire](ctx, c, "/v1/admin/pools")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -119,7 +117,7 @@ func cmdPolicyAuditIsolation(ctx context.Context, c *ctl.Client, args []string, 
 		return 1
 	}
 
-	violations := auditIsolation(policies.DelegationPolicies, pools, runtimes)
+	violations := auditIsolation(policies, pools, runtimes)
 
 	out := make([]isolationViolationOut, 0, len(violations))
 	for _, v := range violations {

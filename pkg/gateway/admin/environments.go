@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
@@ -556,8 +557,18 @@ func (r *Router) handleListEnvironments(w http.ResponseWriter, req *http.Request
 	for _, e := range rows {
 		out = append(out, fromEnvironment(e))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"environments": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(x EnvironmentPayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return x.Name, x.Name
+			case "updated_at":
+				return x.UpdatedAt, x.Name
+			default:
+				return x.CreatedAt, x.Name
+			}
+		})
 }
 
 func (r *Router) handleGetEnvironment(w http.ResponseWriter, req *http.Request) {

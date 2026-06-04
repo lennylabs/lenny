@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -365,8 +366,18 @@ func (r *Router) handleListExperiments(w http.ResponseWriter, req *http.Request)
 	for _, e := range rows {
 		out = append(out, fromExperiment(e))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"experiments": out})
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
+		func(x ExperimentPayload, s pagination.Sort) (string, string) {
+			switch s.Field {
+			case "name":
+				return x.ID, x.ID
+			case "updated_at":
+				return x.UpdatedAt, x.ID
+			default:
+				return x.CreatedAt, x.ID
+			}
+		})
 }
 
 func (r *Router) handleGetExperiment(w http.ResponseWriter, req *http.Request) {

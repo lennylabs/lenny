@@ -1311,12 +1311,7 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 		}
 		printJSON(stdout, out)
 	case "list":
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/external-adapters", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return printItemList(ctx, c, "/v1/admin/external-adapters", stdout, stderr)
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: external-adapters get requires <name>")

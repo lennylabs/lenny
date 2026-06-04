@@ -171,7 +171,7 @@ func TestListDelegationPolicies(t *testing.T) {
 		t.Fatalf("list: status %d", rr.Code)
 	}
 	var resp struct {
-		DelegationPolicies []admin.DelegationPolicyPayload `json:"delegationPolicies"`
+		DelegationPolicies []admin.DelegationPolicyPayload `json:"items"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.DelegationPolicies) != 2 {

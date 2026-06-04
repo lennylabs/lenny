@@ -344,7 +344,7 @@ func TestListReturnsCreatedSessions(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: want 200, got %d", resp.StatusCode)
 	}
-	sessions, ok := body["sessions"].([]any)
+	sessions, ok := body["items"].([]any)
 	if !ok {
 		t.Fatalf("expected sessions array, got %v", body)
 	}
@@ -376,7 +376,7 @@ func TestListFiltersByState(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list filter: want 200, got %d", resp.StatusCode)
 	}
-	sessions := body["sessions"].([]any)
+	sessions := body["items"].([]any)
 	if len(sessions) != 1 || sessions[0].(map[string]any)["id"] != idA {
 		t.Errorf("filter ?state=running: want [idA], got %v", sessions)
 	}

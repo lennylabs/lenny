@@ -171,7 +171,7 @@ func TestConcurrentStatelessMode(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("list pools: status %d", code)
 	}
-	pools, _ := list["pools"].([]any)
+	pools, _ := list["items"].([]any)
 	found := false
 	for _, p := range pools {
 		pm, _ := p.(map[string]any)
