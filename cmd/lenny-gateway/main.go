@@ -177,6 +177,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol/denialpg"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler"
@@ -3819,6 +3820,15 @@ func main() {
 	var leaseBudgets *leasecontrol.MemoryBudgetSource
 	if *grpcAddr != "" {
 		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
+		// §8.6 lines 730-733 durability: when Postgres is configured the
+		// extension-denied flag, cool-off expiry, and grant counters are
+		// persisted to delegation_tree_budget through the denialpg store,
+		// so a coordinator handoff or gateway restart cannot bypass a
+		// user's rejection. Without Postgres (the dev/Embedded path) the
+		// denial stays in-memory. F-8.6.5.
+		if pgPool != nil {
+			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(pgPool))
+		}
 	}
 
 	// spec: §12.5 line 301 / line 307 — the §12.5 T4 KMS availability

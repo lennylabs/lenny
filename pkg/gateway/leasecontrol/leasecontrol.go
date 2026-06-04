@@ -313,6 +313,52 @@ type BudgetSource interface {
 	Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error
 }
 
+// DenialStore is the durable backing for the §8.6 extension-denied flag,
+// the rejection cool-off expiry, and the lease-extension grant counters.
+// MemoryBudgetSource delegates to it when one is injected via
+// WithDenialStore so a user rejection survives a coordinator handoff or
+// gateway restart, which §8.6 line 730 forbids bypassing. The Postgres
+// implementation (pkg/gateway/leasecontrol/denialpg) persists the flag to
+// the delegation_tree_budget table, reads it back compared against the
+// database clock (§8.6 line 733), and re-checks it inside the
+// budget-increment transaction (§8.6 line 732). A nil store leaves the
+// in-memory behavior unchanged — the development and test path.
+//
+// The store keys its rows by (tenantID, rootSessionID): the denial is
+// recorded tree-wide, matching both the delegation_tree_budget primary
+// key and the in-memory source's tree-wide denial. The requestingSessionID
+// the BudgetSource methods carry is the per-subtree scoping the in-memory
+// per-session extension deltas already enforce (F-8.6.12); the durable
+// denial state stays tree-keyed.
+// spec: §8.6 lines 730-733.
+type DenialStore interface {
+	// Deny persists the tree's extension-denied flag and a cool-off
+	// expiry coolOff into the future, keyed by (tenantID, rootSessionID).
+	// The expiry MUST be computed from the database clock (NOW()), not a
+	// caller-supplied wall-clock, per §8.6 line 733.
+	Deny(ctx context.Context, tenantID, rootSessionID string, coolOff time.Duration) error
+
+	// Denied reports whether the tree is currently extension-denied,
+	// comparing the stored cool_off_expiry against the database clock.
+	// expiry is the raw stored expiry timestamp for the caller's
+	// CoolOffExpiry field; denied already folds in the clock comparison.
+	// A tree with no persisted row is reported not denied.
+	Denied(ctx context.Context, tenantID, rootSessionID string) (denied bool, expiry time.Time, err error)
+
+	// Grant runs the §8.6 line 732 in-flight atomic re-check: inside one
+	// transaction it locks the tree's delegation_tree_budget row,
+	// re-evaluates the denial against the database clock, and — only when
+	// the tree is not denied — increments the durable per-tree extension
+	// counters by granted and commits. It returns ErrExtensionDenied when
+	// the flag was set (the grant must roll back) and nil when the grant
+	// committed.
+	Grant(ctx context.Context, tenantID, rootSessionID string, granted Dimensions) error
+
+	// Clear clears the tree's extension-denied flag and cool-off, backing
+	// the §15.1 line 868 admin extension-denial clear endpoint.
+	Clear(ctx context.Context, tenantID, rootSessionID string) error
+}
+
 // Sentinel errors a BudgetSource returns.
 var (
 	// ErrSessionNotFound — the requesting session is unknown to the

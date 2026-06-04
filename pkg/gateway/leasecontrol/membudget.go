@@ -39,6 +39,19 @@ type MemoryBudgetSource struct {
 	// by child session id. A child session's effective extension max
 	// is capped at the parent's lease grant per dimension. F-8.6.15.
 	parentLease map[string]SessionLease
+
+	// denials, when non-nil, is the durable backing for the §8.6
+	// extension-denied flag, cool-off expiry, and grant counters. The
+	// Deny, TreeBudget, ApplyGrant, and ClearSubtreeDenial paths delegate
+	// the denial concern to it so a user rejection survives a coordinator
+	// handoff (§8.6 line 730), the flag is read from the store rather than
+	// the in-memory cache (§8.6 line 731), and the grant re-checks the
+	// flag inside the store's commit transaction (§8.6 line 732). A nil
+	// denials leaves the tree-local in-memory denial state authoritative.
+	// The per-session extension deltas stay in memory in both modes; the
+	// store only owns the denial state and a durable per-tree grant
+	// counter. F-8.6.5.
+	denials DenialStore
 }
 
 // memTree is one delegation tree's mutable §8.6 extension state.
@@ -142,6 +155,22 @@ func (m *MemoryBudgetSource) WithClock(clock func() time.Time) *MemoryBudgetSour
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clock = clock
+	return m
+}
+
+// WithDenialStore makes the §8.6 extension-denied flag, cool-off expiry,
+// and grant counters durable by delegating them to store: the
+// handoff-safe path §8.6 lines 730-733 require. With a store set, Deny
+// persists to it, TreeBudget reads the flag from it (database-clock
+// compared), ApplyGrant re-checks the flag inside the store's commit
+// transaction before the per-session in-memory delta is applied, and
+// ClearSubtreeDenial clears it through the store. A nil store restores
+// the in-memory-only behavior. It returns the receiver for chaining.
+// spec: §8.6 lines 730-733. F-8.6.5.
+func (m *MemoryBudgetSource) WithDenialStore(store DenialStore) *MemoryBudgetSource {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.denials = store
 	return m
 }
 
@@ -367,19 +396,28 @@ func (m *MemoryBudgetSource) MarkDenied(rootSessionID string) {
 // persists it to delegation_tree_budget. An unknown tree is a no-op so a
 // late rejection on a torn-down tree does not error. F-8.6.2.
 // spec: §8.6 line 729, line 734
-func (m *MemoryBudgetSource) Deny(_ context.Context, _ /*tenantID*/, rootSessionID, _ /*requestingSessionID*/ string) error {
+func (m *MemoryBudgetSource) Deny(ctx context.Context, tenantID, rootSessionID, _ /*requestingSessionID*/ string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, ok := m.trees[rootSessionID]
 	if !ok {
+		m.mu.Unlock()
 		return nil
 	}
 	coolOff := t.rejectionCoolOff
 	if coolOff <= 0 {
 		coolOff = DefaultRejectionCoolOff
 	}
+	// With a durable store the denial is persisted to Postgres so a
+	// coordinator handoff cannot bypass it; the DB call runs outside the
+	// mutex so a slow round-trip does not block every other budget op.
+	if m.denials != nil {
+		denials := m.denials
+		m.mu.Unlock()
+		return denials.Deny(ctx, tenantID, rootSessionID, coolOff)
+	}
 	t.extensionDenied = true
 	t.coolOffExpiry = m.clock().Add(coolOff)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -410,15 +448,28 @@ func (m *MemoryBudgetSource) ClearDenial(rootSessionID string) {
 // Postgres implementation returns the not-found and storage-error cases
 // through the same two return values.
 // spec: §8.6 line 735; §15.1 line 868
-func (m *MemoryBudgetSource) ClearSubtreeDenial(_ context.Context, rootSessionID, _ string) (found bool, err error) {
+func (m *MemoryBudgetSource) ClearSubtreeDenial(ctx context.Context, rootSessionID, _ string) (found bool, err error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, ok := m.trees[rootSessionID]
 	if !ok {
+		m.mu.Unlock()
 		return false, nil
+	}
+	if m.denials != nil {
+		tenantID := t.tenantID
+		denials := m.denials
+		m.mu.Unlock()
+		// The tree is known (found=true); clear the durable flag. A
+		// storage error propagates so the admin handler can surface it
+		// rather than report a clear that did not land.
+		if cerr := denials.Clear(ctx, tenantID, rootSessionID); cerr != nil {
+			return true, cerr
+		}
+		return true, nil
 	}
 	t.extensionDenied = false
 	t.coolOffExpiry = time.Time{}
+	m.mu.Unlock()
 	return true, nil
 }
 
@@ -443,23 +494,39 @@ func (m *MemoryBudgetSource) TenantOf(_ context.Context, sessionID string) (stri
 // to sessionID itself. Siblings see the unchanged base — extensions
 // apply to the requesting session only per §8.6 line 737-741. F-8.6.1;
 // F-8.6.12.
-func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID string) (TreeBudget, error) {
+func (m *MemoryBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID string) (TreeBudget, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, err := m.lookupLocked(tenantID, sessionID)
 	if err != nil {
+		m.mu.Unlock()
 		return TreeBudget{}, err
 	}
-	denied := t.extensionDenied && m.clock().Before(t.coolOffExpiry)
-	parent := m.parentLease[sessionID]
-	return TreeBudget{
-		RootSessionID:   t.rootSessionID,
-		Current:         t.base.add(t.extensions[sessionID]),
-		EffectiveMax:    t.effectiveMaxDims(),
-		ParentCeiling:   parent.ceilings(),
-		ExtensionDenied: denied,
-		CoolOffExpiry:   t.coolOffExpiry,
-	}, nil
+	tb := TreeBudget{
+		RootSessionID: t.rootSessionID,
+		Current:       t.base.add(t.extensions[sessionID]),
+		EffectiveMax:  t.effectiveMaxDims(),
+		ParentCeiling: m.parentLease[sessionID].ceilings(),
+	}
+	// §8.6 line 731: with a durable store the denial flag MUST be read
+	// from the store (database-clock compared), not the in-memory cache
+	// that could be stale across a coordinator handoff. The store read
+	// runs outside the mutex.
+	if m.denials != nil {
+		root := t.rootSessionID
+		denials := m.denials
+		m.mu.Unlock()
+		denied, expiry, derr := denials.Denied(ctx, tenantID, root)
+		if derr != nil {
+			return TreeBudget{}, derr
+		}
+		tb.ExtensionDenied = denied
+		tb.CoolOffExpiry = expiry
+		return tb, nil
+	}
+	tb.ExtensionDenied = t.extensionDenied && m.clock().Before(t.coolOffExpiry)
+	tb.CoolOffExpiry = t.coolOffExpiry
+	m.mu.Unlock()
+	return tb, nil
 }
 
 // ApplyGrant raises the requesting session's extension deltas by the
@@ -471,14 +538,38 @@ func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID s
 // flag under the lock — the in-memory analogue of the Postgres
 // in-transaction re-check — and returns ErrExtensionDenied when a denial
 // landed since the TreeBudget read. F-8.6.1; F-8.6.11; F-8.6.12.
-func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error) {
+func (m *MemoryBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error) {
+	m.mu.Lock()
+	t, err := m.lookupLocked(tenantID, rootSessionID)
+	if err != nil {
+		m.mu.Unlock()
+		return NewLimits{}, err
+	}
+	denials := m.denials
+	m.mu.Unlock()
+
+	// §8.6 line 732: with a durable store the in-flight atomic re-check
+	// and the budget-counter increment happen inside one Postgres
+	// transaction under the delegation_tree_budget row lock. If a denial
+	// was persisted between this request's TreeBudget read and the
+	// commit, the store returns ErrExtensionDenied and the per-session
+	// in-memory delta is not applied. The store call runs outside the
+	// mutex so a denied or slow grant does not stall the whole source.
+	if denials != nil {
+		if gerr := denials.Grant(ctx, tenantID, rootSessionID, granted); gerr != nil {
+			return NewLimits{}, gerr
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	t, err := m.lookupLocked(tenantID, rootSessionID)
+	t, err = m.lookupLocked(tenantID, rootSessionID)
 	if err != nil {
 		return NewLimits{}, err
 	}
-	if t.extensionDenied && m.clock().Before(t.coolOffExpiry) {
+	if denials == nil && t.extensionDenied && m.clock().Before(t.coolOffExpiry) {
+		// In-memory mode keeps the under-lock re-check the durable store
+		// performs in-transaction.
 		return NewLimits{}, ErrExtensionDenied
 	}
 	if t.extensions == nil {
