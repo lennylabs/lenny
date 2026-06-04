@@ -3,9 +3,14 @@
 package llmproxy
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // CodeFallbackExhausted is the §4.9 terminal error returned to the agent
@@ -95,6 +100,21 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 	if h.Fallback == nil {
 		return false
 	}
+	// spec: §16.3 line 353 — the credential.fallback_chain span (Gateway
+	// credential service). The §4.9 fallback orchestration carries no
+	// request context, so the span roots at Background and projects the
+	// faulted lease's tenant/session/provider/pool as attributes. No
+	// credential material is attached (§16.4 line 376).
+	_, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialFallbackChain)
+	span.SetAttributes(
+		attribute.String("tenant_id", lease.TenantID),
+		attribute.String("session_id", lease.SessionID),
+		attribute.String("credential.provider", string(lease.Provider)),
+		attribute.String("credential.faulted_pool", lease.PoolID),
+		attribute.String("credential.fault_trigger", string(trigger)),
+	)
+	defer span.End()
+
 	dec := h.Fallback.Fault(lease.SessionID, lease.Provider, lease.PoolID, trigger)
 	if dec.Exhausted {
 		if h.FallbackMetrics != nil {
@@ -115,12 +135,20 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 		// The session is terminal: drop its fallback state so the
 		// per-session rotation map does not retain the entry.
 		h.Fallback.Release(lease.SessionID)
+		span.SetAttributes(attribute.String(tracing.AttrOutcome, "exhausted"))
+		// Chain exhaustion is a §16.3 POLICY-category terminal outcome.
+		tracing.RecordError(span, tracing.CategorizeError(
+			errChainExhausted, tracing.CategoryPolicy))
 		h.writeError(w, http.StatusForbidden, CodeFallbackExhausted,
 			"the credential fallback chain is exhausted for this session")
 		return true
 	}
 	// Fallback Flow steps 5-7: a replacement pool is available; mint and
 	// push it. The pod retries the request against the rotated lease.
+	span.SetAttributes(
+		attribute.String(tracing.AttrOutcome, "rotated"),
+		attribute.String("credential.next_pool", dec.NextPool),
+	)
 	if h.FallbackMetrics != nil {
 		h.FallbackMetrics.IncCredentialRotation(errorType)
 	}
@@ -129,3 +157,8 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 	}
 	return false
 }
+
+// errChainExhausted is the sentinel recorded on the credential.fallback_chain
+// span when the §4.9 chain is exhausted; the wire error written to the pod is
+// CodeFallbackExhausted.
+var errChainExhausted = errors.New(CodeFallbackExhausted)

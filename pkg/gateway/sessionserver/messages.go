@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // transcriptSortField is the only sort key valid on the §15.1
@@ -209,6 +210,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			"gateway has no executor wired", nil)
 		return
 	}
+	// spec: §16.3 line 342 — open the gateway-side `session.prompt` span on
+	// the request context so the send_message delivery (executor.Send, the
+	// §4.8 PostAgentOutput chain, transcript + event publish) rides one
+	// trace. The pod-side `session.prompt` span stitches under it via the
+	// inherited trace context. Correlation attributes are projected by Start.
+	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanSessionPrompt)
+	defer span.End()
+	r = r.WithContext(ctx)
+
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
 	row, err := s.store.Get(r.Context(), tenantID, id)
@@ -322,6 +332,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if len(msgs) > 0 {
 		o, err := s.executor.Send(r.Context(), row.ID, msgs)
 		if err != nil {
+			// spec: §16.3 line 342 / §16 error taxonomy — the executor (the
+			// pod) rejected the prompt; UPSTREAM marks it a downstream
+			// dependency failure on the `session.prompt` span.
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
 			s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
 				"executor rejected the message batch",
 				map[string]any{"reason": err.Error()})

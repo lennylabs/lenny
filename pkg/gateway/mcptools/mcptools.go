@@ -65,10 +65,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/task"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // mcpStateForSession returns the §8.8 MCP-protocol state spelling for
@@ -1032,12 +1034,21 @@ func Register(srv *mcp.Server, deps Deps) {
 					fmt.Sprintf("session %s is not a child of %s", cid, in.SessionID), nil)
 			}
 		}
+		// spec: §16.3 line 345 — the gateway-side await/collect path runs
+		// under one delegation.await_child span per await call (the poll
+		// loop reuses the same span rather than emitting one per tick).
+		// Correlation attributes auto-project from the context; the awaited
+		// child count is a non-PII descriptive attribute.
+		ctx, span := obstracing.NewTracer(nil).Start(ctx, obstracing.SpanDelegationAwaitChild)
+		span.SetAttributes(attribute.Int("delegation.await.child_count", len(in.ChildIDs)))
+		defer span.End()
 		// Poll the child states until the mode's settle condition holds.
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
 		for {
 			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, tenant, in.ChildIDs, mode)
 			if err != nil {
+				obstracing.RecordError(span, err)
 				return mcp.ToolResult{}, err
 			}
 			if settled {
@@ -1066,6 +1077,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			select {
 			case <-ctx.Done():
+				obstracing.RecordError(span, ctx.Err())
 				return mcp.ToolResult{}, ctx.Err()
 			case <-ticker.C:
 			}
@@ -1540,10 +1552,23 @@ func Register(srv *mcp.Server, deps Deps) {
 			// delegation tree from this session upward verifying the
 			// content-integrity digest at each forward hop, applies the
 			// depth policy, and reports the chain resolver.
-			dr, err := perCall.dispatch(ctx, tenant, row, originalContent, initiator, in.URL)
+			//
+			// spec: §16.3 line 350 — the elicitation chain is "Full chain
+			// (each hop is a child span)"; this is the gateway hop's span,
+			// opened at the request-path entry into the chain. Correlation
+			// attributes auto-project from the context; the initiator kind
+			// is a non-PII descriptive attribute. The post-dispatch blocking
+			// wait for the human response is a separate concern and is not
+			// part of this span.
+			elicitCtx, elicitSpan := obstracing.NewTracer(nil).Start(ctx, obstracing.SpanMCPElicitation)
+			elicitSpan.SetAttributes(attribute.String("mcp.elicitation.initiator", string(initiator)))
+			dr, err := perCall.dispatch(elicitCtx, tenant, row, originalContent, initiator, in.URL)
 			if err != nil {
+				obstracing.RecordError(elicitSpan, err)
+				elicitSpan.End()
 				return mcp.ToolResult{}, err
 			}
+			elicitSpan.End()
 			if dr.Suppressed {
 				// §9.2: a depth-suppressed elicitation returns a SUPPRESSED
 				// response the originating pod handles as "user declined".

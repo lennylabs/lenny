@@ -4,14 +4,17 @@ package adapter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -63,13 +66,13 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				return nil
 			}
 			// §15.4.1: an adapter-local tool_call is answered by the
-			// adapter itself and never relayed to the gateway.
+			// adapter itself and never relayed to the gateway. A relayed
+			// platform/connector tool_call is traced gateway-side as
+			// mcp.external_tool_call; the adapter-local dispatch below is
+			// the pod-side tool invocation that §16.3 attributes to the Pod.
 			if result, handled := HandleToolCall(line, s.WorkspaceRoot); handled {
-				if id := extractToolCallID(line); id != "" {
-					s.SetLastToolCallID(id)
-				}
-				if err := s.Runtime.WriteEnvelope(sessionID, result); err != nil {
-					return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
+				if err := s.emitLocalToolCall(ctx, sessionID, line, result); err != nil {
+					return err
 				}
 				continue
 			}
@@ -96,6 +99,56 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			return ctx.Err()
 		}
 	}
+}
+
+// emitLocalToolCall opens the §16.3 `session.tool_call` span for one
+// adapter-local tool invocation, records the §10.1 last_tool_call_id,
+// writes the tool_result back to the runtime's stdin, and ends the span.
+// The span is per invocation per the §16.3 line 343 "(per tool
+// invocation)" annotation. It carries the tool name as a descriptive
+// attribute (a tool identifier, never arguments) and records an UPSTREAM
+// error when the local tool reported isError, so a failing read of a
+// missing file or a denied write surfaces on the trace. F-16.3.6.
+func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame, result []byte) error {
+	// spec: §16.3 line 343 — `session.tool_call`, emitted by the Pod, one
+	// span per tool invocation. NewTracer(nil) resolves the process-global
+	// provider cmd/lenny-adapter installs; correlation fields auto-project.
+	_, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionToolCall)
+	defer span.End()
+	if name := extractToolCallName(frame); name != "" {
+		span.SetAttributes(attribute.String("tool.name", name))
+	}
+	if id := extractToolCallID(frame); id != "" {
+		span.SetAttributes(attribute.String("tool.call_id", id))
+		s.SetLastToolCallID(id)
+	}
+	// §16.3: a tool that returned isError is the UPSTREAM category — the
+	// failure originates in the tool's execution, not in the adapter
+	// transport. The tool_result is still delivered to the runtime.
+	if toolResultIsError(result) {
+		tracing.RecordError(span, tracing.CategorizeError(
+			errors.New("adapter-local tool reported an error result"),
+			tracing.CategoryUpstream))
+	}
+	if err := s.Runtime.WriteEnvelope(sessionID, result); err != nil {
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
+		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
+	}
+	return nil
+}
+
+// toolResultIsError reports whether a tool_result frame carries
+// isError: true. A frame that does not parse leaves the result treated
+// as a success so a parse hiccup does not flip a healthy tool to an
+// error on the span.
+func toolResultIsError(result []byte) bool {
+	var probe struct {
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(result, &probe); err != nil {
+		return false
+	}
+	return probe.IsError
 }
 
 // stripRuntimeFrom removes a runtime-set `from` field from an outbound

@@ -18,6 +18,7 @@ import (
 	pkgcred "github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // AuditSink receives §4.9.2 credential audit events. The server emits
@@ -207,6 +208,15 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
+	// spec: §16.3 line 352 — the §15.1 credential-rotate path runs under
+	// the credential.rotate span. §16.4 line 376 excludes the rotate RPC's
+	// payload from span attributes, so the secret and credential ref are
+	// not recorded here; correlation attributes (tenant_id, …) auto-project
+	// from the request context and the span records only the rotate
+	// outcome.
+	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanCredentialRotate)
+	defer span.End()
+	r = r.WithContext(ctx)
 	ref := r.PathValue("credential_ref")
 	if !s.ownedBy(r, tenant, user, ref) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
@@ -223,6 +233,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.store.Rotate(r.Context(), tenant, ref, req.Secret)
 	if err != nil {
+		tracing.RecordError(span, err)
 		s.writeStoreErr(w, err)
 		return
 	}

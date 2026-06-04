@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -643,6 +644,18 @@ func (e *TreeVisibilityMessagingScopeError) Error() string {
 //  4. §8.2.bis depth check against MaxDepth.
 //  5. atomic child-session INSERT with ParentSessionID set.
 func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (result Result, retErr error) {
+	// spec: §16.3 line 343 — the gateway spawn-child path runs under a
+	// `delegation.spawn_child` span so a distributed trace shows the
+	// admission gate (isolation, cycle, depth, budget, token mint, child
+	// INSERT) as one unit. The tracer resolves the process-global provider
+	// tracing.InitProvider installs; tenant_id/session_id ride from the
+	// correlation context Start projects. The deferred RecordError stamps
+	// any error path (every gate rejection returns through retErr).
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanDelegationSpawnChild)
+	defer func() {
+		tracing.RecordError(span, retErr)
+		span.End()
+	}()
 	// §8.2 / §12.4: budgetReservation holds the structural budget this
 	// admission reserved from the §12.4 Redis counters once the gate
 	// passes. If any later step fails before the child row is committed

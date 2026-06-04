@@ -13,7 +13,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -26,11 +29,26 @@ import (
 // content. Like the rest of the staging sequence it runs before the
 // session is claimed, so it does not touch pod-assignment state.
 func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServer) error {
+	// spec: §16.3 line 338 — `session.upload` is a Gateway + Pod span. This
+	// is the Pod half: the adapter streams uploaded files into the staging
+	// area. The gateway half (the client→gateway upload) is emitted there.
+	// F-16.3.6 / pod half of F-16.3.1.
+	_, span := tracing.NewTracer(nil).Start(stream.Context(), tracing.SpanSessionUpload)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
+
 	if s.StagingDir == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.FailedPrecondition, "adapter is not configured with a staging directory"),
+			tracing.CategoryPermanent)
 		return status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a staging directory")
 	}
 	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return status.Errorf(codes.Internal, "create staging directory: %v", err)
 	}
 	open := map[string]*os.File{}
@@ -47,10 +65,16 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		}
 		if err != nil {
 			closeAll()
+			// §16.3: a broken upload stream is TRANSIENT (the gateway may
+			// re-stream the upload).
+			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return err
 		}
 		if req.GetSessionId().GetValue() == "" {
 			closeAll()
+			spanErr = tracing.CategorizeError(
+				status.Error(codes.InvalidArgument, "PrepareWorkspace frame requires a session id"),
+				tracing.CategoryPermanent)
 			return status.Error(codes.InvalidArgument,
 				"PrepareWorkspace frame requires a session id")
 		}
@@ -60,11 +84,13 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 			path, err := workspace.StagingPath(s.StagingDir, ref)
 			if err != nil {
 				closeAll()
+				spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 				return status.Errorf(codes.InvalidArgument, "%v", err)
 			}
 			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 			if err != nil {
 				closeAll()
+				spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 				return status.Errorf(codes.Internal, "open staging file: %v", err)
 			}
 			open[ref] = f
@@ -72,11 +98,16 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		n, err := f.Write(req.GetChunk())
 		if err != nil {
 			closeAll()
+			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return status.Errorf(codes.Internal, "write staging file: %v", err)
 		}
 		stagedBytes += int64(n)
 	}
 	closeAll()
+	span.SetAttributes(
+		attribute.Int64("upload.staged_bytes", stagedBytes),
+		attribute.Int("upload.staged_files", len(open)),
+	)
 	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{
 		StagedBytes: stagedBytes,
 		StagedFiles: int32(len(open)),
@@ -95,11 +126,27 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 // the resolved tree in /workspace/staging and atomically promotes it onto
 // /workspace/current so the runtime never observes a partial workspace.
 // spec: §7.4 line 433 — F-7.4.12.
-func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	// spec: §16.3 line 339 — `session.finalize_workspace` is emitted by the
+	// Pod. The span covers the workspace-plan materialization the adapter
+	// runs before the session is claimed. F-16.3.6.
+	_, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionFinalizeWorkspace)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
+
 	if req.GetSessionId().GetValue() == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
 	if s.WorkspaceRoot == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
@@ -112,6 +159,9 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 	// to the §15.1 422 envelope. F-14.1.3.
 	schemaVersion := int(req.GetWorkspacePlan().GetSchemaVersion())
 	if err := workspace.CheckSchemaVersion(schemaVersion); err != nil {
+		// §16.3: an unsupported plan schema is PERMANENT (the gateway must
+		// not retry the same plan against this adapter build).
+		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		st := status.New(codes.FailedPrecondition, err.Error())
 		if withDetail, dErr := st.WithDetails(&adapterv1.Error{
 			Code:      adapterv1.Error_ERROR_CODE_WORKSPACE_PLAN_SCHEMA_UNSUPPORTED,
@@ -136,9 +186,14 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 	if archive.WorkspaceRoot == "" {
 		archive.WorkspaceRoot = s.WorkspaceRoot
 	}
+	sources := req.GetWorkspacePlan().GetSources()
+	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
 	warnings, err := workspace.MaterializeWithPolicy(s.WorkspaceRoot, s.StagingDir,
-		req.GetWorkspacePlan().GetSources(), archive)
+		sources, archive)
 	if err != nil {
+		// §16.3: a plan the adapter cannot materialize (invalid source,
+		// containment violation) is PERMANENT.
+		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto
@@ -189,13 +244,29 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 // requires; the gateway persists this on the session row so a client can
 // see it via §15.1 GET /v1/sessions/{id}. F-7.5.4.
 func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	// spec: §16.3 line 340 — `session.run_setup` is emitted by the Pod. The
+	// span covers the §14 setup-command execution phase. F-16.3.6.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionRunSetup)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
+
 	if req.GetSessionId().GetValue() == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.InvalidArgument, "RunSetup requires a session id"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
 	if s.WorkspaceRoot == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
+	span.SetAttributes(attribute.Int("setup.command_count", len(req.GetSetupCommands())))
 	outputs, err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
 		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot))
 	resp := &adapterv1.RunSetupResponse{Outputs: setupOutputsToProto(outputs)}
@@ -216,6 +287,11 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		// On a hard failure the partial outputs survive in the gRPC status
 		// details so the gateway can persist what was captured before the
 		// failure. The error itself is a FailedPrecondition status.
+		//
+		// §16.3: a failing setup command (non-zero exit, hard timeout) is the
+		// UPSTREAM category — the failure originates in the runtime's own
+		// setup command rather than in the adapter.
+		spanErr = tracing.CategorizeError(err, tracing.CategoryUpstream)
 		st := status.New(codes.FailedPrecondition,
 			fmt.Sprintf("run setup commands: %v", err))
 		if stWithDetails, dErr := st.WithDetails(resp); dErr == nil {

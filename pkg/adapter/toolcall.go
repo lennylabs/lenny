@@ -42,6 +42,25 @@ func extractToolCallID(frame []byte) string {
 	return probe.ID
 }
 
+// extractToolCallName returns the name field of a JSONL tool_call frame,
+// or the empty string when the frame is not a tool_call or cannot be
+// parsed. Used to stamp the §16.3 `session.tool_call` span with the
+// invoked tool's name. The name is a tool identifier (e.g. read_file),
+// never tool arguments, so it carries no secrets or PII.
+func extractToolCallName(frame []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(frame, &probe); err != nil {
+		return ""
+	}
+	if probe.Type != "tool_call" {
+		return ""
+	}
+	return probe.Name
+}
+
 // HandleToolCall inspects one stdout frame from the runtime. When the
 // frame is a tool_call for an adapter-local tool (read_file,
 // write_file, list_dir, delete_file), it runs the tool via

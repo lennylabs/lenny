@@ -30,6 +30,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // DefaultTTL is the GC safety expiry refreshed on every reserve. The
@@ -242,10 +245,26 @@ func (r Reservation) reserveKeys() []string {
 // (fail closed).
 //
 // spec: §8.2 lines 57, 127; §12.4 line 213.
-func (s *Reserver) Reserve(ctx context.Context, r Reservation) (Totals, error) {
+func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals, retErr error) {
 	if r.RootSessionID == "" {
 		return Totals{}, fmt.Errorf("treebudget: empty root session id")
 	}
+	// spec: §16.3 line 347 — the Redis-Lua budget reserve runs under a
+	// `delegation.budget_reserve` span carrying the mandated outcome,
+	// tenant_id, root_session_id, and lua_queue_wait_ms attributes. The
+	// tracer resolves the process-global provider tracing.InitProvider
+	// installs. tenant_id is projected from the correlation context by
+	// Start when present; the Reservation carries no tenant field, so
+	// root_session_id is the explicit per-tree key set here. outcome is
+	// stamped from the actual result by the deferred closure below.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanDelegationBudgetReserve)
+	span.SetAttributes(attribute.String(tracing.AttrRootSessionID, r.RootSessionID))
+	outcome := "rejected"
+	defer func() {
+		span.SetAttributes(attribute.String(tracing.AttrOutcome, outcome))
+		tracing.RecordError(span, retErr)
+		span.End()
+	}()
 	argv := []any{
 		r.TreeSizeCap, r.TreeSizeDelta,
 		r.TreeMemoryCap, r.TreeMemoryDelta,
@@ -254,7 +273,15 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (Totals, error) {
 		r.TokenCap, r.TokenDelta,
 		int64(s.ttl.Seconds()),
 	}
+	// The Lua script executes atomically under the per-root serialization
+	// the `{root_session_id}` hash tag enforces, so the round-trip latency
+	// is the closest cheaply-available measurement of the §16.3 line 347
+	// lua_queue_wait_ms (the time the reserve spent in the Lua path,
+	// including any per-slot serialization). It is emitted as a real
+	// measured value rather than an invented queue-wait estimate.
+	luaStart := time.Now()
 	res, err := reserveScript.Run(ctx, s.client, r.reserveKeys(), argv...).Int64Slice()
+	span.SetAttributes(attribute.Int64(tracing.AttrLuaQueueWaitMs, time.Since(luaStart).Milliseconds()))
 	if err != nil {
 		// Fail closed: a Redis outage or script error must not admit an
 		// unbudgeted delegation (§12.4 line 213).
@@ -282,6 +309,7 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (Totals, error) {
 	if len(res) < 6 {
 		return Totals{}, fmt.Errorf("%w: malformed admission result", ErrBudgetUnavailable)
 	}
+	outcome = "reserved"
 	return Totals{
 		TreeSize:         res[1],
 		TreeMemory:       res[2],
@@ -299,10 +327,24 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (Totals, error) {
 // so it is not fatal to correctness.
 //
 // spec: §8.2 line 130 (decrement on offload).
-func (s *Reserver) Return(ctx context.Context, r Reservation) error {
+func (s *Reserver) Return(ctx context.Context, r Reservation) (retErr error) {
 	if r.RootSessionID == "" {
 		return fmt.Errorf("treebudget: empty root session id")
 	}
+	// spec: §16.3 line 348 — the Redis-Lua budget return runs under a
+	// `delegation.budget_return` span carrying the mandated outcome,
+	// tenant_id, root_session_id, and lua_queue_wait_ms attributes,
+	// mirroring Reserve. tenant_id is projected from the correlation
+	// context by Start when present; root_session_id is set explicitly
+	// from the Reservation. outcome is "returned" on a successful
+	// release and is left unset (the deferred RecordError stamps the
+	// error) on a Redis failure.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanDelegationBudgetReturn)
+	span.SetAttributes(attribute.String(tracing.AttrRootSessionID, r.RootSessionID))
+	defer func() {
+		tracing.RecordError(span, retErr)
+		span.End()
+	}()
 	argv := []any{
 		r.TreeSizeDelta,
 		r.TreeMemoryDelta,
@@ -310,9 +352,16 @@ func (s *Reserver) Return(ctx context.Context, r Reservation) error {
 		r.ChildrenTotalDelta,
 		r.TokenDelta,
 	}
-	if err := returnScript.Run(ctx, s.client, r.keys(), argv...).Err(); err != nil {
+	// The return Lua script executes atomically per the per-root slot
+	// serialization, so its round-trip latency is the §16.3 line 348
+	// lua_queue_wait_ms measurement (emitted as a real measured value).
+	luaStart := time.Now()
+	err := returnScript.Run(ctx, s.client, r.keys(), argv...).Err()
+	span.SetAttributes(attribute.Int64(tracing.AttrLuaQueueWaitMs, time.Since(luaStart).Milliseconds()))
+	if err != nil {
 		return fmt.Errorf("treebudget: return: %w", err)
 	}
+	span.SetAttributes(attribute.String(tracing.AttrOutcome, "returned"))
 	return nil
 }
 

@@ -15,12 +15,14 @@ import (
 	"errors"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -66,7 +68,18 @@ type ClaimRequest struct {
 // ErrNoIdlePod is returned when no idle pod can be claimed. spec:
 // §4.6.1 ADR-007 (single-claim invariant), §4.6.3 ownership table,
 // §5.2 / §6.2 lines 83-94 gateway-driven phase set.
-func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (*lennyv1.SandboxClaim, error) {
+func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.SandboxClaim, retErr error) {
+	// spec: §16.3 line 337 — the session.claim_pod span. The spec marks
+	// the span "Controller"; in this implementation the idle-pod claim is
+	// performed gateway-side (this package), so the span is emitted here.
+	// The deferred RecordError captures every claim-failure return path.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionClaimPod)
+	span.SetAttributes(attribute.String("pool", req.Pool))
+	defer func() {
+		tracing.RecordError(span, retErr)
+		span.End()
+	}()
+
 	var list lennyv1.SandboxList
 	if err := c.Client.List(ctx, &list,
 		client.InNamespace(c.Namespace),

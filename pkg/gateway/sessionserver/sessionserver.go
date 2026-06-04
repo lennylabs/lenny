@@ -75,6 +75,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/task"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -1922,6 +1923,17 @@ type DualStoreGate interface {
 // session-row persist, the §7.1 uploadToken mint, and the
 // CreateSessionResponse.
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req CreateSessionRequest) {
+	// spec: §16.3 line 336 — open the gateway-side `session.create` span on
+	// the request context so the create flow (quota/admission gates, the
+	// store INSERT, the §7.1 uploadToken mint) rides one trace. The tracer
+	// resolves the process-global OTel provider; constructing it here keeps
+	// the span site self-contained. Downstream store calls inherit the span
+	// through the rebound request context. Correlation attributes are
+	// projected from the context by Start.
+	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanSessionCreate)
+	defer span.End()
+	r = r.WithContext(ctx)
+
 	// spec: §10.1 item 2 — while both Postgres and Redis are unreachable
 	// a new session.create cannot complete its Postgres INSERT, so reject
 	// it with 503 + Retry-After: 10 before consuming any quota, rate, or
@@ -2040,6 +2052,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// input stays nil; a non-nil input always lands on the row with
 	// the deployer cap as the floor for unset fields. F-7.3.1.
 	if err := session.ValidateRetryPolicy(req.RetryPolicy); err != nil {
+		// spec: §16.3 line 336 — a malformed retryPolicy is a caller error
+		// (PERMANENT: the same request will not validate on retry).
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
 		var rpErr *session.RetryPolicyValidationError
 		if errors.As(err, &rpErr) {
 			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
@@ -2135,6 +2150,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// createdsweeper's Timeout. F-7.4.7.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
+		// spec: §16.3 line 336 — the uploadToken mint failed before any row
+		// was persisted; record it on the create span (PERMANENT: a bad
+		// session id does not become valid on retry).
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())
 		return
@@ -2148,6 +2167,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		// the finalize/upload paths look up the digest off the
 		// (non-existent) row. Return SESSION_CREATION_FAILED so the
 		// client retries.
+		// spec: §16.3 line 336 — a store INSERT failure is retryable
+		// (TRANSIENT: the client receives a 503 + Retry-After).
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return
 	}

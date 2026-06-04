@@ -8,6 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // DefaultWorkspaceSealMaxDuration is the §7.1 line 112
@@ -70,7 +71,18 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 //
 // spec: §7.1 line 112 — backoff initial 5s, factor 2×, cap 60s per
 // attempt, total window maxWorkspaceSealDurationSeconds.
-func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) error {
+func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (retErr error) {
+	// spec: §16.3 line 356 — the gateway-side `session.seal_and_export`
+	// span covers the whole bounded-backoff retry loop, so a trace shows
+	// the full seal window and its terminal outcome. A seal timeout records
+	// the last export error on the span (TRANSIENT: a MinIO outage is a
+	// retryable downstream condition the loop already exhausted). The
+	// pod-side span stitches under it via the inherited trace context.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionSealAndExport)
+	defer func() {
+		tracing.RecordError(span, tracing.CategorizeError(retErr, tracing.CategoryTransient))
+		span.End()
+	}()
 	start := s.clock()
 	deadline := start.Add(s.sealMaxDuration)
 	backoff := sealBackoffInitial

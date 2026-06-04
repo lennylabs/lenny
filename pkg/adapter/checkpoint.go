@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -126,18 +127,39 @@ type WorkspaceSizeFunc func(workspaceRoot string) (int64, error)
 // is incremented, and the session emits a `checkpoint.skipped` event
 // with `reason: "workspace_size_limit"`.
 func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointRequest) (*adapterv1.CheckpointResponse, error) {
+	// spec: §16.3 line 355 — `session.checkpoint` is a Gateway + Pod span.
+	// This is the Pod half: the adapter's workspace-snapshot RPC. The
+	// gateway half (the checkpoint orchestration) is emitted there.
+	// F-16.3.6 / pod half of F-16.3.1.
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionCheckpoint)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
+
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.InvalidArgument, "Checkpoint requires a session id"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "Checkpoint requires a session id")
 	}
 	if err := s.checkSession(sessionID); err != nil {
+		spanErr = err
 		return nil, err
 	}
 	if s.WorkspaceRoot == "" {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
 	if s.Checkpoints == nil {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.Unimplemented, "adapter is not configured with a checkpoint sink"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.Unimplemented,
 			"adapter is not configured with a checkpoint sink")
 	}
@@ -153,9 +175,13 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	release, err := s.ops.Begin(ctx, opCheckpoint)
 	if err != nil {
 		if errors.Is(err, errOpCoalesced) || errors.Is(err, errOpBusy) {
+			// §16.3: a coalesced/busy checkpoint is TRANSIENT (the caller
+			// is told to retry).
+			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Error(codes.Aborted,
 				"checkpoint coalesced into an in-flight operation; retry")
 		}
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.FromContextError(err).Err()
 	}
 	defer release()
@@ -163,6 +189,9 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	// §4.4 line 254 — pre-checkpoint workspace-size probe. Runs before
 	// quiescence so an oversized workspace never pauses the runtime.
 	if err := s.workspaceSizePreCheck(ctx, sessionID); err != nil {
+		// §16.3: a workspace exceeding the size limit is PERMANENT (the
+		// same workspace re-probes the same way).
+		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		return nil, err
 	}
 
@@ -170,12 +199,17 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	// lifecycle channel — quiesce, snapshot, resume. Other runtimes are
 	// archived live (best-effort consistency).
 	if s.Lifecycle != nil && s.Lifecycle.Supports("checkpoint") {
-		return s.checkpointViaLifecycle(ctx, req, sessionID)
+		resp, err := s.checkpointViaLifecycle(ctx, req, sessionID)
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
+		return resp, err
 	}
 	id, size, err := s.archiveAndStore(ctx, sessionID)
 	if err != nil {
 		// §4.4 line 248 — abort cleanup on every failed checkpoint.
 		s.runAbortCleanup(ctx, sessionID)
+		// §16.3: an archive/store failure is TRANSIENT (a retry can
+		// succeed once the artifact store recovers).
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, err
 	}
 	return &adapterv1.CheckpointResponse{CheckpointId: id, SizeBytes: size}, nil

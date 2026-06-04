@@ -28044,7 +28044,7 @@ Spec ref: `spec/16_observability.md` lines 316–367.
 
 ### Findings
 
-### - [ ] F-16.3.1 — No production code emits any of the 23 §16.3 spans [High] — OPEN
+### - [x] F-16.3.1 — No production code emits any of the 23 §16.3 spans [High] — CLOSED
 
 **High.** `pkg/observability/tracing.SpanNames()` lists 23 spans, but
 no gateway, controller, adapter, or `lenny-ops` package calls
@@ -28087,6 +28087,43 @@ Spec impact: every "Span boundaries (instrumented)" entry in the
 §16.3 table is undelivered. Operators following the spec to wire a
 collector / Jaeger / Tempo / Cloud Trace backend would see zero spans
 from a running Lenny cluster.
+
+**Resolution:** The catalog now has production emit sites for 22 of the
+23 §16.3 spans, opened through the F-16.3.2 process-global provider so
+they land on a real `TracerProvider` rather than the no-op. Gateway-side:
+`session.create` (`sessionserver.createSession`), `session.prompt`
+(`sessionserver.handleMessages`), `session.upload`
+(`sessionserver.runUpload`), `session.seal_and_export`
+(`sessionserver.sealWorkspace`), `session.claim_pod`
+(`podclaim.Claimer.Claim` — the spec marks this "Controller" but this
+implementation claims the idle pod gateway-side, so the span is emitted
+there), `delegation.spawn_child` (`delegation.Service.Delegate`),
+`delegation.await_child` (`mcptools` await_children handler),
+`delegation.export_files` (already wired in `interceptor/export.go`),
+`delegation.budget_reserve` / `delegation.budget_return`
+(`treebudget.Reserver.Reserve/Return`, carrying the spec-mandated
+`outcome`, `tenant_id`, `root_session_id`, and a measured
+`lua_queue_wait_ms`), `mcp.external_tool_call` (`connectorinvoke` — the
+production nil-tracer gap is closed by defaulting `NewInvoker`'s tracer
+to the process-global tracer), `mcp.elicitation` (`mcptools`
+request_elicitation handler), `credential.assign` (`credassign.Service.Assign`),
+`credential.rotate` (`credentialserver.handleRotate`),
+`credential.fallback_chain` (`llmproxy.driveFallback`, with
+`outcome=rotated|exhausted`), `credential.proxy_request`
+(`llmproxy.Handler.ServeHTTP`). Pod-side, emitted by the in-pod
+`lenny-adapter` process (its OTel provider is installed by
+`cmd/lenny-adapter`): `session.start`, `session.run_setup`,
+`session.finalize_workspace`, `session.tool_call` (per invocation),
+plus the pod halves of `session.upload` and `session.checkpoint` — this
+is the substance of F-16.3.6. Each error path records the error and the
+§16.3 category through `tracing.RecordError`. The one remaining span,
+`coordinator.handoff`, has no host call site: the §10.1 3-step
+coordinator-handoff protocol it instruments is unimplemented (tracked
+under F-10.1.7, OPEN), so the span is wired when that protocol lands.
+Per-package span-emission tests use an SDK `tracetest.SpanRecorder` over
+the global provider and cover happy and error paths. Closed by this
+batch (see commit below); `coordinator.handoff` residual carried to
+F-10.1.7.
 
 ### - [x] F-16.3.2 — No OTLP exporter or `TracerProvider` is initialized in any binary [High] — CLOSED
 
@@ -28223,7 +28260,7 @@ attribute names.
 
 **Resolution:** `pkg/observability/tracing/tracing.go` declares the missing keys as constants: `AttrOutcome` (`outcome`), `AttrRootSessionID` (`root_session_id`), `AttrLuaQueueWaitMs` (`lua_queue_wait_ms`), and `AttrGeneration` (`generation`). `tenant_id` and `pool` were already projected from `correlation.Fields` by `Start`. Call sites set the spec's exact names rather than ad-hoc strings; verified by `TestBudgetAndHandoffAttributeKeys_spec_16_3`. Commit f5e46144.
 
-### - [ ] F-16.3.6 — Runtime sidecar / agent-pod OTel SDK egress is admitted but no Go-side emitter exists [Medium] — OPEN
+### - [x] F-16.3.6 — Runtime sidecar / agent-pod OTel SDK egress is admitted but no Go-side emitter exists [Medium] — CLOSED
 
 **Medium.** `charts/lenny/values.yaml:232-257` and
 `charts/lenny/templates/agent-network-policies.yaml:118-147` render
@@ -28237,6 +28274,26 @@ no OTel imports. The policy is correct as a tenant-side
 configuration affordance, but no Lenny-side code path produces traces
 that would use it. Combined with H1–H3, the trace pipeline is
 unconfigured end-to-end on the platform side.
+
+**Resolution:** The premise was partly stale — the H2/H3 infrastructure
+(provider init, propagation middleware) landed under F-16.3.2/F-16.3.3,
+and `cmd/lenny-adapter` already installs an OTel `TracerProvider`. The
+genuine residual was the absent Go-side emitter, which is now present:
+the in-pod `lenny-adapter` process emits the §16.3 pod-owned spans —
+`session.start` (`adapter.StartSession`), `session.run_setup`
+(`adapter.RunSetup`), `session.finalize_workspace`
+(`adapter.FinalizeWorkspace`), `session.tool_call` (one span per
+adapter-local tool invocation in `adapter.Attach`), plus the pod halves
+of `session.upload` (`adapter.PrepareWorkspace`) and `session.checkpoint`
+(`adapter.Checkpoint`). Each resolves the process-global tracer via
+`tracing.NewTracer(nil)` and records errors with the §16.3 category. A
+running agent pod therefore produces OTLP traces that flow over the
+`allow-pod-egress-otlp` NetworkPolicy to the collector, closing the
+"admitted but no producer" gap. The first-party echo reference runtimes
+remain minimal by design; runtime authors opt into native tracing as a
+tenant-side choice. Tests install an SDK span recorder over the global
+provider and assert each adapter span on happy and error paths. Closed
+by this batch (see commit below), alongside F-16.3.1.
 
 ### - [x] F-16.3.7 — The §16.3 error taxonomy is implemented twice with divergent vocabularies [Medium] — CLOSED
 

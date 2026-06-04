@@ -9,13 +9,17 @@
 package credassign
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -214,8 +218,22 @@ func (s *Service) RegisterPool(p Pool) {
 // credential.ErrPoolExhausted when the pool has no assignable
 // credential.
 func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
+	// spec: §16.3 line 351 — the credential.assign span (Gateway credential
+	// service). The §4.9 assign surface carries no request context today, so
+	// the span roots at Background and projects tenant/session/pool from the
+	// call arguments rather than from correlation.From(ctx). No credential
+	// material is attached (§16.4 line 376).
+	_, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialAssign)
+	span.SetAttributes(
+		attribute.String("tenant_id", tenantID),
+		attribute.String("session_id", sessionID),
+		attribute.String("credential.pool", poolName),
+	)
+	defer span.End()
+
 	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI, tenantID)
 	if err != nil {
+		tracing.RecordError(span, err)
 		return credential.Lease{}, err
 	}
 	// The renewal observer runs outside s.mu: the §4.9 Proactive Lease

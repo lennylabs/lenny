@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // maxRequestBytes caps an inbound proxy request body. An LLM request
@@ -209,6 +210,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.IncLLMProxyConnections()
 		defer h.Metrics.DecLLMProxyConnections()
 	}
+
+	// spec: §16.3 line 354 — every LLM-proxy request runs under the
+	// credential.proxy_request span so distributed traces show the proxy
+	// leg between an agent pod and the upstream provider. The span is
+	// opened at the per-request entry; correlation attributes (tenant_id,
+	// session_id, …) auto-project from the request context. §16.4 line 376
+	// excludes credential-sensitive payload from span attributes, so no
+	// lease token or upstream key is recorded here. The status the handler
+	// writes is captured so the defer records a categorized span error for
+	// any rejected request: a 4xx policy/lease rejection is a POLICY error,
+	// a 5xx upstream/provider fault is an UPSTREAM error.
+	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanCredentialProxyRequest)
+	sw := &statusRecorder{ResponseWriter: w}
+	w = sw
+	r = r.WithContext(ctx)
+	defer func() {
+		if sw.status >= http.StatusInternalServerError {
+			tracing.RecordError(span, tracing.CategorizeError(
+				errors.New(http.StatusText(sw.status)), tracing.CategoryUpstream))
+		} else if sw.status >= http.StatusBadRequest {
+			tracing.RecordError(span, tracing.CategorizeError(
+				errors.New(http.StatusText(sw.status)), tracing.CategoryPolicy))
+		}
+		span.End()
+	}()
 
 	token := leaseToken(r)
 	if token == "" {
@@ -531,6 +557,28 @@ func peerSPIFFE(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// statusRecorder wraps an http.ResponseWriter to capture the status code
+// the handler writes so the credential.proxy_request span can record a
+// categorized error for a rejected request without instrumenting every
+// error return. It forwards Flush so the streaming path still detects an
+// http.Flusher (spec: §4.9 streaming proxy path). A status of 0 (never
+// written, which net/http treats as 200) is a success.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // proxyError is the JSON error envelope the proxy returns to the agent

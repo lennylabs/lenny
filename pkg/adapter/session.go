@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -71,16 +72,37 @@ type RuntimeProcess interface {
 // On any failure after the session is tentatively claimed, the pod is
 // returned to the idle state so a retry can land on a fresh pod.
 func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+	// spec: §16.3 line 341 — `session.start` is emitted by the Pod. This
+	// is the Go-side adapter emitter that closes the F-16.3.6 gap: the
+	// process-global OTLP provider cmd/lenny-adapter installs via
+	// tracing.InitProvider backs NewTracer(nil), so the span exports under
+	// the gateway-propagated trace context (correlation fields auto-project).
+	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionStart)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
+
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
+		// §16.3: invalid input is the PERMANENT category (a retry with the
+		// same request cannot succeed).
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.InvalidArgument, "StartSession requires a session id"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
 	if s.Runtime == nil {
+		spanErr = tracing.CategorizeError(
+			status.Error(codes.FailedPrecondition, "adapter is not configured with a runtime"),
+			tracing.CategoryPermanent)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a runtime")
 	}
 
 	if err := s.claimSession(sessionID); err != nil {
+		spanErr = err
 		return nil, err
 	}
 
@@ -102,6 +124,9 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	})
 	if err != nil {
 		s.releaseSession()
+		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
+		// pod can succeed; the §4.7 contract returns the pod to idle).
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
 	// §4.7: start the platform MCP server the runtime connects to. A
@@ -112,6 +137,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	if s.RuntimeKind != RuntimeKindMCP {
 		if err := s.startPlatformMCP(nonce); err != nil {
 			s.releaseSession()
+			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
 		// §9.3 lines 142-164: open one intra-pod MCP server per permitted
@@ -121,6 +147,9 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
+		// §16.3: a runtime-start crash is TRANSIENT (pod crash → retry on a
+		// fresh pod).
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
 	return &adapterv1.StartSessionResponse{}, nil

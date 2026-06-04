@@ -56,11 +56,15 @@ type Invoker struct {
 }
 
 // NewInvoker wires the connector registry, the connector-credential
-// store, and the outbound MCP client. tracer may be nil; when set, every
-// tools/call opens the §16 `mcp.external_tool_call` span. authz may be
-// nil; when set, CallTool enforces the §9.3 line 164 connector-access
-// boundary before proxying a tool call.
+// store, and the outbound MCP client. Every tools/call opens the §16
+// `mcp.external_tool_call` span. authz may be nil; when set, CallTool
+// enforces the §9.3 line 164 connector-access boundary before proxying a
+// tool call.
 func NewInvoker(connectors connectorstore.Store, creds connectorcredstore.Store, client *Client, tracer *tracing.Tracer, authz ConnectorAuthorizer) *Invoker {
+	if tracer == nil {
+		// spec: §16.3 line 349 — default to the process-global tracer so the span is emitted in production
+		tracer = tracing.NewTracer(nil)
+	}
 	return &Invoker{connectors: connectors, creds: creds, client: client, tracer: tracer, authz: authz, clock: func() time.Time { return time.Now().UTC() }}
 }
 

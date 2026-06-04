@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -148,6 +149,14 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			"gateway has no blob store configured", nil)
 		return
 	}
+	// spec: §16.3 line 338 — open the gateway-side `session.upload` span on
+	// the request context so the staged-blob commit (token verify, quota
+	// reserve, blob Put, hash verify) rides one trace. The pod-side
+	// `session.upload` span stitches under it via the inherited trace
+	// context. Correlation attributes are projected by Start.
+	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanSessionUpload)
+	defer span.End()
+	r = r.WithContext(ctx)
 	// §4.1 Upload Handler subsystem gate. The breaker may be open or
 	// the limiter saturated, in which case the handler returns 503
 	// SUBSYSTEM_UNAVAILABLE while the Stream Proxy and MCP Fabric keep
@@ -176,10 +185,15 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 
 	row, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
+		// spec: §16.3 line 338 — record the lookup failure on the
+		// `session.upload` span. A missing session is a caller error
+		// (PERMANENT); any other store error is left uncategorized.
 		if errors.Is(err, sessionstore.ErrNotFound) {
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
 			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
 		}
+		tracing.RecordError(span, err)
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -338,6 +352,9 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		// Downstream blob store failure — feed the §4.1 Upload Handler
 		// subsystem breaker so repeated MinIO outages trip it open and
 		// new uploads return 503 SUBSYSTEM_UNAVAILABLE.
+		// spec: §16.3 line 338 / §16 error taxonomy — a blob-store outage is
+		// a downstream dependency failure (UPSTREAM) on the upload span.
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
 		breakerErr = err
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
