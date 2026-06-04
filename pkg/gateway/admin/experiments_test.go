@@ -136,7 +136,54 @@ func adminETagGetPath(putPath string) string {
 			return prefix + name + "?tenantId=acme"
 		}
 	}
+	// External adapters are platform-global; the GET reads by name with no
+	// tenant query. Only the top-level resource PUT enforces If-Match (the
+	// /validate sub-route is a POST), so a name carrying a further path
+	// segment is not an ETag-bearing PUT.
+	if strings.HasPrefix(putPath, "/v1/admin/external-adapters/") {
+		name := etagResourceName(putPath, "/v1/admin/external-adapters/")
+		if name == "" {
+			return ""
+		}
+		return "/v1/admin/external-adapters/" + name
+	}
+	// Connectors are tenant-scoped; a platform-admin GET with no tenant_id
+	// query resolves the row across tenants by id, so the bare path suffices.
+	if strings.HasPrefix(putPath, "/v1/admin/connectors/") {
+		name := etagResourceName(putPath, "/v1/admin/connectors/")
+		if name == "" {
+			return ""
+		}
+		return "/v1/admin/connectors/" + name
+	}
+	// Credential pools are tenant-scoped; a platform-admin GET requires the
+	// tenantId query, so resolve against the acme fixture tenant. The
+	// per-credential sub-resource PUTs (.../credentials/{id}) are §24.5
+	// operations outside the §15.1 If-Match contract — etagResourceName
+	// returns "" for any path carrying a further segment.
+	if strings.HasPrefix(putPath, "/v1/admin/credential-pools/") {
+		name := etagResourceName(putPath, "/v1/admin/credential-pools/")
+		if name == "" {
+			return ""
+		}
+		return "/v1/admin/credential-pools/" + name + "?tenantId=acme"
+	}
 	return ""
+}
+
+// etagResourceName extracts the single resource segment after prefix in a
+// PUT path, dropping any query string. It returns "" when the segment is
+// empty or carries a further `/` (a sub-resource path, which the §15.1
+// If-Match contract does not cover).
+func etagResourceName(putPath, prefix string) string {
+	name := strings.TrimPrefix(putPath, prefix)
+	if i := strings.IndexByte(name, '?'); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	return name
 }
 
 func TestCreateExperiment(t *testing.T) {

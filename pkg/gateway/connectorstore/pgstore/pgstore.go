@@ -41,7 +41,7 @@ var _ connectorstore.Store = (*Store)(nil)
 
 const selectList = `tenant_id, id, display_name, mcp_server_url, transport, auth,
 	visibility, labels, capability_inference_mode, capabilities, tool_capabilities,
-	capabilities_refreshed_at, created_at, updated_at, deleted_at`
+	capabilities_refreshed_at, created_at, updated_at, deleted_at, version`
 
 // Create inserts a new connector row after running the §9.3
 // validation. Returns ErrAlreadyExists when (tenant_id, id) collides.
@@ -72,15 +72,19 @@ func (s *Store) Create(ctx context.Context, c connectorstore.Connector) error {
 	if err != nil {
 		return err
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if c.Version == 0 {
+		c.Version = 1
+	}
 	return pgtenant.InTx(ctx, s.pool, c.TenantID, func(tx pgx.Tx) error {
 		_, ierr := tx.Exec(ctx, `INSERT INTO connectors (
 			tenant_id, id, display_name, mcp_server_url, transport, auth,
 			visibility, labels, capability_inference_mode, capabilities, tool_capabilities,
-			capabilities_refreshed_at, created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)`,
+			capabilities_refreshed_at, created_at, updated_at, deleted_at, version
+		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)`,
 			c.TenantID, c.ID, c.DisplayName, c.MCPServerURL, c.Transport, auth,
 			c.Visibility, labels, capabilityInferenceMode(c.CapabilityInferenceMode), caps, toolCaps,
-			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.CreatedAt, c.UpdatedAt, pgtenant.NullTime(c.DeletedAt))
+			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.CreatedAt, c.UpdatedAt, pgtenant.NullTime(c.DeletedAt), c.Version)
 		var pgErr *pgconn.PgError
 		if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
 			return connectorstore.ErrAlreadyExists
@@ -149,6 +153,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*co
 			return err
 		}
 		c.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// every successful Update so the next If-Match compares against it.
+		c.Version++
 		auth, err := authJSON(c.Auth)
 		if err != nil {
 			return err
@@ -169,11 +176,11 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*co
 			display_name = $3, mcp_server_url = $4, transport = $5, auth = $6::jsonb,
 			visibility = $7, labels = $8::jsonb, capability_inference_mode = $9,
 			capabilities = $10::jsonb, tool_capabilities = $11::jsonb,
-			capabilities_refreshed_at = $12, updated_at = $13, deleted_at = $14
+			capabilities_refreshed_at = $12, updated_at = $13, deleted_at = $14, version = $15
 		WHERE id = $1 AND tenant_id = $2`,
 			id, tenantID, c.DisplayName, c.MCPServerURL, c.Transport, auth,
 			c.Visibility, labels, capabilityInferenceMode(c.CapabilityInferenceMode), caps, toolCaps,
-			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.UpdatedAt, pgtenant.NullTime(c.DeletedAt)); err != nil {
+			pgtenant.NullTime(c.CapabilitiesRefreshedAt), c.UpdatedAt, pgtenant.NullTime(c.DeletedAt), c.Version); err != nil {
 			return err
 		}
 		out = c
@@ -226,7 +233,7 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, id string, at time.Tim
 	}
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`UPDATE connectors SET deleted_at = $3, updated_at = $3
+			`UPDATE connectors SET deleted_at = $3, updated_at = $3, version = version + 1
 			 WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
 			id, tenantID, at)
 		if err != nil {
@@ -310,7 +317,7 @@ func scanConnector(row pgx.Row) (connectorstore.Connector, error) {
 	if err := row.Scan(
 		&c.TenantID, &c.ID, &c.DisplayName, &c.MCPServerURL, &c.Transport, &authRaw,
 		&c.Visibility, &labelsRaw, &inferMode, &capsRaw, &toolCapsRaw,
-		&refreshedAt, &c.CreatedAt, &c.UpdatedAt, &deletedAt,
+		&refreshedAt, &c.CreatedAt, &c.UpdatedAt, &deletedAt, &c.Version,
 	); err != nil {
 		return connectorstore.Connector{}, err
 	}

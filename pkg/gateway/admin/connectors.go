@@ -30,6 +30,12 @@ type ConnectorPayload struct {
 	CreatedAt    string                `json:"createdAt,omitempty"`
 	UpdatedAt    string                `json:"updatedAt,omitempty"`
 	DeletedAt    string                `json:"deletedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // ConnectorAuthPayload is the OAuth2 auth block. The client secret
@@ -56,6 +62,9 @@ func fromConnector(c connectorstore.Connector) ConnectorPayload {
 		CreatedAt:    rfc3339Nano(c.CreatedAt),
 		UpdatedAt:    rfc3339Nano(c.UpdatedAt),
 		DeletedAt:    rfc3339Nano(c.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(c.Version),
 	}
 	if c.Auth != nil {
 		out.Auth = &ConnectorAuthPayload{
@@ -208,6 +217,9 @@ func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromConnector(row))
 }
@@ -255,20 +267,26 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The PUT resolves the current connector first so the preview reflects
-	// applying the body onto the stored record; a missing connector 404s
-	// ahead of the dry-run branch.
-	if req.URL.Query().Get("dryRun") == "true" {
-		current, gerr := r.connectors.Get(req.Context(), tenantID, id)
-		if gerr != nil {
-			if errors.Is(gerr, connectorstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	// Resolve the current connector first so the §15.1 If-Match precondition
+	// reads the stored version; a missing connector 404s ahead of the
+	// precondition and the dry-run branch.
+	current, gerr := r.connectors.Get(req.Context(), tenantID, id)
+	if gerr != nil {
+		if errors.Is(gerr, connectorstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// the optimistic-concurrency precondition before the dry-run branch so a
+	// dryRun=true combined with a missing/stale If-Match still fails here.
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
 		applyConnectorUpdate(&current, body)
 		current.TenantID = tenantID
 		if err := current.Validate(); err != nil {
@@ -293,6 +311,9 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 	r.emit(req.Context(), principal, audit.EventAdminConnectorUpdated.String(), id, map[string]any{
 		"tenant_id": tenantID,
 	})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromConnector(updated))
 }
@@ -308,6 +329,22 @@ func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request)
 	tenantID, err := resolveTargetTenant(principal, req, "")
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// Resolve the current connector so the §15.1 DELETE If-Match precondition
+	// can compare against its version; a missing connector 404s.
+	current, gerr := r.connectors.Get(req.Context(), tenantID, id)
+	if gerr != nil {
+		if errors.Is(gerr, connectorstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.connectors.SoftDelete(req.Context(), tenantID, id, r.clock()); err != nil {

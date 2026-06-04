@@ -1094,7 +1094,10 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 			return 1
 		}
 		var out map[string]any
-		if err := c.Do(ctx, "PUT", "/v1/admin/pools/"+url.PathEscape(args[1]), body, &out); err != nil {
+		// spec: §15.1 lines 1207-1213 — the pool PUT enforces the If-Match
+		// precondition; fetch the current ETag and forward it.
+		poolPath := "/v1/admin/pools/" + url.PathEscape(args[1])
+		if err := c.PutIfMatch(ctx, poolPath, poolPath, body, &out); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -1340,7 +1343,10 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 				fmt.Fprintln(stderr, "lenny-ctl: external-adapters update requires --name <name>")
 				return 2
 			}
-			if err := c.Do(ctx, "PUT", "/v1/admin/external-adapters/"+url.PathEscape(name), body, &out); err != nil {
+			// spec: §15.1 lines 1207-1213 — the external-adapter PUT enforces
+			// the If-Match precondition; fetch the current ETag and forward it.
+			path := "/v1/admin/external-adapters/" + url.PathEscape(name)
+			if err := c.PutIfMatch(ctx, path, path, body, &out); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}

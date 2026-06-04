@@ -63,6 +63,12 @@ type ExternalAdapterPayload struct {
 	LastValidation *ValidationReportPayload `json:"lastValidation,omitempty"`
 	CreatedAt      string                   `json:"createdAt,omitempty"`
 	UpdatedAt      string                   `json:"updatedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // ValidationReportPayload is the validate-run outcome on the wire.
@@ -95,6 +101,9 @@ func fromExternalAdapter(a externaladapterstore.ExternalAdapter) ExternalAdapter
 		Status:      string(a.Status),
 		CreatedAt:   rfc3339Nano(a.CreatedAt),
 		UpdatedAt:   rfc3339Nano(a.UpdatedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(a.Version),
 	}
 	if a.LastValidation != nil {
 		out.LastValidation = fromValidationReport(*a.LastValidation)
@@ -215,6 +224,9 @@ func (r *Router) handleGetExternalAdapter(w http.ResponseWriter, req *http.Reque
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(a.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromExternalAdapter(a))
 }
@@ -264,20 +276,27 @@ func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Re
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "admin handler reached without authenticated principal", nil)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The PUT resolves the current adapter first so the preview reflects
-	// applying the body onto the stored record; a missing adapter 404s
-	// ahead of the dry-run branch.
-	if req.URL.Query().Get("dryRun") == "true" {
-		current, gerr := r.externalAdapters.Get(req.Context(), name)
-		if gerr != nil {
-			if errors.Is(gerr, externaladapterstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "external adapter not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	// Resolve the current adapter first so the §15.1 If-Match precondition
+	// reads the stored version and the preview reflects applying the body
+	// onto the stored record; a missing adapter 404s ahead of the
+	// precondition and the dry-run branch.
+	current, gerr := r.externalAdapters.Get(req.Context(), name)
+	if gerr != nil {
+		if errors.Is(gerr, externaladapterstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "external adapter not found", nil)
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// the optimistic-concurrency precondition before the dry-run branch so a
+	// dryRun=true combined with a missing/stale If-Match still fails here.
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
 		preview := current
 		if err := applyExternalAdapterUpdate(&preview, body); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -300,6 +319,9 @@ func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Re
 	r.emit(req.Context(), principal, audit.EventAdminExternalAdapterUpdated.String(), name, map[string]any{
 		"status": string(updated.Status),
 	})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromExternalAdapter(updated))
 }
@@ -309,6 +331,22 @@ func (r *Router) handleDeleteExternalAdapter(w http.ResponseWriter, req *http.Re
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "admin handler reached without authenticated principal", nil)
+		return
+	}
+	// Resolve the current adapter so the §15.1 DELETE If-Match precondition
+	// can compare against its version; a missing adapter 404s.
+	current, gerr := r.externalAdapters.Get(req.Context(), name)
+	if gerr != nil {
+		if errors.Is(gerr, externaladapterstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "external adapter not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.externalAdapters.Delete(req.Context(), name); err != nil {

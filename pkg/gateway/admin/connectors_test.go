@@ -38,6 +38,20 @@ func connReq(t *testing.T, h http.Handler, method, path string, body any) *httpt
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
+	// spec: §15.1 lines 1207-1211 — the connector PUT enforces If-Match.
+	// Cases that do not exercise the precondition directly reach the handler
+	// by carrying the resource's current ETag, fetched via a GET against the
+	// same resource. A test driving the precondition sets If-Match itself.
+	if method == http.MethodPut && req.Header.Get("If-Match") == "" {
+		if getPath := adminETagGetPath(path); getPath != "" {
+			g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, getPath, nil))
+			grr := httptest.NewRecorder()
+			h.ServeHTTP(grr, g)
+			if etag := grr.Header().Get("ETag"); etag != "" {
+				req.Header.Set("If-Match", etag)
+			}
+		}
+	}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

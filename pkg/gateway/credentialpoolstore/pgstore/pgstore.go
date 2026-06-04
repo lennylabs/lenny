@@ -45,7 +45,7 @@ const selectList = `tenant_id, name, provider, credentials,
 	assignment_strategy, max_concurrent_sessions, cooldown_on_rate_limit_seconds,
 	lease_ttl_seconds, renew_before_buffer_seconds, host_patterns, cache_scope,
 	delivery_mode, proxy_dialect, proxy_endpoint, cache_policy,
-	created_at, updated_at, deleted_at`
+	created_at, updated_at, deleted_at, version`
 
 // Create inserts a new credential-pool row after running the §4.9
 // validation. It stamps CreatedAt / UpdatedAt when unset, mirroring
@@ -74,19 +74,23 @@ func (s *Store) Create(ctx context.Context, p credentialpoolstore.CredentialPool
 	if err != nil {
 		return err
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if p.Version == 0 {
+		p.Version = 1
+	}
 	err = pgtenant.InTx(ctx, s.pool, p.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO credential_pools (
 			tenant_id, name, provider, credentials,
 			assignment_strategy, max_concurrent_sessions, cooldown_on_rate_limit_seconds,
 			lease_ttl_seconds, renew_before_buffer_seconds, host_patterns, cache_scope,
 			delivery_mode, proxy_dialect, proxy_endpoint, cache_policy,
-			created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18)`,
+			created_at, updated_at, deleted_at, version
+		) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19)`,
 			p.TenantID, p.Name, p.Provider, creds,
 			p.AssignmentStrategy, p.MaxConcurrentSessions, p.CooldownOnRateLimitSeconds,
 			p.LeaseTTLSeconds, p.RenewBeforeBufferSeconds, hosts, p.CacheScope,
 			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint, cachePolicy,
-			p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
+			p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt), p.Version)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -147,6 +151,9 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// every successful Update so the next If-Match compares against it.
+		p.Version++
 		creds, err := credentialsJSON(p.Credentials)
 		if err != nil {
 			return err
@@ -165,14 +172,14 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			lease_ttl_seconds = $8, renew_before_buffer_seconds = $9,
 			host_patterns = $10::jsonb, cache_scope = $11,
 			delivery_mode = $14, proxy_dialect = $15, proxy_endpoint = $16,
-			cache_policy = $17::jsonb,
+			cache_policy = $17::jsonb, version = $18,
 			updated_at = $12, deleted_at = $13
 		WHERE tenant_id = $1 AND name = $2`,
 			tenantID, name, p.Provider, creds, p.AssignmentStrategy,
 			p.MaxConcurrentSessions, p.CooldownOnRateLimitSeconds,
 			p.LeaseTTLSeconds, p.RenewBeforeBufferSeconds, hosts, p.CacheScope,
 			p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint, cachePolicy); err != nil {
+			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint, cachePolicy, p.Version); err != nil {
 			return err
 		}
 		out = p
@@ -220,7 +227,7 @@ func (s *Store) List(ctx context.Context, tenantID string, filter credentialpool
 func (s *Store) SoftDelete(ctx context.Context, tenantID, name string, at time.Time) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`UPDATE credential_pools SET deleted_at = $3, updated_at = $3
+			`UPDATE credential_pools SET deleted_at = $3, updated_at = $3, version = version + 1
 			 WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL`,
 			tenantID, name, at)
 		if err != nil {
@@ -344,7 +351,7 @@ func scanPool(row pgx.Row) (credentialpoolstore.CredentialPool, error) {
 		&p.AssignmentStrategy, &p.MaxConcurrentSessions, &p.CooldownOnRateLimitSeconds,
 		&p.LeaseTTLSeconds, &p.RenewBeforeBufferSeconds, &hostsRaw, &p.CacheScope,
 		&p.DeliveryMode, &p.ProxyDialect, &p.ProxyEndpoint, &cachePolRaw,
-		&p.CreatedAt, &p.UpdatedAt, &deletedAt,
+		&p.CreatedAt, &p.UpdatedAt, &deletedAt, &p.Version,
 	); err != nil {
 		return credentialpoolstore.CredentialPool{}, err
 	}

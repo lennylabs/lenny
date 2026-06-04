@@ -38,6 +38,12 @@ type CredentialPoolPayload struct {
 	CreatedAt                  string                   `json:"createdAt,omitempty"`
 	UpdatedAt                  string                   `json:"updatedAt,omitempty"`
 	DeletedAt                  string                   `json:"deletedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // CachePolicyPayload is the §4.9 semantic-cache configuration on a pool
@@ -179,6 +185,9 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		CreatedAt:                  rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                  rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                  rfc3339Nano(p.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(p.Version),
 	}
 	for _, c := range p.Credentials {
 		entry := CredentialEntryPayload{
@@ -519,6 +528,9 @@ func (r *Router) handleGetCredentialPool(w http.ResponseWriter, req *http.Reques
 	}
 	payload := fromCredentialPool(row)
 	r.enrichCredentialHealth(&payload, row)
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
 }
@@ -598,38 +610,36 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
 		return
 	}
+	// Resolve the current pool once: the §15.1 If-Match precondition reads
+	// its version, the §4.9 secretRef probe diffs against its credential set,
+	// and the dry-run preview applies the body onto it (preserving §4.9
+	// revocation state). A missing pool 404s ahead of all three.
+	current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
+	if gerr != nil {
+		if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// the optimistic-concurrency precondition before the probe / dry-run
+	// branches so dryRun=true combined with a missing/stale If-Match fails here.
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
 	// §4.9 admin-time RBAC live-probe. A PUT replaces the full credential
 	// list, so probe only the secretRefs the update introduces (those not
 	// already in the stored pool). Skipped entirely when no prober is
 	// wired so the dev-mode update path takes no extra read.
 	if r.secretProber != nil {
-		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
-		if gerr != nil {
-			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
-			return
-		}
 		if !r.probeSecretRefs(w, req, newSecretRefs(current.Credentials, body.Credentials)) {
 			return
 		}
 	}
 	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The PUT resolves the current pool first so the preview reflects
-	// applying the body onto the stored record (preserving §4.9 revocation
-	// state); a missing pool 404s ahead of the dry-run branch.
 	if req.URL.Query().Get("dryRun") == "true" {
-		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
-		if gerr != nil {
-			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
-			return
-		}
 		preview := current
 		applyCredentialPoolUpdate(&preview, body)
 		preview.TenantID = tenant
@@ -661,6 +671,9 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.credential_pool.updated", name,
 		map[string]any{"tenantId": tenant})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromCredentialPool(updated))
 }
@@ -670,6 +683,22 @@ func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Req
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// Resolve the current pool so the §15.1 DELETE If-Match precondition can
+	// compare against its version; a missing pool 404s.
+	current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
+	if gerr != nil {
+		if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.credentialPools.SoftDelete(req.Context(), tenant, name, r.clock()); err != nil {

@@ -121,6 +121,62 @@ func (e *APIError) Error() string {
 // as the request body, and out (when non-nil) receives the decoded
 // JSON response.
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
+	return c.do(ctx, method, path, nil, body, out)
+}
+
+// DoIfMatch issues a write (PUT or DELETE) carrying the §15.1 If-Match
+// precondition header so the gateway can enforce optimistic concurrency.
+// An empty ifMatch sends no header, leaving the server to reject the
+// write with 428 ETAG_REQUIRED if it requires the precondition.
+// spec: §15.1 lines 1207-1213.
+func (c *Client) DoIfMatch(ctx context.Context, method, path, ifMatch string, body, out any) error {
+	var headers map[string]string
+	if ifMatch != "" {
+		headers = map[string]string{"If-Match": ifMatch}
+	}
+	return c.do(ctx, method, path, headers, body, out)
+}
+
+// ETag issues a GET against path and returns the value of the response's
+// ETag header, used to satisfy the §15.1 If-Match precondition on a
+// subsequent write. An empty return means the server sent no ETag (the
+// resource does not enforce optimistic concurrency). spec: §15.1 lines
+// 1207-1213.
+func (c *Client) ETag(ctx context.Context, path string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return "", fmt.Errorf("lenny-ctl: build request: %w", err)
+	}
+	c.applyAuth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("lenny-ctl: GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode >= 300 {
+		return "", parseAPIError(resp.StatusCode, raw)
+	}
+	return resp.Header.Get("ETag"), nil
+}
+
+// PutIfMatch implements the §15.1 read-modify-write retry pattern the
+// admin API documents: it fetches the resource's current ETag via
+// getPath, then issues a PUT to putPath carrying it as If-Match. The two
+// paths are usually identical; they differ only when the GET requires a
+// query the PUT does not. spec: §15.1 lines 1202-1213.
+func (c *Client) PutIfMatch(ctx context.Context, getPath, putPath string, body, out any) error {
+	etag, err := c.ETag(ctx, getPath)
+	if err != nil {
+		return err
+	}
+	return c.DoIfMatch(ctx, "PUT", putPath, etag, body, out)
+}
+
+// do is the shared request path behind Do / DoIfMatch. headers carries
+// any extra request headers (for example If-Match) on top of the
+// Content-Type and auth headers.
+func (c *Client) do(ctx context.Context, method, path string, headers map[string]string, body, out any) error {
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -135,6 +191,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	c.applyAuth(req)
 

@@ -266,3 +266,59 @@ func TestStreamCancelledContextReturnsNil(t *testing.T) {
 		t.Errorf("cancelled stream should return nil, got %v", err)
 	}
 }
+
+// spec: §15.1 lines 1207-1213 — PutIfMatch fetches the resource's ETag via a
+// GET, then PUTs it back as If-Match (the documented read-modify-write).
+func TestPutIfMatchReadModifyWrite(t *testing.T) {
+	var gotIfMatch string
+	var sawGet, sawPut bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			sawGet = true
+			w.Header().Set("ETag", `"7"`)
+			_ = json.NewEncoder(w).Encode(map[string]string{"name": "p1"})
+		case http.MethodPut:
+			sawPut = true
+			gotIfMatch = r.Header.Get("If-Match")
+			_ = json.NewEncoder(w).Encode(map[string]string{"name": "p1"})
+		}
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL})
+	var out map[string]string
+	if err := c.PutIfMatch(context.Background(), "/v1/admin/pools/p1", "/v1/admin/pools/p1",
+		map[string]any{"name": "p1"}, &out); err != nil {
+		t.Fatalf("PutIfMatch: %v", err)
+	}
+	if !sawGet || !sawPut {
+		t.Fatalf("expected GET then PUT: get=%v put=%v", sawGet, sawPut)
+	}
+	if gotIfMatch != `"7"` {
+		t.Errorf("If-Match = %q, want %q", gotIfMatch, `"7"`)
+	}
+}
+
+// A stale If-Match surfaces the gateway's 412 ETAG_MISMATCH as an APIError so
+// the operator sees the precondition failure rather than a silent overwrite.
+func TestPutIfMatchSurfacesMismatch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("ETag", `"7"`)
+			_ = json.NewEncoder(w).Encode(map[string]string{"name": "p1"})
+			return
+		}
+		w.WriteHeader(http.StatusPreconditionFailed)
+		_, _ = w.Write([]byte(`{"error":{"code":"ETAG_MISMATCH","message":"stale"}}`))
+	}))
+	defer ts.Close()
+
+	c := ctl.New(ctl.Options{BaseURL: ts.URL})
+	err := c.PutIfMatch(context.Background(), "/v1/admin/pools/p1", "/v1/admin/pools/p1",
+		map[string]any{"name": "p1"}, nil)
+	var apiErr *ctl.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "ETAG_MISMATCH" {
+		t.Fatalf("PutIfMatch error = %v, want APIError ETAG_MISMATCH", err)
+	}
+}

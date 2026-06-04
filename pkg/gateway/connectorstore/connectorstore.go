@@ -91,6 +91,13 @@ type Connector struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt time.Time
+
+	// Version is the §15.1 optimistic-concurrency counter: it starts at
+	// 1 and increments on every successful write (Update or SoftDelete).
+	// The quoted decimal version is the resource's strong ETag, enforced
+	// on the admin PUT via the If-Match precondition and exposed on
+	// GET/list responses. spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // IsActive reports whether the connector has not been soft-deleted.
@@ -298,6 +305,10 @@ func (m *Memory) Create(_ context.Context, c Connector) error {
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = c.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if c.Version == 0 {
+		c.Version = 1
+	}
 	tenant[c.ID] = c
 	return nil
 }
@@ -358,6 +369,10 @@ func (m *Memory) Update(_ context.Context, tenantID, id string, mutate func(*Con
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match precondition compares
+	// against the new value.
+	row.Version++
 	tenant[id] = row
 	return row, nil
 }
@@ -413,6 +428,9 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, id string, at time.Time
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
+	// spec: §15.1 line 1213 — a soft-delete is a write; advance the
+	// version so a stale If-Match on a later operation is caught.
+	row.Version++
 	tenant[id] = row
 	return nil
 }

@@ -89,6 +89,13 @@ type ExternalAdapter struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Version is the §15.1 optimistic-concurrency counter: it starts at
+	// 1 and increments on every successful Update (including a validate
+	// transition). The quoted decimal version is the resource's strong
+	// ETag, enforced on the admin PUT via the If-Match precondition and
+	// exposed on GET/list responses. spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // ValidationReport is the per-test outcome of a validate run, persisted
@@ -188,6 +195,10 @@ func (m *Memory) Create(_ context.Context, a ExternalAdapter) error {
 		a.CreatedAt = time.Now().UTC()
 	}
 	a.UpdatedAt = a.CreatedAt
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if a.Version == 0 {
+		a.Version = 1
+	}
 	m.rows[a.Name] = a
 	return nil
 }
@@ -230,6 +241,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*ExternalAda
 	}
 	a.Name = name
 	a.UpdatedAt = time.Now().UTC()
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match compares against it.
+	a.Version++
 	m.rows[name] = a
 	return a, nil
 }

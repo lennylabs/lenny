@@ -158,6 +158,13 @@ type CredentialPool struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt time.Time
+
+	// Version is the §15.1 optimistic-concurrency counter: it starts at
+	// 1 and increments on every successful write (Update or SoftDelete).
+	// The quoted decimal version is the resource's strong ETag, enforced
+	// on the admin PUT via the If-Match precondition and exposed on
+	// GET/list responses. spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // IsActive reports whether the pool has not been soft-deleted.
@@ -477,6 +484,10 @@ func (m *Memory) Create(_ context.Context, p CredentialPool) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if p.Version == 0 {
+		p.Version = 1
+	}
 	if m.pools[p.TenantID] == nil {
 		m.pools[p.TenantID] = map[string]CredentialPool{}
 	}
@@ -517,6 +528,9 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*C
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match compares against it.
+	row.Version++
 	m.pools[tenantID][name] = clonePool(row)
 	return clonePool(row), nil
 }
@@ -550,6 +564,9 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, name string, at time.Ti
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
+	// spec: §15.1 line 1213 — a soft-delete is a write; advance the
+	// version so a stale If-Match on a later operation is caught.
+	row.Version++
 	m.pools[tenantID][name] = row
 	return nil
 }
