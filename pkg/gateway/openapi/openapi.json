@@ -390,6 +390,7 @@
   "paths": {
     "/healthz": {
       "get": {
+        "operationId": "getHealthz",
         "summary": "Liveness probe",
         "security": [],
         "responses": {
@@ -399,6 +400,7 @@
     },
     "/v1/sessions": {
       "post": {
+        "operationId": "postV1Sessions",
         "summary": "Create a session",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
@@ -422,6 +424,7 @@
         }
       },
       "get": {
+        "operationId": "getV1Sessions",
         "summary": "List sessions",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -448,6 +451,7 @@
     },
     "/v1/environments/{name}/sessions": {
       "post": {
+        "operationId": "postV1EnvironmentsByNameSessions",
         "summary": "Create a session in an environment",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -474,6 +478,7 @@
     },
     "/v1/runtimes": {
       "get": {
+        "operationId": "getV1Runtimes",
         "summary": "Discover runtimes",
         "security": [{ "BearerAuth": [] }],
         "responses": {
@@ -511,6 +516,7 @@
     },
     "/internal/runtimes/{name}/meta/{key}": {
       "get": {
+        "operationId": "getInternalRuntimesByNameMetaByKey",
         "summary": "Fetch an internal or tenant publishedMetadata entry",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -531,6 +537,7 @@
     },
     "/v1/runtimes/{name}/meta/{key}": {
       "get": {
+        "operationId": "getV1RuntimesByNameMetaByKey",
         "summary": "Fetch a public publishedMetadata entry",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
@@ -550,6 +557,7 @@
     },
     "/v1/models": {
       "get": {
+        "operationId": "getV1Models",
         "summary": "List models (OpenAI-compatible discovery)",
         "security": [{ "BearerAuth": [] }],
         "responses": {
@@ -584,6 +592,7 @@
     },
     "/v1/sessions/{id}": {
       "get": {
+        "operationId": "getV1SessionsById",
         "summary": "Get session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -593,6 +602,7 @@
         }
       },
       "delete": {
+        "operationId": "deleteV1SessionsById",
         "summary": "Cancel session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -603,6 +613,7 @@
     },
     "/v1/sessions/{id}/finalize": {
       "post": {
+        "operationId": "postV1SessionsByIdFinalize",
         "summary": "Finalize workspace",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -611,6 +622,7 @@
     },
     "/v1/sessions/{id}/start": {
       "post": {
+        "operationId": "postV1SessionsByIdStart",
         "summary": "Start the agent runtime",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -619,6 +631,7 @@
     },
     "/v1/sessions/{id}/interrupt": {
       "post": {
+        "operationId": "postV1SessionsByIdInterrupt",
         "summary": "Interrupt the running agent",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -627,6 +640,7 @@
     },
     "/v1/sessions/{id}/terminate": {
       "post": {
+        "operationId": "postV1SessionsByIdTerminate",
         "summary": "Gracefully end the session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -635,6 +649,7 @@
     },
     "/v1/sessions/{id}/resume": {
       "post": {
+        "operationId": "postV1SessionsByIdResume",
         "summary": "Resume after retry exhaustion",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -643,6 +658,7 @@
     },
     "/v1/sessions/{id}/derive": {
       "post": {
+        "operationId": "postV1SessionsByIdDerive",
         "summary": "Derive a new session from this session's workspace snapshot",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -659,6 +675,7 @@
     },
     "/v1/sessions/{id}/upload": {
       "post": {
+        "operationId": "postV1SessionsByIdUpload",
         "summary": "Upload a workspace file",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -680,6 +697,7 @@
     },
     "/v1/sessions/{id}/upload-archive": {
       "post": {
+        "operationId": "postV1SessionsByIdUploadArchive",
         "summary": "Upload a workspace archive (tar, tar.gz, or zip) for in-gateway extraction",
         "description": "Streams the body into the gateway's Upload Handler subsystem. v1 stores the bytes as a blob; the §7.4 archive extraction pipeline applies the §13.4 ceilings and the zip-slip guard before promoting the extracted tree.",
         "security": [{ "BearerAuth": [] }],
@@ -702,6 +720,7 @@
     },
     "/v1/sessions/{id}/messages": {
       "post": {
+        "operationId": "postV1SessionsByIdMessages",
         "summary": "Inject a message batch into a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -714,6 +733,7 @@
     },
     "/v1/sessions/{id}/transcript": {
       "get": {
+        "operationId": "getV1SessionsByIdTranscript",
         "summary": "Get the session conversation transcript (paginated)",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -726,6 +746,7 @@
     },
     "/v1/sessions/{id}/tree": {
       "get": {
+        "operationId": "getV1SessionsByIdTree",
         "summary": "Get the delegation task tree rooted at a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -734,6 +755,7 @@
     },
     "/v1/sessions/{id}/events": {
       "get": {
+        "operationId": "getV1SessionsByIdEvents",
         "summary": "Server-Sent Events stream of session activity",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -745,6 +767,7 @@
     },
     "/metrics": {
       "get": {
+        "operationId": "getMetrics",
         "summary": "Prometheus metrics scrape target",
         "security": [],
         "responses": { "200": { "description": "Prometheus exposition format" } }
@@ -752,6 +775,7 @@
     },
     "/mcp": {
       "post": {
+        "operationId": "postMcp",
         "summary": "MCP adapter — JSON-RPC 2.0 (initialize, tools/list, tools/call)",
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "JSON-RPC response" } }
@@ -759,6 +783,7 @@
     },
     "/v1/sessions/{id}/extend-retention": {
       "post": {
+        "operationId": "postV1SessionsByIdExtendRetention",
         "summary": "Extend artifact retention TTL",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -771,6 +796,7 @@
     },
     "/v1/sessions/{id}/eval": {
       "post": {
+        "operationId": "postV1SessionsByIdEval",
         "summary": "Submit an eval score for a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -784,6 +810,7 @@
     },
     "/v1/blobs/{ref}": {
       "get": {
+        "operationId": "getV1BlobsByRef",
         "summary": "Resolve a lenny-blob:// reference",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "ref", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -796,6 +823,7 @@
     },
     "/v1/usage": {
       "get": {
+        "operationId": "getV1Usage",
         "summary": "Aggregated usage report",
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "OK" } }
@@ -803,6 +831,7 @@
     },
     "/v1/metering/events": {
       "get": {
+        "operationId": "getV1MeteringEvents",
         "summary": "Paginated billing event stream",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
@@ -817,6 +846,7 @@
     },
     "/v1/admin/tenants": {
       "post": {
+        "operationId": "postV1AdminTenants",
         "summary": "Create a tenant",
         "x-lenny-mcp-tool": "admin.create_tenant",
         "x-lenny-scope": "admin.tenants.write",
@@ -827,6 +857,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminTenants",
         "summary": "List tenants",
         "x-lenny-mcp-tool": "admin.list_tenants",
         "x-lenny-scope": "admin.tenants.read",
@@ -839,6 +870,7 @@
     },
     "/v1/admin/tenants/{id}": {
       "get": {
+        "operationId": "getV1AdminTenantsById",
         "summary": "Get a tenant",
         "x-lenny-mcp-tool": "admin.get_tenant",
         "x-lenny-scope": "admin.tenants.read",
@@ -849,6 +881,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminTenantsById",
         "summary": "Update a tenant",
         "x-lenny-mcp-tool": "admin.update_tenant",
         "x-lenny-scope": "admin.tenants.write",
@@ -859,6 +892,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminTenantsById",
         "summary": "Soft-delete a tenant",
         "x-lenny-mcp-tool": "admin.soft_delete_tenant",
         "x-lenny-scope": "admin.tenants.write",
@@ -871,6 +905,7 @@
     },
     "/v1/admin/tenants/{id}/roles": {
       "post": {
+        "operationId": "postV1AdminTenantsByIdRoles",
         "summary": "Create a custom role",
         "x-lenny-mcp-tool": "admin.create_custom_role",
         "x-lenny-scope": "admin.rbac.write",
@@ -881,6 +916,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminTenantsByIdRoles",
         "summary": "List custom roles",
         "x-lenny-mcp-tool": "admin.list_custom_roles",
         "x-lenny-scope": "admin.rbac.read",
@@ -893,6 +929,7 @@
     },
     "/v1/admin/tenants/{id}/roles/{name}": {
       "get": {
+        "operationId": "getV1AdminTenantsByIdRolesByName",
         "summary": "Get a custom role",
         "x-lenny-mcp-tool": "admin.get_custom_role",
         "x-lenny-scope": "admin.rbac.read",
@@ -906,6 +943,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminTenantsByIdRolesByName",
         "summary": "Update a custom role",
         "x-lenny-mcp-tool": "admin.update_custom_role",
         "x-lenny-scope": "admin.rbac.write",
@@ -919,6 +957,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminTenantsByIdRolesByName",
         "summary": "Delete a custom role",
         "x-lenny-mcp-tool": "admin.delete_custom_role",
         "x-lenny-scope": "admin.rbac.write",
@@ -934,6 +973,7 @@
     },
     "/v1/admin/tenants/{id}/rbac-config": {
       "get": {
+        "operationId": "getV1AdminTenantsByIdRbacConfig",
         "summary": "Get tenant RBAC configuration",
         "x-lenny-mcp-tool": "admin.get_rbac_config",
         "x-lenny-scope": "admin.rbac.read",
@@ -944,6 +984,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminTenantsByIdRbacConfig",
         "summary": "Set tenant RBAC configuration",
         "x-lenny-mcp-tool": "admin.update_rbac_config",
         "x-lenny-scope": "admin.rbac.write",
@@ -956,6 +997,7 @@
     },
     "/v1/admin/tenants/{id}/access-report": {
       "get": {
+        "operationId": "getV1AdminTenantsByIdAccessReport",
         "summary": "Cross-environment access matrix",
         "x-lenny-mcp-tool": "admin.tenant_access_report",
         "x-lenny-scope": "admin.environments.read",
@@ -968,6 +1010,7 @@
     },
     "/v1/admin/tenants/{id}/elicitation-content-integrity": {
       "get": {
+        "operationId": "getV1AdminTenantsByIdElicitationContentIntegrity",
         "summary": "Get the tenant elicitation content-integrity mode",
         "x-lenny-mcp-tool": "admin.get_elicitation_content_integrity",
         "x-lenny-scope": "admin.tenants.read",
@@ -978,6 +1021,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminTenantsByIdElicitationContentIntegrity",
         "summary": "Set the tenant elicitation content-integrity mode",
         "x-lenny-mcp-tool": "admin.set_elicitation_content_integrity",
         "x-lenny-scope": "admin.tenants.write",
@@ -990,6 +1034,7 @@
     },
     "/v1/admin/tenants/{id}/compliance-profile/decommission": {
       "post": {
+        "operationId": "postV1AdminTenantsByIdComplianceProfileDecommission",
         "summary": "Decommission a tenant compliance profile",
         "x-lenny-mcp-tool": "admin.decommission_compliance_profile",
         "x-lenny-scope": "admin.tenants.write",
@@ -1002,6 +1047,7 @@
     },
     "/v1/admin/runtimes": {
       "post": {
+        "operationId": "postV1AdminRuntimes",
         "summary": "Create a runtime",
         "x-lenny-mcp-tool": "admin.create_runtime",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1012,6 +1058,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminRuntimes",
         "summary": "List runtimes",
         "x-lenny-mcp-tool": "admin.list_runtimes",
         "x-lenny-scope": "admin.runtimes.read",
@@ -1023,6 +1070,7 @@
     },
     "/v1/admin/runtimes/regenerate-cards": {
       "post": {
+        "operationId": "postV1AdminRuntimesRegenerateCards",
         "summary": "Bulk-regenerate auto-generated A2A agent cards",
         "x-lenny-mcp-tool": "admin.regenerate_runtime_cards",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1063,6 +1111,7 @@
     },
     "/v1/admin/runtimes/{name}": {
       "get": {
+        "operationId": "getV1AdminRuntimesByName",
         "summary": "Get a runtime",
         "x-lenny-mcp-tool": "admin.get_runtime",
         "x-lenny-scope": "admin.runtimes.read",
@@ -1073,6 +1122,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminRuntimesByName",
         "summary": "Update a runtime",
         "x-lenny-mcp-tool": "admin.update_runtime",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1083,6 +1133,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminRuntimesByName",
         "summary": "Soft-delete a runtime",
         "x-lenny-mcp-tool": "admin.soft_delete_runtime",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1095,6 +1146,7 @@
     },
     "/v1/admin/runtimes/{name}/tenant-access": {
       "post": {
+        "operationId": "postV1AdminRuntimesByNameTenantAccess",
         "summary": "Grant a tenant access to a runtime",
         "x-lenny-mcp-tool": "admin.grant_runtime_access",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1105,6 +1157,7 @@
         "responses": { "201": { "description": "Granted" } }
       },
       "get": {
+        "operationId": "getV1AdminRuntimesByNameTenantAccess",
         "summary": "List tenant access grants for a runtime",
         "x-lenny-mcp-tool": "admin.list_runtime_access",
         "x-lenny-scope": "admin.runtimes.read",
@@ -1117,6 +1170,7 @@
     },
     "/v1/admin/runtimes/{name}/tenant-access/{tenantId}": {
       "delete": {
+        "operationId": "deleteV1AdminRuntimesByNameTenantAccessByTenantId",
         "summary": "Revoke a tenant's access to a runtime",
         "x-lenny-mcp-tool": "admin.revoke_runtime_access",
         "x-lenny-scope": "admin.runtimes.write",
@@ -1132,6 +1186,7 @@
     },
     "/v1/admin/users": {
       "post": {
+        "operationId": "postV1AdminUsers",
         "summary": "Create a user",
         "x-lenny-mcp-tool": "admin.create_user",
         "x-lenny-scope": "admin.users.write",
@@ -1141,6 +1196,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminUsers",
         "summary": "List users",
         "x-lenny-mcp-tool": "admin.list_users",
         "x-lenny-scope": "admin.users.read",
@@ -1152,6 +1208,7 @@
     },
     "/v1/admin/users/{user_id}": {
       "get": {
+        "operationId": "getV1AdminUsersByUserId",
         "summary": "Get a user",
         "x-lenny-mcp-tool": "admin.get_user",
         "x-lenny-scope": "admin.users.read",
@@ -1162,6 +1219,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminUsersByUserId",
         "summary": "Update a user",
         "x-lenny-mcp-tool": "admin.update_user",
         "x-lenny-scope": "admin.users.write",
@@ -1172,6 +1230,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminUsersByUserId",
         "summary": "Soft-delete a user",
         "x-lenny-mcp-tool": "admin.soft_delete_user",
         "x-lenny-scope": "admin.users.write",
@@ -1184,6 +1243,7 @@
     },
     "/v1/admin/users/{user_id}/invalidate": {
       "post": {
+        "operationId": "postV1AdminUsersByUserIdInvalidate",
         "summary": "Invalidate a user (soft_disable, hard_disable, or full_revoke)",
         "x-lenny-mcp-tool": "admin.invalidate_user",
         "x-lenny-scope": "admin.users.write",
@@ -1199,6 +1259,7 @@
     },
     "/v1/admin/users/{user_id}/erase": {
       "post": {
+        "operationId": "postV1AdminUsersByUserIdErase",
         "summary": "Initiate a GDPR erasure job for a user",
         "x-lenny-mcp-tool": "admin.erase_user",
         "x-lenny-scope": "admin.users.write",
@@ -1214,6 +1275,7 @@
     },
     "/v1/admin/erasure-jobs/{job_id}": {
       "get": {
+        "operationId": "getV1AdminErasureJobsByJobId",
         "summary": "Get the status of a GDPR erasure job",
         "x-lenny-mcp-tool": "admin.get_erasure_job",
         "x-lenny-scope": "admin.users.read",
@@ -1229,6 +1291,7 @@
     },
     "/v1/admin/legal-hold": {
       "post": {
+        "operationId": "postV1AdminLegalHold",
         "summary": "Set or clear a §12.8 legal hold on a session",
         "x-lenny-mcp-tool": "admin.set_legal_hold",
         "x-lenny-scope": "admin.legal_holds.write",
@@ -1243,6 +1306,7 @@
     },
     "/v1/admin/experiments": {
       "post": {
+        "operationId": "postV1AdminExperiments",
         "summary": "Create an experiment",
         "x-lenny-mcp-tool": "admin.create_experiment",
         "x-lenny-scope": "admin.experiments.write",
@@ -1255,6 +1319,7 @@
         }
       },
       "get": {
+        "operationId": "getV1AdminExperiments",
         "summary": "List experiments",
         "x-lenny-mcp-tool": "admin.list_experiments",
         "x-lenny-scope": "admin.experiments.read",
@@ -1266,6 +1331,7 @@
     },
     "/v1/admin/experiments/{name}": {
       "get": {
+        "operationId": "getV1AdminExperimentsByName",
         "summary": "Get an experiment",
         "x-lenny-mcp-tool": "admin.get_experiment",
         "x-lenny-scope": "admin.experiments.read",
@@ -1279,6 +1345,7 @@
         }
       },
       "put": {
+        "operationId": "putV1AdminExperimentsByName",
         "summary": "Update an experiment",
         "x-lenny-mcp-tool": "admin.update_experiment",
         "x-lenny-scope": "admin.experiments.write",
@@ -1292,6 +1359,7 @@
         }
       },
       "patch": {
+        "operationId": "patchV1AdminExperimentsByName",
         "summary": "Transition an experiment's status",
         "x-lenny-mcp-tool": "admin.patch_experiment",
         "x-lenny-scope": "admin.experiments.write",
@@ -1305,6 +1373,7 @@
         }
       },
       "delete": {
+        "operationId": "deleteV1AdminExperimentsByName",
         "summary": "Delete an experiment",
         "x-lenny-mcp-tool": "admin.delete_experiment",
         "x-lenny-scope": "admin.experiments.write",
@@ -1320,6 +1389,7 @@
     },
     "/v1/admin/experiments/{name}/results": {
       "get": {
+        "operationId": "getV1AdminExperimentsByNameResults",
         "summary": "Get aggregated eval results for an experiment, by variant",
         "x-lenny-mcp-tool": "admin.get_experiment_results",
         "x-lenny-scope": "admin.experiments.read",
@@ -1335,6 +1405,7 @@
     },
     "/v1/admin/environments": {
       "post": {
+        "operationId": "postV1AdminEnvironments",
         "summary": "Create an environment",
         "x-lenny-mcp-tool": "admin.create_environment",
         "x-lenny-scope": "admin.environments.write",
@@ -1347,6 +1418,7 @@
         }
       },
       "get": {
+        "operationId": "getV1AdminEnvironments",
         "summary": "List environments",
         "x-lenny-mcp-tool": "admin.list_environments",
         "x-lenny-scope": "admin.environments.read",
@@ -1358,6 +1430,7 @@
     },
     "/v1/admin/environments/{name}": {
       "get": {
+        "operationId": "getV1AdminEnvironmentsByName",
         "summary": "Get an environment",
         "x-lenny-mcp-tool": "admin.get_environment",
         "x-lenny-scope": "admin.environments.read",
@@ -1371,6 +1444,7 @@
         }
       },
       "put": {
+        "operationId": "putV1AdminEnvironmentsByName",
         "summary": "Update an environment",
         "x-lenny-mcp-tool": "admin.update_environment",
         "x-lenny-scope": "admin.environments.write",
@@ -1384,6 +1458,7 @@
         }
       },
       "delete": {
+        "operationId": "deleteV1AdminEnvironmentsByName",
         "summary": "Delete an environment",
         "x-lenny-mcp-tool": "admin.delete_environment",
         "x-lenny-scope": "admin.environments.write",
@@ -1399,6 +1474,7 @@
     },
     "/v1/admin/environments/{name}/runtime-exposure": {
       "get": {
+        "operationId": "getV1AdminEnvironmentsByNameRuntimeExposure",
         "summary": "Runtimes and connectors in an environment's scope",
         "x-lenny-mcp-tool": "admin.environment_runtime_exposure",
         "x-lenny-scope": "admin.environments.read",
@@ -1414,6 +1490,7 @@
     },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
+        "operationId": "postV1AdminIssuedTokensByJtiRevoke",
         "summary": "Revoke an issued token by jti",
         "x-lenny-mcp-tool": "admin.revoke_token",
         "x-lenny-scope": "admin.issued_tokens.write",
@@ -1429,6 +1506,7 @@
     },
     "/v1/admin/bootstrap": {
       "post": {
+        "operationId": "postV1AdminBootstrap",
         "summary": "Apply seed configuration (tenants + runtimes + users) with upsert semantics",
         "x-lenny-mcp-tool": "admin.bootstrap",
         "x-lenny-scope": "admin.bootstrap.write",
@@ -1440,6 +1518,7 @@
     },
     "/v1/sessions/start": {
       "post": {
+        "operationId": "postV1SessionsStart",
         "summary": "Create, finalize, and start a session in one call",
         "security": [{ "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateSessionRequest" } } } },
@@ -1448,6 +1527,7 @@
     },
     "/v1/chat/completions": {
       "post": {
+        "operationId": "postV1ChatCompletions",
         "summary": "OpenAI Chat Completions translator",
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "OK" }, "400": { "description": "Invalid request" } }
@@ -1455,6 +1535,7 @@
     },
     "/v1/responses": {
       "post": {
+        "operationId": "postV1Responses",
         "summary": "Open Responses translator",
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "OK" }, "400": { "description": "Invalid request" } }
@@ -1462,12 +1543,14 @@
     },
     "/v1/responses/{id}": {
       "get": {
+        "operationId": "getV1ResponsesById",
         "summary": "Get an Open Responses response",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       },
       "delete": {
+        "operationId": "deleteV1ResponsesById",
         "summary": "Delete an Open Responses response",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -1476,6 +1559,7 @@
     },
     "/v1/oauth/token": {
       "post": {
+        "operationId": "postV1OauthToken",
         "summary": "RFC 8693 token exchange",
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "Token issued" }, "400": { "description": "Invalid grant" } }
@@ -1483,6 +1567,7 @@
     },
     "/v1/admin/pools": {
       "post": {
+        "operationId": "postV1AdminPools",
         "summary": "Create a pool",
         "x-lenny-mcp-tool": "admin.create_pool",
         "x-lenny-scope": "admin.pools.write",
@@ -1492,6 +1577,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminPools",
         "summary": "List pools",
         "x-lenny-mcp-tool": "admin.list_pools",
         "x-lenny-scope": "admin.pools.read",
@@ -1503,6 +1589,7 @@
     },
     "/v1/admin/pools/{name}": {
       "get": {
+        "operationId": "getV1AdminPoolsByName",
         "summary": "Get a pool",
         "x-lenny-mcp-tool": "admin.get_pool",
         "x-lenny-scope": "admin.pools.read",
@@ -1513,6 +1600,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminPoolsByName",
         "summary": "Update a pool",
         "x-lenny-mcp-tool": "admin.update_pool",
         "x-lenny-scope": "admin.pools.write",
@@ -1523,6 +1611,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminPoolsByName",
         "summary": "Soft-delete a pool",
         "x-lenny-mcp-tool": "admin.soft_delete_pool",
         "x-lenny-scope": "admin.pools.write",
@@ -1535,6 +1624,7 @@
     },
     "/v1/admin/pools/{name}/warm-count": {
       "put": {
+        "operationId": "putV1AdminPoolsByNameWarmCount",
         "summary": "Set a pool's warm count (§25.17 operability scale path)",
         "x-lenny-mcp-tool": "admin.set_pool_warm_count",
         "x-lenny-scope": "admin.pools.write",
@@ -1547,6 +1637,7 @@
     },
     "/v1/admin/pools/{name}/drain": {
       "post": {
+        "operationId": "postV1AdminPoolsByNameDrain",
         "summary": "Drain a pool (§15.1 line 797 — stop admitting new sessions, report in-flight count)",
         "x-lenny-mcp-tool": "admin.drain_pool",
         "x-lenny-scope": "admin.pools.write",
@@ -1577,6 +1668,7 @@
     },
     "/v1/admin/pools/{name}/tenant-access": {
       "post": {
+        "operationId": "postV1AdminPoolsByNameTenantAccess",
         "summary": "Grant a tenant access to a pool",
         "x-lenny-mcp-tool": "admin.grant_pool_access",
         "x-lenny-scope": "admin.pools.write",
@@ -1587,6 +1679,7 @@
         "responses": { "201": { "description": "Granted" } }
       },
       "get": {
+        "operationId": "getV1AdminPoolsByNameTenantAccess",
         "summary": "List tenant access grants for a pool",
         "x-lenny-mcp-tool": "admin.list_pool_access",
         "x-lenny-scope": "admin.pools.read",
@@ -1599,6 +1692,7 @@
     },
     "/v1/admin/pools/{name}/tenant-access/{tenantId}": {
       "delete": {
+        "operationId": "deleteV1AdminPoolsByNameTenantAccessByTenantId",
         "summary": "Revoke a tenant's access to a pool",
         "x-lenny-mcp-tool": "admin.revoke_pool_access",
         "x-lenny-scope": "admin.pools.write",
@@ -1614,6 +1708,7 @@
     },
     "/v1/admin/connectors": {
       "post": {
+        "operationId": "postV1AdminConnectors",
         "summary": "Create a connector",
         "x-lenny-mcp-tool": "admin.create_connector",
         "x-lenny-scope": "admin.connectors.write",
@@ -1623,6 +1718,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminConnectors",
         "summary": "List connectors",
         "x-lenny-mcp-tool": "admin.list_connectors",
         "x-lenny-scope": "admin.connectors.read",
@@ -1634,6 +1730,7 @@
     },
     "/v1/admin/external-adapters": {
       "post": {
+        "operationId": "postV1AdminExternalAdapters",
         "summary": "Register an external protocol adapter (created in pending_validation)",
         "x-lenny-mcp-tool": "admin.register_external_adapter",
         "x-lenny-scope": "admin.external_adapters.write",
@@ -1643,6 +1740,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminExternalAdapters",
         "summary": "List external protocol adapters",
         "x-lenny-mcp-tool": "admin.list_external_adapters",
         "x-lenny-scope": "admin.external_adapters.read",
@@ -1654,6 +1752,7 @@
     },
     "/v1/admin/external-adapters/{name}": {
       "get": {
+        "operationId": "getV1AdminExternalAdaptersByName",
         "summary": "Get a specific external adapter",
         "x-lenny-mcp-tool": "admin.get_external_adapter",
         "x-lenny-scope": "admin.external_adapters.read",
@@ -1664,6 +1763,7 @@
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       },
       "put": {
+        "operationId": "putV1AdminExternalAdaptersByName",
         "summary": "Update an external adapter (resets to pending_validation when the adapter under test changes)",
         "x-lenny-mcp-tool": "admin.update_external_adapter",
         "x-lenny-scope": "admin.external_adapters.write",
@@ -1674,6 +1774,7 @@
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminExternalAdaptersByName",
         "summary": "Delete an external adapter",
         "x-lenny-mcp-tool": "admin.delete_external_adapter",
         "x-lenny-scope": "admin.external_adapters.write",
@@ -1686,6 +1787,7 @@
     },
     "/v1/admin/external-adapters/{name}/validate": {
       "post": {
+        "operationId": "postV1AdminExternalAdaptersByNameValidate",
         "summary": "Run the RegisterAdapterUnderTest conformance suite against the adapter; transitions status to active on a passing run or validation_failed (with per-test details) on failure",
         "x-lenny-mcp-tool": "admin.validate_external_adapter",
         "x-lenny-scope": "admin.external_adapters.write",
@@ -1703,6 +1805,7 @@
     },
     "/v1/admin/connectors/{name}": {
       "get": {
+        "operationId": "getV1AdminConnectorsByName",
         "summary": "Get a connector",
         "x-lenny-mcp-tool": "admin.get_connector",
         "x-lenny-scope": "admin.connectors.read",
@@ -1713,6 +1816,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminConnectorsByName",
         "summary": "Update a connector",
         "x-lenny-mcp-tool": "admin.update_connector",
         "x-lenny-scope": "admin.connectors.write",
@@ -1723,6 +1827,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminConnectorsByName",
         "summary": "Soft-delete a connector",
         "x-lenny-mcp-tool": "admin.soft_delete_connector",
         "x-lenny-scope": "admin.connectors.write",
@@ -1735,6 +1840,7 @@
     },
     "/v1/admin/connectors/{name}/test": {
       "post": {
+        "operationId": "postV1AdminConnectorsByNameTest",
         "summary": "Live connectivity test: DNS, TLS, MCP handshake, auth validation (rate-limited 10/min per connector)",
         "x-lenny-mcp-tool": "admin.test_connector",
         "x-lenny-scope": "admin.connectors.read",
@@ -1751,6 +1857,7 @@
     },
     "/v1/admin/connectors/{name}/oauth/authorize": {
       "post": {
+        "operationId": "postV1AdminConnectorsByNameOauthAuthorize",
         "summary": "Initiate the §9.3 connector OAuth 2.1 authorization-code flow",
         "x-lenny-mcp-tool": "admin.authorize_connector_oauth",
         "x-lenny-scope": "admin.connectors.write",
@@ -1770,6 +1877,7 @@
     },
     "/v1/admin/connectors/oauth/callback": {
       "get": {
+        "operationId": "getV1AdminConnectorsOauthCallback",
         "summary": "Receive the §9.3 OAuth provider redirect and complete token exchange",
         "x-lenny-mcp-tool": "admin.connector_oauth_callback",
         "x-lenny-scope": "admin.connectors.write",
@@ -1789,6 +1897,7 @@
     },
     "/v1/admin/credential-pools": {
       "post": {
+        "operationId": "postV1AdminCredentialPools",
         "summary": "Create a credential pool",
         "x-lenny-mcp-tool": "admin.create_credential_pool",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1798,6 +1907,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminCredentialPools",
         "summary": "List credential pools",
         "x-lenny-mcp-tool": "admin.list_credential_pools",
         "x-lenny-scope": "admin.credential-pools.read",
@@ -1809,6 +1919,7 @@
     },
     "/v1/admin/credential-pools/{name}": {
       "get": {
+        "operationId": "getV1AdminCredentialPoolsByName",
         "summary": "Get a credential pool",
         "x-lenny-mcp-tool": "admin.get_credential_pool",
         "x-lenny-scope": "admin.credential-pools.read",
@@ -1819,6 +1930,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminCredentialPoolsByName",
         "summary": "Update a credential pool",
         "x-lenny-mcp-tool": "admin.update_credential_pool",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1829,6 +1941,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminCredentialPoolsByName",
         "summary": "Delete a credential pool",
         "x-lenny-mcp-tool": "admin.delete_credential_pool",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1841,6 +1954,7 @@
     },
     "/v1/admin/credential-pools/{name}/credentials": {
       "post": {
+        "operationId": "postV1AdminCredentialPoolsByNameCredentials",
         "summary": "Add a credential to a pool",
         "x-lenny-mcp-tool": "admin.add_credential_to_pool",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1853,6 +1967,7 @@
     },
     "/v1/admin/credential-pools/{name}/credentials/{credId}": {
       "put": {
+        "operationId": "putV1AdminCredentialPoolsByNameCredentialsByCredId",
         "summary": "Update a credential in a pool",
         "x-lenny-mcp-tool": "admin.update_pool_credential",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1866,6 +1981,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminCredentialPoolsByNameCredentialsByCredId",
         "summary": "Remove a credential from a pool",
         "x-lenny-mcp-tool": "admin.remove_pool_credential",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1881,6 +1997,7 @@
     },
     "/v1/admin/credential-pools/{name}/credentials/{credId}/revoke": {
       "post": {
+        "operationId": "postV1AdminCredentialPoolsByNameCredentialsByCredIdRevoke",
         "summary": "Emergency revocation of a single pool credential",
         "x-lenny-mcp-tool": "admin.revoke_pool_credential",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1896,6 +2013,7 @@
     },
     "/v1/admin/credential-pools/{name}/credentials/{credId}/re-enable": {
       "post": {
+        "operationId": "postV1AdminCredentialPoolsByNameCredentialsByCredIdReEnable",
         "summary": "Re-enable a previously revoked pool credential",
         "x-lenny-mcp-tool": "admin.re_enable_pool_credential",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1911,6 +2029,7 @@
     },
     "/v1/admin/credential-pools/{name}/revoke": {
       "post": {
+        "operationId": "postV1AdminCredentialPoolsByNameRevoke",
         "summary": "Emergency revocation of all credentials in a pool",
         "x-lenny-mcp-tool": "admin.revoke_credential_pool",
         "x-lenny-scope": "admin.credential-pools.write",
@@ -1923,6 +2042,7 @@
     },
     "/v1/admin/delegation-policies": {
       "post": {
+        "operationId": "postV1AdminDelegationPolicies",
         "summary": "Create a delegation policy",
         "x-lenny-mcp-tool": "admin.create_delegation_policy",
         "x-lenny-scope": "admin.delegation-policies.write",
@@ -1932,6 +2052,7 @@
         "responses": { "201": { "description": "Created" } }
       },
       "get": {
+        "operationId": "getV1AdminDelegationPolicies",
         "summary": "List delegation policies",
         "x-lenny-mcp-tool": "admin.list_delegation_policies",
         "x-lenny-scope": "admin.delegation-policies.read",
@@ -1943,6 +2064,7 @@
     },
     "/v1/admin/delegation-policies/{name}": {
       "get": {
+        "operationId": "getV1AdminDelegationPoliciesByName",
         "summary": "Get a delegation policy",
         "x-lenny-mcp-tool": "admin.get_delegation_policy",
         "x-lenny-scope": "admin.delegation-policies.read",
@@ -1953,6 +2075,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
+        "operationId": "putV1AdminDelegationPoliciesByName",
         "summary": "Update a delegation policy",
         "x-lenny-mcp-tool": "admin.update_delegation_policy",
         "x-lenny-scope": "admin.delegation-policies.write",
@@ -1963,6 +2086,7 @@
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
+        "operationId": "deleteV1AdminDelegationPoliciesByName",
         "summary": "Delete a delegation policy",
         "x-lenny-mcp-tool": "admin.delete_delegation_policy",
         "x-lenny-scope": "admin.delegation-policies.write",
@@ -1975,6 +2099,7 @@
     },
     "/v1/admin/circuit-breakers": {
       "get": {
+        "operationId": "getV1AdminCircuitBreakers",
         "summary": "List circuit breakers",
         "x-lenny-mcp-tool": "admin.list_circuit_breakers",
         "x-lenny-scope": "admin.circuit_breakers.read",
@@ -1986,6 +2111,7 @@
     },
     "/v1/admin/circuit-breakers/{name}": {
       "get": {
+        "operationId": "getV1AdminCircuitBreakersByName",
         "summary": "Get a circuit breaker",
         "x-lenny-mcp-tool": "admin.get_circuit_breaker",
         "x-lenny-scope": "admin.circuit_breakers.read",
@@ -1998,6 +2124,7 @@
     },
     "/v1/admin/circuit-breakers/{name}/open": {
       "post": {
+        "operationId": "postV1AdminCircuitBreakersByNameOpen",
         "summary": "Open a circuit breaker",
         "x-lenny-mcp-tool": "admin.open_circuit_breaker",
         "x-lenny-scope": "admin.circuit_breakers.write",
@@ -2010,6 +2137,7 @@
     },
     "/v1/admin/circuit-breakers/{name}/close": {
       "post": {
+        "operationId": "postV1AdminCircuitBreakersByNameClose",
         "summary": "Close a circuit breaker",
         "x-lenny-mcp-tool": "admin.close_circuit_breaker",
         "x-lenny-scope": "admin.circuit_breakers.write",
@@ -2022,6 +2150,7 @@
     },
     "/v1/admin/schema/migrations/status": {
       "get": {
+        "operationId": "getV1AdminSchemaMigrationsStatus",
         "summary": "Return the expand-contract phase of each active schema migration",
         "x-lenny-mcp-tool": "admin.migration_status",
         "x-lenny-scope": "admin.schema.read",
@@ -2033,6 +2162,7 @@
     },
     "/v1/admin/schema/migrations/{version}/down": {
       "post": {
+        "operationId": "postV1AdminSchemaMigrationsByVersionDown",
         "summary": "Launch the down-migration for a version as a last-resort recovery",
         "x-lenny-mcp-tool": "admin.migration_down",
         "x-lenny-scope": "admin.schema.write",
@@ -2049,6 +2179,7 @@
     },
     "/v1/admin/audit-events": {
       "get": {
+        "operationId": "getV1AdminAuditEvents",
         "summary": "List audit events",
         "x-lenny-mcp-tool": "admin.list_audit_events",
         "x-lenny-scope": "admin.audit.read",
@@ -2060,6 +2191,7 @@
     },
     "/v1/admin/audit-events/{seq}": {
       "get": {
+        "operationId": "getV1AdminAuditEventsBySeq",
         "summary": "Get an audit event by sequence",
         "x-lenny-mcp-tool": "admin.get_audit_event",
         "x-lenny-scope": "admin.audit.read",
@@ -2072,6 +2204,7 @@
     },
     "/v1/admin/health": {
       "get": {
+        "operationId": "getV1AdminHealth",
         "summary": "Platform health report",
         "x-lenny-mcp-tool": "admin.health",
         "x-lenny-scope": "admin.health.read",
@@ -2083,6 +2216,7 @@
     },
     "/v1/admin/health/summary": {
       "get": {
+        "operationId": "getV1AdminHealthSummary",
         "summary": "Platform health summary",
         "x-lenny-mcp-tool": "admin.health_summary",
         "x-lenny-scope": "admin.health.read",
@@ -2094,6 +2228,7 @@
     },
     "/v1/admin/health/{component}": {
       "get": {
+        "operationId": "getV1AdminHealthByComponent",
         "summary": "Single-component health",
         "x-lenny-mcp-tool": "admin.health_component",
         "x-lenny-scope": "admin.health.read",
@@ -2106,6 +2241,7 @@
     },
     "/v1/admin/events/buffer": {
       "get": {
+        "operationId": "getV1AdminEventsBuffer",
         "summary": "In-memory operational event buffer",
         "x-lenny-mcp-tool": "admin.get_event_buffer",
         "x-lenny-scope": "admin.events.read",
@@ -2142,6 +2278,7 @@
     },
     "/v1/admin/recommendations": {
       "get": {
+        "operationId": "getV1AdminRecommendations",
         "summary": "Capacity recommendations",
         "x-lenny-mcp-tool": "admin.get_recommendations",
         "x-lenny-scope": "admin.recommendations.read",
@@ -2184,6 +2321,7 @@
     },
     "/v1/admin/me": {
       "get": {
+        "operationId": "getV1AdminMe",
         "summary": "Identity + role grants for the calling principal",
         "x-lenny-mcp-tool": "admin.me",
         "x-lenny-scope": "admin.me.read",
@@ -2195,6 +2333,7 @@
     },
     "/v1/admin/me/authorized-tools": {
       "get": {
+        "operationId": "getV1AdminMeAuthorizedTools",
         "summary": "Admin tools the caller's roles authorize",
         "x-lenny-mcp-tool": "admin.me_authorized_tools",
         "x-lenny-scope": "admin.me.read",

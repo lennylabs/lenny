@@ -24,6 +24,12 @@
 // Each handler runs the same validation as the equivalent REST
 // endpoint so the REST and MCP surfaces stay in lockstep per the
 // §15.2.1 consistency contract.
+//
+// spec: §15.2.1 rule 4 line 1386 — MCP tool input schemas for operations
+// that overlap the REST API are generated from the OpenAPI document by the
+// build-pipeline code generation step below, not maintained by hand.
+//
+//go:generate go run ./internal/genmcpschemas
 package mcptools
 
 import (
@@ -584,28 +590,36 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
-		// spec: §11.5 line 277 — `idempotencyKey` (optional, ≤128 runes)
+		// spec: §15.2.1 rule 4 line 1386 — the input schema is generated
+		// from the OpenAPI `CreateSessionRequest` (the single authoritative
+		// schema for this overlapping operation) by the build-pipeline code
+		// generation step in pkg/gateway/mcptools/internal/genmcpschemas,
+		// so the MCP create_session surface advertises the same fields the
+		// REST POST /v1/sessions validates (runtimeRef, userId, environment,
+		// workspacePlan, isolationProfile, metadata, retryPolicy) plus the
+		// MCP-only §11.5 `idempotencyKey` extension.
+		// TestGeneratedSchemasMatchOpenAPI guards against drift. F-15.2.7.
+		//
+		// §11.5 line 277 — `idempotencyKey` (optional, ≤128 runes)
 		// collapses retries of CreateSession to one execution; identical
 		// retries replay the cached ToolResult, mismatched bodies are
 		// rejected with IDEMPOTENCY_KEY_REUSED. spec: F-11.5.1.
-		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing."}}}`),
+		InputSchema: GeneratedCreateSessionInputSchema,
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant is the
 		// authenticated principal's, not the Register-time default,
 		// so a multi-tenant deployment scopes the session row to the
 		// caller's tenant. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
-		var in struct {
-			RuntimeRef  string `json:"runtimeRef"`
-			UserID      string `json:"userId"`
-			Environment string `json:"environment"`
-			// IdempotencyKey is read by the MCP idempotency hook before
-			// the handler runs and is intentionally ignored here so a
-			// stray field on a non-idempotency-aware deployment is just
-			// dropped instead of producing a validation error. spec:
-			// §11.5 line 277; F-11.5.1.
-			IdempotencyKey string `json:"idempotencyKey,omitempty"`
-		}
+		// spec: §15.2.1 rule 4 line 1386 — decode the full OpenAPI
+		// CreateSessionRequest and forward every field to the shared
+		// service so the MCP create_session path runs the same workspace-
+		// plan, isolation-profile, metadata, and retry-policy validation
+		// the REST handler runs. The §11.5 idempotencyKey is read by the
+		// MCP idempotency hook before this handler runs and is not a
+		// CreateSessionRequest field, so json.Unmarshal drops it here.
+		// F-15.2.7 / F-15.2.4 / F-11.5.1.
+		var in sessionserver.CreateSessionRequest
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				fmt.Sprintf("invalid arguments: %v", err), nil)
@@ -619,9 +633,8 @@ func Register(srv *mcp.Server, deps Deps) {
 		// environment surface (/mcp/environments/{name}) defaults the
 		// session to that environment when the call omits one. An explicit
 		// `environment` argument still wins. F-10.6.11.
-		env := in.Environment
-		if env == "" {
-			env = environmentmw.ExplicitEnvironmentFromContext(ctx)
+		if in.Environment == "" {
+			in.Environment = environmentmw.ExplicitEnvironmentFromContext(ctx)
 		}
 		// spec: §15.2.1 rule 1 line 1380 — route the create through the
 		// shared §15.1 service layer so the MCP surface runs the same
@@ -633,11 +646,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// subject to policy interception exactly like a REST-created one.
 		// F-15.2.4.
 		if deps.SessionCreator != nil {
-			resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, sessionserver.CreateSessionRequest{
-				RuntimeRef:  in.RuntimeRef,
-				UserID:      in.UserID,
-				Environment: env,
-			})
+			resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
 			if svcErr != nil {
 				// The §15.2.1 rule-3 envelope: surface the REST code +
 				// details so the shared errorclassify table assigns the
@@ -673,7 +682,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			TenantID:         tenant,
 			UserID:           in.UserID,
 			RuntimeRef:       in.RuntimeRef,
-			Environment:      env,
+			Environment:      in.Environment,
 			State:            session.StateRunning,
 			IsolationProfile: isolation.DefaultForMode(deps.DevMode),
 			CreatedAt:        now,
