@@ -141,6 +141,13 @@ func main() {
 	backupReportDSNSecret := flag.String("backup-report-dsn-secret", os.Getenv("LENNY_BACKUP_REPORT_DSN_SECRET"),
 		"name of the Secret whose report-dsn key holds the lenny-ops DSN the backup Job uses for "+
 			"the §25.11 step-8 ops_backups update; empty leaves it unset")
+	backupIncludeSensitive := flag.Bool("backup-include-sensitive-tables",
+		os.Getenv("LENNY_BACKUP_INCLUDE_SENSITIVE_TABLES") == "true",
+		"§25.11 contentPolicy.includeSensitiveTables: forward --include-sensitive-tables to scheduled backups")
+	backupExcludeTables := flag.String("backup-exclude-tables", os.Getenv("LENNY_BACKUP_EXCLUDE_TABLES"),
+		"§25.11 contentPolicy.excludeTables: comma-separated tables excluded from scheduled backups beyond the defaults")
+	backupRedactColumns := flag.String("backup-redact-columns", os.Getenv("LENNY_BACKUP_REDACT_COLUMNS"),
+		"§25.11 contentPolicy.redactColumns: comma-separated columns (bare or table.column) redacted in scheduled backups")
 	backupRegions := flag.String("backups-regions", os.Getenv("LENNY_OPS_BACKUPS_REGIONS"),
 		"§12.8 backups.regions per-region backup endpoint map as JSON "+
 			"({\"eu\":{\"minioEndpoint\":...,\"kmsKeyId\":...,\"accessCredentialSecret\":...}}). "+
@@ -809,6 +816,10 @@ func main() {
 		ReportDSNSecret: *backupReportDSNSecret,
 		Regions:         backupRegionMap,
 		ShardRegions:    backupShardResolver,
+
+		IncludeSensitiveTables: *backupIncludeSensitive,
+		ExcludeTables:          splitCSV(*backupExcludeTables),
+		RedactColumns:          splitCSV(*backupRedactColumns),
 	})
 
 	// The §25.4 escalation service, the §25.10 configuration-drift

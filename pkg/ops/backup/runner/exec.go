@@ -35,6 +35,12 @@ type ExecDumper struct {
 	// the dump via --exclude-table-data. The lenny-backup binary fills
 	// it from backups.contentPolicy plus the defaultExcludedTables.
 	ExcludeTables []string
+	// RedactColumns are the §25.11 contentPolicy.redactColumns entries.
+	// When non-empty the shard dumps switch from --format=custom to
+	// --format=plain so the matched column data can be rewritten to
+	// "[REDACTED]"; each entry is a bare column name (matched in every
+	// table) or a "table.column" qualifier (matched in that table only).
+	RedactColumns []string
 	// ConfigExport runs the §25.11 step-2 platform-configuration export
 	// and returns the JSON. The lenny-backup binary supplies it; a
 	// deployment without the gateway admin API leaves it nil and the
@@ -49,10 +55,14 @@ type ExecDumper struct {
 
 var _ Dumper = (*ExecDumper)(nil)
 
-// DumpPostgres implements Dumper. It runs one pg_dump per shard with
-// --format=custom and the §25.11 content-policy --exclude-table-data
-// flags, and concatenates the per-shard dumps into one component. A
-// shard whose pg_dump fails aborts the run.
+// DumpPostgres implements Dumper. It runs one pg_dump per shard with the
+// §25.11 content-policy --exclude-table-data flags and concatenates the
+// per-shard dumps into one component. The dump uses --format=custom
+// unless contentPolicy.redactColumns is configured, in which case it
+// uses --format=plain and pipes the output through the column-redaction
+// filter so the matched columns are rewritten to "[REDACTED]" (a binary
+// custom-format archive cannot be text-filtered). A shard whose pg_dump
+// fails aborts the run.
 func (d *ExecDumper) DumpPostgres(ctx context.Context) (Component, error) {
 	if len(d.ShardDSNs) == 0 {
 		return Component{}, errors.New("runner: no Postgres shards configured")
@@ -61,10 +71,15 @@ func (d *ExecDumper) DumpPostgres(ctx context.Context) (Component, error) {
 	if pgDump == "" {
 		pgDump = "pg_dump"
 	}
+	targets := parseRedactTargets(d.RedactColumns)
+	format, ext := "custom", "dump"
+	if len(targets) > 0 {
+		format, ext = "plain", "sql"
+	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for i, dsn := range d.ShardDSNs {
-		args := []string{"--format=custom", "--no-owner", "--no-privileges"}
+		args := []string{"--format=" + format, "--no-owner", "--no-privileges"}
 		for _, t := range d.ExcludeTables {
 			args = append(args, "--exclude-table-data="+t)
 		}
@@ -77,15 +92,23 @@ func (d *ExecDumper) DumpPostgres(ctx context.Context) (Component, error) {
 			return Component{}, fmt.Errorf("pg_dump shard %d: %w: %s", i, err,
 				strings.TrimSpace(stderr.String()))
 		}
+		shard := out.Bytes()
+		if len(targets) > 0 {
+			var redacted bytes.Buffer
+			if err := redactCopyStream(bytes.NewReader(shard), &redacted, targets); err != nil {
+				return Component{}, fmt.Errorf("redact shard %d: %w", i, err)
+			}
+			shard = redacted.Bytes()
+		}
 		hdr := &tar.Header{
-			Name: fmt.Sprintf("postgres/shard-%d.dump", i),
+			Name: fmt.Sprintf("postgres/shard-%d.%s", i, ext),
 			Mode: 0o600,
-			Size: int64(out.Len()),
+			Size: int64(len(shard)),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return Component{}, fmt.Errorf("tar header shard %d: %w", i, err)
 		}
-		if _, err := tw.Write(out.Bytes()); err != nil {
+		if _, err := tw.Write(shard); err != nil {
 			return Component{}, fmt.Errorf("tar write shard %d: %w", i, err)
 		}
 	}
@@ -134,7 +157,12 @@ type manifestEntry struct {
 type archiveManifest struct {
 	Components     []manifestEntry `json:"components"`
 	ExcludedTables []string        `json:"excludedTables"`
-	Encrypted      bool            `json:"encrypted"`
+	// RedactedColumns records the §25.11 contentPolicy.redactColumns
+	// applied to the postgres component so restore tooling can detect
+	// that the shard dumps are plain-format and carry "[REDACTED]" in
+	// place of the matched columns.
+	RedactedColumns []string `json:"redactedColumns,omitempty"`
+	Encrypted       bool     `json:"encrypted"`
 }
 
 // TarGzArchiver is the production §25.11 Archiver. It packages the
@@ -154,6 +182,11 @@ type TarGzArchiver struct {
 	// ExcludedTables is recorded in the §25.11 archive internal
 	// manifest.
 	ExcludedTables []string
+	// RedactedColumns is the §25.11 contentPolicy.redactColumns set
+	// applied to the postgres component; it is recorded in the archive
+	// internal manifest so restore tooling knows the dumps are plain
+	// and column-redacted.
+	RedactedColumns []string
 }
 
 var _ Archiver = (*TarGzArchiver)(nil)
@@ -188,8 +221,9 @@ func (a *TarGzArchiver) packTarGz(components []Component) ([]byte, error) {
 	tw := tar.NewWriter(gz)
 
 	manifest := archiveManifest{
-		ExcludedTables: a.ExcludedTables,
-		Encrypted:      len(a.DataKey) > 0,
+		ExcludedTables:  a.ExcludedTables,
+		RedactedColumns: a.RedactedColumns,
+		Encrypted:       len(a.DataKey) > 0,
 	}
 	for _, c := range components {
 		manifest.Components = append(manifest.Components, manifestEntry{

@@ -103,6 +103,7 @@ type restoreTestParams struct {
 	sampleSize    int
 	scratchDSN    string
 	pgRestorePath string
+	psqlPath      string
 	replication   replicationConfig
 }
 
@@ -159,7 +160,7 @@ func runRestoreTest(ctx context.Context, d *deps, p restoreTestParams, stdout, s
 	// --list) without a live restore.
 	var restorer runner.ScratchRestorer
 	if p.scratchDSN != "" {
-		restorer = &runner.ExecScratchRestorer{PgRestorePath: p.pgRestorePath, ScratchDSN: p.scratchDSN}
+		restorer = &runner.ExecScratchRestorer{PgRestorePath: p.pgRestorePath, PsqlPath: p.psqlPath, ScratchDSN: p.scratchDSN}
 	}
 
 	// The sampled-HEAD ArtifactStore check runs only when a replication

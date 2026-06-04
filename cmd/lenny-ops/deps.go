@@ -29,9 +29,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
-	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 	backupk8slauncher "github.com/lennylabs/lenny/pkg/ops/backup/k8slauncher"
 	backuppgstore "github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 	"github.com/lennylabs/lenny/pkg/ops/baselinestore"
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
@@ -405,6 +405,13 @@ type backupDeps struct {
 	KMSKeyID        string
 	ReportDSNSecret string
 
+	// IncludeSensitiveTables, ExcludeTables, and RedactColumns are the
+	// §25.11 backups.contentPolicy the Job factory forwards to every
+	// scheduled backup Job.
+	IncludeSensitiveTables bool
+	ExcludeTables          []string
+	RedactColumns          []string
+
 	// Regions is the §12.8 backups.regions.<region> per-region backup
 	// endpoint map. When non-empty, buildBackupService enables per-region
 	// dispatch and pairs it with ShardRegions; an empty map keeps the
@@ -466,6 +473,11 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			MinIOBucket:     deps.MinIOBucket,
 			KMSKeyID:        deps.KMSKeyID,
 			ReportDSNSecret: deps.ReportDSNSecret,
+			ContentPolicy: backupk8slauncher.ContentPolicy{
+				IncludeSensitiveTables: deps.IncludeSensitiveTables,
+				ExcludeTables:          deps.ExcludeTables,
+				RedactColumns:          deps.RedactColumns,
+			},
 		})
 		if err != nil {
 			log.Fatalf("lenny-ops: build backup Job launcher: %v", err)

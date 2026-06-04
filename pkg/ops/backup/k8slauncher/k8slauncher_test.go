@@ -334,6 +334,67 @@ func hasArg(args []string, want string) bool {
 	return false
 }
 
+// TestBackupJobCarriesContentPolicyArgs asserts the §25.11
+// backups.contentPolicy selections (includeSensitiveTables, excludeTables,
+// redactColumns) are forwarded to the lenny-backup binary on a backup
+// Job, so a scheduled backup applies the same sensitive-content policy as
+// the on-demand path. They are not added to a restore Job.
+//
+// spec: §25.11 contentPolicy.redactColumns / Sensitive Content Policy.
+func TestBackupJobCarriesContentPolicyArgs_spec_25_11_4012(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	l, err := New(Config{
+		Clientset:     cs,
+		Namespace:     "lenny-system",
+		Image:         "registry.example/lenny-backup:v1",
+		MinIOEndpoint: "minio:9000",
+		MinIOBucket:   "lenny-backups",
+		ContentPolicy: ContentPolicy{
+			IncludeSensitiveTables: true,
+			ExcludeTables:          []string{"audit_log"},
+			RedactColumns:          []string{"tenant_secrets.api_key", "token"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	l.cfg.newSuffix = func() string { return "cp" }
+
+	backupArgs := launchedArgs(t, l, cs, backup.JobSpec{Kind: backup.JobBackup, BackupID: "bkp-cp"})
+	for _, want := range []string{
+		"--include-sensitive-tables",
+		"--exclude-table=audit_log",
+		"--redact-column=tenant_secrets.api_key",
+		"--redact-column=token",
+	} {
+		if !hasArg(backupArgs, want) {
+			t.Errorf("backup Job missing content-policy arg %q: %v", want, backupArgs)
+		}
+	}
+
+	l.cfg.newSuffix = func() string { return "rst" }
+	restoreArgs := launchedArgs(t, l, cs, backup.JobSpec{Kind: backup.JobRestore, RestoreID: "rst-cp"})
+	for _, unwanted := range []string{"--include-sensitive-tables", "--exclude-table=audit_log", "--redact-column=token"} {
+		if hasArg(restoreArgs, unwanted) {
+			t.Errorf("restore Job carried backup-only content-policy arg %q: %v", unwanted, restoreArgs)
+		}
+	}
+}
+
+// launchedArgs launches spec and returns the created Job container args.
+func launchedArgs(t *testing.T, l *Launcher, cs *fake.Clientset, spec backup.JobSpec) []string {
+	t.Helper()
+	launched, err := l.Launch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Launch %s: %v", spec.Kind, err)
+	}
+	job, err := cs.BatchV1().Jobs("lenny-system").Get(context.Background(), launched.JobID, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created Job: %v", err)
+	}
+	return job.Spec.Template.Spec.Containers[0].Args
+}
+
 func hasEnv(env []corev1.EnvVar, name, value string) bool {
 	for _, e := range env {
 		if e.Name == name && e.Value == value {

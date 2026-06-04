@@ -3590,8 +3590,12 @@ backups:
     # excludeTables lists additional tables excluded beyond the
     # defaults; each becomes a lenny-backup --exclude-table flag.
     excludeTables: []
-    # redactColumns lists additional column names redacted in the dump
-    # (matched verbatim); consumed by the lenny-ops Job factory.
+    # redactColumns lists columns whose data is rewritten to [REDACTED]
+    # in the dump. Each entry is a bare column name (redacted in every
+    # table) or a table.column qualifier (redacted in that table only).
+    # When set, the postgres dump switches from custom to plain format so
+    # the column data can be text-filtered. Consumed by the lenny-ops Job
+    # factory and the on-demand backup Job.
     redactColumns: []
   # access is the §25.11 line 4020 object-ACL posture on uploaded
   # backup objects.

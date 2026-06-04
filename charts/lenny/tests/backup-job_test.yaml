@@ -154,6 +154,19 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --exclude-table=billing_events
 
+  - it: forwards one --redact-column flag per contentPolicy.redactColumns entry
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.redactColumns: [tenant_secrets.api_key, token]
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redact-column=tenant_secrets.api_key
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redact-column=token
+
   - it: forwards the SSE-KMS key id as a flag and env when encryption.kmsKeyId is set
     set:
       backups.onDemand.enabled: true

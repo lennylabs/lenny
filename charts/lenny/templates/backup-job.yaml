@@ -156,6 +156,9 @@ spec:
             {{- range $.Values.backups.contentPolicy.excludeTables }}
             - --exclude-table={{ . }}
             {{- end }}
+            {{- range $.Values.backups.contentPolicy.redactColumns }}
+            - --redact-column={{ . }}
+            {{- end }}
             {{- if $.Values.backups.encryption.kmsKeyId }}
             - --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
             {{- end }}

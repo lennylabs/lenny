@@ -116,8 +116,18 @@ type ExecDumpInspector struct {
 
 var _ DumpInspector = (*ExecDumpInspector)(nil)
 
-// ListDump implements DumpInspector.
+// ListDump implements DumpInspector. A custom-format dump is proved
+// readable with pg_restore --list; a §25.11 redacted dump is plain SQL
+// (pg_restore cannot list it) and is proved readable with the
+// plain-dump text check, the scratch-DB restore-test being the
+// authoritative restorability proof.
 func (e *ExecDumpInspector) ListDump(ctx context.Context, dump []byte) error {
+	if !isCustomFormatDump(dump) {
+		if !validatePlainDump(dump) {
+			return errors.New("plain-format dump is empty or not readable SQL")
+		}
+		return nil
+	}
 	path, cleanup, err := writeTempDump(dump)
 	if err != nil {
 		return err
@@ -147,6 +157,10 @@ type ExecScratchRestorer struct {
 	// PgRestorePath is the pg_restore executable. Empty defaults to
 	// "pg_restore".
 	PgRestorePath string
+	// PsqlPath is the psql executable used to restore §25.11 redacted
+	// (plain-format) dumps that pg_restore cannot apply. Empty defaults
+	// to "psql".
+	PsqlPath string
 	// ScratchDSN is the scratch Postgres connection string the dumps are
 	// restored into. Required.
 	ScratchDSN string
@@ -154,29 +168,42 @@ type ExecScratchRestorer struct {
 
 var _ ScratchRestorer = (*ExecScratchRestorer)(nil)
 
-// RestoreAndSmoke implements ScratchRestorer.
+// RestoreAndSmoke implements ScratchRestorer. Each shard dump is
+// restored into the scratch Postgres: a custom-format dump via
+// pg_restore, a §25.11 redacted (plain-format) dump via psql with
+// ON_ERROR_STOP so a malformed dump fails the smoke test the same way.
 func (e *ExecScratchRestorer) RestoreAndSmoke(ctx context.Context, dumps [][]byte) error {
 	if e.ScratchDSN == "" {
 		return errors.New("runner: scratch restore requires a scratch DSN")
-	}
-	bin := e.PgRestorePath
-	if bin == "" {
-		bin = "pg_restore"
 	}
 	for i, d := range dumps {
 		path, cleanup, err := writeTempDump(d)
 		if err != nil {
 			return err
 		}
-		cmd := exec.CommandContext(ctx, bin,
-			"--clean", "--if-exists", "--no-owner", "--no-privileges",
-			"--dbname="+e.ScratchDSN, path)
+		var cmd *exec.Cmd
+		if isCustomFormatDump(d) {
+			bin := e.PgRestorePath
+			if bin == "" {
+				bin = "pg_restore"
+			}
+			cmd = exec.CommandContext(ctx, bin,
+				"--clean", "--if-exists", "--no-owner", "--no-privileges",
+				"--dbname="+e.ScratchDSN, path)
+		} else {
+			bin := e.PsqlPath
+			if bin == "" {
+				bin = "psql"
+			}
+			cmd = exec.CommandContext(ctx, bin,
+				"--set", "ON_ERROR_STOP=on", "--dbname="+e.ScratchDSN, "--file="+path)
+		}
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		runErr := cmd.Run()
 		cleanup()
 		if runErr != nil {
-			return fmt.Errorf("pg_restore shard %d: %w: %s", i, runErr, strings.TrimSpace(stderr.String()))
+			return fmt.Errorf("restore shard %d: %w: %s", i, runErr, strings.TrimSpace(stderr.String()))
 		}
 	}
 	return nil

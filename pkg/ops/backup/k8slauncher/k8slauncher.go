@@ -83,9 +83,27 @@ type Config struct {
 	MinIOBucket   string
 	// KMSKeyID, when set, selects §12.9 SSE-KMS for the upload.
 	KMSKeyID string
+	// ContentPolicy carries the §25.11 backups.contentPolicy selections
+	// the factory forwards to the lenny-backup binary on a backup Job so
+	// scheduled backups honor the same sensitive-content policy as the
+	// on-demand path.
+	ContentPolicy ContentPolicy
 	// newSuffix generates the random Job-name suffix; nil uses
 	// k8s.io/apimachinery rand. Injected in tests for determinism.
 	newSuffix func() string
+}
+
+// ContentPolicy is the §25.11 backups.contentPolicy the factory forwards
+// to the lenny-backup binary as CLI flags on a backup Job.
+type ContentPolicy struct {
+	// IncludeSensitiveTables forwards --include-sensitive-tables so the
+	// defaultExcludedTables are dumped (not recommended).
+	IncludeSensitiveTables bool
+	// ExcludeTables forwards one --exclude-table per entry.
+	ExcludeTables []string
+	// RedactColumns forwards one --redact-column per entry; the matched
+	// column data is rewritten to "[REDACTED]" in a plain-format dump.
+	RedactColumns []string
 }
 
 // Launcher is the production §25.11 JobLauncher and JobReaper.
@@ -300,7 +318,9 @@ func (l *Launcher) target(spec backup.JobSpec) jobTarget {
 	return t
 }
 
-// args renders the lenny-backup CLI arguments for spec.Kind.
+// args renders the lenny-backup CLI arguments for spec.Kind. A backup
+// Job also carries the §25.11 content-policy flags so a scheduled backup
+// applies the same exclude/redact policy as the on-demand path.
 func (l *Launcher) args(spec backup.JobSpec) []string {
 	args := []string{"--mode=" + modeFor(spec.Kind)}
 	switch spec.Kind {
@@ -308,6 +328,18 @@ func (l *Launcher) args(spec backup.JobSpec) []string {
 		args = append(args, "--backup-id=$(LENNY_BACKUP_ID)")
 	case backup.JobRestore:
 		args = append(args, "--restore-id=$(LENNY_RESTORE_ID)")
+	}
+	if spec.Kind == backup.JobBackup {
+		cp := l.cfg.ContentPolicy
+		if cp.IncludeSensitiveTables {
+			args = append(args, "--include-sensitive-tables")
+		}
+		for _, t := range cp.ExcludeTables {
+			args = append(args, "--exclude-table="+t)
+		}
+		for _, c := range cp.RedactColumns {
+			args = append(args, "--redact-column="+c)
+		}
 	}
 	if l.target(spec).kmsKeyID != "" {
 		args = append(args, "--kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)")

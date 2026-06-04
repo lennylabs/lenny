@@ -87,6 +87,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"a Postgres shard connection string; repeat once per shard")
 	excludeList := newStringList(fs, "exclude-table",
 		"a table excluded from pg_dump beyond the §25.11 defaults; repeat per table")
+	redactList := newStringList(fs, "redact-column",
+		"a §25.11 contentPolicy.redactColumns entry (bare column or table.column); "+
+			"its data is rewritten to [REDACTED] in a plain-format dump; repeat per column")
 	includeSensitive := fs.Bool("include-sensitive-tables", false,
 		"include the §25.11 defaultExcludedTables in the dump (not recommended)")
 	minioEndpoint := fs.String("minio-endpoint", os.Getenv("LENNY_BACKUP_MINIO_ENDPOINT"),
@@ -108,6 +111,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	pgDumpPath := fs.String("pg-dump-path", "pg_dump", "the pg_dump executable")
 	pgRestorePath := fs.String("pg-restore-path", "pg_restore",
 		"the pg_restore executable used by the verify and restore-test modes")
+	psqlPath := fs.String("psql-path", "psql",
+		"the psql executable used to restore §25.11 redacted (plain-format) dumps in restore-test mode")
 	preRestoreRetainDays := fs.Int("pre-restore-retain-days", 7,
 		"the §25.11 backups.retention.preRestoreRetainDays window")
 	timeout := fs.Duration("timeout", 2*time.Hour,
@@ -200,6 +205,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			sampleSize:    *artifactSampleSize,
 			scratchDSN:    *scratchDSN,
 			pgRestorePath: *pgRestorePath,
+			psqlPath:      *psqlPath,
 			replication: replicationConfig{
 				endpoint:  *replicationEndpoint,
 				bucket:    *replicationBucket,
@@ -232,12 +238,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		PgDumpPath:    *pgDumpPath,
 		ShardDSNs:     shardList.values,
 		ExcludeTables: excluded,
+		RedactColumns: redactList.values,
 		ConfigExport:  deps.configExport,
 		CRDExport:     deps.crdExport,
 	}
 	archiver := &runner.TarGzArchiver{
-		DataKey:        deps.dataKey,
-		ExcludedTables: excluded,
+		DataKey:         deps.dataKey,
+		ExcludedTables:  excluded,
+		RedactedColumns: redactList.values,
 	}
 
 	result, err := runner.Run(ctx, runner.Config{

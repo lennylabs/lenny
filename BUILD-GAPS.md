@@ -42216,7 +42216,7 @@ expires the pre-restore backup once the rollout completes (step 8). A
 failed restore or reconciler leaves the lock held per §25.11 line 4149.
 (this batch, 406555cb)
 
-### - [ ] F-25.11.12 — In-Job dump pipeline lacks ArtifactStore handling, sensitive-content policy enforcement, and restore mode [High] — OPEN
+### - [x] F-25.11.12 — In-Job dump pipeline lacks ArtifactStore handling, sensitive-content policy enforcement, and restore mode [High] — CLOSED
 
 Spec lines 4001–4006 require the Job to package CRDs alongside Postgres and config, redact columns per `redactColumns`, support `excludeTables`, and write the per-region object to the region's bucket. Spec lines 4087–4098 add the restore procedure (target promotion, GC-driven dangling-pointer cleanup, `lenny_restore_artifact_missing_total` instrumentation, sampled-HEAD test restore against the replication target).
 
@@ -42226,6 +42226,8 @@ Implementation status:
 - `runner.Run` for restore mode is absent. The "restore Job" the JobLauncher would create has no binary entrypoint.
 - `lenny_restore_artifact_missing_total` and `lenny_restore_test_artifact_success_rate` are declared in the metrics catalog (catalog.go:285-287) but never emitted (no producer outside the catalog).
 - The restore-test CronJob template (`charts/lenny/templates/restore-test-cronjob.yaml`) renders the Pod and SA but the image's `--mode test-restore` would 404 at process startup because the binary does not handle it.
+
+**Resolution:** Most of this finding was stale — addressed by prior §25.11 batches. `cmd/lenny-backup` already serves `verify` and `restore-test` modes (`restoretest.go`, `pkg/ops/backup/restoretest`), the `ExecDumper.ConfigExport`/`CRDExport` seams are wired from the binary's deps, and `lenny_restore_artifact_missing_total` / `lenny_restore_test_artifact_success_rate` are emitted by `cmd/lenny-ops/deps.go`. The one genuine remaining gap, `redactColumns`, is now implemented end to end: a new column-name-aware COPY-stream filter (`pkg/ops/backup/runner/redact.go`) rewrites the data of every matched column to `[REDACTED]` (bare-column or `table.column` targeting, schema-insensitive). When `contentPolicy.redactColumns` is set, `ExecDumper.DumpPostgres` switches the shard dump from `--format=custom` to `--format=plain` (a binary custom archive cannot be text-filtered) and stores `postgres/shard-N.sql`; the archive manifest records `redactedColumns`. The verify and restore paths sniff the `PGDMP` magic so a plain redacted dump is verified via the text-readability check and restored via `psql` rather than `pg_restore`. A `--redact-column` flag (plus `--psql-path`) lands on `lenny-backup`; the policy is forwarded by both Job paths — the on-demand chart Job (`backup-job.yaml`) and the lenny-ops factory (`k8slauncher.Config.ContentPolicy`, fed by new `LENNY_BACKUP_REDACT_COLUMNS`/`EXCLUDE_TABLES`/`INCLUDE_SENSITIVE_TABLES` lenny-ops flags), which also forwards the previously-unforwarded `excludeTables`/`includeSensitiveTables` on scheduled backups. Closed this batch; 14 tier-1 redactor/sniff tests + 3 dumper/manifest tests + 1 k8slauncher arg test + 1 helm-unittest.
 
 ### - [x] F-25.11.13 — `SafetyCheckRestore` returns hardcoded zero data-loss estimate [Medium] — CLOSED
 
