@@ -165,6 +165,10 @@ type Router struct {
 	auditMetrics            AuditQueryMetrics
 	tokenRevoker            IssuedTokenRevoker
 	revocationCache         RevocationCache
+	// adminToken provisions/rotates the §17.6 initial admin credential
+	// (lenny-admin + lenny-admin-token Secret). Nil leaves the bootstrap
+	// admin-token step and the rotate-token route inactive. F-17.6.3.
+	adminToken AdminTokenProvisioner
 	userPods                UserPodTerminator
 	userLeases              UserLeaseRevoker
 	userTokens              UserTokenRevoker
@@ -799,6 +803,12 @@ func (r *Router) Handler() http.Handler {
 	}
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
+	}
+	if r.adminToken != nil {
+		// §17.6 line 472 — rotate the initial admin token. platform-admin
+		// only (requireAdmin). F-17.6.3.
+		mux.Handle("POST /v1/admin/users/{user}/rotate-token",
+			r.requireAdmin(http.HandlerFunc(r.handleRotateToken)))
 	}
 	if r.tokenRevoker != nil {
 		// §13.3 operator-initiated token revocation.

@@ -94,6 +94,11 @@ type BootstrapResponse struct {
 	CredentialPools    BootstrapSection `json:"credentialPools,omitempty"`
 	DelegationPolicies BootstrapSection `json:"delegationPolicies,omitempty"`
 	Environments       BootstrapSection `json:"environments,omitempty"`
+	// AdminToken reports the §17.6 initial-admin-credential outcome so the
+	// §24.1 CLI can print the first-use prompt. Populated only when the
+	// gateway has an admin-token provisioner wired and the run is not a
+	// dry-run. F-17.6.3 / F-24.1.7.
+	AdminToken *AdminTokenSection `json:"adminToken,omitempty"`
 }
 
 // BootstrapSection is the per-resource result.
@@ -210,6 +215,14 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.environments != nil {
 		out.Environments = r.upsertEnvironments(req, body.Environments, opts)
+	}
+
+	// §17.6 lines 455-474 — provision the initial admin credential after
+	// the seed resources stand (the lenny-admin user row the credential
+	// references is upserted by the provisioner itself). Skipped on a
+	// dry-run so no token is minted or Secret written. F-17.6.3 / F-24.1.7.
+	if section, ok := r.provisionAdminToken(req.Context(), opts.dryRun); ok {
+		out.AdminToken = &section
 	}
 
 	// §15.1 line 863 — the `platform.bootstrap_applied` audit event (T3)
