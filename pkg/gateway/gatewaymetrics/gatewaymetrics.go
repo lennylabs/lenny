@@ -586,6 +586,16 @@ type Metrics struct {
 	treeRecoveryDuration       *prometheus.HistogramVec
 	treeRecoveryTimeout        *prometheus.CounterVec
 
+	// §10.1 orphan-session reconciler observability.
+	// orphanSessionReconciliations counts each session the §10.1 line 51
+	// reconciler forces to `failed` after its bound pod terminated with
+	// no terminal event. agentPodStateMirrorLag is the per-pool staleness
+	// gauge the §16.5 PodStateMirrorStale alert reads; the reconciler
+	// publishes it once per pool per pass.
+	// spec: §10.1 line 51; §16.1.
+	orphanSessionReconciliations prometheus.Counter
+	agentPodStateMirrorLag       *prometheus.GaugeVec
+
 	// statelessRequests is the §5.2 line 573 cumulative request count
 	// arriving at the pool's Kubernetes Service in concurrent-stateless
 	// mode. The PoolScalingController reads
@@ -2058,6 +2068,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	orphanSessionReconciliations := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_orphan_session_reconciliations_total",
+		Help: "Orphan sessions forcibly transitioned to failed by the §10.1 reconciler (§10.1 line 51 / §16.1).",
+	})
+	agentPodStateMirrorLag, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_agent_pod_state_mirror_lag_seconds",
+		Help: "Seconds since the last agent_pod_state mirror update per pool; drives the §16.5 PodStateMirrorStale alert (§10.1 line 51).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 	treeRecoveryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_delegation_tree_recovery_duration_seconds",
 		Help:    "Delegation tree-recovery wall-clock duration by outcome (§8.10 / §16.1 line 144).",
@@ -2255,6 +2276,7 @@ func New() (*Metrics, error) {
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
+		orphanSessionReconciliations, agentPodStateMirrorLag,
 		treeRecoveryDuration, treeRecoveryTimeout,
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
 		delegationLeaseExtension,
@@ -2474,6 +2496,8 @@ func New() (*Metrics, error) {
 		orphanTasksTerminated:                orphanTasksTerminated,
 		orphanTasksActive:                    orphanTasksActive.WithLabelValues(),
 		orphanTasksActivePerTenant:           orphanTasksActivePerTenant,
+		orphanSessionReconciliations:         orphanSessionReconciliations,
+		agentPodStateMirrorLag:               agentPodStateMirrorLag,
 		treeRecoveryDuration:                 treeRecoveryDuration,
 		treeRecoveryTimeout:                  treeRecoveryTimeout,
 		statelessRequests:                    statelessRequests,
@@ -3511,6 +3535,29 @@ func (m *Metrics) IncOrphanCleanupRun() {
 		return
 	}
 	m.orphanCleanupRuns.Inc()
+}
+
+// IncOrphanSessionReconciliation increments
+// `lenny_orphan_session_reconciliations_total` once per session the
+// §10.1 reconciler forces to `failed` after its bound pod terminated
+// without a terminal event. spec: §10.1 line 51; F-10.1.5.
+func (m *Metrics) IncOrphanSessionReconciliation() {
+	if m == nil {
+		return
+	}
+	m.orphanSessionReconciliations.Inc()
+}
+
+// SetAgentPodStateMirrorLag publishes the per-pool
+// `lenny_agent_pod_state_mirror_lag_seconds` gauge — the staleness of
+// the agent_pod_state mirror for poolID. The §10.1 reconciler emits it
+// once per pool per pass; the §16.5 PodStateMirrorStale alert fires when
+// it exceeds 60s. spec: §10.1 line 51; F-10.1.5.
+func (m *Metrics) SetAgentPodStateMirrorLag(poolID string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.agentPodStateMirrorLag.WithLabelValues(poolID).Set(seconds)
 }
 
 // AddOrphanTasksTerminated bumps the §8.10 / §16.1 line 147

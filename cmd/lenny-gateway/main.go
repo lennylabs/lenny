@@ -63,6 +63,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
@@ -194,6 +195,7 @@ import (
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
@@ -264,6 +266,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
+	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -5218,6 +5221,50 @@ func main() {
 		}
 	})
 
+	// ----- §10.1 orphan-session reconciler -----
+	// Cross-references the §4.6.1 agent_pod_state mirror every 60s: a
+	// non-terminal session whose bound pod reached the §6.2 `terminated`
+	// phase (without writing a terminal event, because the coordinating
+	// replica was lost) is forced to `failed`/orphan_pod_terminated so it
+	// stops holding quota. When a pool's mirror is stale (lag > 60s) or
+	// carries no row for the bound pod, the reconciler falls back to a
+	// direct Sandbox read. Active only when the Postgres mirror is wired;
+	// the transition is idempotent across replicas (the Update no-ops on a
+	// concurrent terminal write), matching the orphan-cleanup precedent.
+	// spec: §10.1 lines 47-52. F-10.1.5.
+	if pgPool != nil {
+		orphanSessionOpts := orphansession.Options{
+			Terminal: sessionSrv,
+			Metrics:  gwMetrics,
+			Clock:    clockinject.Now,
+		}
+		if clusterClient != nil && *agentNamespace != "" {
+			orphanSessionOpts.Fallback = sandboxPhaseReader{
+				mgr: &podlifecycle.AgentSandboxPodLifecycleManager{
+					AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{
+						Client:    clusterClient,
+						Namespace: *agentNamespace,
+					},
+				},
+				ns: *agentNamespace,
+			}
+		}
+		orphanSessionReconciler := orphansession.New(sessions, tenantsLister{tenants},
+			agentPodStateMirror{store: agentpodstatepg.New(pgPool)}, orphanSessionOpts)
+		go orphanSessionReconciler.Run(watchdogCtx, func(failed int, err error) {
+			if err != nil {
+				log.Printf("lenny-gateway: §10.1 orphan-session reconcile error: %v", err)
+				return
+			}
+			if failed > 0 {
+				log.Printf("lenny-gateway: §10.1 reconciler failed %d orphaned sessions (orphan_pod_terminated)",
+					failed)
+			}
+		})
+		log.Printf("lenny-gateway: §10.1 orphan-session reconciler enabled (fallback=%t)",
+			orphanSessionOpts.Fallback != nil)
+	}
+
 	// ----- §10.1 dual-store degraded-mode monitor -----
 	// Probes Postgres + Redis on a short cadence; on detecting both
 	// unreachable it pins lenny_dual_store_unavailable=1, broadcasts
@@ -7266,6 +7313,53 @@ func (a credentialAuditor) EmitCredentialEvent(ctx context.Context, eventType st
 // watchdog.TenantLister so the watchdog sweeps every registered
 // tenant. In single-tenant deployments it also returns "default" so
 // dev-mode sessions are bounded.
+// agentPodStateMirror adapts the §4.6.1 agent_pod_state store to the
+// §10.1 orphan-session reconciler's MirrorReader, mapping the store's
+// PodState onto the reconciler's narrow MirrorPod view. spec: §10.1
+// line 51. F-10.1.5.
+type agentPodStateMirror struct {
+	store agentpodstate.Store
+}
+
+func (a agentPodStateMirror) GetByPodID(ctx context.Context, podID string) (orphansession.MirrorPod, bool, error) {
+	p, found, err := a.store.GetByPodID(ctx, podID)
+	if err != nil || !found {
+		return orphansession.MirrorPod{}, found, err
+	}
+	return orphansession.MirrorPod{PoolID: p.PoolID, Phase: p.State}, true, nil
+}
+
+func (a agentPodStateMirror) MirrorLagSeconds(ctx context.Context, poolID string) (float64, error) {
+	return a.store.MirrorLagSeconds(ctx, poolID)
+}
+
+// sandboxPhaseReader is the §10.1 line 51 direct-Kubernetes fallback the
+// orphan-session reconciler consults when the agent_pod_state mirror is
+// stale or missing. It reads the authoritative Sandbox phase through the
+// §4.6.1 PodLifecycleManager.GetPodStatus surface; a deleted Sandbox
+// (ErrPodNotFound) reports found=false, itself a terminal signal.
+// spec: §10.1 line 51. F-10.1.5.
+type sandboxPhaseReader struct {
+	mgr podlifecycle.PodLifecycleManager
+	ns  string
+}
+
+func (r sandboxPhaseReader) PodPhase(ctx context.Context, sessionID, podID, poolID string) (string, bool, error) {
+	st, err := r.mgr.GetPodStatus(ctx, podlifecycle.PodHandle{
+		SandboxName: podID,
+		Namespace:   r.ns,
+		SessionID:   sessionID,
+		PoolName:    poolID,
+	})
+	if errors.Is(err, podlifecycle.ErrPodNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return string(st.Phase), true, nil
+}
+
 type tenantsLister struct {
 	store tenantstore.Store
 }

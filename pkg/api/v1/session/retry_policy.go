@@ -258,6 +258,16 @@ const (
 	// MCP adapter surfaces this as `failed` with error code
 	// `expired:lease`. spec: §8.8 line 867.
 	FailureExpiredLease FailureReason = "expired:lease"
+
+	// FailureOrphanPodTerminated marks a non-terminal session whose
+	// bound pod reached the §6.2 `terminated` phase without the pod
+	// writing a terminal event back to Postgres — the coordinator was
+	// lost and never reconnected. The §10.1 orphan-session reconciler
+	// forcibly transitions such a session to `failed` with this reason
+	// so it stops holding quota indefinitely.
+	// spec: §10.1 line 51 — "forcibly transitioned to `failed` with
+	// reason `orphan_pod_terminated`".
+	FailureOrphanPodTerminated FailureReason = "orphan_pod_terminated"
 )
 
 // DefaultRetryableFailures is the §7.3 line 384 platform default the

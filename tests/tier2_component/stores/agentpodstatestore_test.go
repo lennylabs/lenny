@@ -505,3 +505,91 @@ func TestAgentPodStateReconcileAll(t *testing.T) {
 		}
 	})
 }
+
+// spec: §10.1 line 51 — the §10.1 orphan-session reconciler reads the
+// mirrored §6.2 phase for a session's bound pod through GetByPodID. The
+// read must surface the pool, phase, and the nullable tenant/session
+// columns, report a missing pod as (·, false, nil), and treat an empty
+// pod id as a non-match without a round trip. F-10.1.5.
+func TestAgentPodStateGetByPodID_spec_10_1_51(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := agentpodstatepg.New(pg.Pool)
+	ctx := context.Background()
+
+	pool := "pool-" + newUUID(t)[:8]
+	claimed := pool + "-claimed"
+	idle := pool + "-idle"
+	terminated := pool + "-term"
+	observed := []agentpodstate.PodState{
+		{
+			PodID: claimed, PoolID: pool, State: "attached",
+			TenantID: "acme", SessionID: "sess-1",
+			IsolationProfile: "sandboxed", ExecutionMode: "session", ResourceVersion: 5,
+			NodeName: "node-3",
+		},
+		{PodID: idle, PoolID: pool, State: "idle", IsolationProfile: "sandboxed", ExecutionMode: "session", ResourceVersion: 2},
+		{PodID: terminated, PoolID: pool, State: "terminated", TenantID: "acme", SessionID: "sess-9", IsolationProfile: "sandboxed", ExecutionMode: "session", ResourceVersion: 9},
+	}
+	if err := store.Sync(ctx, pool, observed); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	t.Run("claimed pod surfaces pool, phase, tenant, session", func(t *testing.T) {
+		got, found, err := store.GetByPodID(ctx, claimed)
+		if err != nil {
+			t.Fatalf("GetByPodID: %v", err)
+		}
+		if !found {
+			t.Fatalf("claimed pod not found")
+		}
+		if got.PoolID != pool || got.State != "attached" ||
+			got.TenantID != "acme" || got.SessionID != "sess-1" ||
+			got.NodeName != "node-3" || got.ResourceVersion != 5 {
+			t.Errorf("GetByPodID(claimed) = %+v", got)
+		}
+	})
+
+	t.Run("terminated pod surfaces the terminal phase", func(t *testing.T) {
+		got, found, err := store.GetByPodID(ctx, terminated)
+		if err != nil {
+			t.Fatalf("GetByPodID: %v", err)
+		}
+		if !found || got.State != "terminated" {
+			t.Errorf("GetByPodID(terminated) = (%+v, %v)", got, found)
+		}
+	})
+
+	t.Run("idle pod mirrors NULL tenant/session as empty strings", func(t *testing.T) {
+		got, found, err := store.GetByPodID(ctx, idle)
+		if err != nil {
+			t.Fatalf("GetByPodID: %v", err)
+		}
+		if !found {
+			t.Fatalf("idle pod not found")
+		}
+		if got.TenantID != "" || got.SessionID != "" || got.NodeName != "" {
+			t.Errorf("idle pod NULLs not mapped to empty: %+v", got)
+		}
+	})
+
+	t.Run("missing pod reports not found", func(t *testing.T) {
+		_, found, err := store.GetByPodID(ctx, pool+"-absent")
+		if err != nil {
+			t.Fatalf("GetByPodID(absent): %v", err)
+		}
+		if found {
+			t.Errorf("absent pod reported found")
+		}
+	})
+
+	t.Run("empty pod id is a non-match without a round trip", func(t *testing.T) {
+		_, found, err := store.GetByPodID(ctx, "")
+		if err != nil {
+			t.Fatalf("GetByPodID(\"\"): %v", err)
+		}
+		if found {
+			t.Errorf("empty pod id reported found")
+		}
+	})
+}

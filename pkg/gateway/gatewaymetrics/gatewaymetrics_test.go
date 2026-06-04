@@ -506,6 +506,45 @@ func TestOrphanMetricsNilSafe(t *testing.T) {
 	m.IncTreeRecoveryTimeout("pool", "level")
 }
 
+// TestOrphanSessionReconcilerMetrics_spec_10_1_51 covers the §10.1 line
+// 51 orphan-session reconciler surface: the reconciliations counter and
+// the per-pool agent_pod_state mirror-lag gauge must register and expose
+// the emitted values on /metrics. F-10.1.5.
+func TestOrphanSessionReconcilerMetrics_spec_10_1_51(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncOrphanSessionReconciliation()
+	m.IncOrphanSessionReconciliation()
+	m.SetAgentPodStateMirrorLag("warm-pool-a", 42)
+	m.SetAgentPodStateMirrorLag("warm-pool-b", 7.5)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_orphan_session_reconciliations_total 2",
+		`lenny_agent_pod_state_mirror_lag_seconds{pool="warm-pool-a"} 42`,
+		`lenny_agent_pod_state_mirror_lag_seconds{pool="warm-pool-b"} 7.5`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// TestOrphanSessionMetricsNilSafe pins the nil-receiver short-circuits on
+// the §10.1 emitters. F-10.1.5.
+func TestOrphanSessionMetricsNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncOrphanSessionReconciliation()
+	m.SetAgentPodStateMirrorLag("pool", 1.0)
+}
+
 // TestExperimentTargetingMetricsRegistered_spec_10_7_833 covers the
 // §10.7 line 833 / §16.1 lines 156-157 external-targeting observability
 // surface: the per-provider duration histogram and the per-provider,

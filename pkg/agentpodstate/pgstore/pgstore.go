@@ -176,6 +176,44 @@ func (s *Store) MirrorLagSeconds(ctx context.Context, poolID string) (float64, e
 	return lag, nil
 }
 
+// getByPodSQL reads one mirror row by its primary key.
+const getByPodSQL = `SELECT pool_id, state, tenant_id, session_id,
+	isolation_profile, execution_mode, resource_version, node_name
+	FROM agent_pod_state WHERE pod_id = $1`
+
+// GetByPodID reads the single mirror row keyed on podID. The bool
+// reports whether the row exists. An empty podID can never match the
+// NOT NULL primary key, so it returns (PodState{}, false, nil) without
+// a round trip. spec: §10.1 line 51 — the orphan-session reconciler
+// reads the mirrored §6.2 phase for a session's bound pod.
+func (s *Store) GetByPodID(ctx context.Context, podID string) (agentpodstate.PodState, bool, error) {
+	if podID == "" {
+		return agentpodstate.PodState{}, false, nil
+	}
+	pod := agentpodstate.PodState{PodID: podID}
+	var tenantID, sessionID, nodeName *string
+	err := s.pool.QueryRow(ctx, getByPodSQL, podID).Scan(
+		&pod.PoolID, &pod.State, &tenantID, &sessionID,
+		&pod.IsolationProfile, &pod.ExecutionMode, &pod.ResourceVersion, &nodeName,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentpodstate.PodState{}, false, nil
+	}
+	if err != nil {
+		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: get by pod_id: %w", err)
+	}
+	if tenantID != nil {
+		pod.TenantID = *tenantID
+	}
+	if sessionID != nil {
+		pod.SessionID = *sessionID
+	}
+	if nodeName != nil {
+		pod.NodeName = *nodeName
+	}
+	return pod, true, nil
+}
+
 // claimSelectSQL locks the oldest idle row for a pool. FOR UPDATE SKIP
 // LOCKED takes a row lock and skips any row a concurrent transaction
 // already holds, so two racing ClaimIdle calls select distinct pods

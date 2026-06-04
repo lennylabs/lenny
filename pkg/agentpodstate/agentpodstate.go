@@ -82,6 +82,14 @@ type Store interface {
 	// 0 when the pool has no rows.
 	MirrorLagSeconds(ctx context.Context, poolID string) (float64, error)
 
+	// GetByPodID reads the single mirror row keyed on podID. The bool
+	// reports whether a row exists; (PodState{}, false, nil) when it
+	// does not. This is the §10.1 orphan-session reconciler's read of
+	// the mirrored §6.2 phase for a session's bound pod, used to detect
+	// a pod that reached `terminated` without writing a terminal event
+	// back to Postgres. spec: §10.1 line 51.
+	GetByPodID(ctx context.Context, podID string) (PodState, bool, error)
+
 	// ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one
 	// transaction it selects the oldest idle row for poolID with
 	// SELECT ... FOR UPDATE SKIP LOCKED, then, if a row is found, marks
