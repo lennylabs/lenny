@@ -4,8 +4,12 @@ package main
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
@@ -13,6 +17,8 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
 )
 
 // newLocalRevocationDenyList builds the §11.4 step-6 deny list the
@@ -134,7 +140,8 @@ func TestUserLeaseRevokerRequiresCrossReplicaPropagator_spec_11_4_step_6(t *test
 func TestPodTerminateFanOutSkipsUnboundSessions(t *testing.T) {
 	// The registry holds a binding for run_a but not run_b. A session
 	// with no binding on this replica is skipped and not counted a
-	// failure — its pod is bound elsewhere or already released.
+	// failure — its pod is bound elsewhere (a peer replica terminates it
+	// on its own §11.4 step-2 subscriber, F-11.4.3) or already released.
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "run_a"}) // nil Adapter
 
@@ -149,6 +156,84 @@ func TestPodTerminateFanOutSkipsUnboundSessions(t *testing.T) {
 	if len(res.FailedSessions) != 0 {
 		t.Errorf("FailedSessions = %v, want none — an absent binding is not a failure", res.FailedSessions)
 	}
+}
+
+// TestPodTerminateFanOutPublishesCrossReplica is the §11.4 step-2 fix:
+// the handling replica's full_revoke fans the Terminate request out over
+// Redis pub/sub so peer replicas terminate the pods they coordinate.
+// Without the publish, a pod bound on a peer replica survives until the
+// §8.10 orphan sweep. F-11.4.3.
+func TestPodTerminateFanOutPublishesCrossReplica_spec_11_4_step_2(t *testing.T) {
+	mr := miniredis.RunT(t)
+	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
+
+	// Replica A is the handling replica and holds none of the revoked
+	// sessions locally. Replica B coordinates run_b; its local terminator
+	// must observe the request A publishes. A concrete pod adapter needs
+	// a live gRPC connection, so replica B is exercised through a
+	// recording LocalTerminator (the §4.7 Terminate RPC itself is covered
+	// by the propagator package and the local-only fan-out tests above).
+	peerB := &recordingPeer{}
+	propB := podterminateprop.New(peerB, pubsub.New(clientB), "replica-B")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go propB.Run(ctx)
+
+	fanA := &podTerminateFanOut{registry: podsession.NewRegistry()}
+	fanA.prop = podterminateprop.New(fanA, pubsub.New(clientA), "replica-A")
+
+	// miniredis drops a publish that lands before B's SUBSCRIBE registers,
+	// so re-issue the full_revoke until B observes the request.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		fanA.TerminateUserSessions(ctx, "acme", "alice@acme.com", []string{"run_b"})
+		if peerB.count() > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := peerB.last()
+	if peerB.count() == 0 {
+		t.Fatal("replica B never received the §11.4 cross-replica Terminate request")
+	}
+	if got.UserID != "alice@acme.com" || got.Reason != userRevokeReason || got.Origin != "replica-A" {
+		t.Errorf("replica B received %+v, want acme/alice USER_REVOKED from replica-A", got)
+	}
+	if len(got.SessionIDs) != 1 || got.SessionIDs[0] != "run_b" {
+		t.Errorf("replica B received sessions %v, want [run_b]", got.SessionIDs)
+	}
+}
+
+// recordingPeer is a podterminateprop.LocalTerminator that records the
+// requests a peer replica's subscriber applies, standing in for the pod
+// adapter fan-out on the receiving replica.
+type recordingPeer struct {
+	mu       sync.Mutex
+	requests []podterminateprop.Request
+}
+
+func (r *recordingPeer) TerminateLocal(_ context.Context, req podterminateprop.Request) podterminateprop.Result {
+	r.mu.Lock()
+	r.requests = append(r.requests, req)
+	r.mu.Unlock()
+	return podterminateprop.Result{}
+}
+
+func (r *recordingPeer) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.requests)
+}
+
+func (r *recordingPeer) last() podterminateprop.Request {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) == 0 {
+		return podterminateprop.Request{}
+	}
+	return r.requests[len(r.requests)-1]
 }
 
 func TestPodTerminateFanOutEmptySessionSet(t *testing.T) {

@@ -206,6 +206,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
@@ -4212,6 +4213,12 @@ func main() {
 	// exposes per-session lookup, and the token revoker only with a
 	// Postgres-backed issued-token index. A minimal gateway wires none
 	// of them and still soft/hard disables a user.
+	//
+	// userPodTerminateProp carries the §11.4 step-2 Terminate request to
+	// peer replicas over Redis pub/sub so a revoked user's pods bound on
+	// other replicas are terminated too. Its Run subscriber is launched
+	// alongside the other revocation propagators below. F-11.4.3.
+	var userPodTerminateProp *podterminateprop.Propagator
 	{
 		var (
 			userPods   admin.UserPodTerminator
@@ -4219,7 +4226,13 @@ func main() {
 			userTokens admin.UserTokenRevoker
 		)
 		if podRegistry != nil {
-			userPods = &podTerminateFanOut{registry: podRegistry}
+			fanOut := &podTerminateFanOut{registry: podRegistry}
+			fanOut.prop = podterminateprop.New(fanOut, securityBus, replica,
+				podterminateprop.WithErrorHandler(func(err error) {
+					log.Printf("lenny-gateway: §11.4 full_revoke: publish pod-termination request: %v", err)
+				}))
+			userPodTerminateProp = fanOut.prop
+			userPods = fanOut
 		}
 		// llmLeases is the §4.9 credential-lease store; both the in-memory
 		// and Postgres-backed implementations expose LeasesBySession, so
@@ -5799,6 +5812,12 @@ func main() {
 		go revProp.Run(watchdogCtx)
 		go mtlsDenyProp.Run(watchdogCtx)
 		go credRenewalProp.Run(watchdogCtx)
+		// §11.4 step 2: apply a peer replica's full_revoke Terminate
+		// request to this replica's pods. Wired only with warm-pod
+		// placement (the propagator is nil otherwise). F-11.4.3.
+		if userPodTerminateProp != nil {
+			go userPodTerminateProp.Run(watchdogCtx)
+		}
 	}
 
 	// ----- §4.9 Proactive Lease Renewal sweep -----

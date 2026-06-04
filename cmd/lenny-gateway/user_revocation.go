@@ -13,6 +13,7 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
 )
 
 // Compile-time assertion that the §4.9 credential-lease revocation
@@ -21,6 +22,10 @@ import (
 // fails to build, so the §11.4 step-6 wiring contract is enforced at
 // compile time rather than runtime. spec: §11.4 step 6.
 var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
+
+// Compile-time assertion that podTerminateFanOut is the cross-replica
+// §11.4 step-2 local terminator the pod-termination propagator drives.
+var _ podterminateprop.LocalTerminator = (*podTerminateFanOut)(nil)
 
 // This file wires the §11.4 full_revoke fan-out dependencies the admin
 // router consumes. handleInvalidateUser raises the user's tombstone and
@@ -47,24 +52,67 @@ const userTerminateRPCTimeout = 20 * time.Second
 // podTerminateFanOut terminates the pods hosting a revoked user's
 // sessions. It reads the per-replica pod-session registry and sends the
 // §4.7 Terminate RPC to every pod this replica holds a binding for
-// among the user's sessions. It satisfies admin.UserPodTerminator.
+// among the user's sessions. It satisfies admin.UserPodTerminator and,
+// for the cross-replica path, podterminateprop.LocalTerminator.
+//
+// A pod binding lives in exactly one replica's registry, so the handling
+// replica reaches only the pods it itself coordinates. prop fans the
+// §11.4 step-2 Terminate request out to peer replicas over Redis pub/sub
+// so the pods they coordinate are terminated too; without it the
+// fan-out is replica-local and a revoked user's peer-replica pods run
+// until the §8.10 orphan sweep reaps them. prop is nil in a deployment
+// with no Redis bus, which is the single-replica posture. spec: §11.4
+// step 2.
 type podTerminateFanOut struct {
 	registry *podsession.Registry
+	prop     *podterminateprop.Propagator
 }
 
-// TerminateUserSessions sends the §4.7 Terminate RPC to the pod hosting
-// each of sessionIDs that this replica holds a binding for. It is
-// best-effort per pod: a pod that fails to terminate is recorded in the
-// result and the fan-out continues with the rest. A session with no
-// binding on this replica is skipped without being counted a failure —
-// its pod is bound on another replica or already released, and the
-// SessionStore cancellation already ended the session.
+// TerminateUserSessions is the admin.UserPodTerminator entry the
+// full_revoke handler drives. It terminates the pods this replica holds
+// for the user's sessions and fans the §11.4 step-2 Terminate request
+// out to peer replicas so the pods they coordinate are terminated too.
+// The returned result reports only this replica's local terminations —
+// the peer terminations happen asynchronously on each peer's subscriber,
+// matching the §11.4 note that propagation completes within seconds.
 func (p *podTerminateFanOut) TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) admin.UserTerminationResult {
-	want := make(map[string]struct{}, len(sessionIDs))
-	for _, id := range sessionIDs {
+	req := podterminateprop.Request{
+		TenantID:   tenantID,
+		UserID:     userID,
+		Reason:     userRevokeReason,
+		SessionIDs: sessionIDs,
+	}
+	res := p.terminateLocal(ctx, req)
+	if p.prop != nil {
+		p.prop.Publish(ctx, req)
+	}
+	return admin.UserTerminationResult{PodsTerminated: res.PodsTerminated, FailedSessions: res.FailedSessions}
+}
+
+// TerminateLocal is the podterminateprop.LocalTerminator entry the
+// cross-replica subscriber drives for a peer replica's request. It
+// terminates only the pods this replica holds and does not re-publish.
+func (p *podTerminateFanOut) TerminateLocal(ctx context.Context, req podterminateprop.Request) podterminateprop.Result {
+	return p.terminateLocal(ctx, req)
+}
+
+// terminateLocal sends the §4.7 Terminate RPC to the pod hosting each of
+// req.SessionIDs that this replica holds a binding for. It is
+// best-effort per pod: a pod that fails to terminate is recorded in the
+// result and the loop continues with the rest. A session with no binding
+// on this replica is skipped without being counted a failure — its pod
+// is bound on another replica (which terminates it on its own subscriber)
+// or already released.
+func (p *podTerminateFanOut) terminateLocal(ctx context.Context, req podterminateprop.Request) podterminateprop.Result {
+	reason := req.Reason
+	if reason == "" {
+		reason = userRevokeReason
+	}
+	want := make(map[string]struct{}, len(req.SessionIDs))
+	for _, id := range req.SessionIDs {
 		want[id] = struct{}{}
 	}
-	var res admin.UserTerminationResult
+	var res podterminateprop.Result
 	for _, bind := range p.registry.Snapshot() {
 		if _, ok := want[bind.SessionID]; !ok {
 			continue
@@ -73,11 +121,11 @@ func (p *podTerminateFanOut) TerminateUserSessions(ctx context.Context, tenantID
 			continue
 		}
 		callCtx, cancel := context.WithTimeout(ctx, userTerminateRPCTimeout)
-		_, err := bind.Adapter.Terminate(callCtx, bind.SessionID, userRevokeReason, userTerminateDeadline)
+		_, err := bind.Adapter.Terminate(callCtx, bind.SessionID, reason, userTerminateDeadline)
 		cancel()
 		if err != nil {
 			log.Printf("lenny-gateway: §11.4 full_revoke: terminate pod for session %s (user %s/%s) failed: %v",
-				bind.SessionID, tenantID, userID, err)
+				bind.SessionID, req.TenantID, req.UserID, err)
 			res.FailedSessions = append(res.FailedSessions, bind.SessionID)
 			continue
 		}
