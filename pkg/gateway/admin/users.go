@@ -28,6 +28,10 @@ type UserPayload struct {
 	CreatedAt   string      `json:"createdAt,omitempty"`
 	UpdatedAt   string      `json:"updatedAt,omitempty"`
 	DeletedAt   string      `json:"deletedAt,omitempty"`
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. A list consumer reads it per item to supply
+	// If-Match on a later PUT without a follow-up GET. spec: §15.1 line 1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // UpdateUserRequest is the §15.1 PUT body.
@@ -69,6 +73,8 @@ func fromUser(u userstore.User) UserPayload {
 		CreatedAt:   rfc3339Nano(u.CreatedAt),
 		UpdatedAt:   rfc3339Nano(u.UpdatedAt),
 		DeletedAt:   rfc3339Nano(u.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		ETag: formatETag(u.Version),
 	}
 }
 
@@ -291,6 +297,9 @@ func (r *Router) handleGetUser(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromUser(row))
 }
@@ -324,6 +333,22 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// Resolve the current user so the entity tag (its version) is known
+	// before applying the mutation; a missing user 404s ahead of the
+	// precondition.
+	current, gerr := r.users.Get(req.Context(), tenant, subject)
+	if gerr != nil {
+		if errors.Is(gerr, userstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
 	updated, err := r.users.Update(req.Context(), tenant, subject, func(u *userstore.User) error {
 		if body.Email != nil {
 			u.Email = *body.Email
@@ -351,6 +376,9 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		"tenantId":      tenant,
 		"changedFields": changedUserFields(body),
 	})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromUser(updated))
 }
@@ -360,6 +388,21 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// the current user so the precondition reads the stored entity tag; a
+	// missing user 404s ahead of the precondition.
+	current, gerr := r.users.Get(req.Context(), tenant, subject)
+	if gerr != nil {
+		if errors.Is(gerr, userstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.users.SoftDelete(req.Context(), tenant, subject, r.clock()); err != nil {

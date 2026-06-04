@@ -47,7 +47,7 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ environmentstore.Store = (*Store)(nil)
 
 // selectList is the column projection for reads.
-const selectList = `tenant_id, name, description, body, created_at, updated_at`
+const selectList = `tenant_id, name, description, body, created_at, updated_at, version`
 
 // envBody is the JSON projection of the nested §10.6 Environment
 // fields stored in the body jsonb column. The scalar columns
@@ -113,16 +113,20 @@ func (s *Store) Create(ctx context.Context, e environmentstore.Environment) erro
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if e.Version == 0 {
+		e.Version = 1
+	}
 	body, err := marshalBody(e)
 	if err != nil {
 		return err
 	}
 	err = pgtenant.InTx(ctx, s.pool, e.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO environments (
-			tenant_id, name, description, body, created_at, updated_at
-		) VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+			tenant_id, name, description, body, created_at, updated_at, version
+		) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
 			e.TenantID, e.Name, e.Description, string(body),
-			e.CreatedAt, e.UpdatedAt)
+			e.CreatedAt, e.UpdatedAt, e.Version)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -184,14 +188,16 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		e.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+		e.Version++
 		body, err := marshalBody(e)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE environments SET
-			description = $3, body = $4::jsonb, updated_at = $5
+			description = $3, body = $4::jsonb, updated_at = $5, version = $6
 		WHERE tenant_id = $1 AND name = $2`,
-			tenantID, name, e.Description, string(body), e.UpdatedAt); err != nil {
+			tenantID, name, e.Description, string(body), e.UpdatedAt, e.Version); err != nil {
 			return err
 		}
 		out = e
@@ -254,7 +260,7 @@ func scanEnvironment(row pgx.Row) (environmentstore.Environment, error) {
 	)
 	if err := row.Scan(
 		&e.TenantID, &e.Name, &e.Description, &bodyJSON,
-		&e.CreatedAt, &e.UpdatedAt,
+		&e.CreatedAt, &e.UpdatedAt, &e.Version,
 	); err != nil {
 		return environmentstore.Environment{}, err
 	}

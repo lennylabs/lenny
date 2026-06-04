@@ -37,7 +37,7 @@ var _ userstore.Store = (*Store)(nil)
 
 const selectList = `tenant_id, subject, email, display_name, roles,
 	disabled, created_at, updated_at, deleted_at,
-	processing_restricted, erasure_job_id`
+	processing_restricted, erasure_job_id, version`
 
 // Create inserts a new user row. It validates the tenant id, subject,
 // and role set, mirroring userstore.Memory. Returns ErrAlreadyExists
@@ -59,15 +59,19 @@ func (s *Store) Create(ctx context.Context, u userstore.User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if u.Version == 0 {
+		u.Version = 1
+	}
 	err := pgtenant.InTx(ctx, s.pool, u.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO users (
 			tenant_id, subject, email, display_name, roles,
 			disabled, created_at, updated_at, deleted_at,
-			processing_restricted, erasure_job_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			processing_restricted, erasure_job_id, version
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			u.TenantID, u.Subject, u.Email, u.DisplayName, rolesToText(u.Roles),
 			u.Disabled, u.CreatedAt, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
-			u.ProcessingRestricted, u.ErasureJobID)
+			u.ProcessingRestricted, u.ErasureJobID, u.Version)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -124,14 +128,16 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 			return err
 		}
 		u.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+		u.Version++
 		if _, err := tx.Exec(ctx, `UPDATE users SET
 			email = $3, display_name = $4, roles = $5, disabled = $6,
 			updated_at = $7, deleted_at = $8,
-			processing_restricted = $9, erasure_job_id = $10
+			processing_restricted = $9, erasure_job_id = $10, version = $11
 		WHERE tenant_id = $1 AND subject = $2`,
 			tenantID, subject, u.Email, u.DisplayName, rolesToText(u.Roles),
 			u.Disabled, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
-			u.ProcessingRestricted, u.ErasureJobID); err != nil {
+			u.ProcessingRestricted, u.ErasureJobID, u.Version); err != nil {
 			return err
 		}
 		out = u
@@ -309,7 +315,7 @@ func scanUser(row pgx.Row) (userstore.User, error) {
 	if err := row.Scan(
 		&u.TenantID, &u.Subject, &u.Email, &u.DisplayName, &roles,
 		&u.Disabled, &u.CreatedAt, &u.UpdatedAt, &deletedAt,
-		&u.ProcessingRestricted, &u.ErasureJobID,
+		&u.ProcessingRestricted, &u.ErasureJobID, &u.Version,
 	); err != nil {
 		return userstore.User{}, err
 	}

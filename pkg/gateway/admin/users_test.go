@@ -150,6 +150,9 @@ func TestUpdateUser(t *testing.T) {
 	disabled := true
 	body, _ := json.Marshal(admin.UpdateUserRequest{Disabled: &disabled})
 	req := withTenantAdminFor(httptest.NewRequest(http.MethodPut, "/v1/admin/users/alice@acme.com", bytes.NewReader(body)), "acme")
+	// spec: §15.1 lines 1207-1211 — the PUT requires If-Match; a freshly
+	// created user is at version 1.
+	req.Header.Set("If-Match", `"1"`)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

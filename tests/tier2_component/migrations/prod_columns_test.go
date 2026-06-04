@@ -212,6 +212,10 @@ var prodMigrationSchema = []struct {
 	{migration: "0138", table: "custom_roles", columns: []string{"version"}},
 	{migration: "0138", table: "delegation_policies", columns: []string{"version"}},
 	{migration: "0138", table: "experiment_definitions", columns: []string{"version"}},
+	// 0139 extends the §15.1 ETag optimistic-concurrency version counter to
+	// the users and environments admin resources.
+	{migration: "0139", table: "users", columns: []string{"version"}},
+	{migration: "0139", table: "environments", columns: []string{"version"}},
 }
 
 // spec: 12.2, 18.5

@@ -190,6 +190,10 @@ type EnvironmentPayload struct {
 	CrossEnvironmentDelegation CrossEnvDelegationPayload `json:"crossEnvironmentDelegation"`
 	CreatedAt                  string                    `json:"createdAt,omitempty"`
 	UpdatedAt                  string                    `json:"updatedAt,omitempty"`
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. A list consumer reads it per item to supply
+	// If-Match on a later PUT without a follow-up GET. spec: §15.1 line 1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 func toSelector(p SelectorPayload) environment.Selector {
@@ -347,6 +351,8 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 		},
 		CreatedAt: rfc3339Nano(e.CreatedAt),
 		UpdatedAt: rfc3339Nano(e.UpdatedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		ETag: formatETag(e.Version),
 	}
 }
 
@@ -586,6 +592,9 @@ func (r *Router) handleGetEnvironment(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses carry the ETag header so the
+	// client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromEnvironment(row))
 }
@@ -615,21 +624,28 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	desired := toEnvironment(body, tenant)
-	// spec: §15.1 line 1140 — ?dryRun=true validates the merged definition
-	// and returns the selector preview without persisting or auditing. The
-	// current row is resolved so the preview reflects the real (unchanged)
-	// name and creation time, and so a missing environment 404s as the real
-	// path does.
-	if req.URL.Query().Get("dryRun") == "true" {
-		current, gErr := r.environments.Get(req.Context(), tenant, name)
-		if gErr != nil {
-			if errors.Is(gErr, environmentstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "environment not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gErr.Error(), nil)
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// Resolve the current environment first so the entity tag (its version)
+	// is known before applying the mutation. This runs before the dry-run
+	// branch so a dry-run with a stale If-Match still returns 412 and one
+	// with no If-Match still returns 428. A missing environment 404s ahead
+	// of the precondition.
+	current, gErr := r.environments.Get(req.Context(), tenant, name)
+	if gErr != nil {
+		if errors.Is(gErr, environmentstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "environment not found", nil)
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gErr.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates the merged definition
+	// and returns the selector preview without persisting or auditing. The
+	// preview reflects the real (unchanged) name and creation time.
+	if req.URL.Query().Get("dryRun") == "true" {
 		desired.Name = current.Name
 		desired.CreatedAt = current.CreatedAt
 		if err := desired.Validate(); err != nil {
@@ -645,6 +661,9 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	updated, err := r.environments.Update(req.Context(), tenant, name, func(e *environmentstore.Environment) error {
 		desired.Name = e.Name
 		desired.CreatedAt = e.CreatedAt
+		// spec: §15.1 line 1207 — a full-replace PUT must carry the stored
+		// entity-tag version forward so the store's increment is monotonic.
+		desired.Version = e.Version
 		*e = desired
 		return nil
 	})
@@ -658,6 +677,9 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.environment.updated", name, map[string]any{"tenantId": tenant})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromEnvironment(updated))
 }
@@ -667,6 +689,21 @@ func (r *Router) handleDeleteEnvironment(w http.ResponseWriter, req *http.Reques
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// the current environment so the precondition reads the stored entity
+	// tag; a missing environment 404s ahead of the precondition.
+	current, gErr := r.environments.Get(req.Context(), tenant, name)
+	if gErr != nil {
+		if errors.Is(gErr, environmentstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "environment not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gErr.Error(), nil)
+		return
+	}
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.environments.Delete(req.Context(), tenant, name); err != nil {

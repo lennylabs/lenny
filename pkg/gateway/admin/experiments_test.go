@@ -120,6 +120,22 @@ func adminETagGetPath(putPath string) string {
 		}
 		return putPath
 	}
+	// Environments and users are tenant-scoped under acme in the fixtures.
+	// A platform-admin GET requires the tenantId query; a tenant-admin
+	// principal ignores it and resolves from the principal, so the query is
+	// harmless either way.
+	for _, prefix := range []string{"/v1/admin/environments/", "/v1/admin/users/"} {
+		if strings.HasPrefix(putPath, prefix) {
+			name := strings.TrimPrefix(putPath, prefix)
+			if i := strings.IndexByte(name, '?'); i >= 0 {
+				name = name[:i]
+			}
+			if name == "" {
+				return ""
+			}
+			return prefix + name + "?tenantId=acme"
+		}
+	}
 	return ""
 }
 

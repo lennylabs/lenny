@@ -67,6 +67,13 @@ type User struct {
 	// the caller can poll the job. It is empty when the user is not
 	// restricted.
 	ErasureJobID string
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful admin Update. The
+	// quoted decimal version is the resource's strong entity tag, enforced
+	// on PUT via the If-Match precondition and exposed on GET/list.
+	// spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // IsActive reports whether the user is neither disabled nor
@@ -179,6 +186,10 @@ func (m *Memory) Create(_ context.Context, u User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if u.Version == 0 {
+		u.Version = 1
+	}
 	m.users[k] = u
 	return nil
 }
@@ -217,6 +228,8 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	row.Version++
 	m.users[k] = row
 	return row, nil
 }

@@ -103,6 +103,13 @@ type Environment struct {
 	// CreatedAt and UpdatedAt are audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful admin Update. The
+	// quoted decimal version is the resource's strong entity tag, enforced
+	// on PUT via the If-Match precondition and exposed on GET/list.
+	// spec: §15.1 lines 1207-1213.
+	Version int64
 }
 
 // MaxDescriptionLen bounds the §10.6 environment Description so the
@@ -379,6 +386,10 @@ func (m *Memory) Create(_ context.Context, e Environment) error {
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
+	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	if e.Version == 0 {
+		e.Version = 1
+	}
 	m.environments[k] = clone(e)
 	return nil
 }
@@ -411,6 +422,8 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*E
 		return Environment{}, err
 	}
 	e.UpdatedAt = time.Now().UTC()
+	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	e.Version++
 	m.environments[k] = clone(e)
 	return clone(e), nil
 }

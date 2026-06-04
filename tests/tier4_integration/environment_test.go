@@ -30,6 +30,13 @@ type envClient struct {
 }
 
 func (c envClient) do(method, path, tenant, user, roles, groups string, body any) (int, map[string]any) {
+	return c.doIfMatch(method, path, tenant, user, roles, groups, "", body)
+}
+
+// doIfMatch is do() plus the §15.1 If-Match precondition header. The
+// environments resource enforces ETag optimistic concurrency, so an admin
+// PUT carries the current entity tag. spec: §15.1 lines 1207-1211.
+func (c envClient) doIfMatch(method, path, tenant, user, roles, groups, ifMatch string, body any) (int, map[string]any) {
 	c.t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -38,6 +45,9 @@ func (c envClient) do(method, path, tenant, user, roles, groups string, body any
 	}
 	req, _ := http.NewRequest(method, c.base+path, reader)
 	req.Header.Set("Content-Type", "application/json")
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
 	if tenant != "" {
 		req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	}
@@ -140,8 +150,11 @@ func TestEnvironmentResource(t *testing.T) {
 		}},
 		"runtimeSelector": map[string]any{"matchLabels": map[string]string{"team": "security"}},
 	}
-	code, updated := c.do(http.MethodPut, "/v1/admin/environments/security-team",
-		"platform", "ops@acme.com", "platform-admin", "", update)
+	// spec: §15.1 lines 1207-1211 — the PUT requires If-Match; the entity
+	// tag rides the GET body's etag field (it is also on the ETag header).
+	ifMatch, _ := got["etag"].(string)
+	code, updated := c.doIfMatch(http.MethodPut, "/v1/admin/environments/security-team",
+		"platform", "ops@acme.com", "platform-admin", "", ifMatch, update)
 	if code != http.StatusOK {
 		t.Fatalf("update environment: status %d (%v)", code, updated)
 	}
