@@ -2680,6 +2680,11 @@ func main() {
 		auditBatchBuffer      *auditbatch.Buffer
 		auditPruner           *auditretention.Pruner
 		eventBusRetranscriber *eventbus.Retranscriber
+		// auditOpsStore is the durable audit Store, hoisted so the §25.5
+		// operational-event emitter (built further down, once Redis is
+		// resolved) can be wired into the §16.7 ops-stream escalation path
+		// via SetOpsStreamEmitter. F-25.5.18.
+		auditOpsStore *auditstore.Store
 	)
 	if pgPool != nil {
 		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
@@ -2725,6 +2730,12 @@ func main() {
 		// The §11.7 `interceptor.rejected` policy-rejection rows share
 		// the durable Postgres-backed per-tenant hash chain.
 		auditAppender = pgAudit
+		// Hoist the Store so the §25.5 operational-event escalation
+		// emitter can be wired once Redis is resolved. Every escalating
+		// §16.7 audit event funnels through Store.Append (the admin sink,
+		// the policy-rejection sink, and the §25.9 audit-maintenance API
+		// all reach this chain), so a single hook covers them. F-25.5.18.
+		auditOpsStore = pgAudit
 		// The auditstore drives the §11.7 OCSF translation state machine
 		// (ocsf_translation_state). Hoisted so the OCSF translator wired
 		// below reads pending rows from the durable chain. F-11.7.1.
@@ -2932,6 +2943,13 @@ func main() {
 			OnError:         opsEmitErrLogger,
 		})
 		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+	}
+	// Wire the §16.7 / §25.5 operational-event escalation path: the
+	// durable audit Store routes the §16.7 ops-stream subset of audit
+	// events onto the operational event stream as audit-bearing
+	// CloudEvents (datacontenttype application/ocsf+json). F-25.5.18.
+	if auditOpsStore != nil {
+		auditOpsStore.SetOpsStreamEmitter(opsEmitter, replica)
 	}
 
 	// §4.9 credential-pool registry, shared by the admin credential-pool

@@ -98,6 +98,13 @@ type Store struct {
 	// events ride the batched-insert path instead of a synchronous
 	// write. Nil keeps every audit write synchronous. F-12.3.14.
 	batchBuffer batchEnqueuer
+	// opsEmitter, when set, receives the §16.7 subset of audit events
+	// that escalate onto the §25.5 operational event stream as
+	// audit-bearing CloudEvents (datacontenttype application/ocsf+json).
+	// Nil disables the escalation path entirely. opsPublisherID is the
+	// gateway-replica id stamped onto the CloudEvents source. F-25.5.18.
+	opsEmitter     opsStreamEmitter
+	opsPublisherID string
 }
 
 // batchEnqueuer is the seam the §12.3 batch buffer satisfies. It is an
@@ -222,6 +229,7 @@ func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload 
 			return nil
 		})
 		if err == nil {
+			s.escalateToOpsStream(ctx, committed)
 			return committed, nil
 		}
 		var cte *ConcurrencyTimeoutError

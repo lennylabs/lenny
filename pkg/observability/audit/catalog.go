@@ -461,3 +461,31 @@ func IsKnownEventType(t EventType) bool {
 	}
 	return false
 }
+
+// operationalStreamEscalations is the §16.7 subset of audit event types
+// that are additionally routed onto the §25.5 operational event stream,
+// beyond the §11.7 append-only audit log. §16.7 records this routing per
+// event ("Written through the standard append-only audit path ... and
+// also routed to the operational event stream so on-call operators can
+// ... in real time"). When such an event is emitted on the stream the
+// envelope is CloudEvents with datacontenttype application/ocsf+json and
+// the OCSF v1.1.0 record in the data field. spec: §16.7 lines 661, 670,
+// 674, 682, 687; §25.5 line 2556.
+var operationalStreamEscalations = map[EventType]bool{
+	EventDelegationSelfRecursionAllowed:             true, // spec: §16.7 line 670
+	EventElicitationContentTamperDetected:           true, // spec: §16.7 line 674
+	EventDeploymentFeatureFlagDowngradeAcknowledged: true, // spec: §16.7 line 682
+	EventAuditOcsfRetranslateRequested:              true, // spec: §16.7 line 687
+	EventAuditPartitionDropForced:                   true, // spec: §16.7 line 687
+	EventEventBusRepublishRequested:                 true, // spec: §16.7 line 687
+}
+
+// EscalatesToOperationalStream reports whether an audit event of type t
+// is routed onto the §25.5 operational event stream in addition to the
+// §11.7 audit log. The escalation set is the §16.7 events flagged for
+// real-time operator visibility (self-recursion admission, elicitation
+// content tampering, feature-flag downgrade acknowledgement, and the
+// §25.9 audit-maintenance operations). spec: §16.7 line 661.
+func EscalatesToOperationalStream(t EventType) bool {
+	return operationalStreamEscalations[t]
+}
