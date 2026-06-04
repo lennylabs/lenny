@@ -17871,7 +17871,7 @@ events route without per-emit-site changes; it is inert (single-region
 default) until `Config.PlatformRegions` is populated. Wired in
 `cmd/lenny-gateway` via a tenant-store `tenantResidencyLookup`. The
 `PlatformAuditResidencyViolation` alert (already in `rules.go`) now has a
-live metric. Resolved in commit <pending>.
+live metric. Resolved in commit 2c545dbc.
 
 ### - [x] F-11.7.10 — 10  No pgaudit DDL/ROLE capture wiring, no `audit.pgaudit.enabled` enforcement at startup or at regulated-tenant create/update [High] — CLOSED
 
