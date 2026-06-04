@@ -227,6 +227,7 @@ import (
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
@@ -3220,7 +3221,22 @@ func main() {
 		Finalizer: callbackFinalize,
 	})
 
+	// spec: §11.2 line 44 — the mid-session token-budget enforcer. The
+	// §4.9 LLM-proxy recorder feeds it each session's cumulative
+	// proxy-recorded tokens; on exhaustion the terminator transitions the
+	// session to `expired` (§7.1 line 175) and the pre-flight gate rejects
+	// further proxied requests with BUDGET_EXHAUSTED (§8.10 line 1108). The
+	// terminator's terminal hook is set after the session server exists
+	// (the same deferred wiring sessionAdminAdapter uses).
+	budgetTerminator := &budgetSessionTerminator{store: sessions}
+	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator,
+		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
+		// spec: §11.2 — drop a settled session's mid-session budget
+		// accounting so the enforcer's per-session map does not grow
+		// unbounded.
+		BudgetForget: sessionBudgetEnforcer.Forget,
 		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver
@@ -3414,6 +3430,11 @@ func main() {
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+	// spec: §11.2 line 44 — the budget terminator runs the same terminal
+	// pipeline a watchdog or operator force-terminate runs, so an
+	// over-budget session releases its pod and emits its terminal audit /
+	// billing / SSE signals exactly once.
+	budgetTerminator.onTerminal = sessionSrv.OnSessionTerminal
 
 	// ----- OpenAI Chat + Open Responses translators -----
 	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{Clock: clockinject.Now})
@@ -5054,7 +5075,7 @@ func main() {
 	// proxy-extracted (authoritative) counts are persisted as the
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
-	llmProxyUsage := newProxyUsageRecorder(usage, sessions, quotaCounter, tenantLimits)
+	llmProxyUsage := newProxyUsageRecorder(usage, sessions, quotaCounter, tenantLimits, sessionBudgetEnforcer)
 	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
@@ -5068,7 +5089,7 @@ func main() {
 		audit:      proxyFallbackAudit{sink: auditSink},
 		metrics:    gwMetrics,
 	}
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics, llmProxyUsage, llmFallbackDeps)
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -6408,7 +6429,7 @@ type llmFallbackWiring struct {
 	metrics    llmproxy.FallbackMetrics
 }
 
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, fallback llmFallbackWiring) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, budgetGate llmproxy.BudgetGate, fallback llmFallbackWiring) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -6424,6 +6445,9 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		// spec: §4.9 line 1468 — proxy-extracted counts feed the §15.1 /
 		// §11.2 usage record. A nil Usage discards the counts.
 		Usage: usage,
+		// spec: §11.2 line 44 / §8.10 line 1108 — reject a proxied request
+		// for a session that has already exhausted its token budget.
+		BudgetGate: budgetGate,
 		// §16.1 lines 97, 99, 100: active connections, translation
 		// duration, and translation errors on the gateway registry.
 		Metrics: gwMetrics,

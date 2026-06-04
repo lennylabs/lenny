@@ -258,6 +258,7 @@ type Server struct {
 	environments          environmentstore.Store
 	tenantAccess          tenantaccessstore.Store
 	opsEmitter            events.EventEmitter
+	budgetForget          func(sessionID string)
 	refResolver           workspaceplan.RefResolver
 	credPools             credentialpoolstore.Store
 	vcsCreds              vcscred.Resolver
@@ -1114,6 +1115,12 @@ type Options struct {
 	// emits no operational events for session transitions.
 	OpsEmitter events.EventEmitter
 
+	// BudgetForget drops a settled session's §11.2 mid-session
+	// token-budget accounting from the LLM-proxy enforcer so the
+	// per-session map does not grow without bound. Optional — when nil,
+	// the terminal pipeline performs no budget cleanup. spec: §11.2.
+	BudgetForget func(sessionID string)
+
 	// RefResolver pins each §14 gitClone source's ref to an immutable
 	// commit SHA at session creation. Optional — when nil, the gateway
 	// stores the submitted plan without resolving git refs.
@@ -1359,6 +1366,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		environments:             opts.Environments,
 		tenantAccess:             opts.TenantAccess,
 		opsEmitter:               opts.OpsEmitter,
+		budgetForget:             opts.BudgetForget,
 		refResolver:              opts.RefResolver,
 		credPools:                opts.CredentialPools,
 		vcsCreds:                 opts.VCSCredentials,

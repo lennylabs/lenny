@@ -200,6 +200,47 @@ func TestHandlerRejectsSpiffeMismatch(t *testing.T) {
 	}
 }
 
+// denyGate is a BudgetGate that denies a fixed session id.
+type denyGate struct{ deny string }
+
+func (g denyGate) Allow(sessionID string) bool { return sessionID != g.deny }
+
+// spec: §8.10 line 1108 / §11.2 line 44 — a request for a session whose
+// token budget is exhausted is rejected with BUDGET_EXHAUSTED before any
+// upstream call (the §11.2 mid-session enforcement pre-flight gate).
+func TestHandlerRejectsBudgetExhaustedSession_spec_8_10(t *testing.T) {
+	h := newProxyHarness(t)
+	if err := h.leases.Put(handlerLease("lt-budget")); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	// handlerLease binds SessionID "s_h1"; the gate denies it.
+	h.handler.BudgetGate = denyGate{deny: "s_h1"}
+
+	rr := post(h.handler, "lt-budget", messagesBody)
+	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
+		t.Fatalf("status %d code %q, want 403 BUDGET_EXHAUSTED", rr.Code, errorCode(t, rr))
+	}
+	// The gate fires before any upstream call: the fake Anthropic server
+	// must never see the real key for this request.
+	if *h.gotKey != "" {
+		t.Errorf("upstream was called despite the budget gate: x-api-key=%q", *h.gotKey)
+	}
+}
+
+// A gate that allows the session does not interfere with a normal proxied
+// request.
+func TestHandlerAllowsUnderBudgetSession_spec_11_2(t *testing.T) {
+	h := newProxyHarness(t)
+	if err := h.leases.Put(handlerLease("lt-ok")); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	h.handler.BudgetGate = denyGate{deny: "some-other-session"}
+	rr := post(h.handler, "lt-ok", messagesBody)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestHandlerRejectsWhenUpstreamCredentialUnavailable(t *testing.T) {
 	h := newProxyHarness(t)
 	h.handler.Credentials = fakeResolver{ok: false}

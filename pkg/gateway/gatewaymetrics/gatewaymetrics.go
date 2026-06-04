@@ -107,6 +107,7 @@ type Metrics struct {
 	sessionDuration             *prometheus.HistogramVec
 	evalScore                   *prometheus.HistogramVec
 	noEnvPolicyAllowAll         *prometheus.CounterVec
+	sessionBudgetExceeded       *prometheus.CounterVec
 	erasureJobFailed            *prometheus.CounterVec
 	erasureJobsActive           prometheus.Gauge
 	erasureJobDuration          prometheus.Observer
@@ -1160,6 +1161,16 @@ func New() (*Metrics, error) {
 		Name: "lenny_erasure_job_failed_total",
 		Help: "§12.8 user-level erasure job failures by tenant and failure_phase.",
 	}, []string{"tenant_id", "failure_phase"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §11.2 line 44 — count sessions terminated mid-flight because
+	// their cumulative proxy-recorded LLM token usage exhausted the
+	// session's token budget (the §4.9 LLM-proxy enforcer fast path).
+	sessionBudgetExceeded, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_session_budget_exceeded_total",
+		Help: "§11.2 sessions terminated mid-session for token-budget exhaustion, by tenant.",
+	}, []string{"tenant_id"})
 	if err != nil {
 		return nil, err
 	}
@@ -2253,7 +2264,7 @@ func New() (*Metrics, error) {
 		experimentIsoRej,
 		experimentTargetingDur, experimentTargetingErr, experimentStickyInval, experimentTargetingCircuit,
 		sessionTotal, sessionError, sessionDuration, evalScore,
-		noEnvPolicyAllowAll, erasureJobFailed,
+		noEnvPolicyAllowAll, erasureJobFailed, sessionBudgetExceeded,
 		erasureJobsActive, erasureJobDuration, erasureJobDeadlineSeconds, erasureJobAgeSeconds,
 		tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
@@ -2425,6 +2436,7 @@ func New() (*Metrics, error) {
 		sessionDuration:                      sessionDuration,
 		evalScore:                            evalScore,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
+		sessionBudgetExceeded:                sessionBudgetExceeded,
 		erasureJobFailed:                     erasureJobFailed,
 		erasureJobsActive:                    erasureActive,
 		erasureJobDuration:                   erasureDuration,
@@ -3807,6 +3819,14 @@ func (m *Metrics) RecordSessionTerminal(tenantID, sessionType, variantID string,
 // scored session was not enrolled).
 func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score float64) {
 	m.evalScore.WithLabelValues(tenantID, scorer, variantID).Observe(score)
+}
+
+// IncSessionBudgetExceeded increments
+// lenny_gateway_session_budget_exceeded_total when the §11.2 mid-session
+// enforcer terminates a session for token-budget exhaustion. spec: §11.2
+// line 44.
+func (m *Metrics) IncSessionBudgetExceeded(tenantID string) {
+	m.sessionBudgetExceeded.WithLabelValues(tenantID).Inc()
 }
 
 // IncErasureJobFailed increments lenny_erasure_job_failed_total for a

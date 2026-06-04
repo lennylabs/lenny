@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/quota"
@@ -37,12 +38,17 @@ type proxyUsageRecorder struct {
 	// limits resolves the tenant's §11.2 reset period and rolling-window
 	// length so the recorder writes the same window QuotaEvaluator reads.
 	limits policy.TenantLimitLookup
+	// budget is the §11.2 mid-session token-budget enforcer. It tracks
+	// each session's cumulative proxy-recorded tokens against the
+	// session's §8.2 token budget and terminates an over-budget session.
+	// A nil enforcer disables mid-session enforcement (no budget cap).
+	budget *sessionbudget.Enforcer
 	// now returns the current time; nil selects time.Now. Overridden in
 	// tests so the quota window key is deterministic.
 	now func() time.Time
 }
 
-func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup) *proxyUsageRecorder {
+func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup, budget *sessionbudget.Enforcer) *proxyUsageRecorder {
 	if usage == nil {
 		return nil
 	}
@@ -51,6 +57,7 @@ func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, 
 		sessions: sessions,
 		quota:    quotaCounter,
 		limits:   limits,
+		budget:   budget,
 	}
 }
 
@@ -87,6 +94,7 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 		},
 	}
 	userID := ""
+	var tokenBudget int64
 	if r.sessions != nil && lease.SessionID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), proxyUsageLookupTimeout)
 		if sess, err := r.sessions.Get(ctx, lease.TenantID, lease.SessionID); err == nil {
@@ -95,6 +103,13 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 			// authenticated subject, the same id QuotaEvaluator reads from
 			// the request metadata at admission.
 			userID = sess.UserID
+			// spec: §8.2 lines 38-48 — the session's effective LLM token
+			// cap is the delegation lease's per-subtree maxTokenBudget.
+			// Zero (no lease, or no budget set) leaves the session
+			// unbounded so the §11.2 mid-session enforcer is a no-op for it.
+			if sess.DelegationLease != nil {
+				tokenBudget = sess.DelegationLease.MaxTokenBudget
+			}
 		}
 		cancel()
 	}
@@ -105,7 +120,16 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 	_ = r.usage.Record(ctx, rec)
 	cancel()
 
-	r.recordQuota(lease.TenantID, userID, int64(u.InputTokens)+int64(u.OutputTokens))
+	tokens := int64(u.InputTokens) + int64(u.OutputTokens)
+	r.recordQuota(lease.TenantID, userID, tokens)
+
+	// spec: §11.2 line 44 — enforce the per-session token budget against
+	// the cumulative proxy-recorded usage and terminate immediately when
+	// it is exhausted. Runs after the metering / quota writes so the
+	// authoritative record lands before the session is torn down.
+	if r.budget != nil {
+		r.budget.Record(lease.TenantID, lease.SessionID, tokenBudget, tokens)
+	}
 }
 
 // recordQuota advances the §11.2 hierarchical token counter (per-user,

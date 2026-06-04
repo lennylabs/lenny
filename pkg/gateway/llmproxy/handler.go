@@ -59,6 +59,15 @@ type DenyList interface {
 	Revoked(key credential.CredentialKey) bool
 }
 
+// BudgetGate is the §11.2 / §8.10 mid-session token-budget pre-flight.
+// Allow reports whether the session may issue another proxied request;
+// it returns false once the session has exhausted its token budget so
+// the proxy rejects the request with BUDGET_EXHAUSTED before any
+// upstream call (spec: §8.10 line 1108). A nil gate disables the check.
+type BudgetGate interface {
+	Allow(sessionID string) bool
+}
+
 // UsageRecorder receives the authoritative §4.9 token usage the proxy
 // extracts from each upstream response. §4.9 makes the proxy-extracted
 // counts the record for quota accounting; pod-reported counts are not
@@ -138,6 +147,11 @@ type Handler struct {
 	// Usage records the authoritative token usage of each proxied
 	// request. A nil Usage discards the counts.
 	Usage UsageRecorder
+	// BudgetGate is the §11.2 / §8.10 mid-session token-budget
+	// pre-flight: a request for a session that has already exhausted its
+	// token budget is rejected with BUDGET_EXHAUSTED before any upstream
+	// call. A nil gate disables the check.
+	BudgetGate BudgetGate
 	// Cache is the §4.9 semantic cache consulted on the non-streaming
 	// request path. A nil Cache disables caching (the §4.9 default).
 	Cache ProxyCache
@@ -229,6 +243,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case credential.RejectSpiffeMismatch:
 		h.writeError(w, http.StatusForbidden, "LEASE_SPIFFE_MISMATCH",
 			"the request's SPIFFE identity does not match the lease")
+		return
+	}
+
+	// spec: §8.10 line 1108 / §11.2 line 44 — a session that has already
+	// exhausted its token budget is terminated; any further proxied
+	// request it issues before the pod drains is rejected up front with
+	// BUDGET_EXHAUSTED (POLICY, non-retryable) before any upstream call.
+	if h.BudgetGate != nil && lease.SessionID != "" && !h.BudgetGate.Allow(lease.SessionID) {
+		h.writeError(w, http.StatusForbidden, "BUDGET_EXHAUSTED",
+			"the session's token budget is exhausted")
 		return
 	}
 

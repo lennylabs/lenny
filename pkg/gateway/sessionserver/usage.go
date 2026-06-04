@@ -381,6 +381,15 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	if s.inputWaits != nil {
 		s.inputWaits.ForgetSession(sess.ID)
 	}
+	// spec: §11.2 — drop the settled session's mid-session token-budget
+	// accounting from the §4.9 LLM-proxy enforcer so the per-session map
+	// does not retain an entry for a session whose row is gone. Runs for
+	// every terminal (natural completion, failure, budget expiry, force
+	// terminate) since recordSessionCompleted is the single terminal
+	// funnel.
+	if s.budgetForget != nil {
+		s.budgetForget(sess.ID)
+	}
 	// spec: §11.2 line 44 — on session completion the final cumulative
 	// token usage is written to Postgres as the authoritative value so a
 	// subsequent Redis-recovery reconstruction has an accurate baseline.
