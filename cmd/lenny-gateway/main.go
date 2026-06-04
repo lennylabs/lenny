@@ -138,6 +138,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
@@ -829,6 +830,9 @@ func main() {
 	maxCreatedStateTimeoutSeconds := flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
 		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
+	maxDeadlockWaitSeconds := flag.Int("max-deadlock-wait-seconds",
+		envInt("LENNY_MAX_DEADLOCK_WAIT_SECONDS", 120),
+		"§8.8 line 981 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")
 	// spec: §11.3 line 219-221 — gateway.max{Finalizing,Ready,Starting}TimeoutSeconds
 	// and the platform-wide cap on §6.2 awaiting_client_action /
 	// maxSessionAge. Each is operator-tunable; the watchdog applied the
@@ -3783,9 +3787,22 @@ func main() {
 	// rather than the cluster default alone. F-13.5.1 / F-8.2.9.
 	maxInputResolver.inner = delegationSvc
 	mcpSrv := mcp.NewServer()
+	// spec: §8.8 lines 981-997 — the subtree deadlock detector. The await
+	// tracker records which session awaits which children (registered by
+	// lenny/await_children for the duration of each poll); the manager
+	// holds the active deadlocked subtrees so the await poll can surface a
+	// deadlock_detected partial. The periodic sweep + DEADLOCK_TIMEOUT
+	// application is wired under watchdogCtx below. F-8.8.6.
+	deadlockTracker := deadlock.NewAwaitTracker()
+	var deadlockManager *deadlock.Manager
+	if *maxDeadlockWaitSeconds > 0 {
+		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, gwMetrics)
+	}
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,
 		Executor:                   exec,
+		DeadlockTracker:            deadlockTracker,
+		Deadlocks:                  deadlockManager,
 		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Users:                      users,
@@ -5594,6 +5611,49 @@ func main() {
 		})
 		log.Printf("lenny-gateway: §10.1 orphan-session reconciler enabled (fallback=%t)",
 			orphanSessionOpts.Fallback != nil)
+	}
+
+	// ----- §8.8 subtree deadlock detector -----
+	// Periodically sweeps the live await edges (which session awaits which
+	// children) and the request_input registry; when every non-terminal
+	// task in a subtree is blocked, the root receives a deadlock_detected
+	// event on its lenny/await_children poll, and if the deadlock is not
+	// resolved within maxDeadlockWaitSeconds the detector fails the deepest
+	// blocked tasks with DEADLOCK_TIMEOUT. Disabled when the timeout is
+	// zero. spec: §8.8 lines 981-997. F-8.8.6.
+	if deadlockManager != nil {
+		deadlockLookup := func(ctx context.Context, tenantID, sessionID string) (session.State, bool) {
+			row, err := sessions.Get(ctx, tenantID, sessionID)
+			if err != nil {
+				// Row gone (reclaimed) — the detector treats it as settled.
+				return "", false
+			}
+			return row.State, true
+		}
+		deadlockFail := func(ctx context.Context, tenantID, sessionID string) {
+			updated, err := sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
+				if session.IsTerminal(s.State) {
+					return nil // a concurrent terminal transition won the race
+				}
+				s.State = session.StateFailed
+				s.FailureClass = session.FailureClassRuntime
+				s.FailureReason = string(session.FailureDeadlockTimeout)
+				return nil
+			})
+			if err != nil {
+				log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
+				return
+			}
+			if updated.State == session.StateFailed &&
+				updated.FailureReason == string(session.FailureDeadlockTimeout) {
+				sessionSrv.OnSessionTerminal(ctx, updated)
+			}
+		}
+		deadlockDetector := deadlock.NewDetector(deadlockManager, deadlockTracker, inputWaits,
+			deadlockLookup, deadlockFail)
+		go deadlockDetector.Run(watchdogCtx, 10*time.Second)
+		log.Printf("lenny-gateway: §8.8 subtree deadlock detector enabled (maxDeadlockWaitSeconds=%d)",
+			*maxDeadlockWaitSeconds)
 	}
 
 	// ----- §10.1 dual-store degraded-mode monitor -----

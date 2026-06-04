@@ -301,3 +301,23 @@ func TestPendingDetailsForSession_spec_8_8_951(t *testing.T) {
 		t.Errorf("after Cancel = %v, want nil", got)
 	}
 }
+
+// TestPendingDetailsCarriesBlockedSince_spec_8_8_990 confirms the
+// §8.8 line 990 `blockedSince` witness is stamped from the registry clock
+// at Register time and surfaced on the await partial, so the subtree
+// deadlock detector reports an accurate blocked-since per request.
+func TestPendingDetailsCarriesBlockedSince_spec_8_8_990(t *testing.T) {
+	r := inputwait.NewRegistry()
+	at := time.Date(2026, 6, 4, 9, 30, 0, 0, time.UTC)
+	r.SetClock(func() time.Time { return at })
+	if _, err := r.Register("sess", "req", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	got := r.PendingDetailsForSession("sess")
+	if len(got) != 1 {
+		t.Fatalf("PendingDetailsForSession returned %d entries, want 1", len(got))
+	}
+	if !got[0].BlockedSince.Equal(at) {
+		t.Errorf("BlockedSince = %v, want %v", got[0].BlockedSince, at)
+	}
+}

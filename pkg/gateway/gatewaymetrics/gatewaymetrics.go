@@ -391,6 +391,20 @@ type Metrics struct {
 	// pre-delegation cycle detector — typically a §8.10 recovery write
 	// that re-parented a node. spec: §8.9 line 1003; F-8.9.10.
 	delegationTreeCycleDetected *prometheus.CounterVec
+	// delegationDeadlockDetected counts §8.8 line 981 subtree-deadlock
+	// detections, labelled by tenant. The detector increments it once
+	// per newly-detected deadlocked subtree root (not per sweep tick).
+	// F-8.8.6.
+	delegationDeadlockDetected *prometheus.CounterVec
+	// delegationDeadlockResolution counts §8.8 deadlock resolutions by
+	// `resolution` (`resolved` when the root broke the deadlock before
+	// `willTimeoutAt`, `timeout` when the detector applied DEADLOCK_TIMEOUT).
+	// F-8.8.6.
+	delegationDeadlockResolution *prometheus.CounterVec
+	// delegationDeadlockDuration observes the §8.8 time from detection to
+	// resolution (seconds), labelled by the same `resolution` outcome.
+	// F-8.8.6.
+	delegationDeadlockDuration *prometheus.HistogramVec
 	// delegationBudgetReconstruction counts §11.2 line 48 delegation tree
 	// budget reconstruction events on Redis recovery. Label `outcome` is
 	// one of `success` (counters restored via the MAX rule) or
@@ -1809,6 +1823,33 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §8.8 line 981 — the subtree deadlock detector counters.
+	// `detected_total` bumps once per newly-detected deadlocked subtree;
+	// `resolution_total` and `duration_seconds` close out each tracked
+	// deadlock when the root resolves it or the detector times it out.
+	// F-8.8.6.
+	delegationDeadlockDetected, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_deadlock_detected_total",
+		Help: "Subtree deadlock detections (§8.8 line 981 heuristic), by tenant.",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	delegationDeadlockResolution, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_deadlock_resolution_total",
+		Help: "Subtree deadlock resolutions by resolution (resolved | timeout).",
+	}, []string{"resolution"})
+	if err != nil {
+		return nil, err
+	}
+	delegationDeadlockDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_delegation_deadlock_duration_seconds",
+		Help:    "Time from §8.8 deadlock detection to resolution, by resolution outcome.",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300},
+	}, []string{"resolution"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 / §11.2 line 48 — `lenny_delegation_budget_reconstruction_total`
 	// counts delegation tree budget reconstruction events on Redis
 	// recovery, labelled by outcome (`success` | `irrecoverable`) so
@@ -2322,6 +2363,7 @@ func New() (*Metrics, error) {
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
+		delegationDeadlockDetected, delegationDeadlockResolution, delegationDeadlockDuration,
 		delegationBudgetReconstruction,
 		quotaCheckpointReconcile,
 		delegationParallelChildrenHWM,
@@ -2538,6 +2580,9 @@ func New() (*Metrics, error) {
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
 		delegationTreeCycleDetected:          delegationTreeCycleDetected,
+		delegationDeadlockDetected:           delegationDeadlockDetected,
+		delegationDeadlockResolution:         delegationDeadlockResolution,
+		delegationDeadlockDuration:           delegationDeadlockDuration,
 		delegationBudgetReconstruction:       delegationBudgetReconstruction,
 		quotaCheckpointReconcile:             quotaCheckpointReconcile,
 		delegationParallelChildrenHWM:        delegationParallelChildrenHWM,
@@ -3299,6 +3344,29 @@ func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 		return
 	}
 	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
+}
+
+// IncDelegationDeadlockDetected increments the §8.8 line 981
+// `lenny_delegation_deadlock_detected_total` counter once per
+// newly-detected deadlocked subtree root, scoped by tenant. F-8.8.6.
+func (m *Metrics) IncDelegationDeadlockDetected(tenantID string) {
+	if m == nil {
+		return
+	}
+	m.delegationDeadlockDetected.WithLabelValues(tenantID).Inc()
+}
+
+// ObserveDelegationDeadlockResolution closes out one tracked §8.8
+// deadlock: it increments `lenny_delegation_deadlock_resolution_total`
+// and records the detection-to-resolution latency on
+// `lenny_delegation_deadlock_duration_seconds`, both labelled by the
+// `resolution` outcome (`resolved` | `timeout`). F-8.8.6.
+func (m *Metrics) ObserveDelegationDeadlockResolution(resolution string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.delegationDeadlockResolution.WithLabelValues(resolution).Inc()
+	m.delegationDeadlockDuration.WithLabelValues(resolution).Observe(seconds)
 }
 
 // ObserveDelegationParallelChildrenHighWatermark records the §8.3 line

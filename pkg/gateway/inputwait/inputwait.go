@@ -13,6 +13,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Registry errors.
@@ -41,23 +42,33 @@ type Registry struct {
 	mu       sync.Mutex
 	pending  map[string]*entry
 	consumed map[string]int
+	// now sources the wall clock for the §8.8 line 990 `blockedSince`
+	// timestamp stamped on each pending request. It is overridable in
+	// tests so the §8.8 deadlock detector's blocked-since witnesses are
+	// deterministic. spec: §8.8 line 990. F-8.8.6.
+	now func() time.Time
 }
 
 // entry is a single pending request: the answer channel plus the §8.8
 // line 951 question `parts` the lenny/await_children partial result
 // carries back to the awaiting parent. spec: §8.8 line 951; F-8.8.5.
 type entry struct {
-	ch    chan string
-	parts []json.RawMessage
+	ch           chan string
+	parts        []json.RawMessage
+	registeredAt time.Time
 }
 
 // PendingRequest is one session's pending lenny/request_input round as
 // surfaced to lenny/await_children. RequestID is the correlation id the
 // parent answers with `inReplyTo`; Parts is the OutputPart[] question.
-// spec: §8.8 line 951; F-8.8.5.
+// BlockedSince is the wall-clock instant the request was registered —
+// the §8.8 line 990 `blockedSince` witness the subtree deadlock
+// detector reports on each `blockedRequests` entry. spec: §8.8 line
+// 951, line 990; F-8.8.5 / F-8.8.6.
 type PendingRequest struct {
-	RequestID string
-	Parts     []json.RawMessage
+	RequestID    string
+	Parts        []json.RawMessage
+	BlockedSince time.Time
 }
 
 // NewRegistry returns an empty Registry.
@@ -65,7 +76,24 @@ func NewRegistry() *Registry {
 	return &Registry{
 		pending:  map[string]*entry{},
 		consumed: map[string]int{},
+		now:      time.Now,
 	}
+}
+
+// SetClock overrides the registry's wall clock. It exists for tests
+// that assert the §8.8 `blockedSince` witness; production callers use
+// the default time.Now wired by NewRegistry.
+func (r *Registry) SetClock(now func() time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = now
+}
+
+func (r *Registry) clock() time.Time {
+	if r.now == nil {
+		return time.Now()
+	}
+	return r.now()
 }
 
 // key joins a session and request id into a registry key. The NUL
@@ -93,7 +121,7 @@ func (r *Registry) Register(sessionID, requestID string, parts []json.RawMessage
 		return nil, ErrDuplicate
 	}
 	ch := make(chan string, 1)
-	r.pending[k] = &entry{ch: ch, parts: parts}
+	r.pending[k] = &entry{ch: ch, parts: parts, registeredAt: r.clock()}
 	r.consumed[sessionID]++
 	return ch, nil
 }
@@ -191,7 +219,7 @@ func (r *Registry) PendingDetailsForSession(sessionID string) []PendingRequest {
 	var out []PendingRequest
 	for k, e := range r.pending {
 		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			out = append(out, PendingRequest{RequestID: k[len(prefix):], Parts: e.parts})
+			out = append(out, PendingRequest{RequestID: k[len(prefix):], Parts: e.parts, BlockedSince: e.registeredAt})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RequestID < out[j].RequestID })

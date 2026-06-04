@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -264,6 +265,18 @@ type Deps struct {
 	// non-nil, lenny/cancel_child archives each cancelled child's
 	// §8.8 TaskResult so a resumed parent can replay it.
 	TreeArchive treearchive.Store
+
+	// DeadlockTracker records the §8.8 await edges (which session awaits
+	// which children) so the subtree deadlock detector can decide whether
+	// an awaiting parent's children are all blocked. Optional — when nil,
+	// lenny/await_children does not register its edge. spec: §8.8 line
+	// 981. F-8.8.6.
+	DeadlockTracker *deadlock.AwaitTracker
+
+	// Deadlocks is the §8.8 deadlock manager the await poll reads to
+	// surface a `deadlock_detected` partial to a deadlocked subtree root.
+	// Optional — when nil, no deadlock partial is emitted. F-8.8.6.
+	Deadlocks *deadlock.Manager
 
 	// RequestInputTimeout caps a lenny/request_input block per the
 	// §11.3 maxRequestInputWaitSeconds limit. Zero selects the default.
@@ -1042,6 +1055,11 @@ func Register(srv *mcp.Server, deps Deps) {
 		ctx, span := obstracing.NewTracer(nil).Start(ctx, obstracing.SpanDelegationAwaitChild)
 		span.SetAttributes(attribute.Int("delegation.await.child_count", len(in.ChildIDs)))
 		defer span.End()
+		// spec: §8.8 line 981 — register the await edge for the duration of
+		// the poll loop so the subtree deadlock detector can see that this
+		// session is blocking on these children. The edge drops on return.
+		// F-8.8.6.
+		defer deps.DeadlockTracker.Begin(tenant, in.SessionID, in.ChildIDs)()
 		// Poll the child states until the mode's settle condition holds.
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
@@ -1056,6 +1074,22 @@ func Register(srv *mcp.Server, deps Deps) {
 					Results []task.Result `json:"results"`
 				}{Results: results})
 				return textResult(string(body)), nil
+			}
+			// spec: §8.8 lines 981-997 — when the detector has flagged this
+			// session as a deadlocked subtree root, yield the
+			// deadlock_detected event so the parent's agent can break the
+			// deadlock (resolve a pending request_input or cancel a blocked
+			// child) before willTimeoutAt. The v1 MCP transport is unary, so
+			// the event rides one partial frame and the parent re-awaits.
+			// F-8.8.6.
+			if deps.Deadlocks != nil {
+				if ev, ok := deps.Deadlocks.Event(in.SessionID); ok {
+					body, _ := json.Marshal(struct {
+						Partial  bool           `json:"partial"`
+						Deadlock deadlock.Event `json:"deadlock"`
+					}{Partial: true, Deadlock: ev})
+					return textResult(string(body)), nil
+				}
 			}
 			// spec: §8.8 lines 951-971 — when an awaited child enters the
 			// input_required sub-state (it has a pending lenny/request_input

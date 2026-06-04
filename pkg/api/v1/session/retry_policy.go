@@ -268,6 +268,15 @@ const (
 	// spec: §10.1 line 51 — "forcibly transitioned to `failed` with
 	// reason `orphan_pod_terminated`".
 	FailureOrphanPodTerminated FailureReason = "orphan_pod_terminated"
+
+	// FailureDeadlockTimeout marks a blocked task the §8.8 subtree
+	// deadlock detector failed because the deadlocked subtree was not
+	// resolved within `maxDeadlockWaitSeconds` (default 120). The
+	// detector fails the deepest blocked tasks in the subtree with this
+	// reason so the §8.8 `DEADLOCK_TIMEOUT` contract fires; the MCP
+	// adapter surfaces it as `failed` with error code `DEADLOCK_TIMEOUT`.
+	// spec: §8.8 line 981. F-8.8.6.
+	FailureDeadlockTimeout FailureReason = "deadlock_timeout"
 )
 
 // DefaultRetryableFailures is the §7.3 line 384 platform default the
