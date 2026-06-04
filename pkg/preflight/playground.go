@@ -38,10 +38,12 @@ var playgroundTenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 // lenny-preflight Job runs at install time. It rejects the
 // combinations that the gateway's layer-3 startup gate
 // (pkg/gateway/playground.Config.Validate) would otherwise catch only
-// after the pod has started, plus the apiKey-mode acknowledgement
-// warning that has no startup analogue. Failures use the §27.2 fatal
-// codes as their prefix so an operator sees the same envelope at
-// install time and at startup.
+// after the pod has started. Failures use the §27.2 fatal codes as their
+// prefix so an operator sees the same envelope at install time and at
+// startup. The apiKey-mode acknowledgement WARNING is a distinct,
+// non-blocking row (CheckPlaygroundAPIKeyMode, the §27.9 line 255
+// `playground.apiKeyMode` row), kept separate so the operator-visible
+// report names it exactly as the spec does.
 //
 // spec: §27.2 lines 41–42 + §27.3 ("rejected at Helm-validate
 // otherwise").
@@ -92,13 +94,24 @@ func CheckPlaygroundConfig(cfg PlaygroundConfig) Decision {
 			}
 		}
 	}
-	// spec: §27.2 line 42 / §27.9 — apiKey mode outside dev mode
-	// requires the operator to set playground.acknowledgeApiKeyMode
-	// (same pattern as monitoring.acknowledgeNoPrometheus). The check
-	// is non-blocking: a missing acknowledgement surfaces as a passing
-	// WARNING so the install does not abort, matching the spec's
-	// "non-blocking WARNING" wording. F-27.2.2 / F-27.9.3.
-	if cfg.AuthMode == "apiKey" && !cfg.GlobalDevMode && !cfg.AcknowledgeAPIKeyMode {
+	return Decision{Passed: true}
+}
+
+// CheckPlaygroundAPIKeyMode is the §27.9 line 255 `playground.apiKeyMode`
+// row of the lenny-preflight Job. It emits a non-blocking WARNING when a
+// deployment ships the playground in apiKey auth mode outside dev mode
+// without acknowledging the paste-form phishing surface via
+// playground.acknowledgeApiKeyMode — the install-time audit the spec
+// names, modelled on monitoring.acknowledgeNoPrometheus. The WARNING
+// passes (install proceeds): the gateway does not gate startup on the
+// acknowledgement, so preflight is the single install-time touchpoint.
+// Every other combination (playground disabled, oidc/dev mode, apiKey
+// inside dev mode, or an acknowledged apiKey mode) passes silently.
+//
+// spec: §27.9 line 255 (`playground.apiKeyMode` preflight row); §27.2
+// line 42 (acknowledgeApiKeyMode value). F-27.9.2.
+func CheckPlaygroundAPIKeyMode(cfg PlaygroundConfig) Decision {
+	if cfg.Enabled && cfg.AuthMode == "apiKey" && !cfg.GlobalDevMode && !cfg.AcknowledgeAPIKeyMode {
 		return Decision{
 			Passed: true,
 			Reason: "WARNING: playground.authMode=apiKey is enabled outside global.devMode; set playground.acknowledgeApiKeyMode=true to acknowledge the §27.9 paste-form phishing surface (same pattern as monitoring.acknowledgeNoPrometheus)",

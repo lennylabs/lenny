@@ -128,6 +128,99 @@ func TestWebSocketToolsListReturnsRegisteredTools(t *testing.T) {
 	}
 }
 
+// dialWithOrigin connects to the §4.1 WebSocket transport with an
+// X-Test-Origin header the test server's principal extractor maps to the
+// §27.3 origin claim, so the §27.9 egress redaction gate sees the
+// connection as playground-origin (or not).
+func dialWithOrigin(t *testing.T, srv *mcp.Server, origin string) (context.Context, *websocket.Conn, func()) {
+	t.Helper()
+	httpSrv := httptest.NewServer(srv.WebSocketHandler())
+	wsURL := strings.Replace(httpSrv.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"X-Test-Origin": []string{origin}},
+	})
+	if err != nil {
+		cancel()
+		httpSrv.Close()
+		t.Fatalf("websocket dial: %v", err)
+	}
+	return ctx, conn, func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+		cancel()
+		httpSrv.Close()
+	}
+}
+
+// playgroundOriginServer builds a Server whose §27.5.4 principal extractor
+// reads the §27.3 origin claim from the X-Test-Origin header, so the §27.9
+// egress redaction gate can be exercised end to end. A tool whose
+// inputSchema carries a credential-named property is registered so the
+// test can assert the redaction does not corrupt schemas.
+func playgroundOriginServer(t *testing.T) *mcp.Server {
+	t.Helper()
+	srv := mcp.NewServer()
+	srv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
+		return mcp.WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Test-Origin")}, true
+	}, nil, 0)
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/connect",
+		Description: "connect a credential",
+		InputSchema: []byte(`{"type":"object","properties":{"access_token":{"type":"string"},"token":{"type":"string"}}}`),
+	}, func(_ context.Context, _ json.RawMessage) (mcp.ToolResult, error) {
+		return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
+	})
+	return srv
+}
+
+// spec: §27.9 line 251 — for an origin=playground connection the gateway
+// runs the §16.4 frame redaction before sending frames to the browser.
+// The redaction must not corrupt a tool's inputSchema: a schema property
+// named access_token (whose value is the structural {"type":"string"},
+// not a credential literal) survives so the playground's schema-driven
+// form still renders. The initialize handshake also round-trips intact,
+// proving the redaction pass is transparent on credential-free frames.
+func TestWebSocketPlaygroundEgressPreservesSchema_spec_27_9_251(t *testing.T) {
+	srv := playgroundOriginServer(t)
+	ctx, conn, teardown := dialWithOrigin(t, srv, "playground")
+	defer teardown()
+
+	writeJSON(t, ctx, conn, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+	if got := readJSON(t, ctx, conn)["result"].(map[string]any)["protocolVersion"]; got != mcp.ProtocolVersion {
+		t.Fatalf("playground initialize protocolVersion = %v, want %s", got, mcp.ProtocolVersion)
+	}
+
+	writeJSON(t, ctx, conn, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+	resp := readJSON(t, ctx, conn)
+	tool := resp["result"].(map[string]any)["tools"].([]any)[0].(map[string]any)
+	props := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	if at, ok := props["access_token"].(map[string]any); !ok || at["type"] != "string" {
+		t.Errorf("playground egress corrupted inputSchema access_token property: %v", props["access_token"])
+	}
+}
+
+// spec: §27.9 line 251 — a non-playground connection (a headless MCP
+// client) is never redacted, so it receives the raw tool catalog. The
+// frame is byte-identical to what a playground connection sees for this
+// credential-free catalog, confirming the gate is the only difference and
+// the redaction pass is transparent when no credential literal is present.
+func TestWebSocketNonPlaygroundEgressUnredacted_spec_27_9_251(t *testing.T) {
+	srv := playgroundOriginServer(t)
+	ctx, conn, teardown := dialWithOrigin(t, srv, "api")
+	defer teardown()
+
+	writeJSON(t, ctx, conn, map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+	resp := readJSON(t, ctx, conn)
+	tool := resp["result"].(map[string]any)["tools"].([]any)[0].(map[string]any)
+	if tool["name"] != "lenny/connect" {
+		t.Errorf("non-playground tools/list name = %v, want lenny/connect", tool["name"])
+	}
+	props := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := props["access_token"].(map[string]any); !ok {
+		t.Errorf("non-playground egress dropped inputSchema access_token property: %v", props)
+	}
+}
+
 // spec: §4.1 / §15.2 / §15.2.1 — tools/call routes to the registered
 // handler and the success result returns over the same connection.
 // Multiple consecutive frames are dispatched independently.

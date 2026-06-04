@@ -153,6 +153,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancelWatch()
 	s.startRevocationWatch(watchCtx, conn, r)
 
+	// §27.9 line 251 — when the connection carries an origin=playground
+	// bearer, every response frame is scrubbed of credential-bearing
+	// fields before it reaches the browser's raw-frame inspector, the
+	// same exclusion §16.4 line 376 applies to credential-sensitive
+	// payloads. A non-playground MCP client (a headless agent) is never
+	// redacted so it still receives the raw tool results it needs.
+	// F-27.9.1.
+	redactEgress := s.playgroundEgress(r)
+
 	for {
 		readCtx, cancelRead := context.WithTimeout(watchCtx, wsReadFrameTimeout)
 		msgType, data, err := conn.Read(readCtx)
@@ -173,6 +182,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// §15.2.1. dispatchRPC returns the response envelope ready for
 		// JSON encoding.
 		respBytes, fatal := s.dispatchFrameBytes(watchCtx, data)
+		if redactEgress {
+			respBytes = redactPlaygroundFrame(respBytes)
+		}
 		writeCtx, cancelWrite := context.WithTimeout(watchCtx, wsWriteTimeout)
 		writeErr := conn.Write(writeCtx, websocket.MessageText, respBytes)
 		cancelWrite()
@@ -188,6 +200,22 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// playgroundEgress reports whether outbound frames on this connection
+// must be redacted before reaching the browser, i.e. whether the request
+// carries an origin=playground bearer. It reuses the same principal
+// extractor the §27.5.4 revocation watch keys on, so the redaction gate
+// and the revocation gate agree on what "a playground connection" is.
+// When no extractor is wired (a deployment without the playground) the
+// gate is off and frames pass through; no playground bearer can reach the
+// handler in that configuration. spec: §27.3 origin claim; §27.9 line 251.
+func (s *Server) playgroundEgress(r *http.Request) bool {
+	if s.wsAuth.principal == nil {
+		return false
+	}
+	p, ok := s.wsAuth.principal(r)
+	return ok && p.Origin == playgroundOriginClaim
 }
 
 // startRevocationWatch spawns the §27.5.4 revocation poller for an

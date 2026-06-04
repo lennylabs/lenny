@@ -537,6 +537,17 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		Decision: CheckPlaygroundConfig(cfg.Playground),
 	})
 
+	// spec: §27.9 line 255 — the `playground.apiKeyMode` row emits a
+	// non-blocking WARNING when the playground ships apiKey auth mode
+	// outside dev mode without playground.acknowledgeApiKeyMode, the
+	// single install-time touchpoint for the paste-form phishing-surface
+	// acknowledgement. Surfaced as its own row so the operator-visible
+	// report carries the exact name the spec names. F-27.9.2.
+	report = append(report, CheckResult{
+		Name:     "playground.apiKeyMode",
+		Decision: CheckPlaygroundAPIKeyMode(cfg.Playground),
+	})
+
 	// spec: §10 line 443 — every installed Lenny CRD MUST carry the
 	// schema-version annotation matching the version the chart release
 	// expects. A stale or absent CRD aborts the install before the

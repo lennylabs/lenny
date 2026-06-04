@@ -100,61 +100,86 @@ func TestCheckPlaygroundConfigMultiTenantDefaultRejected_F_27_2_6(t *testing.T) 
 	}
 }
 
-// TestCheckPlaygroundConfigAPIKeyAckWarning_F_27_2_2 exercises the
-// §27.2 line 42 / §27.9 acknowledgeApiKeyMode non-blocking warning.
-// The check passes (install proceeds) but carries the WARNING reason.
-func TestCheckPlaygroundConfigAPIKeyAckWarning_F_27_2_2(t *testing.T) {
-	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
+// TestCheckPlaygroundAPIKeyModeWarning exercises the §27.9 line 255
+// `playground.apiKeyMode` row: apiKey mode outside dev mode without an
+// acknowledgement emits a non-blocking WARNING (passes install but
+// carries the reason).
+func TestCheckPlaygroundAPIKeyModeWarning_F_27_9_2(t *testing.T) {
+	d := preflight.CheckPlaygroundAPIKeyMode(preflight.PlaygroundConfig{
 		Enabled:               true,
 		AuthMode:              "apiKey",
 		GlobalDevMode:         false,
 		AcknowledgeAPIKeyMode: false,
 	})
 	if !d.Passed {
-		t.Fatalf("playground-config: apiKey warning must pass install, got fail: %s", d.Reason)
+		t.Fatalf("playground.apiKeyMode: apiKey warning must pass install, got fail: %s", d.Reason)
 	}
 	if !strings.HasPrefix(d.Reason, "WARNING") {
-		t.Fatalf("playground-config: want WARNING prefix, got %q", d.Reason)
+		t.Fatalf("playground.apiKeyMode: want WARNING prefix, got %q", d.Reason)
 	}
 	if !strings.Contains(d.Reason, "acknowledgeApiKeyMode") {
-		t.Fatalf("playground-config: WARNING must name acknowledgeApiKeyMode knob, got %q", d.Reason)
+		t.Fatalf("playground.apiKeyMode: WARNING must name acknowledgeApiKeyMode knob, got %q", d.Reason)
 	}
 }
 
-// TestCheckPlaygroundConfigAPIKeyAckSuppresses_F_27_2_2 exercises the
-// acknowledgement: setting playground.acknowledgeApiKeyMode=true
-// suppresses the warning.
-func TestCheckPlaygroundConfigAPIKeyAckSuppresses_F_27_2_2(t *testing.T) {
-	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
+// TestCheckPlaygroundAPIKeyModeAckSuppresses exercises the
+// acknowledgement: playground.acknowledgeApiKeyMode=true silences the row.
+func TestCheckPlaygroundAPIKeyModeAckSuppresses_F_27_9_2(t *testing.T) {
+	d := preflight.CheckPlaygroundAPIKeyMode(preflight.PlaygroundConfig{
 		Enabled:               true,
 		AuthMode:              "apiKey",
 		GlobalDevMode:         false,
 		AcknowledgeAPIKeyMode: true,
 	})
-	if !d.Passed {
-		t.Fatalf("playground-config: ack=true must pass, got fail: %s", d.Reason)
-	}
-	if d.Reason != "" {
-		t.Fatalf("playground-config: ack=true must be silent, got %q", d.Reason)
+	if !d.Passed || d.Reason != "" {
+		t.Fatalf("playground.apiKeyMode: ack=true must pass silently, got passed=%v reason=%q", d.Passed, d.Reason)
 	}
 }
 
-// TestCheckPlaygroundConfigDevModeApiKeyNoAck exercises the
-// global.devMode=true escape: a developer install can run apiKey
-// mode without an acknowledgement warning because the §27.9 phishing
-// surface only applies outside dev mode.
-func TestCheckPlaygroundConfigDevModeApiKeyNoAck_F_27_2_2(t *testing.T) {
-	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
+// TestCheckPlaygroundAPIKeyModeDevEscape exercises the global.devMode=true
+// escape: a developer install can run apiKey mode without a warning
+// because the §27.9 phishing surface only applies outside dev mode.
+func TestCheckPlaygroundAPIKeyModeDevEscape_F_27_9_2(t *testing.T) {
+	d := preflight.CheckPlaygroundAPIKeyMode(preflight.PlaygroundConfig{
 		Enabled:               true,
 		AuthMode:              "apiKey",
 		GlobalDevMode:         true,
 		AcknowledgeAPIKeyMode: false,
 	})
-	if !d.Passed {
-		t.Fatalf("playground-config: dev + apiKey must pass, got fail: %s", d.Reason)
+	if !d.Passed || d.Reason != "" {
+		t.Fatalf("playground.apiKeyMode: dev + apiKey must pass silently, got passed=%v reason=%q", d.Passed, d.Reason)
 	}
-	if d.Reason != "" {
-		t.Fatalf("playground-config: dev + apiKey must be silent, got %q", d.Reason)
+}
+
+// TestCheckPlaygroundAPIKeyModeDisabled exercises the §27.9 enable gate:
+// when the playground is disabled the row never fires regardless of the
+// other apiKey values, matching the spec's
+// "playground.enabled=true AND ..." conjunction.
+func TestCheckPlaygroundAPIKeyModeDisabled_F_27_9_2(t *testing.T) {
+	d := preflight.CheckPlaygroundAPIKeyMode(preflight.PlaygroundConfig{
+		Enabled:               false,
+		AuthMode:              "apiKey",
+		GlobalDevMode:         false,
+		AcknowledgeAPIKeyMode: false,
+	})
+	if !d.Passed || d.Reason != "" {
+		t.Fatalf("playground.apiKeyMode: disabled playground must pass silently, got passed=%v reason=%q", d.Passed, d.Reason)
+	}
+}
+
+// TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning pins the split: the
+// structural playground-config row stays silent on the unacknowledged
+// apiKey case (the WARNING moved to the playground.apiKeyMode row) so the
+// warning is emitted exactly once. F-27.9.2.
+func TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning_F_27_9_2(t *testing.T) {
+	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
+		Enabled:               true,
+		AuthMode:              "apiKey",
+		GlobalDevMode:         false,
+		AcknowledgeAPIKeyMode: false,
+	})
+	if !d.Passed || d.Reason != "" {
+		t.Fatalf("playground-config: apiKey case must now pass silently, got passed=%v reason=%q", d.Passed, d.Reason)
 	}
 }
 

@@ -45021,7 +45021,7 @@ Tests: `/Users/joan/projects/lenny/pkg/gateway/playground/playground_test.go` (`
 
 ### Findings
 
-### - [ ] F-27.9.1 — 1 — Raw-frame inspector forwards unredacted MCP frames to the browser [High] — OPEN
+### - [x] F-27.9.1 — 1 — Raw-frame inspector forwards unredacted MCP frames to the browser [High] — CLOSED
 
 §27.9 (line 251) requires that "the gateway applies the same redaction rules as the audit log (§16.4) before sending frames to the browser" for the raw-frame inspector. The inspector is implemented in `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:333-338` (`recordFrame`) and it captures every WebSocket message the browser receives over `/mcp/v1/ws` verbatim (`ws.onmessage` at line 392-395 hands `ev.data` directly to `recordFrame`).
 
@@ -45031,7 +45031,27 @@ Concrete impact: a playground user with a scope-intersected `user_bearer` whose 
 
 Severity: High (correctness, security — MUST in §27.9).
 
-### - [ ] F-27.9.2 — 2 — `playground.apiKeyMode` preflight check is not implemented [High] — OPEN
+**Resolution:** The §27.9 line 251 frame redaction now runs in the MCP
+WebSocket leg. `pkg/gateway/mcp/playground_redact.go` adds
+`redactPlaygroundFrame`, which parses each outbound JSON-RPC frame and
+scrubs every credential-named scalar field (markers mirror the admin
+`redactSecret` set, §16.4 line 376) at any nesting depth, replacing the
+value with `[REDACTED]`. A sensitive key whose value is structural (an
+object/array) is treated as a schema or container rather than a
+credential literal and is recursed into, so a tool `inputSchema` property
+named `access_token` survives intact. `handleWebSocket`
+(`pkg/gateway/mcp/websocket.go`) computes `playgroundEgress(r)` once per
+connection — true only for an `origin=playground` bearer, reusing the
+same §27.5.4 principal extractor the revocation watch keys on — and
+applies the redactor to each response frame before `conn.Write`. A
+non-playground MCP client (a headless agent) is never redacted. The
+`app.js` inspector comment now describes a behavior that exists. Closed
+by commit COMMIT_27_9. Tests: 5 tier-1 internal (scalar scrub at depth +
+in arrays, schema/id preservation, non-JSON passthrough, marker set,
+egress gate) + 2 tier-2 component over the live WS handler (playground
+schema-safe egress, non-playground unredacted).
+
+### - [x] F-27.9.2 — 2 — `playground.apiKeyMode` preflight check is not implemented [High] — CLOSED
 
 §27.9 (line 255) requires the `lenny-preflight` Job to run a `playground.apiKeyMode` check that emits a non-blocking WARNING when `playground.enabled=true AND playground.authMode=apiKey AND global.devMode=false AND playground.acknowledgeApiKeyMode=false`. The Job artifact is present (`/Users/joan/projects/lenny/cmd/lenny-preflight/main.go`, `/Users/joan/projects/lenny/charts/lenny/templates/preflight-job.yaml`) and the rule package is `/Users/joan/projects/lenny/pkg/preflight/`.
 
@@ -45040,6 +45060,24 @@ A search across `pkg/preflight/` and the `cmd/lenny-preflight/` entry point for 
 Concretely: an operator who ships `helm install` with `playground.enabled=true`, `playground.authMode=apiKey`, `global.devMode=false`, and no `playground.acknowledgeApiKeyMode: true` gets no preflight WARNING. The single install-time touchpoint the spec specifies is missing, so the paste-form phishing-surface acknowledgement gate the spec relies on is unenforced. The runtime banner (Verified-4 below) still appears, so the user-visible advisory is present; the operator-side acknowledgement audit is the gap.
 
 Severity: High (MUST in §27.9; missing install-time gate the spec cross-references to `monitoring.acknowledgeNoPrometheus`).
+
+**Resolution:** The "zero matches" evidence was stale — the WARNING
+substance and its end-to-end wiring already shipped under F-27.2.2:
+`CheckPlaygroundConfig` (`pkg/preflight/playground.go`) emitted the
+acknowledgement WARNING, `cmd/lenny-preflight/main.go` populates
+`PlaygroundConfig` from flags, and `charts/lenny/templates/preflight-job.yaml`
+passes all six `--playground-*` flags (including `--playground-enabled`
+and `--playground-acknowledge-api-key-mode`). The remaining gap was the
+spec's literal "`playground.apiKeyMode` row": the WARNING was folded into
+the combined `playground-config` row rather than surfaced under the name
+§27.9 line 255 gives it. This batch extracts the apiKey-mode WARNING into
+`CheckPlaygroundAPIKeyMode` and registers it in `run.go` as its own
+`playground.apiKeyMode` CheckResult (gated on the full
+`enabled && apiKey && !devMode && !acknowledged` conjunction), so the
+operator-visible preflight report now carries the exact row name. The
+warning is emitted exactly once (removed from `CheckPlaygroundConfig`).
+Closed by commit COMMIT_27_9. Tests: 5 tier-1 (warning fires, ack
+suppresses, dev-mode escape, disabled-gate silence, config-no-longer-emits).
 
 ### - [x] F-27.9.3 — 1 — `playground.acknowledgeApiKeyMode` Helm value not declared in `values.yaml` [Medium] — CLOSED
 
