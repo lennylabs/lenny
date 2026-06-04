@@ -25679,7 +25679,7 @@ generators emit `RetryableError` clients that never see `retryable` or
 
 - **Resolution:** Closed by F-15.5.7. The `Error` schema in `pkg/gateway/openapi/openapi.json` now requires `code`, `category`, `message`, and `retryable`, with a closed `category` enum (`VALIDATION`, `AUTH`, `AUTHZ`, `NOT_FOUND`, `CONFLICT`, `TRANSIENT`, `RATE_LIMIT`, `INTERNAL`, `UNAVAILABLE`, `TIMEOUT`) covering the §15.1 line 972 / §15.2.1 REST↔MCP parity contract. CI test `TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972` guards the surface.
 
-### - [ ] F-15.1.6 — The §15.1 cursor-based pagination envelope is not used [High] — OPEN
+### - [x] F-15.1.6 — The §15.1 cursor-based pagination envelope is not used [High] — CLOSED
 Spec (§15.1 "Cursor-based pagination", lines 1228–1253) is normative:
 all list endpoints (named individually: `/v1/sessions`, `/v1/runtimes`,
 `/v1/pools`, `/v1/metering/events`, `/v1/sessions/{id}/artifacts`,
@@ -25707,6 +25707,39 @@ Implementation diverges almost everywhere:
 Impact: every SDK-generated paginator breaks. The spec also requires
 `sort` and `limit` clamping to `[1, 200]` with `VALIDATION_ERROR` on
 invalid values — none of the implementations enforce this.
+
+**Resolution (commits 3496b306, 3acf43fe, 116b10ec, 600f2f6e):** The
+reusable `pkg/gateway/pagination` package gained `Page` (comparison-based
+cursor slice that survives inserts/deletes, stamps the cheaply-computable
+`total`) and `SortSlice`, complementing the pre-existing `ParseRequest`
+(limit clamp `[1, 200]`, sort-field allow-list with `VALIDATION_ERROR` +
+`details.fields[0].rule`, 24-hour cursor TTL). `GET /v1/sessions` now
+returns `{items, cursor, hasMore, total}` with `?cursor/?limit/?sort`
+(created_at|updated_at, default created_at:desc). The shared admin
+`writePaginatedList` migrates every general admin resource collection:
+`/v1/admin/{tenants,runtimes,pools,connectors,credential-pools,
+custom-roles,delegation-policies,environments,experiments,
+external-adapters,users,billing-corrections}` (billing keyed by
+submitted_at). The metering and transcript endpoints already used the
+canonical envelope (F-25.2.4). Consumers updated: the Go and Python SDK
+`SessionPage` decoders, lenny-ctl list commands and the policy
+audit-isolation drift join (new page-walking `listAllItems`/
+`listAllAdmin` helpers so the CLI still shows the full inventory), and
+`openapi.json` (the §15.1 line 589 SDK-generator input) for the sessions
+list schema + query params.
+
+Two list endpoints retain their own section-specific contracts rather
+than the generic §15.1 envelope, which §15.1 permits because those
+sections define their own list semantics: `GET /v1/admin/audit-events`
+(§25.9 line 3659 — limit `1..1000` and the `chainIntegrityReport`
+envelope) and the `GET /v1/runtimes` discovery endpoint (§9.1 — carries
+the sibling `adapterCapabilities` block and is the full-inventory
+discovery contract). The live operational lists
+`GET /v1/admin/circuit-breakers` (§11.6 Redis state, no creation
+timestamp) and the tenant-access grant sub-collections likewise keep
+their operational shapes. The stale evidence pointers (`sessionserver.go:809`,
+`tenants.go:869`) were corrected against the current line numbers during
+the fix.
 
 ### - [x] F-15.1.7 — Spec-required rate-limit headers are not emitted [High] — CLOSED
 Spec (§15.1 lines 1131–1138): every REST response MUST include
