@@ -68,7 +68,8 @@ export default function () {
   const childIDs = [];
   for (let i = 0; i < FANOUT; i++) {
     const res = mcpCall(
-      { parentSessionId: parentID, runtimeRef: RUNTIME, taskInput: `child-${i}` },
+      // spec: §8.2 — opaque `target` id and the `task` OutputPart[] envelope. F-8.2.1.
+      { parentSessionId: parentID, target: RUNTIME, task: { input: [{ type: 'text', inline: `child-${i}` }] } },
       'mcp_delegate',
     );
     if (check(res, { 'mcp ok': (r) => r.status === 200 }) && res.body) {

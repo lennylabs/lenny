@@ -122,8 +122,9 @@ func (c mcpClient) runningSession() string {
 // keys on the (runtime, pool) tuple — does not reject the chain.
 func (c mcpClient) delegateChild(parentID, runtimeRef string) string {
 	c.t.Helper()
+	// spec: §8.2 — the opaque `target` id replaces `runtimeRef`. F-8.2.1.
 	rpc := c.callTool("lenny/delegate_task",
-		`{"parentSessionId":"`+parentID+`","runtimeRef":"`+runtimeRef+`"}`)
+		`{"parentSessionId":"`+parentID+`","target":"`+runtimeRef+`"}`)
 	text, isErr := toolResultText(c.t, rpc)
 	if isErr {
 		c.t.Fatalf("lenny/delegate_task failed: %s", text)

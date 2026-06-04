@@ -15,7 +15,7 @@ func TestDelegateTaskRejectsDenyApprovalMode_spec_8_4_521(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, nil)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work","approvalMode":"deny"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]},"approvalMode":"deny"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("approvalMode=deny must be a tool error: %+v", resp)
@@ -37,7 +37,7 @@ func TestDelegateTaskRejectsUnknownApprovalMode_spec_8_4(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, nil)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","approvalMode":"ALLOW"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","approvalMode":"ALLOW"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("invalid approvalMode must be a tool error: %+v", resp)
@@ -66,7 +66,7 @@ func TestDelegateTaskAcceptsApprovalAliasedToPolicy_spec_8_4_520(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, nil)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work","approvalMode":"approval"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]},"approvalMode":"approval"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		t.Fatalf("approvalMode=approval must be admitted (v1 alias to policy): %+v", resp)
@@ -82,7 +82,7 @@ func TestDelegateTaskAdmitsWithoutApprovalMode_spec_8_4(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, nil)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		t.Fatalf("omitted approvalMode must default to policy: %+v", resp)

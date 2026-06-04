@@ -60,7 +60,7 @@ func TestDelegateTaskLeaseSliceOverBudget_spec_8_2(t *testing.T) {
 	})
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","leaseSlice":{"maxTokenBudget":5000}}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","leaseSlice":{"maxTokenBudget":5000}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("over-budget leaseSlice must be a tool error: %+v", resp)
@@ -82,7 +82,7 @@ func TestDelegateTaskLeaseSliceWithinBudget_spec_8_2(t *testing.T) {
 	})
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","leaseSlice":{"maxTokenBudget":400,"maxChildrenTotal":5}}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","leaseSlice":{"maxTokenBudget":400,"maxChildrenTotal":5}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		t.Fatalf("within-budget leaseSlice must be admitted: %+v", resp)

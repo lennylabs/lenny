@@ -73,7 +73,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 
 	// research-agent is outside the caller's environment scope — reject.
 	resp := callAs(t, srv.Handler(), caller, "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"research-agent","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"research-agent","poolRef":"pool-b"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("delegation to an out-of-scope runtime must be a tool error: %+v", resp)
@@ -92,7 +92,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	// sec-agent is within the caller's environment scope — the
 	// delegation proceeds.
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"sec-agent","poolRef":"pool-b"}`))
+		`{"parentSessionId":"sess_parent","target":"sec-agent","poolRef":"pool-b"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("delegation to an in-scope runtime should proceed: %q", text)
 	}
@@ -161,7 +161,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	// team-a <-> team-b declaration makes it reachable cross-environment.
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`))
+		`{"parentSessionId":"sess_parent","target":"shared-tool","poolRef":"pool-b"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("a cross-environment-reachable delegation should proceed: %q", text)
 	}
@@ -171,7 +171,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	// tagged with that environment.
 	outsider := authmw.Principal{Subject: "mallory", TenantID: "acme", Groups: []string{"outsiders"}}
 	resp := callAs(t, srv.Handler(), outsider, "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"shared-tool","poolRef":"pool-b"}`)
 	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
 		t.Errorf("a non-member must not borrow the parent environment's cross-environment reach: %+v", resp)
 	}
@@ -208,7 +208,7 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 		CreatedAt:  now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"fs-mcp","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"fs-mcp","poolRef":"pool-b"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("delegation to a type:mcp runtime must be a tool error: %+v", resp)
@@ -275,7 +275,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	// resolved child pool profile, not the inherited parent profile, is
 	// what the delegation service evaluates.
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"weak-pool"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"weak-pool"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("delegation to a weaker-isolation pool must be rejected: %+v", resp)
@@ -321,7 +321,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	// A pool at least as restrictive as the parent is admitted, and a
 	// successful delegation emits no isolation-violation event.
 	text := resultText(t, call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"strong-pool"}`))
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"strong-pool"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("delegation to a stronger-isolation pool should proceed: %q", text)
 	}

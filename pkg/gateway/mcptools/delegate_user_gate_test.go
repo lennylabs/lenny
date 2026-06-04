@@ -64,7 +64,7 @@ func TestDelegateTaskRejectsDisabledOwner_spec_11_4(t *testing.T) {
 	srv, store := newDelegateMCPWithUsers(t, users)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a disabled owner must block delegation: %+v", resp)
@@ -92,7 +92,7 @@ func TestDelegateTaskRejectsRevokedOwner_spec_11_4(t *testing.T) {
 	srv, store := newDelegateMCPWithUsers(t, users)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a revoked owner must block delegation: %+v", resp)
@@ -113,7 +113,7 @@ func TestDelegateTaskAdmitsActiveOwner_spec_11_4(t *testing.T) {
 	srv, store := newDelegateMCPWithUsers(t, users)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		t.Fatalf("an active owner must admit delegation: %+v", resp)
@@ -130,7 +130,7 @@ func TestDelegateTaskAdmitsUnregisteredOwner_spec_11_4(t *testing.T) {
 	srv, store := newDelegateMCPWithUsers(t, userstore.NewMemory())
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		t.Fatalf("an unregistered owner must be admitted: %+v", resp)

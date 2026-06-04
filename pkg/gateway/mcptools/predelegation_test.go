@@ -83,7 +83,7 @@ func TestDelegateTaskDeliversTaskInput(t *testing.T) {
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, nil)
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"summarize the logs"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"summarize the logs"}]}}`)
 	if got := resultText(t, resp); got == "" {
 		t.Fatal("delegate_task returned no result")
 	}
@@ -96,7 +96,7 @@ func TestDelegateTaskNoTaskInputSkipsDelivery(t *testing.T) {
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, nil)
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo"}`)
+		`{"parentSessionId":"sess_parent","target":"echo"}`)
 	resultText(t, resp) // must not error
 	if got := rec.received("sess_child"); len(got) != 0 {
 		t.Errorf("child received %v with no taskInput, want nothing", got)
@@ -114,7 +114,7 @@ func TestDelegateTaskPreDelegationRejects(t *testing.T) {
 	srv, store := newMCPForDelegate(t, rec, chain)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"do something bad"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"do something bad"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a PreDelegation REJECT should be a tool error: %+v", resp)
@@ -142,7 +142,7 @@ func TestDelegateTaskPreDelegationRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, chain)
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"do something bad"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"do something bad"}]}}`)
 	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
 		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
 	}
@@ -161,7 +161,7 @@ func TestDelegateTaskPreRouteRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386(t *t
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, chain)
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"work"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"work"}]}}`)
 	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
 		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
 	}
@@ -178,7 +178,7 @@ func TestDelegateTaskPreDelegationModifies(t *testing.T) {
 	srv, _ := newMCPForDelegate(t, rec, chain)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"original task"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"original task"}]}}`)
 	resultText(t, resp) // must not error
 	// §4: a PreDelegation MODIFY rewrites the input the child receives.
 	if got := rec.received("sess_child"); len(got) != 1 || got[0] != "scrubbed task" {
@@ -229,7 +229,7 @@ func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 	}
 
 	call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"do something bad"}`)
+		`{"parentSessionId":"sess_parent","target":"echo","task":{"input":[{"type":"text","inline":"do something bad"}]}}`)
 
 	if app.payload == nil {
 		t.Fatal("no interceptor.rejected audit row written on PreDelegation REJECT")

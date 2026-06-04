@@ -29,7 +29,7 @@ func TestDelegateTaskInputTooLargeSurfacesCanonicalCode_spec_8_3_157(t *testing.
 	srv, store := newDelegateMCPWithChain(t, chain)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"`+strings.Repeat("x", 64)+`"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"`+strings.Repeat("x", 64)+`"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("an over-cap taskInput must be a tool error: %+v", resp)
@@ -54,7 +54,7 @@ func TestDelegateTaskInputWithinCapAdmitted_spec_8_3_157(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, chain)
 
 	text := resultText(t, call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"short input"}`))
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"short input"}]}}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Fatalf("a within-cap delegation should proceed: %q", text)
 	}

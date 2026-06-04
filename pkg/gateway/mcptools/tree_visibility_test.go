@@ -148,7 +148,7 @@ func TestMCPDelegateTreeVisibilityWeakening_spec_8_3_317(t *testing.T) {
 	vtSeedParent(t, store, session.VisibilityParentAndSelf)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b","treeVisibility":"full"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b","treeVisibility":"full"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "TREE_VISIBILITY_WEAKENING" {
@@ -174,7 +174,7 @@ func TestMCPDelegateTreeVisibilityNarrowingAccepted_spec_8_3_316(t *testing.T) {
 	vtSeedParent(t, store, session.VisibilityFull)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b","treeVisibility":"self-only"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b","treeVisibility":"self-only"}`)
 	_ = resultText(t, resp) // asserts no error
 	child, err := store.Get(context.Background(), "acme", "sess_child")
 	if err != nil {
@@ -192,7 +192,7 @@ func TestMCPDelegateTreeVisibilityInvalid_spec_8_5_540(t *testing.T) {
 	vtSeedParent(t, store, session.VisibilityFull)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b","treeVisibility":"everything"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b","treeVisibility":"everything"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "INVALID_LEASE_FIELD" {

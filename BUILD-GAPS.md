@@ -7551,7 +7551,7 @@ Auditor inputs: `pkg/delegation/{cycle,lease,tracing,recovery}/`, `pkg/gateway/d
 
 Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Severity is calibrated against MUST/SHOULD wording in §8.2 and the §8.3 contract that §8.2 leans on.
 
-### - [ ] F-8.2.1 — `lenny/delegate_task` MCP tool surface does not match the §8.2 contract [High] — OPEN
+### - [x] F-8.2.1 — `lenny/delegate_task` MCP tool surface does not match the §8.2 contract [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-8.5.3, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
@@ -7581,6 +7581,8 @@ Gaps:
 - The MCP tool also accepts a `maxDepth` parameter from the caller, which is not part of the §8.2 normative signature; the spec says `maxDepth` is resolved at lease issuance via the §8.2.bis precedence chain, not supplied per-call by the runtime (§8.2 lines 81-89).
 
 Consequence: a runtime written against the §8.2 contract cannot invoke this tool, and the gateway cannot accept a normatively-shaped delegation. The field-naming leak undermines the runtime-agnosticism the §8.2 design rests on.
+
+**Resolution (this batch):** The `lenny/delegate_task` tool surface now matches the §8.2 line 12 signature `(target, task, lease_slice?)`. The opaque `runtimeRef` was renamed to `target`, resolved server-side by the new `resolveDelegationTarget` (`pkg/gateway/mcptools/delegate_target.go`): it maps the opaque id to the concrete runtime reference and classifies the kind (standalone / derived / mcp) internally for the `type: mcp` → `target_not_an_agent` gate and audit, while the runtime never learns the kind. Resolution checks the raw registry entry for the derived marker (since `runtimestore.Resolve` merges and clears `BaseRuntime`) and the merged entry for the effective type; an unresolved target passes through so the §10.6 scope gate still rejects it with `TARGET_NOT_IN_SCOPE`. The flat `taskInput: string` is replaced by the `task: TaskSpec` envelope carrying `input: OutputPart[]` (flattened to its text projection via `flattenTaskInput` for interceptor evaluation and child delivery) and `workspaceFiles.export` (the §8.7 export specs, moved off the prior top-level `fileExport`). The per-call `maxDepth` is removed from the schema and no longer forwarded — the effective ceiling resolves at lease issuance via the §8.2.bis precedence chain (F-8.2.6). All error/audit payloads use `target`. The `leaseSlice` (F-8.2.2) and export materialization (F-8.7.1) surfaces are unchanged. Closes the duplicate **F-8.5.3** (already CLOSED) residual `target`/envelope third. Tests: tier-1 `flattenTaskInput` (6 cases) + `resolveDelegationTarget` kind classification (standalone/derived/mcp/unresolved/no-registry); tier-2 schema-contract guard (advertises `target`+`task`, drops `runtimeRef`/`taskInput`/`maxDepth`), missing-target → `VALIDATION_ERROR`, multipart `OutputPart[]` flatten+delivery; updated 10 mcptools test files + 3 integration/load call sites.
 
 ### - [x] F-8.2.2 — `LeaseSlice` admission and parent-budget validation is not wired into `lenny/delegate_task` [High] — CLOSED
 
@@ -21740,7 +21742,7 @@ and the gateway restart, with the ledger-stale block clearable via the
 existing `ConfirmLegalHoldLedger` watermark. The audit-store row erasure
 itself (§12.8 audit participation) is F-12.8.4.
 
-### - [ ] F-12.8.4 — Audit-log GDPR erasure (DeleteByUser/DeleteByTenant, gdpr.* exemption, chain re-sealing) is unimplemented [High] — OPEN
+### - [ ] F-12.8.4 — Audit-log GDPR erasure (DeleteByUser/DeleteByTenant, gdpr.* exemption, chain re-sealing) is unimplemented [High] — DEFERRED
 
 **Spec:** §12.8 lines 770–775, 809, 837–840 require (a) the EventStore (audit) participates in `DeleteByUser` and `DeleteByTenant`, (b) rows with `event_type LIKE 'gdpr.%'` are exempt from erasure and retained under `audit.gdprRetentionDays` (default 2555 days), (c) rows with `ocsf_translation_state = 'dead_lettered'` are not deleted but PII-redacted in place, and (d) the chain is re-sealed at the redaction boundary with `chainIntegrity = redacted_gdpr` plus a signed `RedactionReceipt` in `audit_redaction_receipts`.
 
@@ -21757,6 +21759,8 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 - `pkg/audit/chain.go:63-76` — minimal `RedactionReceipt` model.
 
 **Impact:** A GDPR erasure cannot remove the user's audit rows; the audit chain cannot be re-sealed safely; downstream verifiers cannot distinguish authorized redaction from tamper. `audit.gdprRetentionDays` has no enforcement point.
+
+**Deferred (this batch) — confirmed duplicate of the already-DEFERRED F-12.2.5; blocked on the same spec reconciliation (rule B).** Re-verification: the §12.1 compile-time half and `DeleteByTenant` (Phase-4 chain DELETE under `SET LOCAL lenny.erasure_mode='true'`) already exist on `auditstore.EventStore`; `gdprRetentionDays` *does* have an enforcement point (`auditstore.PruneRetention` holds `gdpr.*` rows under the separate `GDPRCutoff` floor — that part of the evidence is stale); and `pkg/audit/chain.go` already carries the in-memory `Redact` / `RedactionReceipt` / `ChainRedactedGDPR` verifier with missing-receipt → `broken`. The genuine residual is the §12.8 step-13/step-14 user-scoped audit erasure, which is blocked exactly as F-12.2.5 records: (1) the authoritative `audit_log` column list has no `user_id` column, yet §12.8 step 14 redacts "every `audit_log` row whose `user_id` column equals the target user" — the two spec passages contradict on schema; (2) step 13 deletes mid-chain rows from the §11.7 per-tenant hash chain, but the spec defines chain re-sealing only for the step-14 in-place redaction, not for step-13 deletion, so a literal step-13 implementation breaks `Verify`. Resolving (1) and (2) requires a `spec/` change to reconcile the `user_id` reference and define step-13 chain semantics; per rule B the spec is not modified. The well-specified step-14 dead-letter redaction + `audit_redaction_receipts` table + KMS-signed receipt is implementable but cannot fully CLOSE this finding while step-13 stays blocked, so it is deferred with F-12.2.5 rather than partially built.
 
 ### - [x] F-12.8.5 — Postgres-backed billing pseudonymization, `erasure_salt` KMS envelope, and rotate-erasure-salt admin endpoint are unimplemented [High] — CLOSED
 

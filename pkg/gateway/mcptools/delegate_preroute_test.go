@@ -79,7 +79,7 @@ func TestDelegateTaskPreRouteRejectBlocksChild(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, chain)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a PreRoute REJECT should be a tool error: %+v", resp)
@@ -103,7 +103,7 @@ func TestDelegateTaskPreRouteModifyRewritesInput(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, chain)
 
 	text := resultText(t, call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`))
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Fatalf("delegation should proceed after a MODIFY: %q", text)
 	}
@@ -126,7 +126,7 @@ func TestDelegateTaskPreRouteModifyImmutableTenantRejected(t *testing.T) {
 	srv, store := newDelegateMCPWithChain(t, chain)
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"pool-b","taskInput":"do work"}`)
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a PreRoute MODIFY altering tenant_id should be a tool error: %+v", resp)

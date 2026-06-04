@@ -2211,7 +2211,16 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
+			// spec: §8.2 lines 12-34 — the normative signature is
+			// `lenny/delegate_task(target: string, task: TaskSpec,
+			// lease_slice?: LeaseSlice)`. `target` is the opaque target id
+			// (the runtime never learns whether it resolves to a standalone
+			// runtime, a derived runtime, or an external registered agent).
+			// `task.input` is an OutputPart[] envelope and
+			// `task.workspaceFiles.export` carries the §8.7 export specs. No
+			// per-call `maxDepth`: the effective ceiling is resolved at lease
+			// issuance via the §8.2.bis precedence chain (F-8.2.6).
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 OutputPart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -2220,10 +2229,25 @@ func Register(srv *mcp.Server, deps Deps) {
 			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				ParentSessionID string `json:"parentSessionId"`
-				RuntimeRef      string `json:"runtimeRef"`
-				PoolRef         string `json:"poolRef"`
-				MaxDepth        int    `json:"maxDepth"`
-				TaskInput       string `json:"taskInput"`
+				// Target is the §8.2 opaque delegation target id. The
+				// runtime never learns whether it resolves to a standalone
+				// runtime, a derived runtime, or an external registered
+				// agent; resolveDelegationTarget performs the resolution
+				// server-side. F-8.2.1.
+				Target  string `json:"target"`
+				PoolRef string `json:"poolRef"`
+				// Task is the §8.2 TaskSpec delegation subset: the input
+				// OutputPart[] and the §8.7 workspaceFiles.export specs.
+				// F-8.2.1.
+				Task struct {
+					Input          []task.OutputPart `json:"input"`
+					WorkspaceFiles struct {
+						Export []struct {
+							Source     string `json:"source"`
+							DestPrefix string `json:"destPrefix"`
+						} `json:"export"`
+					} `json:"workspaceFiles"`
+				} `json:"task"`
 				// ApprovalMode is the §8.4 lease enum forwarded
 				// verbatim onto the delegation Request; the service
 				// validates the closed enum and short-circuits on
@@ -2240,17 +2264,9 @@ func Register(srv *mcp.Server, deps Deps) {
 				// + ignored here. spec: §11.5 line 277; F-11.5.1,
 				// F-11.5.6.
 				IdempotencyKey string `json:"idempotencyKey,omitempty"`
-				// FileExport is the §8.7 lease fileExport entry list. Each
-				// entry's source glob is resolved in the parent's
-				// /workspace/current and rebased under destPrefix in the
-				// child. Empty skips the export phase. F-8.7.1 / F-8.2.1 /
-				// F-8.5.3.
-				FileExport []struct {
-					Source     string `json:"source"`
-					DestPrefix string `json:"destPrefix"`
-				} `json:"fileExport,omitempty"`
 				// FileExportLimits is the optional §8.3 line 264 ceiling on
-				// the fileExport set; omit for the spec defaults. F-8.7.1.
+				// the task.workspaceFiles.export set; omit for the spec
+				// defaults. F-8.7.1.
 				FileExportLimits *struct {
 					MaxFiles     int   `json:"maxFiles"`
 					MaxTotalSize int64 `json:"maxTotalSize"`
@@ -2300,26 +2316,35 @@ func Register(srv *mcp.Server, deps Deps) {
 					fmt.Sprintf("treeVisibility %q is not a recognised §8.5 value (full, parent-and-self, self-only)", in.TreeVisibility),
 					map[string]any{"field": "treeVisibility", "value": in.TreeVisibility})
 			}
+			// spec: §8.2 lines 12-23 — `target` is the opaque delegation
+			// target id. The gateway resolves it server-side into a
+			// concrete runtime reference and an internal kind; the runtime
+			// never learns whether the target was a standalone runtime, a
+			// derived runtime, or an external registered agent. F-8.2.1.
+			if in.Target == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"target is required",
+					map[string]any{"field": "target"})
+			}
+			targetRef, targetKind := resolveDelegationTarget(ctx, deps, in.Target)
 			// spec: §8.2 line 50 — `lenny/delegate_task` rejects
 			// `type: mcp` targets with `target_not_an_agent`. The check
 			// runs before the §10.6 scope filter so a caller cannot
 			// reach an MCP-only runtime even if it happens to share
 			// the caller's environment.
-			if deps.Runtimes != nil && in.RuntimeRef != "" {
-				if rt, err := runtimestore.Resolve(ctx, deps.Runtimes, in.RuntimeRef); err == nil && rt.Type == runtimestore.TypeMCP {
-					// spec: §15.2.1 — surface the canonical lenny code via
-					// *mcp.ToolError so REST and MCP envelopes share the
-					// same (category, retryable) pair. F-8.5.10.
-					return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
-						fmt.Sprintf("target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)", in.RuntimeRef),
-						map[string]any{"runtimeRef": in.RuntimeRef})
-				}
+			if targetKind == targetKindMCP {
+				// spec: §15.2.1 — surface the canonical lenny code via
+				// *mcp.ToolError so REST and MCP envelopes share the
+				// same (category, retryable) pair. F-8.5.10.
+				return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
+					fmt.Sprintf("target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)", in.Target),
+					map[string]any{"target": in.Target})
 			}
 			// §10.6: the delegation target must be within the caller's
 			// environment scope — the same transparent-filter boundary
-			// lenny/discover_agents applies, enforced so a hard-coded
-			// runtimeRef cannot reach an out-of-scope runtime.
-			authorized, err := runtimeAuthorizedForCaller(ctx, deps, in.RuntimeRef)
+			// lenny/discover_agents applies, enforced so the resolved
+			// target cannot reach an out-of-scope runtime.
+			authorized, err := runtimeAuthorizedForCaller(ctx, deps, targetRef)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -2329,7 +2354,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				// may still be reachable through a bilateral
 				// cross-environment-delegation declaration from the parent
 				// session's environment.
-				reachable, err := crossEnvReachable(ctx, deps, tenant, in.ParentSessionID, in.RuntimeRef)
+				reachable, err := crossEnvReachable(ctx, deps, tenant, in.ParentSessionID, targetRef)
 				if err != nil {
 					return mcp.ToolResult{}, err
 				}
@@ -2343,16 +2368,18 @@ func Register(srv *mcp.Server, deps Deps) {
 				// *mcp.ToolError so REST and MCP envelopes share the same
 				// (category, retryable) pair. F-8.5.10.
 				return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_IN_SCOPE",
-					fmt.Sprintf("target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)", in.RuntimeRef),
-					map[string]any{"runtimeRef": in.RuntimeRef})
+					fmt.Sprintf("target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)", in.Target),
+					map[string]any{"target": in.Target})
 			}
 			// §4 PreDelegation: run the interceptor chain over the
 			// TaskSpec.input before the gateway processes the delegation.
 			// A REJECT blocks the delegation; a MODIFY rewrites the input
 			// the child receives. The chain payload is the task input
-			// only — delegation metadata (runtimeRef, poolRef, maxDepth)
-			// is structurally immutable because it is not in the payload.
-			taskInput := in.TaskInput
+			// only — delegation metadata (target, poolRef) is structurally
+			// immutable because it is not in the payload. The §8.2
+			// OutputPart[] input is flattened to its text projection for
+			// the interceptor content and child delivery. F-8.2.1.
+			taskInput := flattenTaskInput(in.Task.Input)
 			if taskInput != "" && deps.Interceptors != nil {
 				res := deps.Interceptors.Run(ctx, interceptor.Request{
 					Phase:     interceptor.PhasePreDelegation,
@@ -2395,7 +2422,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			if deps.Interceptors != nil && deps.Interceptors.Len(interceptor.PhasePreRoute) > 0 {
 				spec := childRouteSpec{
 					TenantID:         tenant,
-					RequestedRuntime: in.RuntimeRef,
+					RequestedRuntime: targetRef,
 					Input:            taskInput,
 				}
 				payload, merr := json.Marshal(spec)
@@ -2427,11 +2454,11 @@ func Register(srv *mcp.Server, deps Deps) {
 					taskInput = modified.Input
 				}
 			}
-			// §8.7: translate the lease fileExport entries into the
-			// delegation Request. The Service runs the export materializer
-			// when the slice is non-empty. F-8.7.1.
+			// §8.7: translate the §8.2 task.workspaceFiles.export entries
+			// into the delegation Request. The Service runs the export
+			// materializer when the slice is non-empty. F-8.7.1 / F-8.2.1.
 			var fileExport []export.Spec
-			for _, e := range in.FileExport {
+			for _, e := range in.Task.WorkspaceFiles.Export {
 				fileExport = append(fileExport, export.Spec{Source: e.Source, DestPrefix: e.DestPrefix})
 			}
 			var fileExportLimits fileexport.FileExportLimits
@@ -2479,10 +2506,14 @@ func Register(srv *mcp.Server, deps Deps) {
 				}
 			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
-				ParentSessionID:  in.ParentSessionID,
-				RuntimeRef:       in.RuntimeRef,
+				ParentSessionID: in.ParentSessionID,
+				// §8.2: the opaque target is resolved to a concrete runtime
+				// reference server-side. MaxDepth is intentionally unset —
+				// the effective ceiling is resolved at lease issuance via
+				// the §8.2.bis precedence chain (F-8.2.6), not supplied
+				// per-call by the runtime. F-8.2.1.
+				RuntimeRef:       targetRef,
 				PoolRef:          in.PoolRef,
-				MaxDepth:         in.MaxDepth,
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
 				LeaseSlice:       leaseSlice,
@@ -2524,7 +2555,7 @@ func Register(srv *mcp.Server, deps Deps) {
 						}
 						deps.Audit.EmitDelegationEvent(ctx, "delegation.isolation_violation", map[string]any{
 							"parentSessionId":     in.ParentSessionID,
-							"runtimeRef":          in.RuntimeRef,
+							"runtimeRef":          targetRef,
 							"poolRef":             in.PoolRef,
 							"parent_isolation":    string(isoErr.ParentProfile),
 							"target_isolation":    string(isoErr.ChildProfile),
@@ -2632,7 +2663,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				// canonical code so REST and MCP envelopes match.
 				if errors.Is(err, delegation.ErrTargetNotAgent) {
 					return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
-						err.Error(), map[string]any{"runtimeRef": in.RuntimeRef})
+						err.Error(), map[string]any{"target": in.Target})
 				}
 				// spec: §8.3 line 181 — the resolved DelegationPolicy
 				// is inside the cluster-scoped scanExportedFiles

@@ -151,7 +151,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 	}
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"research","poolRef":"pool-b","taskInput":"original-input"}`)
+		`{"parentSessionId":"sess_parent","target":"research","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"original-input"}]}}`)
 	text := resultText(t, resp)
 
 	// Step 5/6 — TaskHandle envelope decodes against the typed shape.
@@ -204,7 +204,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 	rec.blocks = rec.blocks[:0]
 	rec.depths = rec.depths[:0]
 	cycleResp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"claude","poolRef":"pool-a"}`)
+		`{"parentSessionId":"sess_parent","target":"claude","poolRef":"pool-a"}`)
 	cycleResult, _ := cycleResp["result"].(map[string]any)
 	if cycleResult["isError"] != true {
 		t.Errorf("self-recursive hop must be rejected: %+v", cycleResp)

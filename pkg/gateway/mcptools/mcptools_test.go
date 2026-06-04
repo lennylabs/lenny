@@ -701,7 +701,7 @@ func TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t
 		Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:abc",
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent_810","runtimeRef":"fs-mcp","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent_810","target":"fs-mcp","poolRef":"pool-b"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "TARGET_NOT_AN_AGENT" {
@@ -854,7 +854,7 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 	})
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent_cd","runtimeRef":"gemini","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent_cd","target":"gemini","poolRef":"pool-b"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "INTERCEPTOR_WEAKENING_COOLDOWN" {
@@ -1024,7 +1024,7 @@ func TestDelegateTaskTool(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("delegate result: %q", text)
@@ -1049,7 +1049,7 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	})
 	// Delegating back to the parent's own (runtime, pool) is a cycle.
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"claude","poolRef":"pool-a"}`)
+		`{"parentSessionId":"sess_parent","target":"claude","poolRef":"pool-a"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("cycle should be a tool error: %+v", resp)
@@ -1070,7 +1070,7 @@ func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b"}`)
 	text := resultText(t, resp)
 	var handle struct {
 		ChildSessionID string `json:"childSessionId"`
@@ -1109,7 +1109,7 @@ func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
-		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
+		`{"parentSessionId":"sess_parent","target":"gemini","poolRef":"pool-b"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("userless parent must be a tool error: %+v", resp)
