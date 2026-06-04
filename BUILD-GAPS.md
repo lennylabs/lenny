@@ -11715,7 +11715,7 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go:165-210`
 
-**Resolution:** Verify-closed; this is a per-resource manifestation of the platform-wide §15.1 ETag/If-Match gap tracked under F-15.1.2 (still OPEN High — "every admin PUT" must read `If-Match`, reject `412 ETAG_MISMATCH` / `428 ETAG_REQUIRED`, and stores need a `version` column). The connector handler will pick up If-Match enforcement when that work lands platform-wide; a connector-only fix would duplicate the eventual cross-cutting solution.
+**Resolution:** Verify-closed as a per-resource manifestation of the platform-wide §15.1 ETag/If-Match gap tracked under F-15.1.2. The connector handler enforcement has since landed (BUILD-GAPS iter 186): `handleUpdateConnector` reads `If-Match`, returns `428 ETAG_REQUIRED` / `412 ETAG_MISMATCH` (with `details.currentEtag`), GET/list carry the `connectors.version` ETag, and the soft-delete honours `If-Match` when present. See the F-15.1.2 progress note.
 
 ### - [x] F-9.3.14 — Connector OAuth endpoints absent from the OpenAPI spec [Low] — CLOSED
 
@@ -25559,21 +25559,44 @@ stays monotonic. `adminETagGetPath` maps both PUT paths (tenant-scoped
 under `acme`) so `doAdminReq` keeps the package green; the one direct user
 PUT test and the tier4 environment PUT now send `If-Match`.
 
-The remaining admin PUT handlers (tenants, runtimes, connectors,
-external-adapters, credential-pools, rbac-config,
+**Partial progress (2026-06-04, commit `194d69f7`):** Three more
+resources now carry the full contract end to end — **connectors**,
+**external-adapters**, and **credential-pools**. Each store gained the
+integer `version` (init 1, `+1` per Update **and** per SoftDelete so a
+soft-delete advances the tag); migration `0140` adds the column to
+`connectors` and `credential_pools` (external-adapters is Memory-only, no
+table). GET-single sets the `ETag` header, list responses carry a
+per-item `etag`, every main-resource `PUT` runs `enforceIfMatch` before
+the dry-run/probe branch (so `dryRun + If-Match` pre-validates and a
+missing If-Match is 428 either way), success returns the bumped tag, and
+the `DELETE`/`SoftDelete` handlers honour `enforceIfMatchIfPresent`. The
+§24.5 per-credential sub-resource PUTs (`.../credentials/{id}`) stay
+outside the §15.1 If-Match contract (the `etagResourceName` test helper
+skips any path with a further segment), matching the warm-count
+exclusion. This is the first batch to wire the **`lenny-ctl` read-modify-
+write path**: `ctl.Client` gained `ETag` / `DoIfMatch` / `PutIfMatch`
+(GET the current tag, then PUT with `If-Match`), used by
+`external-adapters update` and `pools update` (the latter fixing a latent
+428 left when F-24.4.3 added pool enforcement without updating the CLI).
+The `connReq`/`eaReq` admin-test helpers now auto-inject If-Match like
+`doAdminReq`, and `adminETagGetPath` maps the three new resources. This
+lands the enforcement the already-closed per-resource manifestation
+**F-9.3.13** (connectors) anticipated.
+
+The remaining admin PUT handlers (tenants, runtimes, rbac-config,
 elicitation-content-integrity, warm-count) and their GET ETag exposure
-still need the same treatment, and their non-pool stores still need a
+still need the same treatment, and the non-pool stores still need a
 `version` column. `tenants` (envelope-encrypted ~23-column store) and
-`runtimes` (heavily special-cased PUT handler) are the highest-risk
-remaining resources; `warm-count` has the §25.17 confirm-flag scale
-convention that needs spec reconciliation against §15.1 If-Match;
-`rbac-config` and `elicitation-content-integrity` are singleton configs.
-The volume (the SDK, `lenny-ctl`, tier3/tier4, and tier9 PUT callers that
-must start sending `If-Match`) keeps the platform-wide rollout a
-multi-batch effort; the established pattern (migrations `0138`/`0139`, the
-five resources above, the `doAdminReq`/`adminETagGetPath` auto-injection)
-is the template for the rest. Per-resource manifestations F-9.3.13
-(connectors) and F-24.4.3 (pools, closed) trace here.
+`runtimes` (heavily special-cased PUT handler, `lenny-ctl runtime`
+callers) are the highest-risk remaining resources; `warm-count` has the
+§25.17 confirm-flag scale convention that needs spec reconciliation
+against §15.1 If-Match; `rbac-config` and `elicitation-content-integrity`
+are tenant sub-resources whose ETag is the tenant's version, so they
+land with the `tenants` batch. The established pattern (migrations
+`0138`/`0139`/`0140`, the eight resources above, the
+`doAdminReq`/`adminETagGetPath` auto-injection, and the `PutIfMatch` CLI
+helper) is the template for the rest. F-24.4.3 (pools, closed) also
+traces here.
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 
