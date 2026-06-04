@@ -1221,6 +1221,39 @@ billing:
   # Tier 1/2. A positive value pins it. The value renders as
   # LENNY_BILLING_REDIS_STREAM_MAX_LEN on the gateway. F-17.8.5.
   redisStreamMaxLen: 0
+  # §11.2.1 lines 132-138 billing-event delivery sinks. The durable
+  # Postgres ledger is always written synchronously; these configure the
+  # downstream delivery surface. Delivery happens asynchronously and only
+  # after the synchronous Postgres write confirms.
+  deliverySink:
+    # Webhook URL: billing events are POSTed as JSON with an HMAC-SHA256
+    # X-Lenny-Signature header, retried with exponential backoff, and
+    # dead-lettered after exhaustion. Empty disables the webhook sink.
+    # Renders LENNY_BILLING_SINK_WEBHOOK_URL on the gateway. F-11.2.14.
+    webhookURL: ""
+    # Name + key of an existing Secret holding the HMAC signing secret
+    # for the webhook sink. Empty omits the signature header. Rendered as
+    # LENNY_BILLING_SINK_WEBHOOK_SECRET via secretKeyRef.
+    webhookSecret:
+      secretName: ""
+      key: "secret"
+    # Message-queue sink (SQS / Google Pub/Sub / Kafka). The fan-out and
+    # the QueueSink live in pkg/gateway/billingsink; a broker
+    # QueuePublisher driver plugs in to enable it. Configure both the
+    # webhook and a queue for the §11.2.1 "Both for redundancy" mode.
+  # §11.2.1 line 175 billing.approverNotificationWebhook: a dual-control
+  # billing correction entering the pending state notifies eligible
+  # approvers by POSTing a signed notification to this URL. Empty leaves
+  # the channel unconfigured (the workflow still records and audits the
+  # pending request). F-11.2.14.
+  approverNotificationWebhook:
+    url: ""
+    # Name + key of an existing Secret holding the HMAC signing secret
+    # for the approver-notification webhook. Rendered as
+    # LENNY_BILLING_APPROVER_WEBHOOK_SECRET via secretKeyRef.
+    secret:
+      secretName: ""
+      key: "secret"
 
 # audit configures the §11.7 / §12.3 audit-ledger integrity controls.
 audit:

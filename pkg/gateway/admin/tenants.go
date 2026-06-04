@@ -182,6 +182,12 @@ type Router struct {
 	billing                 billingstore.Store
 	corrections             correctionstore.Store
 	dualControlThresh       float64
+	// approverNotifier delivers the §11.2.1 dual-control approval
+	// notification to eligible approvers via the configured
+	// billing.approverNotificationWebhook. Nil leaves the notification
+	// step inactive (the workflow still records the pending request).
+	// spec: §11.2.1 line 175. F-11.2.14.
+	approverNotifier ApproverNotifier
 	sessions                sessionstore.Store
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves

@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -13,6 +14,69 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
+
+// ApproverNotifier delivers a §11.2.1 dual-control approval
+// notification (the billing.approverNotificationWebhook channel). The
+// production implementation wraps the §11.2.1 webhook sink so the
+// notification inherits HMAC signing, exponential-backoff retry, and
+// dead-lettering. A nil notifier leaves the channel unconfigured; the
+// dual-control workflow still records and audits the pending request.
+//
+// spec: §11.2.1 line 175. F-11.2.14.
+type ApproverNotifier interface {
+	NotifyApprovers(ctx context.Context, payload []byte) error
+}
+
+// WithApproverNotifier wires the §11.2.1 approver-notification channel.
+func (r *Router) WithApproverNotifier(n ApproverNotifier) *Router {
+	r.approverNotifier = n
+	return r
+}
+
+// approverNotification is the JSON body posted to the
+// billing.approverNotificationWebhook when a correction enters the
+// dual-control pending state. It carries no replacement values that a
+// notification channel does not need; an approver follows the
+// approvalRequestId to the correction-queue API for the full detail.
+type approverNotification struct {
+	Type                 string `json:"type"`
+	ApprovalRequestID    string `json:"approvalRequestId"`
+	TenantID             string `json:"tenantId"`
+	CorrectsSequence     uint64 `json:"correctsSequence"`
+	CorrectionReasonCode string `json:"correctionReasonCode"`
+	SubmittedBy          string `json:"submittedBy"`
+	SubmittedAt          string `json:"submittedAt"`
+}
+
+// notifyApprovers fires the §11.2.1 approver notification for a pending
+// dual-control correction. It is best-effort and runs detached from the
+// request so webhook retry/backoff never blocks the HTTP response; the
+// notifier owns its own dead-letter handling on exhaustion.
+func (r *Router) notifyApprovers(p correctionstore.PendingCorrection) {
+	if r.approverNotifier == nil {
+		return
+	}
+	body, err := json.Marshal(approverNotification{
+		Type:                 "billing.correction_approval_requested",
+		ApprovalRequestID:    p.ID,
+		TenantID:             p.TenantID,
+		CorrectsSequence:     p.CorrectsSequence,
+		CorrectionReasonCode: string(p.ReasonCode),
+		SubmittedBy:          p.SubmittedBy,
+		SubmittedAt:          rfc3339Nano(p.SubmittedAt),
+	})
+	if err != nil {
+		return
+	}
+	go func() {
+		// Detached from the request context, which ends when the 202 is
+		// written; bound the delivery so a stuck webhook cannot leak a
+		// goroutine indefinitely.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_ = r.approverNotifier.NotifyApprovers(ctx, body)
+	}()
+}
 
 // WithBillingCorrections wires the §11.2.1 operator-initiated
 // billing-correction workflow onto the Router. billing is the
@@ -196,6 +260,9 @@ func (r *Router) handleCreateBillingCorrection(w http.ResponseWriter, req *http.
 		"state":                   "pending",
 		"dualControl":             true,
 	})
+	// §11.2.1 line 175: notify eligible approvers via the configured
+	// billing.approverNotificationWebhook (best-effort, detached).
+	r.notifyApprovers(pending)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(correctionPayload(pending))

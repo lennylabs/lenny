@@ -15945,7 +15945,7 @@ Spec §11.2.1 schema: `experiment_id` "Auto-populated from the session's `experi
 
 **Resolution (5a49f9c2):** Added a nil-safe `ExperimentContext.Enrollment()` accessor and stamped `ExperimentID`/`VariantID` from `sess.ExperimentContext` on all three billing emit sites — `recordSessionCreated`, `recordSessionCompleted` (sessionserver), and the watchdog-forced terminal path. Unenrolled sessions carry the empty (nullable) values.
 
-### - [ ] F-11.2.14 — Billing event delivery sinks (webhook, message queue) are unimplemented [Medium] — OPEN
+### - [x] F-11.2.14 — Billing event delivery sinks (webhook, message queue) are unimplemented [Medium] — CLOSED
 
 Spec §11.2.1 "Delivery sinks":
 - Webhook URL: HMAC-SHA256 signed POST, exponential backoff, dead-letter on exhaustion.
@@ -15955,6 +15955,8 @@ Spec §11.2.1 "Delivery sinks":
 The Helm value `billing.sink` (`charts/lenny/values.yaml:301-302`) is a single string and its only documented value is `"postgres"`. Comments at lines 286-296 acknowledge "v1 default writes events synchronously to Postgres … `<future>` v2 external sinks (BigQuery / Athena / Data Lake) ride in once the corresponding publisher lands". Grep across `pkg/` for `webhook`-, `kafka`-, `pubsub`-, `sqs`-style billing publishers returned nothing. The §11.2.1 sinks are wholly absent.
 
 This includes `billing.approverNotificationWebhook` for billing-correction approvals (§11.2.1 dual-control "The gateway notifies eligible approvers via the configured notification channel"). Grep for `approverNotificationWebhook` returned spec and review-finding references only.
+
+**Resolution (this batch):** New `pkg/gateway/billingsink` package implements the §11.2.1 delivery sinks. `WebhookSink` POSTs each event as JSON with the §11.2.1-line-136 HMAC-SHA256 `X-Lenny-Signature` header, retries with exponential backoff, and dead-letters after the attempt budget is exhausted; `QueueSink` publishes to an SQS/Pub-Sub/Kafka topic through an injected `QueuePublisher`; `Publisher` fans an event out to all configured sinks for the §11.2.1-line-138 "Both for redundancy" mode. The `Publishing` store decorator wraps the durable primary so delivery happens only after the synchronous Postgres write confirms (§11.2.1 line 137), asynchronously. The gateway wires the webhook sink from `billing.deliverySink.webhookURL` + a `secretKeyRef` secret (`--billing-sink-webhook-url` / `LENNY_BILLING_SINK_WEBHOOK_SECRET`) and the §11.2.1-line-175 `billing.approverNotificationWebhook` into the dual-control branch of `POST /v1/admin/billing-corrections` via `admin.ApproverNotifier` (reusing the signed/retried/dead-lettered webhook delivery). Residuals: the broker-specific `QueuePublisher` drivers (SQS/Pub-Sub/Kafka SDK glue) are external-SDK integrations the `QueueSink` interface accepts but the chart does not yet ship; sink delivery for events buffered through the §11.2.1 Redis-stream/in-memory write-ahead path during a Postgres outage (flushed later via `InsertFromStream`) is a tracked follow-on. Tests: 17 tier-1 (webhook sign/retry/dead-letter/cancel, queue retry, fan-out redundancy, payload shape, publishing-decorator ordering), 2 tier-1 admin (approver-notify on dual-control / no-notify on single-control), 4 tier-2 helm-unittest (webhook + approver env via secretKeyRef, default-omit).
 
 ### - [x] F-11.2.15 — Compliance-aware billing retention floor and the configurable `billing.retentionDays` are unimplemented [Medium] — CLOSED
 

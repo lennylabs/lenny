@@ -103,6 +103,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
+	"github.com/lennylabs/lenny/pkg/gateway/billingsink"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
@@ -926,6 +927,14 @@ func main() {
 		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
 	billingCorrectionRateThreshold := flag.Float64("billing-correction-rate-threshold", envFloat("LENNY_BILLING_CORRECTION_RATE_THRESHOLD", 0.05),
 		"§11.2.1 line 187 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
+	billingSinkWebhookURL := flag.String("billing-sink-webhook-url", os.Getenv("LENNY_BILLING_SINK_WEBHOOK_URL"),
+		"§11.2.1 line 136 billing.sink webhook URL: when set, every billing event committed to Postgres is POSTed as JSON with an HMAC-SHA256 X-Lenny-Signature header, retried with exponential backoff, and dead-lettered after exhaustion. Empty disables the webhook sink. Override via LENNY_BILLING_SINK_WEBHOOK_URL. F-11.2.14.")
+	billingApproverWebhookURL := flag.String("billing-approver-webhook-url", os.Getenv("LENNY_BILLING_APPROVER_WEBHOOK_URL"),
+		"§11.2.1 line 175 billing.approverNotificationWebhook: when set, a billing correction entering the dual-control pending state notifies eligible approvers by POSTing a signed notification to this URL. Empty leaves the channel unconfigured. Override via LENNY_BILLING_APPROVER_WEBHOOK_URL. F-11.2.14.")
+	// §11.2.1 HMAC signing secrets are read from the environment only (a
+	// Helm secretKeyRef) so they never appear in the process argv.
+	billingSinkWebhookSecret := []byte(os.Getenv("LENNY_BILLING_SINK_WEBHOOK_SECRET"))
+	billingApproverWebhookSecret := []byte(os.Getenv("LENNY_BILLING_APPROVER_WEBHOOK_SECRET"))
 	billingRetentionDays := flag.Int("billing-retention-days", envInt("LENNY_BILLING_RETENTION_DAYS", billingretention.DefaultRetentionDays),
 		"§11.2.1 line 151 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
 	gdprRetentionDays := flag.Int("audit-gdpr-retention-days", envInt("LENNY_AUDIT_GDPR_RETENTION_DAYS", audit.GDPRRetentionDefaultDays),
@@ -1697,8 +1706,23 @@ func main() {
 	} else {
 		billingStream = failover.NewMemStream()
 	}
+	// spec: §11.2.1 lines 132-138 — wrap the durable primary so every
+	// event a synchronous Postgres write seals is published to the
+	// configured delivery sinks (webhook / message queue). The wrap is a
+	// no-op when no sink is configured, and is applied to the failover
+	// Primary so delivery happens "only after the synchronous Postgres
+	// write confirms" (line 137). Buffered-then-flushed events during a
+	// Postgres outage are a tracked residual. F-11.2.14.
+	billingPublisher, err := buildBillingPublisher(*billingSinkWebhookURL, billingSinkWebhookSecret)
+	if err != nil {
+		log.Fatalf("lenny-gateway: billing delivery sink: %v", err)
+	}
+	billingPrimary := billingsink.NewPublishing(billing, billingPublisher, billingsink.PublishingOptions{})
+	if !billingPublisher.Empty() {
+		log.Printf("lenny-gateway: §11.2.1 billing delivery sinks active: %v", billingPublisher.Sinks())
+	}
 	billingPipeline := failover.New(failover.Options{
-		Primary: billing,
+		Primary: billingPrimary,
 		Stream:  billingStream,
 		// §12.3 line 76 billingFlushIntervalMs / billingFlushBatchSize /
 		// billingFlushMaxPending. OnFlushPressure is wired after
@@ -4432,6 +4456,15 @@ func main() {
 	adminRouter = adminRouter.WithBillingCorrections(
 		billing, corrections, *billingDualControlThreshold,
 	)
+	// spec: §11.2.1 line 175 — wire billing.approverNotificationWebhook so
+	// a dual-control correction entering the pending state notifies
+	// eligible approvers. Nil leaves the channel unconfigured. F-11.2.14.
+	if approverNotifier, err := buildApproverNotifier(*billingApproverWebhookURL, billingApproverWebhookSecret); err != nil {
+		log.Fatalf("lenny-gateway: billing approver notification webhook: %v", err)
+	} else if approverNotifier != nil {
+		adminRouter = adminRouter.WithApproverNotifier(approverNotifier)
+		log.Printf("lenny-gateway: §11.2.1 billing approver-notification webhook configured")
+	}
 	// spec: §24.6 line 99 / §15.1 line 879 — back `POST /v1/admin/quota/reconcile`
 	// with the §11.2 MAX-rule reconcile over the Postgres token-usage
 	// checkpoint. Until the checkpoint store is wired (no Redis/Postgres)

@@ -1564,6 +1564,69 @@ tests:
             name: LENNY_BILLING_RETENTION_DAYS
             value: "2190"
 
+  # spec: §11.2.1 line 136 — the billing webhook sink URL and its HMAC
+  # signing secret (via secretKeyRef) render only when configured.
+  # F-11.2.14.
+  - it: wires the §11.2.1 billing webhook sink URL and secret when configured
+    set:
+      billing.deliverySink.webhookURL: https://acme.example/billing-hook
+      billing.deliverySink.webhookSecret.secretName: lenny-billing-hook
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_SINK_WEBHOOK_URL
+            value: https://acme.example/billing-hook
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_SINK_WEBHOOK_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: lenny-billing-hook
+                key: secret
+
+  # spec: §11.2.1 — with no delivery sink configured the gateway leaves
+  # the billing write path unwrapped; no webhook env is rendered.
+  # F-11.2.14.
+  - it: omits the billing webhook sink env by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_SINK_WEBHOOK_URL
+            value: ""
+
+  # spec: §11.2.1 line 175 — the dual-control approver-notification
+  # webhook URL and secret render only when configured. F-11.2.14.
+  - it: wires the §11.2.1 approver-notification webhook when configured
+    set:
+      billing.approverNotificationWebhook.url: https://acme.example/approve
+      billing.approverNotificationWebhook.secret.secretName: lenny-approver-hook
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_APPROVER_WEBHOOK_URL
+            value: https://acme.example/approve
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_APPROVER_WEBHOOK_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: lenny-approver-hook
+                key: secret
+
   # spec: §12.3 line 76 — billing flush tunables (default 500ms / 50 / 500)
   # flow through to the gateway binary. F-12.3.13.
   - it: wires the §12.3 billing flush tunables from chart defaults

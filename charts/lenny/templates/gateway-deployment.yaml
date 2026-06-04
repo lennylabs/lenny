@@ -872,6 +872,37 @@ spec:
             - name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
               value: {{ .Values.billing.redisStreamMaxLen | quote }}
             {{- end }}
+            # §11.2.1 lines 132-138 billing-event delivery sinks: the
+            # webhook sink URL and (via secretKeyRef) its HMAC signing
+            # secret, plus the §11.2.1 line 175 dual-control approver
+            # notification webhook. Each is rendered only when configured.
+            # F-11.2.14.
+            {{- with .Values.billing.deliverySink }}
+            {{- with .webhookURL }}
+            - name: LENNY_BILLING_SINK_WEBHOOK_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and .webhookSecret .webhookSecret.secretName }}
+            - name: LENNY_BILLING_SINK_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .webhookSecret.secretName | quote }}
+                  key: {{ .webhookSecret.key | default "secret" | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.billing.approverNotificationWebhook }}
+            {{- with .url }}
+            - name: LENNY_BILLING_APPROVER_WEBHOOK_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and .secret .secret.secretName }}
+            - name: LENNY_BILLING_APPROVER_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secret.secretName | quote }}
+                  key: {{ .secret.key | default "secret" | quote }}
+            {{- end }}
+            {{- end }}
             # §17.8.2 capacityPlanning.tier — drives the
             # billingRedisStreamMaxLen default and the §17.8.2 line 1164
             # RedisClusterRecommended startup warning. F-17.8.5, F-17.8.7.
