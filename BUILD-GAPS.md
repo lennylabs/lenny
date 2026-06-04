@@ -26152,7 +26152,7 @@ only the revoke action.
 
 **Resolution:** Verify-closed per the finding's own framing ("spec table doesn't formally list a GET on `/v1/admin/issued-tokens` ... spec carries only the revoke action"). §12.1 names the `issued_tokens` Postgres table as a revocation-lookup index; §13.3 lines 589-601 describe only the revoke flow as an external surface. A listing endpoint would require new spec text (Rule B prevents spec edits); the revoke action at `POST /v1/admin/issued-tokens/{jti}/revoke` is already mounted (`tenants.go:572`) and OpenAPI-declared (`openapi.json:1412`). No code action owed.
 
-### - [-] F-15.1.25 — `DELETE /v1/sessions/{id}` semantics partially diverge [Medium] — DEFERRED
+### - [x] F-15.1.25 — `DELETE /v1/sessions/{id}` semantics partially diverge [Medium] — CLOSED
 Spec lines 624–625 distinguish `/terminate` ("graceful, successful end
 — `completed`") from `DELETE` ("force-cancel — `cancelled`"). Impl at
 `pkg/gateway/sessionserver/sessionserver.go::handleDelete` does
@@ -26161,7 +26161,7 @@ transition to `cancelled` correctly, but does not honour an optional
 does not record the `releases resources` semantic — the impl just flips
 state.
 
-**Resolution:** DEFERRED. The `If-Match` optional precondition on `DELETE` is structurally tied to the spec §15.1 line 1207-1224 ETag-based optimistic concurrency contract: an integer `version` column on every admin resource, an `ETag` header populated on `GET`, `412 ETAG_MISMATCH` + `details.currentEtag` shape, and `RFC 7232 §2.3` quoted-decimal parsing. None of that infrastructure exists today — see **F-15.1.2** (`ETag-based optimistic concurrency is entirely missing`, High, OPEN). Landing a session-only `If-Match` would diverge from the canonical envelope. Re-attempt once F-15.1.2 lands.
+**Resolution:** Re-assessed after F-15.1.2 landed (commit `d07eac01`). The §15.1 lines 1207-1224 ETag contract is explicitly scoped to "every admin resource in Postgres" — it adds a `version` column to the eight admin resources and their tenant sub-resources, not to client-facing session rows. The spec's `DELETE /v1/sessions/{id}` row (§15.1 line 625) defines the semantics as "Force-cancels the session and releases resources" with **no** `If-Match` precondition and no session `ETag`/`version`. Honouring an admin-style `If-Match` on the session DELETE would therefore invent an ETag the spec does not define for that surface, so the original "does not honour `If-Match`" concern is out of scope. The second concern — "the impl just flips state" — is stale: `handleDelete` transitions to `cancelled` and calls `recordSessionCompleted`, the same resource-release path `/terminate` uses (workspace seal/export, executor/pod teardown via `releaseExecutor`, terminal lifecycle, billing). `pkg/gateway/sessionserver/cancel_release_test.go` asserts the DELETE path releases the session (and cascade-drains descendants) with the `cancelled` disposition. Unblocked and closed by F-15.1.2 (`d07eac01`).
 
 ### - [x] F-15.1.26 — Per-endpoint MCP/scope OpenAPI extensions are not enforced by CI [Medium] — CLOSED
 Spec lines 923–933 require every admin endpoint to carry
