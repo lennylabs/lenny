@@ -87,6 +87,13 @@ var (
 		Help: "Adapter→gateway control events that could not be delivered " +
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
+	// §10.1 line 52: 1 while the adapter is in the coordinator-loss hold
+	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
+	coordinatorHold = mustGauge(prometheus.GaugeOpts{
+		Name: "lenny_adapter_coordinator_hold",
+		Help: "1 while the adapter is in the §10.1 coordinator-loss hold " +
+			"state awaiting a new coordinator's CoordinatorFence; 0 otherwise.",
+	}, nil)
 )
 
 // mustCounter builds and registers a label-free counter, panicking on a
@@ -184,4 +191,15 @@ func incControlEventSent(event string) { controlEventsSent.WithLabelValues(event
 // delivered, tagging the drop reason ("no_stream" or "buffer_full").
 func incControlEventDropped(event, reason string) {
 	controlEventsDropped.WithLabelValues(event, reason).Inc()
+}
+
+// setCoordinatorHold publishes the §10.1 line 52 coordinator-hold gauge:
+// 1 while the adapter is in hold state, 0 once a fence resolves it or the
+// hold times out into self-termination.
+func setCoordinatorHold(active bool) {
+	v := 0.0
+	if active {
+		v = 1.0
+	}
+	coordinatorHold.WithLabelValues().Set(v)
 }

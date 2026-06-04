@@ -155,6 +155,12 @@ func main() {
 	keepaliveTimeoutMs := flag.Int("keepalive-timeout-ms",
 		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
 		"§11.3 line 206 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
+	coordinatorHoldTimeoutSec := flag.Int("coordinator-hold-timeout-seconds",
+		envIntOr("LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS", 120),
+		"§10.1 line 50 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
+	postMortemDir := flag.String("post-mortem-dir",
+		os.Getenv("LENNY_POST_MORTEM_DIR"),
+		"§10.1 line 50 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -226,6 +232,11 @@ func main() {
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
 	adapterSrv.StagingDir = *stagingDir
+	// spec: §10.1 lines 47-52 — the coordinator-loss hold window and the
+	// disk post-mortem path the adapter falls back to when no coordinator
+	// returns to receive the AdapterTerminating event.
+	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
+	adapterSrv.PostMortemDir = *postMortemDir
 	// §6.4 line 409: decode the inline shared-asset set the controller
 	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
 	// materialize it into the read-only /workspace/shared tree.

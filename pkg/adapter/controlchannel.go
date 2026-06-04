@@ -102,6 +102,10 @@ func (s *Server) LifecycleChannel(stream adapterv1.Adapter_LifecycleChannelServe
 		s.controlMu.Lock()
 		s.controlSink = nil
 		s.controlMu.Unlock()
+		// spec: §10.1 lines 47-52 — a closed gateway control stream with a
+		// session still live is the coordinator-loss signal; enter hold
+		// state and await a new coordinator's CoordinatorFence.
+		s.onCoordinatorChannelClosed()
 	}()
 
 	ctx := stream.Context()

@@ -133,6 +133,14 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	s.coord.lastFenced = gen
 	s.coord.initialized = true
 	_ = prev
+
+	// spec: §10.1 line 49 — a successful fence from a new coordinator is
+	// the only way out of hold state. exitHoldState locks only hold.mu, so
+	// calling it while coord.mu is held is deadlock-free (enterHoldState
+	// reads the generation through the accessor before taking hold.mu, and
+	// the hold timeout never reaches back into coord.mu).
+	s.exitHoldState()
+
 	return &adapterv1.CoordinatorFenceResponse{
 		Accepted:             true,
 		LastFencedGeneration: gen,

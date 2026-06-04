@@ -227,6 +227,23 @@ type Server struct {
 	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
 	ExpiryNow       func() time.Time
 
+	// CoordinatorHoldTimeout overrides the §10.1 line 50
+	// coordinatorHoldTimeoutSeconds default (120s): the window the adapter
+	// holds a session after losing its coordinator before it
+	// self-terminates. Zero selects the spec default.
+	CoordinatorHoldTimeout time.Duration
+	// HoldAfterFunc is the §10.1 hold-timer test seam. Nil selects
+	// time.AfterFunc; tests inject a fake to fire the hold timeout
+	// deterministically.
+	HoldAfterFunc func(time.Duration, func()) expiryTimerHandle
+	// PostMortemDir is the pod-local directory the §10.1 line 50 hold
+	// timeout writes a coordinator_lost post-mortem record into when no
+	// new coordinator returns and the gateway control stream is gone.
+	// Empty skips the disk write (the dev path); the AdapterTerminating
+	// control event and the gateway orphan-session reconciler remain the
+	// primary terminal-notification surfaces.
+	PostMortemDir string
+
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 
@@ -234,6 +251,11 @@ type Server struct {
 	// CoordinatorFence RPC installs and the CheckpointBarrier RPC
 	// validates. See pkg/adapter/coordination.go.
 	coord coordinationState
+
+	// hold tracks the §10.1 coordinator-loss hold state the adapter
+	// enters when the gateway control stream drops while a session is
+	// live. See pkg/adapter/holdstate.go.
+	hold holdState
 
 	// controlMu guards controlSink.
 	controlMu sync.Mutex
