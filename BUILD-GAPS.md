@@ -35222,7 +35222,7 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/observability/metrics/catalog.go:178`
 - `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:1112–1125`
 
-**Resolution:** Built the full §17.8.2 cold-start surface. (a) `poolstore.Pool`
+**Resolution (commit 2b745ebb):** Built the full §17.8.2 cold-start surface. (a) `poolstore.Pool`
 gains a nullable `BootstrapMinWarm` override (migration 0137
 `bootstrap_min_warm` column; pgstore + Memory round-trip), set via the new
 `PUT {bootstrapMinWarm: N}` field. (b) `DELETE /v1/admin/pools/{name}/bootstrap-override`
