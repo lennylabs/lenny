@@ -27103,7 +27103,7 @@ and requires only those), **MED-014's cited over-strict cases are stale**
 `provider`/`credentialsPath` fields the adapter emits), and **MED-015 is
 stale** (`protocolVersion` is now documented in the schema).
 
-**Re-verification (commit `__MED_021_023_SHA__`).** Several more items are
+**Re-verification (commit `11778396`).** Several more items are
 now stale, and three are closed this batch:
 - **MED-011 is stale** — `pkg/adapter/lifecyclechannel.go` implements the
   full task lifecycle: `WithTaskLifecycle`, `RequestTaskComplete`
