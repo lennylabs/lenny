@@ -78,6 +78,7 @@ type Service struct {
 
 	webhook WebhookFanOut
 	onGap   func()
+	health  SourceHealth
 }
 
 // subscription is one active SSE subscriber.
@@ -106,6 +107,13 @@ type Options struct {
 	// pagination.gapDetected: true). It backs the §25.5
 	// lenny_ops_events_stream_gaps_total counter. spec: §25.5 line 2788.
 	OnGap func()
+	// SourceHealth, when non-nil, drives the §25.5 degradation matrix: the
+	// poll and stream surfaces consult it to decide whether to attach a
+	// degradation envelope (Redis-down fall-back to the gateway buffer),
+	// emit the :degradation SSE comment, or return 503
+	// EVENT_STREAM_UNAVAILABLE (dual Redis + gateway outage). A nil value
+	// is treated as fully healthy. spec: §25.5 lines 2768-2780.
+	SourceHealth SourceHealth
 }
 
 // New returns a Service.
@@ -124,6 +132,7 @@ func New(opts Options) *Service {
 		replicaID: replicaID,
 		webhook:   opts.Webhook,
 		onGap:     opts.OnGap,
+		health:    opts.SourceHealth,
 	}
 }
 
@@ -325,6 +334,17 @@ func parseSortOrder(q url.Values) (desc bool, err error) {
 // been evicted. spec: §25.5 lines 2687-2699; §25.2 lines 234-275.
 func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// §25.5 degradation case 4: when both the Redis stream and the gateway
+	// buffer are unreachable, polling for gateway-originated events cannot
+	// be served and cannot partial-serve, so it fails with a transient
+	// 503 the agent retries. The SSE surface still serves
+	// lenny-ops-originated events from the local buffer. spec: §25.5 lines
+	// 2768-2780.
+	_, deg, dualDown := s.streamState()
+	if dualDown {
+		writeStreamUnavailable(w)
+		return
+	}
 	filter, err := parseFilter(q)
 	if err != nil {
 		conventions.WriteError(w, http.StatusBadRequest, codeInvalidEventFilter, conventions.CategoryPermanent, err.Error())
@@ -343,6 +363,11 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(q)
 
 	page := s.pollPage(kind, eventKey, filter, limit, desc)
+	// §25.5 degradation case 1: serving from the gateway-buffer fall-back
+	// during a Redis outage is reported as response metadata
+	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
+	// lines 2768-2772.
+	page.Degradation = deg
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(page)
 }
@@ -467,6 +492,16 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+
+	// §25.5 degradation cases 1 and 4: announce the fall-back source on
+	// the stream so the consumer learns it is receiving a degraded view —
+	// the gateway buffer during a Redis outage, or only this replica's
+	// lenny-ops-originated events during a dual Redis + gateway outage
+	// (the local ring buffer holds no gateway-originated events). spec:
+	// §25.5 lines 2768-2780.
+	if _, deg, _ := s.streamState(); deg != nil {
+		writeSSEDegradation(w, deg)
+	}
 
 	if gap {
 		writeSSEGap(w, resumeKey)

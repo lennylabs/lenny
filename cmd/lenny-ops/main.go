@@ -554,7 +554,19 @@ func main() {
 	// delivery surface (per §25.5 cold-start). Built before the webhook
 	// worker so OnSelfHealthChange can emit through it and the worker can
 	// consume the same Redis stream.
-	eventStream := opsstream.New(opsstream.Options{ReplicaID: replicaID, OnGap: observeStreamGap})
+	// §25.5 degradation matrix: when Redis backs the stream, a source-
+	// health probe lets the read surface attach the degradation envelope
+	// (Redis-down → gateway-buffer fall-back) and the dual-outage 503.
+	// Without Redis there is no meaningful "outage" to signal, so the
+	// probe is omitted and the read surface stays healthy. spec: §25.5
+	// lines 2768-2780. F-25.5.14.
+	streamOpts := opsstream.Options{ReplicaID: replicaID, OnGap: observeStreamGap}
+	var srcHealth *sourceHealthProbe
+	if redisClient != nil {
+		srcHealth = newSourceHealthProbe()
+		streamOpts.SourceHealth = srcHealth
+	}
+	eventStream := opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = eventStream
 	if redisClient != nil {
 		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID, *eventsStreamMaxLen)
@@ -667,6 +679,13 @@ func main() {
 	}, prometheus.DefaultRegisterer)
 	if err != nil {
 		log.Fatalf("lenny-ops: build gateway client: %v", err)
+	}
+
+	// Start the §25.5 source-health refresh now that both the Redis
+	// client and the gateway client exist. The loop is bounded by ctx,
+	// so it exits on shutdown. F-25.5.14.
+	if srcHealth != nil {
+		go srcHealth.run(ctx, 15*time.Second, redisClient, gwClient)
 	}
 
 	// The §25.4 self-health checks every replica runs.

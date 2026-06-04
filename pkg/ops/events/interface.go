@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )
 
@@ -69,6 +70,11 @@ type SubscriptionUpdate struct {
 type EventPage struct {
 	Items      []gwevents.BufferedEvent `json:"items"`
 	Pagination Pagination               `json:"pagination"`
+	// Degradation is the §25.5 degradation envelope, attached when the
+	// read surface is serving from a fall-back source (the gateway buffer
+	// during a Redis outage). Omitted when serving from the primary
+	// source. spec: §25.5 lines 2768-2780.
+	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
 // Pagination is the §25.2 canonical pagination envelope shared by
