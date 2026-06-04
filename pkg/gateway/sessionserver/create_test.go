@@ -50,6 +50,69 @@ func createRequestRaw(t *testing.T, h http.Handler, body []byte) *httptest.Respo
 	return rr
 }
 
+// TestCreateSessionServiceHappyPath_spec_15_2_1_1380 exercises the
+// shared §15.1 service entry point the MCP lenny/create_session tool
+// dispatches to: it runs the full create flow (validation, persist,
+// uploadToken mint) and returns the same CreateSessionResponse the REST
+// handler returns, in `created` state. spec: §15.2.1 rule 1 line 1380.
+// F-15.2.4.
+func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_svc" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+
+	resp, svcErr := srv.CreateSessionService(context.Background(), "acme", sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+		UserID:     "alice@acme.com",
+	})
+	if svcErr != nil {
+		t.Fatalf("unexpected service error: %+v", svcErr)
+	}
+	if resp.ID != "sess_svc" {
+		t.Errorf("id: got %q, want sess_svc", resp.ID)
+	}
+	if resp.State != "created" {
+		t.Errorf("state: got %q, want created", resp.State)
+	}
+	if resp.TenantID != "acme" {
+		t.Errorf("tenant: got %q, want acme (from tenantID arg)", resp.TenantID)
+	}
+	if resp.UploadToken == "" {
+		t.Error("service did not mint a §7.1 uploadToken")
+	}
+	if _, err := store.Get(context.Background(), "acme", "sess_svc"); err != nil {
+		t.Fatalf("service did not persist the row: %v", err)
+	}
+}
+
+// TestCreateSessionServiceValidationError_spec_15_2_1_1380 verifies the
+// service surfaces a validation rejection as a typed ServiceError with the
+// REST code, so the MCP surface can project the identical envelope. An
+// empty runtimeRef is the canonical VALIDATION_ERROR. F-15.2.4.
+func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc: func() string { return "sess_svc" },
+	})
+
+	_, svcErr := srv.CreateSessionService(context.Background(), "acme", sessionserver.CreateSessionRequest{})
+	if svcErr == nil {
+		t.Fatal("expected a ServiceError for an empty runtimeRef")
+	}
+	if svcErr.Code != "VALIDATION_ERROR" {
+		t.Errorf("code: got %q, want VALIDATION_ERROR", svcErr.Code)
+	}
+	if svcErr.HTTPStatus != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", svcErr.HTTPStatus)
+	}
+}
+
 func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	store := memstore.New()
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})

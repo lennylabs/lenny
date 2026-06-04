@@ -47,12 +47,16 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:    store,
-		Executor: exec,
-		Memory:   mem,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp_consistency" },
-		TenantID: tenant,
+		Store: store,
+		// spec: §15.2.1 rule 1 line 1380 — wire the shared §15.1 service
+		// so lenny/create_session runs the same gates and returns the same
+		// envelope as REST POST /v1/sessions. F-15.2.4.
+		SessionCreator: rest,
+		Executor:       exec,
+		Memory:         mem,
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "sess_mcp_consistency" },
+		TenantID:       tenant,
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())
 	t.Cleanup(tsMCP.Close)
@@ -175,10 +179,11 @@ func getJSON(t *testing.T, url, tenant string) (*http.Response, []byte) {
 // return semantically identical session rows. Both surfaces share the
 // gateway's sessionstore. This test creates the session via each
 // surface, reads it back through the shared store, and asserts the
-// session identity columns (tenant, runtime, state) match the wire
-// contract on each side. The MCP server does not expose finalize /
-// start / interrupt / terminate tools; the full lifecycle parity is
-// blocked on those tools and tracked below.
+// session identity columns (tenant, runtime, user) AND the initial
+// state match on each side now that lenny/create_session routes through
+// the shared §15.1 service (F-15.2.4). The MCP server does not expose
+// finalize / start / interrupt / terminate tools; the full lifecycle
+// parity is blocked on those tools and tracked below.
 func TestRESTMCPSessionLifecycle(t *testing.T) {
 	tsREST, tsMCP, store := newConsistencyServers(t, "acme")
 
@@ -212,6 +217,16 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 	if mcpID == "" {
 		t.Fatalf("MCP create returned no sessionId: %v", mcpPayload)
 	}
+	// spec: §15.2.1 rule 1 line 1380 — the MCP tool now routes through the
+	// shared §15.1 service, so it returns the same initial `created` state
+	// the REST surface returns and mints the §7.1 uploadToken (previously
+	// the MCP path jumped straight to `running` with no token). F-15.2.4.
+	if got, _ := mcpPayload["state"].(string); got != string(session.StateCreated) {
+		t.Errorf("MCP create state: got %q, want %q (REST/MCP parity)", got, session.StateCreated)
+	}
+	if tok, _ := mcpPayload["uploadToken"].(string); tok == "" {
+		t.Errorf("MCP create did not mint a §7.1 uploadToken: %v", mcpPayload)
+	}
 
 	// Both sessions land in the shared store.
 	row1, err := store.Get(context.Background(), "acme", restCreated.ID)
@@ -223,9 +238,11 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 		t.Fatalf("MCP session not in store: %v", err)
 	}
 	// The §15.2.1 rule 1 contract: the same logical create produces
-	// matching identity columns. State differs by surface because the
-	// MCP tool jumps directly to running while REST stops at created;
-	// the runtime, tenant, and user fields must match.
+	// matching identity columns AND the same initial state, because both
+	// surfaces now run the one shared §15.1 service. F-15.2.4.
+	if row1.State != row2.State {
+		t.Errorf("state: REST=%q, MCP=%q (both must be %q)", row1.State, row2.State, session.StateCreated)
+	}
 	if row1.TenantID != row2.TenantID {
 		t.Errorf("tenant: REST=%q, MCP=%q", row1.TenantID, row2.TenantID)
 	}

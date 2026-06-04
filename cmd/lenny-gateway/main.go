@@ -3799,7 +3799,12 @@ func main() {
 		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, gwMetrics)
 	}
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:                      sessions,
+		Store: sessions,
+		// spec: §15.2.1 rule 1 line 1380 — route lenny/create_session
+		// through the gateway's shared §15.1 session-creation service so
+		// the MCP surface runs the same admission gates and returns the
+		// same envelope the REST POST /v1/sessions handler does. F-15.2.4.
+		SessionCreator:             sessionSrv,
 		Executor:                   exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,

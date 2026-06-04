@@ -62,6 +62,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -217,10 +218,36 @@ type TreeCycleEvent struct {
 	Source        string
 }
 
+// SessionCreator is the §15.2.1 rule-1 shared session-creation service.
+// *sessionserver.Server implements it. When wired, lenny/create_session
+// admits a session through exactly the same §15.1 gates the REST
+// POST /v1/sessions handler runs (active-user, quota, concurrency,
+// admission-rate, policy chain, environment access, runtime / isolation /
+// workspace-plan validation) and mints the §7.1 uploadToken, so an
+// MCP-created session is not a path around tenant quotas and policy
+// interception and lands in the same `created` state with the same
+// envelope the REST surface returns.
+//
+// A nil SessionCreator falls back to the legacy direct-store create used
+// by the minimal in-process gateway that wires no session server (and by
+// the mcptools unit suite). Production wires the real service.
+//
+// spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+type SessionCreator interface {
+	CreateSessionService(ctx context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
 	Store sessionstore.Store
+
+	// SessionCreator is the §15.2.1 rule-1 shared session-creation
+	// service. When set, lenny/create_session routes through it so the
+	// MCP and REST surfaces run identical validation and return identical
+	// envelopes. Optional — a nil creator selects the legacy direct-store
+	// create path. spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+	SessionCreator SessionCreator
 
 	// Executor routes messages to runtimes.
 	Executor executor.Executor
@@ -558,6 +585,50 @@ func Register(srv *mcp.Server, deps Deps) {
 		if env == "" {
 			env = environmentmw.ExplicitEnvironmentFromContext(ctx)
 		}
+		// spec: §15.2.1 rule 1 line 1380 — route the create through the
+		// shared §15.1 service layer so the MCP surface runs the same
+		// active-user, quota, concurrency, admission-rate, policy-chain,
+		// environment-access, and runtime / isolation / workspace-plan
+		// gates the REST POST /v1/sessions handler runs, and returns the
+		// same `created`-state envelope with a §7.1 uploadToken. An
+		// MCP-created session therefore consumes tenant quota and is
+		// subject to policy interception exactly like a REST-created one.
+		// F-15.2.4.
+		if deps.SessionCreator != nil {
+			resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, sessionserver.CreateSessionRequest{
+				RuntimeRef:  in.RuntimeRef,
+				UserID:      in.UserID,
+				Environment: env,
+			})
+			if svcErr != nil {
+				// The §15.2.1 rule-3 envelope: surface the REST code +
+				// details so the shared errorclassify table assigns the
+				// same (category, retryable) pair on both surfaces.
+				return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+			}
+			// Project the shared response onto the MCP create_session
+			// envelope: the `sessionId`/`state` fields the MCP clients and
+			// SDKs already read, plus the §7.1 `uploadToken` the REST
+			// surface returns (previously absent on the MCP path, so a
+			// subsequent upload over REST failed differently — impact (e)).
+			// F-15.2.4.
+			out := map[string]any{
+				"sessionId":   resp.ID,
+				"state":       resp.State,
+				"uploadToken": resp.UploadToken,
+			}
+			payload, err := json.Marshal(out)
+			if err != nil {
+				return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+					"create response encode: "+err.Error(), nil)
+			}
+			return textResult(string(payload)), nil
+		}
+		// Legacy direct-store fallback for the minimal in-process gateway
+		// that wires no session server. It runs no gates and mints no
+		// uploadToken; production always wires deps.SessionCreator. The
+		// runtimeRef-required check above already covers both paths.
+		// F-15.2.4.
 		now := clock()
 		row := sessionstore.Session{
 			ID:               idFn(),
