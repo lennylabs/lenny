@@ -32481,7 +32481,7 @@ them either.)
   posture: a `backends: self-managed` render now fails when Postgres is
   neither deployed nor external, when a chart-managed Postgres is not
   synchronous, when Redis lacks a Sentinel/Cluster failover topology, or
-  when no object store is configured. Commit `<pending>`.
+  when no object store is configured. Commit `93936064`.
 
 ---
 
@@ -35793,7 +35793,7 @@ path.
   consumer-side endpoints at the rendered Services, so they render a full
   backend topology instead of referencing out-of-band placeholders.
   `datastore-secret.yaml` renders `redis-password` for any deploy path.
-  Commit `<pending>`.
+  Commit `93936064`.
 
 ---
 
