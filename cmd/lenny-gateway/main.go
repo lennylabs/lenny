@@ -3244,7 +3244,13 @@ func main() {
 		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
 		// is re-emitted from the same flag). F-8.10.10.
 		MaxOrphanTasksPerTenant: *delegationMaxOrphanTasksPerTenant,
-		UploadTokenIssuer:       uploadIssuer,
+		// spec: §8.10 lines 1022-1023 — the bottom-up tree-recovery
+		// driver's per-level and whole-tree budgets, plus the §16.1
+		// line 144-145 telemetry sink. F-8.10.1.
+		TreeRecoveryLevelTimeout: time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
+		TreeRecoveryTreeTimeout:  time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
+		TreeRecoveryMetrics:      gwMetrics,
+		UploadTokenIssuer:        uploadIssuer,
 		UploadTokenVerifier:     uploadVerifier,
 		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
 		UploadTokenTTL: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,

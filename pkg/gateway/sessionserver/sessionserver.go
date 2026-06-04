@@ -70,6 +70,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -274,6 +275,14 @@ type Server struct {
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
 	resumeWindow time.Duration
+	// treeRecovery drives the §8.10 bottom-up delegation-tree recovery
+	// from the resume path. Nil leaves resume's per-session behavior
+	// unchanged (no descendant reattach traversal).
+	treeRecovery *treerecovery.Orchestrator
+	// treeRecoveryHook, when set, is called with the tree root id once a
+	// detached recoverDelegationTree goroutine finishes. Tests use it to
+	// await the async recovery deterministically; nil in production.
+	treeRecoveryHook func(rootID string)
 	// sessionLogHook, when set, receives the §4.4 line 226 session-log
 	// close-hook on every session transition to a terminal state.
 	// Best-effort: a failure logs and discards rather than abort the
@@ -1095,6 +1104,19 @@ type Options struct {
 	// spec: §4.2 line 159 — "Resume eligibility and window".
 	ResumeWindow time.Duration
 
+	// TreeRecoveryLevelTimeout and TreeRecoveryTreeTimeout are the §8.10
+	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets the
+	// bottom-up delegation-tree recovery applies when a tree is resumed.
+	// A non-positive value selects the §8.10 recovery-package default
+	// (120s / 600s). spec: §8.10 lines 1022-1023.
+	TreeRecoveryLevelTimeout time.Duration
+	TreeRecoveryTreeTimeout  time.Duration
+
+	// TreeRecoveryMetrics records the §16.1 line 144-145 tree-recovery
+	// telemetry. *gatewaymetrics.Metrics satisfies it. Nil drops the
+	// observations.
+	TreeRecoveryMetrics treerecovery.Metrics
+
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
@@ -1449,6 +1471,22 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.resumeWindow <= 0 {
 		s.resumeWindow = DefaultResumeWindow
 	}
+	// spec: §8.10 lines 1014-1027 — the bottom-up delegation-tree
+	// recovery driver. The required seams (lister, reattacher, terminal
+	// marker) are always available here, so the orchestrator is built
+	// unconditionally; its work is gated to genuinely orphaned nodes by
+	// nodeNeedsRecovery, which is a no-op when the pod registry is
+	// unwired (dev / unit-test) so resume keeps its per-session
+	// behavior.
+	s.treeRecovery = treerecovery.New(treerecovery.Config{
+		Lister:       store,
+		Reattacher:   sessionNodeReattacher{s: s},
+		Terminal:     sessionTerminalMarker{s: s},
+		Metrics:      opts.TreeRecoveryMetrics,
+		Recoverable:  s.nodeNeedsRecovery,
+		LevelTimeout: opts.TreeRecoveryLevelTimeout,
+		TreeTimeout:  opts.TreeRecoveryTreeTimeout,
+	})
 	if s.uploadIssuer == nil {
 		// Default to a freshly-generated random key so the server is
 		// useful in tests. Production callers always wire their own

@@ -1474,6 +1474,22 @@ func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, 
 // error it returns to the client, so a store failure here cannot change
 // the reply. A failed child session is archived to the §8.10
 // session_tree_archive so a resumed parent can replay the outcome.
+// expireSession transitions a session to the §7.3 terminal `expired`
+// state and runs the same archive / terminal-lifecycle teardown as
+// failSession. The §8.10 tree-recovery driver uses it for a node whose
+// individual `maxResumeWindowSeconds` elapsed before recovery reached
+// it (spec: §8.10 line 1027 — "that node transitions to `expired`").
+func (s *Server) expireSession(ctx context.Context, tenantID, sessionID string) {
+	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		row.State = session.StateExpired
+		return nil
+	})
+	if err == nil {
+		s.archiveSettledChild(ctx, updated)
+		s.emitTerminalLifecycle(ctx, updated)
+	}
+}
+
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.State = session.StateFailed
@@ -1664,6 +1680,13 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	mode := s.classifyResumeWithAdapter(r.Context(), updated, adapterReportedResumeMode)
 	s.emitResumedEvent(r.Context(), updated, mode)
 	s.emitChildrenReattached(r.Context(), tenantID, id)
+	// spec: §8.10 line 1016 — recover the resumed tree's orphaned
+	// descendants bottom-up so that "by the time a parent resumes, its
+	// children are already in a known state". Detached from the request
+	// because the traversal is bounded by maxTreeRecoverySeconds, not by
+	// the HTTP deadline. A leaf resume (no descendants) is a cheap
+	// no-op.
+	s.recoverDelegationTree(r.Context(), tenantID, s.treeRoot(r.Context(), updated))
 	s.writeSession(w, http.StatusOK, updated)
 }
 

@@ -10141,7 +10141,7 @@ guarantee, and the policy/orphan-cap audit events are all unimplemented.
 
 ### Findings
 
-### - [ ] F-8.10.1 — 1 — `pkg/delegation/recovery` is never invoked [High] — OPEN
+### - [x] F-8.10.1 — 1 — `pkg/delegation/recovery` is never invoked [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.24 — Both report that the pkg/delegation/recovery package implementing the §8.10 bottom-up traversal is built but never invoked from production code.
 
@@ -10177,6 +10177,32 @@ delegation tree with a failed mid-level node and still-running children
 gets ad-hoc per-session resume only — there is no level deadline, no
 tree deadline, no deterministic leaves-first ordering, and no
 terminal-failure transition for unrecovered nodes.
+
+**Resolution:** New `pkg/gateway/treerecovery.Orchestrator` is the
+production driver the pure `pkg/delegation/recovery` package was missing.
+`RecoverTree` enumerates a tree via `sessionstore.ListByRoot`, builds the
+`recovery.Node` set (depth from the immutable `DelegationDepth`, the
+per-node `ResumeWindow` from `ResumeEligibleUntil`), and invokes
+`recovery.Recover` so failed nodes are grouped by depth and recovered
+leaves-first under the `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds`
+budgets; unrecovered nodes are marked terminal (`expired` for an elapsed
+per-node resume window per §8.10 line 1027, otherwise `failed`) and the
+§16.1 line 144-145 `lenny_delegation_tree_recovery_duration_seconds` /
+`_timeout_total` metrics are emitted (full_success / partial_failure /
+total_timeout; level / tree). The gateway wires it in
+`sessionserver`: `handleResume` calls `recoverDelegationTree` after
+`emitChildrenReattached`, so a resumed tree's orphaned descendants are
+brought to a known state bottom-up. The per-node reattach reuses the
+existing `resumeOnPod` resume path; the `nodeNeedsRecovery` predicate
+scopes recovery to descendants that lost their pod binding (the pod
+registry is the liveness oracle), so a root that resumed for its own
+reasons never tears down children still live on their pods. The
+previously-dead `delegation-max-level-recovery-seconds` /
+`delegation-max-tree-recovery-seconds` flags now feed the orchestrator.
+The traversal runs detached from the request because it is bounded by
+`maxTreeRecoverySeconds` (600s), not the HTTP deadline. Commit
+`515f881f`. (F-8.2.24 is already closed as the §8.2-side duplicate of
+this finding.)
 
 ---
 
