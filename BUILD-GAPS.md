@@ -32986,7 +32986,7 @@ This leaves the spec's "Ready to use in < 60s" claim (line 150) untested. The
 existing 6-minute foreground timeout in `lifecycle.go` line 99 also contradicts the
 60-second steady-state aspiration without any benchmark to validate the lower bound.
 
-**Resolution (this batch):** New `tests/testinfra/embedded` helper drives the real
+**Resolution (commit `c5ebc95e`):** New `tests/testinfra/embedded` helper drives the real
 `cmd/lenny` binary (`Build` compiles it; `Run` executes a verb under a timeout against
 a temporary `LENNY_HOME`), and `tests/tier4_integration/embedded_mode_smoke_test.go`
 (`//go:build smoke`, `TestEmbeddedModeSmoke_spec_17_4_18`) drives the documented
