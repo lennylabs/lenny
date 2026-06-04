@@ -18901,7 +18901,7 @@ already-wired step-18 `tokens` eraser (`issuedtokenstore`). Step 13/14
 gap and is owned by **F-12.8.4** (which must first implement the
 audit-store erasure + dead-letter redaction eraser); wiring that eraser
 into the orchestrator is a one-line append once F-12.8.4 builds it.
-Resolved by commit 21e44430.
+Resolved by commit d09abd6f.
 
 ### - [x] F-12.2.17 — 17 — `EvalResultStore`, `BillingStore`, `EvictionStateStore` erasure methods on concrete types rather than interface (Medium) [Medium] — CLOSED
 
