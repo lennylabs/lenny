@@ -31914,7 +31914,7 @@ checksum/readability gates. The replication-target artifact-key resolution
 exactness (blob-URI → object-key) and a fully-provisioned scratch
 namespace remain deployment-configured extensions; the binary HEADs the
 recorded `artifact_store.uri` keys when a replication endpoint is
-configured. Commit `<pending>`. Tests: tier-1 runner (15: verify
+configured. Commit `e3aa5ee4`. Tests: tier-1 runner (15: verify
 happy/checksum/unreadable/config-only/download/resolve, restore-test
 happy/below-floor/at-floor/no-backup/scratch-fail/readability-only/store-error,
 opener round-trip plaintext+encrypted, exec error paths), tier-1
