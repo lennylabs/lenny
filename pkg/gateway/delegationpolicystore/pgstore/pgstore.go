@@ -45,8 +45,9 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var _ delegationpolicystore.Store = (*Store)(nil)
 
-// selectList is the column projection for reads.
-const selectList = `tenant_id, name, policy, created_at, updated_at, deleted_at`
+// selectList is the column projection for reads. version is the §15.1
+// optimistic-concurrency counter and is read last.
+const selectList = `tenant_id, name, policy, created_at, updated_at, deleted_at, version`
 
 // policyBody is the jsonb-serialized §8.3 policy body. The tuple
 // (tenant_id, name) and the audit timestamps live in their own
@@ -80,15 +81,19 @@ func (s *Store) Create(ctx context.Context, p delegationpolicystore.DelegationPo
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if p.Version == 0 {
+		p.Version = 1
+	}
 	body, err := bodyJSON(p)
 	if err != nil {
 		return err
 	}
 	return pgtenant.InTx(ctx, s.pool, p.TenantID, func(tx pgx.Tx) error {
 		_, ierr := tx.Exec(ctx, `INSERT INTO delegation_policies (
-			tenant_id, name, policy, created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3::jsonb, $4, $5, $6)`,
-			p.TenantID, p.Name, body, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
+			tenant_id, name, policy, created_at, updated_at, deleted_at, version
+		) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)`,
+			p.TenantID, p.Name, body, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt), p.Version)
 		var pgErr *pgconn.PgError
 		if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
 			return delegationpolicystore.ErrAlreadyExists
@@ -156,14 +161,18 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// every successful Update so the next If-Match precondition compares
+		// against the new value.
+		p.Version++
 		body, err := bodyJSON(p)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE delegation_policies SET
-			policy = $3::jsonb, updated_at = $4, deleted_at = $5
+			policy = $3::jsonb, updated_at = $4, deleted_at = $5, version = $6
 		WHERE name = $1 AND tenant_id = $2`,
-			name, tenantID, body, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
+			name, tenantID, body, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt), p.Version); err != nil {
 			return err
 		}
 		out = p
@@ -260,7 +269,7 @@ func scanPolicy(row pgx.Row) (delegationpolicystore.DelegationPolicy, error) {
 		bodyRaw   []byte
 		deletedAt *time.Time
 	)
-	if err := row.Scan(&p.TenantID, &p.Name, &bodyRaw, &p.CreatedAt, &p.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&p.TenantID, &p.Name, &bodyRaw, &p.CreatedAt, &p.UpdatedAt, &deletedAt, &p.Version); err != nil {
 		return delegationpolicystore.DelegationPolicy{}, err
 	}
 	if len(bodyRaw) > 0 {

@@ -55,6 +55,9 @@ type Experiment struct {
 	// CreatedAt and UpdatedAt are audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Version is the §15.1 optimistic-concurrency counter: starts at 1,
+	// incremented on every successful Update. Rendered as the quoted-decimal ETag.
+	Version int64
 }
 
 // Definition projects the Experiment onto the experiment.Definition
@@ -156,6 +159,10 @@ func (m *Memory) Create(_ context.Context, e Experiment) error {
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if e.Version == 0 {
+		e.Version = 1
+	}
 	m.experiments[k] = cloneExperiment(e)
 	return nil
 }
@@ -188,6 +195,10 @@ func (m *Memory) Update(_ context.Context, tenantID, id string, mutate func(*Exp
 		return Experiment{}, err
 	}
 	e.UpdatedAt = time.Now().UTC()
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match precondition compares
+	// against the new value.
+	e.Version++
 	m.experiments[k] = cloneExperiment(e)
 	return cloneExperiment(e), nil
 }

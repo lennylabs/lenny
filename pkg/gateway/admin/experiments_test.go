@@ -57,22 +57,70 @@ func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as 
 		rdr = bytes.NewReader(b)
 	}
 	req := as(httptest.NewRequest(method, path, rdr))
-	if method == http.MethodPut && strings.HasPrefix(path, "/v1/admin/pools/") &&
-		!strings.HasSuffix(path, "/warm-count") {
-		// spec: §15.1 lines 1207-1211 — the pool PUT enforces If-Match.
-		// Authorization-focused cases reach the handler by carrying the
-		// resource's current ETag; only the pool resource enforces this
-		// precondition today.
-		g := as(httptest.NewRequest(http.MethodGet, path, nil))
-		grr := httptest.NewRecorder()
-		h.ServeHTTP(grr, g)
-		if etag := grr.Header().Get("ETag"); etag != "" {
-			req.Header.Set("If-Match", etag)
+	if method == http.MethodPut && req.Header.Get("If-Match") == "" {
+		// spec: §15.1 lines 1207-1211 — pool and experiment PUTs enforce
+		// If-Match. Cases that do not exercise the precondition directly
+		// reach the handler by carrying the resource's current ETag, fetched
+		// via a GET against the same resource. A test that drives the
+		// precondition sets If-Match explicitly and is left untouched.
+		if getPath := adminETagGetPath(path); getPath != "" {
+			g := as(httptest.NewRequest(http.MethodGet, getPath, nil))
+			grr := httptest.NewRecorder()
+			h.ServeHTTP(grr, g)
+			if etag := grr.Header().Get("ETag"); etag != "" {
+				req.Header.Set("If-Match", etag)
+			}
 		}
 	}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
+}
+
+// adminETagGetPath maps a PUT path to the GET path that returns the
+// resource's current ETag, or "" when the route does not enforce
+// If-Match. Pools read straight off the same path; experiments need the
+// tenantId query (the platform-admin GET requires it) so the lookup
+// resolves the tenant the fixtures use. spec: §15.1 lines 1207-1211.
+func adminETagGetPath(putPath string) string {
+	if strings.HasPrefix(putPath, "/v1/admin/pools/") {
+		if strings.HasSuffix(putPath, "/warm-count") {
+			return ""
+		}
+		return putPath
+	}
+	if strings.HasPrefix(putPath, "/v1/admin/experiments/") {
+		name := strings.TrimPrefix(putPath, "/v1/admin/experiments/")
+		if i := strings.IndexByte(name, '?'); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			return ""
+		}
+		return "/v1/admin/experiments/" + name + "?tenantId=acme"
+	}
+	if strings.HasPrefix(putPath, "/v1/admin/delegation-policies/") {
+		name := strings.TrimPrefix(putPath, "/v1/admin/delegation-policies/")
+		if i := strings.IndexByte(name, '?'); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			return ""
+		}
+		// The GET resolves the tenant from the principal (the as func is
+		// applied to the GET request), so no tenant query is needed.
+		return "/v1/admin/delegation-policies/" + name
+	}
+	// Custom roles live under the tenant-scoped path
+	// /v1/admin/tenants/{id}/roles/{name}; the GET reads off the same path
+	// (the tenant is resolved from the path segment, so no query is needed).
+	if strings.HasPrefix(putPath, "/v1/admin/tenants/") && strings.Contains(putPath, "/roles/") {
+		if i := strings.IndexByte(putPath, '?'); i >= 0 {
+			return putPath[:i]
+		}
+		return putPath
+	}
+	return ""
 }
 
 func TestCreateExperiment(t *testing.T) {

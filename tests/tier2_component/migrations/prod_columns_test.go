@@ -207,6 +207,11 @@ var prodMigrationSchema = []struct {
 	// session_checkpoints checkpoint-metadata catalog.
 	{migration: "0131", table: "session_messages", columns: []string{"schema_version"}},
 	{migration: "0132", table: "session_checkpoints", columns: []string{"schema_version"}},
+	// 0138 adds the §15.1 ETag optimistic-concurrency version counter to
+	// the first batch of admin resources to adopt the contract.
+	{migration: "0138", table: "custom_roles", columns: []string{"version"}},
+	{migration: "0138", table: "delegation_policies", columns: []string{"version"}},
+	{migration: "0138", table: "experiment_definitions", columns: []string{"version"}},
 }
 
 // spec: 12.2, 18.5

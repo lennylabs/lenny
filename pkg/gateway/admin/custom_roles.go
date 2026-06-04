@@ -20,6 +20,12 @@ type CustomRolePayload struct {
 	Permissions []auth.Permission `json:"permissions,omitempty"`
 	CreatedAt   string            `json:"createdAt,omitempty"`
 	UpdatedAt   string            `json:"updatedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // UpdateCustomRoleRequest is the §15.1 PUT body — a custom-role update
@@ -34,6 +40,9 @@ func fromCustomRole(r customrolestore.CustomRole) CustomRolePayload {
 		Permissions: r.Permissions,
 		CreatedAt:   rfc3339Nano(r.CreatedAt),
 		UpdatedAt:   rfc3339Nano(r.UpdatedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(r.Version),
 	}
 }
 
@@ -144,6 +153,9 @@ func (r *Router) handleGetCustomRole(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromCustomRole(row))
 }
@@ -158,6 +170,24 @@ func (r *Router) handleUpdateCustomRole(w http.ResponseWriter, req *http.Request
 	var body UpdateCustomRoleRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	// Resolve the current role first so the §15.1 If-Match precondition
+	// reads the stored version; a missing role 404s ahead of the
+	// precondition.
+	current, gerr := r.customRoles.Get(req.Context(), tenant, name)
+	if gerr != nil {
+		if errors.Is(gerr, customrolestore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "custom role not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// role's entity tag is its version; enforce the optimistic-concurrency
+	// precondition before applying the mutation.
+	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
 	updated, err := r.customRoles.Update(req.Context(), tenant, name, func(role *customrolestore.CustomRole) error {
@@ -175,6 +205,9 @@ func (r *Router) handleUpdateCustomRole(w http.ResponseWriter, req *http.Request
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.custom_role.updated", name,
 		map[string]any{"tenantId": tenant})
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromCustomRole(updated))
 }
@@ -226,6 +259,22 @@ func (r *Router) handleDeleteCustomRole(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusConflict, "RESOURCE_HAS_DEPENDENTS",
 			"custom role is assigned to one or more users",
 			map[string]any{"dependents": []map[string]any{dep}})
+		return
+	}
+	// Resolve the current role so the §15.1 DELETE If-Match precondition can
+	// compare against its version; a missing role 404s.
+	current, gerr := r.customRoles.Get(req.Context(), tenant, name)
+	if gerr != nil {
+		if errors.Is(gerr, customrolestore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "custom role not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.customRoles.Delete(req.Context(), tenant, name); err != nil {

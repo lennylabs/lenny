@@ -72,6 +72,12 @@ type ExperimentPayload struct {
 	Propagation ExperimentPropagation `json:"propagation"`
 	CreatedAt   string                `json:"createdAt,omitempty"`
 	UpdatedAt   string                `json:"updatedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // PatchExperimentRequest is the §15.1 PATCH body. v1 supports the
@@ -99,6 +105,9 @@ func fromExperiment(e experimentstore.Experiment) ExperimentPayload {
 		Propagation: ExperimentPropagation{ChildSessions: string(e.Propagation)},
 		CreatedAt:   rfc3339Nano(e.CreatedAt),
 		UpdatedAt:   rfc3339Nano(e.UpdatedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(e.Version),
 	}
 }
 
@@ -395,6 +404,9 @@ func (r *Router) handleGetExperiment(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromExperiment(row))
 }
@@ -428,6 +440,14 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// experiment's entity tag is its version; enforce the optimistic-
+	// concurrency precondition before applying the mutation. This runs
+	// before the dry-run branch so a dry-run with a stale If-Match still
+	// returns 412 and a dry-run with no If-Match still returns 428.
+	if !enforceIfMatch(w, req, existing.Version) {
+		return
+	}
 	desired := toExperiment(body, tenant)
 	desired.ID = existing.ID
 	desired.CreatedAt = existing.CreatedAt
@@ -459,6 +479,10 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		desired.ID = e.ID
 		desired.CreatedAt = e.CreatedAt
 		desired.Status = status
+		// spec: §15.1 line 1207 — the §15.1 version is store-managed; carry
+		// the loaded value through the full-replacement so the store's
+		// Update bump lands on the current version rather than resetting it.
+		desired.Version = e.Version
 		*e = desired
 		return nil
 	})
@@ -472,6 +496,9 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 	}
 	r.emit(req.Context(), principal, "admin.experiment.updated", name, map[string]any{"tenantId": tenant})
 	r.checkTenantIsolationFloor(req.Context(), principal, updated)
+	// spec: §15.1 line 1211 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromExperiment(updated))
 }
@@ -577,6 +604,11 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 			"experiment must be in 'concluded' status before delete",
 			map[string]any{"currentStatus": string(existing.Status)})
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
+	if !enforceIfMatchIfPresent(w, req, existing.Version) {
 		return
 	}
 	if err := r.experiments.Delete(req.Context(), tenant, name); err != nil {

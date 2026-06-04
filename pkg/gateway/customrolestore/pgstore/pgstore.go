@@ -36,7 +36,9 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var _ customrolestore.Store = (*Store)(nil)
 
-const selectList = `tenant_id, name, permissions, created_at, updated_at`
+// selectList is the column projection for reads. version is the §15.1
+// optimistic-concurrency counter and is read last.
+const selectList = `tenant_id, name, permissions, created_at, updated_at, version`
 
 // Create inserts a new custom-role row. It validates the §10.2
 // structural invariants, mirroring customrolestore.Memory. Returns
@@ -52,12 +54,16 @@ func (s *Store) Create(ctx context.Context, r customrolestore.CustomRole) error 
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if r.Version == 0 {
+		r.Version = 1
+	}
 	err := pgtenant.InTx(ctx, s.pool, r.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO custom_roles (
-			tenant_id, name, permissions, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5)`,
+			tenant_id, name, permissions, created_at, updated_at, version
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
 			r.TenantID, r.Name, permsToText(r.Permissions),
-			r.CreatedAt, r.UpdatedAt)
+			r.CreatedAt, r.UpdatedAt, r.Version)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -115,10 +121,14 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		r.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// every successful Update so the next If-Match precondition compares
+		// against the new value.
+		r.Version++
 		if _, err := tx.Exec(ctx, `UPDATE custom_roles SET
-			permissions = $3, updated_at = $4
+			permissions = $3, updated_at = $4, version = $5
 		WHERE tenant_id = $1 AND name = $2`,
-			tenantID, name, permsToText(r.Permissions), r.UpdatedAt); err != nil {
+			tenantID, name, permsToText(r.Permissions), r.UpdatedAt, r.Version); err != nil {
 			return err
 		}
 		out = r
@@ -214,7 +224,7 @@ func scanRole(row pgx.Row) (customrolestore.CustomRole, error) {
 		perms []string
 	)
 	if err := row.Scan(
-		&r.TenantID, &r.Name, &perms, &r.CreatedAt, &r.UpdatedAt,
+		&r.TenantID, &r.Name, &perms, &r.CreatedAt, &r.UpdatedAt, &r.Version,
 	); err != nil {
 		return customrolestore.CustomRole{}, err
 	}

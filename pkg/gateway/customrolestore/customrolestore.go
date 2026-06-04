@@ -38,6 +38,10 @@ type CustomRole struct {
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Version is the §15.1 optimistic-concurrency counter: starts at 1,
+	// incremented on every successful Update. Rendered as the quoted-decimal ETag.
+	Version int64
 }
 
 // Store is the §10.2 custom-role registry contract. Every method is
@@ -144,6 +148,10 @@ func (m *Memory) Create(_ context.Context, r CustomRole) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if r.Version == 0 {
+		r.Version = 1
+	}
 	if m.roles[r.TenantID] == nil {
 		m.roles[r.TenantID] = map[string]CustomRole{}
 	}
@@ -183,6 +191,10 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*C
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match precondition compares
+	// against the new value.
+	row.Version++
 	m.roles[tenantID][name] = cloneRole(row)
 	return cloneRole(row), nil
 }

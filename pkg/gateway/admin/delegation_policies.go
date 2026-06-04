@@ -30,6 +30,12 @@ type DelegationPolicyPayload struct {
 	CreatedAt          string                  `json:"createdAt,omitempty"`
 	UpdatedAt          string                  `json:"updatedAt,omitempty"`
 	DeletedAt          string                  `json:"deletedAt,omitempty"`
+
+	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
+	// decimal version. List and GET responses carry it so a client can
+	// supply it as the If-Match header on a later PUT.
+	// spec: §15.1 lines 1207-1209.
+	ETag string `json:"etag,omitempty"`
 }
 
 // DelegationRulePayload is one §8.3 tag-matched allow/deny rule.
@@ -68,6 +74,9 @@ func fromDelegationPolicy(p delegationpolicystore.DelegationPolicy) DelegationPo
 		CreatedAt: rfc3339Nano(p.CreatedAt),
 		UpdatedAt: rfc3339Nano(p.UpdatedAt),
 		DeletedAt: rfc3339Nano(p.DeletedAt),
+		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// carried per-item on list responses and in the GET header.
+		ETag: formatETag(p.Version),
 	}
 	for _, r := range p.Rules {
 		out.Rules = append(out.Rules, DelegationRulePayload{
@@ -275,6 +284,9 @@ func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// ETag header so the client can use it as the next PUT's If-Match.
+	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(row))
 }
@@ -344,20 +356,28 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The PUT resolves the current policy first so the preview reflects
-	// applying the body onto the stored record; a missing policy 404s
-	// ahead of the dry-run branch.
-	if req.URL.Query().Get("dryRun") == "true" {
-		current, gerr := r.delegationPolicies.Get(req.Context(), tenantID, name)
-		if gerr != nil {
-			if errors.Is(gerr, delegationpolicystore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	// Resolve the current policy first so the §15.1 If-Match precondition
+	// and the dry-run preview both read the stored record; a missing
+	// policy 404s ahead of the precondition and the dry-run branch.
+	current, gerr := r.delegationPolicies.Get(req.Context(), tenantID, name)
+	if gerr != nil {
+		if errors.Is(gerr, delegationpolicystore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// policy's entity tag is its version; enforce the optimistic-
+	// concurrency precondition before applying the mutation. This runs
+	// before the dry-run branch so a dry-run with a stale If-Match still
+	// returns 412 and a dry-run with no If-Match still returns 428.
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	if req.URL.Query().Get("dryRun") == "true" {
 		preview := current
 		r.applyDelegationPolicyUpdate(&preview, body)
 		preview.TenantID = tenantID
@@ -387,6 +407,9 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 	})
 	r.emitScanExportedFilesTransition(req.Context(), principal, name,
 		oldScan, updated.ContentPolicy.ScanExportedFiles, rfc3339Nano(updated.UpdatedAt))
+	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// the client can chain a subsequent write without a refresh GET.
+	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(updated))
 }
@@ -446,6 +469,23 @@ func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusConflict, "RESOURCE_HAS_DEPENDENTS",
 			"delegation policy is referenced by one or more runtimes",
 			map[string]any{"dependents": []map[string]any{dep}})
+		return
+	}
+	// Resolve the current policy so the §15.1 DELETE If-Match precondition
+	// can compare against its version; a missing policy 404s.
+	current, gerr := r.delegationPolicies.Get(req.Context(), tenantID, name)
+	if gerr != nil {
+		if errors.Is(gerr, delegationpolicystore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds. This
+	// runs before the actual delete.
+	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}
 	if err := r.delegationPolicies.SoftDelete(req.Context(), tenantID, name, r.clock()); err != nil {

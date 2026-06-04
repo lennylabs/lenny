@@ -25526,16 +25526,36 @@ rejects `W/`/`*`/unquoted/non-decimal), and `enforceIfMatch` (428
 `ETAG_REQUIRED` / 400 `VALIDATION_ERROR` / 412 `ETAG_MISMATCH` with
 `details.currentEtag`). It is wired into the **pool** resource (F-24.4.3):
 GET + list carry the ETag, `PUT /v1/admin/pools/{name}` enforces it,
-success returns the bumped tag. The remaining ~13 admin PUT handlers
-(tenants, runtimes, users, experiments, environments, connectors,
-external-adapters, delegation-policies, custom-roles, credential-pools,
-rbac-config, elicitation-content-integrity, warm-count) and their GET
-ETag exposure still need the same treatment, and the non-pool stores need
-a `version`/generation column (pools already have `Generation`). The
-helper makes each a mechanical apply; the volume (137 admin-PUT test sites
-to update) makes the platform-wide rollout a dedicated multi-batch effort.
-Per-resource manifestations F-9.3.13 (connectors) and F-24.4.3 (pools, now
-closed) trace here.
+success returns the bumped tag.
+
+**Partial progress (2026-06-04):** Three more resources now carry the
+full contract end to end — **experiments**, **delegation-policies**, and
+**custom-roles**. Each store record gained an integer `version` (starts
+at 1, `+1` per successful write; migration `0138` adds the column to
+`experiment_definitions`, `delegation_policies`, `custom_roles`,
+defaulting existing rows to 1, round-tripped through pgstore +
+`Memory`). Their GET-single sets the `ETag` header, list responses carry
+a per-item `etag`, the `PUT` handlers run `enforceIfMatch` before the
+dry-run branch (so `dryRun + If-Match` pre-validates and a missing
+If-Match is 428 on either path), success returns the bumped tag, and
+`DELETE` honours `enforceIfMatchIfPresent` alongside the existing
+deletion guards. The shared admin test helper `doAdminReq` auto-injects a
+valid If-Match on PUTs (via `adminETagGetPath`) so the rollout keeps the
+package green as resources adopt the contract. Resources chosen this
+batch have no SDK/CLI/integration PUT callers, so the blast radius stayed
+inside the admin package.
+
+The remaining admin PUT handlers (tenants, runtimes, users, environments,
+connectors, external-adapters, credential-pools, rbac-config,
+elicitation-content-integrity, warm-count) and their GET ETag exposure
+still need the same treatment, and their non-pool stores still need a
+`version` column. The volume (the ~137 admin-PUT test sites plus the SDK,
+`lenny-ctl`, and tier3/tier4 PUT callers that must start sending
+`If-Match`) keeps the platform-wide rollout a multi-batch effort; the
+established pattern (migration `0138`, the three resources above, the
+`doAdminReq`/`adminETagGetPath` auto-injection) is the template for the
+rest. Per-resource manifestations F-9.3.13 (connectors) and F-24.4.3
+(pools, closed) trace here.
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
 

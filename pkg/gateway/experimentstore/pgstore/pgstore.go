@@ -43,9 +43,10 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var _ experimentstore.Store = (*Store)(nil)
 
-// selectList is the column projection for reads.
+// selectList is the column projection for reads. version is the §15.1
+// optimistic-concurrency counter and is read last.
 const selectList = `tenant_id, id, status, base_runtime, body,
-	created_at, updated_at`
+	created_at, updated_at, version`
 
 // body is the jsonb document persisted in the body column. It carries
 // the nested ExperimentDefinition fields that are not promoted to
@@ -71,6 +72,10 @@ func (s *Store) Create(ctx context.Context, e experimentstore.Experiment) error 
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if e.Version == 0 {
+		e.Version = 1
+	}
 	bodyJSON, err := encodeBody(e)
 	if err != nil {
 		return err
@@ -78,10 +83,10 @@ func (s *Store) Create(ctx context.Context, e experimentstore.Experiment) error 
 	err = pgtenant.InTx(ctx, s.pool, e.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO experiment_definitions (
 			tenant_id, id, status, base_runtime, body,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+			created_at, updated_at, version
+		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)`,
 			e.TenantID, e.ID, string(e.Status), e.BaseRuntime, bodyJSON,
-			e.CreatedAt, e.UpdatedAt)
+			e.CreatedAt, e.UpdatedAt, e.Version)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -145,15 +150,20 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*ex
 			return err
 		}
 		e.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// every successful Update so the next If-Match precondition compares
+		// against the new value.
+		e.Version++
 		bodyJSON, err := encodeBody(e)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE experiment_definitions SET
-			status = $3, base_runtime = $4, body = $5::jsonb, updated_at = $6
+			status = $3, base_runtime = $4, body = $5::jsonb, updated_at = $6,
+			version = $7
 		WHERE tenant_id = $1 AND id = $2`,
 			tenantID, id, string(e.Status), e.BaseRuntime, bodyJSON,
-			e.UpdatedAt); err != nil {
+			e.UpdatedAt, e.Version); err != nil {
 			return err
 		}
 		out = e
@@ -284,7 +294,7 @@ func scanExperiment(row pgx.Row) (experimentstore.Experiment, error) {
 	)
 	if err := row.Scan(
 		&e.TenantID, &e.ID, &status, &e.BaseRuntime, &bodyJSON,
-		&e.CreatedAt, &e.UpdatedAt,
+		&e.CreatedAt, &e.UpdatedAt, &e.Version,
 	); err != nil {
 		return experimentstore.Experiment{}, err
 	}

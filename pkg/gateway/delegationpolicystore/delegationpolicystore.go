@@ -117,6 +117,12 @@ type DelegationPolicy struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt time.Time
+
+	// Version is the §15.1 optimistic-concurrency counter: it starts at 1
+	// and increments by one on every successful Update. The admin surface
+	// renders it as the quoted-decimal ETag and enforces it as the
+	// If-Match precondition. spec: §15.1 line 1207.
+	Version int64
 }
 
 // IsActive reports whether the policy has not been soft-deleted.
@@ -255,6 +261,10 @@ func (m *Memory) Create(_ context.Context, p DelegationPolicy) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
+	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	if p.Version == 0 {
+		p.Version = 1
+	}
 	tenant[p.Name] = clonePolicy(p)
 	return nil
 }
@@ -314,6 +324,10 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*D
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// every successful Update so the next If-Match precondition compares
+	// against the new value.
+	row.Version++
 	tenant[name] = clonePolicy(row)
 	return clonePolicy(row), nil
 }
