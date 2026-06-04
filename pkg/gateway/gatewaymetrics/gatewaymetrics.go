@@ -573,6 +573,16 @@ type Metrics struct {
 	// region-scoped counter above so the cross-operation §16.5 view has a
 	// single series. F-12.5.20 / F-16.7.2.
 	dataResidencyViolation *prometheus.CounterVec
+	// platformAuditRegionUnresolvable is the §11.7 line 433
+	// lenny_platform_audit_region_unresolvable_total counter, labeled by
+	// the requested region and the failure_mode (missing_entry |
+	// postgres_unreachable). The CMP-058 platform-tenant audit residency
+	// gate bumps it (alongside dataResidencyViolation{operation=
+	// "platform_audit_write"}) when a platform-tenant audit write
+	// referencing a regulated target tenant cannot resolve that tenant's
+	// regional platform-Postgres. It drives the PlatformAuditResidencyViolation
+	// critical alert. F-11.7.9.
+	platformAuditRegionUnresolvable *prometheus.CounterVec
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -2107,6 +2117,13 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	platformAuditRegionUnresolvable, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_platform_audit_region_unresolvable_total",
+		Help: "§11.7 CMP-058 platform-tenant audit residency resolution failures by region and failure_mode.",
+	}, []string{"region", "failure_mode"})
+	if err != nil {
+		return nil, err
+	}
 	// §17.3 line 130 / §25.11 line 4085 ArtifactStore replication-health
 	// surface — the replication Controller's MeasureAll wires these via
 	// LagObserver.ReplicationLag / ReplicationFailures. F-17.3.7.
@@ -2378,6 +2395,7 @@ func New() (*Metrics, error) {
 		auditQueryDuration, auditChainVerificationBroken, auditChainRechainedPostOutage,
 		auditRateLimited, auditScatterGatherShards,
 		minioReplicationResidencyViolation, dataResidencyViolation,
+		platformAuditRegionUnresolvable,
 		minioReplicationLagSeconds, minioReplicationFailed,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
@@ -2612,6 +2630,7 @@ func New() (*Metrics, error) {
 		minioReplicationLagSeconds:           minioReplicationLagSeconds,
 		minioReplicationFailed:               minioReplicationFailed,
 		dataResidencyViolation:               dataResidencyViolation,
+		platformAuditRegionUnresolvable:      platformAuditRegionUnresolvable,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -4423,6 +4442,22 @@ func (m *Metrics) IncDataResidencyViolation(operation string) {
 		return
 	}
 	m.dataResidencyViolation.WithLabelValues(operation).Inc()
+}
+
+// IncPlatformAuditRegionUnresolvable records one §11.7 line 433 CMP-058
+// platform-tenant audit residency resolution failure: a platform-tenant
+// audit write referencing a regulated target tenant could not resolve
+// that tenant's regional platform-Postgres. region is the target
+// tenant's requested dataResidencyRegion; failureMode is "missing_entry"
+// (no storage.regions.<region>.postgresEndpoint entry) or
+// "postgres_unreachable" (the entry exists but the pool is unreachable).
+// The CMP-058 gate also bumps IncDataResidencyViolation("platform_audit_write").
+// F-11.7.9.
+func (m *Metrics) IncPlatformAuditRegionUnresolvable(region, failureMode string) {
+	if m == nil {
+		return
+	}
+	m.platformAuditRegionUnresolvable.WithLabelValues(region, failureMode).Inc()
 }
 
 // ObserveAuditScatterGatherShards records the §25.9 shard fan-out width

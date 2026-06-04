@@ -105,6 +105,13 @@ type Store struct {
 	// gateway-replica id stamped onto the CloudEvents source. F-25.5.18.
 	opsEmitter     opsStreamEmitter
 	opsPublisherID string
+	// platformResidency, when wired via WithPlatformAuditResidency,
+	// activates the §11.7 CMP-058 platform-tenant audit residency gate:
+	// a platform-tenant audit write carrying a non-platform
+	// target_tenant_id is routed to that tenant's regional
+	// platform-Postgres. Nil keeps every write on the §12.3 R-03 router
+	// shard (the single-region default). F-11.7.9.
+	platformResidency *platformResidencyRouter
 }
 
 // batchEnqueuer is the seam the §12.3 batch buffer satisfies. It is an
@@ -204,10 +211,31 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash,
 // failure is returned immediately without consuming a retry.
 // spec: §11.7 item 3 line 368.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	// spec: §11.7 lines 430-435 (CMP-058) — a platform-tenant audit write
+	// that references a non-platform target tenant via target_tenant_id is
+	// residency-routed to the target tenant's regional platform-Postgres,
+	// falling back to global when no region is set and failing closed with
+	// PLATFORM_AUDIT_REGION_UNRESOLVABLE when the region is unresolvable.
+	// Keyed on the payload's target_tenant_id so every current and future
+	// platform-tenant event that carries it is routed without per-emit-site
+	// changes. The gate is inert unless WithPlatformAuditResidency wired it.
+	if s.platformResidency != nil && tenantID == s.platformResidency.platformTenantID {
+		if target := targetTenantID(payload); target != "" && target != tenantID {
+			return s.appendPlatformTargeted(ctx, eventType, payload, target, at)
+		}
+	}
 	pool, err := s.writeShard(ctx, tenantID)
 	if err != nil {
 		return audit.Row{}, err
 	}
+	return s.appendOnPool(ctx, pool, tenantID, eventType, payload, at)
+}
+
+// appendOnPool runs the §11.7 item 3 per-tenant lock + seal + insert
+// retry loop against an explicit pool. The Append fast path and the
+// CMP-058 residency-routed path both call it; only the resolved pool
+// differs. spec: §11.7 item 3 line 368.
+func (s *Store) appendOnPool(ctx context.Context, pool *pgxpool.Pool, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	cfg := s.lockCfg.withDefaults()
 	var lastErr error
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {

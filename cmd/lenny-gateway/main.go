@@ -2792,7 +2792,21 @@ func main() {
 			auditstore.WithLockMetrics(auditLockMetrics),
 			// §12.3 line 79: route synchronous audit writes onto the
 			// dedicated sync write pool when one was opened. F-12.3.14.
-			auditstore.WithSyncWritePool(auditSyncPool))
+			auditstore.WithSyncWritePool(auditSyncPool),
+			// spec: §11.7 lines 430-435 (CMP-058) — route a platform-tenant
+			// audit write that references a non-platform target_tenant_id to
+			// the target tenant's regional platform-Postgres, failing closed
+			// with PLATFORM_AUDIT_REGION_UNRESOLVABLE when the region cannot
+			// be resolved. The storage.regions.<region>.postgresEndpoint map
+			// is empty in the single-region default (Config.PlatformRegions),
+			// so a target tenant with a dataResidencyRegion set but no
+			// configured regional endpoint fails closed as the spec requires.
+			// F-11.7.9.
+			auditstore.WithPlatformAuditResidency(
+				jwtaudit.PlatformTenantID,
+				storeRouter,
+				tenantResidencyLookup{tenants: tenants},
+				gwMetrics))
 		// §12.3 line 81: opt-in T2 audit-event batching. When enabled, the
 		// non-PII cross_tenant_read worker receipts are buffered and
 		// flushed in batches through the dedicated sync write pool instead

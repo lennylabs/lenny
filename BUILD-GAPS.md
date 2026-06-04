@@ -17812,7 +17812,7 @@ distinguish a real gap from a recoverable outage.
 **Severity:** High — durability and integrity gap for the audit-bearing
 `lenny-ops` event stream.
 
-### - [ ] F-11.7.9 — 09  Platform-tenant audit residency routing (CMP-058, `PLATFORM_AUDIT_REGION_UNRESOLVABLE`) is not implemented [High] — OPEN
+### - [x] F-11.7.9 — 09  Platform-tenant audit residency routing (CMP-058, `PLATFORM_AUDIT_REGION_UNRESOLVABLE`) is not implemented [High] — CLOSED
 
 **Spec:** §11.7 lines 430–443 — every platform-tenant audit event
 referencing a non-platform `target_tenant_id` MUST be written to the
@@ -17846,6 +17846,32 @@ Art. 44–46 constraint the spec explicitly invokes.
 
 **Severity:** High — a fail-closed control the spec names; without it
 the residency boundary is porous.
+
+**Resolution:** Implemented the §11.7 lines 430-435 CMP-058 three-rule
+gate. `storerouter` gains the region-scoped platform-Postgres resolution:
+`Config.PlatformRegions` (the `storage.regions.<region>.postgresEndpoint`
+map), `PlatformPostgresForRegion(ctx, region)` on the `StoreRouter`
+interface + `SingleShardRouter` (empty region → global pool; configured
+region → its pool; absent region → new `ErrPlatformRegionUnresolvable`).
+`auditstore` gains `WithPlatformAuditResidency` + `residency.go`: every
+`Append` under the platform tenant whose canonical payload carries a
+non-platform `target_tenant_id` is routed by `decide` — rule 1 (resolvable
+region → regional pool), rule 2 (no `dataResidencyRegion`, not-found, or
+tombstone → global), rule 3 (missing storage.regions entry → `missing_entry`,
+or reachability-ping failure → `postgres_unreachable` → fail closed). The
+fail-closed path bumps `lenny_data_residency_violation_total{operation=
+"platform_audit_write"}` and the formerly-emitterless
+`lenny_platform_audit_region_unresolvable_total{region,failure_mode}`,
+writes the `DataResidencyViolationAttempt` record itself to the global
+platform-Postgres (rule 3's rule-2 fallback so the incident is not lost to
+the unreachable region), and returns `*PlatformAuditRegionUnresolvableError`
+(HTTP 422 `PLATFORM_AUDIT_REGION_UNRESOLVABLE`, already in the classifier).
+The gate keys on payload content so current and future platform-tenant
+events route without per-emit-site changes; it is inert (single-region
+default) until `Config.PlatformRegions` is populated. Wired in
+`cmd/lenny-gateway` via a tenant-store `tenantResidencyLookup`. The
+`PlatformAuditResidencyViolation` alert (already in `rules.go`) now has a
+live metric. Resolved in commit <pending>.
 
 ### - [x] F-11.7.10 — 10  No pgaudit DDL/ROLE capture wiring, no `audit.pgaudit.enabled` enforcement at startup or at regulated-tenant create/update [High] — CLOSED
 
@@ -18079,7 +18105,7 @@ observability on the audit pipeline.
 
 **Severity:** Medium — observability gap; alerts are silently broken.
 
-**Deferred:** The evidence is largely stale. 11 of the 13 named series are now wired by prior batches and prove out under `grep` (`lenny_audit_grant_drift_total` via the §11.7 item-2 periodic integrity check `OnGrantDrift`; `lenny_audit_chain_integrity_total` via `OnChainState`; `lenny_audit_ocsf_translation_failed_total` via the OCSF translator adapter; `lenny_audit_lock_acquire_seconds` / `lenny_audit_concurrency_timeout_total` via `auditstore.LockMetrics`; `lenny_audit_siem_delivery_lag_seconds` via the SIEM outbox; `lenny_pgaudit_grant_events_total` via the lenny-ops pgaudit shipper (F-4.4.20); `lenny_audit_siem_configured` / `lenny_audit_retention_days` / `lenny_env_production` from startup flags; `lenny_data_residency_violation_total` from the replication/audit paths). Only two remain unemitted, and each is blocked on an unbuilt subsystem rather than on metric plumbing: `lenny_platform_audit_region_unresolvable_total` is owned by F-11.7.9 (platform-tenant audit residency routing, `PLATFORM_AUDIT_REGION_UNRESOLVABLE`, OPEN), and `lenny_audit_redaction_receipt_missing_total` is owned by F-12.8.4 (the in-place §12.8 audit redaction / KMS-signed `RedactionReceipt` path is in-memory `ChainSet`-only; the production Postgres erasure path deletes rows and never verifies receipts, so no production caller can increment it without rule O making it hollow). Re-attempt when F-11.7.9 and F-12.8.4 land their emitters.
+**Deferred:** The evidence is largely stale. 11 of the 13 named series are now wired by prior batches and prove out under `grep` (`lenny_audit_grant_drift_total` via the §11.7 item-2 periodic integrity check `OnGrantDrift`; `lenny_audit_chain_integrity_total` via `OnChainState`; `lenny_audit_ocsf_translation_failed_total` via the OCSF translator adapter; `lenny_audit_lock_acquire_seconds` / `lenny_audit_concurrency_timeout_total` via `auditstore.LockMetrics`; `lenny_audit_siem_delivery_lag_seconds` via the SIEM outbox; `lenny_pgaudit_grant_events_total` via the lenny-ops pgaudit shipper (F-4.4.20); `lenny_audit_siem_configured` / `lenny_audit_retention_days` / `lenny_env_production` from startup flags; `lenny_data_residency_violation_total` from the replication/audit paths). Only one remains unemitted: `lenny_platform_audit_region_unresolvable_total` is now wired by F-11.7.9 (the CMP-058 platform-tenant audit residency gate bumps it on a fail-closed abort via `gatewaymetrics.IncPlatformAuditRegionUnresolvable`). The last gap is `lenny_audit_redaction_receipt_missing_total`, owned by F-12.8.4 (the in-place §12.8 audit redaction / KMS-signed `RedactionReceipt` path is in-memory `ChainSet`-only; the production Postgres erasure path deletes rows and never verifies receipts, so no production caller can increment it without rule O making it hollow). Re-attempt when F-12.8.4 lands its emitter.
 
 ### - [x] F-11.7.16 — 16  No SIEM probe contributing to `/healthz` degraded status [Medium] — CLOSED
 
@@ -38944,7 +38970,8 @@ half of the force-delete path). The plain DELETE lifecycle now exists
 block (`TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` semantics enforced in the
 controller as a pause), but the `force-delete` endpoint + CLI + escrow
 re-encryption depend on the region-scoped escrow KEK/bucket and CMP-058
-platform-audit residency routing (F-11.7.9, OPEN). Deferred with F-12.8.2.
+platform-audit residency routing (F-11.7.9 now CLOSED, but the escrow
+KEK/bucket and force-delete lifecycle remain). Deferred with F-12.8.2.
 
 ### - [x] F-24.10.3 — `DELETE /v1/admin/tenants/{id}` does not initiate the §12.8 deletion lifecycle [High] — CLOSED
 

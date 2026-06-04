@@ -109,6 +109,16 @@ type StoreRouter interface {
 	// not owned by a tenant or session (ops-scoped tables).
 	PlatformPostgres(ctx context.Context) (*pgxpool.Pool, error)
 
+	// PlatformPostgresForRegion returns the region-scoped
+	// platform-Postgres pool the §11.7 CMP-058 platform-tenant audit
+	// residency gate routes a write to when the target tenant carries a
+	// dataResidencyRegion. The empty region resolves to the global
+	// PlatformPostgres pool (the residency rule-2 fallback). A non-empty
+	// region with no storage.regions.<region>.postgresEndpoint entry
+	// returns ErrPlatformRegionUnresolvable so the caller fails closed.
+	// spec: §11.7 line 431.
+	PlatformPostgresForRegion(ctx context.Context, region string) (*pgxpool.Pool, error)
+
 	// AllAuditShards returns every audit shard for scatter-gather
 	// cross-tenant audit queries (§25.9).
 	AllAuditShards(ctx context.Context) ([]ShardHandle, error)
@@ -136,6 +146,16 @@ var (
 	// shards, so a Postgres-only deployment can still satisfy R-03
 	// without a Redis instance.
 	ErrRedisUnavailable = errors.New("storerouter: router has no redis client (postgres-only mode)")
+	// ErrPlatformRegionUnresolvable reports that a region-scoped
+	// platform-Postgres write named a region with no
+	// storage.regions.<region>.postgresEndpoint entry. It is the §11.7
+	// line 433 fail-closed condition for the CMP-058 platform-tenant
+	// audit residency gate (the missing-entry case), mirroring the
+	// BACKUP_REGION_UNRESOLVABLE / LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE
+	// fail-closed gates. PlatformPostgresForRegion returns it; the audit
+	// write path maps it to PLATFORM_AUDIT_REGION_UNRESOLVABLE (HTTP 422).
+	// spec: §11.7 line 433.
+	ErrPlatformRegionUnresolvable = errors.New("storerouter: platform-Postgres region has no storage.regions entry")
 )
 
 // SingleShardRouter is the v1 implementation: every Postgres
@@ -157,6 +177,13 @@ type SingleShardRouter struct {
 	platformID     ShardID
 	scatterCfg     ScatterConfig
 	scatterMetrics ScatterMetrics
+	// platformRegions is the storage.regions.<region>.postgresEndpoint
+	// map: one logical platform-Postgres pool per data-residency region.
+	// PlatformPostgresForRegion resolves a region against it; an empty
+	// map keeps the single-region deployment default (every region-set
+	// write fails closed because no regional endpoint is configured).
+	// spec: §11.7 line 431.
+	platformRegions map[string]*pgxpool.Pool
 }
 
 // Config configures NewSingleShardRouter.
@@ -210,6 +237,16 @@ type Config struct {
 	// instance, so an operator that splits concerns typically points this
 	// at the same client as RedisByConcern[RedisConcernCoordination].
 	PlatformRedisClient redis.UniversalClient
+	// PlatformRegions is the storage.regions.<region>.postgresEndpoint
+	// map consumed by PlatformPostgresForRegion: one platform-Postgres
+	// pool per data-residency region. The §11.7 CMP-058 platform-tenant
+	// audit residency gate routes a write referencing a regulated target
+	// tenant to that tenant's regional platform-Postgres; a region absent
+	// from this map is unresolvable and the write fails closed. Empty (the
+	// default) keeps the single-region deployment behavior. The same map
+	// underpins runtime-tenant writes, backups, and legal-hold escrow
+	// residency. spec: §11.7 line 431.
+	PlatformRegions map[string]*pgxpool.Pool
 	// DefaultShardID is the ShardID assigned to the single shard
 	// returned by AllSessionShards and AllAuditShards. A zero value
 	// defaults to "default".
@@ -260,16 +297,24 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 		guard(c)
 	}
 	guard(cfg.PlatformRedisClient)
+	var platformRegions map[string]*pgxpool.Pool
+	if len(cfg.PlatformRegions) > 0 {
+		platformRegions = make(map[string]*pgxpool.Pool, len(cfg.PlatformRegions))
+		for region, pool := range cfg.PlatformRegions {
+			platformRegions[region] = pool
+		}
+	}
 	return &SingleShardRouter{
-		pg:             cfg.Postgres,
-		billingPG:      cfg.BillingAuditPostgres,
-		rdb:            cfg.Redis,
-		redisByConcern: cfg.RedisByConcern,
-		platformRedis:  cfg.PlatformRedisClient,
-		defaultID:      id,
-		platformID:     id,
-		scatterCfg:     cfg.Scatter.withDefaults(),
-		scatterMetrics: cfg.ScatterMetrics,
+		pg:              cfg.Postgres,
+		billingPG:       cfg.BillingAuditPostgres,
+		rdb:             cfg.Redis,
+		redisByConcern:  cfg.RedisByConcern,
+		platformRedis:   cfg.PlatformRedisClient,
+		defaultID:       id,
+		platformID:      id,
+		scatterCfg:      cfg.Scatter.withDefaults(),
+		scatterMetrics:  cfg.ScatterMetrics,
+		platformRegions: platformRegions,
 	}, nil
 }
 
@@ -389,6 +434,24 @@ func (r *SingleShardRouter) AllSessionShards(_ context.Context) ([]ShardHandle, 
 // deployment can route them to a dedicated instance.
 func (r *SingleShardRouter) PlatformPostgres(_ context.Context) (*pgxpool.Pool, error) {
 	return r.pg, nil
+}
+
+// PlatformPostgresForRegion resolves the §11.7 line 431 region-scoped
+// platform-Postgres pool for the CMP-058 platform-tenant audit residency
+// gate. The empty region (the rule-2 fallback) returns the global
+// PlatformPostgres pool. A non-empty region is looked up in the
+// storage.regions.<region>.postgresEndpoint map (Config.PlatformRegions):
+// a present entry returns that region's pool (rule 1); an absent entry
+// returns ErrPlatformRegionUnresolvable so the audit write fails closed
+// (rule 3, missing_entry). spec: §11.7 lines 431-433.
+func (r *SingleShardRouter) PlatformPostgresForRegion(ctx context.Context, region string) (*pgxpool.Pool, error) {
+	if region == "" {
+		return r.PlatformPostgres(ctx)
+	}
+	if pool, ok := r.platformRegions[region]; ok {
+		return pool, nil
+	}
+	return nil, ErrPlatformRegionUnresolvable
 }
 
 // AllAuditShards returns one ShardHandle wrapping the audit pool. When
