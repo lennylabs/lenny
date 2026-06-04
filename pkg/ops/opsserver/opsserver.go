@@ -25,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
+	"github.com/lennylabs/lenny/pkg/ops/doctor"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
@@ -121,6 +122,11 @@ type Server struct {
 	// coalescing when DiagnosticsAudit is configured; nil disables it.
 	diagAudit    *auditrate.Limiter
 	diagAuditCfg *DiagnosticsAuditConfig
+
+	// doctor backs the §25.6 POST /v1/admin/diagnostics/run[?fix=true]
+	// auto-remediation surface. A nil orchestrator reports the run
+	// endpoint unavailable (the deployment has no cluster remediator).
+	doctor doctor.Service
 }
 
 // Options configures a lenny-ops Server.
@@ -146,6 +152,10 @@ type Options struct {
 	// and credential-pool diagnostic endpoints. A nil service reports
 	// those endpoints as unavailable.
 	Diagnostics diagnostics.DiagnosticService
+	// Doctor is the §25.6 auto-remediation orchestrator backing POST
+	// /v1/admin/diagnostics/run[?fix=true] and `lenny-ctl doctor[--fix]`.
+	// A nil orchestrator reports the run endpoint unavailable.
+	Doctor doctor.Service
 	// Drift is the §25.10 configuration-drift service. A nil service
 	// reports the drift endpoints as unavailable.
 	Drift *driftservice.Service
@@ -298,6 +308,7 @@ func New(opts Options) *Server {
 		leader:             opts.Leader,
 		backups:            opts.Backups,
 		diagnostics:        opts.Diagnostics,
+		doctor:             opts.Doctor,
 		drift:              opts.Drift,
 		locks:              opts.Locks,
 		lockCoordination:   opts.LockCoordination,
@@ -366,6 +377,7 @@ func New(opts Options) *Server {
 	s.registerLogRoutes()
 	s.registerBackupRoutes()
 	s.registerDiagnosticsRoutes()
+	s.registerDoctorRoute()
 	s.registerDriftRoutes()
 	s.registerLockRoutes()
 	s.registerEscalationRoutes()

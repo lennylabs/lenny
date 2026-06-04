@@ -154,6 +154,17 @@ spec:
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days={{ .Values.ops.drift.snapshotStaleWarningDays }}
             - --drift-running-state-cache-ttl-seconds={{ .Values.ops.drift.runningStateCacheTTLSeconds }}
+            # §25.6 doctor `fix=true` auto-remediation guardrails:
+            # admin.doctor.fixTimeoutSeconds bounds each fix,
+            # admin.doctor.allowedFixes narrows the fixable set, and
+            # global.maintenanceMode disables every fix. F-25.6.2.
+            - --doctor-fix-timeout-seconds={{ .Values.admin.doctor.fixTimeoutSeconds }}
+            {{- with .Values.admin.doctor.allowedFixes }}
+            - --doctor-allowed-fixes={{ join "," . }}
+            {{- end }}
+            {{- if .Values.global.maintenanceMode }}
+            - --maintenance-mode=true
+            {{- end }}
             # §25.4 line 903 / §17.8.4 ops.selfHealth.checkIntervalSeconds —
             # self-monitor cadence (10s at Tier 2/3, 30s acceptable at
             # Tier 1). Tier-preset overridden. F-17.8.1.

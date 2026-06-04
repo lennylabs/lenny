@@ -104,11 +104,11 @@ const (
 	// by sessionserver lifecycle.go; the events below cover the §7.3
 	// auto-retry, resume, awaiting-client-action, and cascade transitions
 	// that sit between create and terminal. F-7.3.25.
-	EventSessionResumed                EventType = "session.resumed"
-	EventSessionRetryAttempted         EventType = "session.retry_attempted"
-	EventSessionAwaitingActionEntered  EventType = "session.awaiting_action_entered"
+	EventSessionResumed                 EventType = "session.resumed"
+	EventSessionRetryAttempted          EventType = "session.retry_attempted"
+	EventSessionAwaitingActionEntered   EventType = "session.awaiting_action_entered"
 	EventSessionExpiredInAwaitingAction EventType = "session.expired_in_awaiting_action"
-	EventSessionCascadeApplied         EventType = "session.cascade_applied"
+	EventSessionCascadeApplied          EventType = "session.cascade_applied"
 	// EventSessionSetupCommandFailed is the §7.5 / §7.3 line 387
 	// non-retryable failure category, emitted by the gateway when a
 	// setup command exits non-zero or is killed by the per-command /
@@ -138,11 +138,11 @@ const (
 	// connector_id; the §16.7 catalog enumerates each so audit-sink
 	// validators (IsKnownEventType) do not discard the rows as unknown
 	// event types. spec: §9.3 line 116-164 — F-9.3.9.
-	EventAdminConnectorCreated              EventType = "admin.connector.created"
-	EventAdminConnectorUpdated              EventType = "admin.connector.updated"
-	EventAdminConnectorSoftDeleted          EventType = "admin.connector.soft_deleted"
+	EventAdminConnectorCreated                EventType = "admin.connector.created"
+	EventAdminConnectorUpdated                EventType = "admin.connector.updated"
+	EventAdminConnectorSoftDeleted            EventType = "admin.connector.soft_deleted"
 	EventConnectorOAuthAuthorizationInitiated EventType = "connector.oauth.authorization_initiated"
-	EventConnectorOAuthCredentialStored     EventType = "connector.oauth.credential_stored"
+	EventConnectorOAuthCredentialStored       EventType = "connector.oauth.credential_stored"
 )
 
 // §15.1 / §24.8 external-protocol adapter registry lifecycle. The admin
@@ -153,10 +153,10 @@ const (
 // excluded from Catalog(). spec: §15 line 1414 (machine-enforceable
 // registration gate); §24.8 line 113. F-24.8.2.
 const (
-	EventAdminExternalAdapterRegistered      EventType = "admin.external_adapter.registered"
-	EventAdminExternalAdapterUpdated         EventType = "admin.external_adapter.updated"
-	EventAdminExternalAdapterDeleted         EventType = "admin.external_adapter.deleted"
-	EventAdminExternalAdapterValidated       EventType = "admin.external_adapter.validated"
+	EventAdminExternalAdapterRegistered       EventType = "admin.external_adapter.registered"
+	EventAdminExternalAdapterUpdated          EventType = "admin.external_adapter.updated"
+	EventAdminExternalAdapterDeleted          EventType = "admin.external_adapter.deleted"
+	EventAdminExternalAdapterValidated        EventType = "admin.external_adapter.validated"
 	EventAdminExternalAdapterValidationFailed EventType = "admin.external_adapter.validation_failed"
 )
 
@@ -186,6 +186,19 @@ const (
 	EventDiagnosticsPoolDiagnosed           EventType = "diagnostics.pool_diagnosed"
 	EventDiagnosticsCredentialPoolDiagnosed EventType = "diagnostics.credential_pool_diagnosed"
 	EventDiagnosticsConnectivityChecked     EventType = "diagnostics.connectivity_checked"
+
+	// §25.6 `fix=true` auto-remediation lifecycle. The doctor
+	// orchestrator emits these around a `POST /v1/admin/diagnostics/run?-
+	// fix=true` run: one fix_started/fix_completed pair bounds the run,
+	// and one fix_applied / fix_skipped / fix_failed per finding. §16.7
+	// line 685 enumerates only the four read-side diagnostics events, so
+	// these are recognized by IsKnownEventType (see auxKnownEventTypes)
+	// but excluded from Catalog(). spec: §25.6 lines 2975-2982 — F-25.6.2.
+	EventDiagnosticsFixStarted   EventType = "diagnostics.fix_started"
+	EventDiagnosticsFixApplied   EventType = "diagnostics.fix_applied"
+	EventDiagnosticsFixSkipped   EventType = "diagnostics.fix_skipped"
+	EventDiagnosticsFixFailed    EventType = "diagnostics.fix_failed"
+	EventDiagnosticsFixCompleted EventType = "diagnostics.fix_completed"
 )
 
 // The §16.7 / §25.8 platform-lifecycle-management audit events.
@@ -411,6 +424,14 @@ var auxKnownEventTypes = []EventType{
 	EventAdminExternalAdapterDeleted,
 	EventAdminExternalAdapterValidated,
 	EventAdminExternalAdapterValidationFailed,
+	// §25.6 doctor `fix=true` auto-remediation lifecycle. §16.7 line 685
+	// enumerates only the read-side diagnostics events, so these are
+	// recognized by IsKnownEventType yet excluded from Catalog(). F-25.6.2.
+	EventDiagnosticsFixStarted,
+	EventDiagnosticsFixApplied,
+	EventDiagnosticsFixSkipped,
+	EventDiagnosticsFixFailed,
+	EventDiagnosticsFixCompleted,
 }
 
 // Catalog returns the §16.7 catalog of §25 audit event types. The

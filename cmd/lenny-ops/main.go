@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/doctor"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
@@ -119,6 +120,13 @@ func main() {
 			"signals and stamps the relatedLogs reference against it")
 	runbookDir := flag.String("runbook-dir", envOr("LENNY_RUNBOOK_DIR", "docs/runbooks"),
 		"directory of §25.7 operational-runbook markdown files the runbook index serves")
+	// §25.6 doctor auto-remediation guardrails (admin.doctor.* / global.maintenanceMode).
+	doctorFixTimeout := flag.Int("doctor-fix-timeout-seconds", 120,
+		"§25.6 admin.doctor.fixTimeoutSeconds: per-remediation timeout for `doctor --fix`")
+	doctorAllowedFixes := flag.String("doctor-allowed-fixes", os.Getenv("LENNY_DOCTOR_ALLOWED_FIXES"),
+		"§25.6 admin.doctor.allowedFixes: comma-separated allowlist of fixable findings; empty means the full set")
+	maintenanceMode := flag.Bool("maintenance-mode", envOr("LENNY_MAINTENANCE_MODE", "false") == "true",
+		"§25.6 global.maintenanceMode: when true, `doctor --fix` skips every remediation")
 	backupImage := flag.String("backup-image", os.Getenv("LENNY_BACKUP_IMAGE"),
 		"§25.11 lenny-backup image ({platform.registry.url}/lenny-backup:{version}) the "+
 			"Kubernetes JobLauncher runs. Empty (with no cluster) keeps the in-process fake "+
@@ -792,6 +800,28 @@ func main() {
 	}
 	diagnosticSvc := buildDiagnosticService(diagnosticDeps)
 
+	// §25.6 doctor auto-remediation orchestrator backing POST
+	// /v1/admin/diagnostics/run[?fix=true]. Built only when a Kubernetes
+	// client is available; otherwise the endpoint reports 503. F-25.6.2.
+	dDeps := doctorDeps{
+		ReleaseNS:    envOr("POD_NAMESPACE", *leaderElectNS),
+		AllowedFixes: splitCSV(*doctorAllowedFixes),
+		FixTimeout:   time.Duration(*doctorFixTimeout) * time.Second,
+		Audit: func(ev doctor.Event) {
+			auditRecorder.Record(string(ev.Type), ev.Fields, time.Time{})
+		},
+	}
+	if *maintenanceMode {
+		dDeps.MaintenanceMode = func() bool { return true }
+	}
+	if clientset != nil {
+		dDeps.Clientset = clientset
+	}
+	if dynClient != nil {
+		dDeps.Dynamic = dynClient
+	}
+	doctorSvc := buildDoctorService(dDeps)
+
 	// The §25.8 release-channel manifest publisher. Loaded from the
 	// operator-supplied key + manifest paths. When no key is configured
 	// the publisher is nil and GET /v1/latest is unmapped; lenny-ops
@@ -1126,6 +1156,7 @@ func main() {
 		Leader:             svc,
 		Backups:            backupSvc,
 		Diagnostics:        diagnosticSvc,
+		Doctor:             doctorSvc,
 		Drift:              driftSvc,
 		Locks:              lockSvc,
 		LockCoordination:   lockCoordination,
@@ -1150,8 +1181,8 @@ func main() {
 		IdempotencyStandardTTL:    time.Duration(*idempotencyKeyTTL) * time.Second,
 		IdempotencyLongRunningTTL: time.Duration(*idempotencyLongRunningTTL) * time.Second,
 		Inventory:                 inventory,
-		Me:                   meConfig,
-		Audit:                opsAudit,
+		Me:                        meConfig,
+		Audit:                     opsAudit,
 		// §16.8 / §16.9: expose every instrument registered on the process
 		// default registry (self-health, backup, drift, rate-limit,
 		// diagnostics) on the mandatory lenny-ops scrape target.

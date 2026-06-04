@@ -40,6 +40,7 @@ type Root struct {
 	AgentNamespaces            []Object `json:"agentNamespaces,omitempty"`
 	Controller                 Object   `json:"controller,omitempty"`
 	PoolScalingController      Object   `json:"poolScalingController,omitempty"`
+	Admin                      Object   `json:"admin,omitempty"`
 	AdmissionWebhooks          Object   `json:"admissionWebhooks,omitempty"`
 	AdmissionPolicies          Object   `json:"admissionPolicies,omitempty"`
 	WebhookIngressCIDR         string   `json:"webhookIngressCIDR,omitempty"`
@@ -123,6 +124,9 @@ type Global struct {
 	// the empty string to omit the deployment_tier metric relabel.
 	DeploymentTier string `json:"deploymentTier,omitempty" desc:"Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1."`
 	DevMode        bool   `json:"devMode,omitempty" desc:"Relaxes multi-tenant admission controls for local development. Never enable on a multi-tenant cluster. §4.9."`
+	// MaintenanceMode is the §25.6 line 2974 global guard: when true the
+	// doctor --fix auto-remediation surface skips every remediation.
+	MaintenanceMode bool `json:"maintenanceMode,omitempty" desc:"When true, the §25.6 doctor --fix auto-remediation surface skips every remediation. §25.6 line 2974."`
 	// NoEnvironmentPolicy is the §10.6/§17.6 line 365 platform-wide default
 	// access policy. The gateway refuses to start when it is unset outside
 	// --dev-mode, so the schema constrains it to the two documented values.

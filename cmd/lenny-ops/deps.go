@@ -20,10 +20,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
@@ -34,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics/prodsource"
+	"github.com/lennylabs/lenny/pkg/ops/doctor"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
@@ -43,7 +46,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
-	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
@@ -1219,6 +1221,53 @@ func buildDiagnosticService(deps diagnosticSourceDeps) diagnostics.DiagnosticSer
 		src.Pools = prodsource.NewGatewayPoolReader(deps.Gateway)
 	}
 	return diagnostics.NewService(src)
+}
+
+// doctorDeps carries the inputs for the §25.6 auto-remediation
+// orchestrator backing POST /v1/admin/diagnostics/run[?fix=true].
+type doctorDeps struct {
+	// Clientset and Dynamic are the cluster clients the remediator acts
+	// through. A nil Clientset leaves the surface unconfigured.
+	Clientset kubernetes.Interface
+	Dynamic   dynamic.Interface
+	// ReleaseNS is the namespace holding the cert-manager Certificate CRs
+	// the certManagerExpiring fix targets.
+	ReleaseNS string
+	// AllowedFixes is admin.doctor.allowedFixes; empty means the full set.
+	AllowedFixes []string
+	// FixTimeout is admin.doctor.fixTimeoutSeconds; zero applies the 120s
+	// default.
+	FixTimeout time.Duration
+	// MaintenanceMode reports global.maintenanceMode. A nil hook is "off".
+	MaintenanceMode func() bool
+	// Audit emits the §25.6 diagnostics.fix_* lifecycle events.
+	Audit func(doctor.Event)
+}
+
+// buildDoctorService constructs the §25.6 doctor orchestrator over the
+// production Kubernetes remediator. A nil Clientset (no cluster
+// connection in single-process dev) leaves the orchestrator nil, so the
+// run endpoint reports 503 DOCTOR_UNAVAILABLE. spec: §25.6 lines
+// 2941-2982. F-25.6.2, F-24.2.3.
+func buildDoctorService(deps doctorDeps) doctor.Service {
+	if deps.Clientset == nil {
+		return nil
+	}
+	rem := &k8sDoctorRemediator{
+		clientset: deps.Clientset,
+		dyn:       deps.Dynamic,
+		releaseNS: deps.ReleaseNS,
+	}
+	o := doctor.New(rem, doctor.Config{
+		AllowedFixes:    deps.AllowedFixes,
+		FixTimeout:      deps.FixTimeout,
+		MaintenanceMode: deps.MaintenanceMode,
+		Audit:           deps.Audit,
+	})
+	if o == nil {
+		return nil
+	}
+	return o
 }
 
 // buildReleaseChannelPublisher constructs the §25.8 release-channel

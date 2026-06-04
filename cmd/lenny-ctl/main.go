@@ -217,6 +217,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
 			return cmdDiagnose(ctx, ops, rest[1:], stdout, stderr)
 		})
+	case "doctor":
+		// §24.2 rows 2-3: doctor runs the §25.6 diagnostic suite via
+		// POST /v1/admin/diagnostics/run on lenny-ops; --fix applies the
+		// auto-remediations. spec: §24.2 lines 44-45; §25.6 lines 2941-2982.
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdDoctor(ctx, ops, rest[1:], stdout, stderr)
+		})
 	case "drift":
 		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
 			return cmdDrift(ctx, ops, rest[1:], stdout, stderr)
@@ -356,6 +363,7 @@ Operability commands (§25.14 / §24.15, target lenny-ops):
   diagnose pool <name>                  Diagnose a pool
   diagnose connectivity                 Check dependency connectivity
   diagnose credential-pool <name>       Diagnose a credential pool
+  doctor [--fix] [--findings <a,b,c>]   Run diagnostics; --fix applies safe auto-remediations
   drift report [--scope <s>] [--against <live|target|both>]
   drift validate --desired <file>       Validate desired state
   drift snapshot refresh --desired <file> [--confirm]   Replace the stored desired-state snapshot

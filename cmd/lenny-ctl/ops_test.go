@@ -198,6 +198,42 @@ func TestDiagnoseCredentialPool(t *testing.T) {
 	}
 }
 
+// spec: §24.2 line 44 — `lenny-ctl doctor` POSTs to the read-only
+// diagnostics run endpoint.
+func TestDoctorReadOnly(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"fix":false,"findings":[]}`, "doctor")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/diagnostics/run" {
+		t.Errorf("request: %s %s, want POST /v1/admin/diagnostics/run", got.method, got.path)
+	}
+}
+
+// spec: §24.2 line 45 — `lenny-ctl doctor --fix` sets ?fix=true.
+func TestDoctorFixSetsQuery(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"fix":true,"findings":[]}`, "doctor", "--fix")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.path != "/v1/admin/diagnostics/run?fix=true" {
+		t.Errorf("path: %q, want /v1/admin/diagnostics/run?fix=true", got.path)
+	}
+}
+
+// `--findings a,b` is parsed into the request body's findings array.
+func TestDoctorFindingsFlag(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"fix":true,"findings":[]}`,
+		"doctor", "--fix", "--findings", "coreDnsStuckEndpoint, certManagerExpiring")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	list, _ := got.body["findings"].([]any)
+	if len(list) != 2 || list[0] != "coreDnsStuckEndpoint" || list[1] != "certManagerExpiring" {
+		t.Errorf("findings body = %v", got.body["findings"])
+	}
+}
+
 func TestDriftReport(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"drift":[]}`, "drift", "report")
 	if code != 0 {

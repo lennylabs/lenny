@@ -249,6 +249,32 @@ func cmdDiagnose(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 	}
 }
 
+// cmdDoctor runs the §25.6 diagnostic suite via
+// POST /v1/admin/diagnostics/run on lenny-ops. Without --fix the run is
+// read-only and prints a remediation report; with --fix it applies the
+// §25.6 auto-remediations and prints the per-finding outcomes plus the
+// §25.2 operation envelope. An optional --findings <a,b,c> narrows the
+// run to specific finding codes. spec: §24.2 lines 44-45; §25.6 lines
+// 2941-2982. F-24.2.3.
+func cmdDoctor(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	fix := hasFlag(args, "--fix")
+	path := "/v1/admin/diagnostics/run"
+	if fix {
+		path += "?fix=true"
+	}
+	body := map[string]any{}
+	if list := flagValue(args, "--findings"); list != "" {
+		findings := []string{}
+		for _, f := range strings.Split(list, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				findings = append(findings, f)
+			}
+		}
+		body["findings"] = findings
+	}
+	return opsSend(ctx, c, "POST", path, body, stdout, stderr)
+}
+
 // cmdDrift dispatches the §25.14 `drift` group, which maps to the
 // §25.10 configuration-drift endpoints on lenny-ops.
 func cmdDrift(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {

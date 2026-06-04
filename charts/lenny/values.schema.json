@@ -10,6 +10,9 @@
     "adapter": {
       "type": "object"
     },
+    "admin": {
+      "type": "object"
+    },
     "admissionPolicies": {
       "type": "object"
     },
@@ -96,6 +99,10 @@
         },
         "devMode": {
           "description": "Relaxes multi-tenant admission controls for local development. Never enable on a multi-tenant cluster. §4.9.",
+          "type": "boolean"
+        },
+        "maintenanceMode": {
+          "description": "When true, the §25.6 doctor --fix auto-remediation surface skips every remediation. §25.6 line 2974.",
           "type": "boolean"
         },
         "noEnvironmentPolicy": {
