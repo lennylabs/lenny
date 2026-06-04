@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/ops/registryservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
@@ -89,8 +90,11 @@ type Server struct {
 	releaseChannel     *releasechannel.Publisher
 	upgrade            *upgradeservice.Service
 	upgradeChecker     *upgradeservice.Checker
+	upgradePreflighter *upgradeservice.Preflighter
 	versionAggregator  *upgradeservice.VersionAggregator
 	platformConfig     *configservice.Service
+	registry           *registryservice.Service
+	buildVersion       string // §25.8 compiled-in lenny-ops version for the preflight version gate
 	podLogs            PodLogReader
 	production         bool
 
@@ -224,6 +228,21 @@ type Options struct {
 	// registers the routes; when nil they are unmapped (404), the
 	// cold-start posture for a deployment without a gateway config client.
 	PlatformConfig *configservice.Service
+	// UpgradePreflighter backs the §25.8 POST
+	// /v1/admin/platform/upgrade/preflight endpoint. When non-nil the
+	// Server registers the route; when nil it is unmapped (404). It runs
+	// the §25.8 Phase-1 safety checks and returns the resolved upgrade plan
+	// as a preview without writing state.
+	UpgradePreflighter *upgradeservice.Preflighter
+	// Registry backs the §25.8 GET/PUT /v1/admin/platform/registry runtime
+	// registry API. When non-nil the Server registers the routes; when nil
+	// they are unmapped (404), the cold-start posture for a deployment
+	// without a runtime registry store.
+	Registry *registryservice.Service
+	// BuildVersion is the compiled-in lenny-ops version. The §25.8
+	// preflight version-prerequisite gate compares it against the release
+	// manifest's minUpgradeFrom.
+	BuildVersion string
 	// PodLogs, when non-nil, backs the §25.4 GET
 	// /v1/admin/logs/pods/{namespace}/{name} log-proxy endpoint with the
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
@@ -320,8 +339,11 @@ func New(opts Options) *Server {
 		releaseChannel:     opts.ReleaseChannel,
 		upgrade:            opts.Upgrade,
 		upgradeChecker:     opts.UpgradeChecker,
+		upgradePreflighter: opts.UpgradePreflighter,
 		versionAggregator:  opts.VersionAggregator,
 		platformConfig:     opts.PlatformConfig,
+		registry:           opts.Registry,
+		buildVersion:       opts.BuildVersion,
 		podLogs:            opts.PodLogs,
 		production:         opts.Production,
 		inventory:          opts.Inventory,
@@ -387,6 +409,7 @@ func New(opts Options) *Server {
 	s.registerReleaseChannelRoutes()
 	s.registerPlatformUpgradeRoutes()
 	s.registerPlatformConfigRoutes()
+	s.registerPlatformRegistryRoutes()
 	s.registerOperationsRoutes()
 	s.registerMeRoutes()
 	// §25.12: the MCP management server exposes the §25 operability

@@ -56,12 +56,14 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 // columns (target_version, current_phase, started_by, started_at,
 // completed_at, paused_at) mirror the spec schema for SQL introspection.
 type stateMeta struct {
-	OperationID string    `json:"operationId"`
-	ImageDigest string    `json:"imageDigest,omitempty"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	Paused      bool      `json:"paused"`
-	Verified    bool      `json:"verified"`
-	Reason      string    `json:"reason,omitempty"`
+	OperationID    string            `json:"operationId"`
+	ImageDigest    string            `json:"imageDigest,omitempty"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+	Paused         bool              `json:"paused"`
+	Verified       bool              `json:"verified"`
+	Reason         string            `json:"reason,omitempty"`
+	PreviousImages map[string]string `json:"previousImages,omitempty"`
+	OpsHeartbeat   time.Time         `json:"opsRollHeartbeat,omitempty"`
 }
 
 // Load returns the platform_upgrade_state singleton. ok is false when no
@@ -74,12 +76,14 @@ func (s *Store) Load(ctx context.Context) (upgradeservice.State, bool, error) {
 		currentPhase  string
 		startedBy     string
 		startedAt     time.Time
+		targetImgsRaw []byte
+		upgradeErr    *string
 		metaRaw       []byte
 	)
 	err := s.pool.QueryRow(ctx,
-		`SELECT target_version, current_phase, started_by, started_at, metadata
+		`SELECT target_version, current_phase, started_by, started_at, target_images, error, metadata
 		 FROM platform_upgrade_state WHERE id=$1`, singleton).
-		Scan(&targetVersion, &currentPhase, &startedBy, &startedAt, &metaRaw)
+		Scan(&targetVersion, &currentPhase, &startedBy, &startedAt, &targetImgsRaw, &upgradeErr, &metaRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return upgradeservice.State{}, false, nil
 	}
@@ -92,17 +96,31 @@ func (s *Store) Load(ctx context.Context) (upgradeservice.State, bool, error) {
 			return upgradeservice.State{}, false, err
 		}
 	}
+	var targetImages map[string]string
+	if len(targetImgsRaw) > 0 {
+		if err := json.Unmarshal(targetImgsRaw, &targetImages); err != nil {
+			return upgradeservice.State{}, false, err
+		}
+	}
+	upgradeErrVal := ""
+	if upgradeErr != nil {
+		upgradeErrVal = *upgradeErr
+	}
 	st := upgradeservice.State{
-		OperationID:   meta.OperationID,
-		Phase:         upgrade.Phase(currentPhase),
-		TargetVersion: targetVersion,
-		ImageDigest:   meta.ImageDigest,
-		StartedBy:     startedBy,
-		StartedAt:     startedAt.UTC(),
-		UpdatedAt:     meta.UpdatedAt.UTC(),
-		Paused:        meta.Paused,
-		Verified:      meta.Verified,
-		Reason:        meta.Reason,
+		OperationID:    meta.OperationID,
+		Phase:          upgrade.Phase(currentPhase),
+		TargetVersion:  targetVersion,
+		ImageDigest:    meta.ImageDigest,
+		TargetImages:   nilIfEmpty(targetImages),
+		PreviousImages: meta.PreviousImages,
+		StartedBy:      startedBy,
+		StartedAt:      startedAt.UTC(),
+		UpdatedAt:      meta.UpdatedAt.UTC(),
+		Paused:         meta.Paused,
+		Verified:       meta.Verified,
+		Reason:         meta.Reason,
+		Error:          upgradeErrVal,
+		OpsHeartbeat:   meta.OpsHeartbeat.UTC(),
 	}
 	if st.UpdatedAt.IsZero() {
 		st.UpdatedAt = st.StartedAt
@@ -115,15 +133,30 @@ func (s *Store) Load(ctx context.Context) (upgradeservice.State, bool, error) {
 // single-upgrade-at-a-time model.
 func (s *Store) Save(ctx context.Context, st upgradeservice.State) error {
 	metaRaw, err := json.Marshal(stateMeta{
-		OperationID: st.OperationID,
-		ImageDigest: st.ImageDigest,
-		UpdatedAt:   st.UpdatedAt.UTC(),
-		Paused:      st.Paused,
-		Verified:    st.Verified,
-		Reason:      st.Reason,
+		OperationID:    st.OperationID,
+		ImageDigest:    st.ImageDigest,
+		UpdatedAt:      st.UpdatedAt.UTC(),
+		Paused:         st.Paused,
+		Verified:       st.Verified,
+		Reason:         st.Reason,
+		PreviousImages: st.PreviousImages,
+		OpsHeartbeat:   st.OpsHeartbeat.UTC(),
 	})
 	if err != nil {
 		return err
+	}
+	targetImages := st.TargetImages
+	if targetImages == nil {
+		targetImages = map[string]string{}
+	}
+	targetImgsRaw, err := json.Marshal(targetImages)
+	if err != nil {
+		return err
+	}
+	var upgradeErr *string
+	if st.Error != "" {
+		e := st.Error
+		upgradeErr = &e
 	}
 	// completed_at / paused_at mirror the spec schema for SQL queries: a
 	// terminal upgrade stamps completed_at, a paused one stamps paused_at.
@@ -139,19 +172,31 @@ func (s *Store) Save(ctx context.Context, st upgradeservice.State) error {
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO platform_upgrade_state
 		   (id, target_version, target_images, current_phase, started_by,
-		    started_at, paused_at, completed_at, metadata)
-		 VALUES ($1, $2, '{}'::jsonb, $3, $4, $5, $6, $7, $8)
+		    started_at, paused_at, completed_at, error, metadata)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (id) DO UPDATE SET
 		   target_version = EXCLUDED.target_version,
+		   target_images  = EXCLUDED.target_images,
 		   current_phase  = EXCLUDED.current_phase,
 		   started_by     = EXCLUDED.started_by,
 		   started_at     = EXCLUDED.started_at,
 		   paused_at      = EXCLUDED.paused_at,
 		   completed_at   = EXCLUDED.completed_at,
+		   error          = EXCLUDED.error,
 		   metadata       = EXCLUDED.metadata`,
-		singleton, st.TargetVersion, string(st.Phase), st.StartedBy,
-		st.StartedAt.UTC(), pausedAt, completedAt, metaRaw)
+		singleton, st.TargetVersion, targetImgsRaw, string(st.Phase), st.StartedBy,
+		st.StartedAt.UTC(), pausedAt, completedAt, upgradeErr, metaRaw)
 	return err
+}
+
+// nilIfEmpty returns nil for an empty map so a round-tripped State keeps
+// the TargetImages field omitempty-clean (an empty `{}` column decodes to
+// an empty map, which the orchestrator treats as "no explicit plan").
+func nilIfEmpty(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 // Compile-time guard: Store satisfies the orchestrator's persistence

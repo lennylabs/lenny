@@ -25,6 +25,9 @@ func (s *Server) registerPlatformUpgradeRoutes() {
 	if s.versionAggregator != nil {
 		s.mux.HandleFunc("GET /v1/admin/platform/version/full", s.handleVersionFull)
 	}
+	if s.upgradePreflighter != nil {
+		s.mux.HandleFunc("POST /v1/admin/platform/upgrade/preflight", s.handleUpgradePreflight)
+	}
 	if s.upgrade == nil {
 		return
 	}
@@ -55,12 +58,110 @@ func (s *Server) handleUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.StartedBy = callerIdentity(r)
+	// §25.8 air-gap (line 3422): an operator who passes no explicit images
+	// has them resolved from the runtime registry config. An operator who
+	// passes images (skip-channel, channel disabled) uses them verbatim.
+	if len(req.Images) == 0 && s.registry != nil {
+		plan, err := s.registry.ResolveImagePlan(r.Context(), req.TargetVersion, nil)
+		if err == nil {
+			req.Images = plan
+		}
+	}
 	st, err := s.upgrade.Start(r.Context(), req)
 	if err != nil {
 		s.writeUpgradeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, upgradeStatusBody(st))
+}
+
+// preflightBody is the POST /v1/admin/platform/upgrade/preflight request.
+type preflightBody struct {
+	// Version is the version the upgrade would converge on.
+	Version string `json:"version"`
+	// MinUpgradeFrom is the release manifest's hard prerequisite. Empty
+	// disables the version gate.
+	MinUpgradeFrom string `json:"minUpgradeFrom,omitempty"`
+	// Images is an explicit per-component image plan (air-gap skip-channel).
+	// When set it overrides registry resolution.
+	Images map[string]string `json:"images,omitempty"`
+	// Digests supplies per-component digests for digest-pinned resolution.
+	Digests map[string]string `json:"digests,omitempty"`
+}
+
+// handleUpgradePreflight serves POST /v1/admin/platform/upgrade/preflight:
+// it resolves the target image plan through the runtime registry config,
+// runs the §25.8 Phase-1 safety gates, and returns the plan as a preview
+// without writing upgrade state. A failed gate maps to
+// UPGRADE_IMAGE_NOT_PULLABLE (image-only failure) or UPGRADE_PREFLIGHT_FAILED.
+//
+// spec: §25.8 POST /v1/admin/platform/upgrade/preflight, Phase 1.
+func (s *Server) handleUpgradePreflight(w http.ResponseWriter, r *http.Request) {
+	if s.upgradePreflighter == nil {
+		s.upgradeUnavailable(w)
+		return
+	}
+	var body preflightBody
+	if err := readJSONBody(r, &body); err != nil {
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			conventions.CategoryPermanent, "malformed request body")
+		return
+	}
+	if body.Version == "" {
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			conventions.CategoryPermanent, "a target version is required")
+		return
+	}
+	plan, err := s.resolvePreflightPlan(r, body)
+	if err != nil {
+		// A resolution failure (e.g. requireDigest with no digest, or no
+		// base url) is an unpullable-image condition.
+		conventions.WriteErrorWithDetails(w, http.StatusUnprocessableEntity,
+			upgradeservice.CodeUpgradeImageNotPullable, conventions.CategoryPermanent,
+			"the target image plan could not be resolved from the registry configuration",
+			map[string]any{"error": err.Error()})
+		return
+	}
+	res, err := s.upgradePreflighter.Preflight(r.Context(), upgradeservice.PreflightRequest{
+		TargetVersion:  body.Version,
+		CurrentVersion: s.buildVersion,
+		MinUpgradeFrom: body.MinUpgradeFrom,
+		ImagePlan:      plan,
+	})
+	if err != nil {
+		conventions.WriteError(w, http.StatusServiceUnavailable, upgradeservice.CodeUnavailable,
+			conventions.CategoryTransient, "a preflight gate dependency is unavailable")
+		return
+	}
+	if res.Passed {
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	if res.OnlyImageGateFailed() {
+		conventions.WriteErrorWithDetails(w, http.StatusUnprocessableEntity,
+			upgradeservice.CodeUpgradeImageNotPullable, conventions.CategoryPermanent,
+			"one or more target images could not be pulled from the configured registry",
+			map[string]any{"images": res.UnpullableImages, "preflight": res})
+		return
+	}
+	conventions.WriteErrorWithDetails(w, http.StatusUnprocessableEntity,
+		upgradeservice.CodeUpgradePreflightFailed, conventions.CategoryPermanent,
+		"one or more preflight checks failed",
+		map[string]any{"failures": res.Failures, "preflight": res})
+}
+
+// resolvePreflightPlan computes the per-component image plan for the
+// preflight: explicit body images win (air-gap skip-channel); otherwise
+// the runtime registry config resolves them. With no registry and no
+// explicit images the plan is empty (the image gate is then skipped).
+func (s *Server) resolvePreflightPlan(r *http.Request, body preflightBody) (map[string]string, error) {
+	if len(body.Images) > 0 {
+		return body.Images, nil
+	}
+	if s.registry == nil {
+		return map[string]string{}, nil
+	}
+	return s.registry.ResolveImagePlan(r.Context(), body.Version, body.Digests)
 }
 
 // handleUpgradeProceed serves POST /v1/admin/platform/upgrade/proceed.
@@ -184,6 +285,7 @@ func upgradeStatusBody(st upgradeservice.State) map[string]any {
 		"operationId":   st.OperationID,
 		"phase":         string(st.Phase),
 		"targetVersion": st.TargetVersion,
+		"targetImages":  st.TargetImages,
 		"imageDigest":   st.ImageDigest,
 		"startedBy":     st.StartedBy,
 		"startedAt":     st.StartedAt,
@@ -191,6 +293,7 @@ func upgradeStatusBody(st upgradeservice.State) map[string]any {
 		"paused":        st.Paused,
 		"verified":      st.Verified,
 		"reason":        st.Reason,
+		"error":         st.Error,
 		"active":        st.Active(),
 		"progress":      st.Progress(),
 	}

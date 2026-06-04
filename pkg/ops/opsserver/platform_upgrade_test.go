@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/ops/registryservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
@@ -211,5 +212,99 @@ func TestUpgradeCheckUnreachable(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if body["error"]["code"] != upgradeservice.CodeChannelUnreachable {
 		t.Errorf("error code = %v", body["error"]["code"])
+	}
+}
+
+func newPreflightServer(t *testing.T, images upgradeservice.ImagePullChecker) *opsserver.Server {
+	t.Helper()
+	store := upgradeservice.NewMemoryStore()
+	pf := upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
+		Store:  store,
+		Health: alwaysHealthy{},
+		Images: images,
+	})
+	reg := registryservice.New(registryservice.Options{
+		Base:  registryservice.EffectiveConfig{URL: "ghcr.io/lennylabs"},
+		Store: registryservice.NewMemoryStore(),
+	})
+	return opsserver.New(opsserver.Options{
+		Upgrade:            upgradeservice.New(upgradeservice.Options{Store: store}),
+		UpgradePreflighter: pf,
+		Registry:           reg,
+		BuildVersion:       "1.5.0",
+	})
+}
+
+type alwaysHealthy struct{}
+
+func (alwaysHealthy) Healthy(context.Context) (bool, string, error) { return true, "", nil }
+
+type pullable struct{ bad map[string]bool }
+
+func (p pullable) Pullable(_ context.Context, ref string) (bool, string, error) {
+	if p.bad[ref] {
+		return false, "manifest not found", nil
+	}
+	return true, "", nil
+}
+
+// spec: §25.8 POST .../upgrade/preflight — a passing preflight returns 200
+// with the resolved plan preview and writes no upgrade state.
+func TestPreflightHandler_Passes_spec_25_8(t *testing.T) {
+	s := newPreflightServer(t, pullable{})
+	w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/preflight", `{"version":"1.6.0"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preflight = %d body=%s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["passed"] != true {
+		t.Fatalf("preflight body = %v", body)
+	}
+	plan, _ := body["plan"].(map[string]any)
+	if plan["ops"] != "ghcr.io/lennylabs/lenny-ops:1.6.0" {
+		t.Errorf("plan preview = %v", plan)
+	}
+	// No upgrade state was written.
+	if st := do(s, http.MethodGet, "/v1/admin/platform/upgrade/status", ""); st.Code != http.StatusNotFound {
+		t.Errorf("preflight must not start an upgrade: status=%d", st.Code)
+	}
+}
+
+// spec: §25.8 — an unpullable image maps to 422 UPGRADE_IMAGE_NOT_PULLABLE
+// with details.images.
+func TestPreflightHandler_ImageNotPullable_spec_25_8(t *testing.T) {
+	s := newPreflightServer(t, pullable{bad: map[string]bool{"ghcr.io/lennylabs/lenny-ops:1.6.0": true}})
+	w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/preflight", `{"version":"1.6.0"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("preflight = %d body=%s", w.Code, w.Body.String())
+	}
+	var body map[string]map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"]["code"] != upgradeservice.CodeUpgradeImageNotPullable {
+		t.Fatalf("error code = %v", body["error"]["code"])
+	}
+}
+
+// spec: §25.8 — a version below minUpgradeFrom maps to 422
+// UPGRADE_PREFLIGHT_FAILED.
+func TestPreflightHandler_VersionTooOld_spec_25_8(t *testing.T) {
+	s := newPreflightServer(t, pullable{})
+	w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/preflight", `{"version":"1.6.0","minUpgradeFrom":"1.9.0"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("preflight = %d body=%s", w.Code, w.Body.String())
+	}
+	var body map[string]map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"]["code"] != upgradeservice.CodeUpgradePreflightFailed {
+		t.Fatalf("error code = %v", body["error"]["code"])
+	}
+}
+
+// spec: §25.8 — preflight is unmapped (404) without a preflighter.
+func TestPreflightHandler_Unmapped_spec_25_8(t *testing.T) {
+	s := opsserver.New(opsserver.Options{Upgrade: upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()})})
+	if w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/preflight", `{"version":"1.6.0"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("unmapped preflight = %d", w.Code)
 	}
 }

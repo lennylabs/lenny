@@ -238,6 +238,21 @@ spec:
             # F-25.4.17.
             - --alerting-bundle-formats={{ if eq .Values.monitoring.format "both" }}prometheusrule,configmap{{ else }}{{ .Values.monitoring.format | default "prometheusrule" }}{{ end }}
             - --alerting-override-count={{ len .Values.monitoring.alertOverrides }}
+            # §25.8 platform.registry.* — the base image registry the runtime
+            # registry API (GET/PUT /v1/admin/platform/registry) overlays and
+            # the upgrade preflight resolves component images against.
+            - --registry-url={{ .Values.platform.registry.url }}
+            {{- with .Values.platform.registry.pullSecretName }}
+            - --registry-pull-secret={{ . }}
+            {{- end }}
+            - --registry-require-digest={{ .Values.platform.registry.requireDigest }}
+            {{- with .Values.platform.registry.overrides }}
+            - --registry-overrides={{ toJson . | quote }}
+            {{- end }}
+            # §25.8 platform.upgrade.* — the OpsRoll watchdog roll timeouts.
+            - --ops-roll-timeout-seconds={{ .Values.platform.upgrade.opsRollTimeoutSeconds }}
+            - --gateway-roll-timeout-seconds={{ .Values.platform.upgrade.gatewayRollTimeoutSeconds }}
+            - --controller-roll-timeout-seconds={{ .Values.platform.upgrade.controllerRollTimeoutSeconds }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}

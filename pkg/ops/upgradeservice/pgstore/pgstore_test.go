@@ -97,6 +97,57 @@ func TestUpgradeStateRoundTrip_spec_25_8(t *testing.T) {
 	}
 }
 
+// TestUpgradeStateNewFieldsRoundTrip_spec_25_8 covers the §25.8 fields the
+// watchdog and air-gap paths added: target_images (resolved plan), the
+// error column (OPS_ROLL_TIMEOUT on a watchdog rollback), previousImages,
+// and the opsRollHeartbeat.
+func TestUpgradeStateNewFieldsRoundTrip_spec_25_8(t *testing.T) {
+	pool := startPG(t)
+	store := pgstore.New(pool)
+	ctx := context.Background()
+
+	hb := time.Now().UTC().Truncate(time.Millisecond)
+	st := upgradeservice.State{
+		OperationID:    "upgrade-air",
+		Phase:          upgrade.OpsRoll,
+		TargetVersion:  "1.6.0",
+		StartedBy:      "alice@acme.com",
+		StartedAt:      hb.Add(-time.Minute),
+		UpdatedAt:      hb,
+		TargetImages:   map[string]string{"ops": "mirror.internal/lenny-ops@sha256:bbb"},
+		PreviousImages: map[string]string{"ops": "mirror.internal/lenny-ops@sha256:old"},
+		Error:          upgradeservice.CodeOpsRollTimeout,
+		OpsHeartbeat:   hb,
+	}
+	if err := store.Save(ctx, st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, ok, err := store.Load(ctx)
+	if err != nil || !ok {
+		t.Fatalf("Load = (ok=%v, err=%v)", ok, err)
+	}
+	if got.TargetImages["ops"] != st.TargetImages["ops"] {
+		t.Errorf("target images = %+v", got.TargetImages)
+	}
+	if got.PreviousImages["ops"] != st.PreviousImages["ops"] {
+		t.Errorf("previous images = %+v", got.PreviousImages)
+	}
+	if got.Error != upgradeservice.CodeOpsRollTimeout {
+		t.Errorf("error = %q, want %q", got.Error, upgradeservice.CodeOpsRollTimeout)
+	}
+	if !got.OpsHeartbeat.Equal(hb) {
+		t.Errorf("opsHeartbeat = %v, want %v", got.OpsHeartbeat, hb)
+	}
+	// The error column reflects the durable failure reason.
+	var dbErr *string
+	if err := pool.QueryRow(ctx, `SELECT error FROM platform_upgrade_state WHERE id='singleton'`).Scan(&dbErr); err != nil {
+		t.Fatalf("query error col: %v", err)
+	}
+	if dbErr == nil || *dbErr != upgradeservice.CodeOpsRollTimeout {
+		t.Errorf("error column = %v", dbErr)
+	}
+}
+
 // TestUpgradeStateTerminalReplaces_spec_25_8 covers that a terminal
 // upgrade stamps completed_at and that a new upgrade overwrites the prior
 // singleton (the §25.8 single-upgrade-at-a-time model).

@@ -100,6 +100,48 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --alerting-override-count=2
 
+  - it: renders the §25.8 registry and upgrade-watchdog args (defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-url=ghcr.io/lennylabs
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-require-digest=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ops-roll-timeout-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-roll-timeout-seconds=1200
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --controller-roll-timeout-seconds=600
+
+  - it: passes a runtime registry override and pull secret to §25.8 lenny-ops
+    set:
+      platform.registry.url: mirror.internal/lenny
+      platform.registry.pullSecretName: lenny-mirror-pull
+      platform.registry.requireDigest: true
+      platform.registry.overrides:
+        gateway: mirror.internal/lenny-gateway
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-url=mirror.internal/lenny
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-pull-secret=lenny-mirror-pull
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-require-digest=true
+
   - it: grants Lease RBAC for §25.4 leader election
     documentSelector:
       path: kind

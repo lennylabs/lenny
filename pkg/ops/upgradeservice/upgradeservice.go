@@ -115,6 +115,27 @@ type State struct {
 	Verified bool `json:"verified"`
 	// Reason carries the operator justification for a pause or rollback.
 	Reason string `json:"reason,omitempty"`
+	// Error is the §25.8 platform_upgrade_state.error column: the failure
+	// code stamped when the watchdog auto-rolls-back (OPS_ROLL_TIMEOUT) or
+	// a phase fails. Empty on a healthy upgrade.
+	Error string `json:"error,omitempty"`
+	// TargetImages is the §25.8 platform_upgrade_state.target_images map:
+	// the resolved per-component image references the upgrade converges on.
+	// For an air-gapped skip-channel start it is the operator-supplied set
+	// (spec line 3422); otherwise the registry-resolved plan. The watchdog
+	// reads previousImages/target_images to roll back to the prior ref.
+	TargetImages map[string]string `json:"targetImages,omitempty"`
+	// PreviousImages records the per-component image references in force
+	// before this upgrade started, so the §25.8 OpsRoll watchdog can
+	// re-patch a Deployment back to its previous reference on timeout
+	// (spec line 3509, metadata.previousImages).
+	PreviousImages map[string]string `json:"previousImages,omitempty"`
+	// OpsHeartbeat is the §25.8 metadata.opsRollHeartbeat: the time the new
+	// lenny-ops pod last wrote an ops_healthy heartbeat during OpsRoll
+	// (spec line 3511). The watchdog suppresses the timeout rollback while
+	// the heartbeat is fresh, since a live new pod means the roll
+	// succeeded and the operator simply has not proceeded yet.
+	OpsHeartbeat time.Time `json:"opsHeartbeat,omitempty"`
 }
 
 // Active reports whether the upgrade is still in flight (not terminal).
@@ -303,6 +324,17 @@ type StartRequest struct {
 	// ImageDigest is the target image digest for the upgrade_progressed
 	// payload. Optional (resolved by digest only when requireDigest).
 	ImageDigest string `json:"imageDigest,omitempty"`
+	// Images is the §25.8 air-gap skip-channel image set (spec line 3422):
+	// when the release channel is disabled (platform.upgradeChannel: "")
+	// the operator passes the explicit per-component image references here
+	// rather than having them resolved from a channel manifest. Keyed by
+	// component short name (gateway, ops, controllers, backup). When empty
+	// the caller resolves the plan through the registry service.
+	Images map[string]string `json:"images,omitempty"`
+	// PreviousImages records the image references in force before this
+	// upgrade so the watchdog can roll a Deployment back on timeout. The
+	// handler fills it from the version aggregator / running deployment.
+	PreviousImages map[string]string `json:"previousImages,omitempty"`
 	// StartedBy is the operator/agent identity; the handler fills it from
 	// the verified principal.
 	StartedBy string `json:"-"`
@@ -326,14 +358,16 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (State, error) {
 	}
 	now := s.now()
 	st := State{
-		OperationID:   s.newID(),
-		Phase:         upgrade.Preflight,
-		TargetVersion: req.TargetVersion,
-		ImageDigest:   req.ImageDigest,
-		StartedBy:     req.StartedBy,
-		StartedAt:     now,
-		UpdatedAt:     now,
-		Paused:        true, // awaiting the first proceed
+		OperationID:    s.newID(),
+		Phase:          upgrade.Preflight,
+		TargetVersion:  req.TargetVersion,
+		ImageDigest:    req.ImageDigest,
+		TargetImages:   copyImageMap(req.Images),
+		PreviousImages: copyImageMap(req.PreviousImages),
+		StartedBy:      req.StartedBy,
+		StartedAt:      now,
+		UpdatedAt:      now,
+		Paused:         true, // awaiting the first proceed
 	}
 	if err := s.store.Save(ctx, st); err != nil {
 		return State{}, err
@@ -497,6 +531,85 @@ func (s *Service) Status(ctx context.Context) (State, bool, error) {
 	return s.store.Load(ctx)
 }
 
+// RecordOpsHeartbeat stamps metadata.opsRollHeartbeat (spec line 3511):
+// the new lenny-ops pod calls it on startup while the upgrade is in
+// OpsRoll to signal it is alive. The §25.8 watchdog suppresses its
+// timeout rollback while the heartbeat is fresh. The call is a no-op when
+// no upgrade is active or the phase is not OpsRoll, so a stale heartbeat
+// write after a completed upgrade does not mutate terminal state.
+//
+// spec: §25.8 line 3511 (metadata.opsRollHeartbeat).
+func (s *Service) RecordOpsHeartbeat(ctx context.Context) (State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok, err := s.store.Load(ctx)
+	if err != nil {
+		return State{}, err
+	}
+	if !ok {
+		return State{}, ErrNoUpgrade
+	}
+	if st.Phase != upgrade.OpsRoll {
+		// A heartbeat outside OpsRoll is a no-op; the new pod only beats
+		// while the roll is in flight. Return the current state unchanged.
+		return st, nil
+	}
+	// The heartbeat is not a phase transition, so UpdatedAt (the watchdog's
+	// phase-entry clock) is left untouched; only the heartbeat stamp moves.
+	st.OpsHeartbeat = s.now().UTC()
+	if err := s.store.Save(ctx, st); err != nil {
+		return State{}, err
+	}
+	return st, nil
+}
+
+// RollbackOnTimeout is the §25.8 OpsRoll watchdog rollback (spec line
+// 3509): it transitions a rollbackable upgrade to RolledBack, stamps the
+// failure code (OPS_ROLL_TIMEOUT) into State.Error, emits
+// platform.upgrade_rolled_back, and runs the §25.10 target-snapshot
+// cleanup. It returns ErrNotRollbackable when the upgrade has passed the
+// point of no return (SchemaMigration onward), so a post-migration stall
+// is left for the operator (the spec keeps post-migration rollback a
+// restore-from-backup decision).
+//
+// spec: §25.8 line 3509 (OpsRoll timeout auto-rollback), line 3551.
+func (s *Service) RollbackOnTimeout(ctx context.Context, code, detail string) (State, error) {
+	st, err := s.transition(ctx, func(st *State) error {
+		if upgrade.IsTerminal(st.Phase) {
+			return ErrUpgradeTerminal
+		}
+		if !upgrade.CanRollBack(st.Phase) {
+			return ErrNotRollbackable
+		}
+		from := st.Phase
+		next, err := upgrade.AdvanceRollback(ctx, s.emitter, PlatformScope, st.Phase, st.ImageDigest)
+		if err != nil {
+			return err
+		}
+		st.Phase = next
+		st.Paused = false
+		st.Error = code
+		st.Reason = detail
+		s.emitAudit(AuditEvent{
+			Type:          string(audit.EventPlatformUpgradeRolledBack),
+			OperationID:   st.OperationID,
+			Actor:         "watchdog",
+			OldPhase:      string(from),
+			NewPhase:      string(next),
+			TargetVersion: st.TargetVersion,
+			Detail:        code + ": " + detail,
+		})
+		return nil
+	})
+	if err != nil {
+		return State{}, err
+	}
+	if s.drift != nil && st.Phase == upgrade.RolledBack {
+		_, _ = s.drift.DeleteTargetSnapshot(ctx, st.OperationID)
+	}
+	return st, nil
+}
+
 // MetricsSnapshot is the point-in-time data the §25.8 upgrade metrics
 // collector reports: the current phase encoded as an integer and the
 // elapsed time since the upgrade started.
@@ -594,6 +707,19 @@ func (s *Service) emitAudit(ev AuditEvent) {
 		ev.At = s.now()
 	}
 	s.audit(ev)
+}
+
+// copyImageMap returns a defensive copy of a per-component image map, or
+// nil for an empty input so the State field stays omitempty.
+func copyImageMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // AuditEventTypes returns the §16.7 platform-upgrade lifecycle audit

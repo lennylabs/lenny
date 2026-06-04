@@ -73,6 +73,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsinventory"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/ops/platformassets"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -185,6 +186,27 @@ func main() {
 		"path to the §25.8 release-channel manifest JSON the publisher serves. When set "+
 			"the publisher loads this file at startup and serves it on GET /v1/latest. "+
 			"Override via LENNY_RELEASE_CHANNEL_MANIFEST_FILE.")
+	// §25.8 platform.registry.* — the base image-registry configuration the
+	// runtime registry API (GET/PUT /v1/admin/platform/registry) overlays.
+	registryURL := flag.String("registry-url", envOr("LENNY_PLATFORM_REGISTRY_URL", "ghcr.io/lennylabs"),
+		"§25.8 platform.registry.url: the base image registry the upgrade "+
+			"system resolves component images against. Override via LENNY_PLATFORM_REGISTRY_URL.")
+	registryPullSecret := flag.String("registry-pull-secret", os.Getenv("LENNY_PLATFORM_REGISTRY_PULL_SECRET"),
+		"§25.8 platform.registry.pullSecretName: the image-pull Secret name (value not stored). "+
+			"Override via LENNY_PLATFORM_REGISTRY_PULL_SECRET.")
+	registryRequireDigest := flag.Bool("registry-require-digest", envBool("LENNY_PLATFORM_REGISTRY_REQUIRE_DIGEST", false),
+		"§25.8 platform.registry.requireDigest: require digest-pinned references. "+
+			"Override via LENNY_PLATFORM_REGISTRY_REQUIRE_DIGEST.")
+	registryOverrides := flag.String("registry-overrides", os.Getenv("LENNY_PLATFORM_REGISTRY_OVERRIDES"),
+		"§25.8 platform.registry.overrides as a JSON object mapping component short name to "+
+			"full image reference. Override via LENNY_PLATFORM_REGISTRY_OVERRIDES.")
+	// §25.8 platform.upgrade.* roll timeouts for the OpsRoll watchdog.
+	opsRollTimeout := flag.Int("ops-roll-timeout-seconds", envInt("LENNY_PLATFORM_OPS_ROLL_TIMEOUT_SECONDS", 600),
+		"§25.8 platform.upgrade.opsRollTimeoutSeconds: the OpsRoll watchdog auto-rollback timeout.")
+	gatewayRollTimeout := flag.Int("gateway-roll-timeout-seconds", envInt("LENNY_PLATFORM_GATEWAY_ROLL_TIMEOUT_SECONDS", 1200),
+		"§25.8 platform.upgrade.gatewayRollTimeoutSeconds.")
+	controllerRollTimeout := flag.Int("controller-roll-timeout-seconds", envInt("LENNY_PLATFORM_CONTROLLER_ROLL_TIMEOUT_SECONDS", 600),
+		"§25.8 platform.upgrade.controllerRollTimeoutSeconds.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	// §4.4 line 232 / §11.7 pgaudit sink consumer wiring.
 	pgauditLogFile := flag.String("pgaudit-log-file", os.Getenv("LENNY_PGAUDIT_LOG_FILE"),
@@ -864,8 +886,31 @@ func main() {
 	// completion into it, and the Operations Inventory reads it to derive
 	// the historical_p50 ETA. F-25.2.7.
 	baselineStore := buildBaselineStore(pgPool)
-	upgradeSvc := buildUpgradeService(pgPool, driftSvc, opsEmitter, baselineStore, auditRecorder)
+	// §25.8 platform_upgrade_state store, shared by the orchestrator and the
+	// preflighter so both observe the same in-flight upgrade.
+	upgradeStore := buildUpgradeStore(pgPool)
+	upgradeSvc := buildUpgradeService(upgradeStore, driftSvc, opsEmitter, baselineStore, auditRecorder)
 	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter, auditRecorder)
+	// §25.8 air-gap item 5 (line 3425): the CRD manifests and migration SQL
+	// the upgrade's CRDUpdate/SchemaMigration phases need are compiled into
+	// this binary (pkg/ops/platformassets), so an air-gapped install pulls
+	// no schema/CRD assets from the release channel. Log the inventory so an
+	// operator can confirm the assets travelled with the binary.
+	if crdCount, migCount, err := platformassets.Inventory(); err == nil {
+		log.Printf("lenny-ops: embedded platform assets: %d CRD manifests, %d migrations (air-gap ready)", crdCount, migCount)
+	}
+	// §25.8 runtime registry API: the chart platform.registry.* values are
+	// the base; a runtime PUT overlays them (Postgres-backed when a pool is
+	// present). Also feeds the upgrade preflight's image-plan resolution.
+	registrySvc := buildRegistryService(pgPool, registryBaseConfig(
+		*registryURL, *registryPullSecret, *registryRequireDigest, *registryOverrides), auditRecorder)
+	// §25.8 upgrade preflight (Phase 1 safety gates) and OpsRoll watchdog.
+	upgradePreflighter := buildPreflighter(upgradeStore, pgPool)
+	upgradeWatchdog := buildWatchdog(upgradeSvc, upgradeservice.WatchdogConfig{
+		OpsRollTimeout:        time.Duration(*opsRollTimeout) * time.Second,
+		GatewayRollTimeout:    time.Duration(*gatewayRollTimeout) * time.Second,
+		ControllerRollTimeout: time.Duration(*controllerRollTimeout) * time.Second,
+	}, opsEmitter)
 	// §25.8 live upgrade gauges (phase + duration): a collector that reads
 	// the orchestrator's singleton at scrape time so the gauges advance
 	// without a background goroutine. Registered on the default registry
@@ -882,7 +927,7 @@ func main() {
 	// routes stay unmapped (404).
 	platformConfigSvc := buildPlatformConfigService(gwClient)
 	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator),
-		deliveryRetentionJob(delivery.Store))
+		upgradeWatchdogJob(upgradeWatchdog), deliveryRetentionJob(delivery.Store))
 
 	// §25.4 Operations Inventory: a scatter-gather view over the wired
 	// subsystem sources. The lock, escalation, and platform-upgrade
@@ -1188,8 +1233,11 @@ func main() {
 		ReleaseChannel:       releaseChannelPub,
 		Upgrade:              upgradeSvc,
 		UpgradeChecker:       upgradeChecker,
+		UpgradePreflighter:   upgradePreflighter,
 		VersionAggregator:    versionAggregator,
 		PlatformConfig:       platformConfigSvc,
+		Registry:             registrySvc,
+		BuildVersion:         buildVersion,
 		PodLogs:              podLogs,
 		Production:           *production,
 		DiagnosticsAudit:     buildDiagnosticsAudit(*diagnosticsAuditRate, auditRecorder),

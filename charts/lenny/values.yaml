@@ -1495,6 +1495,21 @@ platform:
       # binary restarts.
       manifestConfigMap: lenny-release-channel-manifest
       manifestKey: latest.json
+  upgrade:
+    # §25.8 OpsRoll watchdog timeouts. The old lenny-ops pod runs a
+    # watchdog during a roll phase and auto-rolls-back (OpsRoll) when the
+    # new pod does not become healthy within the timeout, so an
+    # image-pull failure surfaces well before the PlatformUpgradeStuck
+    # alert (default 1h).
+    # opsRollTimeoutSeconds is the OpsRoll auto-rollback timeout (§25.8
+    # line 3509).
+    opsRollTimeoutSeconds: 600
+    # gatewayRollTimeoutSeconds accounts for warm-pool drain and re-warm
+    # (§25.8 line 3529).
+    gatewayRollTimeoutSeconds: 1200
+    # controllerRollTimeoutSeconds bounds the WarmPool/PoolScaling
+    # controller rollout (§25.8 line 3533).
+    controllerRollTimeoutSeconds: 600
 
 # tenancy configures the platform multi-tenancy posture (§4.9, §13).
 tenancy:

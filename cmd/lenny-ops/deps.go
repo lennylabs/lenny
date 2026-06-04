@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/ops/registryservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
@@ -1525,11 +1526,19 @@ func upgradeAuditSink(recorder *opsaudit.Recorder) func(upgradeservice.AuditEven
 //
 // spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
 // consumer).
-func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitter events.EventEmitter, baselines operations.BaselineStore, recorder *opsaudit.Recorder) *upgradeservice.Service {
-	var store upgradeservice.Store = upgradeservice.NewMemoryStore()
+// buildUpgradeStore selects the §25.8 platform_upgrade_state store: the
+// Postgres-backed singleton when a pool is present (so a paused upgrade
+// survives a leader handoff, spec line 3560), the in-memory store
+// otherwise. It is shared by the orchestrator and the preflighter so both
+// observe the same in-flight upgrade.
+func buildUpgradeStore(pool *pgxpool.Pool) upgradeservice.Store {
 	if pool != nil {
-		store = upgradepg.New(pool)
+		return upgradepg.New(pool)
 	}
+	return upgradeservice.NewMemoryStore()
+}
+
+func buildUpgradeService(store upgradeservice.Store, drift *driftservice.Service, emitter events.EventEmitter, baselines operations.BaselineStore, recorder *opsaudit.Recorder) *upgradeservice.Service {
 	opts := upgradeservice.Options{
 		Store:   store,
 		Emitter: emitter,
@@ -1543,6 +1552,159 @@ func buildUpgradeService(pool *pgxpool.Pool, drift *driftservice.Service, emitte
 		opts.DriftCleaner = drift
 	}
 	return upgradeservice.New(opts)
+}
+
+// registryAuditSink adapts the registryservice audit event onto the
+// durable §16.7 audit recorder (platform.registry_updated).
+func registryAuditSink(recorder *opsaudit.Recorder) registryservice.AuditSink {
+	return func(ev registryservice.AuditEvent) {
+		recorder.Record(ev.Type, map[string]any{
+			"actor":  ev.Actor,
+			"detail": ev.Detail,
+		}, ev.At)
+	}
+}
+
+// registryBaseConfig assembles the §25.8 chart-base registry config from
+// the platform.registry.* flags. A malformed overrides JSON is logged and
+// dropped (the base url still serves), since a registry override is an
+// optional refinement of the default resolution.
+func registryBaseConfig(url, pullSecret string, requireDigest bool, overridesJSON string) registryservice.EffectiveConfig {
+	var overrides map[string]string
+	if strings.TrimSpace(overridesJSON) != "" {
+		if err := json.Unmarshal([]byte(overridesJSON), &overrides); err != nil {
+			log.Printf("lenny-ops: ignoring malformed --registry-overrides: %v", err)
+			overrides = nil
+		}
+	}
+	return registryservice.EffectiveConfig{
+		URL:            url,
+		Overrides:      overrides,
+		PullSecretName: pullSecret,
+		RequireDigest:  requireDigest,
+		Source:         "helm",
+	}
+}
+
+// buildRegistryService constructs the §25.8 runtime registry API service.
+// The chart-rendered platform.registry.* values are the base; a runtime
+// PUT persists an override to Postgres (migration 0135) when a pool is
+// available so the change survives a restart. In single-process degraded
+// mode (no pool) the registry is read at the chart base and PUT reports it
+// read-only.
+//
+// spec: §25.8 Image Registry Configuration / Runtime API.
+func buildRegistryService(pool *pgxpool.Pool, base registryservice.EffectiveConfig, recorder *opsaudit.Recorder) *registryservice.Service {
+	var store registryservice.Store
+	if pool != nil {
+		store = registryservice.NewPgStore(pool)
+	}
+	return registryservice.New(registryservice.Options{
+		Base:  base,
+		Store: store,
+		Audit: registryAuditSink(recorder),
+	})
+}
+
+// pgConnChecker is the §25.8 preflight Postgres-connection gate (spec line
+// 3501): it reports whether the pool has headroom for the migration phase.
+// A nil pool reports healthy (the single-process degraded path runs no
+// migration phase).
+type pgConnChecker struct{ pool *pgxpool.Pool }
+
+func (c pgConnChecker) HasFreeConnections(context.Context) (bool, string, error) {
+	if c.pool == nil {
+		return true, "no pooled Postgres (single-process mode)", nil
+	}
+	stat := c.pool.Stat()
+	free := stat.MaxConns() - stat.AcquiredConns()
+	if free <= 0 {
+		return false, "no free Postgres connections for migration", nil
+	}
+	return true, fmt.Sprintf("%d/%d connections free", free, stat.MaxConns()), nil
+}
+
+// buildPreflighter constructs the §25.8 upgrade preflighter over the
+// shared upgrade store (so it sees an in-flight upgrade) and the Postgres
+// connection gate. The platform-health and image-pullability gates are
+// left unconfigured in v1 (the live gateway-health probe and registry HEAD
+// check are documented follow-ons); the preflighter degrades those gates
+// to skipped and still returns the resolved image plan as a preview.
+//
+// spec: §25.8 Phase 1 (lines 3496-3503).
+func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool) *upgradeservice.Preflighter {
+	return upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
+		Store: store,
+		Conns: pgConnChecker{pool: pool},
+	})
+}
+
+// imagePullCheckDuration is the §25.8 line 3619
+// lenny_platform_image_pull_check_duration_seconds histogram: the latency
+// of one preflight/watchdog image-pullability observation, labelled by
+// component. It is registered on the process default registry so the §16.9
+// /metrics exposition scrapes it.
+//
+// spec: §25.8 Metrics (line 3619).
+var imagePullCheckDuration = func() *prometheus.HistogramVec {
+	h, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_platform_image_pull_check_duration_seconds",
+		Help:    "§25.8 latency of a platform-upgrade image-pullability check, per component.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"component"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, h)
+	return h
+}()
+
+// recordImagePullCheck observes an image-pull-check latency on the §25.8
+// histogram. The watchdog calls it per observation.
+func recordImagePullCheck(component string, d time.Duration) {
+	if imagePullCheckDuration == nil {
+		return
+	}
+	imagePullCheckDuration.WithLabelValues(component).Observe(d.Seconds())
+}
+
+// buildWatchdog constructs the §25.8 OpsRoll watchdog over the upgrade
+// orchestrator. The pod-observation seam is left nil in v1 (the Kubernetes
+// pod-watch implementation is a documented follow-on), so the watchdog
+// drives the timeout auto-rollback while the image-pull-failure event
+// remains dormant until a PodObserver is wired. The histogram is recorded
+// on every observation pass.
+//
+// spec: §25.8 lines 3509-3511, 3619.
+func buildWatchdog(svc *upgradeservice.Service, cfg upgradeservice.WatchdogConfig, emitter events.EventEmitter) *upgradeservice.Watchdog {
+	return upgradeservice.NewWatchdog(upgradeservice.WatchdogOptions{
+		Service: svc,
+		Config:  cfg,
+		Emitter: emitter,
+		Record:  recordImagePullCheck,
+	})
+}
+
+// upgradeWatchdogJob is the leader-only cron that runs the §25.8 OpsRoll
+// watchdog every minute while an upgrade is in a roll phase. It is a no-op
+// outside a roll phase, so it costs one store read per minute at idle.
+//
+// spec: §25.8 lines 3509-3511 (OpsRoll watchdog goroutine).
+func upgradeWatchdogJob(wd *upgradeservice.Watchdog) opsservice.ScheduledJob {
+	return opsservice.ScheduledJob{
+		Name:       "platform-upgrade-watchdog",
+		Expression: "* * * * *", // every minute
+		Run: func(ctx context.Context) error {
+			res, err := wd.Evaluate(ctx)
+			if err != nil {
+				return err
+			}
+			if res.RolledBack {
+				log.Printf("lenny-ops: platform-upgrade watchdog auto-rolled-back %s after timeout", res.Phase)
+			}
+			return nil
+		},
+	}
 }
 
 // buildUpgradeChecker constructs the §25.8 upgrade-check client. It reads
