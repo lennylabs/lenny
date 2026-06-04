@@ -18856,7 +18856,7 @@ Spec: §12.2 line 26 ("The `ArtifactStore` (MinIO) **must** use `/{tenant_id}/` 
 
 - **Resolution (`c5519211`):** Closed by F-12.5.8 / F-12.5.9 / F-4.5.1 (same root cause). The `blobstore.TenantScoped` decorator performs the `/{tenant_id}/` interface-level prefix validation (returning `ErrCrossTenant` on mismatch) and is now wired into the gateway's caller-supplied-URI blob paths, so a calling site that supplied the wrong `TenantID` is rejected at the store boundary rather than writing into another tenant's prefix.
 
-### - [ ] F-12.2.16 — 16 — Erasure orchestrator wiring omits LeaseStore, SemanticCache, Redis caches, billing-write-ahead buffer, QuotaStore, eviction-state, audit (Medium) [Medium] — OPEN
+### - [x] F-12.2.16 — 16 — Erasure orchestrator wiring omits LeaseStore, SemanticCache, Redis caches, billing-write-ahead buffer, QuotaStore, eviction-state, audit (Medium) [Medium] — CLOSED
 
 Spec: §12.8 "`DeleteByUser` dependency-ordered deletion sequence" — steps 1, 2, 3, 4, 5, 6, 9, 13, 14.
 
@@ -18873,6 +18873,35 @@ Spec: §12.8 "`DeleteByUser` dependency-ordered deletion sequence" — steps 1, 
 - Step 13 EventStore (audit) per-user delete and step 14 OCSF dead-letter PII redaction (auditstore has no methods — F-12.2-05).
 
 The orchestrator runs successfully and writes a `gdpr.erasure_completed` audit event whose `Deleted` map covers a small subset of the stores §12.8 lists. The compliance contract that the erasure receipt corresponds to a complete removal is therefore documented but not delivered.
+
+**Resolution:** Evidence was substantially stale — the `cmd/lenny-gateway`
+erasure orchestrator block had already grown to wire step 1 `LeaseStore`
+(`leases`), step 4 experiment-sticky (`experiment_sticky`), step 5
+billing-write-ahead buffer (`billing_buffer`), step 6 `QuotaStore`
+(`quota`), and step 11 `session_tree_archive` since this finding was
+filed; step 10 `session_dlq_archive` is reclaimed by its `ON DELETE
+CASCADE` FK when the step-17 `SessionStore` delete runs (documented in
+the wiring). The one genuine live gap was **step 2 `SemanticCache`**:
+the §4.9 in-memory cache holds per-user cached LLM query/response pairs
+but was constructed only on the proxy hot path and never wired into the
+orchestrator. This batch builds the cache once (gated on
+`--llm-semantic-cache`), registers it as the user-scoped `semantic_cache`
+eraser (`canonicalRank` already reserved slot 20), and reuses the exact
+same instance on the proxy path so a `DeleteByUser` purges the cache the
+proxy populates. Step 3 Redis caches (`routingcache`) and step 9
+`EvictionStateStore` hold no live gateway data — neither is wired into
+the request path (no non-test caller), so the orchestrator has nothing to
+erase from them until those subsystems are wired; their `canonicalRank`
+slots (`redis_caches`=30, `eviction_state`=90) already reserve their
+position. The cached-access-token cache (`credcache`) keys on
+`CredentialKey` (pool credentials), not user PII, so it is outside
+`DeleteByUser` scope; user-scoped OAuth/refresh tokens are erased by the
+already-wired step-18 `tokens` eraser (`issuedtokenstore`). Step 13/14
+`EventStore` (audit) erasure participation is the substantive remaining
+gap and is owned by **F-12.8.4** (which must first implement the
+audit-store erasure + dead-letter redaction eraser); wiring that eraser
+into the orchestrator is a one-line append once F-12.8.4 builds it.
+Resolved by commit 21e44430.
 
 ### - [x] F-12.2.17 — 17 — `EvalResultStore`, `BillingStore`, `EvictionStateStore` erasure methods on concrete types rather than interface (Medium) [Medium] — CLOSED
 

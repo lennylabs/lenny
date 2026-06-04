@@ -4220,6 +4220,17 @@ func main() {
 	// collector exists. Nil during the startup window before the GC block
 	// runs (no erasure job can complete that early).
 	var immediateGCSweep func(ctx context.Context, tenantID string)
+	// spec: §12.8 step 2 line 794 — the §4.9 semantic cache holds
+	// per-user cached LLM query/response pairs, so a user erasure must
+	// purge it. The cache is opt-in (--llm-semantic-cache); when enabled
+	// the in-memory store is built here and the same instance is reused on
+	// the §4.9 proxy hot path below, so the erasure orchestrator purges
+	// the exact cache the proxy populates. Nil when the cache is off
+	// (nothing to erase). F-12.2.16.
+	var erasureSemanticCache *semanticcache.InMemory
+	if *llmSemanticCache {
+		erasureSemanticCache = semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
+	}
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
 	// Session-scoped stores (transcripts, artifacts) are erased per
@@ -4269,6 +4280,16 @@ func main() {
 			// step 1: release the user's active session-coordination leases.
 			userScoped = append(userScoped,
 				erasure.Eraser{Name: "leases", DeleteByUser: erasureLeaseStore.DeleteByUser})
+		}
+		if erasureSemanticCache != nil {
+			// step 2: purge the user's cached LLM query/response pairs. The
+			// §4.9 SemanticCache.DeleteByUser returns only an error; the
+			// orchestrator adapter reports the count it cannot supply as 0.
+			sc := erasureSemanticCache
+			userScoped = append(userScoped,
+				erasure.Eraser{Name: "semantic_cache", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
+					return 0, sc.DeleteByUser(ctx, tenantID, userID)
+				}})
 		}
 		if erasureSticky != nil {
 			// step 4: delete the user's experiment sticky assignments.
@@ -5355,8 +5376,10 @@ func main() {
 	// owning user, resolved from the session store.
 	var llmCache llmproxy.ProxyCache
 	if *llmSemanticCache {
-		store := semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
-		llmCache = proxycache.New(credentialPools, store, sessionUserLookup{sessions})
+		// Reuse the same in-memory store the §12.8 erasure orchestrator
+		// wired above (erasureSemanticCache), so a DeleteByUser purges the
+		// exact cache this proxy path populates. F-12.2.16.
+		llmCache = proxycache.New(credentialPools, erasureSemanticCache, sessionUserLookup{sessions})
 	}
 	// spec: §4.9 line 1468 — wire the §15.1 / §11.2 usage recorder so
 	// proxy-extracted (authoritative) counts are persisted as the
