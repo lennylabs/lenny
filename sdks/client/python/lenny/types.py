@@ -183,9 +183,9 @@ class ListOptions:
 class SessionPage:
     """One page of a ``GET /v1/sessions`` listing.
 
-    The gateway returns the session array; the pagination fields are
-    populated from the section 25.2 pagination envelope when the gateway
-    supplies it.
+    The gateway returns the section 15.1 canonical cursor-paginated
+    envelope ``{items, cursor, hasMore, total?}`` (spec section 15.1
+    lines 1228-1253).
     """
 
     #: The page of session envelopes.
@@ -198,27 +198,24 @@ class SessionPage:
     #: Whether more pages follow this one.
     has_more: bool = False
 
+    #: The total match count across all pages, or ``None`` when the
+    #: gateway omits it (spec section 15.1 line 1252). Callers must not
+    #: rely on its presence.
+    total: Optional[int] = None
+
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> "SessionPage":
-        """Decode a ``GET /v1/sessions`` page.
-
-        The section 25.2 pagination envelope is the canonical source
-        when the gateway supplies it; the top-level fields are the
-        fallback.
-        """
+        """Decode a ``GET /v1/sessions`` page from the section 15.1
+        canonical ``{items, cursor, hasMore, total?}`` envelope."""
         sessions = [
-            Session.from_wire(s) for s in raw.get("sessions", []) or []
+            Session.from_wire(s) for s in raw.get("items", []) or []
         ]
-        next_cursor = str(raw.get("nextCursor", ""))
-        has_more = bool(raw.get("hasMore", False))
-        pagination = raw.get("pagination")
-        if isinstance(pagination, dict):
-            next_cursor = str(pagination.get("cursor", ""))
-            has_more = bool(pagination.get("hasMore", False))
+        total = raw.get("total")
         return cls(
             sessions=sessions,
-            next_cursor=next_cursor,
-            has_more=has_more,
+            next_cursor=str(raw.get("cursor", "") or ""),
+            has_more=bool(raw.get("hasMore", False)),
+            total=int(total) if total is not None else None,
         )
 
 

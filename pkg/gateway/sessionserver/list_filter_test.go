@@ -20,7 +20,8 @@ import (
 
 // listSessions issues GET /v1/sessions with the supplied raw query and an
 // optional request mutator (e.g. to attach a Principal), returning the
-// decoded session ids in the §15.1 `{"sessions":[...]}` envelope order.
+// decoded session ids in the §15.1 `{"items":[...]}` canonical
+// cursor-paginated envelope order (spec §15.1 lines 1228-1253).
 func listSessions(t *testing.T, h http.Handler, rawQuery string, mods ...func(*http.Request)) []sessionserver.SessionResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?"+rawQuery, nil)
@@ -34,12 +35,12 @@ func listSessions(t *testing.T, h http.Handler, rawQuery string, mods ...func(*h
 		t.Fatalf("list status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 	var env struct {
-		Sessions []sessionserver.SessionResponse `json:"sessions"`
+		Items []sessionserver.SessionResponse `json:"items"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode list envelope: %v; body=%s", err, rr.Body.String())
 	}
-	return env.Sessions
+	return env.Items
 }
 
 func listIDs(rows []sessionserver.SessionResponse) []string {
@@ -48,6 +49,108 @@ func listIDs(rows []sessionserver.SessionResponse) []string {
 		out[i] = r.ID
 	}
 	return out
+}
+
+// sessionPage is the canonical §15.1 cursor envelope the list endpoint
+// returns (spec §15.1 lines 1228-1253).
+type sessionPage struct {
+	Items   []sessionserver.SessionResponse `json:"items"`
+	Cursor  string                          `json:"cursor"`
+	HasMore bool                            `json:"hasMore"`
+	Total   *int64                          `json:"total"`
+}
+
+func getSessionPage(t *testing.T, h http.Handler, rawQuery string) sessionPage {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?"+rawQuery, nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var page sessionPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page: %v; body=%s", err, rr.Body.String())
+	}
+	return page
+}
+
+// spec: §15.1 lines 1228-1253 — GET /v1/sessions returns the canonical
+// cursor-paginated envelope. limit clamps the page, the cursor walks the
+// remainder exactly once in created_at:desc order, total reports the full
+// match count, and the last page carries no cursor. F-15.1.6.
+func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
+	store := memstore.New()
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		_ = store.Create(ctx, sessionstore.Session{
+			ID: "s" + string(rune('0'+i)), TenantID: "acme",
+			State: session.StateRunning, CreatedAt: time.Unix(int64(10+i), 0),
+		})
+	}
+	srv := sessionserver.New(store, sessionserver.Options{})
+	h := srv.Handler()
+
+	first := getSessionPage(t, h, "limit=2")
+	if len(first.Items) != 2 {
+		t.Fatalf("first page len: got %d want 2", len(first.Items))
+	}
+	if !first.HasMore || first.Cursor == "" {
+		t.Fatalf("first page must report hasMore + cursor: %+v", first)
+	}
+	if first.Total == nil || *first.Total != 5 {
+		t.Fatalf("total: got %v want 5", first.Total)
+	}
+	// Default sort is created_at:desc, so the newest (s4) comes first.
+	if first.Items[0].ID != "s4" || first.Items[1].ID != "s3" {
+		t.Errorf("desc order: got %v", listIDs(first.Items))
+	}
+
+	seen := append([]string{}, listIDs(first.Items)...)
+	cursor, pages := first.Cursor, 1
+	for cursor != "" {
+		page := getSessionPage(t, h, "limit=2&cursor="+cursor)
+		seen = append(seen, listIDs(page.Items)...)
+		cursor = page.Cursor
+		if pages++; pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("walked %d sessions across pages, want 5: %v", len(seen), seen)
+	}
+}
+
+// spec: §15.1 line 1236 — an unsupported sort field is rejected with
+// VALIDATION_ERROR carrying details.fields[0].rule. F-15.1.6.
+func TestListSessionsRejectsUnknownSortField_spec_15_1_1236(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?sort=bogus:asc", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details struct {
+				Fields []struct {
+					Field string `json:"field"`
+					Rule  string `json:"rule"`
+				} `json:"fields"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "VALIDATION_ERROR" {
+		t.Errorf("code: got %q want VALIDATION_ERROR", env.Error.Code)
+	}
+	if len(env.Error.Details.Fields) == 0 || env.Error.Details.Fields[0].Field != "sort" {
+		t.Errorf("details.fields: got %+v", env.Error.Details.Fields)
+	}
 }
 
 // spec: §15.1 line 598 — GET /v1/sessions is filterable by labels. The

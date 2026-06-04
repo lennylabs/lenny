@@ -162,30 +162,23 @@ func (c *Client) ListSessions(ctx context.Context, opt ListOptions, opts ...Requ
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
+	// spec: §15.1 lines 1228-1253 — the gateway returns the canonical
+	// `{items, cursor, hasMore, total?}` cursor-paginated envelope.
 	var raw struct {
-		Sessions   []Session `json:"sessions"`
-		NextCursor string    `json:"nextCursor"`
-		HasMore    bool      `json:"hasMore"`
-		Pagination *struct {
-			Cursor  string `json:"cursor"`
-			HasMore bool   `json:"hasMore"`
-		} `json:"pagination"`
+		Items   []Session `json:"items"`
+		Cursor  string    `json:"cursor"`
+		HasMore bool      `json:"hasMore"`
+		Total   *int64    `json:"total"`
 	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &raw, opts...); err != nil {
 		return nil, err
 	}
-	page := &SessionPage{
-		Sessions:   raw.Sessions,
-		NextCursor: raw.NextCursor,
+	return &SessionPage{
+		Sessions:   raw.Items,
+		NextCursor: raw.Cursor,
 		HasMore:    raw.HasMore,
-	}
-	// The §25.2 pagination envelope is the canonical source when the
-	// gateway supplies it; the top-level fields are the fallback.
-	if raw.Pagination != nil {
-		page.NextCursor = raw.Pagination.Cursor
-		page.HasMore = raw.Pagination.HasMore
-	}
-	return page, nil
+		Total:      raw.Total,
+	}, nil
 }
 
 // IterateSessions walks every page of a GET /v1/sessions listing,

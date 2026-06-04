@@ -402,17 +402,17 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 		t.Fatalf("LIST status: got %d, want 200", lr.Code)
 	}
 	var listResp struct {
-		Sessions []sessionserver.SessionResponse `json:"sessions"`
+		Items []sessionserver.SessionResponse `json:"items"`
 	}
 	if err := json.Unmarshal(lr.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode LIST: %v", err)
 	}
-	if len(listResp.Sessions) != 1 {
-		t.Fatalf("LIST returned %d sessions, want 1", len(listResp.Sessions))
+	if len(listResp.Items) != 1 {
+		t.Fatalf("LIST returned %d sessions, want 1", len(listResp.Items))
 	}
-	if listResp.Sessions[0].SessionIsolationLevel.IsolationProfile != string(isolation.ProfileMicrovm) {
+	if listResp.Items[0].SessionIsolationLevel.IsolationProfile != string(isolation.ProfileMicrovm) {
 		t.Errorf("LIST sessionIsolationLevel.isolationProfile = %q, want microvm",
-			listResp.Sessions[0].SessionIsolationLevel.IsolationProfile)
+			listResp.Items[0].SessionIsolationLevel.IsolationProfile)
 	}
 }
 

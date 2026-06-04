@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
@@ -2484,6 +2485,16 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	if q.Get("includeDeriveFailures") == "false" {
 		filter.ExcludeDeriveFailures = true
 	}
+	// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated list
+	// envelope. `?cursor`/`?limit`/`?sort` are parsed and validated here;
+	// the default sort is created_at:desc (line 1236) and the supported
+	// fields are created_at and updated_at. F-15.1.6.
+	params, ferr := pagination.ParseRequest(r,
+		sessionListSortFields, sessionListDefaultSort, s.clock())
+	if ferr != nil {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
+		return
+	}
 	rows, err := s.store.List(r.Context(), tenantID, filter)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -2493,10 +2504,26 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		out = append(out, toResponse(row))
 	}
+	keyOf := func(sr SessionResponse) (string, string) {
+		if params.Sort.Field == "updated_at" {
+			return sr.UpdatedAt, sr.ID
+		}
+		return sr.CreatedAt, sr.ID
+	}
+	pagination.SortSlice(out, params.Sort.Direction, keyOf)
+	env := pagination.Page(out, params, s.clock(), keyOf)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": out})
+	_ = json.NewEncoder(w).Encode(env)
 }
+
+// sessionListSortFields / sessionListDefaultSort pin the §15.1 line 1236
+// sort contract for GET /v1/sessions: created_at (default) and
+// updated_at, descending by default.
+var (
+	sessionListSortFields = []string{"created_at", "updated_at"}
+	sessionListDefaultSort = pagination.Sort{Field: "created_at", Direction: pagination.DirectionDesc}
+)
 
 // parseLabelFilter turns the repeatable `?label=key=value` query values
 // into the AND-containment map the store List honours. A value with no

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -231,12 +232,98 @@ type Envelope[T any] struct {
 // MintCursor builds a cursor with the supplied key + tiebreaker + sort
 // stamped with the supplied issuedAt. Callers pass the sort key value
 // of the last item on the page and the unique tiebreaker (id).
-func MintCursor(sort Sort, key, tiebreak string, issuedAt time.Time) string {
+func MintCursor(s Sort, key, tiebreak string, issuedAt time.Time) string {
 	return Encode(Cursor{
 		Key:       key,
 		Tiebreak:  tiebreak,
-		Field:     sort.Field,
-		Direction: sort.Direction,
+		Field:     s.Field,
+		Direction: s.Direction,
 		IssuedAt:  issuedAt.Unix(),
 	})
+}
+
+// KeyFunc yields the sort key value and the unique tiebreaker (id) for
+// one item. Both are returned as strings so the cursor encoding and the
+// slice ordering share a single comparison. The key is the value of the
+// active sort field; for a `created_at` sort it is the RFC3339Nano
+// timestamp, for a `name` sort it is the name. Callers that support
+// multiple sort fields close over the parsed Sort and return the key
+// for the active field. spec: §15.1 line 1253 (sort key + tiebreaker).
+type KeyFunc[T any] func(T) (key, tiebreak string)
+
+// SortSlice orders items in place to match direction using keyOf. The
+// sort is stable and total: ties on the sort key fall through to the
+// tiebreaker so iteration is deterministic across inserts (§15.1 line
+// 1253). The same keyOf is then passed to Page so the encoded cursor
+// matches the ordering.
+func SortSlice[T any](items []T, direction string, keyOf KeyFunc[T]) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ki, ti := keyOf(items[i])
+		kj, tj := keyOf(items[j])
+		c := strings.Compare(ki, kj)
+		if c == 0 {
+			c = strings.Compare(ti, tj)
+		}
+		if direction == DirectionDesc {
+			return c > 0
+		}
+		return c < 0
+	})
+}
+
+// Page slices an already-sorted in-memory collection into the canonical
+// §15.1 envelope. items MUST already be ordered to match params.Sort
+// (call SortSlice first). The page start is located by comparison
+// against params.Cursor rather than by index, so a cursor survives
+// inserts and deletes between requests: every item at or before the
+// cursor position in sort order is skipped. Up to params.Limit items
+// are returned; HasMore and the next Cursor are set when more remain.
+// Total is stamped because an in-memory slice has a cheaply-computable
+// count (§15.1 line 1252).
+//
+// spec: §15.1 lines 1228-1253.
+func Page[T any](items []T, params Params, now time.Time, keyOf KeyFunc[T]) Envelope[T] {
+	start := 0
+	if c := params.Cursor; c.Key != "" || c.Tiebreak != "" {
+		for start < len(items) {
+			k, t := keyOf(items[start])
+			if afterCursor(k, t, c, params.Sort.Direction) {
+				break
+			}
+			start++
+		}
+	}
+	end := start + params.Limit
+	hasMore := end < len(items)
+	if end > len(items) {
+		end = len(items)
+	}
+	page := items[start:end]
+	env := Envelope[T]{Items: page, HasMore: hasMore}
+	if env.Items == nil {
+		env.Items = []T{}
+	}
+	if hasMore && len(page) > 0 {
+		k, t := keyOf(page[len(page)-1])
+		env.Cursor = MintCursor(params.Sort, k, t, now)
+	}
+	total := int64(len(items))
+	env.Total = &total
+	return env
+}
+
+// afterCursor reports whether the (key, tiebreak) tuple sorts strictly
+// after the cursor position under the given direction. The comparison
+// is the same key-then-tiebreaker tuple ordering SortSlice applies, so
+// the first item that is "after" the cursor is the first item of the
+// next page.
+func afterCursor(key, tiebreak string, c Cursor, direction string) bool {
+	cmp := strings.Compare(key, c.Key)
+	if cmp == 0 {
+		cmp = strings.Compare(tiebreak, c.Tiebreak)
+	}
+	if direction == DirectionDesc {
+		return cmp < 0
+	}
+	return cmp > 0
 }

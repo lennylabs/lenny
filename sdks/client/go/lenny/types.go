@@ -121,6 +121,11 @@ type SessionPage struct {
 
 	// HasMore reports whether more pages follow this one.
 	HasMore bool `json:"-"`
+
+	// Total is the §15.1 line 1252 total match count across all pages.
+	// It is nil when the gateway omits it (the count would require a
+	// full table scan); callers must not rely on its presence.
+	Total *int64 `json:"-"`
 }
 
 // DeliveryReceipt mirrors the §15.4 lines 1725-1737 delivery_receipt
