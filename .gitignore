@@ -17,6 +17,7 @@ tmp/
 /lenny-loadrunner
 /lenny-loadctl
 /lenny-ops
+/lenny-preflight
 /cloud-metrics-collector
 /echo
 /streaming-echo
