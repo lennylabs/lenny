@@ -26658,6 +26658,27 @@ Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requ
 
 ### - [ ] F-15.4.1 — MUST violations, missing security, correctness gaps [High] — OPEN
 
+**Progress (stays OPEN).** The schema half of this cluster is resolved:
+`schemas/lifecycle-events.schema.json` has been regenerated to camelCase
+with the correct field names, the previously-missing frames, and the
+relaxed required-sets — so **15.4-HIGH-001, 002, 003, 004 are stale**
+(the schema now matches the spec text and the adapter wire). **HIGH-008
+is also resolved**: `cmd/lenny-ctl/runtimescaffold/probe.go` drives the
+`lenny-compliance` battery from `lenny runtime validate` (via
+`pkg/compliance.RunSuite`) and surfaces `runtime_level_underperforms`.
+**HIGH-007 is resolved this batch**: `pkg/gateway/mcptools` now rejects a
+`lenny/output` part that sets both `inline` and `ref`
+(`OUTPUTPART_INLINE_REF_CONFLICT`) or exceeds 50 MB
+(`OUTPUTPART_TOO_LARGE`), and the §4.7 sidecar scanner buffer is raised
+16 MB → 50 MB so a legal large part frames (closes 15.4-INFO-031). The
+finding stays OPEN for **HIGH-005** (the `set_tracing_context` JSONL
+intercept; the adapter does not proxy `delegate_task` today, so the
+spec's "attach to subsequent delegate_task gRPC requests" mechanism needs
+an architectural decision) and **HIGH-006 / HIGH-009** (the periodic
+heartbeat sender + ack-overdue SIGTERM, which needs adapter write
+serialization; and the conformance harness JSON-Schema validation). Those
+three are a dedicated adapter/harness batch.
+
 ### 15.4-HIGH-001 — `schemas/lifecycle-events.schema.json` field casing diverges from spec and implementation
 - Spec uses **camelCase** lifecycle-channel fields throughout §15.4.4 pseudocode and supporting §4.7 prose: `checkpointId`, `interruptId`, `deadlineMs`, `leaseId`, `credentialsPath` (spec lines 2287–2310).
 - Implementation matches the spec: adapter sends/reads `checkpointId`/`interruptId`/`deadlineMs`/`leaseId` (`pkg/adapter/lifecyclechannel.go:45-59`), SDKs read/write camelCase (`sdks/runtime/go/runtime/lifecycle.go:197-263`, `sdks/runtime/python/lenny_runtime/lifecycle.py:195-215`, `sdks/runtime/typescript/src/lifecycle.ts:181-207`), and the compliance harness drives camelCase (`cmd/lenny-compliance/full.go:298-349`).
@@ -26708,6 +26729,7 @@ Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requ
 - The MCP tool `lenny/output` accepts `output` as `json.RawMessage` and only checks `len(parts) == 0` (`pkg/gateway/mcptools/mcptools.go:530-548`). No size/conflict enforcement.
 - Adapter's `socketruntime` scanner buffer caps inbound frames at **16 MB** (`pkg/adapter/socketruntime.go:116`), which is below the 50 MB spec ceiling for a single OutputPart — a 17–50 MB part that the spec says must be accepted will fail framing before it reaches any (missing) validation.
 - Affected paths: `/Users/joan/projects/lenny/pkg/gateway/mcptools/mcptools.go:530-548`, `/Users/joan/projects/lenny/pkg/adapter/socketruntime.go:116` (16 MB buffer), no equivalent validation anywhere.
+- **Resolved (this batch):** `pkg/gateway/mcptools` `validateOutputPart` rejects a `lenny/output` part that sets both `inline` and `ref` (`OUTPUTPART_INLINE_REF_CONFLICT`) or whose marshaled length exceeds 50 MB (`OUTPUTPART_TOO_LARGE`, with `details.maxBytes`), run over every part before publish. The §4.7 sidecar scanner buffer in `pkg/adapter/socketruntime.go` is raised 16 MB → 50 MB (`maxJSONLFrameBytes`), closing 15.4-INFO-031. Tests: `outputpart_internal_test.go` (inline/ref matrix + oversize).
 
 ### 15.4-HIGH-008 — `lenny runtime validate` does NOT execute the §15.4.6 conformance test categories
 - Spec §15.4.6 lines 2379-2398: "`lenny runtime validate [<path>]` ... is the canonical entry point. It reads `runtime.yaml`'s optional `integrationLevel` field ... to discover the **declared** integration level and executes the corresponding test categories below against a locally-built image or binary." The declared-vs-observed reconciliation (probe runtime, compare against declared, emit `runtime_level_underperforms` failure) is mandated to run from the validate command.
@@ -26724,6 +26746,21 @@ Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requ
 - Affected paths: `/Users/joan/projects/lenny/cmd/lenny-compliance/main.go`, `/Users/joan/projects/lenny/cmd/lenny-compliance/standard.go`, `/Users/joan/projects/lenny/cmd/lenny-compliance/full.go`.
 
 ### - [ ] F-15.4.2 — SHOULD violations, capability gaps, schema drift [Medium] — OPEN
+
+**Progress (stays OPEN).** The `schemas/lifecycle-events.schema.json`
+regeneration (see F-15.4.1 progress) resolves the schema-drift items:
+**MED-013 is stale** (`credentials_rotated` no longer requires a
+`trigger` enum — the schema carries `provider`/`credentialsPath`/`leaseId`
+and requires only those), **MED-014's cited over-strict cases are stale**
+(the schema now allows the `protocolVersion` and
+`provider`/`credentialsPath` fields the adapter emits), and **MED-015 is
+stale** (`protocolVersion` is now documented in the schema). The finding
+stays OPEN for the unimplemented adapter/runtime capabilities: MED-010
+(`draining` frame emission), MED-011/MED-012 (`task_complete` lifecycle +
+`taskId` manifest), MED-016 (`RUNTIME_CRASH` synthesis), MED-017–019
+(degradation annotations), MED-020 (type registry), MED-021
+(`schemaVersion` stamping in reference runtimes), and MED-022/MED-023
+(conformance deadline enforcement).
 
 ### 15.4-MED-010 — `DRAINING` state and `draining` lifecycle frame never emitted by the adapter
 - Spec §15.4.2 lists `DRAINING` as a normative state (line 2037-2049). §15.4.3 capability matrix (line 2126) mandates "`DRAINING` state via lifecycle channel enables graceful shutdown coordination before `shutdown`" at Full level.
@@ -28782,7 +28819,7 @@ correlate session activity by time, nor any retention/cleanup behavior
 to verify. The §17.8 capacity-planning numbers ("~600 MB/day before
 retention cleanup") are dormant because there is no cleanup.
 
-### - [ ] F-16.4.7 — Audit events are not written for the spec's "all policy decisions" [High] — OPEN
+### - [x] F-16.4.7 — Audit events are not written for the spec's "all policy decisions" [High] — CLOSED
 
 **High.** §16.4 line 374 says: "Audit events for all policy decisions."
 The implementation surface is selective:
@@ -28823,6 +28860,39 @@ circuit-breaker openings, rate-limit denials, environment-policy
 rejections, or any Token Service activity. The §16.7 catalog promises
 events for these paths; the catalog constants exist but the writers do
 not.
+
+**Resolution (verify-closed):** Every substantive emit site the finding
+names is now wired by prior batches; the remaining two are §16.7
+non-events.
+
+- **Circuit breaker** — `pkg/gateway/middleware/circuitbreaker/audit.go`
+  ships `AuditReporter`, which commits `admission.circuit_breaker_rejected`
+  on a breaker match (with the §11.6 line 331 10s per-(tenant,circuit,sub)
+  sampling). It is wired in `cmd/lenny-gateway/main.go`
+  (`cbAudit := cbmw.NewAuditReporter(...)` → `Audit: cbAudit`). Commit
+  19273cb6 (F-4.8.8/9/16). Covered by `circuitbreaker/audit_test.go`.
+- **Token Service** — `pkg/tokenservice/tokenservice.go` emits
+  `token.exchanged` (via `IssuedTokenAuditStore.RecordWithAudit` on the
+  durable path, `emitExchangeAudit` on the in-memory dev path),
+  `token.exchange_rate_limited` (`emitRateLimitAudit`, sampled), and
+  `token.revoked` (revocation hot path). `cmd/lenny-token-service/main.go`
+  wires the `auditstore`-backed `Auditor`. Covered by
+  `tokenservice/audit_test.go`. The finding's "zero hits" grep is stale.
+- **Playground** — `playgroundAuditEmitter` in `cmd/lenny-gateway/main.go`
+  now commits `playground.bearer_minted` / `playground.bearer_revoked` /
+  `playground.bearer_mint_rejected` to the durable §11.7 chain via
+  `admin.AuditSink.EmitAdminEvent`, not `log.Printf` (F-27.3.5).
+- **Gateway rate-limit** — §16.7 defines no dedicated audit event for
+  the gateway rate-limit middleware (the only rate-limit audit event is
+  the Token Service's `token.exchange_rate_limited`, above). Gateway
+  rate-limit denials are the `lenny_policy_denials_total` metric surface,
+  not an audit row.
+- **Environment policy** — `pkg/gateway/middleware/environment` is a
+  §10.6 transparent-filtering resolver, not a rejecter: it narrows the
+  visible runtime/connector set and never writes a policy-denial
+  envelope. Environment-policy decisions that REJECT flow through the
+  §4.8 interceptor chain and are audited as `interceptor.rejected`
+  (`pkg/gateway/policy/auditsink.go`, F-11.7.18).
 
 ### - [x] F-16.4.8 — Credential-sensitive-RPC redaction has no enforcement seam [High] — CLOSED
 

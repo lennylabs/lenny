@@ -120,6 +120,41 @@ func errInvalidArgs(err error) error {
 	return mcp.NewToolError("VALIDATION_ERROR", fmt.Sprintf("invalid arguments: %v", err), nil)
 }
 
+// maxOutputPartBytes is the §15.4.1 line 1548 hard ceiling: a single
+// OutputPart above 50 MB is rejected at ingress. The gate measures the
+// marshaled part (inline payload plus envelope) so a base64-inlined blob
+// that exceeds the cap is refused before it reaches the event stream.
+const maxOutputPartBytes = 50 * 1024 * 1024
+
+// validateOutputPart enforces the two §15.4.1 lines 1542-1548 OutputPart
+// ingress invariants on one `lenny/output` part: `inline` and `ref` are
+// mutually exclusive (both set → `400 OUTPUTPART_INLINE_REF_CONFLICT`),
+// and a part larger than 50 MB is rejected (`413 OUTPUTPART_TOO_LARGE`).
+// The outputpart.schema.json $comment designates both as gateway runtime
+// checks rather than schema-validation checks. F-15.4.1 (15.4-HIGH-007).
+func validateOutputPart(part json.RawMessage) error {
+	if len(part) > maxOutputPartBytes {
+		return mcp.NewToolError("OUTPUTPART_TOO_LARGE",
+			"output part exceeds the 50 MB ceiling",
+			map[string]any{"maxBytes": maxOutputPartBytes, "actualBytes": len(part)})
+	}
+	var probe struct {
+		Inline *json.RawMessage `json:"inline"`
+		Ref    *json.RawMessage `json:"ref"`
+	}
+	if err := json.Unmarshal(part, &probe); err != nil {
+		// A part that does not parse as an object is a malformed payload;
+		// surface it as a validation error rather than a conflict.
+		return mcp.NewToolError("VALIDATION_ERROR",
+			fmt.Sprintf("output part is not a JSON object: %v", err), nil)
+	}
+	if probe.Inline != nil && probe.Ref != nil {
+		return mcp.NewToolError("OUTPUTPART_INLINE_REF_CONFLICT",
+			"output part sets both inline and ref, which are mutually exclusive", nil)
+	}
+	return nil
+}
+
 // errSessionLookup maps a session-store Get failure to
 // RESOURCE_NOT_FOUND (PERMANENT, not retryable), matching the REST 404
 // for a session that does not exist or is not visible to the caller.
@@ -1210,6 +1245,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			if len(parts) == 0 {
 				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 					"output must contain at least one part", nil)
+			}
+			// spec: §15.4.1 lines 1542-1548 — the §4.1 ingress runtime
+			// check the outputpart.schema.json $comment defers to the
+			// gateway: a part may not carry both `inline` and `ref`
+			// (`400 OUTPUTPART_INLINE_REF_CONFLICT`), and a part larger
+			// than 50 MB is rejected (`413 OUTPUTPART_TOO_LARGE`). The
+			// size gate uses the marshaled part length, which bounds the
+			// inline payload plus its envelope; it sits below the §13.4
+			// archive ceiling that governs uploads. F-15.4.1 (15.4-HIGH-007).
+			for _, part := range parts {
+				if err := validateOutputPart(part); err != nil {
+					return mcp.ToolResult{}, err
+				}
 			}
 			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
