@@ -1,0 +1,144 @@
+suite: §17.9.5 self-managed MinIO workload
+templates:
+  - minio-statefulset.yaml
+tests:
+  # spec: §17.9.5 — cloud-managed and external self-managed deployments
+  # leave minio.deploy false, so the stock render emits nothing.
+  - it: renders nothing when minio.deploy is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — a chart-managed self-managed deployment renders the
+  # headless Service, API Service, StatefulSet, and (>=2 nodes) a PDB.
+  - it: renders headless Service, API Service, StatefulSet, and PDB when deploy is true
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 4
+
+  - it: StatefulSet carries the minio component label and defaults to 4 nodes
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 4
+      - equal:
+          path: spec.serviceName
+          value: lenny-minio-headless
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: minio
+
+  # spec: §17.8 — >=4 nodes start MinIO in distributed mode, which
+  # auto-enables erasure coding. The server arg carries the {0...N-1}
+  # ellipsis the distributed set expands.
+  - it: distributed render passes the erasure-set ellipsis arg to minio server
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "http://lenny-minio-{0...3}.lenny-minio-headless.NAMESPACE.svc.cluster.local/data"
+    release:
+      namespace: NAMESPACE
+
+  - it: 8-node Tier 3 set expands the ellipsis to {0...7}
+    set:
+      minio.deploy: true
+      minio.nodes: 8
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 8
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "http://lenny-minio-{0...7}.lenny-minio-headless.NAMESPACE.svc.cluster.local/data"
+    release:
+      namespace: NAMESPACE
+
+  # Single-node dev: no distributed args, no PDB (nothing to disrupt).
+  - it: single-node render uses a local data path and omits the PDB
+    set:
+      minio.deploy: true
+      minio.nodes: 1
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 3
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "http://lenny-minio-{0...0}.lenny-minio-headless.NAMESPACE.svc.cluster.local/data"
+        documentSelector:
+          path: kind
+          value: StatefulSet
+    release:
+      namespace: NAMESPACE
+
+  # spec: §17.9.7 — encrypted transit. A TLS render mounts the cert
+  # secret and serves HTTPS on tlsPort (readiness probe scheme HTTPS).
+  - it: TLS render mounts the cert secret and probes over HTTPS
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: certs
+            secret:
+              secretName: lenny-minio-tls
+              items:
+                - key: tls.crt
+                  path: public.crt
+                - key: tls.key
+                  path: private.key
+
+  # spec: §17.9.7 — a TLS render without a cert secret must fail rather
+  # than silently serving plaintext object storage.
+  - it: fails the render when TLS is enabled but no cert secret is supplied
+    set:
+      minio.deploy: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.7: minio.deploy with minio.tls.enabled requires minio.tls.secretName (the TLS Secret MinIO serves HTTPS from); provision it with cert-manager or supply your own."
+
+  # spec: §4.5 — root credentials come from an out-of-band Secret, never
+  # minted by the chart.
+  - it: root credentials are sourced from the rootCredentialsSecret
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MINIO_ROOT_USER
+            valueFrom:
+              secretKeyRef:
+                name: lenny-minio-root
+                key: MINIO_ROOT_USER

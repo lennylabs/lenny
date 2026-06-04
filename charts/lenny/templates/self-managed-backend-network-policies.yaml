@@ -1,0 +1,211 @@
+{{- /*
+NetworkPolicies that re-admit the intra-backend flows the §13.2
+lenny-system default-deny otherwise blocks for the §17.9.5 in-cluster
+self-managed backends. The existing allow-redis / allow-minio /
+allow-pgbouncer policies cover the gateway -> backend data hop for the
+bring-your-own model; these additive policies open the flows the
+rendered topologies need to function:
+
+  - Redis Sentinel discovery on 26379 (gateway/token-service -> sentinel)
+    and the intra-Redis replication, Sentinel monitoring, and Sentinel
+    gossip flows.
+  - Distributed MinIO inter-node erasure-set traffic on tlsPort.
+  - Postgres client ingress on 5432 (PgBouncer/gateway/controller) plus
+    CloudNativePG instance-to-instance replication and the operator's
+    instance-manager egress to the kube-apiserver.
+
+NetworkPolicies are additive, so these only widen what the default-deny
+permits. Each renders only when its backend's deploy flag is set, so a
+bring-your-own or cloud-managed install is unchanged.
+
+spec: §13.2 (lenny-system default-deny + per-component allow-lists),
+§17.9.5 lines 1497-1530 (self-managed backend workloads), §12.4, §12.5.
+*/ -}}
+{{- $tlsPort := int .Values.redis.tlsPort }}
+{{- $busPort := add $tlsPort 10000 }}
+{{- if .Values.redis.deploy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-self-managed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: redis
+  ingress:
+    # Intra-Redis: replication (data nodes), Sentinel -> data monitoring,
+    # and Sentinel <-> Sentinel gossip / Cluster bus.
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ $tlsPort }}
+          protocol: TCP
+        - port: 26379
+          protocol: TCP
+        - port: {{ $busPort }}
+          protocol: TCP
+    # Gateway and Token Service reach the data port and discover the
+    # master through the Sentinel port.
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: token-service
+      ports:
+        - port: {{ $tlsPort }}
+          protocol: TCP
+        - port: 26379
+          protocol: TCP
+        - port: {{ $busPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ $tlsPort }}
+          protocol: TCP
+        - port: 26379
+          protocol: TCP
+        - port: {{ $busPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{- end }}
+{{- if and .Values.minio.deploy (ge (int .Values.minio.nodes) 2) }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-self-managed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: minio
+  ingress:
+    # Distributed erasure set: every node connects to every peer on the
+    # API/TLS port.
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ int .Values.minio.tlsPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ int .Values.minio.tlsPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{- end }}
+{{- if .Values.postgres.deploy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-self-managed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: postgres
+  ingress:
+    # Client hops (PgBouncer is the primary pooler; gateway/controller
+    # reach Postgres directly via postgres.gatewayEgressCIDR) plus
+    # CloudNativePG instance-to-instance streaming replication on 5432.
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: postgres
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: token-service
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: controller
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # CloudNativePG instance manager reaches the kube-apiserver; allow the
+    # cluster-wide HTTPS apiserver port. The §13.2 IMDS/private-range
+    # exclusions are gateway-only, so this backend egress is unconstrained
+    # by them.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+{{- end }}

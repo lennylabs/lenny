@@ -1,0 +1,289 @@
+{{- /*
+The §17.9.5 self-managed Redis on the §17.8 Tier 3 Redis Cluster topology
+(provider=cluster). A StatefulSet of cluster-enabled nodes behind a
+headless Service, plus a one-shot post-install Job that runs
+`redis-cli --cluster create` to assign hash slots and replicas.
+
+Rendering is gated on `redis.deploy` (default false) and a resolved
+provider of "cluster", distinct from the `redis.cluster.addrs` connection
+list (the gateway's seed-node target). A chart-managed self-managed
+deployment sets `deploy: true` and points `redis.cluster.addrs` at the
+rendered node Services.
+
+§17.9.7 — plaintext disabled (port 0), TLS on tlsPort, cluster bus and
+replication over TLS, AUTH via redis.password (shared with the gateway
+through the lenny-datastore-conn redis-password key).
+
+spec: §17.9.5 lines 1497-1530 (self-managed Redis = Cluster at Tier 3),
+§17.8 line 1149 (Redis Cluster 6+ nodes), §12.4, §17.9.7 line 1521.
+*/ -}}
+{{- if and .Values.redis.deploy (eq (include "lenny.redisProvider" .) "cluster") }}
+{{- $r := .Values.redis }}
+{{- $tlsPort := int $r.tlsPort }}
+{{- $busPort := add $tlsPort 10000 }}
+{{- if eq ($r.tls.secretName | default "") "" }}
+{{- fail "§17.9.7: redis.deploy requires redis.tls.secretName (the TLS Secret keys tls.crt/tls.key/ca.crt); Redis must serve TLS with the plaintext port disabled." -}}
+{{- end }}
+{{- if eq ($r.password | default "" | toString) "" }}
+{{- fail "§17.9.7: redis.deploy requires redis.password (the §12.4 AUTH credential); it is shared with the gateway via the lenny-datastore-conn redis-password key." -}}
+{{- end }}
+{{- $nodes := int $r.cluster.nodes }}
+{{- $replicasPerMaster := int $r.cluster.replicasPerMaster }}
+{{- if lt $nodes 6 }}{{- fail "§17.8: redis.provider=cluster requires redis.cluster.nodes >= 6 (3 primaries x 1 replica)." -}}{{- end }}
+{{- $ns := .Release.Namespace }}
+{{- $headlessFQDN := printf "lenny-redis-cluster-headless.%s.svc.cluster.local" $ns }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-redis-cluster-scripts
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+data:
+  redis.conf: |
+    port 0
+    tls-port {{ $tlsPort }}
+    tls-cert-file /etc/redis-tls/tls.crt
+    tls-key-file /etc/redis-tls/tls.key
+    tls-ca-cert-file /etc/redis-tls/ca.crt
+    tls-auth-clients yes
+    tls-cluster yes
+    tls-replication yes
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+    appendonly yes
+    dir /data
+  start-redis.sh: |
+    #!/bin/sh
+    set -eu
+    CONF=/etc/redis-runtime/redis.conf
+    cp /scripts/redis.conf "$CONF"
+    {
+      echo "requirepass ${REDIS_PASSWORD}"
+      echo "masterauth ${REDIS_PASSWORD}"
+    } >> "$CONF"
+    exec redis-server "$CONF"
+  init-cluster.sh: |
+    #!/bin/sh
+    set -eu
+    NODES=""
+    i=0
+    while [ "$i" -lt {{ $nodes }} ]; do
+      NODES="$NODES lenny-redis-cluster-$i.{{ $headlessFQDN }}:{{ $tlsPort }}"
+      i=$((i + 1))
+    done
+    # Idempotent: skip if slots are already assigned.
+    if redis-cli --tls --cert /etc/redis-tls/tls.crt --key /etc/redis-tls/tls.key \
+        --cacert /etc/redis-tls/ca.crt -a "$REDIS_PASSWORD" \
+        -h lenny-redis-cluster-0.{{ $headlessFQDN }} -p {{ $tlsPort }} \
+        cluster info 2>/dev/null | grep -q "cluster_state:ok"; then
+      echo "cluster already initialized"
+      exit 0
+    fi
+    # shellcheck disable=SC2086
+    redis-cli --cluster create $NODES \
+      --cluster-replicas {{ $replicasPerMaster }} --cluster-yes \
+      --tls --cert /etc/redis-tls/tls.crt --key /etc/redis-tls/tls.key \
+      --cacert /etc/redis-tls/ca.crt -a "$REDIS_PASSWORD"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-cluster-headless
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    lenny.dev/component: redis
+    lenny.dev/redis-role: cluster
+  ports:
+    - name: redis-tls
+      port: {{ $tlsPort }}
+      targetPort: redis-tls
+    - name: cluster-bus
+      port: {{ $busPort }}
+      targetPort: cluster-bus
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-redis-cluster
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  serviceName: lenny-redis-cluster-headless
+  replicas: {{ $nodes }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: cluster
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: redis
+        lenny.dev/redis-role: cluster
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/start-redis.sh"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+          ports:
+            - name: redis-tls
+              containerPort: {{ $tlsPort }}
+            - name: cluster-bus
+              containerPort: {{ $busPort }}
+          readinessProbe:
+            tcpSocket:
+              port: redis-tls
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: redis-tls
+              mountPath: /etc/redis-tls
+              readOnly: true
+            - name: runtime
+              mountPath: /etc/redis-runtime
+          resources:
+            {{- toYaml $r.deployResources | nindent 12 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: redis
+              lenny.dev/redis-role: cluster
+      volumes:
+        - name: scripts
+          configMap:
+            name: lenny-redis-cluster-scripts
+        - name: redis-tls
+          secret:
+            secretName: {{ $r.tls.secretName }}
+        - name: runtime
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "lenny.labels" . | nindent 10 }}
+          lenny.dev/component: redis
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $r.persistence.storageClass }}
+        storageClassName: {{ $r.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $r.persistence.size | quote }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-redis-cluster
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: cluster
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-redis-cluster-init
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: redis
+        lenny.dev/redis-role: cluster-init
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: init
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/init-cluster.sh"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: redis-tls
+              mountPath: /etc/redis-tls
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: lenny-redis-cluster-scripts
+        - name: redis-tls
+          secret:
+            secretName: {{ $r.tls.secretName }}
+{{- end }}

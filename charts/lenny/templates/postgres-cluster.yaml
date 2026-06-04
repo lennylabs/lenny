@@ -1,0 +1,80 @@
+{{- /*
+The §17.9.5 self-managed Postgres workload, rendered as a CloudNativePG
+`Cluster` custom resource. CloudNativePG runs the primary plus standbys
+and provides the §17.3 RPO=0 synchronous replication and < 30s automated
+failover targets natively (the operator promotes a synchronous standby
+on primary loss), so the chart does not hand-roll a Patroni StatefulSet.
+
+Rendering is gated on `postgres.deploy` (default false) and
+`postgres.selfManaged.provider == cloudnative-pg`, distinct from
+`postgres.dsn` (the gateway's connection target). Cloud-managed and
+external self-managed deployments leave `deploy` false and point `dsn` at
+a provider endpoint or an out-of-band Postgres; a chart-managed
+self-managed deployment sets `deploy: true` and points `dsn` at the
+operator-minted `lenny-postgres-rw` Service using the `lenny-postgres-app`
+secret CloudNativePG generates.
+
+The CloudNativePG operator (and its `postgresql.cnpg.io` CRDs) must already
+be installed in the cluster; this template renders only the `Cluster`
+resource, mirroring how the §17.9.5 table names "CloudNativePG operator".
+
+spec: §17.9.5 lines 1497-1503 (self-managed Postgres = CloudNativePG),
+§17.3 lines 114-117 (Postgres RPO=0 sync replication, < 30s auto failover),
+§12.3 (Postgres HA requirements).
+*/ -}}
+{{- if .Values.postgres.deploy }}
+{{- $sm := .Values.postgres.selfManaged }}
+{{- $provider := $sm.provider | default "cloudnative-pg" }}
+{{- if eq $provider "patroni" }}
+{{- fail "§17.9.5: postgres.selfManaged.provider=patroni is reserved and not rendered in v1; use \"cloudnative-pg\" or point postgres.dsn at an external Postgres." -}}
+{{- end }}
+{{- if ne $provider "cloudnative-pg" }}
+{{- fail (printf "§17.9.5: postgres.selfManaged.provider must be \"cloudnative-pg\" when postgres.deploy is true, got %q" $provider) -}}
+{{- end }}
+{{- $instances := int $sm.instances }}
+{{- if lt $instances 1 }}{{- fail "§17.3: postgres.selfManaged.instances must be >= 1" -}}{{- end }}
+{{- if and $sm.synchronous (lt $instances 2) }}
+{{- fail "§17.3: postgres.selfManaged.synchronous (RPO=0) requires at least 2 instances so a standby can acknowledge writes; set instances >= 2 or synchronous: false." -}}
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: lenny-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: postgres
+spec:
+  # §17.3 — primary plus standbys. CloudNativePG elects and promotes a
+  # standby on primary loss (the < 30s auto-failover target).
+  instances: {{ $instances }}
+  imageName: {{ $sm.imageName | quote }}
+  primaryUpdateStrategy: unsupervised
+  # Propagate the lenny component label onto every pod/PVC/Service the
+  # operator creates so the §13.2 NetworkPolicies and dashboards match.
+  inheritedMetadata:
+    labels:
+      lenny.dev/component: postgres
+  postgresql:
+    {{- if $sm.synchronous }}
+    # §17.3 RPO=0 — synchronous commit to one standby (method: any so any
+    # one in-sync standby acknowledging satisfies the quorum). A write is
+    # not acknowledged to the client until it is durable on a standby.
+    synchronous:
+      method: any
+      number: 1
+    {{- end }}
+  bootstrap:
+    initdb:
+      database: {{ $sm.database | quote }}
+      owner: {{ $sm.owner | quote }}
+  storage:
+    size: {{ $sm.storage.size | quote }}
+    {{- if $sm.storage.storageClass }}
+    storageClass: {{ $sm.storage.storageClass | quote }}
+    {{- end }}
+  {{- with $sm.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

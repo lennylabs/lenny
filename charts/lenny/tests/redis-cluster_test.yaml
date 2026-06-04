@@ -1,0 +1,122 @@
+suite: §17.9.5 self-managed Redis Cluster workload (Tier 3)
+templates:
+  - redis-cluster.yaml
+tests:
+  - it: renders nothing when redis.deploy is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing on the sentinel provider
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.8 — the Cluster topology renders a scripts ConfigMap, a
+  # headless Service, the StatefulSet, a PDB, and the cluster-init Job.
+  - it: renders the Cluster topology when deploy and provider=cluster
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "lenny-redis-cluster-0.lenny-redis-cluster-headless:6380"
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: defaults to a 6-node cluster with the redis component label
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "lenny-redis-cluster-0.lenny-redis-cluster-headless:6380"
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 6
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/redis-role"]
+          value: cluster
+
+  # spec: §17.9.7 — cluster bus and replication over TLS, cluster-enabled.
+  - it: redis.conf enables TLS cluster mode with plaintext disabled
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "lenny-redis-cluster-0.lenny-redis-cluster-headless:6380"
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "cluster-enabled yes"
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "tls-cluster yes"
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "port 0"
+
+  # spec: §17.8 — the init Job assigns slots via redis-cli --cluster
+  # create with the configured replicas-per-master.
+  - it: the cluster-init Job runs redis-cli --cluster create over TLS
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "lenny-redis-cluster-0.lenny-redis-cluster-headless:6380"
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+      - equal:
+          path: spec.template.spec.containers[0].command[1]
+          value: /scripts/init-cluster.sh
+
+  - it: the init-cluster script uses --cluster-replicas from values
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "lenny-redis-cluster-0.lenny-redis-cluster-headless:6380"
+      redis.cluster.replicasPerMaster: 1
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - matchRegex:
+          path: data["init-cluster.sh"]
+          pattern: "--cluster-replicas 1"
+
+  # spec: §17.8 — Redis Cluster requires at least 6 nodes.
+  - it: fails when cluster.nodes is below the 6-node floor
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "seed:6380"
+      redis.cluster.nodes: 3
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.8: redis.provider=cluster requires redis.cluster.nodes >= 6 (3 primaries x 1 replica)."

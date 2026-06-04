@@ -1,0 +1,18 @@
+{{- /*
+§17.3 / §17.9.5 self-managed backend posture guard.
+
+A `backends: self-managed` install must own its Postgres, Redis, and
+object store: either render them in-cluster (postgres.deploy /
+redis.deploy / minio.deploy) or point at an out-of-band self-managed
+endpoint, and the chart-rendered Postgres/Redis must meet the §17.3
+RPO/RTO targets (Postgres synchronous replication, Redis Sentinel or
+Cluster failover). This render-time guard fails `helm install`/`helm
+upgrade` when a backend is missing or under-configured, so the chart can
+signal the gap the §17.3 RPO/RTO table requires rather than installing a
+self-managed topology with no datastore. The template emits no
+Kubernetes object; it exists solely to evaluate the check at template
+time. The check is a no-op for cloud-managed and embedded backends.
+
+spec: §17.3 lines 112-117, §17.9.5 lines 1495-1530.
+*/ -}}
+{{- include "lenny.selfManagedBackendCheck" . -}}

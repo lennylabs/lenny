@@ -32449,7 +32449,7 @@ key id does not match. It renders only when `backups.bucket` is set and
 
 ---
 
-### - [ ] F-17.3.19 — 3.9 — `minio-deployment` / `postgres-deployment` Helm templates do not exist; §17.3 sync replication / Sentinel topology is BYO [Medium] — OPEN
+### - [x] F-17.3.19 — 3.9 — `minio-deployment` / `postgres-deployment` Helm templates do not exist; §17.3 sync replication / Sentinel topology is BYO [Medium] — CLOSED
 
 Spec — §17.3 "RPO/RTO targets" table requires Postgres "sync
 replication" and "auto failover" and Redis "Sentinel failover".
@@ -32469,6 +32469,19 @@ neither the §17.3 Postgres RPO=0 sync-replication target nor the
 Sentinel failover target by default — the chart cannot signal
 that these are missing. (The Tier-3 preset does not enforce
 them either.)
+
+- **Resolution:** Closed by F-17.9.5 in the same batch. The chart now
+  renders the self-managed Postgres workload as a CloudNativePG `Cluster`
+  with `postgresql.synchronous {method: any, number: 1}` (the §17.3 RPO=0
+  sync-replication + < 30s auto-failover target) when `postgres.deploy`,
+  and the Redis Sentinel topology (data StatefulSet + 3-node Sentinel
+  StatefulSet driving < 15s failover) when `redis.deploy`. The new
+  `templates/self-managed-backends-guard.yaml` (helper
+  `lenny.selfManagedBackendCheck`) makes the chart *signal* the §17.3
+  posture: a `backends: self-managed` render now fails when Postgres is
+  neither deployed nor external, when a chart-managed Postgres is not
+  synchronous, when Redis lacks a Sentinel/Cluster failover topology, or
+  when no object store is configured. Commit `<pending>`.
 
 ---
 
@@ -35703,7 +35716,7 @@ incidentally but not enforced by the contract.
 
 ---
 
-### - [ ] F-17.9.5 — §17.9.5 self-managed backend workloads (PgBouncer, Redis Sentinel/Cluster, MinIO) are not rendered by the chart [High] — OPEN
+### - [x] F-17.9.5 — §17.9.5 self-managed backend workloads (PgBouncer, Redis Sentinel/Cluster, MinIO) are not rendered by the chart [High] — CLOSED
 
 **Spec:** §17.9.5 (lines 1499–1530) requires that answer files in the
 self-managed backend dimension "deploy PgBouncer, Redis Sentinel (or
@@ -35759,6 +35772,28 @@ path.
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:157` (`minio`
   block documented as "self-managed profile" but has no Deployment
   template to back it)
+
+- **Resolution:** The chart now renders every §17.9.5 self-managed backend
+  workload, gated on a per-backend `deploy` flag that follows the existing
+  `pgbouncer.deploy` convention (PgBouncer was already rendered by
+  F-12.3.10/.11). New templates: `minio-statefulset.yaml` (distributed
+  erasure-coded StatefulSet — ≥4 nodes auto-enable erasure coding per
+  §17.8 — headless + API Services, PDB, TLS on tlsPort);
+  `redis-sentinel.yaml` (the §17.8 "Sentinel (3 sentinels, 1+1)" topology:
+  a data StatefulSet + a 3-node Sentinel StatefulSet, `port 0` + TLS +
+  `tls-auth-clients yes` + AUTH per §17.9.7, sharing the gateway's
+  `redis-password` key so credentials match); `redis-cluster.yaml` (the
+  Tier-3 6+ node Redis Cluster StatefulSet + a `redis-cli --cluster create`
+  init Job); and `postgres-cluster.yaml` (a CloudNativePG `Cluster` CR with
+  synchronous replication). `self-managed-backend-network-policies.yaml`
+  re-admits the intra-backend flows (Sentinel discovery on 26379, Redis
+  replication/gossip, distributed-MinIO erasure traffic, CNPG replication
+  + client ingress) the §13.2 default-deny blocks. The three
+  `*-self-managed.yaml` answer files now set `deploy: true` and point the
+  consumer-side endpoints at the rendered Services, so they render a full
+  backend topology instead of referencing out-of-band placeholders.
+  `datastore-secret.yaml` renders `redis-password` for any deploy path.
+  Commit `<pending>`.
 
 ---
 

@@ -1,0 +1,94 @@
+suite: §17.9.5 self-managed Postgres (CloudNativePG) workload
+templates:
+  - postgres-cluster.yaml
+tests:
+  # spec: §17.9.5 — cloud-managed and external self-managed deployments
+  # leave postgres.deploy false, so the stock render emits nothing.
+  - it: renders nothing when postgres.deploy is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — a chart-managed self-managed deployment renders a
+  # CloudNativePG Cluster custom resource.
+  - it: renders a CloudNativePG Cluster when postgres.deploy is true
+    set:
+      postgres.deploy: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Cluster
+      - equal:
+          path: apiVersion
+          value: postgresql.cnpg.io/v1
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: postgres
+
+  # spec: §17.3 — three instances (primary + 2 standbys) by default.
+  - it: defaults to 3 instances with the component label inherited onto operator resources
+    set:
+      postgres.deploy: true
+    asserts:
+      - equal:
+          path: spec.instances
+          value: 3
+      - equal:
+          path: spec.inheritedMetadata.labels["lenny.dev/component"]
+          value: postgres
+      - equal:
+          path: spec.primaryUpdateStrategy
+          value: unsupervised
+
+  # spec: §17.3 line 116 — RPO=0 synchronous replication. The default
+  # render commits synchronously to one standby.
+  - it: enables synchronous replication for the RPO=0 target by default
+    set:
+      postgres.deploy: true
+    asserts:
+      - equal:
+          path: spec.postgresql.synchronous.method
+          value: any
+      - equal:
+          path: spec.postgresql.synchronous.number
+          value: 1
+
+  - it: omits the synchronous block when synchronous is disabled
+    set:
+      postgres.deploy: true
+      postgres.selfManaged.synchronous: false
+    asserts:
+      - notExists:
+          path: spec.postgresql.synchronous
+
+  # spec: §17.3 — synchronous replication needs a standby to acknowledge,
+  # so a single-instance synchronous render must fail.
+  - it: fails when synchronous is requested with a single instance
+    set:
+      postgres.deploy: true
+      postgres.selfManaged.instances: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.3: postgres.selfManaged.synchronous (RPO=0) requires at least 2 instances so a standby can acknowledge writes; set instances >= 2 or synchronous: false."
+
+  # spec: §17.9.5 — Patroni is named as an alternative but is not rendered
+  # in v1; the render must fail with guidance rather than emit nothing.
+  - it: fails for the reserved patroni provider
+    set:
+      postgres.deploy: true
+      postgres.selfManaged.provider: patroni
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.5: postgres.selfManaged.provider=patroni is reserved and not rendered in v1; use \"cloudnative-pg\" or point postgres.dsn at an external Postgres."
+
+  - it: bootstraps the application database and owner
+    set:
+      postgres.deploy: true
+    asserts:
+      - equal:
+          path: spec.bootstrap.initdb.database
+          value: lenny
+      - equal:
+          path: spec.bootstrap.initdb.owner
+          value: lenny

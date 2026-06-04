@@ -1,0 +1,229 @@
+{{- /*
+The §17.9.5 self-managed MinIO object store, rendered as a distributed
+erasure-coded StatefulSet, a headless Service for stable pod DNS, a
+ClusterIP API Service the gateway reaches on minio.tlsPort, and a
+PodDisruptionBudget.
+
+Rendering is gated on `minio.deploy` (default false), distinct from
+`minio.endpoint` (the gateway's §4.5 artifact-store target). Cloud-managed
+and external self-managed deployments leave `deploy` false and point
+`endpoint` at a provider bucket or an out-of-band MinIO; a chart-managed
+self-managed deployment sets `deploy: true` and points `endpoint` at the
+rendered Service (lenny-minio.<namespace>:<tlsPort>).
+
+With minio.nodes >= 4 the StatefulSet starts MinIO in distributed mode
+across the pod set, which auto-enables erasure coding (§17.8 "4-node MinIO
+erasure coding"). minio.nodes == 1 renders a single-node store for
+non-production self-managed dev. §17.9.7 mandates encrypted transit, so a
+TLS render mounts minio.tls.secretName and serves HTTPS on tlsPort.
+
+The pod carries the `lenny.dev/component: minio` label the §13.2 system
+NetworkPolicies (allow-minio, allow-gateway-egress) already select.
+
+spec: §17.9.5 lines 1497-1530 (self-managed MinIO workload), §12.5
+(ArtifactStore HA topology), §17.8 (per-tier node counts), §17.9.7 line
+1521 (S3-compatible API, encryption at rest, TLS in transit).
+*/ -}}
+{{- if .Values.minio.deploy }}
+{{- $m := .Values.minio }}
+{{- $nodes := int $m.nodes }}
+{{- if lt $nodes 1 }}{{- fail "§17.9.5: minio.nodes must be >= 1 when minio.deploy is true" -}}{{- end }}
+{{- $tlsEnabled := $m.tls.enabled }}
+{{- if and $tlsEnabled (eq ($m.tls.secretName | default "") "") }}
+{{- fail "§17.9.7: minio.deploy with minio.tls.enabled requires minio.tls.secretName (the TLS Secret MinIO serves HTTPS from); provision it with cert-manager or supply your own." -}}
+{{- end }}
+{{- $headlessFQDN := printf "lenny-minio-headless.%s.svc.cluster.local" .Release.Namespace }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio
+spec:
+  # Headless Service: gives each pod a stable DNS name
+  # lenny-minio-<ordinal>.lenny-minio-headless the distributed server
+  # set addresses (§17.9.5).
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    lenny.dev/component: minio
+  ports:
+    - name: api
+      port: {{ $m.tlsPort }}
+      targetPort: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio
+spec:
+  # ClusterIP API Service the gateway's minio.endpoint targets; load
+  # balances S3 requests across the erasure set.
+  selector:
+    lenny.dev/component: minio
+  ports:
+    - name: api
+      port: {{ $m.tlsPort }}
+      targetPort: api
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio
+spec:
+  serviceName: lenny-minio-headless
+  replicas: {{ $nodes }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      lenny.dev/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: minio
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          image: "{{ $m.image.repository }}:{{ $m.image.tag }}"
+          imagePullPolicy: {{ $m.image.pullPolicy }}
+          args:
+            - server
+            - --address
+            - ":{{ $m.tlsPort }}"
+            - --console-address
+            - ":{{ $m.consolePort }}"
+            {{- if $tlsEnabled }}
+            - --certs-dir
+            - /etc/minio/certs
+            {{- end }}
+            {{- if ge $nodes 4 }}
+            # §17.8 — distributed erasure-coded set across the pods.
+            - {{ printf "http://lenny-minio-{0...%d}.%s/data" (sub $nodes 1) $headlessFQDN | quote }}
+            {{- else if ge $nodes 2 }}
+            - {{ printf "http://lenny-minio-{0...%d}.%s/data" (sub $nodes 1) $headlessFQDN | quote }}
+            {{- else }}
+            # Single-node store (no erasure coding); non-production dev.
+            - /data
+            {{- end }}
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $m.rootCredentialsSecret }}
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $m.rootCredentialsSecret }}
+                  key: MINIO_ROOT_PASSWORD
+          ports:
+            - name: api
+              containerPort: {{ $m.tlsPort }}
+            - name: console
+              containerPort: {{ $m.consolePort }}
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+              scheme: {{ if $tlsEnabled }}HTTPS{{ else }}HTTP{{ end }}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+              scheme: {{ if $tlsEnabled }}HTTPS{{ else }}HTTP{{ end }}
+            periodSeconds: 30
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if $tlsEnabled }}
+            - name: certs
+              mountPath: /etc/minio/certs/public.crt
+              subPath: public.crt
+              readOnly: true
+            - name: certs
+              mountPath: /etc/minio/certs/private.key
+              subPath: private.key
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml $m.deployResources | nindent 12 }}
+      {{- if ge $nodes 2 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      {{- end }}
+      {{- if $tlsEnabled }}
+      volumes:
+        - name: certs
+          secret:
+            secretName: {{ $m.tls.secretName }}
+            items:
+              - key: tls.crt
+                path: public.crt
+              - key: tls.key
+                path: private.key
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "lenny.labels" . | nindent 10 }}
+          lenny.dev/component: minio
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $m.persistence.storageClass }}
+        storageClassName: {{ $m.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $m.persistence.size | quote }}
+{{- if ge $nodes 2 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio
+spec:
+  # A node-drain or rolling update must never take more than one MinIO
+  # node down at once so the erasure set keeps read/write quorum (§12.5).
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/component: minio
+{{- end }}
+{{- end }}

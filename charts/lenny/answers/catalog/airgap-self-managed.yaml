@@ -7,11 +7,13 @@
 # the backend-reachability preflight probes that would otherwise require
 # egress to the managed backends (§17.9.2, §17.9.11).
 #
-# Layering: with presets/values-tierN.yaml. Set the mirror host,
-# pull-secret name, and the Sentinel and MinIO endpoints in an overrides
-# file (the placeholders below are replaced per deployment).
+# Layering: with presets/values-tierN.yaml. The backends render
+# in-cluster; set the mirror host and pull-secret name, supply the Redis
+# and MinIO TLS Secrets, the Redis AUTH password, and the MinIO root
+# credentials (the REPLACE- placeholders) in an overrides file, and point
+# postgres.dsn at the rendered lenny-postgres-rw Service.
 #
-# Leaves open: capacity tier, mirror details, connection endpoints.
+# Leaves open: capacity tier, mirror details, TLS Secrets, AUTH credentials.
 
 cluster: vanilla
 backends: self-managed
@@ -27,19 +29,42 @@ platform:
     # registry-digest preflight enforces it on an airgap install.
     requireDigest: true
 postgres:
+  # pgbouncer: the in-cluster PgBouncer enforces the connect_query
+  # __unset__ sentinel for RLS checkout safety (§12.3).
   connectionPooler: pgbouncer
+  # §17.9.5 — render the Postgres workload as a CloudNativePG Cluster with
+  # §17.3 RPO=0 synchronous replication. Point the gateway dsn at the
+  # operator-minted lenny-postgres-rw Service in an overrides file using
+  # the lenny-postgres-app secret CloudNativePG generates.
+  deploy: true
+pgbouncer:
+  # §17.9.5 — render the in-cluster PgBouncer Deployment (2+ replicas, PDB).
+  deploy: true
 redis:
   provider: sentinel
   sentinelMaster: mymaster
+  # §17.9.5 — render the Sentinel topology (1+1 data nodes, 3 sentinels)
+  # and discover the master through the rendered Sentinel pods. Supply the
+  # §17.9.7 TLS Secret and AUTH password in an overrides file.
+  deploy: true
+  tls:
+    secretName: "REPLACE-redis-tls"
+  password: "REPLACE-redis-password"
   sentinels:
-    - "REPLACE-redis-sentinel-0.redis:26379"
-    - "REPLACE-redis-sentinel-1.redis:26379"
-    - "REPLACE-redis-sentinel-2.redis:26379"
+    - "lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"
+    - "lenny-redis-sentinel-1.lenny-redis-sentinel-headless:26379"
+    - "lenny-redis-sentinel-2.lenny-redis-sentinel-headless:26379"
 objectStorage:
   provider: minio
 minio:
-  endpoint: "REPLACE-minio.lenny-system:9000"
+  # §17.9.5 — render the erasure-coded MinIO StatefulSet and point the
+  # §4.5 artifact store at its in-cluster API Service. Supply the §17.9.7
+  # TLS Secret and the lenny-minio-root credentials Secret out of band.
+  deploy: true
+  endpoint: "lenny-minio:9443"
   bucket: "lenny-artifacts"
+  tls:
+    secretName: "REPLACE-minio-tls"
 preflight:
   # skipNetworkProbes drops the MinIO, Redis, OTLP, and ops-admin
   # backend-reachability probes; the cluster-API checks still run

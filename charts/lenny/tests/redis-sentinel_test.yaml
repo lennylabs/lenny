@@ -1,0 +1,168 @@
+suite: §17.9.5 self-managed Redis Sentinel workload
+templates:
+  - redis-sentinel.yaml
+tests:
+  # spec: §17.9.5 — cloud-managed and external self-managed deployments
+  # leave redis.deploy false, so the stock render emits nothing.
+  - it: renders nothing when redis.deploy is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — deploy on a non-sentinel provider renders nothing
+  # here (the cluster template owns the cluster topology).
+  - it: renders nothing when provider is cluster
+    set:
+      redis.deploy: true
+      redis.provider: cluster
+      redis.cluster.addrs: "seed:6379"
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.8 — the Sentinel topology renders a scripts ConfigMap, a
+  # data + sentinel headless Service, a sentinel ClusterIP Service, the
+  # two StatefulSets, and two PodDisruptionBudgets.
+  - it: renders the full Sentinel topology when deploy and provider=sentinel
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - hasDocuments:
+          count: 8
+
+  - it: data StatefulSet defaults to 2 nodes (1 primary + 1 replica) with the redis component label
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: spec.serviceName
+      value: lenny-redis-headless
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: redis
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/redis-role"]
+          value: data
+
+  - it: sentinel StatefulSet defaults to 3 replicas
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: spec.serviceName
+      value: lenny-redis-sentinel-headless
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  # spec: §17.9.7 — plaintext disabled (port 0), TLS on tlsPort,
+  # tls-auth-clients yes.
+  - it: redis.conf disables the plaintext port and requires client TLS
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "port 0"
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "tls-port 6380"
+      - matchRegex:
+          path: data["redis.conf"]
+          pattern: "tls-auth-clients yes"
+
+  # spec: §17.8 — the sentinel.conf monitors the configured master name
+  # with the configured quorum.
+  - it: sentinel monitors the configured master name and quorum
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: lenny-master
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - matchRegex:
+          path: data["start-sentinel.sh"]
+          pattern: "sentinel monitor lenny-master lenny-redis-0.lenny-redis-headless.NAMESPACE.svc.cluster.local 6380 2"
+    release:
+      namespace: NAMESPACE
+
+  # spec: §12.4 — the deployed Redis and the gateway share one AUTH
+  # credential via the lenny-datastore-conn redis-password key.
+  - it: data pods read REDIS_PASSWORD from the shared datastore secret
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    documentSelector:
+      path: spec.serviceName
+      value: lenny-redis-headless
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+
+  # spec: §17.9.7 — a deploy render without a TLS secret must fail.
+  - it: fails the render when no TLS secret is supplied
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.password: s3cret
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.7: redis.deploy requires redis.tls.secretName (the TLS Secret keys tls.crt/tls.key/ca.crt); Redis must serve TLS with the plaintext port disabled."
+
+  # spec: §12.4 — AUTH is mandatory; a deploy render without a password
+  # must fail.
+  - it: fails the render when no AUTH password is supplied
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.tls.secretName: lenny-redis-tls
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.7: redis.deploy requires redis.password (the §12.4 AUTH credential); it is shared with the gateway via the lenny-datastore-conn redis-password key."

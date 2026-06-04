@@ -1,0 +1,105 @@
+suite: §17.3 / §17.9.5 self-managed backend posture guard
+templates:
+  - self-managed-backends-guard.yaml
+tests:
+  # spec: §17.9.5 — the guard is a no-op for the default (empty) and
+  # cloud-managed backends; provider-native services handle HA.
+  - it: is a no-op when backends is unset (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: is a no-op for cloud-managed backends
+    set:
+      backends: cloud-managed
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: is a no-op for embedded backends
+    set:
+      backends: embedded
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — a self-managed install with every backend either
+  # deployed or externally configured renders cleanly.
+  - it: passes when all self-managed backends are deployed in-cluster
+    set:
+      backends: self-managed
+      postgres.deploy: true
+      postgres.selfManaged.synchronous: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["lenny-redis-sentinel-0.lenny-redis-sentinel-headless:26379"]
+      redis.deploy: true
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: passes when self-managed backends point at out-of-band endpoints
+    set:
+      backends: self-managed
+      postgres.dsn: "postgres://lenny@db.acme.internal:5432/lenny"
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0.acme.internal:26379"]
+      minio.endpoint: "minio.acme.internal:9000"
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — the gap the finding flags: a self-managed install
+  # with no Postgres backend must fail rather than install with none.
+  - it: fails when self-managed Postgres is neither deployed nor external
+    set:
+      backends: self-managed
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0:26379"]
+      minio.endpoint: "minio:9000"
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.5: backends=self-managed requires a Postgres backend: set postgres.deploy=true to render a CloudNativePG cluster (§17.3 RPO=0 sync replication) or point postgres.dsn at an out-of-band self-managed Postgres."
+
+  # spec: §17.3 line 116 — a chart-managed Postgres must be synchronous.
+  - it: fails when chart-managed Postgres disables synchronous replication
+    set:
+      backends: self-managed
+      postgres.deploy: true
+      postgres.selfManaged.synchronous: false
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0:26379"]
+      minio.endpoint: "minio:9000"
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.3: a chart-managed self-managed Postgres must use synchronous replication to meet the RPO=0 target; set postgres.selfManaged.synchronous: true."
+
+  # spec: §17.3 line 117 — self-managed Redis must have a failover path.
+  - it: fails when self-managed Redis has no Sentinel or Cluster topology
+    set:
+      backends: self-managed
+      postgres.dsn: "postgres://lenny@db:5432/lenny"
+      redis.url: "rediss://:p@redis:6380/0"
+      minio.endpoint: "minio:9000"
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.3: backends=self-managed requires a Redis failover topology; set redis.provider to \"sentinel\" or \"cluster\" (a single external endpoint has no Sentinel failover path). Set redis.deploy=true to render it in-cluster or point at an out-of-band Sentinel/Cluster."
+
+  # spec: §17.9.5 — a self-managed install with no object store must fail.
+  - it: fails when self-managed object storage is neither deployed nor external
+    set:
+      backends: self-managed
+      postgres.dsn: "postgres://lenny@db:5432/lenny"
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0:26379"]
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.9.5: backends=self-managed requires an object store: set minio.deploy=true to render an erasure-coded MinIO StatefulSet or point minio.endpoint at an out-of-band MinIO."

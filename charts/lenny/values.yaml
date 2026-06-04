@@ -441,6 +441,49 @@ redis:
   # it renders into the lenny-datastore-conn Secret and is read via
   # LENNY_REDIS_SENTINEL_PASSWORD. Honored only when provider=sentinel.
   sentinelPassword: ""
+  # deploy gates the §17.9.5 in-cluster Redis workload. With
+  # provider=sentinel it renders the §17.8 "Sentinel (3 sentinels, 1+1)"
+  # topology: a data StatefulSet (1 primary + replicas) and a separate
+  # 3-replica Sentinel StatefulSet that monitors the primary and drives
+  # failover. With provider=cluster it renders a Redis Cluster
+  # StatefulSet plus a one-shot cluster-init Job. It is distinct from the
+  # connection fields (sentinels / cluster.addrs): external self-managed
+  # and cloud-managed deployments leave `deploy` false and point those at
+  # an out-of-band Redis; a chart-managed self-managed deployment sets
+  # `deploy: true` and points them at the rendered Services. The pods
+  # carry the `lenny.dev/component: redis` label the §13.2
+  # NetworkPolicies select. spec: §17.9.5, §12.4, §17.8.
+  deploy: false
+  # replicas is the data-node count on the Sentinel path: 1 primary plus
+  # (replicas-1) read replicas. §17.8 "1+1" is the default 2. Ignored for
+  # provider=cluster (cluster.nodes applies).
+  replicas: 2
+  # sentinel configures the deployed Sentinel tier (provider=sentinel).
+  sentinel:
+    # replicas is the Sentinel count. §17.8 requires 3 for quorum.
+    replicas: 3
+    # quorum is the agreeing-Sentinel count that authorizes a failover.
+    # §12.4 sets it to a majority of replicas (2 of 3).
+    quorum: 2
+  # image is the Redis server/sentinel container image (one image runs
+  # both redis-server and redis-sentinel).
+  image:
+    repository: redis
+    tag: "7.4-alpine"
+    pullPolicy: IfNotPresent
+  # tls.secretName names a Kubernetes TLS Secret (keys tls.crt, tls.key,
+  # ca.crt) the deployed Redis and Sentinel pods mount. §17.9.7 mandates
+  # Redis TLS with plaintext disabled (port 0, tls-port), so a self-
+  # managed redis.deploy render requires this secret. Ignored when deploy
+  # is false.
+  tls:
+    secretName: ""
+  # persistence sizes each data node's append-only PVC.
+  persistence:
+    size: "8Gi"
+    storageClass: ""
+  # deployResources are the requests/limits for each Redis/Sentinel pod.
+  deployResources: {}
   # cluster.addrs is a comma-separated list of §12.4 Redis Cluster seed
   # nodes (host:port). When set the gateway base Redis client is a
   # CLUSTER KEYSLOT-aware ClusterClient — the Tier 2→3 migration topology
@@ -450,6 +493,12 @@ redis:
   # var (LENNY_REDIS_CLUSTER_ADDRS).
   cluster:
     addrs: ""
+    # nodes is the deployed Redis Cluster size (provider=cluster +
+    # deploy=true). §17.8 Tier 3 requires 6+ (3 primaries × 1 replica).
+    nodes: 6
+    # replicasPerMaster is the replica count per primary the cluster-init
+    # Job assigns (--cluster-replicas). 1 gives the §17.8 6-node 3+3 set.
+    replicasPerMaster: 1
   # concerns implements the §12.4 "Logical separation of Redis concerns"
   # deployment-time split. Each value is a dedicated Redis connection URL
   # for one store role; an empty value keeps that concern on the base
@@ -551,6 +600,53 @@ minio:
   # regulated `complianceProfile`, fails the helm render.
   tls:
     enabled: true
+    # secretName names a Kubernetes TLS Secret (keys tls.crt, tls.key,
+    # and an optional ca.crt) the in-cluster MinIO StatefulSet (deploy:
+    # true) mounts to serve HTTPS on tlsPort. §17.9.7 mandates encrypted
+    # transit for self-managed object storage, so a self-managed
+    # minio.deploy render requires this secret. Provision it with
+    # cert-manager or supply your own. Ignored when deploy is false.
+    secretName: ""
+  # deploy gates the §17.9.5 in-cluster MinIO workload: a distributed,
+  # erasure-coded StatefulSet (≥4 nodes auto-enables erasure coding per
+  # §17.8), a headless Service for stable pod DNS, a ClusterIP API
+  # Service, and a PodDisruptionBudget. It is distinct from `endpoint`
+  # (the gateway's connection target): cloud-managed and external
+  # self-managed deployments leave `deploy` false and point `endpoint`
+  # at a provider bucket or an out-of-band MinIO; a chart-managed
+  # self-managed deployment sets `deploy: true` and points `endpoint`
+  # at the rendered Service (lenny-minio.<namespace>:<tlsPort>). The
+  # pod carries the `lenny.dev/component: minio` label the §13.2
+  # NetworkPolicies select. spec: §17.9.5, §12.5, §17.8.
+  deploy: false
+  # nodes is the §17.8 MinIO node count. 4 (the Tier-2 default) and 8
+  # (Tier 3) enable erasure coding across the distributed set; 1 renders
+  # a single-node MinIO for non-production self-managed dev. A self-
+  # managed minio.deploy render warns (does not block, §17.6 line 531)
+  # when nodes < 4 because erasure coding is then unavailable.
+  nodes: 4
+  # image is the MinIO server container image.
+  image:
+    repository: quay.io/minio/minio
+    tag: "RELEASE.2024-10-13T13-34-11Z"
+    pullPolicy: IfNotPresent
+  # consolePort is the MinIO web-console port the StatefulSet exposes
+  # alongside the API. Reachable only in-cluster (no Service by default).
+  consolePort: 9001
+  # rootCredentialsSecret names the Secret carrying MINIO_ROOT_USER and
+  # MINIO_ROOT_PASSWORD for the deployed StatefulSet. Defaults to
+  # lenny-minio-root; provision it out of band (the chart never mints
+  # object-store root credentials). The gateway's minio.accessKey /
+  # minio.secretKey remain the §4.5 artifact-store credentials.
+  rootCredentialsSecret: "lenny-minio-root"
+  # persistence sizes each node's data PVC. size is the per-node volume;
+  # storageClass empty uses the cluster default (operators should select
+  # an encrypted-at-rest class to satisfy §17.9.7).
+  persistence:
+    size: "50Gi"
+    storageClass: ""
+  # deployResources are the requests/limits for each MinIO server pod.
+  deployResources: {}
   # lifecycle gates the §12.5 lines 277-280 post-install bucket
   # configuration Job (mc mb, versioning enable, delete-marker and
   # noncurrent-version expiration via `mc ilm add`). The Job runs
@@ -1083,6 +1179,45 @@ postgres:
   # "pgbouncer" otherwise, so a cloud-managed install never silently
   # runs without the trigger defense. spec: §12.3 lines 55-56.
   connectionPooler: ""
+  # deploy gates the §17.9.5 in-cluster Postgres workload. With
+  # selfManaged.provider=cloudnative-pg it renders a CloudNativePG
+  # `Cluster` custom resource (the operator must already be installed);
+  # CloudNativePG provides the §17.3 RPO=0 synchronous replication and
+  # < 30s automated failover targets natively. It is distinct from `dsn`
+  # (the gateway's connection target): cloud-managed and external
+  # self-managed deployments leave `deploy` false and point `dsn` at a
+  # provider endpoint or an out-of-band Postgres; a chart-managed
+  # self-managed deployment sets `deploy: true` and points `dsn` at the
+  # rendered `<release>-postgres-rw` Service using the operator-minted
+  # app secret. spec: §17.9.5, §17.3, §12.3.
+  deploy: false
+  # selfManaged configures the deployed Postgres workload.
+  selfManaged:
+    # provider selects the deployed topology. "cloudnative-pg" renders a
+    # CloudNativePG Cluster CR. "patroni" is reserved (not rendered in
+    # v1); use cloudnative-pg or an external dsn. spec: §17.9.5.
+    provider: "cloudnative-pg"
+    # instances is the §17.3 / §12.3 Postgres replica count. 3 gives a
+    # primary plus two standbys so synchronous replication survives a
+    # single standby loss without blocking writes.
+    instances: 3
+    # synchronous enables §17.3 RPO=0 synchronous replication (CNPG
+    # `postgresql.synchronous` with method=any, number=1). A self-managed
+    # deploy render with synchronous=false fails the §17.3 HA signal.
+    synchronous: true
+    # imageName is the CloudNativePG-compatible Postgres image.
+    imageName: "ghcr.io/cloudnative-pg/postgresql:16.4"
+    # database / owner are the application database and role CNPG
+    # bootstraps. The gateway dsn targets this database.
+    database: "lenny"
+    owner: "lenny"
+    # storage sizes each instance's data volume; storageClass empty uses
+    # the cluster default (select an encrypted-at-rest class for §17.9.7).
+    storage:
+      size: "50Gi"
+      storageClass: ""
+    # resources are the requests/limits for each Postgres instance pod.
+    resources: {}
   # cidr is the destination CIDR PgBouncer is allowed to reach
   # Postgres on (§13.2). Operators should tighten this to the
   # database endpoint; the broad default is bounded by the per-port

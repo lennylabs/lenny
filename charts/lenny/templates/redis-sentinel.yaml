@@ -1,0 +1,387 @@
+{{- /*
+The §17.9.5 self-managed Redis, rendered on the §17.8 "Sentinel
+(3 sentinels, 1+1)" topology: a data StatefulSet (1 primary + replicas)
+and a separate Sentinel StatefulSet that monitors the primary and drives
+< 15s failover (§17.3 line 117). Each tier has a headless Service for
+stable pod DNS and a ClusterIP Service; the data tier and Sentinel tier
+each carry a PodDisruptionBudget.
+
+Rendering is gated on `redis.deploy` (default false) and a resolved
+provider of "sentinel", distinct from the `redis.sentinels` connection
+list (the gateway's discovery target). A chart-managed self-managed
+deployment sets `deploy: true` and points `redis.sentinels` at the
+rendered lenny-redis-sentinel pods.
+
+§17.9.7 mandates Redis AUTH + TLS with the plaintext port disabled, so
+the rendered config sets `port 0`, serves TLS on tlsPort, requires
+`tls-auth-clients yes`, and authenticates with the §17.9.3 redis.password
+(read from the same lenny-datastore-conn `redis-password` key the gateway
+reads, so the credentials match by construction).
+
+The pods carry the `lenny.dev/component: redis` label the §13.2 system
+NetworkPolicies select.
+
+spec: §17.9.5 lines 1497-1530 (self-managed Redis = Sentinel/Cluster),
+§17.8 line 1149 (3 sentinels, 1+1), §17.3 line 117 (< 15s Sentinel
+failover), §12.4 (Redis HA + TLS + AUTH), §17.9.7 line 1521.
+*/ -}}
+{{- if and .Values.redis.deploy (eq (include "lenny.redisProvider" .) "sentinel") }}
+{{- $r := .Values.redis }}
+{{- $tlsPort := int $r.tlsPort }}
+{{- $sentinelPort := 26379 }}
+{{- $master := required "§17.9.3: redis.deploy on the sentinel path requires redis.sentinelMaster (the monitored master name)." $r.sentinelMaster }}
+{{- if eq ($r.tls.secretName | default "") "" }}
+{{- fail "§17.9.7: redis.deploy requires redis.tls.secretName (the TLS Secret keys tls.crt/tls.key/ca.crt); Redis must serve TLS with the plaintext port disabled." -}}
+{{- end }}
+{{- if eq ($r.password | default "" | toString) "" }}
+{{- fail "§17.9.7: redis.deploy requires redis.password (the §12.4 AUTH credential); it is shared with the gateway via the lenny-datastore-conn redis-password key." -}}
+{{- end }}
+{{- $dataReplicas := int $r.replicas }}
+{{- $sentinelReplicas := int $r.sentinel.replicas }}
+{{- $quorum := int $r.sentinel.quorum }}
+{{- $ns := .Release.Namespace }}
+{{- $masterFQDN := printf "lenny-redis-0.lenny-redis-headless.%s.svc.cluster.local" $ns }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-redis-scripts
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+data:
+  # §17.9.7 — plaintext port disabled, TLS only, client cert required.
+  redis.conf: |
+    port 0
+    tls-port {{ $tlsPort }}
+    tls-cert-file /etc/redis-tls/tls.crt
+    tls-key-file /etc/redis-tls/tls.key
+    tls-ca-cert-file /etc/redis-tls/ca.crt
+    tls-auth-clients yes
+    tls-replication yes
+    appendonly yes
+    dir /data
+  sentinel.conf: |
+    port 0
+    tls-port {{ $sentinelPort }}
+    tls-cert-file /etc/redis-tls/tls.crt
+    tls-key-file /etc/redis-tls/tls.key
+    tls-ca-cert-file /etc/redis-tls/ca.crt
+    tls-replication yes
+    dir /etc/redis-runtime
+  start-redis.sh: |
+    #!/bin/sh
+    set -eu
+    ORDINAL="${HOSTNAME##*-}"
+    CONF=/etc/redis-runtime/redis.conf
+    cp /scripts/redis.conf "$CONF"
+    {
+      echo "requirepass ${REDIS_PASSWORD}"
+      echo "masterauth ${REDIS_PASSWORD}"
+    } >> "$CONF"
+    # §17.8 1+1 — ordinal 0 bootstraps as primary; the rest replicate
+    # from it. Sentinel reconfigures replicaof targets after a failover.
+    if [ "$ORDINAL" != "0" ]; then
+      echo "replicaof {{ $masterFQDN }} {{ $tlsPort }}" >> "$CONF"
+    fi
+    exec redis-server "$CONF"
+  start-sentinel.sh: |
+    #!/bin/sh
+    set -eu
+    CONF=/etc/redis-runtime/sentinel.conf
+    cp /scripts/sentinel.conf "$CONF"
+    {
+      echo "sentinel monitor {{ $master }} {{ $masterFQDN }} {{ $tlsPort }} {{ $quorum }}"
+      echo "sentinel auth-pass {{ $master }} ${REDIS_PASSWORD}"
+      echo "sentinel down-after-milliseconds {{ $master }} 5000"
+      echo "sentinel failover-timeout {{ $master }} 30000"
+      echo "sentinel parallel-syncs {{ $master }} 1"
+      if [ -n "${SENTINEL_PASSWORD:-}" ]; then echo "requirepass ${SENTINEL_PASSWORD}"; fi
+    } >> "$CONF"
+    exec redis-sentinel "$CONF"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-headless
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    lenny.dev/component: redis
+    lenny.dev/redis-role: data
+  ports:
+    - name: redis-tls
+      port: {{ $tlsPort }}
+      targetPort: redis-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-sentinel-headless
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    lenny.dev/component: redis
+    lenny.dev/redis-role: sentinel
+  ports:
+    - name: sentinel
+      port: {{ $sentinelPort }}
+      targetPort: sentinel
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-sentinel
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  # The gateway's redis.sentinels discovery target.
+  selector:
+    lenny.dev/component: redis
+    lenny.dev/redis-role: sentinel
+  ports:
+    - name: sentinel
+      port: {{ $sentinelPort }}
+      targetPort: sentinel
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-redis
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  serviceName: lenny-redis-headless
+  replicas: {{ $dataReplicas }}
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: data
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: redis
+        lenny.dev/redis-role: data
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/start-redis.sh"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+          ports:
+            - name: redis-tls
+              containerPort: {{ $tlsPort }}
+          readinessProbe:
+            tcpSocket:
+              port: redis-tls
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis-tls
+            periodSeconds: 30
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: redis-tls
+              mountPath: /etc/redis-tls
+              readOnly: true
+            - name: runtime
+              mountPath: /etc/redis-runtime
+          resources:
+            {{- toYaml $r.deployResources | nindent 12 }}
+      {{- if ge $dataReplicas 2 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: redis
+              lenny.dev/redis-role: data
+      {{- end }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: lenny-redis-scripts
+        - name: redis-tls
+          secret:
+            secretName: {{ $r.tls.secretName }}
+        - name: runtime
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "lenny.labels" . | nindent 10 }}
+          lenny.dev/component: redis
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $r.persistence.storageClass }}
+        storageClassName: {{ $r.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $r.persistence.size | quote }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-redis-sentinel
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  serviceName: lenny-redis-sentinel-headless
+  replicas: {{ $sentinelReplicas }}
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: sentinel
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: redis
+        lenny.dev/redis-role: sentinel
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sentinel
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/start-sentinel.sh"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+            {{- if ne ($r.sentinelPassword | default "" | toString) "" }}
+            - name: SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+          ports:
+            - name: sentinel
+              containerPort: {{ $sentinelPort }}
+          readinessProbe:
+            tcpSocket:
+              port: sentinel
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: redis-tls
+              mountPath: /etc/redis-tls
+              readOnly: true
+            - name: runtime
+              mountPath: /etc/redis-runtime
+          resources:
+            {{- toYaml $r.deployResources | nindent 12 }}
+      {{- if ge $sentinelReplicas 2 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: redis
+              lenny.dev/redis-role: sentinel
+      {{- end }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: lenny-redis-scripts
+        - name: redis-tls
+          secret:
+            secretName: {{ $r.tls.secretName }}
+        - name: runtime
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-redis
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: data
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-redis-sentinel
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: redis
+spec:
+  # Keep a Sentinel quorum during a node drain or rolling update.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/component: redis
+      lenny.dev/redis-role: sentinel
+{{- end }}

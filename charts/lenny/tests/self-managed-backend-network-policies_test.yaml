@@ -1,0 +1,93 @@
+suite: §13.2 / §17.9.5 self-managed backend NetworkPolicies
+templates:
+  - self-managed-backend-network-policies.yaml
+tests:
+  - it: renders nothing when no backend is deployed (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.9.5 — the Redis policy opens the Sentinel discovery port and
+  # the intra-Redis flows the default-deny blocks.
+  - it: renders the Redis policy opening the Sentinel port to the gateway
+    set:
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: allow-redis-self-managed
+      - contains:
+          path: spec.ingress[1].ports
+          content:
+            port: 26379
+            protocol: TCP
+
+  # spec: §12.5 — the distributed MinIO policy opens inter-node erasure
+  # traffic; a single-node MinIO needs no inter-node policy.
+  - it: renders the MinIO policy for a distributed set
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: allow-minio-self-managed
+
+  - it: omits the MinIO policy for a single-node store
+    set:
+      minio.deploy: true
+      minio.nodes: 1
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.3 — the Postgres policy admits PgBouncer/client ingress and
+  # CloudNativePG instance-to-instance replication on 5432.
+  - it: renders the Postgres policy admitting client and replication ingress
+    set:
+      postgres.deploy: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: allow-postgres-self-managed
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            podSelector:
+              matchLabels:
+                lenny.dev/component: pgbouncer
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            podSelector:
+              matchLabels:
+                lenny.dev/component: postgres
+
+  - it: renders all three policies when every backend is deployed
+    set:
+      postgres.deploy: true
+      redis.deploy: true
+      redis.provider: sentinel
+      redis.sentinelMaster: mymaster
+      redis.sentinels: ["s0:26379"]
+      redis.tls.secretName: lenny-redis-tls
+      redis.password: s3cret
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    asserts:
+      - hasDocuments:
+          count: 3

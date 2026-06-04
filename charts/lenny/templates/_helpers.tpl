@@ -372,6 +372,49 @@ spec: §17.9.3 lines 1402-1409.
 {{- end -}}
 
 {{/*
+lenny.selfManagedBackendCheck signals the §17.3 RPO/RTO posture for a
+self-managed install. §17.9.5 makes the self-managed backend dimension a
+first-class chart path: a `backends: self-managed` deployment must either
+render each backend in-cluster (postgres.deploy / redis.deploy /
+minio.deploy) or point at an out-of-band self-managed endpoint
+(postgres.dsn / redis.sentinels|cluster.addrs / minio.endpoint). The
+check fails the render when a backend is neither, so the chart can no
+longer silently install with no Postgres, Redis, or object store.
+
+It also enforces the §17.3 RPO/RTO targets the table requires: a
+chart-managed Postgres must use synchronous replication (RPO=0), and a
+self-managed Redis must use the Sentinel or Cluster topology (failover),
+never a single external endpoint with no failover path.
+
+The check is a no-op for `cloud-managed` (provider-native HA) and
+`embedded` (the developer `lenny up` mode). It emits no object; the
+self-managed-backends-guard template evaluates it at render time.
+spec: §17.3 lines 112-117 (RPO/RTO targets), §17.9.5 lines 1495-1530.
+*/}}
+{{- define "lenny.selfManagedBackendCheck" -}}
+{{- if eq (.Values.backends | default "") "self-managed" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- $pgDeploy := $pg.deploy | default false -}}
+{{- $pgDSN := $pg.dsn | default "" | toString -}}
+{{- if and (not $pgDeploy) (eq $pgDSN "") -}}
+{{- fail "§17.9.5: backends=self-managed requires a Postgres backend: set postgres.deploy=true to render a CloudNativePG cluster (§17.3 RPO=0 sync replication) or point postgres.dsn at an out-of-band self-managed Postgres." -}}
+{{- end -}}
+{{- if and $pgDeploy (not (($pg.selfManaged | default dict).synchronous | default false)) -}}
+{{- fail "§17.3: a chart-managed self-managed Postgres must use synchronous replication to meet the RPO=0 target; set postgres.selfManaged.synchronous: true." -}}
+{{- end -}}
+{{- $redis := .Values.redis | default dict -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- if eq $redisProvider "external" -}}
+{{- fail "§17.3: backends=self-managed requires a Redis failover topology; set redis.provider to \"sentinel\" or \"cluster\" (a single external endpoint has no Sentinel failover path). Set redis.deploy=true to render it in-cluster or point at an out-of-band Sentinel/Cluster." -}}
+{{- end -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- if and (not ($minio.deploy | default false)) (eq ($minio.endpoint | default "") "") -}}
+{{- fail "§17.9.5: backends=self-managed requires an object store: set minio.deploy=true to render an erasure-coded MinIO StatefulSet or point minio.endpoint at an out-of-band MinIO." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 lenny.gatewayLogLevel maps the §17.9.1 environment dimension to the
 gateway's LENNY_LOG_LEVEL. The local and dev environments render
 "debug" verbosity; staging and prod render "info". An empty environment
