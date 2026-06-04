@@ -62,11 +62,17 @@ func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries 
 			if ts.IsZero() {
 				ts = time.Now().UTC()
 			}
+			// The gateway owns schema_version per §15.4.1 line 1694;
+			// normalize a zero-value caller field to the v1 baseline.
+			schemaVer := e.SchemaVersion
+			if schemaVer == 0 {
+				schemaVer = transcriptstore.SchemaVersion
+			}
 			if _, err := tx.Exec(ctx,
 				`INSERT INTO session_messages
-				 (id, session_id, tenant_id, seq, role, content, created_at)
-				 VALUES (gen_random_uuid(), $1::uuid, $2, $3, $4, $5, $6)`,
-				sessionID, tenantID, maxSeq, e.Role, e.Content, ts); err != nil {
+				 (id, session_id, tenant_id, seq, role, content, created_at, schema_version)
+				 VALUES (gen_random_uuid(), $1::uuid, $2, $3, $4, $5, $6, $7)`,
+				sessionID, tenantID, maxSeq, e.Role, e.Content, ts, schemaVer); err != nil {
 				return err
 			}
 		}
@@ -80,7 +86,7 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) ([]transcri
 	var out []transcriptstore.Entry
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT seq, role, content, created_at FROM session_messages
+			`SELECT seq, role, content, created_at, schema_version FROM session_messages
 			 WHERE session_id = $1::uuid AND tenant_id = $2 ORDER BY seq`,
 			sessionID, tenantID)
 		if err != nil {
@@ -116,7 +122,7 @@ func (s *Store) Page(ctx context.Context, tenantID, sessionID string, afterSeq u
 	var exists bool
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT seq, role, content, created_at FROM session_messages
+			`SELECT seq, role, content, created_at, schema_version FROM session_messages
 			 WHERE session_id = $1::uuid AND tenant_id = $2 AND seq > $3
 			 ORDER BY seq LIMIT $4`,
 			sessionID, tenantID, int64(afterSeq), limit)
@@ -197,7 +203,7 @@ func scanEntry(row pgx.Row) (transcriptstore.Entry, error) {
 		e   transcriptstore.Entry
 		seq int64
 	)
-	if err := row.Scan(&seq, &e.Role, &e.Content, &e.Timestamp); err != nil {
+	if err := row.Scan(&seq, &e.Role, &e.Content, &e.Timestamp, &e.SchemaVersion); err != nil {
 		return transcriptstore.Entry{}, err
 	}
 	e.Seq = uint64(seq)

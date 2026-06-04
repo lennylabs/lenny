@@ -26805,7 +26805,7 @@ Concretely:
 
 - **Resolution:** New `pkg/degradation` package exports the §15.5 line 2461 catalog: `AnnotationSchemaVersionAhead`, `AnnotationDurableSchemaVersionAhead`, `AnnotationMcpProtocolVersionRetired`, the three body constructors (`SchemaVersionAhead(known, encountered)`, `DurableSchemaVersionAhead(known, encountered, recordType)`, `McpProtocolVersionRetired(retired, current[])` — sorted), plus `Stamp` / `Has` helpers. `MessageEnvelope.Annotations map[string]any` is now wired on both the Go runtime SDK (`sdks/runtime/go/runtime/types.go`) and Python runtime SDK (`sdks/runtime/python/lenny_runtime/types.py`) so producers and consumers agree on the wire shape. `pkg/workspaceplan.ParseStored` exercises the catalog by stamping the `durable_schema_version_ahead` body shape into the new `WarnDurableSchemaVersionAhead` warning (see F-15.5.8). 8 tier-1 tests in the new package + a Go-SDK round-trip test (`TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461`) and omit-empty guard. `mcp_protocol_version_retired` emission stays gated on F-15.5.4 (MCP version negotiation), which owns the retirement defect surface.
 
-### - [ ] F-15.5.6 — Persisted record types are missing the mandated `schemaVersion` field [High] — OPEN
+### - [x] F-15.5.6 — Persisted record types are missing the mandated `schemaVersion` field [High] — CLOSED
 
 `spec/15_external-api-surface.md:2452` enumerates seven record types that MUST carry a `schemaVersion` integer (starting at 1): `TaskRecord`, billing events, audit events, checkpoint metadata, session records, `WorkspacePlan`, and `MessageEnvelope` (persisted in `session_messages`).
 
@@ -26821,6 +26821,18 @@ Schema audit (`migrations/0001_initial_schema.up.sql` and downstream migrations)
 - `MessageEnvelope` — not persisted with a schema version: the runtime-SDK `MessageEnvelope.SchemaVersion int \`json:"schemaVersion,omitempty"\`` field (`sdks/runtime/go/runtime/types.go:56`) is on-wire only; the persisted `session_messages` row has no column for it.
 
 Spec text on the `MessageEnvelope` field at §15.4.1 (line 1694) explicitly says: "Every `MessageEnvelope` persisted to the `session_messages` table carries this field." The table does not carry it.
+
+**Resolution (per record type, re-verified against the spec):**
+
+- **`MessageEnvelope` / `session_messages`** — migration `0131` adds `schema_version INT NOT NULL DEFAULT 1 CHECK (schema_version >= 1)` as a query-filterable column. `transcriptstore.Entry` gains `SchemaVersion`; the pgstore INSERT/SELECT carry the column and the Memory store + pgstore normalize a zero-value caller field to the v1 baseline (the gateway owns the field per §15.4.1 line 1694, "Runtimes MUST NOT set it"). The transcript REST response (`GET /v1/sessions/{id}/transcript`) now surfaces `schemaVersion` on every entry.
+- **Checkpoint metadata** — migration `0132` adds the same `schema_version` column to `session_checkpoints` (the per-commit checkpoint-metadata catalog); `checkpointretention.Record.SchemaVersion` + the pgstore/Memory write paths stamp it at write time.
+- **`sessions` (session records)** — already carries `schema_version INT NOT NULL DEFAULT 1` from migration `0050`; the original evidence ("no `schema_version` column") was stale.
+- **`billing_events`** — already present (`schema_version INT`, line 163).
+- **`WorkspacePlan`** — the `schemaVersion` integer is carried inside the JSONB payload (`pkg/workspaceplan/plan.go`), which satisfies §15.5's "carry a `schemaVersion` integer field"; the spec does not mandate a separate SQL column for JSONB-embedded records.
+- **`audit_log.event_schema_version`** — left as `TEXT` deliberately. §11.7 line 365 defines `event_schema_version` as a **per-event-type string version token** (`credential.leased@v1`), published as the `schemas/audit-events/v*.json` registry and folded into the §11.7 hash-chain canonical tuple. It is a distinct field from the billing/EventStore `schema_version uint32` (§11.7 line 82). Retyping it to INT would contradict §11.7 and break the audit hash chain; per Rule B the spec is authoritative, so no change.
+- **`TaskRecord`** — not persisted to Postgres in v1 (no table); §15.5's rule scopes to "Postgres-persisted record types", so it is vacuously satisfied here. The in-flight struct already carries `SchemaVersion`; durable TaskRecord persistence is tracked under §8.8, not §15.5.
+
+Tests: tier-1 static migration-content tests (0131/0132), tier-1 in-memory store stamping/normalization tests (transcript + checkpoint), tier-2 component column-existence coverage and a transcript-pgstore round-trip subtest. Resolution commit in this batch.
 
 ### - [x] F-15.5.7 — REST error envelope OpenAPI schema is missing `category` and `retryable` [High] — CLOSED
 

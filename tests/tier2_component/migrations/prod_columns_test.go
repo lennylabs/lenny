@@ -202,6 +202,11 @@ var prodMigrationSchema = []struct {
 	{migration: "0124", table: "platform_upgrade_state", create: true},
 	{migration: "0124", table: "platform_upgrade_check_cache", create: true},
 	{migration: "0125", table: "audit_log_deferred_writes", create: true},
+	// 0131 / 0132 add the §15.5 item 7 schema_version column to the
+	// session_messages MessageEnvelope rows (§15.4.1 line 1694) and the
+	// session_checkpoints checkpoint-metadata catalog.
+	{migration: "0131", table: "session_messages", columns: []string{"schema_version"}},
+	{migration: "0132", table: "session_checkpoints", columns: []string{"schema_version"}},
 }
 
 // spec: 12.2, 18.5

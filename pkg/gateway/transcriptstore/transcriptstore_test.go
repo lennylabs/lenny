@@ -129,3 +129,39 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 		t.Errorf("globex/sess_1 should survive: %v", err)
 	}
 }
+
+// TestAppendStampsSchemaVersion_spec_15_4_1_1694 verifies the gateway-owned
+// schema_version is stamped on every persisted MessageEnvelope: a
+// zero-value caller field is normalized to the v1 baseline, and an explicit
+// version is preserved verbatim.
+//
+// spec: §15.4.1 line 1694 — "Every MessageEnvelope persisted to the
+// session_messages table carries this field"; §15.5 item 7 — integer
+// "starting at 1".
+func TestAppendStampsSchemaVersion_spec_15_4_1_1694(t *testing.T) {
+	s := transcriptstore.NewMemory()
+	if err := s.Append(
+		context.Background(), "acme", "sess_sv",
+		transcriptstore.Entry{Role: "user", Content: "zero-defaulted"},
+		transcriptstore.Entry{Role: "assistant", Content: "explicit", SchemaVersion: 2},
+	); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	got, err := s.Get(context.Background(), "acme", "sess_sv")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].SchemaVersion != transcriptstore.SchemaVersion {
+		t.Errorf("entry[0].SchemaVersion = %d, want %d (v1 baseline)",
+			got[0].SchemaVersion, transcriptstore.SchemaVersion)
+	}
+	if got[1].SchemaVersion != 2 {
+		t.Errorf("entry[1].SchemaVersion = %d, want 2 (explicit preserved)", got[1].SchemaVersion)
+	}
+	if transcriptstore.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion const = %d, want 1 per §15.5 item 7", transcriptstore.SchemaVersion)
+	}
+}

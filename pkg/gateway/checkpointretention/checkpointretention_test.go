@@ -314,3 +314,37 @@ func TestRotate_StampsDeletedAt(t *testing.T) {
 		t.Fatal("transitioned row must have DeletedAt set")
 	}
 }
+
+// TestInsert_StampsSchemaVersion_spec_15_5_item7 verifies the gateway-owned
+// checkpoint-metadata schema_version is stamped on Insert: a zero-value
+// caller field defaults to the v1 baseline and an explicit value is kept.
+//
+// spec: §15.5 item 7 — "checkpoint metadata" carries a schemaVersion
+// integer "starting at 1", set at write time by the gateway.
+func TestInsert_StampsSchemaVersion_spec_15_5_item7(t *testing.T) {
+	store, _ := newStore()
+	ctx := context.Background()
+	if err := store.Insert(ctx, Record{TenantID: "acme", SessionID: "s", Ref: "a"}); err != nil {
+		t.Fatalf("Insert default: %v", err)
+	}
+	if err := store.Insert(ctx, Record{TenantID: "acme", SessionID: "s", Ref: "b", SchemaVersion: 3}); err != nil {
+		t.Fatalf("Insert explicit: %v", err)
+	}
+	rows, err := store.List(ctx, "acme", "s", "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]int{}
+	for _, r := range rows {
+		got[r.Ref] = r.SchemaVersion
+	}
+	if got["a"] != SchemaVersion {
+		t.Errorf("ref a SchemaVersion = %d, want %d (v1 baseline)", got["a"], SchemaVersion)
+	}
+	if got["b"] != 3 {
+		t.Errorf("ref b SchemaVersion = %d, want 3 (explicit preserved)", got["b"])
+	}
+	if SchemaVersion != 1 {
+		t.Errorf("SchemaVersion const = %d, want 1 per §15.5 item 7", SchemaVersion)
+	}
+}

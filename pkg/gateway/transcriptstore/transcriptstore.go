@@ -19,6 +19,15 @@ import (
 	"time"
 )
 
+// SchemaVersion is the §15.5 item 7 schema revision the gateway stamps on
+// every MessageEnvelope it persists to session_messages. v1 writers use 1.
+//
+// spec: §15.4.1 line 1694 — "Every MessageEnvelope persisted to the
+// session_messages table carries this field ... the gateway writes it at
+// inbox-enqueue time and it is immutable once written." §15.5 item 7 — the
+// field is an integer "starting at 1".
+const SchemaVersion = 1
+
 // Entry is one transcript line.
 type Entry struct {
 	// Seq is the per-session monotonic sequence, starting at 1.
@@ -32,6 +41,12 @@ type Entry struct {
 
 	// Timestamp is the UTC instant the entry was recorded.
 	Timestamp time.Time `json:"timestamp"`
+
+	// SchemaVersion is the §15.4.1 MessageEnvelope schema revision the
+	// gateway stamps at persist time. Zero on input is normalized to
+	// SchemaVersion (1) by the store; callers do not set it (the gateway
+	// owns it per §15.4.1 line 1694, "Runtimes MUST NOT set it").
+	SchemaVersion int `json:"schemaVersion"`
 }
 
 // ErrNotFound — no transcript exists for the (tenant, session) pair.
@@ -98,6 +113,9 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		e.Seq = nextSeq
 		if e.Timestamp.IsZero() {
 			e.Timestamp = time.Now().UTC()
+		}
+		if e.SchemaVersion == 0 {
+			e.SchemaVersion = SchemaVersion
 		}
 		existing = append(existing, e)
 		nextSeq++

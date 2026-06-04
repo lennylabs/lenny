@@ -37,7 +37,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 var _ checkpointretention.Store = (*Store)(nil)
 
-const selectList = `tenant_id, session_id, slot_id, ref, created_at, retained, deleted_at`
+const selectList = `tenant_id, session_id, slot_id, ref, created_at, retained, deleted_at, schema_version`
 
 // Insert records a new checkpoint row. A duplicate (tenant, session,
 // ref) returns checkpointretention.ErrDuplicate.
@@ -48,13 +48,19 @@ func (s *Store) Insert(ctx context.Context, r checkpointretention.Record) error 
 	if r.Ref == "" {
 		return errors.New("checkpointretention: ref is required")
 	}
+	// The gateway owns schema_version per §15.5 item 7; normalize a
+	// zero-value caller field to the v1 baseline.
+	schemaVer := r.SchemaVersion
+	if schemaVer == 0 {
+		schemaVer = checkpointretention.SchemaVersion
+	}
 	return pgtenant.InTx(ctx, s.pool, r.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO session_checkpoints (
 				tenant_id, session_id, slot_id, ref,
-				created_at, retained, deleted_at)
-			VALUES ($1, $2, $3, $4, $5, TRUE, NULL)`,
-			r.TenantID, r.SessionID, r.SlotID, r.Ref, s.now())
+				created_at, retained, deleted_at, schema_version)
+			VALUES ($1, $2, $3, $4, $5, TRUE, NULL, $6)`,
+			r.TenantID, r.SessionID, r.SlotID, r.Ref, s.now(), schemaVer)
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -233,7 +239,7 @@ func scanRow(row pgx.Row) (checkpointretention.Record, error) {
 	)
 	if err := row.Scan(
 		&r.TenantID, &r.SessionID, &r.SlotID, &r.Ref,
-		&r.CreatedAt, &r.Retained, &deletedAt,
+		&r.CreatedAt, &r.Retained, &deletedAt, &r.SchemaVersion,
 	); err != nil {
 		return checkpointretention.Record{}, err
 	}

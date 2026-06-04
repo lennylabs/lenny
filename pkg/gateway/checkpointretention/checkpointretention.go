@@ -68,7 +68,18 @@ type Record struct {
 	// false. The §12.5 backstop sweep hard-prunes rows whose
 	// DeletedAt is older than the tombstone retention window.
 	DeletedAt time.Time
+	// SchemaVersion is the §15.5 item 7 checkpoint-metadata schema
+	// revision. The gateway stamps it at Insert time; a zero value is
+	// normalized to SchemaVersion (1). It is immutable once written.
+	//
+	// spec: §15.5 item 7 — "checkpoint metadata" carries a schemaVersion
+	// integer "starting at 1", set at write time by the gateway.
+	SchemaVersion int
 }
+
+// SchemaVersion is the §15.5 item 7 checkpoint-metadata schema revision
+// stamped on every row v1 writes.
+const SchemaVersion = 1
 
 // Store persists checkpoint rotation rows.
 type Store interface {
@@ -165,6 +176,9 @@ func (m *MemoryStore) Insert(_ context.Context, r Record) error {
 	r.CreatedAt = m.now()
 	r.Retained = true
 	r.DeletedAt = time.Time{}
+	if r.SchemaVersion == 0 {
+		r.SchemaVersion = SchemaVersion
+	}
 	m.rows[k] = r
 	return nil
 }

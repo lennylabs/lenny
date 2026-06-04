@@ -163,4 +163,33 @@ func TestTranscriptStoreContract(t *testing.T) {
 			t.Errorf("cross-tenant Get: got %v, want ErrNotFound", err)
 		}
 	})
+
+	// spec: §15.4.1 line 1694 — every MessageEnvelope persisted to
+	// session_messages carries the gateway-stamped schema_version; §15.5
+	// item 7 — integer starting at 1. The migration 0131 column must
+	// round-trip through INSERT and SELECT: a zero-value caller field is
+	// normalized to the v1 baseline, an explicit version is preserved.
+	t.Run("schema_version round-trips and defaults to v1", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sid := seedSession(t, ctx, sess, tenant)
+		if err := store.Append(ctx, tenant, sid,
+			entry("user", "defaulted"),
+			transcriptstore.Entry{Role: "assistant", Content: "explicit", SchemaVersion: 2},
+		); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, sid)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("Get returned %d entries, want 2", len(got))
+		}
+		if got[0].SchemaVersion != transcriptstore.SchemaVersion {
+			t.Errorf("entry[0].SchemaVersion = %d, want %d", got[0].SchemaVersion, transcriptstore.SchemaVersion)
+		}
+		if got[1].SchemaVersion != 2 {
+			t.Errorf("entry[1].SchemaVersion = %d, want 2", got[1].SchemaVersion)
+		}
+	})
 }
