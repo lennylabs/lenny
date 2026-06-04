@@ -233,6 +233,7 @@ type Router struct {
 	poolStatus            PoolStatusReader
 	crdGenerations        CRDGenerationReader
 	poolDrainMetrics      PoolDrainMetrics
+	poolBootstrap         PoolBootstrapStatusReader
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
@@ -696,6 +697,11 @@ func (r *Router) Handler() http.Handler {
 		// in-flight count + estimated drain seconds. Runs on the same
 		// manage_pools gate as the PUT it shares the resource with.
 		mux.Handle("POST /v1/admin/pools/{name}/drain", poolManage(http.HandlerFunc(r.handleDrainPool)))
+		// §17.8.2 step 3: clear a pool's bootstrapMinWarm override so the
+		// PoolScalingController switches to formula-driven scaling
+		// immediately. Runs on the same manage_pools gate as the PUT it
+		// shares the resource with.
+		mux.Handle("DELETE /v1/admin/pools/{name}/bootstrap-override", poolManage(http.HandlerFunc(r.handleClearBootstrapOverride)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 		// §4.6.2 item 3 (c): operator-initiated reset of a stuck pool's
 		// admission-denial backoff. Only registered when a

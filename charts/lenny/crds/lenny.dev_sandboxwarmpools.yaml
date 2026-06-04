@@ -200,6 +200,16 @@ spec:
               owns.
             x-kubernetes-preserve-unknown-fields: true
             properties:
+              bootstrapHoursOfData:
+                description: |-
+                  BootstrapHoursOfData is the whole hours of accumulated traffic
+                  data the PoolScalingController has observed for the pool while it
+                  operates under a §17.8.2 bootstrapMinWarm override. The admin pool
+                  GET surfaces it as bootstrapStatus.hoursOfData and projects
+                  estimatedConvergenceAt against the 48-hour window.
+                format: int32
+                minimum: 0
+                type: integer
               conditions:
                 description: Conditions is the standard Kubernetes condition list.
                 items:
@@ -272,6 +282,18 @@ spec:
                   claimable ready state.
                 format: int32
                 type: integer
+              scalingMode:
+                description: |-
+                  ScalingMode is the §17.8.2 cold-start scaling mode the
+                  PoolScalingController operates the pool in: `bootstrap` while the
+                  pool is pinned to its bootstrapMinWarm override, or `formula`
+                  once the §17.8.2 step-4 convergence criteria are met (or no
+                  override is set). The §16.5 PoolBootstrapMode alert reads the
+                  matching lenny_pool_bootstrap_mode gauge.
+                enum:
+                - bootstrap
+                - formula
+                type: string
               sdkWarmCircuitBreaker:
                 description: |-
                   SDKWarmCircuitBreaker persists the SDK-warm circuit-breaker

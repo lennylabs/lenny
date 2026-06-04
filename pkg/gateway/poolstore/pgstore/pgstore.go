@@ -47,7 +47,8 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	allow_standard_isolation, concurrency_style, max_concurrent,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
 	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-	pool_config_generation, task_policy, elicitation_policy, draining_since`
+	pool_config_generation, task_policy, elicitation_policy, draining_since,
+	bootstrap_min_warm`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -55,6 +56,9 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 func validatePool(p poolstore.Pool) error {
 	if p.WarmCount < 0 {
 		return errors.New("poolstore: warmCount must be >= 0")
+	}
+	if p.BootstrapMinWarm != nil && *p.BootstrapMinWarm < 0 {
+		return errors.New("poolstore: bootstrapMinWarm must be >= 0 (§17.8.2)")
 	}
 	if p.MaxSessionAgeSeconds < 0 {
 		return errors.New("poolstore: maxSessionAgeSeconds must be >= 0")
@@ -223,14 +227,15 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		allow_standard_isolation, concurrency_style, max_concurrent,
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
 		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-		pool_config_generation, task_policy, elicitation_policy, draining_since
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		pool_config_generation, task_policy, elicitation_policy, draining_since,
+		bootstrap_min_warm
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince))
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -298,14 +303,15 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
 		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
 		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
-		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20
+		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20,
+		bootstrap_min_warm = $21
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince)); err != nil {
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -387,6 +393,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		drainingSince                                                    *time.Time
 		taskPolicy                                                       []byte
 		elicitationPolicy                                                []byte
+		bootstrapMinWarm                                                 *int
 	)
 	if err := row.Scan(
 		&p.Name, &p.RuntimeRef, &isolationProfile, &executionMode,
@@ -395,8 +402,13 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
+		&bootstrapMinWarm,
 	); err != nil {
 		return poolstore.Pool{}, err
+	}
+	if bootstrapMinWarm != nil {
+		v := *bootstrapMinWarm
+		p.BootstrapMinWarm = &v
 	}
 	p.IsolationProfile = isolation.Profile(isolationProfile)
 	p.ExecutionMode = runtimestore.ExecutionMode(executionMode)

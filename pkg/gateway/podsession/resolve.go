@@ -213,3 +213,20 @@ func (l PoolStatusLookup) PoolStatus(ctx context.Context, poolName string) (cond
 	}
 	return condition, idlePodCount, true, nil
 }
+
+// PoolBootstrapStatus returns the pool's §17.8.2 cold-start signals read
+// from its SandboxWarmPool CRD status: the accumulated whole hours of
+// traffic data and the scaling mode the PoolScalingController operates
+// it in (`bootstrap` or `formula`). found is false when the pool has no
+// SandboxWarmPool yet, so the admin GET reports the override-only view.
+// spec: §17.8.2 step 3.
+func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName string) (hoursOfData float64, scalingMode string, found bool, err error) {
+	var pool lennyv1.SandboxWarmPool
+	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &pool); e != nil {
+		if apierrors.IsNotFound(e) {
+			return 0, "", false, nil
+		}
+		return 0, "", false, fmt.Errorf("podsession: get warm pool %s: %w", poolName, e)
+	}
+	return float64(pool.Status.BootstrapHoursOfData), pool.Status.ScalingMode, true, nil
+}

@@ -42,6 +42,32 @@ type PoolStatusReader interface {
 	PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error)
 }
 
+// PoolBootstrapStatusReader reads a pool's §17.8.2 cold-start
+// convergence signals from its SandboxWarmPool CRD status and the
+// PoolScalingController's demand window: how many hours of traffic data
+// have accumulated and which scaling mode the controller currently
+// operates the pool in (`bootstrap` or `formula`). The admin pool GET
+// uses it to populate the bootstrapStatus object's hoursOfData and
+// estimatedConvergenceAt. found is false when no SandboxWarmPool exists
+// for the pool yet, so the handler reports the override-only view.
+// spec: §17.8.2 step 3.
+type PoolBootstrapStatusReader interface {
+	PoolBootstrapStatus(ctx context.Context, poolName string) (hoursOfData float64, scalingMode string, found bool, err error)
+}
+
+// BootstrapStatusPayload is the §17.8.2 step-3 bootstrapStatus object on
+// the admin pool GET. active reports whether the pool is operating under
+// its bootstrapMinWarm override (the controller has not converged to
+// formula-driven scaling); bootstrapMinWarm echoes the override value;
+// hoursOfData and estimatedConvergenceAt are populated when a
+// PoolBootstrapStatusReader is wired. spec: §17.8.2 step 3.
+type BootstrapStatusPayload struct {
+	Active                 bool    `json:"active"`
+	BootstrapMinWarm       int     `json:"bootstrapMinWarm"`
+	HoursOfData            float64 `json:"hoursOfData,omitempty"`
+	EstimatedConvergenceAt string  `json:"estimatedConvergenceAt,omitempty"`
+}
+
 // CRDGenerationReader reports the pool's CRD-side pool_config_generation
 // (read from the lenny.dev/config-generation annotation the
 // PoolScalingController stamps in §4.6.2 line 558). It backs the
@@ -119,6 +145,12 @@ type PoolPayload struct {
 	// spec: §15.1 lines 1207-1209.
 	ETag string `json:"etag,omitempty"`
 
+	// BootstrapStatus is the §17.8.2 step-3 cold-start bootstrap status
+	// object. It is populated on GET for a pool that carries a
+	// bootstrapMinWarm override; pools without one omit it. spec: §17.8.2
+	// step 3.
+	BootstrapStatus *BootstrapStatusPayload `json:"bootstrapStatus,omitempty"`
+
 	// TaskPolicy is the §5.2 task-mode taskPolicy block (lines 398-413).
 	// Required when ExecutionMode is `task` and must be absent on session
 	// and concurrent pools; the gateway-side ValidateTaskPolicy enforces
@@ -193,6 +225,7 @@ type UpdatePoolRequest struct {
 	ExecutionMode                    *string            `json:"executionMode,omitempty"`
 	ResourceClass                    *string            `json:"resourceClass,omitempty"`
 	WarmCount                        *int               `json:"warmCount,omitempty"`
+	BootstrapMinWarm                 *int               `json:"bootstrapMinWarm,omitempty"`
 	MaxSessionAgeSeconds             *int               `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation           *bool              `json:"allowStandardIsolation,omitempty"`
 	EgressProfile                    *string            `json:"egressProfile,omitempty"`
@@ -424,6 +457,15 @@ func (r *Router) WithPoolStatusReader(rdr PoolStatusReader) *Router {
 	return r
 }
 
+// WithPoolBootstrapStatusReader wires the §17.8.2 step-3 cold-start
+// status source onto the Router. Without it the admin pool GET reports
+// the override-only bootstrapStatus view (active + bootstrapMinWarm)
+// and omits hoursOfData / estimatedConvergenceAt.
+func (r *Router) WithPoolBootstrapStatusReader(rdr PoolBootstrapStatusReader) *Router {
+	r.poolBootstrap = rdr
+	return r
+}
+
 // WithCRDGenerationReader wires the §4.6.2 line 559/560 sync-status
 // data source. Without it the admin pool GET / PUT report
 // syncStatus="unknown" and the sync-status endpoint reports
@@ -627,6 +669,9 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	}
 	payload := fromPool(row)
 	r.attachPoolStatus(req.Context(), &payload)
+	// spec: §17.8.2 step 3 — surface the cold-start bootstrapStatus
+	// object for a pool that carries a bootstrapMinWarm override.
+	r.attachBootstrapStatus(req.Context(), row, &payload)
 	payload.SyncStatus = r.resolveSyncStatus(req.Context(), row)
 	// spec: §15.1 line 797 — while a pool is draining, GET surfaces the
 	// live in-flight session count so operators can watch the drain
@@ -667,6 +712,53 @@ func (r *Router) attachPoolStatus(ctx context.Context, p *PoolPayload) {
 		p.PoolCondition = &condCopy
 	}
 }
+
+// attachBootstrapStatus populates the §17.8.2 step-3 bootstrapStatus
+// object on a pool payload that carries a bootstrapMinWarm override.
+// active and bootstrapMinWarm come from the override column, which is
+// always available. hoursOfData and estimatedConvergenceAt are populated
+// only when a PoolBootstrapStatusReader is wired and the pool has a
+// reconciled SandboxWarmPool; a reader error is swallowed so a transient
+// Kubernetes lookup never fails the admin GET. A pool with no override
+// omits the object entirely. spec: §17.8.2 step 3.
+func (r *Router) attachBootstrapStatus(ctx context.Context, row poolstore.Pool, p *PoolPayload) {
+	if row.BootstrapMinWarm == nil {
+		return
+	}
+	status := &BootstrapStatusPayload{
+		// Without a status reader the override's mere presence is the
+		// authoritative "operating under a bootstrap override" signal.
+		Active:           true,
+		BootstrapMinWarm: *row.BootstrapMinWarm,
+	}
+	if r.poolBootstrap != nil {
+		hoursOfData, scalingMode, found, err := r.poolBootstrap.PoolBootstrapStatus(ctx, row.Name)
+		if err == nil && found {
+			status.HoursOfData = hoursOfData
+			// The controller reports scalingMode: formula once it has
+			// converged even while the override column lingers, so the
+			// CRD status is authoritative for active vs converged.
+			status.Active = scalingMode != scalingModeFormulaStatus
+			if status.Active {
+				remaining := bootstrapMinHoursOfData - hoursOfData
+				if remaining > 0 {
+					at := r.clock().Add(time.Duration(remaining * float64(time.Hour)))
+					status.EstimatedConvergenceAt = rfc3339Nano(at.UTC())
+				}
+			}
+		}
+	}
+	p.BootstrapStatus = status
+}
+
+// scalingModeFormulaStatus mirrors the §17.8.2 status.scalingMode value
+// the PoolScalingController writes once a pool converges. The admin GET
+// reads it to decide bootstrapStatus.active.
+const scalingModeFormulaStatus = "formula"
+
+// bootstrapMinHoursOfData is the §17.8.2 step-4 traffic-data window
+// (48h) the admin GET projects estimatedConvergenceAt against.
+const bootstrapMinHoursOfData = 48.0
 
 // handleSyncStatus implements the §4.6.2 line 560
 // GET /v1/admin/pools/{name}/sync-status endpoint. It compares the
@@ -804,6 +896,14 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	}
 	if body.WarmCount != nil {
 		p.WarmCount = *body.WarmCount
+	}
+	// spec: §17.8.2 step 3 — a non-nil bootstrapMinWarm sets or updates
+	// the cold-start override. Clearing is the dedicated
+	// DELETE /v1/admin/pools/{name}/bootstrap-override route, so PUT
+	// never clears the override.
+	if body.BootstrapMinWarm != nil {
+		v := *body.BootstrapMinWarm
+		p.BootstrapMinWarm = &v
 	}
 	if body.MaxSessionAgeSeconds != nil {
 		p.MaxSessionAgeSeconds = *body.MaxSessionAgeSeconds
@@ -1151,6 +1251,73 @@ func (r *Router) handleDeletePool(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleClearBootstrapOverride serves the §17.8.2 step-3
+// DELETE /v1/admin/pools/{name}/bootstrap-override route. It clears the
+// pool's bootstrapMinWarm override so the PoolScalingController switches
+// to formula-driven scaling immediately, regardless of the 48-hour
+// window. A present If-Match is honoured (§15.1 line 1213). A pool with
+// no override in force is a no-op success so the operation is
+// idempotent. The response carries the updated pool payload (now without
+// the bootstrapStatus object) and the bumped ETag. spec: §17.8.2 step 3.
+func (r *Router) handleClearBootstrapOverride(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	current, err := r.pools.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// §4 / §15.1: a tenant-admin may address a pool only when their
+	// tenant holds an access grant for it; otherwise it reads as 404.
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		if !r.accessibleSet(req.Context(), tenantaccessstore.KindPool, tenantID)[current.Name] {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+	}
+	// spec: §15.1 line 1213 — DELETE honours If-Match when present.
+	if !enforceIfMatchIfPresent(w, req, current.Generation) {
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	// A pool with no override is already formula-driven; report success
+	// without churning the generation so the operation is idempotent.
+	if current.BootstrapMinWarm == nil {
+		w.Header().Set("ETag", formatETag(current.Generation))
+		w.Header().Set("Content-Type", "application/json")
+		payload := fromPool(current)
+		payload.SyncStatus = r.resolveSyncStatus(req.Context(), current)
+		_ = json.NewEncoder(w).Encode(payload)
+		return
+	}
+	updated, err := r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {
+		p.BootstrapMinWarm = nil
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	r.emit(req.Context(), principal, "admin.pool.bootstrap_override_cleared", name, nil)
+	w.Header().Set("ETag", formatETag(updated.Generation))
+	w.Header().Set("Content-Type", "application/json")
+	payload := fromPool(updated)
+	payload.SyncStatus = r.resolveSyncStatus(req.Context(), updated)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
 func changedPoolFields(b UpdatePoolRequest) []string {
 	var out []string
 	if b.RuntimeRef != nil {
@@ -1167,6 +1334,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.WarmCount != nil {
 		out = append(out, "warmCount")
+	}
+	if b.BootstrapMinWarm != nil {
+		out = append(out, "bootstrapMinWarm")
 	}
 	if b.MaxSessionAgeSeconds != nil {
 		out = append(out, "maxSessionAgeSeconds")

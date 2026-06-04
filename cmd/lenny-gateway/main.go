@@ -4214,10 +4214,15 @@ func main() {
 	// agent-namespace deployment). The minimal Postgres-only posture
 	// leaves the reader unwired and the fields are omitted.
 	if podBinder != nil && podBinder.Client != nil {
-		adminRouter = adminRouter.WithPoolStatusReader(podsession.PoolStatusLookup{
+		lookup := podsession.PoolStatusLookup{
 			Reader:    podBinder.Client,
 			Namespace: podBinder.Namespace,
-		})
+		}
+		adminRouter = adminRouter.WithPoolStatusReader(lookup)
+		// spec: §17.8.2 step 3 — surface the cold-start bootstrapStatus
+		// hoursOfData / estimatedConvergenceAt from the SandboxWarmPool
+		// CRD status the PoolScalingController writes.
+		adminRouter = adminRouter.WithPoolBootstrapStatusReader(lookup)
 	}
 	if *elicitationFloor != "" {
 		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)

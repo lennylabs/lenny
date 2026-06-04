@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/poolscaling/convergence"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
 )
 
@@ -59,12 +60,24 @@ type PoolConfig struct {
 	// Template is the desired SandboxTemplate spec. Per §4.6.3 the
 	// PoolScalingController owns the whole SandboxTemplate spec.
 	Template lennyv1.SandboxTemplateSpec
-	// MinWarm is the bootstrap warm-pod floor: the operator-set value a
-	// pool uses until the §4.6.2 scaling formula has converged on
-	// observed demand. MaxWarm is the warm-pod ceiling. Both are owned
-	// by the PoolScalingController per §4.6.3.
+	// MinWarm is the warm-pod floor and MaxWarm the warm-pod ceiling,
+	// both owned by the PoolScalingController per §4.6.3. MinWarm is the
+	// static fallback the §4.6.2 formula returns until observed demand
+	// converges.
 	MinWarm int32
 	MaxWarm int32
+
+	// BootstrapMinWarm is the §17.8.2 cold-start bootstrap override. When
+	// non-nil the pool is bootstrap-eligible: the controller pins minWarm
+	// to this value (status.scalingMode: bootstrap) until the §17.8.2
+	// step-4 convergence criteria are met, then switches to the formula
+	// (status.scalingMode: formula). A nil pointer means no override is
+	// in force and the pool is formula-driven with no bootstrap-mode
+	// signal. The PoolStoreSource populates it from the pool's
+	// bootstrap_min_warm column. spec: §17.8.2 "Cold-start bootstrap
+	// procedure".
+	BootstrapMinWarm *int
+
 	// SafetyFactor scales the steady-state term of the §4.6.2 formula.
 	// A non-positive value is treated as the agent-type Tier 1/2
 	// default.
@@ -131,6 +144,12 @@ type Demand struct {
 	// Observed is true once the metrics window holds a usable sample.
 	// While it is false the pool stays at its bootstrap minWarm.
 	Observed bool
+	// HoursOfData is how many hours of traffic data the source has
+	// accumulated for the pool. The §17.8.2 step-4 convergence check
+	// reads it as the 48-hour gate; a source that does not track the
+	// window leaves it zero, which keeps a bootstrap-override pool in
+	// bootstrap mode until the operator clears the override manually.
+	HoursOfData float64
 }
 
 // DemandSource yields the observed demand signal for a pool. The
@@ -139,6 +158,22 @@ type Demand struct {
 // DemandSource operates every pool in bootstrap mode.
 type DemandSource interface {
 	PoolDemand(ctx context.Context, poolName string) (Demand, error)
+}
+
+// WarmPoolLowSource reports whether a §16.5 WarmPoolLow alert has fired
+// for a pool inside a trailing recency window. The §17.8.2 step-4
+// convergence criteria require no WarmPoolLow in the last 6 hours before
+// a bootstrapping pool may switch to formula-driven scaling. The
+// production implementation reads the alert state from the §16.5 alert
+// manager or the firing-alert metric. A PoolScalingController
+// constructed without a WarmPoolLowSource treats the criterion as
+// satisfied (no recent low), so convergence then rests on the data,
+// stability, and provisioning criteria alone.
+//
+// spec: §17.8.2 step 4 — "No WarmPoolLow alert has fired in the last 6
+// hours."
+type WarmPoolLowSource interface {
+	WarmPoolLowFiredSince(ctx context.Context, poolName string, since time.Time) (bool, error)
 }
 
 // PoolConfigSource yields the current set of pool definitions. The
@@ -213,6 +248,17 @@ type Reconciler struct {
 	// Strategy computes the warm-pod floor. When nil, the default
 	// §4.6.2 formula is used.
 	Strategy strategy.PoolScalingStrategy
+	// WarmPoolLow reports recent §16.5 WarmPoolLow alert activity that
+	// the §17.8.2 step-4 convergence criteria gate on. When nil, the
+	// controller treats the criterion as satisfied. spec: §17.8.2 step
+	// 4.
+	WarmPoolLow WarmPoolLowSource
+	// BootstrapStabilityWindow overrides the §17.8.2 step-4
+	// formula-target stability window the convergence tracker enforces.
+	// A non-positive value uses convergence.DefaultStabilityWindow (2h).
+	// It is a field so tests can drive convergence without two hours of
+	// samples.
+	BootstrapStabilityWindow time.Duration
 	// Now returns the current time. It is a field so tests can pin the
 	// clock the §6.1 circuit breaker compares against minOpenUntil.
 	// When nil, time.Now is used.
@@ -249,6 +295,18 @@ type Reconciler struct {
 	// WarmPoolReplenishmentSlow alert reads as its per-pool 2×
 	// threshold source. It is lazily constructed on the first Sync.
 	warmupMeter *warmupBaselineMeter
+
+	// bootstrapMeter publishes the §17.8.2 cold-start gauges
+	// (lenny_pool_bootstrap_mode, lenny_pool_bootstrap_min_warm_override,
+	// lenny_pool_bootstrap_target_min_warm) the §16.5 PoolBootstrapMode
+	// and PoolBootstrapUnderprovisioned alerts read. Lazily constructed
+	// on the first Sync.
+	bootstrapMeter *bootstrapModeMeter
+
+	// bootstrapTracker maintains the per-pool formula-target sample
+	// history the §17.8.2 step-4 stability criterion reads. Lazily
+	// constructed on the first Sync.
+	bootstrapTracker *convergence.Tracker
 }
 
 // StuckPools returns the list of <namespace>/<name> pool keys with at
@@ -332,6 +390,13 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	if r.warmupMeter == nil {
 		r.warmupMeter = newWarmupBaselineMeter()
 	}
+	if r.bootstrapMeter == nil {
+		r.bootstrapMeter = newBootstrapModeMeter()
+	}
+	if r.bootstrapTracker == nil {
+		r.bootstrapTracker = convergence.NewTrackerWithWindow(
+			r.BootstrapStabilityWindow, convergence.DefaultMaxCoefficientOfVariation)
+	}
 	configs, err := r.Source.ListPoolConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
@@ -381,6 +446,8 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	// auto-resolve.
 	r.lagMeter.forgetNotIn(desired)
 	r.warmupMeter.forgetNotIn(desired)
+	r.bootstrapMeter.forgetNotIn(desired)
+	r.bootstrapTracker.ForgetNotIn(desired)
 	return nil
 }
 
@@ -499,7 +566,7 @@ func defaultTopologySpreadConstraints(poolName string) []corev1.TopologySpreadCo
 // is wired and no breaker is currently persisted, so an operator
 // override via the admin API still takes effect.
 func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
-	minWarm, err := r.targetMinWarm(ctx, cfg)
+	wd, err := r.resolveWarm(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -519,7 +586,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 			return err
 		}
 		pool.Spec.TemplateRef = cfg.Name
-		pool.Spec.MinWarm = minWarm
+		pool.Spec.MinWarm = wd.MinWarm
 		pool.Spec.MaxWarm = cfg.MaxWarm
 		pool.Spec.ScalePolicy = cfg.ScalePolicy
 		if decision != nil {
@@ -537,13 +604,15 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 		return err
 	}
 
-	// The circuit-breaker state is a status subresource carve-out
-	// (§4.6.3), so it is written separately from the spec apply above.
-	if decision != nil {
-		if err := r.syncBreakerStatus(ctx, pool, decision.State); err != nil {
-			return err
-		}
+	// The §6.1 circuit-breaker state and the §17.8.2 scaling mode are
+	// both status subresource carve-outs (§4.6.3), written together
+	// after the spec apply.
+	if err := r.syncPoolStatus(ctx, pool, decision, wd.ScalingMode, wd.HoursOfData); err != nil {
+		return err
 	}
+	// spec: §17.8.2 steps 4, 5 — publish the cold-start gauges the
+	// PoolBootstrapMode / PoolBootstrapUnderprovisioned alerts read.
+	r.bootstrapMeter.Set(cfg.Name, wd.Sample)
 	return nil
 }
 
@@ -623,18 +692,37 @@ func (r *Reconciler) evaluateBreaker(ctx context.Context, cfg PoolConfig, pool *
 	return &decision, nil
 }
 
-// syncBreakerStatus writes the §6.1 circuit-breaker state to the
-// SandboxWarmPool status.sdkWarmCircuitBreaker carve-out. The write is
-// skipped when the persisted state already matches the decision, so a
+// syncPoolStatus writes the §6.1 circuit-breaker state and the §17.8.2
+// scaling mode to the SandboxWarmPool status subresource in a single
+// update. Both are PoolScalingController-owned carve-outs (§4.6.3). A
+// nil breaker decision leaves the breaker status untouched (no breaker
+// evaluation ran). The update is skipped when neither field changed so a
 // steady-state reconcile does not churn the status subresource.
-func (r *Reconciler) syncBreakerStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, state BreakerState) error {
-	want := breakerStatusFromState(state)
-	if breakerStatusEqual(pool.Status.SDKWarmCircuitBreaker, want) {
+func (r *Reconciler) syncPoolStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision *BreakerDecision, scalingMode string, hoursOfData int32) error {
+	changed := false
+	if decision != nil {
+		want := breakerStatusFromState(decision.State)
+		if !breakerStatusEqual(pool.Status.SDKWarmCircuitBreaker, want) {
+			pool.Status.SDKWarmCircuitBreaker = want
+			changed = true
+		}
+	}
+	if scalingMode != "" && pool.Status.ScalingMode != scalingMode {
+		pool.Status.ScalingMode = scalingMode
+		changed = true
+	}
+	// spec: §17.8.2 step 3 — surface accumulated traffic hours while an
+	// override is active so the admin GET can report hoursOfData; clear
+	// it once the pool converges or has no override.
+	if pool.Status.BootstrapHoursOfData != hoursOfData {
+		pool.Status.BootstrapHoursOfData = hoursOfData
+		changed = true
+	}
+	if !changed {
 		return nil
 	}
-	pool.Status.SDKWarmCircuitBreaker = want
 	if err := r.Client.Status().Update(ctx, pool); err != nil {
-		return fmt.Errorf("update circuit-breaker status: %w", err)
+		return fmt.Errorf("update pool status: %w", err)
 	}
 	return nil
 }
@@ -660,27 +748,71 @@ func timePtrEqual(a, b *metav1.Time) bool {
 	return a.Time.Equal(b.Time)
 }
 
-// targetMinWarm derives the warm-pod floor for one pool by running the
-// §4.6.2 scaling formula. A pool with no DemandSource, or one whose
-// demand has not yet converged, stays at its bootstrap minWarm.
-func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, error) {
+// scalingMode names the §17.8.2 cold-start scaling mode the
+// PoolScalingController writes to status.scalingMode.
+const (
+	scalingModeBootstrap = "bootstrap"
+	scalingModeFormula   = "formula"
+)
+
+// warmPoolLowRecencyWindow is the §17.8.2 step-4 trailing window over
+// which a WarmPoolLow alert blocks convergence ("the last 6 hours").
+const warmPoolLowRecencyWindow = 6 * time.Hour
+
+// warmDecision is the per-pool outcome of resolveWarm: the warm-pod
+// floor written to the SandboxWarmPool spec, the §17.8.2 scaling mode
+// written to status, and the cold-start gauge snapshot the bootstrap
+// meter publishes.
+type warmDecision struct {
+	MinWarm     int32
+	ScalingMode string
+	Sample      bootstrapSample
+	// HoursOfData is the whole hours of accumulated traffic data, written
+	// to status.bootstrapHoursOfData while the pool operates under an
+	// override so the admin GET can surface bootstrapStatus.hoursOfData.
+	// Zero when no override is in force.
+	HoursOfData int32
+}
+
+// resolveWarm derives one pool's warm-pod floor and §17.8.2 cold-start
+// scaling mode. A paused or scale-to-zero pool short-circuits to zero
+// warm pods in formula mode. A pool without a bootstrapMinWarm override
+// is formula-driven (today's behavior) with no bootstrap-mode signal. A
+// pool with an override stays pinned to it (status.scalingMode:
+// bootstrap) until every §17.8.2 step-4 convergence criterion is met,
+// then switches to the formula target (status.scalingMode: formula).
+//
+// spec: §4.6.2 scaling formula; §17.8.2 "Cold-start bootstrap
+// procedure" steps 1-4.
+func (r *Reconciler) resolveWarm(ctx context.Context, cfg PoolConfig) (warmDecision, error) {
+	now := r.now()
 	// spec: §10.7 line 1102 — a paused experiment's variant pool pins
 	// minWarm to 0 regardless of any observed demand, short-circuiting
 	// the scaling formula so no new warm pods are created while paused.
 	if cfg.ForceZeroMinWarm {
-		return 0, nil
+		return warmDecision{MinWarm: 0, ScalingMode: scalingModeFormula}, nil
 	}
 	// A pool inside its §4.6.1 scale-to-zero window targets zero warm
 	// pods regardless of observed demand. The window is evaluated before
 	// the scaling formula so an off-hours pool short-circuits to zero.
 	if cfg.ScalePolicy != nil && cfg.ScalePolicy.ScaleToZero != nil {
-		active, err := scaleToZeroActive(cfg.ScalePolicy.ScaleToZero, r.now())
+		active, err := scaleToZeroActive(cfg.ScalePolicy.ScaleToZero, now)
 		if err != nil {
-			return 0, fmt.Errorf("evaluate scaleToZero for pool %q: %w", cfg.Name, err)
+			return warmDecision{}, fmt.Errorf("evaluate scaleToZero for pool %q: %w", cfg.Name, err)
 		}
 		if active {
-			return 0, nil
+			return warmDecision{MinWarm: 0, ScalingMode: scalingModeFormula}, nil
 		}
+	}
+
+	// spec: §17.8.2 — the bootstrapMinWarm override makes the pool
+	// bootstrap-eligible and is the static floor while bootstrap mode is
+	// active. A pool without one falls back to its configured WarmCount
+	// as the cold-start floor (the prior behavior).
+	hasOverride := cfg.BootstrapMinWarm != nil
+	bootstrapFloor := int(cfg.MinWarm)
+	if hasOverride {
+		bootstrapFloor = *cfg.BootstrapMinWarm
 	}
 
 	in := strategy.ScalingInputs{
@@ -691,7 +823,7 @@ func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, 
 		PodWarmupSeconds:        podWarmupSeconds(cfg),
 		VariantWeight:           cfg.VariantWeight,
 		SumActiveVariantWeights: cfg.SumActiveVariantWeights,
-		BootstrapMinWarm:        int(cfg.MinWarm),
+		BootstrapMinWarm:        bootstrapFloor,
 	}
 	// spec: §5.2 line 549 — resolve `mode_factor` for the pool. Task and
 	// concurrent modes have a static fallback from the CRD spec
@@ -716,14 +848,16 @@ func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, 
 			in.SafetyFactor = defaultSafetyFactor
 		}
 	}
+	var hoursOfData float64
 	if r.Demand != nil {
 		d, err := r.Demand.PoolDemand(ctx, cfg.Name)
 		if err != nil {
-			return 0, fmt.Errorf("read demand: %w", err)
+			return warmDecision{}, fmt.Errorf("read demand: %w", err)
 		}
 		in.BaseDemandP95 = d.BaseDemandP95
 		in.BurstP99Claims = d.BurstP99Claims
 		in.HasObservedDemand = d.Observed
+		hoursOfData = d.HoursOfData
 	}
 
 	strat := r.Strategy
@@ -732,9 +866,84 @@ func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, 
 	}
 	decision, err := strat.Compute(in)
 	if err != nil {
-		return 0, fmt.Errorf("compute minWarm: %w", err)
+		return warmDecision{}, fmt.Errorf("compute minWarm: %w", err)
 	}
-	return int32(decision.MinWarm), nil
+
+	// The formula target only exists once demand is observed; before
+	// then Compute returns the bootstrap fallback, not a demand-driven
+	// target.
+	hasFormula := in.HasObservedDemand
+	formulaTarget := 0
+	if hasFormula {
+		formulaTarget = decision.MinWarm
+	}
+	// Feed the §17.8.2 step-4 stability tracker so the variance criterion
+	// accrues history. A zero target (no demand) resets the window.
+	r.bootstrapTracker.Observe(cfg.Name, formulaTarget, now)
+
+	// spec: §17.8.2 — bootstrap mode applies only while spec.bootstrapMinWarm
+	// is set. A pool without an override is formula-driven with no
+	// bootstrap-mode signal, preserving the prior behavior.
+	if !hasOverride {
+		return warmDecision{
+			MinWarm:     int32(decision.MinWarm),
+			ScalingMode: scalingModeFormula,
+		}, nil
+	}
+
+	cvg := convergence.Inputs{
+		HasObservedDemand: in.HasObservedDemand,
+		HoursOfData:       hoursOfData,
+		TargetStable:      r.bootstrapTracker.Stable(cfg.Name, now),
+		WarmPoolLowRecent: r.warmPoolLowRecent(ctx, cfg.Name, now),
+		FormulaTarget:     formulaTarget,
+		OverrideMinWarm:   *cfg.BootstrapMinWarm,
+	}
+	sample := bootstrapSample{
+		HasOverride:     true,
+		OverrideMinWarm: *cfg.BootstrapMinWarm,
+		HasFormula:      hasFormula,
+		FormulaTarget:   formulaTarget,
+	}
+	hours := int32(hoursOfData)
+	if hours < 0 {
+		hours = 0
+	}
+	if cvg.Converged() {
+		// spec: §17.8.2 step 4 — every criterion met, switch to
+		// formula-driven scaling and clear the bootstrap-mode signal.
+		return warmDecision{
+			MinWarm:     int32(formulaTarget),
+			ScalingMode: scalingModeFormula,
+			Sample:      sample,
+		}, nil
+	}
+	// spec: §17.8.2 step 1 — the static override takes precedence over
+	// the formula output while bootstrap mode is active.
+	sample.BootstrapActive = true
+	return warmDecision{
+		MinWarm:     int32(*cfg.BootstrapMinWarm),
+		ScalingMode: scalingModeBootstrap,
+		Sample:      sample,
+		HoursOfData: hours,
+	}, nil
+}
+
+// warmPoolLowRecent reports the §17.8.2 step-4 WarmPoolLow criterion: a
+// WarmPoolLow alert that fired for the pool inside the trailing 6-hour
+// window blocks convergence. With no WarmPoolLowSource wired the
+// criterion is treated as satisfied; a source error is treated
+// conservatively as a recent low so the controller does not converge on
+// an unverifiable signal.
+func (r *Reconciler) warmPoolLowRecent(ctx context.Context, pool string, now time.Time) bool {
+	if r.WarmPoolLow == nil {
+		return false
+	}
+	fired, err := r.WarmPoolLow.WarmPoolLowFiredSince(ctx, pool, now.Add(-warmPoolLowRecencyWindow))
+	if err != nil {
+		return true
+	}
+	return fired
 }
 
 // podWarmupSeconds resolves the pod creation-to-ready time the scaling

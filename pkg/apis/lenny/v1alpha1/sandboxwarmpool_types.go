@@ -169,6 +169,28 @@ type SandboxWarmPoolStatus struct {
 	// +optional
 	SDKWarmCircuitBreaker *SDKWarmCircuitBreakerStatus `json:"sdkWarmCircuitBreaker,omitempty"`
 
+	// ScalingMode is the §17.8.2 cold-start scaling mode the
+	// PoolScalingController operates the pool in: `bootstrap` while the
+	// pool is pinned to its bootstrapMinWarm override, or `formula`
+	// once the §17.8.2 step-4 convergence criteria are met (or no
+	// override is set). The §16.5 PoolBootstrapMode alert reads the
+	// matching lenny_pool_bootstrap_mode gauge. spec: §17.8.2 steps 2,
+	// 4.
+	// +kubebuilder:validation:Enum=bootstrap;formula
+	// +optional
+	ScalingMode string `json:"scalingMode,omitempty"`
+
+	// BootstrapHoursOfData is the whole hours of accumulated traffic
+	// data the PoolScalingController has observed for the pool while it
+	// operates under a §17.8.2 bootstrapMinWarm override. The admin pool
+	// GET surfaces it as bootstrapStatus.hoursOfData and projects
+	// estimatedConvergenceAt against the 48-hour window. It is only
+	// written while an override is in force; whole-hour granularity
+	// keeps the status subresource from churning. spec: §17.8.2 step 3.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	BootstrapHoursOfData int32 `json:"bootstrapHoursOfData,omitempty"`
+
 	// ObservedGeneration is the .metadata.generation the controller
 	// last reconciled.
 	// +optional

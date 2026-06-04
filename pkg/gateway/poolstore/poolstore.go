@@ -81,6 +81,17 @@ type Pool struct {
 	// per §4.6.2.
 	WarmCount int
 
+	// BootstrapMinWarm is the §17.8.2 cold-start bootstrap override. When
+	// set, the PoolScalingController pins the pool's warm-pod floor to
+	// this static value (status.scalingMode: bootstrap) instead of the
+	// scaling formula, until the §17.8.2 step-4 convergence criteria are
+	// met. A nil pointer means no override is in force: the pool is
+	// formula-driven (or held at WarmCount until demand is observed). The
+	// admin API sets it via `PUT {bootstrapMinWarm: N}` and clears it via
+	// `DELETE /v1/admin/pools/{name}/bootstrap-override`. spec: §17.8.2
+	// "Cold-start bootstrap procedure" steps 1-4.
+	BootstrapMinWarm *int
+
 	// MaxSessionAgeSeconds is the §5.2 per-session lifetime cap.
 	MaxSessionAgeSeconds int
 
@@ -620,6 +631,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.WarmCount < 0 {
 		return errors.New("poolstore: warmCount must be >= 0")
 	}
+	if p.BootstrapMinWarm != nil && *p.BootstrapMinWarm < 0 {
+		return errors.New("poolstore: bootstrapMinWarm must be >= 0 (§17.8.2)")
+	}
 	if p.MaxSessionAgeSeconds < 0 {
 		return errors.New("poolstore: maxSessionAgeSeconds must be >= 0")
 	}
@@ -655,6 +669,7 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	}
 	p.TaskPolicy = p.TaskPolicy.Clone()
 	p.URLModeElicitation.DomainAllowlist = cloneAllowlist(p.URLModeElicitation.DomainAllowlist)
+	p.BootstrapMinWarm = cloneIntPtr(p.BootstrapMinWarm)
 	m.pools[p.Name] = p
 	return nil
 }
@@ -668,6 +683,17 @@ func cloneAllowlist(in []string) []string {
 	return append([]string(nil), in...)
 }
 
+// cloneIntPtr returns a copy of a nullable int (the §17.8.2
+// bootstrapMinWarm override) so the Memory store never shares the
+// pointer with a caller.
+func cloneIntPtr(in *int) *int {
+	if in == nil {
+		return nil
+	}
+	v := *in
+	return &v
+}
+
 // Get implements Store.
 func (m *Memory) Get(_ context.Context, name string) (Pool, error) {
 	m.mu.RLock()
@@ -678,6 +704,7 @@ func (m *Memory) Get(_ context.Context, name string) (Pool, error) {
 	}
 	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	row.TaskPolicy = row.TaskPolicy.Clone()
+	row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	return row, nil
 }
 
@@ -695,6 +722,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	}
 	if row.WarmCount < 0 {
 		return Pool{}, errors.New("poolstore: warmCount must be >= 0")
+	}
+	if row.BootstrapMinWarm != nil && *row.BootstrapMinWarm < 0 {
+		return Pool{}, errors.New("poolstore: bootstrapMinWarm must be >= 0 (§17.8.2)")
 	}
 	if row.MaxSessionAgeSeconds < 0 {
 		return Pool{}, errors.New("poolstore: maxSessionAgeSeconds must be >= 0")
@@ -722,10 +752,12 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	row.Generation++
 	row.TaskPolicy = row.TaskPolicy.Clone()
 	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
+	row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	m.pools[name] = row
 	out := row
 	out.TaskPolicy = row.TaskPolicy.Clone()
 	out.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
+	out.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	return out, nil
 }
 
@@ -743,6 +775,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Pool, error) {
 		}
 		row.TaskPolicy = row.TaskPolicy.Clone()
 		row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
+		row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

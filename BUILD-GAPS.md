@@ -35191,7 +35191,7 @@ the §26 reference-runtime catalog keep their own registries. Closed by
 precedence, and pull-secret propagation on the gateway, PSC, controller, and
 webhook surfaces.
 
-### - [ ] F-17.8.3 — 8-03 — Bootstrap-mode admin API and status signaling not implemented [High] — OPEN
+### - [x] F-17.8.3 — 8-03 — Bootstrap-mode admin API and status signaling not implemented [High] — CLOSED
 
 §17.8.2 "Cold-start bootstrap procedure" (spec lines 1079–1097) is normative. It requires:
 
@@ -35221,6 +35221,29 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/controller/poolscaling/strategy/strategy.go:79–88`
 - `/Users/joan/projects/lenny/pkg/observability/metrics/catalog.go:178`
 - `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:1112–1125`
+
+**Resolution:** Built the full §17.8.2 cold-start surface. (a) `poolstore.Pool`
+gains a nullable `BootstrapMinWarm` override (migration 0137
+`bootstrap_min_warm` column; pgstore + Memory round-trip), set via the new
+`PUT {bootstrapMinWarm: N}` field. (b) `DELETE /v1/admin/pools/{name}/bootstrap-override`
+(`handleClearBootstrapOverride`, honours If-Match-if-present, idempotent,
+audits `admin.pool.bootstrap_override_cleared`). (c) GET surfaces a
+`bootstrapStatus {active, bootstrapMinWarm, hoursOfData, estimatedConvergenceAt}`
+object; hoursOfData / estimatedConvergenceAt come from the new
+`PoolBootstrapStatusReader` (satisfied by `podsession.PoolStatusLookup` reading
+`status.scalingMode` + `status.bootstrapHoursOfData`, wired in `cmd/lenny-gateway`).
+(d) `SandboxWarmPoolStatus.ScalingMode` (`bootstrap|formula`) added and written
+by the reconciler's `syncPoolStatus`. (e) The reconciler emits the
+`lenny_pool_bootstrap_mode` gauge via the new `bootstrapModeMeter` (with
+forget-not-in cleanup). (f) New `convergence` package implements the §17.8.2
+step-4 criteria (≥48h data, formula-target stability via a `stableSince`
+run-tracker, no recent WarmPoolLow via the optional `WarmPoolLowSource`, target
+≤ 3× override); the meter also emits `lenny_pool_bootstrap_target_min_warm` and
+`lenny_pool_bootstrap_min_warm_override`, so the catalog-only
+`PoolBootstrapUnderprovisioned` / `PoolBootstrapMode` alerts now evaluate. The
+evidence's `pkg/apis/lenny/v1` path is now `v1alpha1` (F-15.5.1) and the two
+"missing from catalog" metrics were already present (catalog.go:380-381); only
+emitters were absent.
 
 ---
 

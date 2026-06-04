@@ -81,7 +81,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 			CleanupTimeoutSeconds:            int64(p.CleanupTimeoutSeconds),
 		}
 	}
-	return PoolConfig{
+	cfg := PoolConfig{
 		Name:       p.Name,
 		Namespace:  s.Namespace,
 		Template:   spec,
@@ -89,6 +89,15 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		MaxWarm:    warm,
 		Generation: p.Generation,
 	}
+	// spec: §17.8.2 — carry the bootstrapMinWarm override so the
+	// controller can pin the pool to it (status.scalingMode: bootstrap)
+	// until the convergence criteria are met. A nil column means no
+	// override is in force.
+	if p.BootstrapMinWarm != nil {
+		v := *p.BootstrapMinWarm
+		cfg.BootstrapMinWarm = &v
+	}
+	return cfg
 }
 
 // taskPolicyToCRD renders a store TaskPolicy into the CRD shape. The

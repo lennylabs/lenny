@@ -43,7 +43,7 @@ func warmPoolExists(t *testing.T, c client.Client) bool {
 // naturally and the CRD is retained.
 func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
 	cfg := config()
 	cfg.ForceZeroMinWarm = true
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}

@@ -120,7 +120,7 @@ func TestSyncEmitsWarmupBaselineGauge_spec_16_5_488(t *testing.T) {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
 	cfg := PoolConfig{
 		Name:      pool,
 		Namespace: "lenny-agents",

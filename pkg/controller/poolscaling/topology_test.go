@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 )
 
@@ -18,7 +19,7 @@ import (
 // when the pool definition carries none.
 func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -56,7 +57,7 @@ func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 // verbatim rather than replacing them with the defaults.
 func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
 
 	cfg := config()
 	cfg.Template.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
@@ -89,7 +90,7 @@ func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 // pass, so the count stays at 2.
 func TestSyncTopologyDefaultsAreIdempotent_spec_5_2_631(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {

@@ -87,3 +87,15 @@ func enforceIfMatch(w http.ResponseWriter, req *http.Request, current int64) boo
 	}
 	return true
 }
+
+// enforceIfMatchIfPresent honours the §15.1 optimistic-concurrency
+// precondition on a DELETE: a present If-Match is enforced exactly as on
+// a PUT (malformed → 400 VALIDATION_ERROR, stale → 412 ETAG_MISMATCH),
+// while an absent header lets the DELETE proceed. spec: §15.1 line 1213
+// ("DELETE MUST honour If-Match when present").
+func enforceIfMatchIfPresent(w http.ResponseWriter, req *http.Request, current int64) bool {
+	if strings.TrimSpace(req.Header.Get("If-Match")) == "" {
+		return true
+	}
+	return enforceIfMatch(w, req, current)
+}
