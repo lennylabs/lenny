@@ -27092,7 +27092,7 @@ HIGH-005 mandates is in force.)
 - The Tier 0 / Tier 3 tests (`tests/tier0_static/schemas_test.go:34-167`, `tests/tier3_contract/adapter_jsonl/messages_test.go:126-167`) DO validate sample frames against the schemas, so the schemas are exercised, just not by the spec-named entry point.
 - Affected paths: `/Users/joan/projects/lenny/cmd/lenny-compliance/main.go`, `/Users/joan/projects/lenny/cmd/lenny-compliance/standard.go`, `/Users/joan/projects/lenny/cmd/lenny-compliance/full.go`.
 
-### - [ ] F-15.4.2 — SHOULD violations, capability gaps, schema drift [Medium] — OPEN
+### - [x] F-15.4.2 — SHOULD violations, capability gaps, schema drift [Medium] — CLOSED
 
 **Progress (stays OPEN).** The `schemas/lifecycle-events.schema.json`
 regeneration (see F-15.4.1 progress) resolves the schema-drift items:
@@ -27146,6 +27146,38 @@ to the gateway→client error path), **MED-017** (live `schema_version_ahead`
 **MED-018** (`unregistered_platform_type` ingress registry check). These
 share the OutputPart-model enrichment and are scoped for a focused
 follow-on batch.
+
+**Resolution (commit `8c11ae21`).** The four remaining items are closed,
+completing the finding:
+- **MED-016** — `task.RuntimeCrash(exitCode, stderr)` synthesizes the
+  §15.4.1 line-1889 `RUNTIME_CRASH` structured error (TRANSIENT category +
+  exit code + capped stderr tail). `SubprocessExecutor` now captures the
+  runtime's stderr and, on a stdout-closed-before-`response`, probes the
+  memoized exit code: a non-zero exit returns the synthesized crash, a
+  clean exit stays the generic protocol error.
+- **MED-018** — new `pkg/outputtype` carries the v1 canonical registry and
+  the unprefixed/`x-<vendor>/`/unregistered classification. The shared
+  executor ingest (`pkg/gateway/executor/ingest.go`) collapses an
+  unregistered unprefixed type to `text` with `annotations.originalType`
+  and stamps the part-level `unregistered_platform_type` warning; a
+  vendor-namespaced type falls back without the warning.
+- **MED-017** — `pkg/degradation` gains the `blob_ref_unresolvable` and
+  `unregistered_platform_type` builders. `Executor.Send` now returns a
+  `Response{Parts, Annotations}` MessageEnvelope; the ingest stamps
+  `schema_version_ahead` (knownVersion/encounteredVersion) on the envelope
+  when a part exceeds `outputtype.MaxKnownSchemaVersion` while still
+  forward-reading it, and the §15.1 message path publishes the envelope
+  degradation annotations as a `response_degraded` session event. The
+  `blob_ref_unresolvable` builder backs the catalog for the external
+  adapter dereference path (the executor passes refs through, per §15.4.1
+  "the REST adapter passes ref values through as-is").
+- **MED-010** — the adapter `Shutdown` sends the lifecycle-channel
+  `terminate` (the §15.4.2 DRAINING-state graceful drain) before the hard
+  runtime close on a Full-level runtime (`Lifecycle != nil`), normalizing
+  the reason to the terminate enum. The stale `draining`/`drain_budget_ms`
+  schema-frame evidence no longer applies (that frame was removed from
+  `schemas/lifecycle-events.schema.json`); the lifecycle `terminate` frame
+  is the channel's graceful-shutdown signal.
 
 ### 15.4-MED-010 — `DRAINING` state and `draining` lifecycle frame never emitted by the adapter
 - Spec §15.4.2 lists `DRAINING` as a normative state (line 2037-2049). §15.4.3 capability matrix (line 2126) mandates "`DRAINING` state via lifecycle channel enables graceful shutdown coordination before `shutdown`" at Full level.
