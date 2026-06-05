@@ -1,0 +1,50 @@
+suite: §10.3 CA-rotation previous-CA trust bundle (F-10.3.21)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - mtls-trust-bundle.yaml
+tests:
+  # spec: §10.3 lines 344-349 — the previous-CA ConfigMap exists only
+  # while a rotation is in flight (mtls.previousCA set). A steady-state
+  # install renders nothing.
+  - it: renders nothing in the steady state (no rotation in flight)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: materializes the previous CA in a ConfigMap during a rotation
+    set:
+      mtls:
+        previousCA: |
+          -----BEGIN CERTIFICATE-----
+          MIIBdummyPreviousCAcertificatePEMforoverlapwindowtrust
+          -----END CERTIFICATE-----
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-mtls-previous-ca
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: mtls-pki
+      - matchRegex:
+          path: data["ca.crt"]
+          pattern: "BEGIN CERTIFICATE"
+
+  # spec: §10.3 — disabling the PKI (mesh-mTLS deployment) suppresses the
+  # ConfigMap even when a previous CA is set.
+  - it: renders nothing when mtls is disabled
+    set:
+      mtls:
+        enabled: false
+        previousCA: |
+          -----BEGIN CERTIFICATE-----
+          MIIBdummyPreviousCAcertificatePEMforoverlapwindowtrust
+          -----END CERTIFICATE-----
+    asserts:
+      - hasDocuments:
+          count: 0

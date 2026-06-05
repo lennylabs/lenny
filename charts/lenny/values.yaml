@@ -1776,6 +1776,21 @@ mtls:
   # false when a service mesh (Istio, Linkerd) supplies mTLS instead,
   # in which case the mesh issues the identities (§10.3).
   enabled: true
+  # currentCAID is the id of the CA that currently signs control-plane
+  # leaves. It seeds the §10.3 CA-rotation state machine
+  # (lenny-gateway --mtls-current-ca-id) so the operator-driven
+  # /v1/admin/ca-rotation procedure starts from a named trust anchor. It
+  # matches the lenny-mtls-ca Certificate rendered by mtls-pki.yaml.
+  # spec: §10.3 lines 344-350.
+  currentCAID: lenny-mtls-ca
+  # previousCA is the PEM-encoded certificate of the outgoing CA during a
+  # §10.3 CA rotation. An operator extracts the current CA certificate
+  # before promoting a new one and sets it here; the chart materializes
+  # it in the lenny-mtls-previous-ca ConfigMap so the runtime trust
+  # bundle accepts leaves signed by either CA during the overlap window.
+  # Empty (the steady state) renders no ConfigMap. spec: §10.3 lines
+  # 344-349.
+  previousCA: ""
   # caDurationHours is the lifetime of the cluster-internal CA
   # certificate. The CA outlives the leaf certificates by a wide margin
   # so leaf renewal never races CA expiry.

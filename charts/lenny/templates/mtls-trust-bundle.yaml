@@ -1,0 +1,23 @@
+{{- /*
+§10.3 lines 344-349 CA-rotation overlap. During a rotation an operator
+sets mtls.previousCA to the PEM of the outgoing CA certificate. This
+ConfigMap materializes it so the gateway, controller, and Token Service
+trust bundles can include both the current and the previous CA during
+the overlap window (spec line 349: "trust bundles must include both CAs
+during the overlap window"); once every leaf has rotated under the new
+CA the operator clears the value and the ConfigMap disappears. A
+steady-state install (no rotation in flight) renders nothing.
+*/ -}}
+{{- if and .Values.mtls.enabled .Values.mtls.previousCA }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-mtls-previous-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: mtls-pki
+data:
+  ca.crt: |
+{{ .Values.mtls.previousCA | trim | indent 4 }}
+{{- end }}

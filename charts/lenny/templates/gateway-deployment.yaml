@@ -412,6 +412,11 @@ spec:
             - --token-service-tls-cert=/etc/lenny/mtls/tls.crt
             - --token-service-tls-key=/etc/lenny/mtls/tls.key
             - --token-service-ca=/etc/lenny/mtls/ca.crt
+            # §10.3 lines 344-350: seed the durable CA-rotation state
+            # machine with the current trust anchor so the operator-driven
+            # /v1/admin/ca-rotation procedure (begin/promote/retire) is
+            # served, audited, and resumable across restarts. F-10.3.21.
+            - --mtls-current-ca-id={{ .Values.mtls.currentCAID }}
             # §4.7 / §10.3 line 320 (NET-060) adapter mTLS client
             # material. The same lenny-gateway-tls Secret carries the
             # client cert the gateway presents to each pod adapter's

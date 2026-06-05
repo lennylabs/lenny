@@ -559,7 +559,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|users|quota|circuit-breakers|erasure-jobs|external-adapters)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|users|quota|circuit-breakers|ca-rotation|erasure-jobs|external-adapters)")
 		return 2
 	}
 	switch args[0] {
@@ -579,6 +579,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdQuota(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breakers":
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
+	case "ca-rotation":
+		return cmdCARotation(ctx, c, args[1:], stdout, stderr)
 	case "erasure-jobs":
 		return cmdErasureJobs(ctx, c, args[1:], stdout, stderr)
 	case "external-adapters":
@@ -1275,6 +1277,49 @@ func cmdCircuitBreakers(ctx context.Context, c *ctl.Client, args []string, stdou
 		printJSON(stdout, out)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown circuit-breakers subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// cmdCARotation implements the §10.3 lines 344-350 CA-rotation group:
+// `status` reads the current stage, `begin <newCaId>` introduces the new
+// CA, `promote` swaps the issuer, and `retire` drops the old CA once the
+// overlap window closes. Each transition is platform-admin-only and is
+// audited as platform.ca_rotated on the gateway. F-10.3.21.
+func cmdCARotation(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: ca-rotation requires a subcommand (status|begin|promote|retire)")
+		return 2
+	}
+	switch args[0] {
+	case "status":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/ca-rotation", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "begin":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: ca-rotation begin requires <newCaId>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/ca-rotation/begin", map[string]any{"newCaId": args[1]}, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "promote", "retire":
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/ca-rotation/"+args[0], nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown ca-rotation subcommand %q\n", args[0])
 		return 2
 	}
 	return 0
