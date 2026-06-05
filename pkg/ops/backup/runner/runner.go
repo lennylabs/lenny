@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/backup/retention"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
@@ -146,6 +147,12 @@ type Config struct {
 	Pruner Pruner
 	// Reporter records the run outcome. Required.
 	Reporter Reporter
+	// Audit emits the §16.7 backup terminal-state audit events
+	// (backup.completed, backup.failed) to the §11.7 platform hash chain
+	// as the run transitions the ops_backups row. A nil sink drops the
+	// events (dev / no-durable-store mode); the status update still
+	// lands. spec: §25.11 line 4343.
+	Audit backup.AuditSink
 	// RetentionStore supplies the existing backups and the retention
 	// policy for the §25.11 post-backup retention enforcement. A nil
 	// store skips retention enforcement (the daily-cron Job supplies
@@ -226,13 +233,13 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	components, err := dumpComponents(ctx, cfg)
 	if err != nil {
-		_ = cfg.Reporter.BackupFailed(ctx, cfg.BackupID, err.Error())
+		recordBackupFailed(ctx, cfg, err.Error())
 		return Result{}, err
 	}
 
 	archive, err := cfg.Archiver.Pack(ctx, components)
 	if err != nil {
-		_ = cfg.Reporter.BackupFailed(ctx, cfg.BackupID, err.Error())
+		recordBackupFailed(ctx, cfg, err.Error())
 		return Result{}, fmt.Errorf("pack archive: %w", err)
 	}
 	// §25.11 step-6 invariant: the checksum is the SHA-256 of the
@@ -241,7 +248,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	if got := sha256Hex(archive.Data); archive.Checksum != "" && got != archive.Checksum {
 		err := fmt.Errorf("archive checksum mismatch: archiver reported %s, content hashes to %s",
 			archive.Checksum, got)
-		_ = cfg.Reporter.BackupFailed(ctx, cfg.BackupID, err.Error())
+		recordBackupFailed(ctx, cfg, err.Error())
 		return Result{}, err
 	}
 	if archive.Checksum == "" {
@@ -251,7 +258,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	objectPath := StoragePath(string(cfg.Mode), cfg.BackupID, startedAt)
 	storedPath, err := cfg.Uploader.Upload(ctx, objectPath, archive)
 	if err != nil {
-		_ = cfg.Reporter.BackupFailed(ctx, cfg.BackupID, err.Error())
+		recordBackupFailed(ctx, cfg, err.Error())
 		return Result{}, fmt.Errorf("upload archive: %w", err)
 	}
 
@@ -269,6 +276,23 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	if err := cfg.Reporter.BackupCompleted(ctx, result); err != nil {
 		return Result{}, fmt.Errorf("record completion: %w", err)
 	}
+	// spec: §25.11 line 4343, §16.7 backup.completed — the durable audit
+	// row for the terminal completion transition, written from the Job
+	// pod alongside the ops_backups status:completed update.
+	emitBackupAudit(cfg.Audit, backup.AuditEvent{
+		Type:     string(audit.EventBackupCompleted),
+		BackupID: cfg.BackupID,
+		Outcome:  "success",
+		At:       result.CompletedAt,
+		Fields: map[string]any{
+			"type":        result.Type,
+			"sizeBytes":   result.SizeBytes,
+			"checksum":    result.Checksum,
+			"storagePath": result.StoragePath,
+			"durationMs":  result.CompletedAt.Sub(result.StartedAt).Milliseconds(),
+			"components":  len(result.Components),
+		},
+	})
 
 	// §25.11: after a successful backup, lenny-ops evaluates the
 	// retention policy and deletes expired backups. The daily-cron Job

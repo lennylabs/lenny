@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 
+	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/backup/runner"
 )
 
@@ -35,6 +36,7 @@ type depsInput struct {
 type deps struct {
 	uploader     *runner.MinIOUploader
 	reporter     *pgReporter
+	audit        backup.AuditSink
 	dataKey      []byte
 	minioClient  *minio.Client
 	bucket       string
@@ -95,6 +97,7 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 	return &deps{
 		uploader:    uploader,
 		reporter:    &pgReporter{pool: pool},
+		audit:       buildBackupAuditSink(pool),
 		dataKey:     dataKey,
 		minioClient: client,
 		bucket:      in.minioBucket,

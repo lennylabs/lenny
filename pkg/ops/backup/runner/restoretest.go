@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 )
 
@@ -115,6 +117,14 @@ type VerifyConfig struct {
 	Opener     ArchiveOpener
 	Inspector  DumpInspector
 	Reporter   VerifyReporter
+	// Audit emits the §16.7 backup.verified audit event to the §11.7
+	// platform hash chain when the verification succeeds. A nil sink
+	// drops the event; the ops_backups status:verified update still
+	// lands. A verification failure has no §16.7 catalog event — it is
+	// surfaced through the status:verification_failed transition and the
+	// §25.11 restore-test gauges — so no audit row is written on failure.
+	// spec: §25.11 line 4343.
+	Audit backup.AuditSink
 }
 
 // RunVerify performs one §25.11 Backup Verification: download the
@@ -171,6 +181,14 @@ func RunVerify(ctx context.Context, cfg VerifyConfig) error {
 	if err := cfg.Reporter.MarkVerified(ctx, cfg.BackupID); err != nil {
 		return fmt.Errorf("record verified: %w", err)
 	}
+	// spec: §25.11 line 4343, §16.7 backup.verified — the durable audit
+	// row for the successful verification, written from the Job pod
+	// alongside the ops_backups status:verified update.
+	emitBackupAudit(cfg.Audit, backup.AuditEvent{
+		Type:     string(audit.EventBackupVerified),
+		BackupID: cfg.BackupID,
+		Outcome:  "success",
+	})
 	return nil
 }
 

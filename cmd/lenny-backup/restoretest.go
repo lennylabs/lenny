@@ -137,6 +137,7 @@ func runVerify(ctx context.Context, d *deps, backupID, pgRestorePath string, std
 		Opener:     &runner.TarGzOpener{DataKey: d.dataKey},
 		Inspector:  &runner.ExecDumpInspector{PgRestorePath: pgRestorePath},
 		Reporter:   d.reporter,
+		Audit:      d.audit,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny-backup: verify %s failed: %v\n", backupID, err)

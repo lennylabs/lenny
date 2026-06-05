@@ -256,6 +256,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Uploader:             deps.uploader,
 		Pruner:               deps.uploader,
 		Reporter:             deps.reporter,
+		Audit:                deps.audit,
 		RetentionStore:       deps.reporter,
 		PreRestoreRetainDays: *preRestoreRetainDays,
 	})
