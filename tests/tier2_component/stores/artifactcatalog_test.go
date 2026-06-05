@@ -212,7 +212,7 @@ func TestArtifactCatalogContract(t *testing.T) {
 		past := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 		_ = cat.SoftDelete(ctx, uri, past)
 		_ = cat.Tombstone(ctx, uri)
-		if err := cat.SetLegalHold(ctx, uri, true); err != nil {
+		if err := cat.SetLegalHold(ctx, uri, true, "admin@acme.com", time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), "incident-42"); err != nil {
 			t.Fatalf("SetLegalHold: %v", err)
 		}
 		now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
@@ -258,7 +258,7 @@ func TestArtifactCatalogContract(t *testing.T) {
 			t.Fatalf("SoftDelete future: %v", err)
 		}
 		_ = cat.SoftDelete(ctx, held, past)
-		if err := cat.SetLegalHold(ctx, held, true); err != nil {
+		if err := cat.SetLegalHold(ctx, held, true, "admin@acme.com", time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), "incident-42"); err != nil {
 			t.Fatalf("SetLegalHold: %v", err)
 		}
 		// live is left in the live state.
@@ -325,6 +325,54 @@ func TestArtifactCatalogContract(t *testing.T) {
 			if rows[i].URI != u {
 				t.Errorf("rows[%d].URI = %q, want %q", i, rows[i].URI, u)
 			}
+		}
+	})
+
+	// spec: §15.1 lines 864-865 — SetLegalHold records the hold's
+	// provenance (setBy, setAt, note); ListLegalHeld returns the tenant's
+	// held rows with that provenance; clearing the hold blanks it.
+	t.Run("SetLegalHold provenance round-trips through ListLegalHeld", func(t *testing.T) {
+		uri := "lenny-blob://acme/sess_prov/p"
+		if err := cat.Insert(ctx, artifactcatalog.Record{
+			URI: uri, TenantID: "acme", SessionID: "sess_prov", PartID: "p",
+		}); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		setAt := time.Date(2026, 5, 18, 9, 30, 0, 0, time.UTC)
+		if err := cat.SetLegalHold(ctx, uri, true, "admin@acme.com", setAt, "incident-99"); err != nil {
+			t.Fatalf("SetLegalHold: %v", err)
+		}
+		held, err := cat.ListLegalHeld(ctx, "acme")
+		if err != nil {
+			t.Fatalf("ListLegalHeld: %v", err)
+		}
+		var found *artifactcatalog.Record
+		for i := range held {
+			if held[i].URI == uri {
+				found = &held[i]
+			}
+		}
+		if found == nil {
+			t.Fatalf("ListLegalHeld missing %s; got %d rows", uri, len(held))
+		}
+		if found.LegalHoldSetBy != "admin@acme.com" || found.LegalHoldNote != "incident-99" || !found.LegalHoldSetAt.Equal(setAt) {
+			t.Errorf("provenance round-trip wrong: setBy=%q setAt=%v note=%q",
+				found.LegalHoldSetBy, found.LegalHoldSetAt, found.LegalHoldNote)
+		}
+		// A cross-tenant ListLegalHeld must not see acme's hold.
+		if other, err := cat.ListLegalHeld(ctx, "globex"); err != nil || len(other) != 0 {
+			t.Errorf("ListLegalHeld(globex) = (%d rows, %v), want (0, nil)", len(other), err)
+		}
+		// Clearing blanks the provenance and drops the row from the list.
+		if err := cat.SetLegalHold(ctx, uri, false, "", time.Time{}, ""); err != nil {
+			t.Fatalf("clear SetLegalHold: %v", err)
+		}
+		got, err := cat.Get(ctx, uri)
+		if err != nil {
+			t.Fatalf("Get after clear: %v", err)
+		}
+		if got.LegalHold || got.LegalHoldSetBy != "" || !got.LegalHoldSetAt.IsZero() || got.LegalHoldNote != "" {
+			t.Errorf("clear left stale provenance: %+v", got)
 		}
 	})
 }

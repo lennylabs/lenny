@@ -42,7 +42,12 @@ func (f *fakeCatalog) ListBySession(_ context.Context, tenantID, sessionID strin
 	}
 	return f.rows[tenantID+"|"+sessionID], nil
 }
-func (f *fakeCatalog) SetLegalHold(context.Context, string, bool) error { return nil }
+func (f *fakeCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
+	return nil
+}
+func (f *fakeCatalog) ListLegalHeld(context.Context, string) ([]artifactcatalog.Record, error) {
+	return nil, nil
+}
 func (f *fakeCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) {
 	return false, nil
 }

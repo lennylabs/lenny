@@ -47,7 +47,12 @@ func (r *recordingCatalog) HardPruneURIs(context.Context, []string) (int, error)
 func (r *recordingCatalog) ListBySession(context.Context, string, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }
-func (r *recordingCatalog) SetLegalHold(context.Context, string, bool) error { return nil }
+func (r *recordingCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
+	return nil
+}
+func (r *recordingCatalog) ListLegalHeld(context.Context, string) ([]artifactcatalog.Record, error) {
+	return nil, nil
+}
 func (r *recordingCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) {
 	return false, nil
 }

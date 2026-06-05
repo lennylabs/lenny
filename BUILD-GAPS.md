@@ -25777,13 +25777,29 @@ un-terminating sessions. New `tenant.suspended` / `tenant.resumed` audit
 events (operator + reason) are catalogued as §11.7-path aux events.
 Documented in `openapi.json`.
 
+**Progress (commit pending — stays OPEN).** Closed
+`GET /v1/admin/legal-holds` (spec line 865). The boolean legal-hold flag
+on sessions and artifacts now carries provenance: migration `0145`
+adds `legal_hold_set_by` / `legal_hold_set_at` / `legal_hold_note` to
+both the `sessions` and `artifact_store` tables, the
+`sessionstore.Session` and `artifactcatalog.Record` structs gain the
+matching fields, and `POST /v1/admin/legal-hold` records them on set and
+blanks them on clear. The POST now enforces the spec-line-864
+`note`-required-when-`hold`-is-true rule. The new list endpoint
+(platform-admin or tenant-admin via `requireTenantResourceAdmin`)
+enumerates active session and artifact holds from the resource rows'
+provenance, honours `?tenant_id` / `?resource_type` / `?resource_id`,
+auto-scopes a tenant-admin to its own tenant, lets a platform-admin omit
+`tenant_id` to list across every tenant, and returns the canonical §15.1
+cursor-paginated envelope with `{resourceType, resourceId, setBy, setAt,
+note}` (plus `tenantId`). New `artifactcatalog.ListLegalHeld`; documented
+in `openapi.json`.
+
 Genuine remaining (real feature work, each multi-resource, not a thin
 route over an existing store): tenant `users` listing and
 `users/{user_id}/role` PUT/DELETE (needs a platform-managed-role store
-that overrides OIDC roles), `GET /v1/admin/legal-holds` list (needs
-set-by/set-at/note provenance the boolean hold flag does not yet carry),
-`GET /v1/admin/environments/{name}/usage` billing rollup,
-`GET /v1/sessions/{id}/workspace` snapshot download, and
+that overrides OIDC roles), `GET /v1/admin/environments/{name}/usage`
+billing rollup, `GET /v1/sessions/{id}/workspace` snapshot download, and
 `GET /v1/sessions/{id}/messages` history list (message history is not
 persisted today). Left OPEN for follow-on batches.
 

@@ -1430,15 +1430,86 @@
     "/v1/admin/legal-hold": {
       "post": {
         "operationId": "postV1AdminLegalHold",
-        "summary": "Set or clear a §12.8 legal hold on a session",
+        "summary": "Set or clear a §12.8 legal hold on a session or artifact",
         "x-lenny-mcp-tool": "admin.set_legal_hold",
         "x-lenny-scope": "admin.legal_holds.write",
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tenantId", "hold"],
+                "properties": {
+                  "tenantId": { "type": "string" },
+                  "sessionId": { "type": "string", "description": "Mutually exclusive with artifactId." },
+                  "artifactId": { "type": "string", "description": "Mutually exclusive with sessionId." },
+                  "hold": { "type": "boolean" },
+                  "note": { "type": "string", "description": "Justification for the hold. Required when hold is true." }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": { "description": "OK" },
-          "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "400": { "description": "Validation error (missing note when hold is true, or ambiguous scope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Session or artifact not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/admin/legal-holds": {
+      "get": {
+        "operationId": "getV1AdminLegalHolds",
+        "summary": "List active §12.8 legal holds",
+        "x-lenny-mcp-tool": "admin.list_legal_holds",
+        "x-lenny-scope": "admin.legal_holds.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "tenant_id", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "resource_type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["session", "artifact"] } },
+          { "name": "resource_id", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "sort", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active legal holds, each with resourceType, resourceId, setBy, setAt, and note.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items", "hasMore"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "resourceType": { "type": "string", "enum": ["session", "artifact"] },
+                          "resourceId": { "type": "string" },
+                          "tenantId": { "type": "string" },
+                          "setBy": { "type": "string" },
+                          "setAt": { "type": "string", "format": "date-time" },
+                          "note": { "type": "string" }
+                        }
+                      }
+                    },
+                    "cursor": { "type": "string", "nullable": true, "description": "§15.1 line 1251 — opaque cursor for the next page; null when no more results." },
+                    "hasMore": { "type": "boolean", "description": "§15.1 line 1251 — true when additional pages exist beyond this one." },
+                    "total": { "type": "integer", "description": "§15.1 line 1252 — total match count across all pages." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Validation error (unknown resource_type)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },

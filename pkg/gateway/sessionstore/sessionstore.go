@@ -185,6 +185,17 @@ type Session struct {
 	// preflight. Set and cleared via POST /v1/admin/legal-hold.
 	LegalHold bool
 
+	// LegalHoldSetBy, LegalHoldSetAt, and LegalHoldNote carry the §15.1
+	// line 865 provenance the `GET /v1/admin/legal-holds` list reports:
+	// the operator subject who set the hold, the instant it was set, and
+	// the required justification note. They are populated when LegalHold
+	// flips true and cleared when it flips false. Zero values when no
+	// hold is active.
+	// spec: §15.1 lines 864-865.
+	LegalHoldSetBy string
+	LegalHoldSetAt time.Time
+	LegalHoldNote  string
+
 	// ExperimentContext is the §10.7 experiment enrollment the
 	// ExperimentRouter assigned at session creation. Nil when the
 	// session is not enrolled in any experiment.

@@ -88,7 +88,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	tree_visibility,
 	delegation_depth,
 	delegation_lease,
-	env, request_envelope`
+	env, request_envelope,
+	legal_hold_set_by, legal_hold_set_at, legal_hold_note`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -345,7 +346,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		cascade_on_failure = $42,
 		tree_visibility = $43,
 		env = $44::jsonb,
-		request_envelope = $45::jsonb
+		request_envelope = $45::jsonb,
+		legal_hold_set_by = $46,
+		legal_hold_set_at = $47,
+		legal_hold_note = $48
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -423,6 +427,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			envArg(sess.Env),
 			// $45 — §14.1 request envelope bundle; see Create. F-14.1.14.
 			requestEnvelopeArg(sess),
+			// $46-$48 — §15.1 line 865 legal-hold provenance (setBy, setAt,
+			// note) reported by GET /v1/admin/legal-holds.
+			sess.LegalHoldSetBy, pgtenant.NullTime(sess.LegalHoldSetAt), sess.LegalHoldNote,
 		); err != nil {
 			return err
 		}
@@ -815,6 +822,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// bundle from migration 0109 (F-14.1.12 / F-14.1.14).
 		envJSON             []byte
 		requestEnvelopeJSON []byte
+		// §15.1 line 865 legal-hold provenance from migration 0145.
+		// legal_hold_set_at is nullable (no hold → SQL NULL).
+		legalHoldSetAt *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -868,8 +878,13 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §14 / §14.1 — env map + request envelope bundle from
 		// migration 0109 (F-14.1.12 / F-14.1.14).
 		&envJSON, &requestEnvelopeJSON,
+		// §15.1 line 865 — legal-hold provenance from migration 0145.
+		&s.LegalHoldSetBy, &legalHoldSetAt, &s.LegalHoldNote,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if legalHoldSetAt != nil {
+		s.LegalHoldSetAt = *legalHoldSetAt
 	}
 	// spec: §14 lines 47-50 — decode the client-supplied env map. A
 	// nil/empty payload leaves Env nil so the read envelope omits it.

@@ -85,6 +85,14 @@ type Record struct {
 	ArtifactType      ArtifactType
 	KMSKeyAlias       string
 	LegalHold         bool
+	// LegalHoldSetBy, LegalHoldSetAt, and LegalHoldNote carry the §15.1
+	// line 865 provenance the `GET /v1/admin/legal-holds` list reports
+	// for an artifact-scoped hold. Populated when LegalHold flips true,
+	// cleared when it flips false. Zero values when no hold is active.
+	// spec: §15.1 lines 864-865.
+	LegalHoldSetBy    string
+	LegalHoldSetAt    time.Time
+	LegalHoldNote     string
 	SoftDeletedAt     time.Time
 	TombstoneDeadline time.Time
 	CreatedAt         time.Time
@@ -106,7 +114,16 @@ type Store interface {
 	// returns the count removed. spec: §12.5 lines 320, 341.
 	HardPruneURIs(ctx context.Context, uris []string) (int, error)
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error)
-	SetLegalHold(ctx context.Context, uri string, hold bool) error
+	// SetLegalHold flips the legal_hold flag for uri. When hold is true,
+	// setBy/setAt/note record the §15.1 line 865 provenance the
+	// GET /v1/admin/legal-holds list reports; when hold is false they are
+	// cleared. spec: §12.8 line 735; §15.1 lines 864-865.
+	SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error
+	// ListLegalHeld returns every catalog row scoped to tenantID that
+	// carries legal_hold=true, with provenance, ordered by uri. It backs
+	// the artifact half of the §15.1 line 865 GET /v1/admin/legal-holds
+	// list. spec: §15.1 lines 864-865.
+	ListLegalHeld(ctx context.Context, tenantID string) ([]Record, error)
 	// IsLegalHeldAt reports whether any row scoped to (tenant, session)
 	// carries legal_hold=true. The MinIO blob store calls it at
 	// DeleteBySession time so a blob whose §12.5 catalog row records a
@@ -190,56 +207,88 @@ func (s *PgStore) Insert(ctx context.Context, r Record) error {
 	if r.ArtifactType == "" {
 		r.ArtifactType = ArtifactTypeWorkspace
 	}
+	var holdSetAt *time.Time
+	if !r.LegalHoldSetAt.IsZero() {
+		at := r.LegalHoldSetAt.UTC()
+		holdSetAt = &at
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO artifact_store (
 			uri, tenant_id, session_id, part_id,
 			mime_type, artifact_size_bytes, state, kms_key_alias,
-			legal_hold, artifact_type, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			legal_hold, artifact_type, created_at, updated_at,
+			legal_hold_set_by, legal_hold_set_at, legal_hold_note
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		r.URI, r.TenantID, r.SessionID, r.PartID,
 		r.MimeType, r.SizeBytes, string(r.State), nullableString(r.KMSKeyAlias),
-		r.LegalHold, string(r.ArtifactType), r.CreatedAt, now)
+		r.LegalHold, string(r.ArtifactType), r.CreatedAt, now,
+		r.LegalHoldSetBy, holdSetAt, r.LegalHoldNote)
 	if err != nil {
 		return fmt.Errorf("artifactcatalog: insert %s: %w", r.URI, err)
 	}
 	return nil
 }
 
+// recordColumns is the shared read projection for the artifact_store
+// row, including the §15.1 line 865 legal-hold provenance trailer added
+// in migration 0145.
+const recordColumns = `uri, tenant_id, session_id, part_id,
+	mime_type, artifact_size_bytes, state, kms_key_alias,
+	legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
+	created_at, updated_at,
+	legal_hold_set_by, legal_hold_set_at, legal_hold_note`
+
+// rowScanner is satisfied by both pgx.Row (QueryRow) and pgx.Rows
+// (Query, after Next), so scanRecord serves the single-row and
+// multi-row read paths alike.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanRecord decodes one recordColumns row into a Record, collapsing the
+// nullable kms_key_alias, soft_deleted_at, tombstone_deadline, and
+// legal_hold_set_at columns to their zero values.
+func scanRecord(sc rowScanner) (Record, error) {
+	var (
+		r                   Record
+		kms                 *string
+		sd, td, holdSetAt   *time.Time
+		state, artifactType string
+	)
+	if err := sc.Scan(&r.URI, &r.TenantID, &r.SessionID, &r.PartID,
+		&r.MimeType, &r.SizeBytes, &state, &kms,
+		&r.LegalHold, &artifactType, &sd, &td,
+		&r.CreatedAt, &r.UpdatedAt,
+		&r.LegalHoldSetBy, &holdSetAt, &r.LegalHoldNote); err != nil {
+		return Record{}, err
+	}
+	r.State = State(state)
+	r.ArtifactType = ArtifactType(artifactType)
+	if kms != nil {
+		r.KMSKeyAlias = *kms
+	}
+	if sd != nil {
+		r.SoftDeletedAt = *sd
+	}
+	if td != nil {
+		r.TombstoneDeadline = *td
+	}
+	if holdSetAt != nil {
+		r.LegalHoldSetAt = *holdSetAt
+	}
+	return r, nil
+}
+
 // Get returns the catalog row for uri.
 func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
-	var (
-		out Record
-		kms *string
-		sd  *time.Time
-		td  *time.Time
-	)
-	row := s.pool.QueryRow(ctx, `
-		SELECT uri, tenant_id, session_id, part_id,
-		       mime_type, artifact_size_bytes, state, kms_key_alias,
-		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
-		       created_at, updated_at
-		FROM artifact_store WHERE uri = $1`, uri)
-	var state, artifactType string
-	err := row.Scan(&out.URI, &out.TenantID, &out.SessionID, &out.PartID,
-		&out.MimeType, &out.SizeBytes, &state, &kms,
-		&out.LegalHold, &artifactType, &sd, &td,
-		&out.CreatedAt, &out.UpdatedAt)
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+recordColumns+` FROM artifact_store WHERE uri = $1`, uri)
+	out, err := scanRecord(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, err
-	}
-	out.State = State(state)
-	out.ArtifactType = ArtifactType(artifactType)
-	if kms != nil {
-		out.KMSKeyAlias = *kms
-	}
-	if sd != nil {
-		out.SoftDeletedAt = *sd
-	}
-	if td != nil {
-		out.TombstoneDeadline = *td
 	}
 	return out, nil
 }
@@ -427,54 +476,78 @@ func (s *PgStore) SumLiveBytes(ctx context.Context, tenantID string) (int64, err
 
 // ListBySession returns every catalog row for one session.
 func (s *PgStore) ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT uri, tenant_id, session_id, part_id,
-		       mime_type, artifact_size_bytes, state, kms_key_alias,
-		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
-		       created_at, updated_at
-		FROM artifact_store WHERE tenant_id = $1 AND session_id = $2
-		ORDER BY uri`, tenantID, sessionID)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+recordColumns+` FROM artifact_store
+		 WHERE tenant_id = $1 AND session_id = $2
+		 ORDER BY uri`, tenantID, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Record
 	for rows.Next() {
-		var (
-			r            Record
-			state        string
-			artifactType string
-			kms          *string
-			sd           *time.Time
-			td           *time.Time
-		)
-		if err := rows.Scan(&r.URI, &r.TenantID, &r.SessionID, &r.PartID,
-			&r.MimeType, &r.SizeBytes, &state, &kms,
-			&r.LegalHold, &artifactType, &sd, &td,
-			&r.CreatedAt, &r.UpdatedAt); err != nil {
+		r, err := scanRecord(rows)
+		if err != nil {
 			return nil, err
-		}
-		r.State = State(state)
-		r.ArtifactType = ArtifactType(artifactType)
-		if kms != nil {
-			r.KMSKeyAlias = *kms
-		}
-		if sd != nil {
-			r.SoftDeletedAt = *sd
-		}
-		if td != nil {
-			r.TombstoneDeadline = *td
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-// SetLegalHold flips the §12.5 legal_hold flag for uri.
-func (s *PgStore) SetLegalHold(ctx context.Context, uri string, hold bool) error {
+// ListLegalHeld returns every catalog row scoped to tenantID that carries
+// legal_hold=true, with provenance, ordered by uri. It backs the artifact
+// half of the §15.1 line 865 GET /v1/admin/legal-holds list.
+//
+// spec: §15.1 lines 864-865.
+func (s *PgStore) ListLegalHeld(ctx context.Context, tenantID string) ([]Record, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+recordColumns+` FROM artifact_store
+		 WHERE tenant_id = $1 AND legal_hold = true
+		 ORDER BY uri`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Record
+	for rows.Next() {
+		r, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetLegalHold flips the §12.5 legal_hold flag for uri. When hold is
+// true the §15.1 line 865 provenance (setBy, setAt, note) is recorded;
+// clearing the hold blanks it so a released artifact reports no stale
+// provenance.
+//
+// spec: §12.8 line 735; §15.1 lines 864-865.
+func (s *PgStore) SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error {
+	now := s.clock().UTC()
+	var (
+		holdSetBy string
+		holdSetAt *time.Time
+		holdNote  string
+	)
+	if hold {
+		holdSetBy = setBy
+		holdNote = note
+		at := setAt.UTC()
+		if at.IsZero() {
+			at = now
+		}
+		holdSetAt = &at
+	}
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE artifact_store SET legal_hold = $2, updated_at = $3 WHERE uri = $1`,
-		uri, hold, s.clock().UTC())
+		UPDATE artifact_store
+		   SET legal_hold = $2, updated_at = $3,
+		       legal_hold_set_by = $4, legal_hold_set_at = $5, legal_hold_note = $6
+		 WHERE uri = $1`,
+		uri, hold, now, holdSetBy, holdSetAt, holdNote)
 	if err != nil {
 		return err
 	}

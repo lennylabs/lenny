@@ -7,10 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // ArtifactLegalHolder is the artifact-side half of the §12.8 legal-hold
@@ -25,11 +30,17 @@ type ArtifactLegalHolder interface {
 	// used to confirm the artifact belongs to the request's tenant
 	// before flipping the hold.
 	Get(ctx context.Context, uri string) (artifactcatalog.Record, error)
-	// SetLegalHold flips the artifact's legal_hold flag.
-	SetLegalHold(ctx context.Context, uri string, hold bool) error
+	// SetLegalHold flips the artifact's legal_hold flag. When hold is
+	// true, setBy/setAt/note record the §15.1 line 865 provenance the
+	// GET /v1/admin/legal-holds list reports.
+	SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error
 	// IsLegalHeldAt reports whether any artifact scoped to
 	// (tenant, session) carries legal_hold=true.
 	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
+	// ListLegalHeld returns the tenant's artifact rows that carry an
+	// active legal hold, with provenance, backing the artifact half of
+	// the §15.1 line 865 list. spec: §15.1 lines 864-865.
+	ListLegalHeld(ctx context.Context, tenantID string) ([]artifactcatalog.Record, error)
 }
 
 // WithSessions wires the SessionStore onto the Router. It backs the
@@ -66,6 +77,10 @@ type LegalHoldRequest struct {
 	// exclusive with SessionID.
 	ArtifactID string `json:"artifactId,omitempty"`
 	Hold       bool   `json:"hold"`
+	// Note is the §15.1 line 864 justification for the hold. Required
+	// when Hold is true; ignored on a clear. Recorded as the hold's
+	// provenance and surfaced by GET /v1/admin/legal-holds.
+	Note string `json:"note,omitempty"`
 }
 
 // handleSetLegalHold implements POST /v1/admin/legal-hold — the §12.8
@@ -96,6 +111,15 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"fields": []string{"sessionId", "artifactId"}})
 		return
 	}
+	// spec: §15.1 line 864 — `note` is required when setting a hold so the
+	// preservation order has a recorded justification. It is ignored on a
+	// clear.
+	if body.Hold && strings.TrimSpace(body.Note) == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"note is required when setting a legal hold",
+			map[string]any{"field": "note"})
+		return
+	}
 	if body.ArtifactID != "" {
 		r.setArtifactLegalHold(w, req, body)
 		return
@@ -103,11 +127,24 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 	r.setSessionLegalHold(w, req, body)
 }
 
-// setSessionLegalHold flips the §12.8 session-level legal hold.
+// setSessionLegalHold flips the §12.8 session-level legal hold. Setting a
+// hold records the §15.1 line 865 provenance (operator, instant, note);
+// clearing blanks it so a released session reports no stale provenance.
 func (r *Router) setSessionLegalHold(w http.ResponseWriter, req *http.Request, body LegalHoldRequest) {
+	principal, _ := authmw.FromContext(req.Context())
+	now := r.clock()
 	updated, err := r.sessions.Update(req.Context(), body.TenantID, body.SessionID,
 		func(s *sessionstore.Session) error {
 			s.LegalHold = body.Hold
+			if body.Hold {
+				s.LegalHoldSetBy = principal.Subject
+				s.LegalHoldSetAt = now
+				s.LegalHoldNote = body.Note
+			} else {
+				s.LegalHoldSetBy = ""
+				s.LegalHoldSetAt = time.Time{}
+				s.LegalHoldNote = ""
+			}
 			return nil
 		})
 	if err != nil {
@@ -121,6 +158,7 @@ func (r *Router) setSessionLegalHold(w http.ResponseWriter, req *http.Request, b
 	r.emitLegalHold(req, body.Hold, "session", body.SessionID, map[string]any{
 		"tenantId":  body.TenantID,
 		"sessionId": body.SessionID,
+		"note":      body.Note,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -145,7 +183,8 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "artifact not found", nil)
 		return
 	}
-	if err := r.artifactHolds.SetLegalHold(req.Context(), body.ArtifactID, body.Hold); err != nil {
+	principal, _ := authmw.FromContext(req.Context())
+	if err := r.artifactHolds.SetLegalHold(req.Context(), body.ArtifactID, body.Hold, principal.Subject, r.clock(), body.Note); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -153,6 +192,7 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 		"tenantId":   body.TenantID,
 		"artifactId": body.ArtifactID,
 		"sessionId":  rec.SessionID,
+		"note":       body.Note,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -160,6 +200,137 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 		"tenantId":   body.TenantID,
 		"legalHold":  body.Hold,
 	})
+}
+
+// legalHoldEntry is one row of the §15.1 line 865
+// GET /v1/admin/legal-holds list. The wire fields match the spec
+// projection (resourceType, resourceId, setBy, setAt, note); tenantId is
+// carried so a platform-admin listing across tenants can attribute each
+// hold.
+//
+// spec: §15.1 line 865.
+type legalHoldEntry struct {
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	TenantID     string `json:"tenantId"`
+	SetBy        string `json:"setBy"`
+	SetAt        string `json:"setAt"`
+	Note         string `json:"note"`
+}
+
+// handleListLegalHolds implements GET /v1/admin/legal-holds — the §15.1
+// line 865 active-hold listing. It enumerates session-level and
+// artifact-level holds from the resource rows' provenance, honouring the
+// `?tenant_id`, `?resource_type`, and `?resource_id` filters and the
+// canonical §15.1 cursor-paginated envelope. A tenant-admin caller is
+// scoped to its own tenant regardless of the `tenant_id` param; a
+// platform-admin omitting `tenant_id` lists across every tenant.
+//
+// spec: §15.1 line 865.
+func (r *Router) handleListLegalHolds(w http.ResponseWriter, req *http.Request) {
+	p, _ := authmw.FromContext(req.Context())
+	q := req.URL.Query()
+	resourceType := q.Get("resource_type")
+	if resourceType != "" && resourceType != "session" && resourceType != "artifact" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"resource_type must be 'session' or 'artifact'",
+			map[string]any{"field": "resource_type"})
+		return
+	}
+	resourceID := q.Get("resource_id")
+
+	// spec: §15.1 line 865 — a tenant-admin is automatically scoped to its
+	// own tenant; the tenant_id param cannot widen that. A platform-admin
+	// honours the param, and omitting it lists across every tenant.
+	tenantFilter := q.Get("tenant_id")
+	if !p.HasRole(auth.RolePlatformAdmin) {
+		tenantFilter = p.TenantID
+	}
+
+	tenantIDs, err := r.legalHoldTenantScope(req.Context(), tenantFilter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	includeSessions := resourceType == "" || resourceType == "session"
+	includeArtifacts := resourceType == "" || resourceType == "artifact"
+
+	var entries []legalHoldEntry
+	for _, tid := range tenantIDs {
+		if includeSessions {
+			rows, lerr := r.sessions.List(req.Context(), tid, sessionstore.ListFilter{})
+			if lerr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", lerr.Error(), nil)
+				return
+			}
+			for _, s := range rows {
+				if !s.LegalHold || (resourceID != "" && s.ID != resourceID) {
+					continue
+				}
+				entries = append(entries, legalHoldEntry{
+					ResourceType: "session",
+					ResourceID:   s.ID,
+					TenantID:     tid,
+					SetBy:        s.LegalHoldSetBy,
+					SetAt:        rfc3339Nano(s.LegalHoldSetAt),
+					Note:         s.LegalHoldNote,
+				})
+			}
+		}
+		if includeArtifacts && r.artifactHolds != nil {
+			recs, lerr := r.artifactHolds.ListLegalHeld(req.Context(), tid)
+			if lerr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", lerr.Error(), nil)
+				return
+			}
+			for _, rec := range recs {
+				if resourceID != "" && rec.URI != resourceID {
+					continue
+				}
+				entries = append(entries, legalHoldEntry{
+					ResourceType: "artifact",
+					ResourceID:   rec.URI,
+					TenantID:     rec.TenantID,
+					SetBy:        rec.LegalHoldSetBy,
+					SetAt:        rfc3339Nano(rec.LegalHoldSetAt),
+					Note:         rec.LegalHoldNote,
+				})
+			}
+		}
+	}
+
+	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// resourceId is the name sort field and the timestamp tiebreaker.
+	writePaginatedList(w, req, r.clock(), entries, adminTimestampSortFields, adminListDefaultSort,
+		func(e legalHoldEntry, s pagination.Sort) (string, string) {
+			if s.Field == "name" {
+				return e.ResourceID, e.ResourceID
+			}
+			return e.SetAt, e.ResourceID
+		})
+}
+
+// legalHoldTenantScope resolves the set of tenant ids the legal-hold list
+// scans. A non-empty filter scopes to that single tenant; an empty filter
+// (platform-admin list-all) enumerates every tenant. When no tenant store
+// is wired the list-all case yields an empty scope.
+func (r *Router) legalHoldTenantScope(ctx context.Context, tenantFilter string) ([]string, error) {
+	if tenantFilter != "" {
+		return []string{tenantFilter}, nil
+	}
+	if r.tenants == nil {
+		return nil, nil
+	}
+	tenants, err := r.tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(tenants))
+	for _, t := range tenants {
+		ids = append(ids, t.ID)
+	}
+	return ids, nil
 }
 
 // emitLegalHold writes the §12.8 ledger event for a hold set or clear,

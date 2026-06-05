@@ -146,7 +146,7 @@ func (f *fakeCatalog) ListBySession(_ context.Context, tenantID, sessionID strin
 	return out, nil
 }
 
-func (f *fakeCatalog) SetLegalHold(_ context.Context, uri string, hold bool) error {
+func (f *fakeCatalog) SetLegalHold(_ context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.rows[uri]
@@ -154,8 +154,25 @@ func (f *fakeCatalog) SetLegalHold(_ context.Context, uri string, hold bool) err
 		return artifactcatalog.ErrNotFound
 	}
 	r.LegalHold = hold
+	if hold {
+		r.LegalHoldSetBy, r.LegalHoldSetAt, r.LegalHoldNote = setBy, setAt, note
+	} else {
+		r.LegalHoldSetBy, r.LegalHoldSetAt, r.LegalHoldNote = "", time.Time{}, ""
+	}
 	f.rows[uri] = r
 	return nil
+}
+
+func (f *fakeCatalog) ListLegalHeld(_ context.Context, tenantID string) ([]artifactcatalog.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []artifactcatalog.Record
+	for _, r := range f.rows {
+		if r.TenantID == tenantID && r.LegalHold {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeCatalog) IsLegalHeldAt(_ context.Context, tenantID, sessionID string) (bool, error) {
@@ -761,7 +778,7 @@ func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 			t.Fatalf("Put: %v", err)
 		}
 	}
-	if err := cat.SetLegalHold(context.Background(), held.String(), true); err != nil {
+	if err := cat.SetLegalHold(context.Background(), held.String(), true, "alice@acme.com", time.Now().UTC(), "incident-42"); err != nil {
 		t.Fatalf("SetLegalHold: %v", err)
 	}
 

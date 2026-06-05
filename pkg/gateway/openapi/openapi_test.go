@@ -139,6 +139,7 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/users/{user_id}/erase",
 		"/v1/admin/erasure-jobs/{job_id}",
 		"/v1/admin/legal-hold",
+		"/v1/admin/legal-holds",
 		"/v1/admin/experiments",
 		"/v1/admin/experiments/{name}",
 		"/v1/admin/experiments/{name}/results",

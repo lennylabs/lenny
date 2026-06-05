@@ -37,14 +37,29 @@ func (f *fakeArtifactHolder) Get(_ context.Context, uri string) (artifactcatalog
 	return r, nil
 }
 
-func (f *fakeArtifactHolder) SetLegalHold(_ context.Context, uri string, hold bool) error {
+func (f *fakeArtifactHolder) SetLegalHold(_ context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error {
 	r, ok := f.records[uri]
 	if !ok {
 		return artifactcatalog.ErrNotFound
 	}
 	r.LegalHold = hold
+	if hold {
+		r.LegalHoldSetBy, r.LegalHoldSetAt, r.LegalHoldNote = setBy, setAt, note
+	} else {
+		r.LegalHoldSetBy, r.LegalHoldSetAt, r.LegalHoldNote = "", time.Time{}, ""
+	}
 	f.records[uri] = r
 	return nil
+}
+
+func (f *fakeArtifactHolder) ListLegalHeld(_ context.Context, tenantID string) ([]artifactcatalog.Record, error) {
+	var out []artifactcatalog.Record
+	for _, r := range f.records {
+		if r.TenantID == tenantID && r.LegalHold {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeArtifactHolder) IsLegalHeldAt(_ context.Context, tenantID, sessionID string) (bool, error) {
@@ -93,7 +108,7 @@ func TestSetLegalHold(t *testing.T) {
 	seedSession(t, sessions, sessionstore.Session{ID: "sess_1", TenantID: "acme", UserID: "alice@acme.com"})
 
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_1", Hold: true}, withAdminPrincipal)
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_1", Hold: true, Note: "incident-42"}, withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("set hold: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -104,6 +119,12 @@ func TestSetLegalHold(t *testing.T) {
 	if !got.LegalHold {
 		t.Error("POST hold:true must set LegalHold on the session")
 	}
+	// spec: §15.1 line 865 — the hold's provenance is recorded so the
+	// list endpoint can report setBy/setAt/note.
+	if got.LegalHoldSetBy == "" || got.LegalHoldSetAt.IsZero() || got.LegalHoldNote != "incident-42" {
+		t.Errorf("provenance not recorded: setBy=%q setAt=%v note=%q",
+			got.LegalHoldSetBy, got.LegalHoldSetAt, got.LegalHoldNote)
+	}
 	if snap := audit.snapshot(); len(snap) != 1 || snap[0].Type != "legal_hold.set" {
 		t.Errorf("audit: %+v, want one legal_hold.set", snap)
 	}
@@ -113,6 +134,7 @@ func TestClearLegalHold(t *testing.T) {
 	router, sessions, audit := newLegalHoldAdmin(t)
 	seedSession(t, sessions, sessionstore.Session{
 		ID: "sess_2", TenantID: "acme", UserID: "bob@acme.com", LegalHold: true,
+		LegalHoldSetBy: "alice@acme.com", LegalHoldSetAt: time.Now().UTC(), LegalHoldNote: "incident-7",
 	})
 
 	rr := setLegalHold(t, router.Handler(),
@@ -124,6 +146,11 @@ func TestClearLegalHold(t *testing.T) {
 	if got.LegalHold {
 		t.Error("POST hold:false must clear LegalHold on the session")
 	}
+	// spec: §15.1 line 865 — a released hold reports no stale provenance.
+	if got.LegalHoldSetBy != "" || !got.LegalHoldSetAt.IsZero() || got.LegalHoldNote != "" {
+		t.Errorf("clear must blank provenance: setBy=%q setAt=%v note=%q",
+			got.LegalHoldSetBy, got.LegalHoldSetAt, got.LegalHoldNote)
+	}
 	if snap := audit.snapshot(); len(snap) != 1 || snap[0].Type != "legal_hold.cleared" {
 		t.Errorf("audit: %+v, want one legal_hold.cleared", snap)
 	}
@@ -132,7 +159,7 @@ func TestClearLegalHold(t *testing.T) {
 func TestSetLegalHoldNotFound(t *testing.T) {
 	router, _, _ := newLegalHoldAdmin(t)
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_absent", Hold: true}, withAdminPrincipal)
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_absent", Hold: true, Note: "incident-1"}, withAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown session: status %d, want 404", rr.Code)
 	}
@@ -159,6 +186,27 @@ func TestSetLegalHoldRequiresSessionOrArtifact(t *testing.T) {
 		admin.LegalHoldRequest{TenantID: "acme", Hold: true}, withAdminPrincipal)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("missing sessionId/artifactId: status %d, want 400", rr.Code)
+	}
+}
+
+// spec: §15.1 line 864 — note is required when setting a hold.
+func TestSetLegalHoldRequiresNoteWhenHolding(t *testing.T) {
+	router, sessions, _ := newLegalHoldAdmin(t)
+	seedSession(t, sessions, sessionstore.Session{ID: "sess_n", TenantID: "acme", UserID: "alice@acme.com"})
+	rr := setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_n", Hold: true}, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("hold:true without note: status %d, want 400", rr.Code)
+	}
+	if got, _ := sessions.Get(context.Background(), "acme", "sess_n"); got.LegalHold {
+		t.Error("a hold must not be applied when the required note is missing")
+	}
+	// A clear (hold:false) does not require a note.
+	seedSession(t, sessions, sessionstore.Session{ID: "sess_c", TenantID: "acme", UserID: "bob@acme.com", LegalHold: true})
+	rr = setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_c", Hold: false}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Errorf("clear without note: status %d, want 200", rr.Code)
 	}
 }
 
@@ -189,13 +237,16 @@ func TestSetArtifactLegalHold(t *testing.T) {
 	}).WithSessions(sessions).WithArtifactLegalHold(holder)
 
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true},
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true, Note: "incident-9"},
 		withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("set artifact hold: status %d, body %s", rr.Code, rr.Body.String())
 	}
 	if !holder.records["blob://acme/s1/file"].LegalHold {
 		t.Error("POST artifactId hold:true must set legal_hold on the artifact")
+	}
+	if rec := holder.records["blob://acme/s1/file"]; rec.LegalHoldNote != "incident-9" || rec.LegalHoldSetBy == "" {
+		t.Errorf("artifact hold provenance not recorded: setBy=%q note=%q", rec.LegalHoldSetBy, rec.LegalHoldNote)
 	}
 	snap := audit.snapshot()
 	if len(snap) != 1 || snap[0].Type != "legal_hold.set" {
@@ -228,7 +279,7 @@ func TestSetArtifactLegalHoldCrossTenantNotFound(t *testing.T) {
 	}).WithSessions(sessions).WithArtifactLegalHold(holder)
 
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://globex/s1/file", Hold: true},
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://globex/s1/file", Hold: true, Note: "incident-x"},
 		withAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("cross-tenant artifact: status %d, want 404", rr.Code)
@@ -242,7 +293,7 @@ func TestSetArtifactLegalHoldCrossTenantNotFound(t *testing.T) {
 func TestSetArtifactLegalHoldUnavailable(t *testing.T) {
 	router, _, _ := newLegalHoldAdmin(t)
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true},
+		admin.LegalHoldRequest{TenantID: "acme", ArtifactID: "blob://acme/s1/file", Hold: true, Note: "incident-z"},
 		withAdminPrincipal)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("artifact hold without holder: status %d, want 400", rr.Code)
