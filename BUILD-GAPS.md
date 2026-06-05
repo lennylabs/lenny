@@ -29243,7 +29243,7 @@ correlate session activity by time, nor any retention/cleanup behavior
 to verify. The §17.8 capacity-planning numbers ("~600 MB/day before
 retention cleanup") are dormant because there is no cleanup.
 
-**Partial progress (stays OPEN — commit `__PENDING__`):** Two of the
+**Partial progress (stays OPEN — commit `0ddce6a9`):** Two of the
 finding's bullets are now stale and one is closed:
 - The `siem_delivery_state` table exists (migration `0107`); the
   "absent" evidence is stale.
