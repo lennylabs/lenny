@@ -224,8 +224,14 @@ func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 		Email:       body.Email,
 		DisplayName: body.DisplayName,
 		Roles:       body.Roles,
-		Disabled:    body.Disabled,
-		CreatedAt:   r.clock(),
+		// spec: §10.2 line 294 — a row created through the admin user
+		// surface is a platform-managed record whose Roles override the
+		// OIDC claim (including the empty downgrade). Mark the assignment
+		// present so the §15.1 line 828 role resolver honors it; only the
+		// dedicated `DELETE .../role` path clears it.
+		RoleAssigned: true,
+		Disabled:     body.Disabled,
+		CreatedAt:    r.clock(),
 	}
 	u.UpdatedAt = u.CreatedAt
 	if err := r.users.Create(req.Context(), u); err != nil {
@@ -358,6 +364,9 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Roles != nil {
 			u.Roles = *body.Roles
+			// spec: §10.2 line 294 — a role change through the generic user
+			// surface (re)establishes the platform-managed override.
+			u.RoleAssigned = true
 		}
 		if body.Disabled != nil {
 			u.Disabled = *body.Disabled

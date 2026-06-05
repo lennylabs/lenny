@@ -240,3 +240,50 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 		t.Errorf("carol@globex should survive: %v", err)
 	}
 }
+
+// spec: §15.1 lines 826-828 — the platform-managed role assignment carries
+// presence (RoleAssigned) plus operator/timestamp provenance. The Memory
+// store must round-trip all three through Create/Update/Get so the role
+// resolver (§10.2 line 294) and the tenant-users list see consistent
+// values. F-15.1.3.
+func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
+	s := userstore.NewMemory()
+	ctx := context.Background()
+	at := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	if err := s.Create(ctx, userstore.User{
+		Subject: "alice@acme.com", TenantID: "acme",
+		Roles:          []auth.Role{auth.RoleTenantViewer},
+		RoleAssigned:   true,
+		RoleAssignedBy: "admin@acme.com",
+		RoleAssignedAt: at,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := s.Get(ctx, "acme", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.RoleAssigned || got.RoleAssignedBy != "admin@acme.com" || !got.RoleAssignedAt.Equal(at) {
+		t.Fatalf("create round-trip: assigned=%v by=%q at=%v", got.RoleAssigned, got.RoleAssignedBy, got.RoleAssignedAt)
+	}
+
+	// Removing the assignment clears presence and provenance while the row
+	// is retained — the §15.1 line 828 DELETE semantics.
+	updated, err := s.Update(ctx, "acme", "alice@acme.com", func(u *userstore.User) error {
+		u.Roles = nil
+		u.RoleAssigned = false
+		u.RoleAssignedBy = ""
+		u.RoleAssignedAt = time.Time{}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.RoleAssigned || updated.RoleAssignedBy != "" || !updated.RoleAssignedAt.IsZero() {
+		t.Fatalf("removal: assigned=%v by=%q at=%v", updated.RoleAssigned, updated.RoleAssignedBy, updated.RoleAssignedAt)
+	}
+	// The row must still be readable after assignment removal.
+	if _, err := s.Get(ctx, "acme", "alice@acme.com"); err != nil {
+		t.Fatalf("row must survive assignment removal: %v", err)
+	}
+}

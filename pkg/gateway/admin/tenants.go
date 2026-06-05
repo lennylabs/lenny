@@ -600,6 +600,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
 		mux.Handle("POST /v1/admin/users/{user_id}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
 		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
+		// §15.1 lines 826-828 — tenant-scoped user listing and the
+		// platform-managed role assignment surface. manage_users gate
+		// (platform-admin or tenant-admin); the handler scopes a
+		// tenant-admin to the path tenant.
+		mux.Handle("GET /v1/admin/tenants/{id}/users", r.requireUserAdmin(http.HandlerFunc(r.handleListTenantUsers)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/users/{user_id}/role", r.requireUserAdmin(http.HandlerFunc(r.handlePutTenantUserRole)))
+		mux.Handle("DELETE /v1/admin/tenants/{id}/users/{user_id}/role", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteTenantUserRole)))
 		if r.erasureRunner != nil {
 			// §12.8 GDPR user erasure.
 			mux.Handle("POST /v1/admin/users/{user_id}/erase",

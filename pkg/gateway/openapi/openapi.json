@@ -1183,6 +1183,61 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/tenants/{id}/users": {
+      "get": {
+        "operationId": "getV1AdminTenantsByIdUsers",
+        "summary": "List users in a tenant with their platform-managed role assignments",
+        "x-lenny-mcp-tool": "admin.list_tenant_users",
+        "x-lenny-scope": "admin.users.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/users/{user_id}/role": {
+      "put": {
+        "operationId": "putV1AdminTenantsByIdUsersByUserIdRole",
+        "summary": "Assign or update the platform-managed role for a user within a tenant",
+        "x-lenny-mcp-tool": "admin.assign_tenant_user_role",
+        "x-lenny-scope": "admin.users.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["role"],
+                "properties": { "role": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "operationId": "deleteV1AdminTenantsByIdUsersByUserIdRole",
+        "summary": "Remove the platform-managed role assignment for a user within a tenant",
+        "x-lenny-mcp-tool": "admin.remove_tenant_user_role",
+        "x-lenny-scope": "admin.users.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
     "/v1/admin/runtimes": {
       "post": {
         "operationId": "postV1AdminRuntimes",

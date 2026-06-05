@@ -37,7 +37,8 @@ var _ userstore.Store = (*Store)(nil)
 
 const selectList = `tenant_id, subject, email, display_name, roles,
 	disabled, created_at, updated_at, deleted_at,
-	processing_restricted, erasure_job_id, version`
+	processing_restricted, erasure_job_id, version,
+	role_assigned, role_assigned_by, role_assigned_at`
 
 // Create inserts a new user row. It validates the tenant id, subject,
 // and role set, mirroring userstore.Memory. Returns ErrAlreadyExists
@@ -67,11 +68,13 @@ func (s *Store) Create(ctx context.Context, u userstore.User) error {
 		_, err := tx.Exec(ctx, `INSERT INTO users (
 			tenant_id, subject, email, display_name, roles,
 			disabled, created_at, updated_at, deleted_at,
-			processing_restricted, erasure_job_id, version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			processing_restricted, erasure_job_id, version,
+			role_assigned, role_assigned_by, role_assigned_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			u.TenantID, u.Subject, u.Email, u.DisplayName, rolesToText(u.Roles),
 			u.Disabled, u.CreatedAt, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
-			u.ProcessingRestricted, u.ErasureJobID, u.Version)
+			u.ProcessingRestricted, u.ErasureJobID, u.Version,
+			u.RoleAssigned, u.RoleAssignedBy, pgtenant.NullTime(u.RoleAssignedAt))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -133,11 +136,13 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 		if _, err := tx.Exec(ctx, `UPDATE users SET
 			email = $3, display_name = $4, roles = $5, disabled = $6,
 			updated_at = $7, deleted_at = $8,
-			processing_restricted = $9, erasure_job_id = $10, version = $11
+			processing_restricted = $9, erasure_job_id = $10, version = $11,
+			role_assigned = $12, role_assigned_by = $13, role_assigned_at = $14
 		WHERE tenant_id = $1 AND subject = $2`,
 			tenantID, subject, u.Email, u.DisplayName, rolesToText(u.Roles),
 			u.Disabled, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
-			u.ProcessingRestricted, u.ErasureJobID, u.Version); err != nil {
+			u.ProcessingRestricted, u.ErasureJobID, u.Version,
+			u.RoleAssigned, u.RoleAssignedBy, pgtenant.NullTime(u.RoleAssignedAt)); err != nil {
 			return err
 		}
 		out = u
@@ -308,20 +313,25 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 // scanUser reads one row in selectList order into a User.
 func scanUser(row pgx.Row) (userstore.User, error) {
 	var (
-		u         userstore.User
-		roles     []string
-		deletedAt *time.Time
+		u          userstore.User
+		roles      []string
+		deletedAt  *time.Time
+		assignedAt *time.Time
 	)
 	if err := row.Scan(
 		&u.TenantID, &u.Subject, &u.Email, &u.DisplayName, &roles,
 		&u.Disabled, &u.CreatedAt, &u.UpdatedAt, &deletedAt,
 		&u.ProcessingRestricted, &u.ErasureJobID, &u.Version,
+		&u.RoleAssigned, &u.RoleAssignedBy, &assignedAt,
 	); err != nil {
 		return userstore.User{}, err
 	}
 	u.Roles = rolesFromText(roles)
 	if deletedAt != nil {
 		u.DeletedAt = *deletedAt
+	}
+	if assignedAt != nil {
+		u.RoleAssignedAt = *assignedAt
 	}
 	return u, nil
 }

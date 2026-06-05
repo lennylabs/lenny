@@ -25795,10 +25795,31 @@ cursor-paginated envelope with `{resourceType, resourceId, setBy, setAt,
 note}` (plus `tenantId`). New `artifactcatalog.ListLegalHeld`; documented
 in `openapi.json`.
 
+**Progress (stays OPEN).** Closed the tenant user-role surface:
+`GET /v1/admin/tenants/{id}/users` (spec line 826) and
+`PUT|DELETE /v1/admin/tenants/{id}/users/{user_id}/role` (lines 827-828).
+The platform-managed role assignment that overrides OIDC roles already
+existed (the §10.2 line 294 `userstorePlatformRoles` resolver over
+`userstore.Roles`); this batch made the assignment a first-class concept
+with presence and provenance. New `userstore.User` fields
+`RoleAssigned` / `RoleAssignedBy` / `RoleAssignedAt` (migration `0146`,
+INSERT/UPDATE/scan wired in pgstore; Memory rides the struct). The
+resolver now overrides OIDC only when `RoleAssigned` is true, so the
+line-828 DELETE removes the assignment (clears the flag, Roles, and
+provenance) and reverts the user to the OIDC claim while retaining the
+row so the user still lists — the prior "row exists ⇒ override" behavior
+(F-10.2.3) is preserved because every existing create path (`/v1/admin/
+users`, admin-token bootstrap, seed bootstrap) now stamps
+`RoleAssigned: true`. The PUT validates the role against the tenant-scoped
+built-ins plus custom roles (platform-admin rejected), requires If-Match
+against the user-row version, and emits `user.role_assigned`; the DELETE
+honours If-Match when present, is idempotent, and emits `user.role_removed`.
+The GET is tenant-scoped (tenant-admin to own tenant), projects
+`{user_id, role, assignedAt, assignedBy}`, and returns the canonical
+§15.1 cursor-paginated envelope. Documented in `openapi.json`.
+
 Genuine remaining (real feature work, each multi-resource, not a thin
-route over an existing store): tenant `users` listing and
-`users/{user_id}/role` PUT/DELETE (needs a platform-managed-role store
-that overrides OIDC roles), `GET /v1/admin/environments/{name}/usage`
+route over an existing store): `GET /v1/admin/environments/{name}/usage`
 billing rollup, `GET /v1/sessions/{id}/workspace` snapshot download, and
 `GET /v1/sessions/{id}/messages` history list (message history is not
 persisted today). Left OPEN for follow-on batches.

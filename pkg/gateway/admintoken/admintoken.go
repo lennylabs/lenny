@@ -275,8 +275,11 @@ func (p *Provisioner) ensureUser(ctx context.Context) error {
 		Email:       p.cfg.Username,
 		DisplayName: "Initial platform administrator",
 		Roles:       []auth.Role{auth.RolePlatformAdmin},
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		// spec: §10.2 line 294 — the initial admin's platform-managed role
+		// must override any OIDC claim for the bootstrap subject.
+		RoleAssigned: true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if cerr != nil && !errors.Is(cerr, userstore.ErrAlreadyExists) {
 		return fmt.Errorf("admintoken: create admin user: %w", cerr)

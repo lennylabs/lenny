@@ -41,6 +41,22 @@ type User struct {
 	// slice means the default `user` role at runtime.
 	Roles []auth.Role
 
+	// RoleAssigned reports whether a platform-managed role assignment is
+	// present on the row. When true, Roles fully replace the user's
+	// OIDC-derived role claim (the §10.2 line 294 precedence rule). When
+	// false — the state left by `DELETE /v1/admin/tenants/{id}/users/
+	// {user_id}/role` — the row is retained (so the user still lists) but
+	// the OIDC claim is authoritative again.
+	// spec: §15.1 lines 827-828, §10.2 line 294.
+	RoleAssigned bool
+
+	// RoleAssignedBy / RoleAssignedAt record the §15.1 line 826
+	// provenance of the platform-managed role assignment: the operator
+	// subject that set it and when. They are empty/zero on a row with no
+	// assignment.
+	RoleAssignedBy string
+	RoleAssignedAt time.Time
+
 	// Disabled, when true, indicates the user is in the §11.4
 	// `soft_disable` state — sessions are not terminated but new
 	// session creation is blocked.

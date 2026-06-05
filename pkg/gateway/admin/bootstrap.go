@@ -794,8 +794,11 @@ func (r *Router) upsertUsers(req *http.Request, in []UserPayload, opts bootstrap
 					Email:       p.Email,
 					DisplayName: p.DisplayName,
 					Roles:       p.Roles,
-					Disabled:    p.Disabled,
-					CreatedAt:   r.clock(),
+					// spec: §10.2 line 294 — a seeded user's platform-managed
+					// roles override the OIDC claim.
+					RoleAssigned: true,
+					Disabled:     p.Disabled,
+					CreatedAt:    r.clock(),
 				}
 				row.UpdatedAt = row.CreatedAt
 				if err := r.users.Create(req.Context(), row); err != nil {

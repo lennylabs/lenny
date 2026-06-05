@@ -7608,12 +7608,13 @@ func (a ocsfMetricsAdapter) DeadLettered(string) {}
 
 // userstorePlatformRoles adapts a userstore.Store into the §10.2 line
 // 294 platform-managed role resolver consulted by the auth middleware.
-// When a row exists for (tenantID, subject) — including a row whose
-// Roles slice is empty — its Roles fully replace the OIDC claim, so
-// tenant-admins can downgrade a user with an over-broad OIDC claim by
-// recording an explicit (possibly empty) assignment. A row not found
-// leaves the JWT claim authoritative.
-// spec: §10.2 line 294. F-10.2.3.
+// When a row carries a platform-managed assignment (RoleAssigned) — even
+// one whose Roles slice is empty — its Roles fully replace the OIDC
+// claim, so tenant-admins can downgrade a user with an over-broad OIDC
+// claim by recording an explicit (possibly empty) assignment. A row with
+// no assignment (the state left by `DELETE /v1/admin/tenants/{id}/users/
+// {user_id}/role`) or a missing row leaves the JWT claim authoritative.
+// spec: §10.2 line 294, §15.1 line 828. F-10.2.3, F-15.1.3.
 type userstorePlatformRoles struct {
 	store userstore.Store
 }
@@ -7629,7 +7630,7 @@ func (r userstorePlatformRoles) ResolveRoles(ctx context.Context, tenantID, subj
 	if err != nil {
 		return nil, false, err
 	}
-	return append([]auth.Role(nil), row.Roles...), true, nil
+	return append([]auth.Role(nil), row.Roles...), row.RoleAssigned, nil
 }
 
 // bearerTenantRegistry is the §10.2 line 219 multi-tenant bearer-chain
