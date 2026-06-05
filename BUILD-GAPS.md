@@ -14522,7 +14522,7 @@ accessors, Clone, and non-negative Validate.
 
 ---
 
-### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — OPEN
+### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — DEFERRED
 
 **Spec:** §10.7 lines 779–782 — Lenny supports two external-targeting
 integration paths: OFREP (recommended) and "OpenFeature SDK providers linked
@@ -14556,6 +14556,23 @@ OFREP client to fail; here the gateway never even tries).
 inert. The admission-time validation accepts a `launchdarkly`/`statsig`/`unleash`
 provider as if functional, so deployers receive no signal that their
 configuration will be ignored at runtime.
+
+**DEFERRED (re-verified OPEN; environment-blocked):** The finding is
+accurate — `experimentrouter.go` still short-circuits any non-OFREP
+provider. Implementing the three providers requires linking their vendor
+OpenFeature SDK modules into the gateway binary
+(`github.com/open-feature/go-sdk-contrib/providers/{launchdarkly,statsig,unleash}`
+plus each vendor's own SDK), none of which is reachable in this build
+environment: there is no `vendor/` tree, none of the modules is in the
+local module cache, none appears in `go.mod`, and the sandbox has no
+network to `go get` them. Adding a hand-rolled HTTP reimplementation of
+each vendor's evaluation API is explicitly not what §10.7 lines 779–782
+mandate (it specifies the vendor SDK providers), would be a large
+fragile surface, and the §10.7 OFREP path already covers
+externally-targeted experiments. Re-attempt once the vendor SDK modules
+are available offline: add the three providers behind the existing
+`experiment.TargetingProvider` enum, construct each from its config
+sub-block, and replace the OFREP-only guard with a provider switch.
 
 ---
 
@@ -25713,6 +25730,46 @@ suspend/resume tenant, credential rotation, schema rollback). Several
 gaps (e.g. `/sessions/{id}/artifacts`, `/sessions/{id}/workspace`,
 `/sessions/{id}/logs`) are first-tier client features the SDK
 documentation already references.
+
+**Progress (stays OPEN — re-diffed against the current tree).** The
+original "~65 unimplemented" count is largely stale: a route-by-route
+grep against the mounted handlers shows most of the listed endpoints now
+exist, added by intervening batches. Confirmed mounted since the finding
+was filed: `/sessions/{id}/artifacts`, `/sessions/{id}/logs`,
+`/sessions/{id}/setup-output`, `/sessions/{id}/usage`,
+`/sessions/{id}/webhook-events`; the credential-pool credential
+sub-resources and pool-wide `revoke`; tenant `force-delete` and
+`rotate-erasure-salt`; the entire `external-adapters` resource and its
+`/validate`; `connectors/{name}/test`; `admin/sessions/{id}` and
+`force-terminate`; `billing-correction-reasons`; `admin/preflight`;
+`schema/migrations/status` + `{version}/down`; `quota/reconcile`; the
+`erasure-jobs` retry / clear-processing-restriction follow-ups;
+`environments/{name}/access-report`; the subtree `extension-denial`
+delete; and the pool operational surface `drain` / `sync-status` /
+`resume-reconciliation` / `warm-count` / `bootstrap-override`. The
+pool-upgrade sub-routes (`upgrade/start|proceed|pause|resume|rollback`,
+`upgrade-status`) are tracked by the still-OPEN F-10.5.1.
+`.well-known/agent.json` is spec-marked Post-V1.
+
+This batch closed one of the genuine remaining gaps: **`GET /v1/pools`**
+(spec line 703) is now mounted in the sessionserver. It lists warm pools
+and their configured warm replica counts using the canonical §15.1
+cursor-paginated envelope, scoped to pools that warm a runtime the caller
+can already discover through the §10.6 transparent runtime filter (a pool
+backing an undiscoverable runtime is hidden, and a runtime-registry read
+failure fails closed to an empty list). Documented in `openapi.json`.
+
+Genuine remaining (real feature work, each multi-resource, not a thin
+route over an existing store): tenant `suspend` / `resume` (needs a
+tenant lifecycle status field + `TENANT_SUSPENDED` gating on session
+create / message inject + drain), tenant `users` listing and
+`users/{user_id}/role` PUT/DELETE (needs a platform-managed-role store
+that overrides OIDC roles), `GET /v1/admin/legal-holds` list (needs
+set-by/set-at/note provenance the boolean hold flag does not yet carry),
+`GET /v1/admin/environments/{name}/usage` billing rollup,
+`GET /v1/sessions/{id}/workspace` snapshot download, and
+`GET /v1/sessions/{id}/messages` history list (message history is not
+persisted today). Left OPEN for follow-on batches.
 
 ### - [x] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — CLOSED
 

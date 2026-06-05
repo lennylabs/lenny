@@ -1582,6 +1582,10 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
+	// §15.1 line 703 — session-facing pool discovery. Mounted bare like
+	// GET /v1/runtimes: the handler scopes the list to pools backing a
+	// runtime the caller can already discover (§10.6 transparent filter).
+	mux.HandleFunc("GET /v1/pools", s.handleListPools)
 	mux.HandleFunc("GET /v1/runtimes/{name}/meta/{key}", s.handleRuntimeMeta)
 	mux.HandleFunc("GET /internal/runtimes/{name}/meta/{key}", s.handleInternalRuntimeMeta)
 	mux.HandleFunc("GET /v1/models", s.handleListModels)

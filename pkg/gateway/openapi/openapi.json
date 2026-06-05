@@ -511,6 +511,52 @@
         }
       }
     },
+    "/v1/pools": {
+      "get": {
+        "operationId": "getV1Pools",
+        "summary": "Discover warm pools",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "cursor", "in": "query", "description": "Opaque cursor from a previous page's response. Omit for the first page.", "schema": { "type": "string" } },
+          { "name": "limit",  "in": "query", "description": "Items per page. Minimum 1, maximum 200; values outside the range are clamped. Default 50.", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "sort",   "in": "query", "description": "Sort field and direction as field:asc|desc. Supported fields: created_at, updated_at. Default created_at:desc.", "schema": { "type": "string", "default": "created_at:desc" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK. Pools are scoped to those backing a runtime the caller can discover via GET /v1/runtimes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items", "hasMore"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name":             { "type": "string" },
+                          "runtimeRef":       { "type": "string" },
+                          "executionMode":    { "type": "string", "enum": ["session","task","concurrent"] },
+                          "concurrencyStyle": { "type": "string", "enum": ["workspace","stateless"] },
+                          "resourceClass":    { "type": "string" },
+                          "warmCount":        { "type": "integer" },
+                          "maxConcurrent":    { "type": "integer" },
+                          "createdAt":        { "type": "string", "format": "date-time" },
+                          "updatedAt":        { "type": "string", "format": "date-time" }
+                        }
+                      }
+                    },
+                    "cursor": { "type": "string", "nullable": true, "description": "Opaque cursor for the next page; null when no more results." },
+                    "hasMore": { "type": "boolean", "description": "True when additional pages exist beyond this one." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/runtimes": {
       "get": {
         "operationId": "getV1Runtimes",
