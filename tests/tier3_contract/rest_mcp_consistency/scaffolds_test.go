@@ -52,6 +52,13 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 		// so lenny/create_session runs the same gates and returns the same
 		// envelope as REST POST /v1/sessions. F-15.2.4.
 		SessionCreator: rest,
+		// spec: §15.2.1 rule 1 line 1380 — the shared service layer the
+		// overlapping client-facing lifecycle/read tools (start_session,
+		// terminate_session, get_session_status, list_sessions,
+		// list_artifacts) dispatch through, so the RegisterAdapterUnderTest
+		// state-transition and pagination matrix entries run the identical
+		// REST route on the MCP surface. F-15.2.3 / F-15.2.5.
+		SessionService: rest,
 		Executor:       exec,
 		Memory:         mem,
 		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -474,9 +481,12 @@ func TestRESTMCPMemory(t *testing.T) {
 	}
 
 	// MCP user-scoped query sees at least both. (It is a superset of
-	// the session-scoped read by spec.)
+	// the session-scoped read by spec.) `query` is required (§8.5 line
+	// 596); both seeded memories contain "the", so the substring search
+	// returns both.
 	mcpQuery := mcpCall(t, tsMCP.URL+"/mcp", "lenny/memory_query", map[string]any{
 		"sessionId": "sess_mem",
+		"query":     "the",
 	})
 	payload := mcpToolPayload(t, mcpQuery)
 	var mcpMems []any

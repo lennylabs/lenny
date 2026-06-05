@@ -155,3 +155,17 @@ func TestStatusIsValid(t *testing.T) {
 		t.Error("bogus status should be invalid")
 	}
 }
+
+// spec: §15 line 1414 — only an adapter that passed the
+// RegisterAdapterUnderTest suite (active) routes; pending_validation and
+// validation_failed are excluded from all traffic routing.
+func TestStatusRoutable(t *testing.T) {
+	if !StatusActive.Routable() {
+		t.Error("active adapter must be routable")
+	}
+	for _, s := range []Status{StatusPendingValidation, StatusValidationFailed, Status("bogus")} {
+		if s.Routable() {
+			t.Errorf("%q must not be routable until validated", s)
+		}
+	}
+}

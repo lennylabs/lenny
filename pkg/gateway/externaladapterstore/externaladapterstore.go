@@ -50,6 +50,19 @@ func (s Status) IsValid() bool {
 	return s == StatusPendingValidation || s == StatusActive || s == StatusValidationFailed
 }
 
+// Routable reports whether an adapter in status s may receive traffic.
+// Per §15 line 1414 only an adapter that has passed the
+// RegisterAdapterUnderTest conformance suite (StatusActive) routes;
+// adapters in pending_validation or validation_failed are excluded from
+// all traffic routing. This is the machine-enforceable production gate
+// the §15.0 ExternalAdapterRegistry consults before dispatching to a
+// runtime-registered adapter.
+//
+// spec: §15 line 1414.
+func (s Status) Routable() bool {
+	return s == StatusActive
+}
+
 // ExternalAdapter is one registered external protocol adapter record.
 type ExternalAdapter struct {
 	// Name is the §15.1 registry key, unique platform-wide.
