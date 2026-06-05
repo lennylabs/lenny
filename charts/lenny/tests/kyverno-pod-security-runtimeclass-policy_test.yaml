@@ -1,0 +1,141 @@
+suite: kyverno RuntimeClass-aware Restricted PSS ClusterPolicy (§17.2 items 1, 2, 4)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/kyverno-pod-security-runtimeclass-policy.yaml
+tests:
+  - it: renders nothing when the kyverno admission-policy block is disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when the podSecurity sub-rule is disabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.podSecurity.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the ClusterPolicy fail-closed when both flags are enabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ClusterPolicy
+      - equal:
+          path: apiVersion
+          value: kyverno.io/v1
+      - equal:
+          path: metadata.name
+          value: lenny-pod-security-runtimeclass
+      - equal:
+          path: spec.validationFailureAction
+          value: Enforce
+      - equal:
+          path: spec.failurePolicy
+          value: Fail
+
+  - it: scopes every rule to agent namespaces via the namespace label (item 4)
+    set:
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - equal:
+          path: spec.rules[0].match.any[0].resources.namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+      - equal:
+          path: spec.rules[1].match.any[0].resources.namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+      - equal:
+          path: spec.rules[2].match.any[0].resources.namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+
+  - it: holds runc pods to the full Restricted profile with no exclusions (item 1)
+    set:
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - equal:
+          path: spec.rules[0].name
+          value: restricted-pss-runc
+      - equal:
+          path: spec.rules[0].validate.podSecurity.level
+          value: restricted
+      - notExists:
+          path: spec.rules[0].validate.podSecurity.exclude
+      # the runc rule fires when runtimeClassName is neither gVisor nor Kata
+      - equal:
+          path: spec.rules[0].preconditions.all[0].operator
+          value: NotEquals
+      - equal:
+          path: spec.rules[0].preconditions.all[0].value
+          value: gvisor
+      - equal:
+          path: spec.rules[0].preconditions.all[1].value
+          value: kata
+
+  - it: exempts only Seccomp for gVisor pods (item 2)
+    set:
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - equal:
+          path: spec.rules[1].name
+          value: restricted-pss-gvisor
+      - equal:
+          path: spec.rules[1].preconditions.all[0].operator
+          value: Equals
+      - equal:
+          path: spec.rules[1].preconditions.all[0].value
+          value: gvisor
+      - equal:
+          path: spec.rules[1].validate.podSecurity.exclude[0].controlName
+          value: Seccomp
+
+  - it: exempts only Privilege Escalation for Kata pods (item 2)
+    set:
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - equal:
+          path: spec.rules[2].name
+          value: restricted-pss-kata
+      - equal:
+          path: spec.rules[2].preconditions.all[0].value
+          value: kata
+      - equal:
+          path: spec.rules[2].validate.podSecurity.exclude[0].controlName
+          value: Privilege Escalation
+
+  - it: sources RuntimeClass names from runtimeClasses.profiles (matches the webhook flags)
+    set:
+      admissionPolicies.kyverno.enabled: true
+      runtimeClasses.profiles.sandboxed.name: runsc
+      runtimeClasses.profiles.microvm.name: kata-qemu
+    asserts:
+      - equal:
+          path: spec.rules[1].preconditions.all[0].value
+          value: runsc
+      - equal:
+          path: spec.rules[2].preconditions.all[0].value
+          value: kata-qemu
+
+  - it: drops the Kata rule and its runc precondition when the Kata name is empty
+    set:
+      admissionPolicies.kyverno.enabled: true
+      runtimeClasses.profiles.microvm.name: ""
+    asserts:
+      # only runc + gVisor rules remain
+      - lengthEqual:
+          path: spec.rules
+          count: 2
+      - equal:
+          path: spec.rules[1].name
+          value: restricted-pss-gvisor
+      # runc rule keeps a single (gVisor) NotEquals precondition
+      - lengthEqual:
+          path: spec.rules[0].preconditions.all
+          count: 1
+      - equal:
+          path: spec.rules[0].preconditions.all[0].value
+          value: gvisor

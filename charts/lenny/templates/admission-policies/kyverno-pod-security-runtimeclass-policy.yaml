@@ -1,0 +1,140 @@
+{{- /*
+Kyverno ClusterPolicy implementing the spec §17.2 RuntimeClass-aware
+split Pod Security Standards enforcement (inventory items 1, 2, and 4):
+
+  1. Full Restricted PSS enforcement for runc pods.
+  2. Relaxed, RuntimeClass-specific PSS for gVisor and Kata pods —
+     gVisor skips the Seccomp control (RuntimeDefault is a no-op under
+     gVisor's userspace syscall interception), Kata skips the Privilege
+     Escalation control (its device plugins require allowPrivilegeEscalation).
+  4. Label-based namespace targeting scopes the policy to the namespaces
+     named in .Values.agentNamespaces, selected by the
+     `lenny.dev/agent-namespace` namespace label the chart stamps on each.
+
+The split mirrors pkg/podsecurity.RuntimeClassPolicy.relaxations exactly:
+a pod whose runtimeClassName matches neither the gVisor nor the Kata name
+(including the runc/standard name and an empty value) receives full
+Restricted enforcement; the gVisor name lifts only Seccomp; the Kata name
+lifts only Privilege Escalation. RuntimeClass names come from the same
+runtimeClasses.profiles.*.name values the lenny-pod-security webhook reads
+through its --gvisor-runtime-class / --kata-runtime-class flags, so the
+policy-engine layer and the in-tree webhook never diverge.
+
+This template renders only when both:
+
+  - admissionPolicies.kyverno.enabled is true, AND
+  - admissionPolicies.kyverno.podSecurity.enabled is true (the default
+    when the Kyverno block is enabled).
+
+failurePolicy: Fail (spec §17.2 line 88) — a Kyverno outage blocks agent
+pod admission rather than admitting a pod with an unverified PSS posture.
+validationFailureAction: Enforce rejects a non-compliant pod at admission.
+
+Operators using Gatekeeper instead of Kyverno should leave
+admissionPolicies.kyverno.enabled at its default (false) and configure
+equivalent ConstraintTemplate / Constraint pairs applying the Restricted
+PSS profile with the same per-RuntimeClass control relaxations. The
+Kyverno CRDs must be present in the cluster for this manifest to be
+accepted by the API server.
+*/ -}}
+{{- if and .Values.admissionPolicies.kyverno.enabled .Values.admissionPolicies.kyverno.podSecurity.enabled }}
+{{- $gvisorName := .Values.runtimeClasses.profiles.sandboxed.name }}
+{{- $kataName := .Values.runtimeClasses.profiles.microvm.name }}
+{{- $agentNsMatch := dict "any" (list (dict "resources" (dict "kinds" (list "Pod") "namespaceSelector" (dict "matchExpressions" (list (dict "key" "lenny.dev/agent-namespace" "operator" "In" "values" (list "true"))))))) }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: lenny-pod-security-runtimeclass
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: "Lenny: RuntimeClass-aware Restricted PSS in agent namespaces"
+    policies.kyverno.io/category: "Lenny / §17.2 Pod Security Standards"
+    policies.kyverno.io/severity: "high"
+    policies.kyverno.io/subject: "Pod"
+    policies.kyverno.io/description: >-
+      Spec §17.2 split-enforcement model: runc pods are held to full
+      Restricted PSS, gVisor pods skip the Seccomp control, Kata pods skip
+      the Privilege Escalation control. Mirrors the in-tree
+      lenny-pod-security webhook; the spec inventory names a
+      Gatekeeper/Kyverno policy as the policy-engine layer.
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  background: true
+  rules:
+    # spec: §17.2 item 1 — runc pods (and any pod whose runtimeClassName
+    # matches neither the gVisor nor the Kata name, including an empty
+    # value) receive full Restricted PSS. This is the relaxations()
+    # fall-through: no exemption applies unless the RuntimeClass matches.
+    - name: restricted-pss-runc
+      match:
+        {{- toYaml $agentNsMatch | nindent 8 }}
+      preconditions:
+        all:
+          {{- if $gvisorName }}
+          - key: {{ `"{{ request.object.spec.runtimeClassName || '' }}"` }}
+            operator: NotEquals
+            value: {{ $gvisorName | quote }}
+          {{- end }}
+          {{- if $kataName }}
+          - key: {{ `"{{ request.object.spec.runtimeClassName || '' }}"` }}
+            operator: NotEquals
+            value: {{ $kataName | quote }}
+          {{- end }}
+      validate:
+        message: >-
+          runc agent pods must satisfy the Restricted Pod Security
+          Standard (spec §17.2, §13.1).
+        podSecurity:
+          level: restricted
+          version: latest
+    {{- if $gvisorName }}
+    # spec: §17.2 item 2 — gVisor pods skip the Seccomp control because
+    # the host seccomp profile is meaningless under gVisor's userspace
+    # syscall interception; every other Restricted control still applies.
+    - name: restricted-pss-gvisor
+      match:
+        {{- toYaml $agentNsMatch | nindent 8 }}
+      preconditions:
+        all:
+          - key: {{ `"{{ request.object.spec.runtimeClassName || '' }}"` }}
+            operator: Equals
+            value: {{ $gvisorName | quote }}
+      validate:
+        message: >-
+          gVisor agent pods must satisfy the Restricted Pod Security
+          Standard except the Seccomp control (spec §17.2, §13.1).
+        podSecurity:
+          level: restricted
+          version: latest
+          exclude:
+            - controlName: Seccomp
+              images:
+                - "*"
+    {{- end }}
+    {{- if $kataName }}
+    # spec: §17.2 item 2 — Kata pods skip the Privilege Escalation control
+    # because their device plugins require allowPrivilegeEscalation: true;
+    # every other Restricted control still applies.
+    - name: restricted-pss-kata
+      match:
+        {{- toYaml $agentNsMatch | nindent 8 }}
+      preconditions:
+        all:
+          - key: {{ `"{{ request.object.spec.runtimeClassName || '' }}"` }}
+            operator: Equals
+            value: {{ $kataName | quote }}
+      validate:
+        message: >-
+          Kata agent pods must satisfy the Restricted Pod Security
+          Standard except the Privilege Escalation control (spec §17.2, §13.1).
+        podSecurity:
+          level: restricted
+          version: latest
+          exclude:
+            - controlName: Privilege Escalation
+              images:
+                - "*"
+    {{- end }}
+{{- end }}

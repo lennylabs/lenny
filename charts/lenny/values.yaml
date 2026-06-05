@@ -172,6 +172,24 @@ admissionPolicies:
     # relying on convention. Default enabled when the Kyverno block is on.
     agentServiceAccountRoleBindings:
       enabled: true
+    # podSecurity renders the §17.2 RuntimeClass-aware Restricted PSS
+    # ClusterPolicy (inventory items 1, 2, and 4). It is the named
+    # policy-engine half of the split-enforcement model: runc pods are
+    # held to full Restricted PSS, gVisor pods are exempted from the
+    # Seccomp control (RuntimeDefault is a no-op under gVisor's userspace
+    # syscall interception), and Kata pods are exempted from the Privilege
+    # Escalation control (their device plugins require it). Every other
+    # Restricted control applies to all three. The policy scopes to agent
+    # namespaces via the `lenny.dev/agent-namespace` namespace label
+    # (item 4). It complements the in-tree lenny-pod-security
+    # ValidatingAdmissionWebhook, which already performs the identical
+    # RuntimeClass-aware check; the spec's inventory names a
+    # Gatekeeper/Kyverno policy specifically, so the chart ships this as
+    # the named second layer. RuntimeClass names are sourced from
+    # runtimeClasses.profiles.{standard,sandboxed,microvm}.name, matching
+    # the webhook's --gvisor-runtime-class / --kata-runtime-class flags.
+    podSecurity:
+      enabled: true
 
 # webhookIngressCIDR is the source CIDR allowed to reach the admission
 # webhook pods (§13.2). The kube-apiserver calls webhooks from a node
