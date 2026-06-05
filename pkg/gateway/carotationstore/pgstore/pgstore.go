@@ -54,26 +54,41 @@ func NewWithClock(pool *pgxpool.Pool, clock func() time.Time) *Store {
 	return s
 }
 
-// Get implements carotationstore.Store.
-func (s *Store) Get(ctx context.Context) (carotationstore.Record, bool, error) {
+// scanner is the QueryRow.Scan surface, isolated so scanRecord's
+// column→Record mapping is exercised at tier-1 without a live Postgres.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// scanRecord maps a ca_rotation row onto a carotationstore.Record. The
+// column order must match the SELECT in Get; the nullable
+// overlap_started_at scans through a *time.Time and normalizes to UTC.
+func scanRecord(row scanner) (carotationstore.Record, error) {
 	var (
 		rec     carotationstore.Record
 		started *time.Time
 	)
-	err := s.pool.QueryRow(ctx, `
+	if err := row.Scan(&rec.Stage, &rec.CurrentCAID, &rec.NewCAID, &started,
+		&rec.OverlapWindowSecs, &rec.Version, &rec.UpdatedAt); err != nil {
+		return carotationstore.Record{}, err
+	}
+	if started != nil {
+		rec.OverlapStartedAt = started.UTC()
+	}
+	return rec, nil
+}
+
+// Get implements carotationstore.Store.
+func (s *Store) Get(ctx context.Context) (carotationstore.Record, bool, error) {
+	rec, err := scanRecord(s.pool.QueryRow(ctx, `
 		SELECT stage, current_ca_id, new_ca_id, overlap_started_at,
 		       overlap_window_secs, version, updated_at
-		FROM ca_rotation WHERE id = $1`, singletonID).
-		Scan(&rec.Stage, &rec.CurrentCAID, &rec.NewCAID, &started,
-			&rec.OverlapWindowSecs, &rec.Version, &rec.UpdatedAt)
+		FROM ca_rotation WHERE id = $1`, singletonID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return carotationstore.Record{}, false, nil
 	}
 	if err != nil {
 		return carotationstore.Record{}, false, fmt.Errorf("carotationstore: get: %w", err)
-	}
-	if started != nil {
-		rec.OverlapStartedAt = started.UTC()
 	}
 	return rec, true, nil
 }
