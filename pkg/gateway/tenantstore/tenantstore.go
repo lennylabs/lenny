@@ -160,6 +160,28 @@ type Tenant struct {
 	// `active`. spec: §12.8 line 865.
 	State string
 
+	// Suspended marks a tenant suspended by an operator via the §15.1
+	// `POST /v1/admin/tenants/{id}/suspend` action. Suspension is
+	// orthogonal to the §12.8 deletion lifecycle State: a suspended
+	// tenant rejects new session creation and message injection with
+	// TENANT_SUSPENDED until resumed, but its row is otherwise
+	// untouched. spec: §15.1 lines 818-819.
+	Suspended bool
+
+	// SuspendedReason is the operator-supplied justification recorded
+	// with a suspension. Empty when the tenant is not suspended or the
+	// operator supplied no reason. spec: §15.1 line 818.
+	SuspendedReason string
+
+	// SuspendedAt is the UTC instant the tenant was last suspended. Zero
+	// when the tenant is not suspended. spec: §15.1 line 818.
+	SuspendedAt time.Time
+
+	// SuspendedBy is the subject of the operator who suspended the
+	// tenant. Empty when the tenant is not suspended. spec: §15.1 line
+	// 818.
+	SuspendedBy string
+
 	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
 	// starts at 1 and increments on every successful write (Update and
 	// SoftDelete). The quoted decimal version is the tenant's strong
@@ -182,6 +204,12 @@ func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
 func (t Tenant) AcceptsNewWork() bool {
 	return t.State == "" || t.State == TenantStateActive
 }
+
+// IsSuspended reports whether the tenant is operator-suspended via the
+// §15.1 suspend action. A suspended tenant rejects new session creation
+// and message injection with TENANT_SUSPENDED regardless of its §12.8
+// deletion-lifecycle State. spec: §15.1 lines 818-819.
+func (t Tenant) IsSuspended() bool { return t.Suspended }
 
 // §12.8 TenantState lifecycle values. spec: §12.8 line 865.
 const (

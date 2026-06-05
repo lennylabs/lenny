@@ -63,6 +63,10 @@ const (
 	// §11.6 — operator-managed circuit-breaker state changes.
 	EventCircuitBreakerStateChanged EventType = "circuit_breaker.state_changed"
 
+	// §15.1 lines 818-819 — operator tenant suspend/resume actions.
+	EventTenantSuspended EventType = "tenant.suspended"
+	EventTenantResumed   EventType = "tenant.resumed"
+
 	// §9.2 — elicitation content integrity.
 	EventElicitationContentTamperDetected                EventType = "elicitation.content_tamper_detected"
 	EventTenantElicitationContentIntegrityChanged        EventType = "tenant.elicitation_content_integrity_changed"
@@ -415,6 +419,12 @@ var auxKnownEventTypes = []EventType{
 	// session lifecycle terminals but not this operator-driven force, so it
 	// is recognized by IsKnownEventType yet excluded from Catalog(). F-24.11.3.
 	EventSessionForceTerminated,
+	// §15.1 lines 818-819 tenant suspend/resume operator actions. §16.7
+	// does not enumerate them, so they are recognized by IsKnownEventType
+	// (audit-sink validators must not discard them) yet excluded from
+	// Catalog(), which transcribes only the §16.7 enumeration. F-15.1.3.
+	EventTenantSuspended,
+	EventTenantResumed,
 	// §15.1 / §24.8 external-adapter registry lifecycle. Emitted through the
 	// §11.7 audit path by the admin CRUD endpoints and the validate gate;
 	// §16.7 does not enumerate them, so they are recognized by

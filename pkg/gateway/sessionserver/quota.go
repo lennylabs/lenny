@@ -120,10 +120,47 @@ func (s *Server) requireTenantState(w http.ResponseWriter, r *http.Request, tena
 			"tenant state check failed: "+err.Error(), nil)
 		return false
 	}
+	// spec: §15.1 line 818 — a suspended tenant rejects new session
+	// creation with TENANT_SUSPENDED. The check precedes the §12.8
+	// deletion-lifecycle gate so an operator suspension is reported as
+	// suspension rather than as the deletion-lifecycle TENANT_NOT_ACTIVE.
+	if tenant.IsSuspended() {
+		s.writeError(w, http.StatusForbidden, "TENANT_SUSPENDED",
+			"the tenant is suspended and is not accepting new sessions",
+			map[string]any{"tenantId": tenantID})
+		return false
+	}
 	if !tenant.AcceptsNewWork() {
 		s.writeError(w, http.StatusForbidden, "TENANT_NOT_ACTIVE",
 			"the tenant is being disabled or deleted and is not accepting new sessions",
 			map[string]any{"tenantId": tenantID, "state": tenant.State})
+		return false
+	}
+	return true
+}
+
+// requireTenantNotSuspended rejects a §15.1 message injection against a
+// suspended tenant with 403 TENANT_SUSPENDED. It returns true when the
+// call may proceed; when it returns false it has already written the
+// response. An unwired registry or an unknown tenant means there is no
+// suspension to consult, so the call proceeds. spec: §15.1 line 818.
+func (s *Server) requireTenantNotSuspended(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if s.tenants == nil {
+		return true
+	}
+	tenant, err := s.tenants.Get(r.Context(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"tenant state check failed: "+err.Error(), nil)
+		return false
+	}
+	if tenant.IsSuspended() {
+		s.writeError(w, http.StatusForbidden, "TENANT_SUSPENDED",
+			"the tenant is suspended; message injection is rejected",
+			map[string]any{"tenantId": tenantID})
 		return false
 	}
 	return true

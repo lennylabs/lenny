@@ -216,6 +216,31 @@ func TestInterceptorRejectedIsKnownButNotCatalogued_spec_11_7_331(t *testing.T) 
 	}
 }
 
+// TestTenantSuspendResumeKnownButNotCatalogued asserts the §15.1 tenant
+// suspend/resume operator actions are recognized by IsKnownEventType so
+// audit-sink validators accept the rows, while staying out of Catalog()
+// because §16.7 does not enumerate them. spec: §15.1 lines 818-819.
+// F-15.1.3.
+func TestTenantSuspendResumeKnownButNotCatalogued_spec_15_1_818(t *testing.T) {
+	wire := map[EventType]string{
+		EventTenantSuspended: "tenant.suspended",
+		EventTenantResumed:   "tenant.resumed",
+	}
+	for et, want := range wire {
+		if string(et) != want {
+			t.Errorf("event wire string = %q, want %q", et, want)
+		}
+		if !IsKnownEventType(et) {
+			t.Errorf("%q is emitted on the §11.7 audit path and must be a known event type", et)
+		}
+		for _, c := range Catalog() {
+			if c == et {
+				t.Errorf("%q is a §15.1 operator action, not a §16.7 enumeration — it must not appear in Catalog()", et)
+			}
+		}
+	}
+}
+
 // TestErasureRecoveryEventsKnownButNotCatalogued asserts the §24.12
 // erasure-job operator-recovery events (retry, clear-processing-
 // restriction) are recognized by IsKnownEventType so audit-sink

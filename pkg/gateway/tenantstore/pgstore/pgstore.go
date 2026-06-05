@@ -125,7 +125,7 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 	experiment_targeting, credential_policy, rbac_config,
 	token_quota_per_window, quota_reset_period, state, gc_priority,
-	erasure_salt, version`
+	erasure_salt, suspended, suspended_reason, suspended_at, suspended_by, version`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -236,14 +236,16 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
 		experiment_targeting, credential_policy, rbac_config,
-		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt, version
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt,
+		suspended, suspended_reason, suspended_at, suspended_by, version
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
-		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob, version)
+		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob,
+		t.Suspended, t.SuspendedReason, pgtenant.NullTime(t.SuspendedAt), t.SuspendedBy, version)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -325,14 +327,18 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		no_environment_policy = $13, experiment_targeting = $14,
 		credential_policy = $15, rbac_config = $16,
 		token_quota_per_window = $17, quota_reset_period = $18,
-		state = $19, gc_priority = $20, erasure_salt = $21, version = $22 WHERE id = $1`,
+		state = $19, gc_priority = $20, erasure_salt = $21,
+		suspended = $22, suspended_reason = $23, suspended_at = $24, suspended_by = $25,
+		version = $26 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
 		targeting, credPolicy, rbacConfig,
 		t.TokenQuotaPerWindow, t.QuotaResetPeriod, updateState(t.State),
-		gcPriorityOrDefault(t.GCPriority), newSaltBlob, t.Version); err != nil {
+		gcPriorityOrDefault(t.GCPriority), newSaltBlob,
+		t.Suspended, t.SuspendedReason, pgtenant.NullTime(t.SuspendedAt), t.SuspendedBy,
+		t.Version); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -419,12 +425,13 @@ func (s *Store) IsRegistered(tenantID string) (bool, error) {
 // the returned Tenant is left nil. F-12.8.5.
 func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 	var (
-		t          tenantstore.Tenant
-		deletedAt  *time.Time
-		targeting  []byte
-		credPolicy []byte
-		rbacConfig []byte
-		saltBlob   []byte
+		t           tenantstore.Tenant
+		deletedAt   *time.Time
+		targeting   []byte
+		credPolicy  []byte
+		rbacConfig  []byte
+		saltBlob    []byte
+		suspendedAt *time.Time
 	)
 	if err := row.Scan(
 		&t.ID, &t.DisplayName, &t.ComplianceProfile, &t.DataResidencyRegion,
@@ -433,12 +440,16 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
 		&targeting, &credPolicy, &rbacConfig,
 		&t.TokenQuotaPerWindow, &t.QuotaResetPeriod, &t.State, &t.GCPriority, &saltBlob,
+		&t.Suspended, &t.SuspendedReason, &suspendedAt, &t.SuspendedBy,
 		&t.Version,
 	); err != nil {
 		return tenantstore.Tenant{}, nil, err
 	}
 	if deletedAt != nil {
 		t.DeletedAt = *deletedAt
+	}
+	if suspendedAt != nil {
+		t.SuspendedAt = *suspendedAt
 	}
 	if len(targeting) > 0 {
 		if err := json.Unmarshal(targeting, &t.ExperimentTargeting); err != nil {

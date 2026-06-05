@@ -25759,10 +25759,26 @@ can already discover through the §10.6 transparent runtime filter (a pool
 backing an undiscoverable runtime is hidden, and a runtime-registry read
 failure fails closed to an empty list). Documented in `openapi.json`.
 
+**Progress (commit pending — stays OPEN).** Closed the tenant
+suspend/resume pair: `POST /v1/admin/tenants/{id}/suspend` and
+`POST /v1/admin/tenants/{id}/resume` (spec lines 818-819) are now mounted
+platform-admin-only on the admin router. Suspension is modeled as a
+`Suspended` marker (plus reason / operator / timestamp) on the tenant row
+— orthogonal to the §12.8 deletion-lifecycle `state` — persisted through
+both the Memory and Postgres stores (migration `0144_tenant_suspend`
+adds the columns; INSERT/UPDATE/scan wired). The gate is enforced at both
+spec-named points: session creation (`requireTenantState`, suspension
+beats the §12.8 `TENANT_NOT_ACTIVE` gate) and message injection
+(`requireTenantNotSuspended` in `handleMessages`) reject with 403
+`TENANT_SUSPENDED`. Suspend drains the tenant's active sessions through
+the existing §24.11 force-terminate seam (terminal and foreign-tenant
+sessions skipped) and is idempotent; resume clears the marker without
+un-terminating sessions. New `tenant.suspended` / `tenant.resumed` audit
+events (operator + reason) are catalogued as §11.7-path aux events.
+Documented in `openapi.json`.
+
 Genuine remaining (real feature work, each multi-resource, not a thin
-route over an existing store): tenant `suspend` / `resume` (needs a
-tenant lifecycle status field + `TENANT_SUSPENDED` gating on session
-create / message inject + drain), tenant `users` listing and
+route over an existing store): tenant `users` listing and
 `users/{user_id}/role` PUT/DELETE (needs a platform-managed-role store
 that overrides OIDC roles), `GET /v1/admin/legal-holds` list (needs
 set-by/set-at/note provenance the boolean hold flag does not yet carry),

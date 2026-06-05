@@ -234,6 +234,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 line 818 — message injection against a suspended tenant
+	// is rejected with TENANT_SUSPENDED. The session exists (checked
+	// above) before the suspension state leaks via this endpoint.
+	if !s.requireTenantNotSuspended(w, r, tenantID) {
+		return
+	}
 	if err := session.Validate(session.PreconditionRequest{
 		Endpoint:     session.EndpointMessages,
 		CurrentState: row.State,

@@ -1147,6 +1147,42 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/tenants/{id}/suspend": {
+      "post": {
+        "operationId": "postV1AdminTenantsByIdSuspend",
+        "summary": "Suspend a tenant",
+        "x-lenny-mcp-tool": "admin.suspend_tenant",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "reason": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/resume": {
+      "post": {
+        "operationId": "postV1AdminTenantsByIdResume",
+        "summary": "Resume a suspended tenant",
+        "x-lenny-mcp-tool": "admin.resume_tenant",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/runtimes": {
       "post": {
         "operationId": "postV1AdminRuntimes",

@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 )
 
@@ -633,5 +634,55 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "cursor_expired") {
 		t.Errorf("expired cursor envelope missing cursor_expired rule: %s", rr.Body.String())
+	}
+}
+
+// spec: §15.1 line 818 — POST /v1/sessions/{id}/messages against a
+// suspended tenant is rejected with 403 TENANT_SUSPENDED before the
+// message reaches the executor. F-15.1.3.
+func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
+	store := memstore.New()
+	seedRunningSession(t, store, "sess_susp")
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", Suspended: true}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Tenants:     tenants,
+	})
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_susp", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+	})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403, body %s", rr.Code, rr.Body.String())
+	}
+	if code, _, _ := decodeError(t, rr); code != "TENANT_SUSPENDED" {
+		t.Errorf("code = %q, want TENANT_SUSPENDED", code)
+	}
+}
+
+// An active tenant admits message injection through the same handler. The
+// suspension gate does not block normal traffic. F-15.1.3.
+func TestMessages_ActiveTenantAdmitted_spec_15_1_818(t *testing.T) {
+	store := memstore.New()
+	seedRunningSession(t, store, "sess_ok")
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Tenants:     tenants,
+	})
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_ok", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200, body %s", rr.Code, rr.Body.String())
 	}
 }

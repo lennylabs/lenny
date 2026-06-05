@@ -505,6 +505,14 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
 			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
+		// §15.1 lines 818-819: platform-admin tenant suspend/resume. Suspend
+		// rejects new session creation and message injection with
+		// TENANT_SUSPENDED and drains the tenant's active sessions; resume
+		// restores normal operation without un-terminating those sessions.
+		mux.Handle("POST /v1/admin/tenants/{id}/suspend",
+			r.requireAdmin(http.HandlerFunc(r.handleSuspendTenant)))
+		mux.Handle("POST /v1/admin/tenants/{id}/resume",
+			r.requireAdmin(http.HandlerFunc(r.handleResumeTenant)))
 		// §10.6 / §15.1 tenant RBAC config, gated on manage_rbac_config:
 		// platform-admin or tenant-admin, scoped to the path tenant.
 		rbacConfigAdmin := r.requirePermission(auth.PermManageRBACConfig)
