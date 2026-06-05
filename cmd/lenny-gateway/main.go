@@ -115,6 +115,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/carotation"
+	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
+	carotationpg "github.com/lennylabs/lenny/pkg/gateway/carotationstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/capacityplanning"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
@@ -714,6 +717,8 @@ func main() {
 		"path to the private key for --token-service-tls-cert.")
 	tokenServiceCA := flag.String("token-service-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
 		"path to the CA bundle that verifies the Token Service's server certificate on the §4.3 mTLS link.")
+	mtlsCurrentCAID := flag.String("mtls-current-ca-id", os.Getenv("LENNY_MTLS_CURRENT_CA_ID"),
+		"§10.3 lines 344-350 id of the cluster-internal CA that currently signs control-plane leaves (the chart's mtls.currentCAID, default lenny-mtls-ca when mtls.enabled). When set, the gateway serves the durable /v1/admin/ca-rotation procedure (begin/promote/retire) so an operator rotation is audited, overlap-window enforced, and resumable across restarts. Empty disables the CA-rotation admin surface (mTLS PKI disabled).")
 	tokenServiceTenant := flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
 		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
 	elicitationFloor := flag.String("elicitation-content-integrity-floor", os.Getenv("LENNY_ELICITATION_CONTENT_INTEGRITY_FLOOR"),
@@ -4150,6 +4155,31 @@ func main() {
 		log.Fatalf("lenny-gateway: §25.3 recommendation ring-buffer gauge: %v", err)
 	}
 
+	// §10.3 lines 344-350 — operator-driven cluster-internal CA rotation.
+	// The stage machine is durable (carotationstore: Postgres when a pool
+	// is wired, else in-memory) so an interrupted rotation resumes after a
+	// restart; each committed transition emits the platform.ca_rotated
+	// audit row through jwtaudit.CAObserver. Wired only when a current CA
+	// id is configured (the chart sets it when mtls.enabled), leaving the
+	// /v1/admin/ca-rotation routes absent on a mesh-mTLS deployment.
+	// F-10.3.21.
+	var caRotationMgr admin.CARotationManager
+	if *mtlsCurrentCAID != "" {
+		var caRotStore carotationstore.Store = carotationstore.NewMemory()
+		if pgPool != nil {
+			caRotStore = carotationpg.New(pgPool)
+		}
+		caRotOpts := []carotation.Option{}
+		if auditAppender != nil {
+			caRotOpts = append(caRotOpts, carotation.WithObserver(jwtaudit.NewCAObserver(auditAppender)))
+		}
+		mgr := carotation.NewManager(caRotStore, caRotOpts...)
+		if err := mgr.EnsureInitialized(context.Background(), *mtlsCurrentCAID); err != nil {
+			log.Printf("lenny-gateway: §10.3 CA-rotation init: %v", err)
+		}
+		caRotationMgr = mgr
+	}
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
@@ -4202,6 +4232,9 @@ func main() {
 		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
 		WithOperationsInventory(operations.New())
+	if caRotationMgr != nil {
+		adminRouter = adminRouter.WithCARotation(caRotationMgr)
+	}
 	if artifactCatalog != nil {
 		// §12.8 line 735 / 794(b): the durable artifact_store catalog backs
 		// artifact-scoped legal holds (POST /v1/admin/legal-hold with

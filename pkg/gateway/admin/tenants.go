@@ -239,6 +239,11 @@ type Router struct {
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
 
+	// caRotation drives the §10.3 CA-rotation state machine. Nil leaves
+	// the /v1/admin/ca-rotation routes unregistered (mTLS PKI disabled).
+	// F-10.3.21.
+	caRotation CARotationManager
+
 	// artifactReplication backs the §25.11 line 3898-3899
 	// POST/GET /v1/admin/artifact-replication/{region}/{resume,status}
 	// endpoints. The routes are registered unconditionally so an agent
@@ -852,6 +857,15 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/circuit-breakers/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetBreaker)))
 		mux.Handle("POST /v1/admin/circuit-breakers/{name}/open", r.requireAdmin(http.HandlerFunc(r.handleOpenBreaker)))
 		mux.Handle("POST /v1/admin/circuit-breakers/{name}/close", r.requireAdmin(http.HandlerFunc(r.handleCloseBreaker)))
+	}
+	if r.caRotation != nil {
+		// §10.3 lines 344-350 — operator-driven cluster-internal CA
+		// rotation. The procedure is platform-global, so every route is
+		// platform-admin-only. F-10.3.21.
+		mux.Handle("GET /v1/admin/ca-rotation", r.requireAdmin(http.HandlerFunc(r.handleGetCARotation)))
+		mux.Handle("POST /v1/admin/ca-rotation/begin", r.requireAdmin(http.HandlerFunc(r.handleBeginCARotation)))
+		mux.Handle("POST /v1/admin/ca-rotation/promote", r.requireAdmin(http.HandlerFunc(r.handlePromoteCARotation)))
+		mux.Handle("POST /v1/admin/ca-rotation/retire", r.requireAdmin(http.HandlerFunc(r.handleRetireCARotation)))
 	}
 	if r.leaseDenials != nil {
 		// §15.1 line 868 — clear the §8.6 extension-denied flag on a

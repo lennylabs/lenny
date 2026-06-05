@@ -214,6 +214,94 @@ func NewCARotation(currentCAID string, opts CARotationOptions) (*CARotation, err
 	}, nil
 }
 
+// RestoredCARotation carries the persisted §10.3 rotation fields a
+// caller needs to rebuild a CARotation mid-procedure after a gateway
+// restart, so the operator resumes from the recorded stage rather than
+// restarting the whole rotation (spec line 347: "Each stage is
+// durable"). carotationstore is the durable home; the gateway loads the
+// row at startup and hands the fields here.
+type RestoredCARotation struct {
+	// Stage is the recorded stage to resume at.
+	Stage CARotationStage
+
+	// OldCAID is the rotation's starting CA (the trust anchor present at
+	// CAStageIdle). Non-empty for every stage.
+	OldCAID string
+
+	// NewCAID is the CA introduced by BeginNewCARotation. Empty at
+	// CAStageIdle; non-empty for every later stage.
+	NewCAID string
+
+	// OverlapStartedAt is the instant BeginNewCARotation ran. Zero at
+	// CAStageIdle; set for CAStageNewCADeployed and CAStagePromoted so
+	// RetireOldCA can re-evaluate the overlap guard after a restart.
+	OverlapStartedAt time.Time
+}
+
+// RestoreCARotation rebuilds a CARotation from a persisted stage so an
+// interrupted §10.3 rotation resumes rather than restarting. It applies
+// the same field invariants the linear transitions maintain: OldCAID is
+// always present, a non-idle stage carries a distinct NewCAID, and a
+// stage inside the overlap window carries OverlapStartedAt. Returns a
+// *RotationError when any invariant is violated.
+func RestoreCARotation(s RestoredCARotation, opts CARotationOptions) (*CARotation, error) {
+	if !s.Stage.IsValid() {
+		return nil, &RotationError{Kind: "invalid_argument", Detail: fmt.Sprintf("unknown stage %q", s.Stage)}
+	}
+	if s.OldCAID == "" {
+		return nil, &RotationError{Kind: "invalid_argument", Detail: "oldCAID is empty"}
+	}
+	if s.Stage == CAStageIdle {
+		if s.NewCAID != "" {
+			return nil, &RotationError{Kind: "invalid_argument", Detail: "idle stage carries a newCAID"}
+		}
+	} else {
+		if s.NewCAID == "" {
+			return nil, &RotationError{Kind: "invalid_argument", Detail: fmt.Sprintf("stage %q requires a newCAID", s.Stage)}
+		}
+		if s.NewCAID == s.OldCAID {
+			return nil, &RotationError{Kind: "invalid_argument", Detail: "newCAID equals oldCAID"}
+		}
+	}
+	if (s.Stage == CAStageNewCADeployed || s.Stage == CAStagePromoted) && s.OverlapStartedAt.IsZero() {
+		return nil, &RotationError{Kind: "invalid_argument", Detail: fmt.Sprintf("stage %q requires overlapStartedAt", s.Stage)}
+	}
+	window := opts.OverlapWindow
+	if window <= 0 {
+		window = DefaultCARotationOverlap
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &CARotation{
+		stage:            s.Stage,
+		oldCAID:          s.OldCAID,
+		newCAID:          s.NewCAID,
+		overlapStartedAt: s.OverlapStartedAt,
+		overlapWindow:    window,
+		now:              now,
+		observer:         opts.Observer,
+	}, nil
+}
+
+// OldCAID returns the rotation's starting CA. The carotation Manager
+// reads it to persist the durable record without reaching into the
+// rotation's private fields.
+func (r *CARotation) OldCAID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.oldCAID
+}
+
+// NewCAID returns the CA introduced by BeginNewCARotation, or "" before
+// it runs.
+func (r *CARotation) NewCAID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.newCAID
+}
+
 // BeginNewCARotation introduces newCAID into the trust bundle.
 // After this call the gateway trusts both the old and new CAs; the
 // old CA still signs new leaves. Records the rotation start instant
