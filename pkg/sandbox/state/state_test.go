@@ -151,9 +151,9 @@ func TestStartingSessionPhaseAndTransitions_spec_6_2(t *testing.T) {
 		t.Fatal("state.All() is missing starting_session (spec §6.2 line 87)")
 	}
 	required := []state.Transition{
-		{From: state.RunningSetup, To: state.StartingSession}, // §6.2 line 87
-		{From: state.StartingSession, To: state.Attached},     // §6.2 line 87
-		{From: state.StartingSession, To: state.Failed},       // §6.2 line 102
+		{From: state.RunningSetup, To: state.StartingSession},  // §6.2 line 87
+		{From: state.StartingSession, To: state.Attached},      // §6.2 line 87
+		{From: state.StartingSession, To: state.Failed},        // §6.2 line 102
 		{From: state.StartingSession, To: state.ResumePending}, // §6.2 line 103
 	}
 	for _, tr := range required {
@@ -193,6 +193,27 @@ func TestSessionTerminalDrainEdges_spec_6_2(t *testing.T) {
 				t.Errorf("IsValid(%q, idle) = nil, want error — a terminal phase must not return to idle", from)
 			}
 		})
+	}
+}
+
+// spec: §6.2 line 146 — cancelled → task_cleanup is the task-mode
+// cancellation edge: an acknowledged cancellation runs the same scrub as
+// a completed task, then rejoins or retires per the task_cleanup
+// disposition. The edge leaves a session-terminal phase (cancelled stays
+// terminal), exactly like the cancelled → draining reclamation edge.
+func TestCancelledTaskCleanupEdge_spec_6_2(t *testing.T) {
+	t.Parallel()
+	if err := state.IsValid(state.Cancelled, state.TaskCleanup); err != nil {
+		t.Errorf("IsValid(cancelled, task_cleanup) = %v, want nil — §6.2 line 146 task-mode cancellation edge", err)
+	}
+	if !state.IsTerminal(state.Cancelled) {
+		t.Errorf("IsTerminal(cancelled) = false, want true — the task_cleanup edge must not flip session terminality")
+	}
+	// task_cleanup advances to exactly the four §6.2 disposition phases.
+	for _, to := range []state.State{state.Idle, state.SDKConnecting, state.Draining, state.Failed} {
+		if err := state.IsValid(state.TaskCleanup, to); err != nil {
+			t.Errorf("IsValid(task_cleanup, %q) = %v, want nil", to, err)
+		}
 	}
 }
 

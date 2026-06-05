@@ -206,10 +206,22 @@ func ValidTransitions() []Transition {
 		{AwaitingClientAction, Expired},
 		// Task-cleanup paths.
 		{Attached, TaskCleanup},
-		{TaskCleanup, SDKConnecting}, // host-schedulable, preConnect
-		{TaskCleanup, Idle},          // host-schedulable, non-preConnect
-		{TaskCleanup, Draining},      // not host-schedulable, or maxTasksPerPod reached
-		{TaskCleanup, Failed},
+		// cancelled → task_cleanup is the §6.2 line 146 task-mode
+		// cancellation edge: when a task-mode pod's in-flight task is
+		// cancelled and the cancellation is acknowledged, the pod runs
+		// the same scrub as a completed task and then rejoins the pool
+		// (idle/sdk_connecting) or retires (draining) per the normal
+		// task_cleanup disposition rules. cancelled is session-terminal
+		// (see Terminal()), so this edge — like the cancelled → draining
+		// pod-reclamation edge below — is a pod-lifecycle transition out
+		// of a session-terminal phase, not a session resumption. The
+		// task-mode-only applicability is enforced by the disposition
+		// driver (the gateway task path), not the state-machine layer.
+		{Cancelled, TaskCleanup},
+		{TaskCleanup, SDKConnecting}, // host-schedulable, preConnect re-warm
+		{TaskCleanup, Idle},          // host-schedulable, non-preConnect reuse
+		{TaskCleanup, Draining},      // not host-schedulable, or a retirement limit reached
+		{TaskCleanup, Failed},        // onCleanupFailure: fail
 		// Concurrent-mode slot edges (§5.2 / §6.2). A concurrent-mode pod
 		// hosts up to maxConcurrent slots simultaneously: idle → slot_active
 		// on the first slot, slot_active → slot_active for each further
