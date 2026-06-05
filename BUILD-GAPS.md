@@ -30182,7 +30182,7 @@ Two of three transports are absent entirely; the third (webhook subs) exists as 
 
 ### Findings
 
-### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — OPEN
+### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — DEFERRED
 
 The §16.7 catalog enumerates 91 audit event types that §25 introduces. The implementation defines all 91 as typed constants in `pkg/observability/audit/catalog.go` and pins them with a round-trip completeness test, but the typed constants are documentation only — they are never referenced from any emit site. Direct string-literal search outside the catalog/mapping/test files finds production references for exactly 7 event types, and only 5 of those are reachable from the running gateway:
 
@@ -30226,6 +30226,52 @@ Evidence:
 - 5 reachable emit sites listed above (grep output for each event name).
 - Catalog test pass: `go test ./pkg/observability/audit/` confirms all 91 constants exist; this provides no coverage that any are actually written.
 - `pkg/ops/opsserver/*` and `cmd/lenny-ops/*` contain zero `audit`, `Audit`, or `Append` references in non-test code (verified by `grep -rn 'audit\|Audit\|Append' cmd/lenny-ops/ pkg/ops/opsserver/ | grep -v _test.go`).
+
+**Resolution (DEFERRED, eef645e2):** The finding's structural claim is
+stale. The catalog has grown to 124 typed event constants; a
+constant-name + string-literal sweep across `pkg cmd internal` (excluding
+the catalog and OCSF-mapping files and `_test.go`) finds production emit
+sites for 108 of them. Intervening batches wired the §7.2 interaction,
+drift, restore, remediation, diagnostics, platform-upgrade-adjacent,
+GDPR-reconcile, experiment, compliance, token, and circuit-breaker
+families; commit eef645e2 (this batch) wired the last backup terminal
+transitions (`backup.completed` / `backup.failed` from the Job pod via
+`runner.Run`, `backup.verified` via `runner.RunVerify`). The "5 reachable
+emit sites" evidence and the per-family inventory above are no longer
+accurate.
+
+The 16 catalogued events that remain inert each require distinct unbuilt
+infrastructure, none of which is a "wire an existing handler" gap, so the
+finding is deferred rather than progressed by further sweeping:
+
+- **Chart render-time guard mechanism (6)** — `gateway.allow_self_recursion_changed`,
+  `gateway.cycle_detection_mode_changed`, `gateway.default_max_depth_changed`,
+  `deployment.feature_flag_downgrade_acknowledged`,
+  `platform.elicitation_content_integrity_floor_changed`,
+  `tenant.elicitation_content_integrity_floor_clamp`. §16.7 lines 672-679
+  and §8.3 line 344 specify these are emitted "once per Helm
+  install/upgrade ... by the chart's render-time guard" (the gateway only
+  *applies* the rendered ConfigMap value; the audit row is chart-side).
+  That render-time guard Job/hook does not exist and is cluster-dependent
+  to verify.
+- **Platform-upgrade lifecycle subsystem (1)** — `platform.config_changed`
+  is part of the §25.8 platform-lifecycle event family, blocked on the
+  still-open F-10.5.1 (RuntimeUpgrade CRD + controller absent).
+- **Production Redis cachingstore→Registry integration (1)** —
+  `admission.circuit_breaker_cache_stale` (§11.6, §16.7 line 679) fires
+  only when the admission middleware reads breakers from the
+  staleness-aware Redis `cachingstore`; the middleware Registry
+  (`pkg/gateway/middleware/circuitbreaker`) currently exposes only
+  `Snapshot` with no cache-age signal, so there is nothing to sample on.
+- **Unbuilt feature handlers (8)** — `admin.impersonation_started` /
+  `admin.impersonation_ended` (no impersonation handler),
+  `gdpr.erasure_deadletter_redacted` /
+  `gdpr.erasure_deadletter_downstream_notified` (the `DeleteByUser` OCSF
+  dead-letter redaction step is absent), and the tenant force-delete /
+  Phase-3.5 escrow lifecycle `gdpr.legal_hold_overridden_tenant` /
+  `legal_hold.escrow_region_resolved` / `legal_hold.escrowed` /
+  `legal_hold.escrow_released` (no force-delete handler exists). Each is
+  its own feature; the audit emit lands when the feature lands.
 
 ### - [x] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — CLOSED
 
