@@ -56,14 +56,14 @@ func TestSubprocessExecutorEchoesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(out) != 1 {
-		t.Fatalf("output parts: got %d, want 1 (%+v)", len(out), out)
+	if len(out.Parts) != 1 {
+		t.Fatalf("output parts: got %d, want 1 (%+v)", len(out.Parts), out.Parts)
 	}
-	if out[0].Type != "text" {
-		t.Errorf("part type: %q", out[0].Type)
+	if out.Parts[0].Type != "text" {
+		t.Errorf("part type: %q", out.Parts[0].Type)
 	}
-	if !strings.Contains(out[0].Text, "hello world") {
-		t.Errorf("echo output does not contain input: %q", out[0].Text)
+	if !strings.Contains(out.Parts[0].Text, "hello world") {
+		t.Errorf("echo output does not contain input: %q", out.Parts[0].Text)
 	}
 	if err := exec.Close(context.Background(), "sess_1"); err != nil {
 		t.Errorf("Close: %v", err)
@@ -84,7 +84,7 @@ func TestSubprocessExecutorMultipleMessagesSameSession(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
-		if len(out) != 1 || !strings.Contains(out[0].Text, content) {
+		if len(out.Parts) != 1 || !strings.Contains(out.Parts[0].Text, content) {
 			t.Errorf("Send %d output: %+v", i, out)
 		}
 	}
@@ -106,11 +106,11 @@ func TestSubprocessExecutorIndependentSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send b: %v", err)
 	}
-	if !strings.Contains(outA[0].Text, "from-a") {
-		t.Errorf("session a: %q", outA[0].Text)
+	if !strings.Contains(outA.Parts[0].Text, "from-a") {
+		t.Errorf("session a: %q", outA.Parts[0].Text)
 	}
-	if !strings.Contains(outB[0].Text, "from-b") {
-		t.Errorf("session b: %q", outB[0].Text)
+	if !strings.Contains(outB.Parts[0].Text, "from-b") {
+		t.Errorf("session b: %q", outB.Parts[0].Text)
 	}
 }
 
@@ -140,7 +140,7 @@ func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send after Start: %v", err)
 	}
-	if len(out) != 1 || !strings.Contains(out[0].Text, "ping") {
+	if len(out.Parts) != 1 || !strings.Contains(out.Parts[0].Text, "ping") {
 		t.Errorf("Send after Start output: %+v", out)
 	}
 }

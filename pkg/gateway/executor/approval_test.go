@@ -93,7 +93,7 @@ func TestPodExecutorToolUseApprove_spec_7_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(out) != 1 || out[0].Text != "executed" {
+	if len(out.Parts) != 1 || out.Parts[0].Text != "executed" {
 		t.Fatalf("Send output = %+v, want one \"executed\" part (the approved call ran)", out)
 	}
 	gate.mu.Lock()
@@ -127,7 +127,7 @@ func TestPodExecutorToolUseDeny_spec_7_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(out) != 1 || out[0].Text != "denied" {
+	if len(out.Parts) != 1 || out.Parts[0].Text != "denied" {
 		t.Fatalf("Send output = %+v, want one \"denied\" part", out)
 	}
 	rt.mu.Lock()
@@ -168,7 +168,7 @@ func TestPodExecutorToolUseNoGate_spec_7_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(out) != 1 || out[0].Text != "ack" {
+	if len(out.Parts) != 1 || out.Parts[0].Text != "ack" {
 		t.Errorf("Send output = %+v, want one \"ack\" part (frame skipped)", out)
 	}
 }

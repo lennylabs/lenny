@@ -78,6 +78,52 @@ func TestAnnotationKeysAreDistinct_spec_15_5_2469(t *testing.T) {
 	}
 }
 
+// spec: §15.4.1 lines 1575-1579 — `blob_ref_unresolvable` carries
+// `partId`, `ref`, and `reason`.
+func TestBlobRefUnresolvableFieldShape_spec_15_4_1(t *testing.T) {
+	body := degradation.BlobRefUnresolvable("part_7", "lenny-blob://acme/sess/part_7", "blob expired")
+	if body["partId"] != "part_7" {
+		t.Errorf("partId = %v", body["partId"])
+	}
+	if body["ref"] != "lenny-blob://acme/sess/part_7" {
+		t.Errorf("ref = %v", body["ref"])
+	}
+	if body["reason"] != "blob expired" {
+		t.Errorf("reason = %v", body["reason"])
+	}
+	if got := len(body); got != 3 {
+		t.Errorf("body has %d fields, want 3 (partId, ref, reason)", got)
+	}
+}
+
+// spec: §15.4.1 lines 1503, 1522 — `unregistered_platform_type` carries
+// the unrecognized type string.
+func TestUnregisteredPlatformTypeFieldShape_spec_15_4_1(t *testing.T) {
+	body := degradation.UnregisteredPlatformType("heatmap")
+	if body["type"] != "heatmap" {
+		t.Errorf("type = %v, want heatmap", body["type"])
+	}
+}
+
+// spec: §15.4.1 / §15.5 — the §15.4.1 ingress annotations are distinct
+// from the §15.5 schemaVersion-family keys and from each other.
+func TestNonCatalogAnnotationKeysAreDistinct_spec_15_4_1(t *testing.T) {
+	keys := map[string]struct{}{
+		degradation.AnnotationSchemaVersionAhead:       {},
+		degradation.AnnotationBlobRefUnresolvable:      {},
+		degradation.AnnotationUnregisteredPlatformType: {},
+	}
+	if len(keys) != 3 {
+		t.Errorf("annotation keys collapsed to %d unique values", len(keys))
+	}
+	if degradation.AnnotationBlobRefUnresolvable != "blob_ref_unresolvable" {
+		t.Errorf("blob_ref_unresolvable key drifted: %q", degradation.AnnotationBlobRefUnresolvable)
+	}
+	if degradation.AnnotationUnregisteredPlatformType != "unregistered_platform_type" {
+		t.Errorf("unregistered_platform_type key drifted: %q", degradation.AnnotationUnregisteredPlatformType)
+	}
+}
+
 // spec: §15.5 line 2461 — Stamp returns the (possibly newly allocated)
 // annotations map so producers can drop the result back into the
 // MessageEnvelope.Annotations field. F-15.5.5.

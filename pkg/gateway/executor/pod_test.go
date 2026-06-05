@@ -76,7 +76,7 @@ func TestPodExecutorSendStreamsResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(out) != 1 || out[0].Type != "text" || out[0].Text != "ack" {
+	if len(out.Parts) != 1 || out.Parts[0].Type != "text" || out.Parts[0].Text != "ack" {
 		t.Errorf("Send output = %+v, want one text part \"ack\"", out)
 	}
 }
@@ -94,7 +94,7 @@ func TestPodExecutorSendReusesTheStreamAcrossMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
-		if len(out) != 1 || out[0].Text != "ack" {
+		if len(out.Parts) != 1 || out.Parts[0].Text != "ack" {
 			t.Errorf("Send %d output = %+v, want one \"ack\" part", i, out)
 		}
 	}

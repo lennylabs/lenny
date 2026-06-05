@@ -913,12 +913,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		// runtime cannot forge an origin. An unattributed send (no principal
 		// session binding and no fromSessionId) defers to the executor's
 		// default gateway-client identity. F-13.5.11.
-		out, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
+		resp, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
 			{Role: "user", Content: messageBody, From: senderFrom(senderID)},
 		})
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
+		out := resp.Parts
 		// §4.8 PostAgentOutput: run the chain over the agent's output
 		// parts before delivering the response to the calling agent. A
 		// REJECT blocks delivery; a MODIFY rewrites the parts.

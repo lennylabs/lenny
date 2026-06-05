@@ -18,6 +18,11 @@
 // 1479-1540 (OutputPart).
 package task
 
+import (
+	"fmt"
+	"strings"
+)
+
 // SchemaVersion is the §8.8 TaskRecord / TaskResult envelope schema
 // version. It is the single producer constant every writer stamps, so
 // the envelope version has one source of truth rather than a literal
@@ -152,6 +157,52 @@ type Error struct {
 	Category         string `json:"category,omitempty"`
 	Message          string `json:"message"`
 	RetriesExhausted bool   `json:"retriesExhausted,omitempty"`
+}
+
+// Error implements the error interface so a synthesized failure block
+// (e.g. RuntimeCrash) can be returned through a Go error value and
+// recovered with errors.As. The string form is the code and message,
+// which is what a log line or a client-facing wrapper renders.
+func (e *Error) Error() string {
+	if e == nil {
+		return "<nil task error>"
+	}
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Code + ": " + e.Message
+}
+
+// maxCrashStderrBytes bounds the stderr tail folded into a RUNTIME_CRASH
+// message so a runtime that died mid-stack-dump does not produce a
+// multi-megabyte error block. The tail is the most diagnostic part of a
+// crash, so the head is dropped when the capture exceeds the cap.
+const maxCrashStderrBytes = 4096
+
+// RuntimeCrash synthesizes the §15.4.1 RUNTIME_CRASH error block from a
+// non-zero runtime exit code and the runtime's captured stderr. The §8.8
+// failure taxonomy classifies a runtime crash as TRANSIENT: the gateway
+// retries on a fresh pod, and only marks retriesExhausted after the
+// pod-crash retry budget is spent (a property the gateway sets later, not
+// at synthesis time). The stderr tail is trimmed of trailing whitespace
+// and capped to the last maxCrashStderrBytes so the message stays bounded.
+// spec: §15.4.1 line 1889 — "When the process exits non-zero without
+// emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error
+// from the exit code and stderr."; §8.8 lines 936-938.
+func RuntimeCrash(exitCode int, stderr string) *Error {
+	trimmed := strings.TrimRight(stderr, " \t\r\n")
+	if len(trimmed) > maxCrashStderrBytes {
+		trimmed = trimmed[len(trimmed)-maxCrashStderrBytes:]
+	}
+	msg := fmt.Sprintf("runtime exited with code %d without emitting a response", exitCode)
+	if trimmed != "" {
+		msg += ": " + trimmed
+	}
+	return &Error{
+		Code:     "RUNTIME_CRASH",
+		Category: "TRANSIENT",
+		Message:  msg,
+	}
 }
 
 // ReconcileSchemaVersion returns the envelope schema version a writer

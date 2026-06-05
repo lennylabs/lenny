@@ -30,8 +30,8 @@ func newCancelTrackingExecutor() *cancelTrackingExecutor {
 	return &cancelTrackingExecutor{released: map[string]executor.Disposition{}}
 }
 
-func (e *cancelTrackingExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
-	return nil, nil
+func (e *cancelTrackingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
 }
 
 func (e *cancelTrackingExecutor) Close(_ context.Context, id string) error {

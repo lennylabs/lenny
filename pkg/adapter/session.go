@@ -4,6 +4,8 @@ package adapter
 
 import (
 	"context"
+	"errors"
+	"log"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -200,11 +202,49 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	// control stream before the stream closes, so the gateway can run
 	// budget_return.lua (§8.3) with the session's complete token totals.
 	s.emitFinalUsage(ctx, sessionID)
+	// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through the
+	// lifecycle channel (the DRAINING state) before the hard runtime
+	// close: the adapter sends `terminate` so the runtime finishes the
+	// current exchange and exits within the gateway's grace window rather
+	// than only observing the stdin/socket EOF. Basic/Standard runtimes
+	// have no lifecycle channel (Lifecycle == nil) and a not-yet-connected
+	// runtime is a no-op; the drain is best-effort and never fails the
+	// shutdown.
+	s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
 	closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
 	closeErr := s.Runtime.Close(closeCtx, sessionID)
 	cancel()
 	s.releaseSession()
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
+}
+
+// drainViaLifecycle sends the §15.4.2 DRAINING-state graceful-shutdown
+// signal on the lifecycle channel before the hard runtime close. It is a
+// no-op when the runtime has no lifecycle channel (Basic/Standard level)
+// or has not yet connected; any other send error is logged rather than
+// surfaced so a drain hiccup never blocks termination.
+func (s *Server) drainViaLifecycle(deadlineMs int32, reason string) {
+	if s.Lifecycle == nil {
+		return
+	}
+	if err := s.Lifecycle.Terminate(deadlineMs, drainReason(reason)); err != nil &&
+		!errors.Is(err, errLifecycleNotConnected) && !errors.Is(err, errLifecycleClosed) {
+		log.Printf("lenny-adapter: lifecycle drain signal: %v", err)
+	}
+}
+
+// drainReason maps a §4.7 ShutdownRequest reason to the lifecycle
+// `terminate` frame's reason enum (session_complete, budget_exhausted,
+// eviction, operator), defaulting an empty or unrecognized value to
+// session_complete so the wire frame always carries a valid reason.
+// spec: §15.4.2 — terminate reason enum.
+func drainReason(reason string) string {
+	switch reason {
+	case "session_complete", "budget_exhausted", "eviction", "operator":
+		return reason
+	default:
+		return "session_complete"
+	}
 }
 
 // contextWithGraceDeadline derives a context bounded by `grace` from

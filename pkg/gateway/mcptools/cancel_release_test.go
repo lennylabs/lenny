@@ -23,8 +23,8 @@ type releaseRecordingExecutor struct {
 	released map[string]executor.Disposition
 }
 
-func (e *releaseRecordingExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
-	return nil, nil
+func (e *releaseRecordingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
 }
 
 func (e *releaseRecordingExecutor) Close(_ context.Context, id string) error {

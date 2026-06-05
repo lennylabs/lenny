@@ -74,7 +74,8 @@ type MessageFrom struct {
 type OutputPart struct {
 	// Type is the §15.4.1 content type: `text`, `tool_call`,
 	// `tool_result`, etc. The minimal echo executor emits only
-	// `text`.
+	// `text`. An unregistered unprefixed type is collapsed to `text`
+	// at ingress, with the original preserved in Annotations.
 	Type string `json:"type"`
 
 	// Text carries the inline text content when Type == "text".
@@ -83,15 +84,43 @@ type OutputPart struct {
 	// Ref carries the §4.5 lenny-blob:// reference when the content
 	// is bound by a blob.
 	Ref string `json:"ref,omitempty"`
+
+	// SchemaVersion is the §15.4.1 per-part OutputPart schema revision
+	// (default 1). Ingest defaults a missing or non-positive value to
+	// 1 so a durable consumer always reads a value.
+	SchemaVersion int `json:"schemaVersion,omitempty"`
+
+	// Annotations is the §15.4.1 open metadata map. Ingest stamps
+	// `originalType` and the `unregistered_platform_type` warning here
+	// when a part's type falls through the canonical-registry fallback.
+	Annotations map[string]any `json:"annotations,omitempty"`
+}
+
+// Response is the result of an Executor.Send: the runtime's output parts
+// plus the §15.4.1 degradation annotations the gateway, as a live
+// consumer, surfaced on the enclosing MessageEnvelope while ingesting the
+// runtime's `response` frame. Annotations carries the envelope-scoped
+// kinds — `schema_version_ahead` (a part stamped a schemaVersion ahead of
+// the gateway's known max) and `blob_ref_unresolvable` (a ref the
+// consumer could not dereference). It is nil when ingestion hit no
+// envelope-level degradation. Part-scoped warnings such as
+// `unregistered_platform_type` live on the part's own Annotations.
+//
+// spec: §15.4.1 lines 1499-1522 (schema_version_ahead), 1575-1579
+// (blob_ref_unresolvable).
+type Response struct {
+	Parts       []OutputPart
+	Annotations map[string]any
 }
 
 // Executor is the gateway-side abstraction for routing a session's
 // messages to a runtime + collecting the response.
 type Executor interface {
 	// Send delivers the messages to the executor's session context
-	// and returns the response output parts. Implementations must
-	// not retain the supplied slice after returning.
-	Send(ctx context.Context, sessionID string, messages []Message) ([]OutputPart, error)
+	// and returns the runtime's Response (output parts plus any
+	// envelope-level §15.4.1 degradation annotations). Implementations
+	// must not retain the supplied slice after returning.
+	Send(ctx context.Context, sessionID string, messages []Message) (Response, error)
 
 	// Close releases any executor-side state associated with the
 	// session. Idempotent; calling Close on a session that was never

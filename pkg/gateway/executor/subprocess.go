@@ -7,12 +7,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/task"
 )
 
 // SubprocessExecutor runs a §15.4 Basic-level runtime binary as a
@@ -68,20 +71,81 @@ type subprocessSession struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	// stderr captures the runtime's stderr tail so a non-zero exit can be
+	// folded into a §15.4.1 RUNTIME_CRASH error.
+	stderr *capBuffer
+
+	// waitOnce memoizes cmd.Wait so the §15.4.1 RUNTIME_CRASH probe in
+	// readResponse and the teardown in Close can both read the exit
+	// status without double-waiting the process.
+	waitOnce sync.Once
+	waitErr  error
+}
+
+// wait reaps the child process exactly once and returns the same exit
+// error to every caller.
+func (s *subprocessSession) wait() error {
+	s.waitOnce.Do(func() { s.waitErr = s.cmd.Wait() })
+	return s.waitErr
+}
+
+// capBuffer is a concurrency-safe writer that retains only the last `cap`
+// bytes written. The runtime's stderr is the most diagnostic at the tail
+// (the final panic / log lines), so the head is discarded when the
+// capture overflows.
+type capBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	cap int
+}
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.buf = append(c.buf, p...)
+	if len(c.buf) > c.cap {
+		c.buf = c.buf[len(c.buf)-c.cap:]
+	}
+	return len(p), nil
+}
+
+func (c *capBuffer) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(c.buf)
+}
+
+// maxStderrCapture bounds the per-session stderr ring buffer.
+const maxStderrCapture = 8 * 1024
+
+// exitCodeOf extracts the process exit code from a cmd.Wait error. ok is
+// false when err is not an *exec.ExitError (e.g. an I/O error reaping the
+// process), so the caller does not misclassify it as a clean or crashed
+// exit.
+func exitCodeOf(err error) (code int, ok bool) {
+	if err == nil {
+		return 0, true
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode(), true
+	}
+	return 0, false
 }
 
 // Send implements Executor. It lazily spawns the child process for
 // sessionID, writes one §15.4.1 message envelope per Message, and
 // collects the response envelopes.
-func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, messages []Message) ([]OutputPart, error) {
+func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	sess, err := e.session(sessionID)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
 	var out []OutputPart
+	var envAnn map[string]any
 	for _, m := range messages {
 		env := messageEnvelope{
 			SchemaVersion: 1,
@@ -92,18 +156,19 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
-			return nil, err
+			return Response{}, err
 		}
 		if _, err := sess.stdin.Write(append(line, '\n')); err != nil {
-			return nil, fmt.Errorf("executor: write to runtime: %w", err)
+			return Response{}, fmt.Errorf("executor: write to runtime: %w", err)
 		}
-		parts, err := e.readResponse(ctx, sess)
+		parts, ann, err := e.readResponse(ctx, sess)
 		if err != nil {
-			return nil, err
+			return Response{}, err
 		}
 		out = append(out, parts...)
+		envAnn = mergeAnnotations(envAnn, ann)
 	}
-	return out, nil
+	return Response{Parts: out, Annotations: envAnn}, nil
 }
 
 // Start eagerly spawns the runtime child process for sessionID without
@@ -191,9 +256,10 @@ func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-ch
 // readResponse scans stdout for the next `response` envelope. The
 // echo runtime may interleave `heartbeat_ack` and `status` frames;
 // those are skipped. Bounded by the executor's SendTimeout.
-func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessSession) ([]OutputPart, error) {
+func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessSession) ([]OutputPart, map[string]any, error) {
 	type result struct {
 		parts []OutputPart
+		ann   map[string]any
 		err   error
 	}
 	ch := make(chan result, 1)
@@ -208,22 +274,21 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 				// heartbeat_ack, status, etc. — keep scanning.
 				continue
 			}
-			parts := make([]OutputPart, 0, len(env.Output))
-			if env.Text != "" && len(env.Output) == 0 {
-				parts = append(parts, OutputPart{Type: "text", Text: env.Text})
-			}
-			for _, p := range env.Output {
-				op := OutputPart{Type: p.Type, Ref: p.Ref}
-				if p.Type == "text" {
-					op.Text = p.Inline
-				}
-				parts = append(parts, op)
-			}
-			ch <- result{parts: parts}
+			parts, ann := ingestResponse(env)
+			ch <- result{parts: parts, ann: ann}
 			return
 		}
 		if err := sess.stdout.Err(); err != nil {
 			ch <- result{err: fmt.Errorf("executor: read from runtime: %w", err)}
+			return
+		}
+		// spec: §15.4.1 line 1889 — the runtime closed stdout before
+		// emitting a `response`. If it exited non-zero, synthesize a
+		// RUNTIME_CRASH from the exit code and the captured stderr; a
+		// clean (code 0) exit with no response is a protocol error, not a
+		// crash.
+		if code, ok := exitCodeOf(sess.wait()); ok && code != 0 {
+			ch <- result{err: task.RuntimeCrash(code, sess.stderr.String())}
 			return
 		}
 		ch <- result{err: fmt.Errorf("executor: runtime closed stdout before responding")}
@@ -231,11 +296,11 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	case <-time.After(e.timeout):
-		return nil, fmt.Errorf("executor: runtime did not respond within %s", e.timeout)
+		return nil, nil, fmt.Errorf("executor: runtime did not respond within %s", e.timeout)
 	case r := <-ch:
-		return r.parts, r.err
+		return r.parts, r.ann, r.err
 	}
 }
 
@@ -256,12 +321,16 @@ func (e *SubprocessExecutor) session(sessionID string) (*subprocessSession, erro
 	if err != nil {
 		return nil, fmt.Errorf("executor: stdout pipe: %w", err)
 	}
+	// Capture stderr so a non-zero exit without a `response` can be turned
+	// into a §15.4.1 RUNTIME_CRASH carrying the runtime's diagnostics.
+	stderr := &capBuffer{cap: maxStderrCapture}
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("executor: start runtime %q: %w", e.binPath, err)
 	}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	s := &subprocessSession{cmd: cmd, stdin: stdin, stdout: scanner}
+	s := &subprocessSession{cmd: cmd, stdin: stdin, stdout: scanner, stderr: stderr}
 	e.procs[sessionID] = s
 	return s, nil
 }
@@ -282,9 +351,12 @@ func (e *SubprocessExecutor) Close(_ context.Context, sessionID string) error {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	_ = sess.stdin.Close()
-	// Give the process a moment to exit cleanly; kill if it lingers.
+	// Give the process a moment to exit cleanly; kill if it lingers. The
+	// memoized wait reaps the process at most once, so a prior
+	// RUNTIME_CRASH probe in readResponse and this teardown never race a
+	// double cmd.Wait.
 	done := make(chan error, 1)
-	go func() { done <- sess.cmd.Wait() }()
+	go func() { done <- sess.wait() }()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
@@ -324,9 +396,11 @@ func resolveFromBlock(m Message) fromBlock {
 }
 
 type wireOutputPart struct {
-	Type   string `json:"type"`
-	Inline string `json:"inline,omitempty"`
-	Ref    string `json:"ref,omitempty"`
+	Type          string         `json:"type"`
+	Inline        string         `json:"inline,omitempty"`
+	Ref           string         `json:"ref,omitempty"`
+	SchemaVersion int            `json:"schemaVersion,omitempty"`
+	Annotations   map[string]any `json:"annotations,omitempty"`
 }
 
 type responseEnvelope struct {

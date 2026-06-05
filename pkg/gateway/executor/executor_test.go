@@ -22,27 +22,27 @@ func TestEchoExecutorSequencesPerSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send 1: %v", err)
 	}
-	if len(out) != 1 || out[0].Type != "text" {
+	if len(out.Parts) != 1 || out.Parts[0].Type != "text" {
 		t.Errorf("output: %+v", out)
 	}
-	if !strings.Contains(out[0].Text, "[seq=1]") || !strings.Contains(out[0].Text, "hello") {
-		t.Errorf("expected seq=1 + hello, got %q", out[0].Text)
+	if !strings.Contains(out.Parts[0].Text, "[seq=1]") || !strings.Contains(out.Parts[0].Text, "hello") {
+		t.Errorf("expected seq=1 + hello, got %q", out.Parts[0].Text)
 	}
 
 	// Second send on same session advances sequence.
 	out2, _ := e.Send(context.Background(), "sess_a", []executor.Message{
 		{Role: "user", Content: "world"},
 	})
-	if !strings.Contains(out2[0].Text, "[seq=2]") {
-		t.Errorf("expected seq=2, got %q", out2[0].Text)
+	if !strings.Contains(out2.Parts[0].Text, "[seq=2]") {
+		t.Errorf("expected seq=2, got %q", out2.Parts[0].Text)
 	}
 
 	// Different session has its own sequence.
 	outB, _ := e.Send(context.Background(), "sess_b", []executor.Message{
 		{Role: "user", Content: "x"},
 	})
-	if !strings.Contains(outB[0].Text, "[seq=1]") {
-		t.Errorf("sess_b should start at seq=1, got %q", outB[0].Text)
+	if !strings.Contains(outB.Parts[0].Text, "[seq=1]") {
+		t.Errorf("sess_b should start at seq=1, got %q", outB.Parts[0].Text)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestEchoExecutorCloseDropsSequence(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	out, _ := e.Send(context.Background(), "sess_a", []executor.Message{{Content: "again"}})
-	if !strings.Contains(out[0].Text, "[seq=1]") {
-		t.Errorf("Close should reset sequence: %q", out[0].Text)
+	if !strings.Contains(out.Parts[0].Text, "[seq=1]") {
+		t.Errorf("Close should reset sequence: %q", out.Parts[0].Text)
 	}
 }
 
@@ -65,8 +65,8 @@ func TestEchoExecutorConcatenatesMessageBatch(t *testing.T) {
 		{Content: "hello"},
 		{Content: "world"},
 	})
-	if !strings.Contains(out[0].Text, "hello | world") {
-		t.Errorf("batch: %q", out[0].Text)
+	if !strings.Contains(out.Parts[0].Text, "hello | world") {
+		t.Errorf("batch: %q", out.Parts[0].Text)
 	}
 }
 
@@ -76,10 +76,10 @@ func TestEchoExecutorIgnoresEmptyContent(t *testing.T) {
 		{Content: ""},
 		{Content: "real"},
 	})
-	if !strings.Contains(out[0].Text, "real") || strings.Contains(out[0].Text, " | real") {
+	if !strings.Contains(out.Parts[0].Text, "real") || strings.Contains(out.Parts[0].Text, " | real") {
 		// "real" should appear; no leading " | " from empty content.
-		if !strings.Contains(out[0].Text, "real") {
-			t.Errorf("empty-content batch should still emit real: %q", out[0].Text)
+		if !strings.Contains(out.Parts[0].Text, "real") {
+			t.Errorf("empty-content batch should still emit real: %q", out.Parts[0].Text)
 		}
 	}
 }

@@ -31,7 +31,7 @@ func NewEchoExecutor() *EchoExecutor {
 // Send implements Executor. Concatenates every user message in the
 // batch into a single response prefixed with the per-session
 // sequence number.
-func (e *EchoExecutor) Send(_ context.Context, sessionID string, messages []Message) ([]OutputPart, error) {
+func (e *EchoExecutor) Send(_ context.Context, sessionID string, messages []Message) (Response, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seq[sessionID]++
@@ -45,10 +45,11 @@ func (e *EchoExecutor) Send(_ context.Context, sessionID string, messages []Mess
 		inputs = append(inputs, m.Content)
 	}
 	body := strings.Join(inputs, " | ")
-	return []OutputPart{{
-		Type: "text",
-		Text: fmt.Sprintf("echo [seq=%d]: %s", seq, body),
-	}}, nil
+	return Response{Parts: []OutputPart{{
+		Type:          "text",
+		Text:          fmt.Sprintf("echo [seq=%d]: %s", seq, body),
+		SchemaVersion: 1,
+	}}}, nil
 }
 
 // Close implements Executor. Drops the per-session sequence counter.

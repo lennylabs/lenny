@@ -214,12 +214,13 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		})
 	}
 
-	out, err := h.exec.Send(r.Context(), sessionID, msgs)
+	sendResp, err := h.exec.Send(r.Context(), sessionID, msgs)
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
 			fmt.Sprintf("executor failure: %v", err))
 		return
 	}
+	out := sendResp.Parts
 
 	// Mark the session completed — the translator runs a single
 	// request/response cycle and does not maintain conversation

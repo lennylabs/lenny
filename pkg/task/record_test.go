@@ -4,8 +4,56 @@ package task
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 )
+
+// spec: §15.4.1 line 1889 — RuntimeCrash synthesizes a RUNTIME_CRASH
+// error from a non-zero exit code and stderr; §8.8 lines 936-938 classify
+// it TRANSIENT.
+func TestRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
+	e := RuntimeCrash(7, "panic: nil deref\n")
+	if e.Code != "RUNTIME_CRASH" {
+		t.Errorf("code = %q, want RUNTIME_CRASH", e.Code)
+	}
+	if e.Category != "TRANSIENT" {
+		t.Errorf("category = %q, want TRANSIENT", e.Category)
+	}
+	if !strings.Contains(e.Message, "code 7") {
+		t.Errorf("message omits exit code: %q", e.Message)
+	}
+	if !strings.Contains(e.Message, "panic: nil deref") {
+		t.Errorf("message omits stderr: %q", e.Message)
+	}
+	// The Error block is returnable through a Go error value.
+	var asErr error = e
+	var te *Error
+	if !errors.As(asErr, &te) || te.Code != "RUNTIME_CRASH" {
+		t.Errorf("errors.As did not recover the RUNTIME_CRASH block")
+	}
+}
+
+// spec: §15.4.1 line 1889 — a runtime that emits no stderr still
+// produces a RUNTIME_CRASH naming the exit code, and an oversized stderr
+// dump is capped to its tail.
+func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
+	bare := RuntimeCrash(2, "")
+	if strings.Contains(bare.Message, ": ") && strings.HasSuffix(bare.Message, ": ") {
+		t.Errorf("empty stderr should not leave a trailing colon: %q", bare.Message)
+	}
+	if !strings.Contains(bare.Message, "code 2") {
+		t.Errorf("bare crash omits exit code: %q", bare.Message)
+	}
+	huge := strings.Repeat("x", maxCrashStderrBytes+5000) + "TAILMARK"
+	capped := RuntimeCrash(1, huge)
+	if len(capped.Message) > maxCrashStderrBytes+200 {
+		t.Errorf("crash message not capped: %d bytes", len(capped.Message))
+	}
+	if !strings.Contains(capped.Message, "TAILMARK") {
+		t.Error("capped crash dropped the diagnostic stderr tail")
+	}
+}
 
 // spec: §15.4.1 lines 1530-1531 — a `text` OutputPart guarantees type,
 // inline, mimeType (text/plain) and carries its own schemaVersion.

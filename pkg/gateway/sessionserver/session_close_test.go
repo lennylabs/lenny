@@ -24,8 +24,8 @@ type closeRecordingExecutor struct {
 	order  *[]string
 }
 
-func (e *closeRecordingExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
-	return nil, nil
+func (e *closeRecordingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
 }
 
 func (e *closeRecordingExecutor) Close(_ context.Context, sessionID string) error {
@@ -43,8 +43,8 @@ type releaseRecordingExecutor struct {
 	released []executor.Disposition
 }
 
-func (e *releaseRecordingExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
-	return nil, nil
+func (e *releaseRecordingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
 }
 
 func (e *releaseRecordingExecutor) Close(context.Context, string) error {

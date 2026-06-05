@@ -25,11 +25,11 @@ type fromCapturingExecutor struct {
 	msgs map[string][]executor.Message
 }
 
-func (e *fromCapturingExecutor) Send(_ context.Context, sessionID string, msgs []executor.Message) ([]executor.OutputPart, error) {
+func (e *fromCapturingExecutor) Send(_ context.Context, sessionID string, msgs []executor.Message) (executor.Response, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.msgs[sessionID] = append(e.msgs[sessionID], msgs...)
-	return []executor.OutputPart{{Type: "text", Text: "ok"}}, nil
+	return executor.Response{Parts: []executor.OutputPart{{Type: "text", Text: "ok"}}}, nil
 }
 
 func (e *fromCapturingExecutor) Close(context.Context, string) error { return nil }

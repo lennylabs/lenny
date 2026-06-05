@@ -63,10 +63,10 @@ var (
 
 // Send delivers each message to the session's bound pod over its Attach
 // stream and returns the agent's response output parts.
-func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) ([]OutputPart, error) {
+func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	stream, err := e.streamFor(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	// The §7.2 KindToolUse interaction the approval gate records is keyed
 	// on the session's tenant; capture it from the live binding once so
@@ -76,6 +76,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		tenantID = bind.TenantID
 	}
 	var out []OutputPart
+	var envAnn map[string]any
 	for _, m := range messages {
 		env := messageEnvelope{
 			SchemaVersion: 1,
@@ -86,18 +87,19 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
-			return nil, err
+			return Response{}, err
 		}
 		if err := stream.Send(line); err != nil {
-			return nil, fmt.Errorf("podexec: send to pod: %w", err)
+			return Response{}, fmt.Errorf("podexec: send to pod: %w", err)
 		}
-		parts, err := e.readAttachResponse(ctx, tenantID, sessionID, stream)
+		parts, ann, err := e.readAttachResponse(ctx, tenantID, sessionID, stream)
 		if err != nil {
-			return nil, err
+			return Response{}, err
 		}
 		out = append(out, parts...)
+		envAnn = mergeAnnotations(envAnn, ann)
 	}
-	return out, nil
+	return Response{Parts: out, Annotations: envAnn}, nil
 }
 
 // streamFor returns the session's Attach stream, opening it on first
@@ -131,19 +133,19 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 // the call is forwarded for execution; deny → a tool_result error is
 // written back). Without a gate the frame is skipped like any other
 // intermediate frame. F-7.2.9, F-7.2.18.
-func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]OutputPart, error) {
+func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]OutputPart, map[string]any, error) {
 	for {
 		frame, err := stream.Recv()
 		if err == io.EOF {
-			return nil, fmt.Errorf("podexec: runtime output ended before responding")
+			return nil, nil, fmt.Errorf("podexec: runtime output ended before responding")
 		}
 		if err != nil {
-			return nil, fmt.Errorf("podexec: receive from pod: %w", err)
+			return nil, nil, fmt.Errorf("podexec: receive from pod: %w", err)
 		}
 		if e.approvals != nil {
 			handled, herr := e.maybeGateToolCall(ctx, tenantID, sessionID, frame, stream)
 			if herr != nil {
-				return nil, herr
+				return nil, nil, herr
 			}
 			if handled {
 				continue
@@ -156,18 +158,8 @@ func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionI
 		if env.Type != "response" {
 			continue
 		}
-		parts := make([]OutputPart, 0, len(env.Output))
-		if env.Text != "" && len(env.Output) == 0 {
-			parts = append(parts, OutputPart{Type: "text", Text: env.Text})
-		}
-		for _, p := range env.Output {
-			op := OutputPart{Type: p.Type, Ref: p.Ref}
-			if p.Type == "text" {
-				op.Text = p.Inline
-			}
-			parts = append(parts, op)
-		}
-		return parts, nil
+		parts, ann := ingestResponse(env)
+		return parts, ann, nil
 	}
 }
 

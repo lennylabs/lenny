@@ -35,13 +35,13 @@ func newRecordingExecutor() *recordingExecutor {
 	return &recordingExecutor{sent: map[string][]string{}}
 }
 
-func (e *recordingExecutor) Send(_ context.Context, sessionID string, msgs []executor.Message) ([]executor.OutputPart, error) {
+func (e *recordingExecutor) Send(_ context.Context, sessionID string, msgs []executor.Message) (executor.Response, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, m := range msgs {
 		e.sent[sessionID] = append(e.sent[sessionID], m.Content)
 	}
-	return []executor.OutputPart{{Type: "text", Text: "ok"}}, nil
+	return executor.Response{Parts: []executor.OutputPart{{Type: "text", Text: "ok"}}}, nil
 }
 
 func (e *recordingExecutor) Close(context.Context, string) error { return nil }

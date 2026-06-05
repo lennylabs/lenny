@@ -186,12 +186,13 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	out, err := h.exec.Send(r.Context(), sessionID, msgs)
+	sendResp, err := h.exec.Send(r.Context(), sessionID, msgs)
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
 			fmt.Sprintf("executor failure: %v", err))
 		return
 	}
+	out := sendResp.Parts
 
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
 		s.State = session.StateCompleted

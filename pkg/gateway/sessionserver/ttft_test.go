@@ -222,8 +222,8 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 // TTFT helper must stay at zero observations.
 type noOutputExecutor struct{}
 
-func (noOutputExecutor) Send(_ context.Context, _ string, _ []executor.Message) ([]executor.OutputPart, error) {
-	return nil, nil
+func (noOutputExecutor) Send(_ context.Context, _ string, _ []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
 }
 
 func (noOutputExecutor) Close(_ context.Context, _ string) error { return nil }

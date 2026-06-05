@@ -43,6 +43,18 @@ const (
 	// AnnotationMcpProtocolVersionRetired — MCP retirement defect.
 	// Direction: old writer → new reader.
 	AnnotationMcpProtocolVersionRetired = "mcp_protocol_version_retired"
+
+	// AnnotationBlobRefUnresolvable — a consumer could not dereference an
+	// OutputPart `ref` (blob expired, storage unavailable, network
+	// partition). It is a §15.4.1 MessageEnvelope annotation distinct from
+	// the §15.5 schemaVersion family. spec: §15.4.1 lines 1575-1579.
+	AnnotationBlobRefUnresolvable = "blob_ref_unresolvable"
+
+	// AnnotationUnregisteredPlatformType — an unprefixed OutputPart `type`
+	// not in the v1 registry was passed through with the custom-type
+	// fallback. It is a §15.4.1 ingress warning carried on the part.
+	// spec: §15.4.1 lines 1503, 1522.
+	AnnotationUnregisteredPlatformType = "unregistered_platform_type"
 )
 
 // SchemaVersionAhead builds the §15.5 `schema_version_ahead` annotation
@@ -85,6 +97,38 @@ func McpProtocolVersionRetired(retired string, current []string) map[string]any 
 	return map[string]any{
 		"retiredVersion":  retired,
 		"currentVersions": sorted,
+	}
+}
+
+// BlobRefUnresolvable builds the §15.4.1 `blob_ref_unresolvable`
+// annotation body for a consumer that encountered an OutputPart `ref` it
+// could not dereference. `partID` is the unresolvable part's id, `ref`
+// the `lenny-blob://` reference, and `reason` the failure detail (blob
+// expired, storage unavailable, network partition). The consumer also
+// substitutes a placeholder `error` part and never silently drops the
+// part.
+//
+// The returned map is suitable for `Annotations[AnnotationBlobRefUnresolvable]`.
+// spec: §15.4.1 lines 1575-1579.
+func BlobRefUnresolvable(partID, ref, reason string) map[string]any {
+	return map[string]any{
+		"partId": partID,
+		"ref":    ref,
+		"reason": reason,
+	}
+}
+
+// UnregisteredPlatformType builds the §15.4.1 `unregistered_platform_type`
+// warning body for an unprefixed OutputPart `type` the gateway did not
+// find in the v1 registry. `typ` is the unrecognized type string the
+// runtime emitted; the gateway records it before applying the custom-type
+// fallback (collapse to `text` with `annotations.originalType`).
+//
+// The returned map is suitable for `Annotations[AnnotationUnregisteredPlatformType]`.
+// spec: §15.4.1 lines 1503, 1522.
+func UnregisteredPlatformType(typ string) map[string]any {
+	return map[string]any{
+		"type": typ,
 	}
 }
 

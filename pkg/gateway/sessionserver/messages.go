@@ -350,6 +350,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	var deliveryReason session.DeliveryReason
 	queueDepth := 0
 	var out []executor.OutputPart
+	// respAnnotations carries the §15.4.1 envelope-level degradation
+	// annotations (schema_version_ahead, blob_ref_unresolvable) the
+	// executor, as a live consumer, surfaced while ingesting the runtime's
+	// response. They are published on the session event stream so an SSE
+	// subscriber is informed of potential response incompleteness.
+	var respAnnotations map[string]any
 
 	if len(msgs) > 0 {
 		inputRequired := row.State == session.StateInputRequired ||
@@ -376,7 +382,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 					map[string]any{"reason": err.Error()})
 				return
 			}
-			out = o
+			out = o.Parts
+			respAnnotations = o.Annotations
 
 			// §4.8 PostAgentOutput: run the chain over the agent's output
 			// parts before delivering the response to the client. A
@@ -428,6 +435,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
 				// only the first event per session triggers the histogram.
 				s.recordTTFTOnce(row, "response")
+			}
+			// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
+			// a response part it did not fully understand (a schemaVersion
+			// ahead of its known max, or an unresolvable ref), it surfaces
+			// the degradation annotation so the subscriber is informed the
+			// response may be incomplete rather than silently dropping it.
+			if len(respAnnotations) > 0 {
+				s.publishEvent(row.TenantID, row.ID, "response_degraded", respAnnotations)
 			}
 			deliveryStatus = session.DeliveryStatusDelivered
 

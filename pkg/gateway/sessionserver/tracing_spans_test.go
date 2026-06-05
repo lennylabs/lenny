@@ -134,8 +134,8 @@ func TestMessagesStartsSessionPromptSpan_spec_16_3(t *testing.T) {
 // drive the §16.3 line 342 EXECUTOR_FAILURE error branch.
 type erroringExecutor struct{}
 
-func (erroringExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
-	return nil, errors.New("test: executor rejected the batch")
+func (erroringExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, errors.New("test: executor rejected the batch")
 }
 
 func (erroringExecutor) Close(context.Context, string) error { return nil }
