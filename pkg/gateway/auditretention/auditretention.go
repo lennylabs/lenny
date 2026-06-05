@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
@@ -53,6 +54,12 @@ type RetentionStore interface {
 	// RetentionWindowStats summarizes the rows a force-drop would
 	// delete, for the §16.7 audit.partition_drop_forced payload.
 	RetentionWindowStats(ctx context.Context, tenantID string, cutoff time.Time) (auditstore.RetentionWindow, error)
+	// SIEMHeldCount reports how many non-gdpr.* rows past cutoff the
+	// SIEM delivery guard is withholding from the drop (their
+	// sequence_number is above the forwarder's high-water mark). A
+	// non-zero result is the §16.4 / §16.5 AuditPartitionDropBlocked
+	// condition.
+	SIEMHeldCount(ctx context.Context, tenantID string, cutoff time.Time) (int, error)
 }
 
 // TenantLister enumerates the tenant chains the sweep covers. The
@@ -69,6 +76,11 @@ type MetricsSink interface {
 	AddAuditRowsPruned(n int)
 	// IncAuditRetentionRun records a sweep outcome (success | error).
 	IncAuditRetentionRun(outcome string)
+	// SetAuditPartitionDropBlocked sets the §16.4 / §16.5
+	// lenny_audit_partition_drop_blocked gauge for a partition (audit
+	// chain): 1 when the SIEM delivery guard is holding past-TTL rows
+	// the GC could otherwise drop, 0 once the forwarder has caught up.
+	SetAuditPartitionDropBlocked(partition string, blocked bool)
 }
 
 // Options configures a Pruner. A zero field selects its default.
@@ -103,6 +115,16 @@ type Pruner struct {
 	interval  time.Duration
 	clock     func() time.Time
 	metrics   MetricsSink
+
+	// blocked tracks which partitions currently carry a
+	// lenny_audit_partition_drop_blocked=1 gauge so a recovered
+	// partition is cleared to 0 exactly once and a never-blocked
+	// partition never creates a series (bounding gauge cardinality to
+	// partitions that have actually stalled the SIEM forwarder). Guarded
+	// by mu because the gauge is touched only from Tick, but ForceDrop
+	// and Tick can run on different goroutines.
+	mu      sync.Mutex
+	blocked map[string]bool
 }
 
 // appendFunc is the audit-append closure the force-drop path emits
@@ -125,6 +147,7 @@ func New(store RetentionStore, tenants TenantLister, emit appendFunc, opts Optio
 		interval:  clampInterval(opts.Interval),
 		clock:     opts.Clock,
 		metrics:   opts.Metrics,
+		blocked:   make(map[string]bool),
 	}
 	if p.clock == nil {
 		p.clock = func() time.Time { return time.Now().UTC() }
@@ -189,10 +212,50 @@ func (p *Pruner) Tick(ctx context.Context, now time.Time) (int, error) {
 			p.incRun("error")
 			return pruned, fmt.Errorf("auditretention: prune tenant %s: %w", tenant, err)
 		}
+		// spec: §16.4 line 378 — when the SIEM delivery guard withholds
+		// past-TTL rows from the drop, the GC is "holding the partition"
+		// and the AuditPartitionDropBlocked alert must fire. Refresh the
+		// per-partition gauge from the count of held rows this tenant
+		// still carries. The guard is inactive unless SIEM is configured.
+		p.refreshPartitionBlocked(ctx, tenant, general)
 	}
 	p.addPruned(pruned)
 	p.incRun("success")
 	return pruned, nil
+}
+
+// refreshPartitionBlocked updates the §16.4 / §16.5
+// lenny_audit_partition_drop_blocked gauge for a partition (audit
+// chain). It is a no-op unless the SIEM delivery guard is active and a
+// metrics sink is wired. A guard-held row count above zero sets the
+// gauge to 1; a partition that was previously blocked but has since
+// drained (the forwarder caught up) is cleared to 0 exactly once. A
+// partition that has never blocked never creates a gauge series, so the
+// gauge cardinality is bounded to partitions that have actually stalled
+// the SIEM forwarder. A held-count read error leaves the prior gauge
+// state untouched (the destructive prune already succeeded; a transient
+// count failure must not flip the alert).
+func (p *Pruner) refreshPartitionBlocked(ctx context.Context, partition string, cutoff time.Time) {
+	if !p.siem || p.metrics == nil {
+		return
+	}
+	held, err := p.store.SIEMHeldCount(ctx, partition, cutoff)
+	if err != nil {
+		return
+	}
+	blocked := held > 0
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	was := p.blocked[partition]
+	switch {
+	case blocked:
+		p.blocked[partition] = true
+		p.metrics.SetAuditPartitionDropBlocked(partition, true)
+	case was:
+		// Recovered: clear the series exactly once.
+		delete(p.blocked, partition)
+		p.metrics.SetAuditPartitionDropBlocked(partition, false)
+	}
 }
 
 // ForceDropResult reports the outcome of an operator-acknowledged

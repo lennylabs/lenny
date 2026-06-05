@@ -2863,6 +2863,11 @@ func main() {
 				SIEMConfigured:    *auditSIEMEndpoint != "",
 				Interval:          time.Duration(*auditRetentionPruneIntervalSeconds) * time.Second,
 				Clock:             clockinject.Now,
+				// spec: §16.4 line 378 — surface the
+				// lenny_audit_partition_drop_blocked gauge so the §16.5
+				// AuditPartitionDropBlocked alert evaluates when the SIEM
+				// delivery guard holds a partition past its retention TTL.
+				Metrics: auditRetentionMetrics{gwMetrics},
 			})
 		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
 		// durable correctness layer that re-publishes every audit row whose
@@ -7889,6 +7894,21 @@ func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Cont
 		at = clockinject.Now().UTC()
 	}
 	_, _ = a.appender.Append(ctx, ev.TenantID, ev.EventType, json.RawMessage(data), at)
+}
+
+// auditRetentionMetrics adapts the gateway metrics object to the
+// auditretention.MetricsSink. Only the §16.1-cataloged
+// lenny_audit_partition_drop_blocked gauge is exported through
+// Prometheus; the per-sweep rows-pruned and run-outcome counts are not
+// §16.1 series and are surfaced through the pruner's onTick log line, so
+// those two sink methods are deliberate no-ops. spec: §16.4 line 378.
+type auditRetentionMetrics struct{ m *gatewaymetrics.Metrics }
+
+func (auditRetentionMetrics) AddAuditRowsPruned(int)      {}
+func (auditRetentionMetrics) IncAuditRetentionRun(string) {}
+
+func (a auditRetentionMetrics) SetAuditPartitionDropBlocked(partition string, blocked bool) {
+	a.m.SetAuditPartitionDropBlocked(partition, blocked)
 }
 
 // treeCycleEmitter increments the

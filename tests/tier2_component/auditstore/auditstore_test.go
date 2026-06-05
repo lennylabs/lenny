@@ -279,6 +279,69 @@ func TestRetentionWindowStats(t *testing.T) {
 	}
 }
 
+// spec: §16.4 line 378 — SIEMHeldCount reports the non-gdpr.* rows past
+// the retention cutoff that the SIEM delivery guard is withholding from
+// the drop (sequence_number above the forwarder's high-water mark). A
+// non-zero result is the AuditPartitionDropBlocked condition. F-16.4.6.
+func TestSIEMHeldCount(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "held")
+
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// seq 1,2,3: old non-gdpr; seq 4: old gdpr.* receipt (guard-exempt);
+	// seq 5: recent (inside the window, not yet eligible to drop).
+	mustAppend(t, ctx, store, "held", "session.created", old)
+	mustAppend(t, ctx, store, "held", "session.created", old)
+	mustAppend(t, ctx, store, "held", "session.created", old)
+	mustAppend(t, ctx, store, "held", "gdpr.erasure_completed", old)
+	mustAppend(t, ctx, store, "held", "session.created", recent)
+
+	// No siem_delivery_state row: the forwarder has acked nothing
+	// (implicit high-water 0), so all three old non-gdpr rows are held.
+	if got, err := store.SIEMHeldCount(ctx, "held", cutoff); err != nil {
+		t.Fatalf("SIEMHeldCount (no state): %v", err)
+	} else if got != 3 {
+		t.Fatalf("held (no state) = %d, want 3 (seqs 1-3; gdpr seq 4 and recent seq 5 excluded)", got)
+	}
+
+	// Forwarder advances to sequence 2: only seq 3 remains past-TTL and
+	// above the high-water mark.
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO siem_delivery_state (tenant_id, last_acked_sequence) VALUES ('held', 2)`); err != nil {
+		t.Fatalf("seed siem_delivery_state: %v", err)
+	}
+	if got, err := store.SIEMHeldCount(ctx, "held", cutoff); err != nil {
+		t.Fatalf("SIEMHeldCount (acked 2): %v", err)
+	} else if got != 1 {
+		t.Fatalf("held (acked 2) = %d, want 1 (only seq 3)", got)
+	}
+
+	// Forwarder catches up past every old row: nothing is held.
+	if _, err := pg.Pool.Exec(ctx,
+		`UPDATE siem_delivery_state SET last_acked_sequence = 5 WHERE tenant_id = 'held'`); err != nil {
+		t.Fatalf("advance siem_delivery_state: %v", err)
+	}
+	if got, err := store.SIEMHeldCount(ctx, "held", cutoff); err != nil {
+		t.Fatalf("SIEMHeldCount (acked 5): %v", err)
+	} else if got != 0 {
+		t.Fatalf("held (acked 5) = %d, want 0 (forwarder caught up)", got)
+	}
+
+	// An empty tenant id is rejected; a zero cutoff is rejected.
+	if _, err := store.SIEMHeldCount(ctx, "", cutoff); err == nil {
+		t.Error("SIEMHeldCount with empty tenant must error")
+	}
+	if _, err := store.SIEMHeldCount(ctx, "held", time.Time{}); err == nil {
+		t.Error("SIEMHeldCount with zero cutoff must error")
+	}
+}
+
 func mustAppend(t *testing.T, ctx context.Context, store *auditstore.Store, tenant, et string, at time.Time) {
 	t.Helper()
 	if _, err := store.Append(ctx, tenant, et, json.RawMessage(`{"x":1}`), at); err != nil {

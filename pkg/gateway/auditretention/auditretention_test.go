@@ -22,6 +22,11 @@ type fakeStore struct {
 	failAfter int // when >0, the Nth (1-based) PruneRetention call returns pruneErr
 	window    auditstore.RetentionWindow
 	windowErr error
+	// held maps tenant -> SIEM-held row count returned by SIEMHeldCount.
+	held    map[string]int
+	heldErr error
+	// heldCalls records the tenants SIEMHeldCount was queried for.
+	heldCalls []string
 }
 
 func (f *fakeStore) PruneRetention(_ context.Context, tenantID string, opts auditstore.PruneOptions) (int, error) {
@@ -40,6 +45,14 @@ func (f *fakeStore) RetentionWindowStats(_ context.Context, _ string, _ time.Tim
 	return f.window, f.windowErr
 }
 
+func (f *fakeStore) SIEMHeldCount(_ context.Context, tenantID string, _ time.Time) (int, error) {
+	f.heldCalls = append(f.heldCalls, tenantID)
+	if f.heldErr != nil {
+		return 0, f.heldErr
+	}
+	return f.held[tenantID], nil
+}
+
 type staticTenants []string
 
 func (s staticTenants) ListTenants(context.Context) ([]string, error) { return []string(s), nil }
@@ -51,12 +64,28 @@ func (e errTenants) ListTenants(context.Context) ([]string, error) { return nil,
 type recordingMetrics struct {
 	pruned int
 	runs   map[string]int
+	// blocked records the latest gauge value set per partition and the
+	// ordered sequence of (partition, blocked) calls so a test can assert
+	// the set-once / clear-once discipline.
+	blocked     map[string]bool
+	blockedSets []blockSet
 }
 
-func newMetrics() *recordingMetrics { return &recordingMetrics{runs: map[string]int{}} }
+type blockSet struct {
+	partition string
+	blocked   bool
+}
+
+func newMetrics() *recordingMetrics {
+	return &recordingMetrics{runs: map[string]int{}, blocked: map[string]bool{}}
+}
 
 func (m *recordingMetrics) AddAuditRowsPruned(n int)        { m.pruned += n }
 func (m *recordingMetrics) IncAuditRetentionRun(out string) { m.runs[out]++ }
+func (m *recordingMetrics) SetAuditPartitionDropBlocked(partition string, blocked bool) {
+	m.blocked[partition] = blocked
+	m.blockedSets = append(m.blockedSets, blockSet{partition, blocked})
+}
 
 var now = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
@@ -246,6 +275,129 @@ func TestForceDropNoWindowRejected(t *testing.T) {
 	p := New(&fakeStore{}, staticTenants{}, emit, Options{RetentionDays: 0})
 	if _, err := p.ForceDrop(context.Background(), "acme", "alice", now); err == nil {
 		t.Fatal("expected error when no retention window is configured")
+	}
+}
+
+// spec: §16.4 line 378 — a tenant whose SIEM forwarder is stalled (held
+// rows past the retention TTL) raises the partition-drop-blocked gauge
+// to 1; a tenant with nothing held never creates a series.
+func TestTickSetsPartitionDropBlockedGauge(t *testing.T) {
+	store := &fakeStore{
+		perTenant: map[string]int{"platform": 1, "acme": 0},
+		held:      map[string]int{"acme": 4}, // SIEM holding 4 rows for acme
+	}
+	m := newMetrics()
+	p := New(store, staticTenants{"platform", "acme"}, nil, Options{
+		RetentionDays:  365,
+		SIEMConfigured: true,
+		Metrics:        m,
+	})
+	if _, err := p.Tick(context.Background(), now); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if !m.blocked["acme"] {
+		t.Errorf("acme gauge = %v, want blocked=true", m.blocked["acme"])
+	}
+	// platform has zero held rows and was never blocked, so no series.
+	if _, ok := m.blocked["platform"]; ok {
+		t.Errorf("platform gauge was set to %v; an unblocked partition must not create a series", m.blocked["platform"])
+	}
+	if len(store.heldCalls) != 2 {
+		t.Errorf("SIEMHeldCount calls = %d, want 2 (one per tenant)", len(store.heldCalls))
+	}
+}
+
+// spec: §16.4 line 378 — once the forwarder catches up the held count
+// returns to zero and the gauge is cleared exactly once; a partition
+// that was never blocked is never cleared (no spurious 0 series).
+func TestTickClearsPartitionDropBlockedOnRecovery(t *testing.T) {
+	store := &fakeStore{
+		perTenant: map[string]int{"acme": 0},
+		held:      map[string]int{"acme": 3},
+	}
+	m := newMetrics()
+	p := New(store, staticTenants{"acme"}, nil, Options{
+		RetentionDays:  365,
+		SIEMConfigured: true,
+		Metrics:        m,
+	})
+	// First sweep: blocked.
+	if _, err := p.Tick(context.Background(), now); err != nil {
+		t.Fatalf("Tick 1: %v", err)
+	}
+	if !m.blocked["acme"] {
+		t.Fatalf("after sweep 1 acme gauge = %v, want true", m.blocked["acme"])
+	}
+	// Forwarder catches up: held drops to 0.
+	store.held["acme"] = 0
+	if _, err := p.Tick(context.Background(), now); err != nil {
+		t.Fatalf("Tick 2: %v", err)
+	}
+	if m.blocked["acme"] {
+		t.Errorf("after recovery acme gauge = %v, want false", m.blocked["acme"])
+	}
+	// Third sweep, still recovered: must NOT re-emit a 0 (clear once).
+	if _, err := p.Tick(context.Background(), now); err != nil {
+		t.Fatalf("Tick 3: %v", err)
+	}
+	clears := 0
+	for _, b := range m.blockedSets {
+		if b.partition == "acme" && !b.blocked {
+			clears++
+		}
+	}
+	if clears != 1 {
+		t.Errorf("acme cleared %d times, want exactly 1 (set-once / clear-once)", clears)
+	}
+}
+
+// The SIEM delivery guard is inactive when no SIEM endpoint is
+// configured, so the gauge is never touched even if the store would
+// report held rows.
+func TestTickSkipsGaugeWhenSIEMUnconfigured(t *testing.T) {
+	store := &fakeStore{
+		perTenant: map[string]int{"acme": 2},
+		held:      map[string]int{"acme": 9},
+	}
+	m := newMetrics()
+	p := New(store, staticTenants{"acme"}, nil, Options{
+		RetentionDays:  365,
+		SIEMConfigured: false,
+		Metrics:        m,
+	})
+	if _, err := p.Tick(context.Background(), now); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(store.heldCalls) != 0 {
+		t.Errorf("SIEMHeldCount called %d times with SIEM unconfigured, want 0", len(store.heldCalls))
+	}
+	if len(m.blockedSets) != 0 {
+		t.Errorf("gauge set %d times with SIEM unconfigured, want 0", len(m.blockedSets))
+	}
+}
+
+// A transient held-count read error must not flip the gauge: the
+// destructive prune already succeeded, so the prior gauge state is held.
+func TestTickHeldCountErrorLeavesGaugeUntouched(t *testing.T) {
+	store := &fakeStore{
+		perTenant: map[string]int{"acme": 0},
+		heldErr:   errors.New("postgres unreachable"),
+	}
+	m := newMetrics()
+	p := New(store, staticTenants{"acme"}, nil, Options{
+		RetentionDays:  365,
+		SIEMConfigured: true,
+		Metrics:        m,
+	})
+	pruned, err := p.Tick(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Tick must not fail on a held-count error: %v", err)
+	}
+	if pruned != 0 {
+		t.Errorf("pruned = %d, want 0", pruned)
+	}
+	if len(m.blockedSets) != 0 {
+		t.Errorf("gauge set %d times despite held-count error, want 0", len(m.blockedSets))
 	}
 }
 

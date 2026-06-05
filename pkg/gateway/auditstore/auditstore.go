@@ -651,6 +651,49 @@ func (s *Store) RetentionWindowStats(ctx context.Context, tenantID string, cutof
 	return win, nil
 }
 
+// SIEMHeldCount reports how many of a tenant's non-gdpr.* audit rows
+// have aged past cutoff yet are withheld from the §16.4 retention drop
+// by the SIEM delivery guard, because their sequence_number is above the
+// forwarder's last acknowledged high-water mark in siem_delivery_state.
+// A non-zero result is the "partition drop blocked by SIEM lag"
+// condition the §16.4 line 378 / §16.5 AuditPartitionDropBlocked alert
+// describes: events past their retention TTL that the GC must hold
+// because the forwarder has not consumed them. gdpr.* rows are excluded
+// (they are held under the separate gdprRetentionDays floor, not the
+// SIEM guard), and a tenant with no siem_delivery_state row has an
+// implicit high-water mark of 0, so every past-TTL row is held.
+//
+// spec: §16.4 line 378 (SIEM delivery guard holds undelivered partitions
+// past their retention TTL); §16.5 (AuditPartitionDropBlocked).
+func (s *Store) SIEMHeldCount(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
+	if tenantID == "" {
+		return 0, ErrEmptyScope
+	}
+	if cutoff.IsZero() {
+		return 0, fmt.Errorf("auditstore: SIEMHeldCount requires a non-zero cutoff")
+	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	var held int64
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM audit_log
+			WHERE tenant_id = $1
+			  AND event_type NOT LIKE 'gdpr.%'
+			  AND created_at < $2
+			  AND sequence_number > COALESCE(
+			        (SELECT last_acked_sequence FROM siem_delivery_state WHERE tenant_id = $1), 0)`,
+			tenantID, cutoff.UTC()).Scan(&held)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(held), nil
+}
+
 // scanTail reads the highest-sequence row for the tenant. hasTail is
 // false when the chain is empty.
 func scanTail(ctx context.Context, tx pgx.Tx, tenantID string) (audit.Row, bool, error) {

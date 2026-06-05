@@ -73,6 +73,7 @@ type Metrics struct {
 	storageQuotaLimit         *prometheus.GaugeVec
 	circuitBreakerOpen        *prometheus.GaugeVec
 	poolDrainingSessions      *prometheus.GaugeVec
+	auditPartitionDropBlocked *prometheus.GaugeVec
 	cbRejections              *prometheus.CounterVec
 	cbRejectionsSuppressed    *prometheus.CounterVec
 	cbCacheStale              prometheus.Gauge
@@ -980,6 +981,18 @@ func New() (*Metrics, error) {
 		Name: "lenny_pool_draining_sessions_total",
 		Help: "In-flight sessions during a §15.1 pool drain, labelled by pool.",
 	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.4 line 378 — 1 when the SIEM delivery guard is holding a
+	// partition (audit chain) whose rows are past their retention TTL but
+	// undelivered to the forwarder, so the §16.5 AuditPartitionDropBlocked
+	// alert can fire. Labelled by partition; 0 once the forwarder catches
+	// up. Set by the auditretention pruner each sweep.
+	auditPartitionDropBlocked, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_audit_partition_drop_blocked",
+		Help: "1 when an audit-partition drop is blocked by SIEM lag, labelled by partition (read by AuditPartitionDropBlocked).",
+	}, []string{"partition"})
 	if err != nil {
 		return nil, err
 	}
@@ -2347,7 +2360,7 @@ func New() (*Metrics, error) {
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
-		poolDrainingSessions,
+		poolDrainingSessions, auditPartitionDropBlocked,
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
 		elicitationTamperDetected, elicitationIntegrityWeakened,
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
@@ -2517,6 +2530,7 @@ func New() (*Metrics, error) {
 		storageQuotaLimit:                    storageQuotaLimit,
 		circuitBreakerOpen:                   circuitBreakerOpen,
 		poolDrainingSessions:                 poolDrainingSessions,
+		auditPartitionDropBlocked:            auditPartitionDropBlocked,
 		cbRejections:                         cbRejections,
 		cbRejectionsSuppressed:               cbRejectionsSuppressed,
 		cbCacheStale:                         cbStale,
@@ -4036,6 +4050,19 @@ func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
 // the drain has converged.
 func (m *Metrics) SetPoolDrainingSessions(pool string, count int) {
 	m.poolDrainingSessions.WithLabelValues(pool).Set(float64(count))
+}
+
+// SetAuditPartitionDropBlocked updates the §16.4 line 378
+// lenny_audit_partition_drop_blocked gauge for a partition (audit
+// chain): 1 when the SIEM delivery guard is holding past-TTL rows the
+// retention GC could otherwise drop, 0 once the forwarder catches up.
+// The §16.5 AuditPartitionDropBlocked alert reads it.
+func (m *Metrics) SetAuditPartitionDropBlocked(partition string, blocked bool) {
+	v := 0.0
+	if blocked {
+		v = 1
+	}
+	m.auditPartitionDropBlocked.WithLabelValues(partition).Set(v)
 }
 
 // RecordCircuitBreakerRejection increments the §11.6

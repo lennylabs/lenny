@@ -127,6 +127,35 @@ func TestCircuitBreakerMetricsExposeGauges(t *testing.T) {
 	}
 }
 
+// TestAuditPartitionDropBlockedGauge covers the §16.4 line 378
+// lenny_audit_partition_drop_blocked gauge the §16.5
+// AuditPartitionDropBlocked alert reads: 1 when the SIEM delivery guard
+// holds a partition past its retention TTL, 0 once the forwarder catches
+// up, labelled by partition. F-16.4.6.
+func TestAuditPartitionDropBlockedGauge(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetAuditPartitionDropBlocked("acme", true)
+	m.SetAuditPartitionDropBlocked("globex", false)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_audit_partition_drop_blocked{partition="acme"} 1`,
+		`lenny_audit_partition_drop_blocked{partition="globex"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 // TestStorageWriteMetricsExposeValues covers the §12.3 write-pressure
 // and billing-pressure metrics: the write-IOPS gauge, the configured
 // ceiling, the billing_flush_pressure counter, and the audit chain

@@ -29243,6 +29243,35 @@ correlate session activity by time, nor any retention/cleanup behavior
 to verify. The §17.8 capacity-planning numbers ("~600 MB/day before
 retention cleanup") are dormant because there is no cleanup.
 
+**Partial progress (stays OPEN — commit `__PENDING__`):** Two of the
+finding's bullets are now stale and one is closed:
+- The `siem_delivery_state` table exists (migration `0107`); the
+  "absent" evidence is stale.
+- The audit_log retention regime is **not** unimplemented: the
+  `pkg/gateway/auditstore.PruneRetention` sweep (run hourly by the
+  leader-gated `auditretention.Pruner`) drops non-gdpr.* rows past
+  `audit.retentionDays`, holds gdpr.* rows under the separate
+  `gdprRetentionDays` floor, and applies the §16.4 line 378 SIEM
+  delivery guard (rows above the forwarder high-water mark are held).
+  The §25.9 force-drop override (`audit.partition_drop_forced`) is wired.
+- The `AuditPartitionDropBlocked` alert is no longer dormant: the new
+  `auditstore.SIEMHeldCount` counts non-gdpr.* past-TTL rows the SIEM
+  guard is withholding, and the pruner sets the §16.1-cataloged
+  `lenny_audit_partition_drop_blocked{partition}` gauge (1 when held, 0
+  on recovery, set-once / clear-once to bound cardinality), wired into
+  `cmd/lenny-gateway` via `auditRetentionMetrics`. Tier-1 pruner tests +
+  a tier-2 Postgres `SIEMHeldCount` test cover the guard semantics.
+
+The remaining genuine gap is the spec's **mechanism**: §16.4 line 378
+mandates native Postgres range partitioning with whole-partition DROP,
+and the `session_logs` / `stream_cursors` partitioned tables. The
+implementation deliberately realizes "partition" as the per-tenant audit
+chain (DELETE-based retention) because native range partitioning of the
+§11.7 hash-chained `audit_log` requires reworking the PK / id-uniqueness
+constraints, the immutability trigger, RLS, grants, the §25.9 force-drop
+endpoint, and the `lenny-ctl audit drop-partition` CLI — a coordinated
+cross-cutting subsystem change, not a single-batch fix. Left OPEN.
+
 ### - [x] F-16.4.7 — Audit events are not written for the spec's "all policy decisions" [High] — CLOSED
 
 **High.** §16.4 line 374 says: "Audit events for all policy decisions."
