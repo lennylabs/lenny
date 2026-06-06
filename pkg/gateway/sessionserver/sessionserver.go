@@ -1630,6 +1630,11 @@ func (s *Server) Handler() http.Handler {
 	// usage route self-gates on view_usage like GET /v1/usage. F-15.2.3.
 	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", read(s.handleListArtifacts))
 	mux.HandleFunc("GET /v1/sessions/{id}/usage", s.handleSessionUsage)
+	// spec: §15.1 lines 671, 674 — workspace snapshot download (tar.gz)
+	// and the §7.5 captured setup-command output, the REST reads the SDK
+	// references for artifact recovery and setup debugging. F-15.1.3.
+	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
+	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", read(s.handleSetupOutput))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))

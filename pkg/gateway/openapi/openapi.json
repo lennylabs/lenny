@@ -855,6 +855,24 @@
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       }
     },
+    "/v1/sessions/{id}/workspace": {
+      "get": {
+        "operationId": "getV1SessionsByIdWorkspace",
+        "summary": "Download the session workspace snapshot (tar.gz)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/setup-output": {
+      "get": {
+        "operationId": "getV1SessionsByIdSetupOutput",
+        "summary": "Get captured setup command stdout/stderr/exit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
     "/v1/sessions/{id}/events": {
       "get": {
         "operationId": "getV1SessionsByIdEvents",

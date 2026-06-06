@@ -25818,11 +25818,28 @@ The GET is tenant-scoped (tenant-admin to own tenant), projects
 `{user_id, role, assignedAt, assignedBy}`, and returns the canonical
 §15.1 cursor-paginated envelope. Documented in `openapi.json`.
 
+**Progress (stays OPEN).** Closed `GET /v1/sessions/{id}/workspace`
+(spec line 671) — the §4.5 workspace-snapshot download. The handler
+resolves the session row's `WorkspaceSnapshot.Ref` (both the
+`lenny-blob://` URI form and the path-style object key), reads it through
+a tenant-scoped blob-store view (cross-tenant ref fails closed before the
+store is touched), and streams the tar.gz with its stored MIME type, a
+`Content-Disposition` naming the archive after the session, and the §4.5
+line 311 content hash header. A session with no snapshot (never-ran or a
+derive_failure audit row) returns 404 per spec line 661; a gateway with
+no blob store wired returns 503. Also mounted the already-implemented
+`GET /v1/sessions/{id}/setup-output` (line 674) handler and brought the
+session subresource family into §15.1 line-661 compliance: a
+`derive_failure` audit row now returns 404 from `/workspace`,
+`/setup-output`, `/artifacts`, and `/usage` (previously `/artifacts` and
+`/usage` returned 200-empty for these rows). Both new endpoints
+documented in `openapi.json` and enforced by the doc-parity test.
+
 Genuine remaining (real feature work, each multi-resource, not a thin
 route over an existing store): `GET /v1/admin/environments/{name}/usage`
-billing rollup, `GET /v1/sessions/{id}/workspace` snapshot download, and
-`GET /v1/sessions/{id}/messages` history list (message history is not
-persisted today). Left OPEN for follow-on batches.
+billing rollup, and `GET /v1/sessions/{id}/messages` history list
+(message history is not persisted today). Left OPEN for follow-on
+batches.
 
 ### - [x] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — CLOSED
 
