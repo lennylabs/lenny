@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SchemaVersion is the §15.5 item 7 schema revision the gateway stamps on
@@ -30,6 +32,18 @@ const SchemaVersion = 1
 
 // Entry is one transcript line.
 type Entry struct {
+	// ID is the stable per-message identifier the §15.4.1 MessageDAG
+	// view (`GET /v1/sessions/{id}/messages`) returns as the message
+	// node id. It is the durable session_messages.id row UUID. The
+	// Memory store generates one at append time; the Postgres store
+	// surfaces the column. Empty on the legacy transcript-write path is
+	// harmless — the transcript view does not depend on it.
+	//
+	// spec: §15.4.1 line 1784 — "every message has a stable ID"; line
+	// 1792 — the session_messages table is indexed on (session_id, id,
+	// thread_id).
+	ID string `json:"id,omitempty"`
+
 	// Seq is the per-session monotonic sequence, starting at 1.
 	Seq uint64 `json:"seq"`
 
@@ -116,6 +130,12 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		}
 		if e.SchemaVersion == 0 {
 			e.SchemaVersion = SchemaVersion
+		}
+		// Assign a stable message-node id so the §15.4.1 MessageDAG view
+		// has a durable identifier, mirroring the Postgres
+		// session_messages.id UUID column. spec: §15.4.1 line 1784.
+		if e.ID == "" {
+			e.ID = uuid.NewString()
 		}
 		existing = append(existing, e)
 		nextSeq++

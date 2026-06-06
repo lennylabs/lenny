@@ -25641,7 +25641,7 @@ traces here.
   contract; migrations 0138-0142 complete the `version`-column rollout.
   Closed by commit `d07eac01` (this batch).
 
-### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
+### - [x] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.4.2 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
 
@@ -25857,6 +25857,29 @@ This requires a message-history persistence subsystem that does not yet
 exist (the `POST .../messages` injection path persists no durable message
 log), so it is real feature work rather than a thin route over an
 existing store. Left OPEN for a follow-on batch.
+
+**Resolution (commit pending — closes the finding).** The last genuine
+remaining endpoint, `GET /v1/sessions/{id}/messages` (spec line 692), is
+now mounted. The earlier worry that no durable message log exists was
+inaccurate: the `POST .../messages` injection path already records every
+inbound message and the runtime's text response into the durable
+`session_messages` store (`messages.go` `s.transcripts.Append`), the same
+backing the `/transcript` view reads. The new `handleMessagesList`
+projects each row to a §15.4.1 MessageDAG node — a stable id
+(`session_messages.id`, surfaced via a new `transcriptstore.Entry.ID`
+column; the Memory store mints a UUID at append), the derived `from`
+object (`agent`→`sess_{session_id}`, `system`→`lenny-gateway`,
+`client`→`client_{opaque}` per the line-1700 closed enum), role/content,
+`schemaVersion`, and the `delivered` delivery state (line 692 "delivery
+receipts and state"). It honours the canonical §15.1 cursor envelope, the
+spec-named `?since=` (coordinator-local seq) and `?threadId=` filters
+(line 1792; v1's single implicit thread means a concrete `threadId`
+matches nothing), `[1,200]` limit clamping, and the line-661 404 contract
+(missing/cross-tenant session, `derive_failure` audit row, or no
+transcript store wired). Documented in `openapi.json`. All other endpoints
+in this sweep were closed by prior batches; the pool-upgrade sub-routes
+remain tracked by F-10.5.1 and `.well-known/agent.json` is spec-marked
+Post-V1. Closes F-15.1.3.
 
 ### - [x] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — CLOSED
 

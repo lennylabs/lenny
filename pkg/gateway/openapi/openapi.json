@@ -821,6 +821,19 @@
       }
     },
     "/v1/sessions/{id}/messages": {
+      "get": {
+        "operationId": "getV1SessionsByIdMessages",
+        "summary": "List the session message history (MessageDAG, paginated)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "threadId", "in": "query", "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "schema": { "type": "integer" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
       "post": {
         "operationId": "postV1SessionsByIdMessages",
         "summary": "Inject a message batch into a session",

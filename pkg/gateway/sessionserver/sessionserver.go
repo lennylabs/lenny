@@ -1615,6 +1615,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manage(s.handleUploadToSession))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
+	// spec: §15.1 line 692 — the §15.4.1 MessageDAG list over the durable
+	// session_messages store, the read side of the message endpoint. Shares
+	// the transcript backing; projects each row to a message node with its
+	// stable id, derived `from`, and delivery state. F-15.1.3.
+	mux.HandleFunc("GET /v1/sessions/{id}/messages", read(s.handleMessagesList))
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
