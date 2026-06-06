@@ -188,6 +188,53 @@ func (s *Store) SessionTotals(ctx context.Context, tenantID, sessionID string) (
 	return billingstore.SumSessionUsage(events, sessionID), nil
 }
 
+// EnvironmentTotals implements billingstore.Store. The query pulls the
+// environment's stamped events plus any §11.2.1 correction events that
+// reference one of them: a correction event carries no environment_id of
+// its own, so filtering by environment_id alone would silently drop
+// corrections and over-report usage. Including the corrections lets
+// SumEnvironmentUsage run ReconcileLedger and supersede the corrected
+// originals before summing, matching the Memory store's semantics.
+//
+// spec: §15.1 line 840 (environment billing rollup); §10.6 line 663;
+// §11.2.1 (correction semantics). F-15.1.3.
+func (s *Store) EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (billingstore.SessionUsage, error) {
+	if environmentID == "" {
+		return billingstore.SessionUsage{}, nil
+	}
+	pool, err := s.shard(ctx, tenantID)
+	if err != nil {
+		return billingstore.SessionUsage{}, err
+	}
+	var events []billingstore.Event
+	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT `+selectList+` FROM billing_events
+			WHERE tenant_id = $1 AND (
+				environment_id = $2
+				OR (corrects_sequence IS NOT NULL AND corrects_sequence IN (
+					SELECT sequence_number FROM billing_events
+					WHERE tenant_id = $1 AND environment_id = $2))
+			)
+			ORDER BY sequence_number`, tenantID, environmentID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			e, err := scanEvent(rows, tenantID)
+			if err != nil {
+				return err
+			}
+			events = append(events, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return billingstore.SessionUsage{}, err
+	}
+	return billingstore.SumEnvironmentUsage(events, environmentID), nil
+}
+
 // scanEvent reads one row in selectList order into an Event.
 func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	var (

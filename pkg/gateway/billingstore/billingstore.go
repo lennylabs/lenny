@@ -280,6 +280,22 @@ type Store interface {
 	// F-15.2.3.
 	SessionTotals(ctx context.Context, tenantID, sessionID string) (SessionUsage, error)
 
+	// EnvironmentTotals returns the reconciled token + compute usage
+	// aggregated across every session created in environmentID within
+	// tenantID, applying the same §11.2.1 correction semantics as
+	// SessionTotals (a correction supersedes the referenced original).
+	// The environmentID is the §10.6 environment name stamped onto every
+	// billing event for sessions created in that environment context, so
+	// the rollup needs no join against the session row. It backs the
+	// §15.1 GET /v1/admin/environments/{name}/usage billing rollup. An
+	// environment with no billing events returns the zero SessionUsage
+	// and a nil error.
+	//
+	// spec: §15.1 line 840 (environment billing rollup); §10.6 line 663
+	// (environment-stamped billing events); §11.2.1 (correction
+	// semantics). F-15.1.3.
+	EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (SessionUsage, error)
+
 	// PseudonymizeUser rewrites every billing event in tenantID owned
 	// by userID, replacing the user id with its §12.8 salted-hash
 	// pseudonym. Billing events are append-only per §11.2.1, so the
@@ -513,12 +529,42 @@ func SumSessionUsage(events []Event, sessionID string) SessionUsage {
 	return u
 }
 
+// SumEnvironmentUsage reconciles §11.2.1 corrections across the supplied
+// ledger and sums the token + compute usage for every event stamped with
+// environmentID. An empty environmentID matches nothing (a session not
+// scoped to an environment carries no environment id). spec: §15.1 line
+// 840; §10.6 line 663; §11.2.1. F-15.1.3.
+func SumEnvironmentUsage(events []Event, environmentID string) SessionUsage {
+	var u SessionUsage
+	if environmentID == "" {
+		return u
+	}
+	for _, e := range ReconcileLedger(events) {
+		if e.EnvironmentID != environmentID {
+			continue
+		}
+		u.TokensInput += e.TokensInput
+		u.TokensOutput += e.TokensOutput
+		u.PodMinutes += e.PodMinutes
+		u.EventCount++
+	}
+	return u
+}
+
 // SessionTotals implements Store.
 func (m *Memory) SessionTotals(_ context.Context, tenantID, sessionID string) (SessionUsage, error) {
 	m.mu.Lock()
 	events := append([]Event(nil), m.events[tenantID]...)
 	m.mu.Unlock()
 	return SumSessionUsage(events, sessionID), nil
+}
+
+// EnvironmentTotals implements Store.
+func (m *Memory) EnvironmentTotals(_ context.Context, tenantID, environmentID string) (SessionUsage, error) {
+	m.mu.Lock()
+	events := append([]Event(nil), m.events[tenantID]...)
+	m.mu.Unlock()
+	return SumEnvironmentUsage(events, environmentID), nil
 }
 
 // Since implements Store.

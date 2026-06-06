@@ -65,6 +65,16 @@ func (f *flakyStore) SessionTotals(ctx context.Context, tenantID, sessionID stri
 	return f.inner.SessionTotals(ctx, tenantID, sessionID)
 }
 
+func (f *flakyStore) EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (billingstore.SessionUsage, error) {
+	f.mu.Lock()
+	down := f.down
+	f.mu.Unlock()
+	if down {
+		return billingstore.SessionUsage{}, errPrimaryDown
+	}
+	return f.inner.EnvironmentTotals(ctx, tenantID, environmentID)
+}
+
 // The erasure primitives delegate to the in-memory ledger; the failover
 // tests do not model an erasure-time outage.
 func (f *flakyStore) PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error) {

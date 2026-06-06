@@ -696,6 +696,13 @@ func (r *Router) Handler() http.Handler {
 			envAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
 		mux.Handle("GET /v1/admin/environments/{name}/runtime-exposure",
 			envAdmin(http.HandlerFunc(r.handleEnvironmentRuntimeExposure)))
+		// §15.1 line 840: environment billing rollup. Only mounted when a
+		// billing ledger is wired so the route is absent rather than
+		// silently returning zero usage on a billing-less deployment.
+		if r.billing != nil {
+			mux.Handle("GET /v1/admin/environments/{name}/usage",
+				envAdmin(http.HandlerFunc(r.handleEnvironmentUsage)))
+		}
 		mux.Handle("GET /v1/admin/tenants/{id}/access-report",
 			envAdmin(http.HandlerFunc(r.handleTenantAccessReport)))
 	}

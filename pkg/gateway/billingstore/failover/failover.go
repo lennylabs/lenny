@@ -312,6 +312,14 @@ func (p *Pipeline) SessionTotals(ctx context.Context, tenantID, sessionID string
 	return p.primary.SessionTotals(ctx, tenantID, sessionID)
 }
 
+// EnvironmentTotals implements billingstore.Store. Like SessionTotals it
+// reads from the durable primary: buffered (not-yet-flushed) events are
+// intentionally excluded until they are renumbered into Postgres in
+// sequence order. spec: §15.1 line 840; §11.2.1. F-15.1.3.
+func (p *Pipeline) EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (billingstore.SessionUsage, error) {
+	return p.primary.EnvironmentTotals(ctx, tenantID, environmentID)
+}
+
 // PseudonymizeUser implements billingstore.Store. It rewrites the
 // durable ledger through the primary store and then pseudonymizes any
 // matching events still sitting in the Tier 2 write-ahead buffer, so a

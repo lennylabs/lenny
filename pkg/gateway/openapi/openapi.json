@@ -1770,6 +1770,22 @@
         }
       }
     },
+    "/v1/admin/environments/{name}/usage": {
+      "get": {
+        "operationId": "getV1AdminEnvironmentsByNameUsage",
+        "summary": "Environment billing rollup",
+        "x-lenny-mcp-tool": "admin.environment_usage",
+        "x-lenny-scope": "admin.environments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
         "operationId": "postV1AdminIssuedTokensByJtiRevoke",

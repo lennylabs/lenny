@@ -25835,11 +25835,28 @@ session subresource family into §15.1 line-661 compliance: a
 `/usage` returned 200-empty for these rows). Both new endpoints
 documented in `openapi.json` and enforced by the doc-parity test.
 
-Genuine remaining (real feature work, each multi-resource, not a thin
-route over an existing store): `GET /v1/admin/environments/{name}/usage`
-billing rollup, and `GET /v1/sessions/{id}/messages` history list
-(message history is not persisted today). Left OPEN for follow-on
-batches.
+**Progress (stays OPEN).** Closed `GET /v1/admin/environments/{name}/usage`
+(spec line 840) — the environment billing rollup. Billing events already
+carry the §10.6 `environment_id` (the environment name), so the rollup
+needs no join against session rows. New `billingstore.EnvironmentTotals`
+(Store interface + Memory + pgstore + failover Pipeline) sums the §11.2.1
+ledger for one environment, applying correction semantics via a shared
+`SumEnvironmentUsage` reconciler; the pgstore query also pulls correction
+events that reference the environment's events (a correction carries no
+`environment_id` of its own, so a naive `WHERE environment_id` filter
+would silently drop corrections and over-report). The admin handler
+resolves the environment within the caller's authorized tenant (404 if
+absent), gates on `manage_environments` like the sibling
+`runtime-exposure` read, and returns the per-session-shaped rollup
+`{environment, tenantId, tokensInput, tokensOutput, podMinutes,
+eventCount}`. The route is mounted only when a billing ledger is wired.
+Documented in `openapi.json` with the admin MCP extensions.
+
+Genuine remaining: only `GET /v1/sessions/{id}/messages` history list.
+This requires a message-history persistence subsystem that does not yet
+exist (the `POST .../messages` injection path persists no durable message
+log), so it is real feature work rather than a thin route over an
+existing store. Left OPEN for a follow-on batch.
 
 ### - [x] F-15.1.4 — Non-spec error codes — `INVALID_REQUEST` and `AUTH_REQUIRED` [High] — CLOSED
 
