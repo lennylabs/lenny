@@ -29479,7 +29479,7 @@ materializes setup output for the client API, and there is no durable
 record of successful or failed setup commands beyond a single ephemeral
 log line on the adapter pod's stdout.
 
-### - [ ] F-16.4.6 — EventStore tables are not partitioned; the SIEM-aware partition GC does not exist [High] — OPEN
+### - [ ] F-16.4.6 — EventStore tables are not partitioned; the SIEM-aware partition GC does not exist [High] — DEFERRED
 
 **High.** §16.4 line 378 mandates: "EventStore tables (audit events,
 session logs, stream cursors) are partitioned by time using native
@@ -29557,6 +29557,47 @@ chain (DELETE-based retention) because native range partitioning of the
 constraints, the immutability trigger, RLS, grants, the §25.9 force-drop
 endpoint, and the `lenny-ctl audit drop-partition` CLI — a coordinated
 cross-cutting subsystem change, not a single-batch fix. Left OPEN.
+
+**Resolution (DEFERRED — commit `__COMMIT__`).** The buildable portion is
+now implemented; the irreducible remainder is blocked by a spec-internal
+contradiction that cannot be resolved without editing `spec/`.
+
+Implemented this batch (the two greenfield §16.4 EventStore tables and
+the native-partition GC mechanism the finding called for):
+- Migration `0149` creates `session_logs` and `stream_cursors` as native
+  `PARTITION BY RANGE (created_at)` tables (the spec-named tables that
+  previously did not exist), each with a `DEFAULT` safety-net partition,
+  the §12.3 tenant-scoped posture (`lenny_tenant_guard` trigger, FORCE
+  RLS, `lenny_app` grants), and the partition key carried in the primary
+  key as Postgres requires.
+- `pkg/gateway/partitionmaint` is the §16.4 line 378 background job: a
+  leader-gated maintainer that creates the current + N-ahead daily
+  partitions and **drops whole partitions** (`DROP TABLE`) once their
+  entire range has aged past the retention window (30 days for session
+  logs, 7 days for stream cursors). It carries a `DropGuard` seam so the
+  §16.4 SIEM delivery guard can veto a drop, mirroring the existing
+  audit guard. Wired into `cmd/lenny-gateway` behind `pgPool != nil` on
+  the gateway-leader lease, alongside the artifact GC and audit pruner.
+
+Irreducible remainder (audit_log native partitioning) — **blocked on a
+spec change, Rule B forbids modifying `spec/`:** §16.4 line 378 lists
+`audit_log` as a natively range-partitioned EventStore table, but §12.8
+line 815 mandates a foreign key `audit_redaction_receipts.audit_event_id
+-> audit_log.id`, which requires a single-column `UNIQUE (id)` on
+`audit_log`. Postgres forbids any unique constraint that omits the
+partition key (`created_at`) on a `PARTITION BY RANGE (created_at)`
+table, so a natively-partitioned `audit_log` and the §12.8 receipt FK
+cannot both exist. §12.2 line 131 further frames audit/billing
+partitioning as a future scaling step ("if the separated billing/audit
+instance is also approaching saturation"), not a v1 baseline. The audit
+retention *behavior* §16.4 requires (drop rows past TTL, gdpr.* carve-out,
+SIEM delivery guard, force-drop override + `lenny-ctl audit
+drop-partition` CLI, `lenny_audit_partition_drop_blocked` gauge +
+`AuditPartitionDropBlocked` alert) is already implemented via the
+DELETE-based `auditstore.PruneRetention` + `auditretention.Pruner`
+(commit `0ddce6a9`). Reconciling §16.4 line 378 with §12.8 line 815 for
+`audit_log` is a spec decision for the spec owner; the engineering
+remainder is mechanical once the spec resolves which constraint wins.
 
 ### - [x] F-16.4.7 — Audit events are not written for the spec's "all policy decisions" [High] — CLOSED
 

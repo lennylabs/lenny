@@ -215,6 +215,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/partitionmaint"
 	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/pgnotify"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
@@ -6184,6 +6185,43 @@ func main() {
 					}
 					if pruned > 0 {
 						log.Printf("lenny-gateway: §16.4 audit-retention sweep pruned %d audit rows past their retention window", pruned)
+					}
+				})
+			})
+		}
+
+		// spec: §16.4 line 378 EventStore partition maintainer: the
+		// leader-elected sweep that creates the current + ahead daily
+		// partitions of session_logs / stream_cursors and drops partitions
+		// whose entire range has aged past the §16.4 retention window (30
+		// days for session logs, 7 days for stream cursors). Only wired when
+		// a durable Postgres pool exists; the in-memory dev gateway has no
+		// partitioned EventStore tables. audit_log stays on the DELETE-based
+		// pruner above (native partitioning of audit_log conflicts with the
+		// §12.8 line 815 audit_redaction_receipts FK onto audit_log.id; see
+		// BUILD-GAPS F-16.4.6).
+		if pgPool != nil {
+			partMaint := partitionmaint.New(
+				partitionmaint.NewPGDriver(pgPool),
+				[]partitionmaint.Spec{
+					{Table: "session_logs", Granularity: partitionmaint.Daily, Retention: partitionmaint.SessionLogRetention},
+					{Table: "stream_cursors", Granularity: partitionmaint.Daily, Retention: partitionmaint.StreamCursorRetention},
+				},
+				partitionmaint.Options{Clock: clockinject.Now},
+			)
+			log.Printf("lenny-gateway: §16.4 EventStore partition maintainer cadence %s (session_logs 30d, stream_cursors 7d)",
+				partMaint.Interval())
+			leaderGate.Add("eventstore-partition-maint", func(ctx context.Context) {
+				partMaint.Run(ctx, func(res []partitionmaint.Result, err error) {
+					if err != nil {
+						log.Printf("lenny-gateway: §16.4 EventStore partition maintenance error: %v", err)
+						return
+					}
+					for _, r := range res {
+						if len(r.Created) > 0 || len(r.Dropped) > 0 || len(r.Held) > 0 {
+							log.Printf("lenny-gateway: §16.4 partition maintenance %s: created %d, dropped %d, held %d",
+								r.Table, len(r.Created), len(r.Dropped), len(r.Held))
+						}
 					}
 				})
 			})
