@@ -56,8 +56,12 @@ mkdir -p "$LOG_DIR"
 SUMMARY="$LOG_DIR/summary.log"
 RUNNING_LOG="$LOG_DIR/close-build-gaps.log"
 
-count_open()   { grep -c '^### - \[ \] F-.*— OPEN' "$REPO/BUILD-GAPS.md" 2>/dev/null || echo 0; }
-count_closed() { grep -c '— CLOSED'                "$REPO/BUILD-GAPS.md" 2>/dev/null || echo 0; }
+# grep -c prints "0" and exits 1 when there are no matches; a bare
+# `|| echo 0` would then emit a second "0", yielding the two-line
+# string "0\n0" that breaks the `(( open == 0 ))` stop check. Capture
+# grep's output and default only when it is empty (missing file).
+count_open()   { local n; n=$(grep -c '^### - \[ \] F-.*— OPEN' "$REPO/BUILD-GAPS.md" 2>/dev/null); echo "${n:-0}"; }
+count_closed() { local n; n=$(grep -c '— CLOSED'                "$REPO/BUILD-GAPS.md" 2>/dev/null); echo "${n:-0}"; }
 
 # The standing prompt. Each `claude -p` invocation is stateless, so
 # everything Claude needs to know is in here. BUILD-GAPS.md and git
