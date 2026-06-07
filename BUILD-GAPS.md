@@ -13422,7 +13422,7 @@ Implementation evidence walked:
 
 ### Findings
 
-### - [ ] F-10.5.1 — 01  `RuntimeUpgrade` state machine is library-only; CRD, controller, admin endpoint, and CLI all absent [High] — OPEN
+### - [x] F-10.5.1 — 01  `RuntimeUpgrade` state machine is library-only; CRD, controller, admin endpoint, and CLI all absent [High] — CLOSED
 
 The spec describes the `RuntimeUpgrade` state machine as the **required mechanism for production runtime upgrades** (line 540). It mandates:
 - A `RuntimeUpgrade` CRD whose `status.phase` carries Pending/Expanding/Draining/Contracting/Complete/Paused, with `previousPoolSpec`, `schemaVersion`, `drainFirst`, `canaryPercent`, `stabilizationWindowSeconds`, `drainTimeoutSeconds`, and `autoAdvance` fields (lines 480–502).
@@ -13445,6 +13445,67 @@ The §16.5 `RuntimeUpgradeStuck` alert at `pkg/alerting/rules/rules.go:1359` fir
 The `runtime-upgrade-stuck` runbook (`docs/runbooks/runtime-upgrade-stuck.md`) tells operators to run `kubectl get runtimeupgrade -A` and `kubectl describe runtimeupgrade`, neither of which can succeed against the cluster.
 
 The §10.5 manual rotation procedure on lines 537–542 is labeled "reference only" and is not the primary mechanism; the spec is explicit that the state machine is required for production. The platform therefore has no normative path to upgrade a runtime pool in v1.
+
+**Resolution (9aa3b47e, 9adde76d):** Built the §10.5 RuntimeUpgrade
+operator surface, the spec's required production mechanism (line 540). The
+spec describes a RuntimeUpgrade *record* (lines 480-508 say "the
+`RuntimeUpgrade` record includes…", "stored in the `RuntimeUpgrade`
+record", "`RuntimeUpgrade.previousPoolSpec`"); the only CRD it names is the
+*SandboxTemplate*. Per Rule O the record is a durable Postgres row
+(`pkg/gateway/runtimeupgradestore` + `pgstore`, migration 0147,
+platform-scoped on the ca_rotation precedent) rather than a synthesized
+CRD, matching the rest of the gateway's durable state. `pkg/gateway/
+runtimeupgrade.Manager` drives the existing `pkg/runtime/upgrade/state`
+linear progression plus Pause/Resume/Rollback under an optimistic version
+guard and captures `previousPoolSpec` from the live pool catalog for
+rollback (line 507). Surface delivered: §15.1 lines 869-874 `POST
+/v1/admin/pools/{name}/upgrade/{start,proceed,pause,resume,rollback}` +
+`GET …/upgrade-status` (platform-admin); §24 lines 65-71 `lenny-ctl admin
+pools upgrade start|proceed|pause|resume|rollback|status`; the previously
+never-emitted §16.1 lines 184-186 `lenny_runtime_upgrade_{state,
+phase_duration_seconds,draining_sessions}` gauges, now written on every
+durable commit and primed at startup so the §16.5 RuntimeUpgradeStuck
+alert can fire; and the rewritten `runtime-upgrade-stuck` runbook (it
+pointed at a nonexistent CRD). The remaining cluster/Job-side enforcement —
+the WarmPoolController/admission SandboxTemplate-deletion guard (line 508)
+and the Phase 3 schema-migration gate (line 502) — is carved into
+**F-10.5.14** (DEFERRED): the deletion guard needs a controller-runtime /
+envtest harness unavailable here, and the Phase 3 gate is forward-looking
+(v1 has no Phase 3 `DROP COLUMN` migration and no gateway endpoint applies
+migrations).
+
+### - [ ] F-10.5.14 — RuntimeUpgrade cluster-side enforcement: SandboxTemplate-deletion guard and Phase 3 schema-migration gate [Medium] — DEFERRED
+
+Carved out of F-10.5.1 (closed by 9aa3b47e/9adde76d, which delivered the
+operator-facing state machine: durable record, admin API, CLI, metric
+emission). Two §10.5 requirements remain, both cluster/Job-side:
+
+- **SandboxTemplate-deletion guard (line 508, the "key safety
+  invariant").** "No operator command outside the state machine can delete
+  the old CRD while a `RuntimeUpgrade` record is active — the
+  WarmPoolController blocks `SandboxTemplate` deletion when an active
+  `RuntimeUpgrade` references it." With the upgrade record in Postgres, the
+  guard is a validating admission webhook (or finalizer) on `SandboxTemplate`
+  DELETE that resolves the template's pool and consults the
+  `runtime_upgrade` table for a non-terminal phase. The pool→SandboxTemplate
+  resolution and the webhook wiring need a controller-runtime / envtest
+  harness to build and test faithfully, which is unavailable in this
+  environment.
+- **Phase 3 schema-migration gate (line 502).** "If `schemaVersion` is set,
+  the gateway blocks Phase 3 migration attempts while `upgradeState !=
+  Complete` for the referenced pool." The record already stores
+  `schemaVersion`, but the gate is forward-looking: v1 ships no Phase 3
+  (`DROP COLUMN`) migration (confirmed under F-10.5.2), and migrations apply
+  through the `lenny-migrate` Job rather than a gateway endpoint, so there
+  is no live Phase 3 attempt to intercept. Implement the gate together with
+  the first real Phase 3 migration so the guard has something to refuse.
+
+**Suggested resolution:** When the controller-runtime / envtest harness is
+available, add a `SandboxTemplate` DELETE admission guard backed by a
+`runtimeupgradestore` lookup, and add the Phase 3 gate to the migration
+runner (or its admin wrapper) alongside the first Phase 3 migration.
+Deferred reason: cluster/envtest harness unavailable here; Phase 3 gate has
+no v1 migration to gate.
 
 ### - [x] F-10.5.2 — 02  No production migration runner: Helm chart has no pre-upgrade `lenny-migrate` Job; expand-contract gating absent [High] — CLOSED
 
@@ -38249,6 +38310,13 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Deferred (2026-06-03):** The §24.4 CLI group maps onto the §24.4 REST surface, which is now ~10/18 mounted (CRUD, `set-warm-count`, `sync-status`, `resume-reconciliation`, the `tenant-access` trio). The remaining eight subcommands the group must cover — `upgrade {start,proceed,pause,resume,rollback,status}`, `drain`, `exit-bootstrap`, `circuit-breaker` — have no endpoints (F-24.4.2/F-24.4.6). Wiring the CLI group now would ship half a `admin pools` command set whose upgrade/drain verbs `404`. Building the whole group cohesively is gated on the §24.4 endpoint build, which needs the pool upgrade state machine (overlaps F-10.5.1) plus the drain / SDK-warm-circuit-breaker / bootstrap-override subsystems. Deferred to that endpoint batch so the CLI lands against a complete REST surface.
 
+**Re-DEFERRED (9aa3b47e, F-10.5.1):** The upgrade verb is now wired —
+`lenny-ctl admin pools upgrade start|proceed|pause|resume|rollback|status`
+maps to the mounted `/v1/admin/pools/{name}/upgrade*` endpoints. The group
+remains incomplete on `drain`, `exit-bootstrap`, and `circuit-breaker`,
+whose endpoints are still absent (F-24.4.2/F-24.4.6); stays DEFERRED until
+those land so the remaining verbs do not 404.
+
 ---
 
 ### - [ ] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — DEFERRED
@@ -38295,6 +38363,17 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 **Impact:** The §24.4 surface is largely a documented future — the spec describes operator workflows whose REST endpoints do not exist on the gateway. This is the third-most-cited admin surface in the §16.5 alert catalog (`PoolConfigDrift`, `PoolScalingAdmissionStuck`, `RuntimeUpgradeStuck` all reference §24.4 operations as the operator clear path) and the §17.7 runbook catalog (`pool-upgrade-rollback.md`, `runtime-upgrade-stuck.md`). When a pool gets stuck in the §4.6.3 admission-denied abort state today, the only available recoveries are the leader-restart and the Postgres config-change paths from §4.6.3; the operator clear path is documented but unbuilt.
 
 **Deferred (2026-06-03):** Re-scoped against the current tree — `warm-count`, `sync-status`, and `resume-reconciliation` now mount (prior batches + this one), and the canonical pool `PUT` now enforces `If-Match` (F-24.4.3). Eight endpoints remain: `POST .../drain`, `PUT .../circuit-breaker`, the five `POST .../upgrade/{start,proceed,pause,resume,rollback}`, `GET .../upgrade-status`, and `DELETE .../bootstrap-override`. The upgrade cluster needs the pool upgrade state machine + persistence (overlaps F-10.5.1, still OPEN); `drain` needs a drain-state store wired into session placement (the `lenny_pool_draining_sessions_total` gauge has no incrementer); `circuit-breaker` needs the §6.1 `SDKWarmCircuitBreaker` override path; `bootstrap-override` needs the PSC bootstrap-convergence field. Each is a subsystem rather than a thin handler, so the eight are deferred to a dedicated §24.4 endpoint batch (which also unblocks F-24.4.1/F-24.4.6 and the remaining F-24.4.4 catalog entries).
+
+**Re-DEFERRED (9aa3b47e, F-10.5.1):** The six upgrade endpoints (`POST
+.../upgrade/{start,proceed,pause,resume,rollback}` + `GET
+.../upgrade-status`, §15.1 lines 869-874) now mount on the gateway, backed
+by the durable `runtimeupgradestore` state machine that this note's
+"upgrade cluster needs the pool upgrade state machine + persistence"
+blocker described. Remaining unbuilt: `POST .../drain` (needs a drain-state
+store wired into session placement), `PUT .../circuit-breaker` (needs the
+§6.1 `SDKWarmCircuitBreaker` override path), and `DELETE
+.../bootstrap-override` (needs the PSC bootstrap-convergence field). Stays
+DEFERRED on those three subsystems.
 
 ---
 
@@ -38358,6 +38437,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 **Impact:** Even if F1 is closed (CLI added), the operator would receive `404` for every action subcommand. The §24.4 surface is unbuilt at both the CLI and the HTTP layer.
 
 **Deferred (2026-06-03):** Partially stale. The pool block in `tenants.go` now mounts `warm-count`, `resume-reconciliation` (behind a `WithReconciliationResumer` seam), and `sync-status` (with a `WithCRDGenerationReader` seam) in addition to CRUD + the `tenant-access` trio, and the canonical `PUT` enforces `If-Match` (F-24.4.3). The routes that still 404 — `drain`, `circuit-breaker`, the `upgrade/*` cluster, `upgrade-status`, `bootstrap-override` — are exactly the eight tracked in F-24.4.2; the seam pattern for adding them is established (`WithReconciliationResumer`/`WithCRDGenerationReader` are the template). Deferred with F-24.4.2 to the dedicated §24.4 endpoint batch.
+
+**Re-DEFERRED (9aa3b47e, F-10.5.1):** The `upgrade/*` cluster and
+`upgrade-status` now mount through a `WithRuntimeUpgrade` seam (same
+template). Only `drain`, `circuit-breaker`, and `bootstrap-override`
+remain unmounted; stays DEFERRED on those three.
 
 ---
 
