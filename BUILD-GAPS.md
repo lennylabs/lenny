@@ -29558,7 +29558,7 @@ constraints, the immutability trigger, RLS, grants, the §25.9 force-drop
 endpoint, and the `lenny-ctl audit drop-partition` CLI — a coordinated
 cross-cutting subsystem change, not a single-batch fix. Left OPEN.
 
-**Resolution (DEFERRED — commit `__COMMIT__`).** The buildable portion is
+**Resolution (DEFERRED — commit `61cea725`).** The buildable portion is
 now implemented; the irreducible remainder is blocked by a spec-internal
 contradiction that cannot be resolved without editing `spec/`.
 
