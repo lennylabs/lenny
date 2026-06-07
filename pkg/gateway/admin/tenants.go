@@ -244,6 +244,11 @@ type Router struct {
 	// F-10.3.21.
 	caRotation CARotationManager
 
+	// runtimeUpgrade drives the §10.5 RuntimeUpgrade state machine. Nil
+	// leaves the /v1/admin/pools/{name}/upgrade routes unregistered.
+	// F-10.5.1.
+	runtimeUpgrade RuntimeUpgradeManager
+
 	// artifactReplication backs the §25.11 line 3898-3899
 	// POST/GET /v1/admin/artifact-replication/{region}/{resume,status}
 	// endpoints. The routes are registered unconditionally so an agent
@@ -893,6 +898,17 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("POST /v1/admin/ca-rotation/begin", r.requireAdmin(http.HandlerFunc(r.handleBeginCARotation)))
 		mux.Handle("POST /v1/admin/ca-rotation/promote", r.requireAdmin(http.HandlerFunc(r.handlePromoteCARotation)))
 		mux.Handle("POST /v1/admin/ca-rotation/retire", r.requireAdmin(http.HandlerFunc(r.handleRetireCARotation)))
+	}
+	if r.runtimeUpgrade != nil {
+		// §10.5 lines 466-540 / §15.1 lines 869-874 — operator-driven
+		// runtime image rollout for a pool. Every route is platform-admin
+		// only (§24 lines 65-71). F-10.5.1.
+		mux.Handle("POST /v1/admin/pools/{name}/upgrade/start", r.requireAdmin(http.HandlerFunc(r.handleUpgradeStart)))
+		mux.Handle("POST /v1/admin/pools/{name}/upgrade/proceed", r.requireAdmin(http.HandlerFunc(r.handleUpgradeProceed)))
+		mux.Handle("POST /v1/admin/pools/{name}/upgrade/pause", r.requireAdmin(http.HandlerFunc(r.handleUpgradePause)))
+		mux.Handle("POST /v1/admin/pools/{name}/upgrade/resume", r.requireAdmin(http.HandlerFunc(r.handleUpgradeResume)))
+		mux.Handle("POST /v1/admin/pools/{name}/upgrade/rollback", r.requireAdmin(http.HandlerFunc(r.handleUpgradeRollback)))
+		mux.Handle("GET /v1/admin/pools/{name}/upgrade-status", r.requireAdmin(http.HandlerFunc(r.handleUpgradeStatus)))
 	}
 	if r.leaseDenials != nil {
 		// §15.1 line 868 — clear the §8.6 extension-denied flag on a

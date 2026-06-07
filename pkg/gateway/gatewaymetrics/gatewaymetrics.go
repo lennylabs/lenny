@@ -74,12 +74,16 @@ type Metrics struct {
 	circuitBreakerOpen        *prometheus.GaugeVec
 	poolDrainingSessions      *prometheus.GaugeVec
 	auditPartitionDropBlocked *prometheus.GaugeVec
-	cbRejections              *prometheus.CounterVec
-	cbRejectionsSuppressed    *prometheus.CounterVec
-	cbCacheStale              prometheus.Gauge
-	cbCacheInitialized        prometheus.Gauge
-	elicitationDropped        *prometheus.CounterVec
-	elicitationTamperDetected *prometheus.CounterVec
+
+	runtimeUpgradeState            *prometheus.GaugeVec
+	runtimeUpgradePhaseDuration    *prometheus.GaugeVec
+	runtimeUpgradeDrainingSessions *prometheus.GaugeVec
+	cbRejections                   *prometheus.CounterVec
+	cbRejectionsSuppressed         *prometheus.CounterVec
+	cbCacheStale                   prometheus.Gauge
+	cbCacheInitialized             prometheus.Gauge
+	elicitationDropped             *prometheus.CounterVec
+	elicitationTamperDetected      *prometheus.CounterVec
 	// elicitationIntegrityWeakened is the §16.5 line 460 standing-alert
 	// gauge: the count of active tenants whose §9.2 effective
 	// elicitation content-integrity mode is weaker than enforce. A
@@ -993,6 +997,36 @@ func New() (*Metrics, error) {
 		Name: "lenny_audit_partition_drop_blocked",
 		Help: "1 when an audit-partition drop is blocked by SIEM lag, labelled by partition (read by AuditPartitionDropBlocked).",
 	}, []string{"partition"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.5 lines 466-540 / §16.1 line 184 — current phase of the
+	// 6-state RuntimeUpgrade machine per pool. Exactly one state row is 1
+	// per pool; the others are 0. The §16.5 RuntimeUpgradeStuck alert fires
+	// on state{state=~"expanding|draining|contracting"} == 1 held past
+	// runtimeUpgrade.phaseTimeoutSeconds.
+	runtimeUpgradeState, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_runtime_upgrade_state",
+		Help: "Current state of the 6-state runtime upgrade machine, labelled by pool and state.",
+	}, []string{"pool", "state"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 185 — wall-clock time spent in the current upgrade
+	// phase, labelled by pool and phase.
+	runtimeUpgradePhaseDuration, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_runtime_upgrade_phase_duration_seconds",
+		Help: "Wall-clock time in the current runtime upgrade phase, labelled by pool and phase.",
+	}, []string{"pool", "phase"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 186 — sessions still draining on the old pool during
+	// a runtime upgrade, labelled by pool.
+	runtimeUpgradeDrainingSessions, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_runtime_upgrade_draining_sessions",
+		Help: "Sessions still draining during a runtime upgrade, labelled by pool.",
+	}, []string{"pool"})
 	if err != nil {
 		return nil, err
 	}
@@ -2361,6 +2395,7 @@ func New() (*Metrics, error) {
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
 		poolDrainingSessions, auditPartitionDropBlocked,
+		runtimeUpgradeState, runtimeUpgradePhaseDuration, runtimeUpgradeDrainingSessions,
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
 		elicitationTamperDetected, elicitationIntegrityWeakened,
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
@@ -2531,6 +2566,9 @@ func New() (*Metrics, error) {
 		circuitBreakerOpen:                   circuitBreakerOpen,
 		poolDrainingSessions:                 poolDrainingSessions,
 		auditPartitionDropBlocked:            auditPartitionDropBlocked,
+		runtimeUpgradeState:                  runtimeUpgradeState,
+		runtimeUpgradePhaseDuration:          runtimeUpgradePhaseDuration,
+		runtimeUpgradeDrainingSessions:       runtimeUpgradeDrainingSessions,
 		cbRejections:                         cbRejections,
 		cbRejectionsSuppressed:               cbRejectionsSuppressed,
 		cbCacheStale:                         cbStale,
@@ -4050,6 +4088,38 @@ func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
 // the drain has converged.
 func (m *Metrics) SetPoolDrainingSessions(pool string, count int) {
 	m.poolDrainingSessions.WithLabelValues(pool).Set(float64(count))
+}
+
+// runtimeUpgradePhases is the §10.5 / §16.1 line 184 state vocabulary.
+// SetRuntimeUpgradeState publishes one series per state so exactly one
+// reads 1 (the current phase) and the rest read 0, keeping the
+// RuntimeUpgradeStuck alert's equality predicate well defined.
+var runtimeUpgradePhases = []string{"pending", "expanding", "draining", "contracting", "complete", "paused"}
+
+// SetRuntimeUpgradeState publishes the §16.1 line 184
+// lenny_runtime_upgrade_state gauge for pool: the series matching phase
+// reads 1 and every other state series reads 0.
+func (m *Metrics) SetRuntimeUpgradeState(pool, phase string) {
+	for _, s := range runtimeUpgradePhases {
+		v := 0.0
+		if s == phase {
+			v = 1
+		}
+		m.runtimeUpgradeState.WithLabelValues(pool, s).Set(v)
+	}
+}
+
+// SetRuntimeUpgradePhaseDuration updates the §16.1 line 185
+// lenny_runtime_upgrade_phase_duration_seconds gauge for pool with the
+// wall-clock seconds spent in the current phase.
+func (m *Metrics) SetRuntimeUpgradePhaseDuration(pool, phase string, seconds float64) {
+	m.runtimeUpgradePhaseDuration.WithLabelValues(pool, phase).Set(seconds)
+}
+
+// SetRuntimeUpgradeDrainingSessions updates the §16.1 line 186
+// lenny_runtime_upgrade_draining_sessions gauge for pool.
+func (m *Metrics) SetRuntimeUpgradeDrainingSessions(pool string, n int) {
+	m.runtimeUpgradeDrainingSessions.WithLabelValues(pool).Set(float64(n))
 }
 
 // SetAuditPartitionDropBlocked updates the §16.4 line 378

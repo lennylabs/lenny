@@ -115,10 +115,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/capacityplanning"
 	"github.com/lennylabs/lenny/pkg/gateway/carotation"
 	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
 	carotationpg "github.com/lennylabs/lenny/pkg/gateway/carotationstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/capacityplanning"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
@@ -239,6 +239,9 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	runtimeupgradepg "github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
@@ -4180,6 +4183,31 @@ func main() {
 		caRotationMgr = mgr
 	}
 
+	// §10.5 lines 466-540 — operator-driven RuntimeUpgrade state machine.
+	// The phase is durable (runtimeupgradestore: Postgres when a pool is
+	// wired, else in-memory) so a runtime image rollout survives a gateway
+	// restart and resumes from the recorded phase; the previous pool spec
+	// is captured from the live pool catalog for rollback (line 507). Each
+	// committed transition emits the lenny_runtime_upgrade_state gauge
+	// family through gwMetrics, and EmitAll primes those gauges at startup
+	// so the §16.5 RuntimeUpgradeStuck alert evaluates the durable phase
+	// after a restart. F-10.5.1.
+	var runtimeUpgradeMgr admin.RuntimeUpgradeManager
+	{
+		var ruStore runtimeupgradestore.Store = runtimeupgradestore.NewMemory()
+		if pgPool != nil {
+			ruStore = runtimeupgradepg.New(pgPool)
+		}
+		mgr := runtimeupgrade.NewManager(ruStore,
+			runtimeupgrade.WithPoolReader(poolSpecReader{store: pools}),
+			runtimeupgrade.WithMetrics(gwMetrics),
+		)
+		if err := mgr.EmitAll(context.Background()); err != nil {
+			log.Printf("lenny-gateway: §10.5 runtime-upgrade metric prime: %v", err)
+		}
+		runtimeUpgradeMgr = mgr
+	}
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
@@ -4234,6 +4262,9 @@ func main() {
 		WithOperationsInventory(operations.New())
 	if caRotationMgr != nil {
 		adminRouter = adminRouter.WithCARotation(caRotationMgr)
+	}
+	if runtimeUpgradeMgr != nil {
+		adminRouter = adminRouter.WithRuntimeUpgrade(runtimeUpgradeMgr)
 	}
 	if artifactCatalog != nil {
 		// §12.8 line 735 / 794(b): the durable artifact_store catalog backs

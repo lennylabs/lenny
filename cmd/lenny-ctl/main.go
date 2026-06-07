@@ -1040,10 +1040,14 @@ func cmdRuntimesRegister(ctx context.Context, c *ctl.Client, args []string, stdo
 // (spec/15_external-api-surface.md lines 792-799).
 func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation)")
+		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation|set-warm-count|upgrade)")
 		return 2
 	}
 	switch args[0] {
+	case "upgrade":
+		// spec: §10.5 lines 466-540 — the RuntimeUpgrade state machine is
+		// managed by `lenny-ctl admin pools upgrade`.
+		return cmdPoolsUpgrade(ctx, c, args[1:], stdout, stderr)
 	case "list":
 		return printItemList(ctx, c, "/v1/admin/pools", stdout, stderr)
 	case "get":
@@ -1187,6 +1191,132 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		fmt.Fprintf(stderr, "lenny-ctl: unknown pools subcommand %q\n", args[0])
 		return 2
 	}
+	return 0
+}
+
+// cmdPoolsUpgrade implements `lenny-ctl admin pools upgrade
+// start|proceed|pause|resume|rollback|status`, the operator surface for
+// the §10.5 RuntimeUpgrade state machine. Each subcommand is keyed by
+// --pool and maps to the /v1/admin/pools/{name}/upgrade* endpoints.
+// spec: §10.5 lines 466-540.
+func cmdPoolsUpgrade(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools upgrade requires a subcommand (start|proceed|pause|resume|rollback|status)")
+		return 2
+	}
+	sub := args[0]
+	rest := args[1:]
+	switch sub {
+	case "start":
+		fs := flag.NewFlagSet("pools upgrade start", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		newImage := fs.String("new-image", "", "digest-pinned runtime image to roll out (required)")
+		canary := fs.Int("canary-percent", 0, "percentage of new sessions routed to the new pool during Expanding")
+		schemaVersion := fs.String("schema-version", "", "schema version gated on upgrade completion (§10.5 line 502)")
+		drainFirst := fs.Bool("drain-first", false, "force Draining to complete before Contracting")
+		autoAdvance := fs.Bool("auto-advance", false, "auto-proceed through phases without an operator proceed")
+		stabWindow := fs.Int64("stabilization-window-seconds", 0, "dwell the new pool must hold before Expanding exits (default 120)")
+		drainTimeout := fs.Int64("drain-timeout-seconds", 0, "bound on Draining before remaining sessions are force-terminated")
+		if err := fs.Parse(rest); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools upgrade start requires --pool <name>")
+			return 2
+		}
+		if *newImage == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools upgrade start requires --new-image <digest>")
+			return 2
+		}
+		body := map[string]any{
+			"newImage":      *newImage,
+			"canaryPercent": *canary,
+			"schemaVersion": *schemaVersion,
+			"drainFirst":    *drainFirst,
+			"autoAdvance":   *autoAdvance,
+		}
+		if *stabWindow > 0 {
+			body["stabilizationWindowSeconds"] = *stabWindow
+		}
+		if *drainTimeout > 0 {
+			body["drainTimeoutSeconds"] = *drainTimeout
+		}
+		return doUpgradeCall(ctx, c, "POST", "/v1/admin/pools/"+url.PathEscape(*pool)+"/upgrade/start", body, stdout, stderr)
+	case "proceed", "resume":
+		pool, code := requireUpgradePool(sub, rest, stderr)
+		if code != 0 {
+			return code
+		}
+		return doUpgradeCall(ctx, c, "POST", "/v1/admin/pools/"+url.PathEscape(pool)+"/upgrade/"+sub, nil, stdout, stderr)
+	case "pause":
+		fs := flag.NewFlagSet("pools upgrade pause", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		reason := fs.String("reason", "", "free-text pause reason recorded on the upgrade record (§10.5 line 494)")
+		if err := fs.Parse(rest); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools upgrade pause requires --pool <name>")
+			return 2
+		}
+		var body map[string]any
+		if *reason != "" {
+			body = map[string]any{"reason": *reason}
+		}
+		return doUpgradeCall(ctx, c, "POST", "/v1/admin/pools/"+url.PathEscape(*pool)+"/upgrade/pause", body, stdout, stderr)
+	case "rollback":
+		fs := flag.NewFlagSet("pools upgrade rollback", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		restore := fs.Bool("restore-old-pool", false, "recreate the old pool from previousPoolSpec (required from Draining/Contracting)")
+		if err := fs.Parse(rest); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools upgrade rollback requires --pool <name>")
+			return 2
+		}
+		body := map[string]any{"restoreOldPool": *restore}
+		return doUpgradeCall(ctx, c, "POST", "/v1/admin/pools/"+url.PathEscape(*pool)+"/upgrade/rollback", body, stdout, stderr)
+	case "status":
+		pool, code := requireUpgradePool(sub, rest, stderr)
+		if code != 0 {
+			return code
+		}
+		return doUpgradeCall(ctx, c, "GET", "/v1/admin/pools/"+url.PathEscape(pool)+"/upgrade-status", nil, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown pools upgrade subcommand %q\n", sub)
+		return 2
+	}
+}
+
+// requireUpgradePool parses the --pool flag shared by the no-body upgrade
+// subcommands (proceed, resume, status).
+func requireUpgradePool(sub string, args []string, stderr io.Writer) (string, int) {
+	fs := flag.NewFlagSet("pools upgrade "+sub, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pool := fs.String("pool", "", "pool name (required)")
+	if err := fs.Parse(args); err != nil {
+		return "", 2
+	}
+	if *pool == "" {
+		fmt.Fprintf(stderr, "lenny-ctl: pools upgrade %s requires --pool <name>\n", sub)
+		return "", 2
+	}
+	return *pool, 0
+}
+
+// doUpgradeCall performs the HTTP call and prints the §10.5 upgrade-status
+// JSON the gateway returns.
+func doUpgradeCall(ctx context.Context, c *ctl.Client, method, path string, body any, stdout, stderr io.Writer) int {
+	var out map[string]any
+	if err := c.Do(ctx, method, path, body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
 	return 0
 }
 
