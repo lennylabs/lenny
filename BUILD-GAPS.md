@@ -3482,7 +3482,7 @@ Auditor inputs: `pkg/apis/lenny/v1/sandbox{template,warmpool}_types.go`, `pkg/ad
 
 Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Severity is calibrated against MUST/SHOULD wording in §5.2.
 
-### - [ ] F-5.2.1 — Task-mode lifecycle is entirely absent [High] — OPEN
+### - [x] F-5.2.1 — Task-mode lifecycle is entirely absent [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-4.7.6 — F-4.7.6 and F-5.2.1 both report task-mode lifecycle messages (task_complete/task_ready/acknowledged) unimplemented; F-6.2.6 is a distinct defect about task_cleanup phase disposition branching not being implemented.
 
@@ -3499,6 +3499,13 @@ Spec §5.2 lines 415–423: a task-mode pod cycles
 - `tests/tier7_load_cloud/task_mode_test.go` asserts the load harness can drive a task pool, but the cited `task_throughput` and `task_scrub_latency` scenarios assume an ingestion endpoint that the gateway does not serve.
 
 Consequence: a deployer who creates a pool with `executionMode: task` passes admission (the validator only checks the acknowledgment and `maxTasksPerPod`), the WarmPoolController warms pods normally, and the gateway treats every session as session-mode in `pkg/gateway/sessionserver/start.go:413` (the `if match.ExecutionMode == concurrent` branch). A task-mode pool effectively runs as session-mode with no reuse, scrub, or retirement; the deployer's acknowledgment of best-effort scrub guards nothing because the scrub never runs.
+
+**Resolution:** Built the §5.2 in-pod task-mode mechanism (the lifecycle exchange and the disposition decider were already present; several finding bullets were stale). Each bullet's disposition:
+
+- *task_complete / task_complete_acknowledged / task_ready signaling* — **stale**, built by F-4.7.6. `pkg/adapter/lifecyclechannel.go` advertises the `task_lifecycle` capability on task-mode pods (`WithTaskLifecycle`, wired in `cmd/lenny-adapter/main.go`), `RequestTaskComplete` sends `task_complete` and waits for `task_complete_acknowledged` under the §4.7 line 708 30s ack ceiling (emitting `lenny_adapter_task_complete_ack_timeout_total` and proceeding on timeout), and `SignalTaskReady` sends `task_ready`.
+- *No cleanupCommands executor* and *No Lenny scrub implementation (steps 0-6)* — **built this batch** as `pkg/adapter/scrub`. `scrub.Run` orchestrates step 0 (credential-file purge before any deployer code), the deployer `cleanupCommands` (reusing the §7.5 bounded executor `workspace.RunSetup` with the §5.2 line 424 `LENNY_PREV_CREDENTIAL_PROVIDER` / `LENNY_PREV_LEASE_ID` cleanup env via `CleanupEnv`), and steps 1-6 (kill `-9 -1`, `ipcrm --all=shm`, `rm -rf $WORKSPACE_DIR`, env reset, clear `/tmp`+`/dev/shm`+scratch, log-buffer truncate, post-scrub stat verification of workspace/scratch/credential paths). The host operations are isolated behind the `Ops` seam (`DefaultOps` runs the real commands) so the ordering, best-effort semantics, and verification are unit-tested off-Linux. The §5.2 line 459 microvm `restart`-mode step 7 (guest VM restart + re-verify) is wired through the `VMRestarter` seam. `scrub.Run` returns a `Result` (Succeeded/Failed) that maps to `taskcleanup.ScrubResult`.
+- *Disposition decider (task_cleanup branching)* — **stale**, built by F-6.2.6 (`pkg/sandbox/taskcleanup.Decide` resolves the §6.2 lines 147-156 branch from the scrub `Result` + retirement counters).
+- *No retirement-driver / scrub-warning / scrub metrics emitters*, *No maxTaskRetries retry path*, *No `/v1/tasks` ingestion endpoint*, *tier7 load harness* — **deferred** to **F-5.2.30**: the gateway-side task-execution driver that ingests tasks, runs the between-task reuse loop through the lifecycle channel + scrub, calls `taskcleanup.Decide`, writes the pod phase + `scrub_warning` annotation, and emits `lenny_task_pod_scrub_failure_count` / `lenny_task_pod_retirement_total` / `lenny_task_scrub_failure_total`. These each require the warm-pool claim, pod state-machine transitions, and the WarmPoolController, so they are cluster-bound. The adapter scrub mechanism (this batch) is the integration contract the deferred driver invokes. Commit 25ef0585.
 
 ### - [x] F-5.2.2 — `lenny-tenant-label-immutability` webhook is folded into `lenny-label-immutability`, with HA properties that may not match [High] — CLOSED
 
@@ -3550,6 +3557,18 @@ Carved from F-5.2.3. The §5.2 line 500/573 tenant-affinity routing *decision* l
 - **Tier-5 `concurrent_modes_test`** — the end-to-end routing/readiness validation `tests/tier4_integration/concurrent_stateless_test.go` defers to a real cluster.
 
 Unblock path: once an EndpointSlice informer and the gateway stateless reverse-proxy seam exist, `Router` plugs in directly (its `UpdateEndpoints`/`Route`/`Release`/`CheckTenant` surface is the integration contract) and the poolscaling demand source reads the already-emitted metrics.
+
+### - [x] F-5.2.30 — Gateway task-execution driver: `/v1/tasks` ingestion, between-task reuse loop, retirement enforcement, scrub/retirement metrics, maxTaskRetries [High] — DEFERRED
+
+Carved from F-5.2.1. The §5.2 in-pod task-mode mechanism is built and unit-tested: the lifecycle exchange (`task_complete` / `task_complete_acknowledged` / `task_ready` in `pkg/adapter/lifecyclechannel.go`), the Lenny scrub orchestrator (`pkg/adapter/scrub` — step 0 credential purge, `cleanupCommands`, steps 1-6, step 7 microvm restart, post-scrub verification, producing a `Result`), and the §6.2 disposition decider (`pkg/sandbox/taskcleanup.Decide`). The remaining pieces are the gateway-side driver that orchestrates these against the warm pool, each requiring the pod-claim path, the §6.2 pod state-machine writes, or the WarmPoolController:
+
+- **`/v1/tasks` ingestion endpoint** — the §15.1 task-submission path (`task_throughput` / `task_scrub_latency` scenarios in `tests/tier7_load_cloud/task_mode_test.go` assume it). The gateway currently dispatches `executionMode: task` through the session-mode `podBinder.Bind` path (`pkg/gateway/sessionserver/start.go`).
+- **Between-task reuse loop** — after a task completes, the gateway drives `LifecycleChannel.RequestTaskComplete` → `scrub.Run` → `LifecycleChannel.SignalTaskReady` and returns the pod to the pool for the next task, rather than tearing the pod down per task. Needs the pod-claim/reuse seam.
+- **Retirement enforcement** — a driver that tracks each pod's completed-task count, uptime, and cumulative scrub-failure count, feeds them to `taskcleanup.Decide`, and writes the resulting `draining`/`failed`/`idle`/`sdk_connecting` phase plus the `scrub_warning` annotation (§6.2 lines 147-156, line 181 host-schedulable gate). Needs the pod state-machine writer and the `lenny.dev/host-schedulable` label read.
+- **Scrub / retirement metrics** — emit `lenny_task_pod_scrub_failure_count` (per-`k8s_pod_name` gauge), `lenny_task_pod_retirement_total{reason}` (counter), and the aggregate `lenny_task_scrub_failure_total` from the reported scrub `Result`. The first two are §16.1-cataloged; the aggregate is named only in §5.2 and lives outside the §16.1 catalog (parity test). Emission point is the gateway driver, labeled by the pool/runtime_class the gateway knows.
+- **maxTaskRetries** — the §6.6 per-task crash-retry budget (`TaskPolicy.MaxTaskRetries`, default 1) consumed on a pod crash mid-task to re-dispatch the task on a fresh pod.
+
+Unblock path: once the gateway warm-pool task-claim seam and the §6.2 pod-phase writer exist, the driver calls the already-built `scrub.Run` (its `Config`/`Report`/`Result` surface is the integration contract) and `taskcleanup.Decide`, then writes the phase and emits the metrics. None of this batch's adapter-side code changes; the driver is purely additive on the gateway side.
 
 ### - [x] F-5.2.4 — Post-recovery slot-counter rehydration is missing [High] — CLOSED
 
@@ -3683,7 +3702,7 @@ Spec §5.2 line 446: "for pools where the runtime declares `capabilities.preConn
 
 Consequence: the §6.1 invariant "all idle pods in a preConnect pool are SDK-warm" is undefended once scrub eventually exists.
 
-**Deferred:** the state-machine row is declared but the driver that distinguishes `scrub_warning` from a clean outcome can only land once the §5.2 task-mode scrub itself exists (F-5.2.1). Tracked behind H-1; revisit when the task-mode lifecycle implementation begins emitting scrub outcomes.
+**Deferred:** the state-machine row is declared and the §5.2 task-mode scrub now exists (`pkg/adapter/scrub`, F-5.2.1), producing a `Result` that distinguishes a `scrub_warning` outcome from a clean one. The driver that reads that `Result` and writes the `scrub_warning` annotation onto the pod is the gateway task-execution driver, deferred to F-5.2.30.
 
 ### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — DEFERRED
 
@@ -3693,7 +3712,7 @@ Implementation: `MicrovmScrubMode` is declared as a runtimestore enum (`pkg/gate
 
 Consequence: cross-tenant microvm reuse (already gated to require the acknowledgment) carries no scrub at all; a deployer who sets `microvmScrubMode: restart` gets no actual VM restart.
 
-**Deferred:** the spec calls for the adapter to request a Kata guest-VM restart via the Kata runtime's VM lifecycle API. That API integration only makes sense once the task-mode scrub itself exists (F-5.2.1 / H-1). Tracked behind H-1.
+**Deferred:** the §5.2 task-mode scrub now exists (`pkg/adapter/scrub`, F-5.2.1) with the step-7 microvm-restart orchestration wired behind a `scrub.VMRestarter` seam. The remaining work is the concrete Kata VM-lifecycle-API client that implements that seam, which lands with the cluster-bound gateway task-execution driver (F-5.2.30).
 
 ### - [x] F-5.2.16 — Mode-adjusted formula `mode_factor` is not derived from observed reuse [Medium] — CLOSED
 
@@ -3725,7 +3744,7 @@ Implementation: `RunSetup` is invoked per-session in `pkg/gateway/podsession/bin
 
 Consequence: if task mode is implemented per H-1, the once-per-pod semantics for `setupCommands` will not hold without further work.
 
-**Deferred:** the "first-task-on-this-pod" gate makes sense only once task-mode multi-task scheduling exists (F-5.2.1 / H-1). In session-mode (the only mode v1 ships), `RunSetup` runs exactly once per session/pod, which is the spec contract. Tracked behind H-1.
+**Deferred:** the "first-task-on-this-pod" gate makes sense only once task-mode multi-task scheduling exists. The §5.2 in-pod scrub mechanism now exists (`pkg/adapter/scrub`, F-5.2.1); the multi-task scheduling that reuses a pod across tasks is the gateway task-execution driver (F-5.2.30). In session-mode (the only mode v1 ships today), `RunSetup` runs exactly once per session/pod, which is the spec contract.
 
 ### - [ ] F-5.2.19 — Stateless-level integration nuance for task mode is undefined [Medium] — DEFERRED
 
@@ -3733,7 +3752,7 @@ Spec §5.2 lines 417–420: Standard/Basic-level runtimes in task mode have no l
 
 Implementation: depends on H-1. Even the lifecycle-channel availability check (which controls whether the adapter falls back to the `shutdown` JSONL message) does not gate any task-mode handling, because task mode is not implemented.
 
-**Deferred:** the Standard/Basic integration-level fallback (adapter sends `{"type":"shutdown"}` on stdin instead of `task_complete` over the lifecycle channel) is meaningful only once task-mode scheduling exists (F-5.2.1 / H-1). Tracked behind H-1.
+**Deferred:** the Standard/Basic integration-level fallback (adapter sends `{"type":"shutdown"}` on stdin instead of `task_complete` over the lifecycle channel) is meaningful only once task-mode scheduling exists. The Full-level lifecycle exchange and the in-pod scrub now exist (F-5.2.1); the per-task scheduling that selects the fallback by integration level is the gateway task-execution driver (F-5.2.30).
 
 ### - [x] F-5.2.20 — Pool admin Pool struct does not carry TaskPolicy or other §5.2 task-mode fields [Medium] — CLOSED
 
@@ -3960,7 +3979,7 @@ Implementation:
 
 Consequence: microvm isolation passes type-checks but no production code path is end-to-end-verified to actually launch and slot-bind a Kata pod.
 
-**Resolution (commit `12430a85`):** Added the missing end-to-end coverage for the launch and slot-bind paths the consequence names; the substantive podspec mapping (microvm → kata RuntimeClass + §17.2 node isolation) was already unit-tested under F-17.2.1, so this finding's gap was the absent reconcile- and claim-level exercise plus a deployer-ready chart preset. (1) Launch: `pkg/controller/sandbox` reconcile test (`TestReconcileMicrovmLaunchesKataPod_spec_5_3_8`) drives a microvm Sandbox through the production `sandbox.Reconciler` against the envtest apiserver and asserts the created pod carries `runtimeClassName: kata`, the §17.2 control-2 `lenny.dev/node-pool=kata` required node affinity, and the control-3 `lenny.dev/isolation=kata:NoSchedule` toleration. (2) Slot-bind: `pkg/gateway/podclaim` test (`TestClaimSlotBindsKataMicrovmPod_spec_5_3_8`) has the gateway `SlotClaimer` bind a slot on a genuine Kata-RuntimeClass pod (the `kata` RuntimeClass pre-created so envtest admits it), confirming the SandboxClaim persists and the §5.2 tenant pin lands on the Kata pod. (3) Chart: a new `reference-runtimes_test.yaml` case confirms a per-catalog-entry `isolationProfile: microvm` pin renders, so a deployer can seed one Kata-isolated runtime alongside the sandboxed default — the §17.2 split-namespace (`lenny-agents` + `lenny-agents-kata`) topology a Tier 3 install provisions. The §5.2 cross-tenant-reuse (`allowCrossTenantReuse`) consumer of microvm remains gated on the absent task-mode lifecycle (F-5.2.1).
+**Resolution (commit `12430a85`):** Added the missing end-to-end coverage for the launch and slot-bind paths the consequence names; the substantive podspec mapping (microvm → kata RuntimeClass + §17.2 node isolation) was already unit-tested under F-17.2.1, so this finding's gap was the absent reconcile- and claim-level exercise plus a deployer-ready chart preset. (1) Launch: `pkg/controller/sandbox` reconcile test (`TestReconcileMicrovmLaunchesKataPod_spec_5_3_8`) drives a microvm Sandbox through the production `sandbox.Reconciler` against the envtest apiserver and asserts the created pod carries `runtimeClassName: kata`, the §17.2 control-2 `lenny.dev/node-pool=kata` required node affinity, and the control-3 `lenny.dev/isolation=kata:NoSchedule` toleration. (2) Slot-bind: `pkg/gateway/podclaim` test (`TestClaimSlotBindsKataMicrovmPod_spec_5_3_8`) has the gateway `SlotClaimer` bind a slot on a genuine Kata-RuntimeClass pod (the `kata` RuntimeClass pre-created so envtest admits it), confirming the SandboxClaim persists and the §5.2 tenant pin lands on the Kata pod. (3) Chart: a new `reference-runtimes_test.yaml` case confirms a per-catalog-entry `isolationProfile: microvm` pin renders, so a deployer can seed one Kata-isolated runtime alongside the sandboxed default — the §17.2 split-namespace (`lenny-agents` + `lenny-agents-kata`) topology a Tier 3 install provisions. The §5.2 cross-tenant-reuse (`allowCrossTenantReuse`) consumer of microvm rides on the cluster-bound gateway task-execution driver (F-5.2.30); the in-pod task-mode lifecycle and scrub mechanism are built (F-5.2.1).
 
 ### - [ ] F-5.3.9 — `RuntimeProvider` abstraction (e.g., KubeVirt forward compatibility) is absent [Medium] — CLOSED
 
@@ -16467,11 +16486,11 @@ Spec §11.3 line 233. `grep -rn "MaxSuspended\|maxSuspended\|suspendedPodHold" -
 
 **Resolution:** added `watchdog.DefaultMaxSuspendedPodHoldSeconds` (900) plus a `MaxSuspendedPodHoldSeconds` field on `watchdog.Config` with default-fill in `withDefaults`. `cmd/lenny-gateway/main.go` exposes `--max-suspended-pod-hold-seconds` (env `LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS`) and threads the value into the watchdog Config. The "more restrictive of deploy + tenant" §11.3 line 233 contract — both caps available, the smaller wins — is now expressible; the per-tenant tightener still depends on the tenant-config plumbing tracked separately. Tier-1 `TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables/MaxSuspendedPodHoldSeconds` covers the default. Committed in this batch.
 
-### - [x] F-11.3.18 — `task_complete_acknowledged` 30s hard-coded timeout is absent [Medium] — DEFERRED
+### - [x] F-11.3.18 — `task_complete_acknowledged` 30s hard-coded timeout is absent [Medium] — CLOSED
 
 Spec §11.3 line 232. The `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle messages (§4.7) themselves are unimplemented: `grep -rn "task_complete\|TaskComplete" pkg/ --include="*.go" --include="*.proto"` returns only schema examples in `tests/tier0_static/schemas_test.go`. With no message, there is no timeout. Task-mode pod reuse cannot land without this.
 
-**Deferred:** gated on F-5.2.1 (Task-mode lifecycle entirely absent, High, OPEN). The 30s `task_complete_acknowledged` timer is meaningful only after the §4.7 lifecycle messages exist; landing the timer before the messages is dead code.
+**Resolution (verify-closed, unblocked by F-5.2.1):** The premise is now stale — the §4.7 lifecycle messages exist (built by F-4.7.6). `pkg/adapter/lifecyclechannel.go` defines `defaultTaskCompleteAckTimeout = 30 * time.Second` (the §11.3 line 232 / §4.7 line 708 hard-coded, non-configurable ceiling); `RequestTaskComplete` bounds the wait for `task_complete_acknowledged` at that timeout, and on expiry logs `task_complete_ack_timeout`, increments `lenny_adapter_task_complete_ack_timeout_total`, and returns nil so the adapter proceeds with the scrub anyway (the spec's "proceeds with cleanup" contract). The timer is hard-coded with no override flag, matching the "not configurable in v1" column. Covered by `lifecyclechannel_test.go`.
 
 ### - [x] F-11.3.19 — `delegation.usageQuiescenceTimeoutSeconds` (5s) is not implemented [Medium] — CLOSED
 
@@ -31986,7 +32005,7 @@ Cross-checked against:
 
 **Impact:** The webhook is in place but its rules apply to pod label transitions that never occur, because the labels live on the Sandbox CR. The "immutable agent-pod label" guarantee called out in §17.2 / §5.2 NET-003 does not bind at the pod layer. A controller that writes a Pod with arbitrary tenant or delivery-mode labels bypasses the gate. Either the controllers must stamp the labels onto Pods at creation, or the webhook must extend to the `lenny.dev/v1` `sandboxes` resource (and the rendering test at `/Users/joan/projects/lenny/charts/lenny/tests/admission-webhooks_test.yaml` lines 61–67 should track that pivot).
 
-**Resolution (commit `12430a85`):** Took resolution option (a) — stamp the labels onto agent pods — which is what §17.2 line 46 ("on agent pods") and §13.2 NET-003 (the NetworkPolicies select pods) mandate; the webhook is correctly pod-scoped and stays unchanged. The evidence was partly stale: `lenny.dev/delivery-mode` and `lenny.dev/egress-profile` already reach the pod via `sb.Labels` at pod creation (`warmpool.sandboxLabels` → `podspec.Build`, added by F-13.2.1 / F-13.2.11). The one residual gap was `lenny.dev/tenant-id`, set on the Sandbox at slot-claim time (after the pod already exists) and never propagated to the pod. New `podclaim.stampPodTenant` JSON-merge-patches the pin onto the agent pod as the gateway ServiceAccount (the one principal the `lenny-tenant-label-immutability` webhook authorizes for the `unset → {tenant_id}` edge per §5.2 line 392), tolerating a NotFound/Conflict so a terminating-or-unmaterialized pod never fails the claim. Wired into both warm-pod assignment paths — `Claimer.Claim` (session mode) and `SlotClaimer.reserveSlot` (concurrent/task) — so the pod-scoped webhook now sees the transition it guards. The `{tenant_id} → unassigned` return-to-pool reset is part of the §5.2 cross-tenant-reuse (task-mode) path that is itself absent (F-5.2.1) and rides on it. Tests: tier-2 podclaim (slot-claim + session-claim stamp the pod, idempotent re-stamp, missing-pod tolerated).
+**Resolution (commit `12430a85`):** Took resolution option (a) — stamp the labels onto agent pods — which is what §17.2 line 46 ("on agent pods") and §13.2 NET-003 (the NetworkPolicies select pods) mandate; the webhook is correctly pod-scoped and stays unchanged. The evidence was partly stale: `lenny.dev/delivery-mode` and `lenny.dev/egress-profile` already reach the pod via `sb.Labels` at pod creation (`warmpool.sandboxLabels` → `podspec.Build`, added by F-13.2.1 / F-13.2.11). The one residual gap was `lenny.dev/tenant-id`, set on the Sandbox at slot-claim time (after the pod already exists) and never propagated to the pod. New `podclaim.stampPodTenant` JSON-merge-patches the pin onto the agent pod as the gateway ServiceAccount (the one principal the `lenny-tenant-label-immutability` webhook authorizes for the `unset → {tenant_id}` edge per §5.2 line 392), tolerating a NotFound/Conflict so a terminating-or-unmaterialized pod never fails the claim. Wired into both warm-pod assignment paths — `Claimer.Claim` (session mode) and `SlotClaimer.reserveSlot` (concurrent/task) — so the pod-scoped webhook now sees the transition it guards. The `{tenant_id} → unassigned` return-to-pool reset is part of the §5.2 cross-tenant-reuse (task-mode) path, which rides on the cluster-bound gateway task-execution driver (F-5.2.30); the in-pod task-mode mechanism is built (F-5.2.1). Tests: tier-2 podclaim (slot-claim + session-claim stamp the pod, idempotent re-stamp, missing-pod tolerated).
 
 ---
 
