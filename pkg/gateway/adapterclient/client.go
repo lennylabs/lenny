@@ -338,6 +338,46 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 	}, nil
 }
 
+// CheckpointBarrierResult mirrors the §10.1 CheckpointBarrierAck the
+// pod's adapter emits in response to a graceful-drain barrier: the
+// echoed barrier id, the last completed tool call's id, the
+// best-effort checkpoint ref (empty when the flush produced none), and
+// the wall-clock the adapter spent quiescing.
+type CheckpointBarrierResult struct {
+	BarrierID      string
+	LastToolCallID string
+	CheckpointRef  string
+	QuiescedMs     int64
+}
+
+// CheckpointBarrier dispatches the §10.1 lines 163-181 graceful-drain
+// barrier to the pod's adapter. The adapter validates generation
+// against its last fenced value (rejecting with FailedPrecondition
+// when stale), quiesces tool-call dispatch, flushes a best-effort
+// checkpoint, and acknowledges. The synchronous return mirrors the
+// CheckpointBarrierAck the adapter also emits on the LifecycleChannel
+// control stream; the gateway persists last_tool_call_id from the
+// result into session_checkpoint_meta (§10.1 line 178 (b)) for
+// resume-time deduplication.
+//
+// spec: §10.1 lines 163-181.
+func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {
+	resp, err := c.rpc.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: coordinationGeneration,
+		BarrierId:              barrierID,
+	})
+	if err != nil {
+		return CheckpointBarrierResult{}, err
+	}
+	return CheckpointBarrierResult{
+		BarrierID:      resp.GetBarrierId(),
+		LastToolCallID: resp.GetLastToolCallId(),
+		CheckpointRef:  resp.GetCheckpointRef(),
+		QuiescedMs:     resp.GetQuiescedMs(),
+	}, nil
+}
+
 // ExportSpec is one §8.7 fileExport entry passed to the adapter's
 // ExportPaths RPC: a source glob resolved inside the parent pod's
 // /workspace/current and the relative destPrefix the matched files are

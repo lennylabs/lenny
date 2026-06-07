@@ -329,6 +329,17 @@ type Metrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
+	// resumeDeduplicated counts the §10.1 line 179 tool calls a new
+	// coordinator skipped at handoff because their sequence number was
+	// at or below the persisted last_tool_call_id. The `source` label
+	// (postgres | checkpoint_manifest) reports whether the dedup state
+	// came from session_checkpoint_meta or the MinIO manifest fallback.
+	resumeDeduplicated *prometheus.CounterVec
+	// barrierTargetSource counts the §10.1 line 165 preStop barrier
+	// target-set reads by source (postgres | cache_fallback) so
+	// operators can detect how often the degraded in-memory lease-cache
+	// path is exercised when the coordination-lease read fails.
+	barrierTargetSource *prometheus.CounterVec
 	// sigkillStreams counts the §10.1 line 161 in-flight streams the
 	// kubelet SIGKILLs at the grace deadline because their eviction
 	// checkpoint did not finish in budget. Labels: `pool`,
@@ -1752,6 +1763,30 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §10.1 line 179 — `lenny_coordinator_resume_deduplicated_total`
+	// counts tool calls skipped at coordinator handoff. The `source`
+	// label (postgres | checkpoint_manifest) reports whether the dedup
+	// state was read from session_checkpoint_meta or the MinIO manifest
+	// fallback, so operators can detect how often the fallback fires.
+	resumeDeduplicated, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_coordinator_resume_deduplicated_total",
+		Help: "Tool calls skipped at coordinator handoff, labeled by dedup source (§10.1).",
+	}, []string{"source"})
+	if err != nil {
+		return nil, err
+	}
+	// §10.1 line 165 — `lenny_prestop_barrier_target_source_total`
+	// counts preStop CheckpointBarrier target-set reads by source
+	// (postgres | cache_fallback) so operators can detect how often the
+	// degraded in-memory lease-cache path is taken when the
+	// coordination-lease read fails or exceeds its 2s deadline.
+	barrierTargetSource, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_prestop_barrier_target_source_total",
+		Help: "preStop CheckpointBarrier target-set source (postgres | cache_fallback) (§10.1).",
+	}, []string{"source"})
+	if err != nil {
+		return nil, err
+	}
 	// spec: §10.1 line 161 — `lenny_gateway_sigkill_streams_total`
 	// counts in-flight streams forcibly terminated when the kubelet
 	// SIGKILLs the pod at the grace deadline because their eviction
@@ -2423,6 +2458,7 @@ func New() (*Metrics, error) {
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
 		slotRehydration, slotPodReplacement, adapterLeakedSlots,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
+		resumeDeduplicated, barrierTargetSource,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
@@ -2638,6 +2674,8 @@ func New() (*Metrics, error) {
 		adapterLeakedSlots:                   adapterLeakedSlots,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
+		resumeDeduplicated:                   resumeDeduplicated,
+		barrierTargetSource:                  barrierTargetSource,
 		sigkillStreams:                       sigkillStreams,
 		gcTombstonesPruned:                   gcTombstonesPruned,
 		gcRuns:                               gcRuns,
@@ -3689,6 +3727,35 @@ func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string)
 		return
 	}
 	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
+}
+
+// AddResumeDeduplicated increments the §10.1 line 179
+// `lenny_coordinator_resume_deduplicated_total` counter by n for the
+// tool calls a new coordinator skipped at handoff. The source label is
+// `postgres` when the dedup state came from session_checkpoint_meta or
+// `checkpoint_manifest` when it came from the MinIO barrier_meta
+// fallback. A non-positive n is a no-op so callers can pass the raw
+// skipped count without branching.
+// spec: §10.1 line 179.
+func (m *Metrics) AddResumeDeduplicated(source string, n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.resumeDeduplicated.WithLabelValues(source).Add(float64(n))
+}
+
+// IncPreStopBarrierTargetSource increments the §10.1 line 165
+// `lenny_prestop_barrier_target_source_total` counter for one preStop
+// barrier target-set read. The source label is `postgres` on the
+// steady-state healthy path or `cache_fallback` when the
+// coordination-lease read failed or exceeded its 2s deadline and the
+// replica fell back to its in-memory lease cache.
+// spec: §10.1 line 165.
+func (m *Metrics) IncPreStopBarrierTargetSource(source string) {
+	if m == nil {
+		return
+	}
+	m.barrierTargetSource.WithLabelValues(source).Inc()
 }
 
 // IncSigkillStreams increments the §10.1 line 161
