@@ -247,6 +247,23 @@ run_iter() {
   return 0
 }
 
+# Keep the machine awake for the duration of the run. On macOS, an
+# unattended Mac drops into Deep Idle and runs Power Nap maintenance
+# sleep cycles (8-17 min each) even on AC with `pmset sleep 0`. Those
+# sleep windows suspend the network stack and tear down the long-lived
+# HTTPS connection to the API, which surfaces as "socket connection was
+# closed unexpectedly" and burns whole iterations on retries. `caffeinate
+# -dimsu` holds display, system, and disk awake; `-w $$` binds the
+# assertion to this script's PID, so it releases when the loop exits.
+CAFFEINATE_PID=""
+if command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -dimsu -w "$$" &
+  CAFFEINATE_PID=$!
+  trap '[[ -n "$CAFFEINATE_PID" ]] && kill "$CAFFEINATE_PID" 2>/dev/null' EXIT
+  printf '[%s] caffeinate holding display+system awake (pid %s, bound to driver pid %s)\n' \
+    "$(date -Iseconds)" "$CAFFEINATE_PID" "$$" | tee -a "$SUMMARY"
+fi
+
 iter=0
 while (( iter < MAX_ITER )); do
   iter=$(( iter + 1 ))
