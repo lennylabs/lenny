@@ -88,7 +88,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `WarmPoolReplenishmentSlow` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `WarmPoolReplenishmentFailing` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `SDKConnectTimeout` | [sdk-connect-timeout](sdk-connect-timeout.html) | `warmPools` |
-| `RuntimeUpgradeStuck` | [runtime-upgrade-stuck](runtime-upgrade-stuck.html) | `controllers` |
+| `RuntimeUpgradeStuck` | [runtime-upgrade-stuck](runtime-upgrade-stuck.html) | `gateway` |
 | `CircuitBreakerActive` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
 | `WorkspaceSealStuck` | [workspace-seal-stuck](workspace-seal-stuck.html) | `gateway` |
 | `CoordinatorHandoffSlow` | [coordinator-handoff-slow](coordinator-handoff-slow.html) | `gateway` |
@@ -138,11 +138,11 @@ When the health API (`GET /v1/admin/health`) returns `degraded` or `unhealthy` f
 | `redis` | [redis-failure](redis-failure.html), [delegation-budget-recovery](delegation-budget-recovery.html) |
 | `objectStore` | [minio-failure](minio-failure.html), [storage-quota-high](storage-quota-high.html), [minio-replication-lag](minio-replication-lag.html) |
 | `backup` | [backup-overdue](backup-overdue.html), [backup-failed](backup-failed.html), [backup-storage-high](backup-storage-high.html), [restore-execute](restore-execute.html), [restore-failure-recovery](restore-failure-recovery.html), [pre-restore-backup-retention](pre-restore-backup-retention.html), [backup-reconcile-blocked](backup-reconcile-blocked.html) |
-| `gateway` | [gateway-replica-failure](gateway-replica-failure.html), [gateway-capacity](gateway-capacity.html), [circuit-breaker-open](circuit-breaker-open.html), [gateway-rate-limit-storm](gateway-rate-limit-storm.html), [gateway-clock-drift](gateway-clock-drift.html) |
+| `gateway` | [gateway-replica-failure](gateway-replica-failure.html), [gateway-capacity](gateway-capacity.html), [circuit-breaker-open](circuit-breaker-open.html), [gateway-rate-limit-storm](gateway-rate-limit-storm.html), [gateway-clock-drift](gateway-clock-drift.html), [runtime-upgrade-stuck](runtime-upgrade-stuck.html) |
 | `certManager` | [cert-manager-outage](cert-manager-outage.html) |
 | `credentialPools` | [credential-pool-exhaustion](credential-pool-exhaustion.html), [credential-revocation](credential-revocation.html) |
 | `tokenService` | [token-service-outage](token-service-outage.html), [token-store-unavailable](token-store-unavailable.html) |
-| `controllers` | [stuck-finalizer](stuck-finalizer.html), [controller-leader-election](controller-leader-election.html), [runtime-upgrade-stuck](runtime-upgrade-stuck.html) |
+| `controllers` | [stuck-finalizer](stuck-finalizer.html), [controller-leader-election](controller-leader-election.html) |
 | `admission` | [admission-webhook-outage](admission-webhook-outage.html) |
 | `audit` | [audit-pipeline-degraded](audit-pipeline-degraded.html), [audit-grant-drift](audit-grant-drift.html) |
 | `billing` | [billing-stream-backlog](billing-stream-backlog.html) |
