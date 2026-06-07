@@ -12335,6 +12335,8 @@ Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:221`
 
 **Deferred:** The adapter-side `CoordinatorFence` and `CheckpointBarrier` server handlers (`pkg/adapter/coordination.go:117/182`) return `coordinator_handoff_stale` on stale-generation rejections (added by F-4.7.2 / F-10.1.7-precursor commit `d353a8ef`), but `pkg/gateway/adapterclient/client.go` has no `CoordinatorFence` / `CheckpointBarrier` wrappers yet, so no gateway code path observes such a rejection. The counter activates when the gateway gains those callers — pairs with the still-OPEN F-10.1.7 (CheckpointBarrier protocol). Deferring until that wiring lands.
 
+**Re-deferred (commit `88cbaeb8`):** Partially unblocked but not cleanly. F-10.1.7 closed and `adapterclient.Client.CheckpointBarrier` now exists, surfacing the FailedPrecondition stale rejection, and `barrier.Coordinator.Dispatch` records a `Stale` outcome per target — so a gateway caller can now observe the rejection. The remaining blockers are the still-absent `CoordinatorFence` client wrapper (F-11.3.14) and the live binary wiring that drives the barrier coordinator and emits the counter in production (F-10.1.19). Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19; the counter genuinely activates when that wiring lands.
+
 ### - [x] F-10.1.17 — Concurrent-workspace pod connection-loss whole-pod replacement trigger uncovered. (Low) [Medium] — CLOSED
 
 Spec: line 54 ("When the gateway loses connection to a concurrent-workspace pod… The whole-pod replacement trigger… is also triggered immediately on total connection loss… The gateway atomically resets the Redis slot counter… and rehydrates it from `SessionStore.GetActiveSlotsByPod(pod_id)`").
@@ -16427,11 +16429,15 @@ Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Me
 
 **Deferred:** the adapter-side `CoordinatorFence` RPC + gap detection now exist (`pkg/adapter/coordination.go`) and the adapter coordinator-loss/hold path landed under F-10.1.4 (commit `6b4dc934`, CLOSED). The remaining gap is the gateway-*side* issuance: a `CoordinatorFence` client wrapper with the 5s hard-coded timeout and retry/relinquish enforcement, plus its barrier-target driver. That belongs to the gateway-side handoff RPC wiring tracked under the still-OPEN F-10.1.7 (CheckpointBarrier protocol) / F-10.1.16 (`coordinator_handoff_stale` emit). Re-deferred against F-10.1.7.
 
+**Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed; this batch added the sibling `adapterclient.Client.CheckpointBarrier` wrapper but not a `CoordinatorFence` client wrapper, and the 5s-timeout retry/relinquish driver still depends on the live handoff wiring. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19 (the carved cmd/lenny-gateway barrier/handoff integration), which is where the `CoordinatorFence` wrapper and its driver land.
+
 ### - [x] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 210. The pool-config validator (`pkg/admission/pool_config_validator/validator.go:18`) defers it as a Postgres-authoritative field, and metric catalog entries exist (`pkg/observability/metrics/catalog.go:93-94`). There is no gateway-side enforcement: `grep -rn "BarrierAck\|barrier_ack" --include="*.go" pkg/` returns only the metric registrations and the validator comment.
 
 **Deferred:** gated on F-10.1.7 (CheckpointBarrier protocol unimplemented, High, OPEN). The 90s timer is the per-replica ACK budget for that protocol; landing it without the protocol is meaningless.
+
+**Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed. `barrier.Coordinator.Dispatch` now fans out under the caller-bounded single wall-clock deadline the spec sets to `checkpointBarrierAckTimeoutSeconds` (§10.1 line 167), so the protocol the 90s timer budgets exists. The remaining gap is the live binary wiring that reads the pool's `checkpointBarrierAckTimeoutSeconds`, bounds the Dispatch context with it during the preStop drain, and enforces the per-replica ACK budget. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19.
 
 ### - [x] F-11.3.16 — Elicitation per-hop forwarding timeout (30s, hard-coded) is absent [Medium] — CLOSED
 
