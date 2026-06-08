@@ -1495,6 +1495,14 @@ audit:
   # audit-event count that triggers an immediate flush when batching is
   # enabled. F-12.3.14.
   flushBatchSize: 100
+  # §25.9 line 3709 ops.audit.scatterGatherCacheEnabled: cache
+  # platform-admin cross-tenant audit scatter-gather results in-process
+  # for 5 minutes, keyed by the query parameters and bypassed per query
+  # with ?fresh=true. Set false to disable the cache so every cross-tenant
+  # query reads the shards fresh. The §25.9 scatterGatherMaxConcurrency /
+  # per-shard timeout reuse the storeRouter scatter bounds above (v1 is
+  # single-shard, so both are inert). F-25.9.11.
+  scatterGatherCacheEnabled: true
   # §11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When
   # empty (default), the compliance gate rejects creating or updating a
   # tenant to a regulated complianceProfile (soc2, fedramp, hipaa) and

@@ -838,10 +838,13 @@ tests:
       #   renders)
       # + LENNY_SLO_BURN_RATE_FAST_MULTIPLIER /
       #   LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER (§16.5 line 640, F-16.5.3 —
-      #   slo.burnRate.{fast,slow}Multiplier default 14 / 3 and render) = 77.
+      #   slo.burnRate.{fast,slow}Multiplier default 14 / 3 and render)
+      # + LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED (§25.9 line 3709,
+      #   F-25.9.11 — audit.scatterGatherCacheEnabled defaults true and
+      #   renders) = 78.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 77
+          count: 78
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1843,6 +1846,34 @@ tests:
           content:
             name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT
             value: "true"
+
+  # spec: §25.9 line 3709 — audit.scatterGatherCacheEnabled renders
+  # LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED so an operator can opt out of
+  # the platform-admin cross-tenant audit scatter-gather result cache.
+  # F-25.9.11.
+  - it: wires LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED
+            value: "true"
+
+  - it: wires LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED from an audit.scatterGatherCacheEnabled override
+    set:
+      audit.scatterGatherCacheEnabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED
+            value: "false"
 
   # spec: §11.7 — audit.siem.endpoint renders LENNY_AUDIT_SIEM_ENDPOINT
   # only when non-empty; the default (empty) leaves it unset so the

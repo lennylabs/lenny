@@ -640,6 +640,9 @@ func main() {
 	auditHardFailOnDrift := flag.Bool("audit-hard-fail-on-drift",
 		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
+	auditScatterCacheEnabled := flag.Bool("audit-scatter-gather-cache-enabled",
+		envBool("LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED", true),
+		"§25.9 line 3709 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results in-process for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")
 	externalAdapterHarnessPath := flag.String("external-adapter-harness-path",
 		os.Getenv("LENNY_EXTERNAL_ADAPTER_HARNESS_PATH"),
 		"§24.8 / §15 line 1414 — path to the lenny-compliance harness binary the external-adapter validate gate drives. When empty the gateway resolves `lenny-compliance` on $PATH; when the harness is absent, POST /v1/admin/external-adapters/{name}/validate returns 503 ADAPTER_VALIDATION_UNAVAILABLE and the adapter stays pending_validation. Override via LENNY_EXTERNAL_ADAPTER_HARNESS_PATH. F-24.8.2.")
@@ -2929,7 +2932,17 @@ func main() {
 				jwtaudit.PlatformTenantID,
 				storeRouter,
 				tenantResidencyLookup{tenants: tenants},
-				gwMetrics))
+				gwMetrics),
+			// spec: §25.9 line 3710 — bound the cross-tenant audit
+			// scatter-gather fan-out by the shared storeRouter scatter
+			// config (max concurrency, per-shard + aggregate timeout). v1 is
+			// single-shard so the bounds are inert until a multi-shard router
+			// is deployed. F-25.9.11.
+			auditstore.WithScatterConfig(storerouter.ScatterConfig{
+				MaxConcurrency:   *scatterMaxConcurrency,
+				PerShardTimeout:  time.Duration(*scatterPerShardTimeoutSeconds) * time.Second,
+				AggregateTimeout: time.Duration(*scatterAggregateTimeoutSeconds) * time.Second,
+			}))
 		// §12.3 line 81: opt-in T2 audit-event batching. When enabled, the
 		// non-PII cross_tenant_read worker receipts are buffered and
 		// flushed in batches through the dedicated sync write pool instead
@@ -2948,7 +2961,17 @@ func main() {
 		// row cannot be injected. Reads stay on the raw chain.
 		auditValidator = auditscope.New(pgAudit, nil)
 		auditSink = admin.NewAuditLogSink(auditValidator, nil)
-		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
+		// spec: §25.9 lines 3668, 3709 — the Postgres-backed chain serves
+		// the platform-admin cross-tenant scatter-gather and its 5-minute
+		// result cache (opt-out via --audit-scatter-gather-cache-enabled).
+		// The in-memory dev chain (below) has no scatter reader, so its
+		// platform-admin no-tenantId query stays single-tenant. F-25.9.11.
+		auditScatterCache := admin.NewMemScatterGatherCache(nil)
+		wireAudit = func(rt *admin.Router) *admin.Router {
+			return rt.WithAuditLog(pgAudit).
+				WithAuditScatter(pgAudit).
+				WithScatterGatherCache(auditScatterCache, *auditScatterCacheEnabled)
+		}
 		// The §11.7 `interceptor.rejected` policy-rejection rows share
 		// the durable Postgres-backed per-tenant hash chain.
 		auditAppender = pgAudit

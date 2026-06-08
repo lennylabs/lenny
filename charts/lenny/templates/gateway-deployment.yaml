@@ -1033,6 +1033,13 @@ spec:
             - name: LENNY_AUDIT_FLUSH_BATCH_SIZE
               value: {{ .Values.audit.flushBatchSize | quote }}
             {{- end }}
+            # §25.9 line 3709 ops.audit.scatterGatherCacheEnabled — opt-out
+            # of the platform-admin cross-tenant audit scatter-gather
+            # result cache (in-process, 5-minute TTL). F-25.9.11.
+            {{- if and .Values.audit (hasKey .Values.audit "scatterGatherCacheEnabled") }}
+            - name: LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED
+              value: {{ .Values.audit.scatterGatherCacheEnabled | quote }}
+            {{- end }}
             # §11.7 audit.siem.endpoint — when set, satisfies the
             # COMPLIANCE_SIEM_REQUIRED gate for regulated-profile tenants.
             # Rendered only when non-empty so an unconfigured platform

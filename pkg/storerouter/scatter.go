@@ -27,6 +27,9 @@ const (
 	QueryGDPRErasure           QueryType = "gdpr_erasure"
 	QueryTenantDeletion        QueryType = "tenant_deletion"
 	QueryDelegationBudgetPurge QueryType = "delegation_budget_purge"
+	// QueryAuditEvents labels the §25.9 platform-admin cross-tenant audit
+	// query fan-out across AllAuditShards.
+	QueryAuditEvents QueryType = "audit_events"
 )
 
 // ScatterConfig pins the §12.6 lines 556-558 scatter-gather execution

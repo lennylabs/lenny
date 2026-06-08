@@ -169,6 +169,10 @@ type AuditEventEnvelope struct {
 	ChainIntegrityReport *ChainIntegrityReport `json:"chainIntegrityReport,omitempty"`
 	AuditMetadata        *AuditMetadata        `json:"auditMetadata,omitempty"`
 	NextCursor           string                `json:"nextCursor,omitempty"`
+	// Degradation carries the §25.9 207 AUDIT_PARTIAL_RESULTS envelope on
+	// a cross-tenant query that reached only some audit shards. Absent on
+	// a complete (200) response.
+	Degradation *AuditDegradation `json:"degradation,omitempty"`
 }
 
 // WithAuditChains wires the §25.9 Audit Log Query API onto the
@@ -423,12 +427,21 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		}
 		limit = n
 	}
-	// spec: §25.9 line 3659 — ?cursor= is the opaque pagination token.
-	afterSeq, ok := decodeCursor(w, req.URL.Query().Get("cursor"))
+	filter, ok := parseAuditFilter(w, req, r.clock())
 	if !ok {
 		return
 	}
-	filter, ok := parseAuditFilter(w, req, r.clock())
+	// spec: §25.9 line 3668 — a platform-admin query that names no tenantId
+	// reads every tenant's chain across all audit shards (scatter-gather),
+	// cached per §25.9 line 3709. Routed only when a scatter reader is
+	// wired; otherwise the platform-admin no-tenantId query stays on the
+	// single-`platform`-tenant path below. F-25.9.11.
+	if r.isCrossTenantAuditQuery(req) {
+		r.listAuditEventsCrossTenant(w, req, limit, req.URL.Query().Get("cursor"), filter)
+		return
+	}
+	// spec: §25.9 line 3659 — ?cursor= is the opaque pagination token.
+	afterSeq, ok := decodeCursor(w, req.URL.Query().Get("cursor"))
 	if !ok {
 		return
 	}
@@ -453,36 +466,12 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		if !filter.matchesRow(row) {
 			continue
 		}
-		if filter.translationState != "" {
-			st, _, serr := r.rowTranslationState(req.Context(), tenant, row.Seq)
-			if serr != nil {
-				writeError(w, http.StatusServiceUnavailable, "AUDIT_STORE_UNAVAILABLE",
-					"audit translation-state lookup failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+serr.Error(), nil)
-				return
-			}
-			if st != filter.translationState {
-				continue
-			}
-		}
-		if filter.publishState != "" {
-			ps, _, perr := r.rowPublishState(req.Context(), tenant, row.Seq)
-			if perr != nil {
-				writeError(w, http.StatusServiceUnavailable, "AUDIT_STORE_UNAVAILABLE",
-					"audit publish-state lookup failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+perr.Error(), nil)
-				return
-			}
-			if ps != filter.publishState {
-				continue
-			}
-		}
 		integrity := integrities[row.Seq]
-		rec, terr := ocsfRecordForRow(row, integrity)
-		if terr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"audit ocsf translation failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+terr.Error(), nil)
+		ocsfBytes, include, rowOK := r.auditRowItem(w, req, tenant, row, integrity, filter)
+		if !rowOK {
 			return
 		}
-		if !filter.matchesSeverity(rec.SeverityID) {
+		if !include {
 			continue
 		}
 		if len(items) >= limit {
@@ -490,12 +479,6 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 			// stop without including it.
 			nextCursor = encodeCursor(afterSeq)
 			break
-		}
-		ocsfBytes, merr := ocsf.MarshalRecord(rec)
-		if merr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"audit ocsf marshal failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+merr.Error(), nil)
-			return
 		}
 		items = append(items, ocsfBytes)
 		tallyIntegrity(&report, integrity)

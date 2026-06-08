@@ -113,6 +113,10 @@ type Store struct {
 	// platform-Postgres. Nil keeps every write on the §12.3 R-03 router
 	// shard (the single-region default). F-11.7.9.
 	platformResidency *platformResidencyRouter
+	// scatterCfg bounds the §25.9 line 3710 cross-tenant scatter-gather
+	// fan-out (max concurrency, per-shard timeout). The zero value
+	// resolves to the storerouter defaults. F-25.9.11.
+	scatterCfg storerouter.ScatterConfig
 }
 
 // batchEnqueuer is the seam the §12.3 batch buffer satisfies. It is an

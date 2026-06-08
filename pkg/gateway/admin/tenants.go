@@ -168,6 +168,14 @@ type Router struct {
 	auditLog        AuditLog
 	auditPruner     AuditPartitionDropper
 	auditMetrics    AuditQueryMetrics
+	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9
+	// line 3668/3709 platform-admin cross-tenant audit scatter-gather and
+	// its Redis result cache. A nil auditScatter leaves the platform-admin
+	// no-tenantId query on the single-tenant (`platform`) read path.
+	// F-25.9.11.
+	auditScatter        auditScatterReader
+	scatterCache        ScatterGatherCache
+	scatterCacheEnabled bool
 	tokenRevoker    IssuedTokenRevoker
 	revocationCache RevocationCache
 	// adminToken provisions/rotates the §17.6 initial admin credential
