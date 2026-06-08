@@ -44922,7 +44922,7 @@ Since the finding cannot close until both land, it is deferred as a unit; re-att
 once the in-pod VCS-token endpoint exists, building the helper and the default-pool seed
 together.
 
-**Resolution (commit 3f7ed38c):** Both remaining deliverables landed, with the prior
+**Resolution (commit 7b84d1f8):** Both remaining deliverables landed, with the prior
 blocker ("no gateway endpoint returns the materialized VCS token to the pod") built
 as its own §9.1-channel endpoint. (1) **In-pod VCS-token endpoint** — new
 `lenny/vcs_token` platform tool (`pkg/gateway/mcptools`): a pod's git-credential
