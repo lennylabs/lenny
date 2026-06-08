@@ -2438,7 +2438,7 @@ carries `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. `leasecontrol.CallConnectorTool
 maps the rejection code to the matching gRPC status (PermissionDenied /
 FailedPrecondition / Unavailable) via an interface so it need not import
 connectorinvoke. Wired in `cmd/lenny-gateway` by passing the gateway-wide
-`policyChain` to `Invoker.WithInterceptors`. Resolved in commit <pending>.
+`policyChain` to `Invoker.WithInterceptors`. Resolved in commit 7d4cb3c1.
 
 ### - [x] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — CLOSED
 
