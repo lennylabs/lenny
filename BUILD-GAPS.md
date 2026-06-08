@@ -40657,7 +40657,7 @@ Consequence: the §15.2.1 REST↔MCP parity contract is not exercised by the CLI
 
 **Resolution:** Closed by commit 2458e503. `session new` now drives the §15.2 MCP `lenny/create_session` tool through the Lenny Go client SDK's `MCPClient.CreateSession`, replacing the REST `POST /v1/sessions/start` call (§24.17 line 209). `TestSessionNewRoutesThroughMCP_spec_24_17_209` pins the MCP path.
 
-### - [ ] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — OPEN
+### - [ ] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — DEFERRED
 
 The spec signature is `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...`. The `cmdSessionNew` flag parser (`/Users/joan/projects/lenny/cmd/lenny/session.go` lines 46-54) accepts only `--runtime`:
 
@@ -40675,6 +40675,8 @@ Spec also requires `--attach` to default ON in interactive TTYs (line 213). No T
 **Resolution:** DEFERRED. `--attach` is now accepted and reports its deferral, pointing the operator at `session logs <id>` for output. Inline streaming requires the §15.1 Streamable-HTTP SSE channel on `/mcp`, which is unbuilt (F-9.1.7 OPEN); `--workspace` / `--file` require the §7.4 mid-session upload pipeline (F-7.4.1 / F-7.4.6 OPEN). Re-attempt once those land.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**DEFERRED 2026-06-08 (`--attach` half now landed; `--workspace`/`--file` upload-binding remains blocked).** The `--attach` flag is implemented end to end: F-9.1.7 (the §15.1 SSE event stream) has closed, and the §24.17 line-213 attach render loop now streams output / elicitation / lifecycle inline until the session terminates (closed under F-24.17.8 this batch; `attachWanted` defaults attach on in an interactive TTY per the spec). The residual is the `--workspace <dir>` / `--file <path>` upload binding, which stays blocked on a genuine ordering tension between §26.2 and §15.1: §26.2 line 95-114 has the CLI tar the workspace, upload it via the upload API, and reference the resulting upload id in the `uploadArchive` workspace source; but the upload endpoint (`POST /v1/sessions/{id}/upload-archive`) mints its server-generated `lenny-blob://` `uploadRef` only against an existing session, while §15.1 scopes the inner `workspacePlan` to `POST /v1/sessions` / `POST /v1/sessions/start` and the plan is immutable after create (no plan-rebind / finalize-with-plan endpoint). There is no client call ordering that attaches a post-create upload into the session's create-time workspace plan. Closing the upload half needs a gateway-side binding path first (a plan-rebind endpoint, a finalize-time bind of the session's staged archive to its plan's `uploadArchive` source, or a create-time deferred-upload sentinel), spanning gateway + the pod-adapter materialization + the client tar/`.lennyignore` walk — a multi-component vertical that is its own batch. Tracked jointly with F-26.2.4.
 
 ### - [x] F-24.17.5 — MCP server registers no `lenny/interrupt` or `lenny/cancel_session` tools [High] — CLOSED
 
@@ -40696,13 +40698,11 @@ REST equivalents exist (`POST /v1/sessions/{id}/interrupt`, `POST /v1/sessions/{
 
 **Resolution:** Verify-closed (stale). The Lenny Go client SDK exists at `sdks/client/go/lenny` (the §15.6 deliverable): the full §15.1 REST surface, the §15.2 MCP client (`MCPClient`), streaming, retries with backoff, and webhook verification. This batch extended it with `MCPClient.InterruptSession` / `CancelSession` and `Client.SessionLogs` (commit 5ae141d8); the §24.17 CLI now embeds it (commit 2458e503).
 
-### - [ ] F-24.17.8 — `session new` output is a bare session id, not the streamed/elicitation/lifecycle output the spec describes [Medium] — OPEN
+### - [x] F-24.17.8 — `session new` output is a bare session id, not the streamed/elicitation/lifecycle output the spec describes [Medium] — CLOSED
 
 `cmdSessionNew` line 120 prints only `created.ID` on stdout and exits. Spec line 213 describes a CLI that "renders the session's output, elicitation prompts, and lifecycle transitions inline until the session terminates" when attached. Even when `--attach` is omitted (non-interactive), the CLI is expected to support the attach path for interactive use; the current implementation has no rendering loop at all.
 
-**Resolution:** DEFERRED with F-24.17.4. The inline output / elicitation / lifecycle render loop needs the §15.1 Streamable-HTTP SSE channel on `/mcp` (F-9.1.7 OPEN). `session logs <id>` is the available follow path today; `session new` prints the created id and (with `--attach`) a notice pointing there.
-
-**Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+**Resolution:** Built the §24.17 line-213 attach render loop now that its prior blocker (the §15.1 SSE event stream, F-9.1.7) has closed. New `pkg/embedded/localcli/attach.go` `streamSession` opens the SDK's `StreamEvents` (`GET /v1/sessions/{id}/events`) and renders inline until the session terminates: `response` agent output to stdout (verbatim, pipeable), `status_change` lifecycle transitions and `message_delivered`/`elicitation_request` prompts to stderr (the §8.5 `parts` text is surfaced, with the §8.8 `maxInputRounds` one_shot annotation). A `GetSession` fast path reports an already-terminal session without opening a stream; a terminal `status_change` cancels the stream and maps the disposition to the exit code (completed→0, failed/cancelled/expired→1); SIGINT/SIGTERM ends the stream cleanly (the session keeps running gateway-side). `session new` invokes it when `attachWanted` resolves true (`--attach`, or an interactive TTY per the line-213 default); the previously-stubbed `session attach <id>` verb now opens the same loop with SDK cursor-resume. A non-interactive `session new` without `--attach` still prints the bare id (the scripted path). Closed this batch; `--workspace`/`--file` (F-24.17.4) is the separate, still-blocked upload half.
 
 ### - [x] F-24.17.9 — `lenny session` falls back to running stack discovery, not `--api-url` / `LENNY_API_URL` [Medium] — CLOSED
 
@@ -44697,7 +44697,7 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 
 ---
 
-### - [ ] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — OPEN
+### - [ ] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — DEFERRED
 
 **Spec:** §26.2 lines 95–114 specify the reference `WorkspacePlan` and the CLI that produces it:
 
@@ -44732,6 +44732,8 @@ finalize-with-plan path, or implicit materialization of the session's staged arc
 which is a gateway design decision outside this client-facing finding's scope. The
 `--attach` interactive-stream half additionally depends on the §15.2 Streamable-HTTP /
 SSE surface (F-15.2.2, OPEN). Re-attempt once a gateway upload-binding path lands.
+
+**DEFERRED 2026-06-08 (`--attach` half landed; `--workspace`/`uploadArchive` upload-binding still blocked).** The `--attach` half is now implemented: the §24.17 line-213 attach render loop streams output / elicitation / lifecycle inline until the session terminates over the §15.1 SSE event stream (closed under F-24.17.8 this batch; the prior `--attach` blocker F-9.1.7 has closed). The `--workspace`/`uploadArchive` upload half remains blocked on the same §26.2↔§15.1 upload-binding ordering tension documented under F-24.17.4 (the upload-archive `uploadRef` is minted only against an existing session, but the create-time `workspacePlan` that must reference it is immutable, and no plan-rebind / finalize-with-plan / deferred-upload gateway path exists). Closed jointly with F-24.17.4 once that gateway binding path lands.
 
 ---
 

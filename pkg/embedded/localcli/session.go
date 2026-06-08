@@ -67,14 +67,7 @@ func cmdSession(args []string, stdout, stderr io.Writer) int {
 	case "logs":
 		return cmdSessionLogs(ctx, rest, stdout, stderr)
 	case "attach":
-		// spec: §24.17 line 214 — attach opens an MCP stream with cursor
-		// resume. The interactive streaming channel (§15.1 Streamable-HTTP
-		// SSE on /mcp) is not yet wired, so attach is deferred. Report it
-		// honestly and point at the logs tail, which is the available way
-		// to follow a session's output today.
-		fmt.Fprintln(stderr, "lenny session attach: interactive streaming is not yet available")
-		fmt.Fprintln(stderr, "follow output with: lenny session logs <sessionId>")
-		return 2
+		return cmdSessionAttach(ctx, rest, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny session: unknown subcommand %q\n", sub)
 		fmt.Fprintln(stderr, sessionUsage)
@@ -248,8 +241,10 @@ func mintEmbeddedBearer() (string, error) {
 
 // cmdSessionNew implements `lenny session new` over the §15.2 MCP
 // lenny/create_session tool (the §24.17 line 213 mapping). It prints the
-// created session id. The --attach flag is accepted but interactive
-// streaming is deferred; a notice points at `session logs`.
+// created session id. When --attach is set (the §24.17 line 213 default
+// in an interactive TTY), it then opens the §15.1 event stream and
+// renders the session's output, elicitation prompts, and lifecycle
+// transitions inline until the session terminates.
 func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -274,10 +269,36 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 1
 	}
 	fmt.Fprintln(stdout, created.SessionID)
-	if f.attach {
-		fmt.Fprintln(stderr, "lenny session new: --attach streaming is not yet available; follow output with 'lenny session logs "+created.SessionID+"'")
+	if attachWanted(f, stdout) {
+		// spec: §24.17 line 213 — render the session inline until it
+		// terminates. The created id is already on stdout so a caller
+		// that captured it can still drive the session even if the
+		// attach stream is interrupted.
+		return streamSession(ctx, client, created.SessionID, stdout, stderr)
 	}
 	return 0
+}
+
+// cmdSessionAttach implements `lenny session attach <sessionId>` per
+// §24.17 line 214. It opens the §15.1 event stream from the retained
+// backlog and renders the session inline until it terminates or the
+// caller interrupts. Reconnect-with-cursor is handled by the SDK's
+// StreamEvents (Last-Event-ID resume).
+func cmdSessionAttach(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	f, err := parseSessionFlags(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny session attach: %v\n", err)
+		return 2
+	}
+	if len(f.pos) < 1 {
+		fmt.Fprintln(stderr, "lenny session attach: usage: session attach <sessionId>")
+		return 2
+	}
+	client, ok, code := sessionClient(f, "attach", stderr)
+	if !ok {
+		return code
+	}
+	return streamSession(ctx, client, f.pos[0], stdout, stderr)
 }
 
 // cmdSessionSend implements `lenny session send <id> <message>` over the

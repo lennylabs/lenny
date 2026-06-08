@@ -86,8 +86,10 @@ func fakeGateway(t *testing.T) *httptest.Server {
 		_, _ = w.Write([]byte(`{"id":"` + r.PathValue("id") + `","state":"running","runtimeRef":"claude-code"}`))
 	})
 	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		// §15.1 lines 1228-1253 canonical cursor-paginated envelope the
+		// SDK's ListSessions decodes ({items, cursor, hasMore}).
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sessions":[{"id":"sess_1","state":"running","runtimeRef":"claude-code"}]}`))
+		_, _ = w.Write([]byte(`{"items":[{"id":"sess_1","state":"running","runtimeRef":"claude-code"}],"hasMore":false}`))
 	})
 
 	srv := httptest.NewServer(mux)
@@ -211,16 +213,20 @@ func TestSessionDiscoversAPIURLFromEnv_spec_24_17_9(t *testing.T) {
 	}
 }
 
-// TestSessionAttachDeferred_spec_24_17_214 confirms attach reports its
-// deferral and points at the logs tail rather than crashing. F-24.17.4.
-func TestSessionAttachDeferred_spec_24_17_214(t *testing.T) {
+// TestSessionAttachNoGateway_spec_24_17_214 confirms the implemented
+// attach verb surfaces a gateway-discovery error (exit 1) when no
+// --api-url, LENNY_API_URL, or running stack resolves, rather than
+// silently doing nothing. F-24.17.8.
+func TestSessionAttachNoGateway_spec_24_17_214(t *testing.T) {
+	t.Setenv("LENNY_API_URL", "")
+	t.Setenv("LENNY_API_TOKEN", "")
 	var stdout, stderr bytes.Buffer
 	code := cmdSession([]string{"attach", "sess_1"}, &stdout, &stderr)
-	if code != 2 {
-		t.Errorf("attach exit code = %d, want 2", code)
+	if code != 1 {
+		t.Errorf("attach exit code = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "logs") {
-		t.Errorf("attach should point at logs: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no --api-url") {
+		t.Errorf("attach should report discovery failure: %q", stderr.String())
 	}
 }
 
