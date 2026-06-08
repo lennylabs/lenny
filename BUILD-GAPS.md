@@ -22222,7 +22222,7 @@ probe-only gateway cannot run control-plane Phase 4a KMS destroy
 (operator-driven per §12.5 line 301) and has no k8s client for CRD
 cleanup. Closes the DELETE-side initiation jointly with F-24.10.3.
 
-### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — OPEN
+### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-24.10.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
 
@@ -22255,6 +22255,8 @@ residency routing (`PlatformPostgres(region)` /
 `PLATFORM_AUDIT_REGION_UNRESOLVABLE`), which is itself OPEN as F-11.7.9.
 Deferred pending that infrastructure; the spoliation-protection invariant
 is satisfied in the interim by the Phase 3.5 block.
+
+**DEFERRED 2026-06-08 (re-verified; one cited blocker cleared, the escrow-infrastructure half remains).** F-11.7.9 (the §12.8 line 885 CMP-058 platform-tenant audit residency routing) is now CLOSED, so the audit-residency half of this finding's dependency is resolved. The residual override/escrow path still requires the region-scoped escrow infrastructure that v1 does not provision: a region-scoped escrow KMS keyring (`platform:legal_hold_escrow:<region>`) and a `COMPLIANCE`-mode object-lock escrow bucket with `retain-until-hold-release`. `grep` confirms no `force-delete` / `forceDelete` handler exists (only alert-rule, controller-skeleton, and audit-catalog references), no `legal_hold_escrow_kek` consumer, and no `legalHoldEscrow` chart value. Building a faithful re-encrypt-and-migrate path needs those object-lock and region-scoped-KMS backends, which are cloud infrastructure unavailable in this environment (Rule P escape: infrastructure unavailable). The mandatory fail-closed spoliation invariant remains enforced by the F-12.8.1 Phase 3.5 block. Re-attempt when the region-scoped escrow KMS keyring and the object-lock escrow bucket land.
 
 ### - [x] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — CLOSED
 
@@ -27206,7 +27208,7 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Impact:** The `handleToolCall` fallback at `pkg/gateway/mcp/mcp.go:248-258` then assigns these errors lenny code `INTERNAL_ERROR` and `(TRANSIENT, true)` by classifier default. So every validation rejection (missing required field), every state-transition failure (session is terminal), every not-found, every timeout (`ELICITATION_TIMEOUT`, `REQUEST_INPUT_TIMEOUT`), every authorization failure on MCP becomes `INTERNAL_ERROR/TRANSIENT/retryable=true`. The REST surface emits proper codes (`VALIDATION_ERROR`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `REQUEST_INPUT_TIMEOUT`, `ELICITATION_TIMEOUT`) with correct categories and `retryable: false`. Rule 5(d) parity is violated for nearly every error path in the MCP tool surface.
 - **Resolution (`1c9a2259`):** Converted the remaining client-facing plain-error sites across the twelve tools in `pkg/gateway/mcptools/mcptools.go` to `*mcp.ToolError` carrying the canonical lenny code, via three shared parity helpers (`errInvalidArgs` → `VALIDATION_ERROR`, `errSessionLookup` → `RESOURCE_NOT_FOUND`, `errSessionTerminalState` → `INVALID_STATE_TRANSITION`) plus per-site codes (`TARGET_TERMINAL` for a terminal message/cancel target, `PERMISSION_DENIED` for cancel/await outside the caller's subtree, `INTERCEPTOR_REJECTED` for the PreMessageDelivery REJECT, `QUOTA_EXCEEDED` for the elicitation budget). Genuine server-internal failures (`no executor configured`, serialization, store write/query errors) deliberately stay plain → `INTERNAL_ERROR`. With F-15.2.6's classifier expansion these now classify identically to REST per rule 5(d). The delegate_task tool was already canonical (F-15.2.11). Tests: `TestToolErrorsCarryCanonicalEnvelopeCode` exercises send_message/set_tracing/output/await_children paths.
 
-### - [ ] F-15.2.13 — Streaming/elicitation/tool-use wire-projection rows are unrealised; MCP cannot deliver the §9.2 elicitation chain natively [Medium] — OPEN
+### - [ ] F-15.2.13 — Streaming/elicitation/tool-use wire-projection rows are unrealised; MCP cannot deliver the §9.2 elicitation chain natively [Medium] — DEFERRED
 
 **Potential overlap** (confidence: high) — F-9.2.17 — Both concern §9.2 elicitation over MCP but report different gaps (missing per-kind wire-projection/elicitation-create dispatch vs the unregistered respond_to_elicitation MCP tool).
 
@@ -27218,6 +27220,8 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Impact:** The "native MCP Elicitation feature" path the spec (line 1404) names as the rationale for keeping `respond/dismiss` REST-only is not present. An MCP-only client has no way to surface or respond to an elicitation through MCP itself.
 
 **Reopened 2026-06-07 — prior deferral (re-assessed after F-15.2.2 closed):** The F-15.2.2 transport blocker is cleared — `pkg/gateway/mcp/stream.go` now provides the SSE response writer, the per-session event channel, the `id:`/resume/gap/keepalive contract, and an extensible `notifications/lenny/*` frame writer. The residual is the per-kind projection itself, which is its own substantial effort: the live `sessionevents.Bus` carries string-typed events (`status_change`, `response`, `elicitation_requested`, …), so realising the §15.2 lines 1358-1368 table requires (a) a classifier mapping those wire types onto the closed `SessionEventKind` enum, (b) MCP Tasks support (`notifications/tasks/statusUpdate` + the task final-state frame with the §8.8 Lenny-state→MCP-Tasks mapping), (c) the bidirectional `elicitation/create` request→reply round-trip routed through the §9.2 hop-by-hop chain, and (d) the §15.4 OutputPart translation matrix. The current transport emits the faithful generic `notifications/lenny/sessionEvent` frame; swapping it for the method-name-per-kind projection is a focused follow-on, not a drop-in. Re-defer as its own work item; the transport it needs now exists.
+
+**DEFERRED 2026-06-08 (re-verified; blocked on the unbuilt §9.2 hop-by-hop elicitation chain + MCP Tasks).** The per-kind projection's hardest leg — the bidirectional `elicitation/create` request→reply round-trip routed through the §9.2 hop-by-hop chain (table line 1366) — depends on the §9.2 per-hop elicitation-forwarding subsystem, which is still unbuilt: F-9.2.1 (per-hop content verification / tamper detector) and F-9.2.7 (connector `expected_domain` boundary) are both DEFERRED, and no `elicitation/create` dispatcher exists in `pkg/gateway/mcp`. The remaining legs (the closed-`SessionEventKind` classifier and the §8.8 MCP Tasks `notifications/tasks/statusUpdate` + final-state frame) are a substantial projection layer in their own right. The transport (F-15.2.2 SSE writer + `notifications/lenny/*`) exists and currently emits the faithful generic `notifications/lenny/sessionEvent` frame, so MCP clients are served; swapping it for the method-name-per-kind projection is gated on that elicitation subsystem (Rule P escape: separate large workstream not begun). Re-attempt alongside the §9.2 hop-by-hop elicitation forwarding work (with F-15.2.14, which is blocked on this finding).
 
 ### - [ ] F-15.2.14 — The `tool_use` approval REST-only argument is moot because there is no MCP tool-use lifecycle either [Medium] — DEFERRED
 - **Spec §15.2.1 line 1404:** "The tool-use approval and elicitation response/dismiss endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP **Elicitation** feature... the gateway's `MCPAdapter` surfaces pending elicitations and **approval-required** `tool_use` requested-phase events as MCP `elicitation/create` exchanges."
@@ -27543,6 +27547,8 @@ runtime field, or tenant override populates it — only
 degenerate zero config would silently deny every extension rather than
 fix the path. Deferred until the §8.6 config-layering resolver and the
 session/delegation lifecycle registration hooks land as their own task.
+
+**Re-verified 2026-06-08 (kept OPEN — primary blocker resolved, residual is lifecycle wiring; now actionable).** The §8.6 config-layering resolver the prior note blocked on now exists: `pkg/leaseextension` implements "resolving the effective extension ceiling from the layered deployment/tenant/runtime configuration" plus the per-dimension grant computation (the pure §8.6 decision kernel). Registering with a *resolved* (non-degenerate) config is therefore now possible. The residual gap is the lifecycle wiring: `MemoryBudgetSource.RegisterTree`/`AddSession`/`SetParentLease` still have no production caller (`grep` over non-test code is empty), so the first `ExtendLease` still fails `ErrSessionNotFound`. Closing this is now a bounded gateway change — call `RegisterTree` at root-session creation with the `leaseextension`-resolved config, and `AddSession`/`SetParentLease` at `delegation.Delegate` time — no longer blocked on an unbuilt subsystem. Left OPEN for a dedicated wiring batch rather than deferred.
 
 ### - [x] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — DEFERRED
 
@@ -32710,7 +32716,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.15 — 2-15  Required integration test suites are absent [Medium] — OPEN
+### - [ ] F-17.2.15 — 2-15  Required integration test suites are absent [Medium] — DEFERRED
 **Spec requirement** (§17.2 lines 76, 84):
 
 - `tests/integration/phase_stamp_downgrade_test.go` — parameterises every `(from, to)` flag combination, asserts render-time fail-closed gate behavior and audit emission.
@@ -32723,6 +32729,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 **Impact:** The spec's "regression in either direction is caught in CI" guarantee is unenforced. Drift between the chart's rendered webhooks and the preflight's expected set, between phase-stamp behavior under each `(from, to)` combination, and between controller pod specs and deployed admission rules can ship without test failures.
 
 **Reopened 2026-06-07 — prior deferral:** the four named suites live at `tests/integration/` and require a live-cluster (`helm install` against a real kube-apiserver) harness that this repo does not yet host; the established render-regression pattern here is helm-unittest plus pure-Go decision tests. Two of the four are now partially covered without the named files: the webhook-inventory drift the `admission_webhook_inventory_test.go` suite would catch is machine-checked by `pkg/preflight.CatalogueCoverage` + `TestCatalogueCoverageInventoryMatchesSpec17_2` (F-17.2.12), and the phase-stamp downgrade decision the `phase_stamp_downgrade_test.go` suite parameterises is exercised by `pkg/preflight.CheckPhaseStamp` (the layer-3 semantics shared with the F-17.2.7 layer-2 guard). The render-time fail-closed behavior (needs `lookup`-backed prior state → a live cluster) and the controller-pod-spec-vs-admission and core-deployment-inventory suites need the integration harness. Re-attempt when a `tests/integration` cluster harness is stood up.
+
+**DEFERRED 2026-06-08 (re-verified; live-cluster harness unavailable here).** `tests/integration/` still does not exist, and the four named suites are intrinsically cluster-bound: render-time fail-closed phase-stamp gating needs `lookup`-backed prior cluster state, and the admission-policy and core-deployment-inventory suites need controller-generated pod specs validated against deployed admission policies on a real kube-apiserver (`helm install` against a live cluster). This repo's established render-regression pattern is helm-unittest plus pure-Go decision tests; a live `helm install`/kube-apiserver harness is infrastructure unavailable in this environment (Rule P escape). The decision-level coverage the suites would back is already machine-checked without the named files (`pkg/preflight.CatalogueCoverage` for webhook-inventory drift, `pkg/preflight.CheckPhaseStamp` for the downgrade semantics). Re-attempt when a `tests/integration` cluster lane (envtest or a CI kind/k3s cluster) is stood up.
 
 ---
 
@@ -33915,7 +33923,7 @@ implementation honors it, deviates from it, or omits it entirely.
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 MUST cluster lives in the sibling F-17.4.2..F-17.4.10 entries.
 
-### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — OPEN
+### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — DEFERRED
 
 Spec lines 199–202 enumerate the Source Mode substitutions: **Embedded SQLite** for
 session and metadata storage, **in-memory caches** for pub/sub and ephemeral state,
@@ -33944,6 +33952,8 @@ echo runtime when unset; F-17.4.15). The two remaining substitutions are dedicat
 batches: an **embedded SQLite** session/metadata store (no SQLite backend exists in the
 tree — every store interface would need a new implementation), and the in-process
 **controller-sim** goroutine. Deferred until the SQLite store lands.
+
+**DEFERRED 2026-06-08 (re-verified; embedded SQLite store is a separate large workstream not begun).** `find` confirms no `*sqlite*` source and no `modernc.org/sqlite`/`mattn/go-sqlite` dependency in the tree. The two remaining Source-Mode substitutions (the gateway already gets filesystem artifact storage via `blobstore.FilesystemStore` and the `LENNY_AGENT_BINARY`/`--runtime-bin` override) are the embedded SQLite session/metadata store and the in-process controller-sim goroutine. A SQLite backend is a full new implementation of every store interface (sessionstore, runtimestore, poolstore, credential stores, audit, ...) behind a new driver — a separate large workstream that has not begun (Rule P escape: separate large workstream). The current `make run` in-memory fallback is a working dev path; the SQLite substitution is a durability upgrade, not a correctness gap. Re-attempt as a dedicated SQLite-store-backend batch.
 
 ### - [x] F-17.4.3 — Compose Mode (`docker compose up`) bundle does not exist [High] — CLOSED
 
@@ -34164,7 +34174,7 @@ spec.
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 SHOULD cluster lives in the sibling F-17.4.12..F-17.4.18 entries.
 
-### - [ ] F-17.4.12 — Gateway does not use the embedded k3s cluster for session placement [Medium] — OPEN
+### - [ ] F-17.4.12 — Gateway does not use the embedded k3s cluster for session placement [Medium] — DEFERRED
 
 Spec line 168: "**Same platform code path as production.** Embedded Mode uses the
 production gateway, controllers, CRDs, and storage interfaces."
@@ -34207,6 +34217,8 @@ namespace in the embedded k3s, and gate the switch on the runnable-image
 precondition. (k3s is Linux-only — `k3s.SupportedPlatform()` is false on the
 darwin dev host — so the placement path is not integration-testable here
 either; the change needs a Linux CI lane to validate end-to-end.)
+
+**DEFERRED 2026-06-08 (re-verified; one cited blocker cleared, the runnable-image + Linux-cluster halves remain).** F-26.3.6 (placeholder-digest reference catalog) is now CLOSED, but the two facts that make the `--agent-namespace` switch harmful today still hold: (1) every §26 reference runtime in `pkg/embedded/stack/catalog.go` is still pinned with `placeholderDigest` (`@sha256:000…`, catalog.go:97/142/196+), and no pod-deployable echo image is published — the §17.4 zero-credential echo path runs in-process, which is precisely the executor `--agent-namespace` would replace, so flipping it would mint Sandboxes with unpullable images and break `lenny session new`; and (2) `k3s.SupportedPlatform()` is false on the darwin dev host, so the placement path is not integration-testable in this environment and needs a Linux CI lane (Rule P escape: infrastructure unavailable here). Re-attempt once a pod-deployable echo image is published (and the reference runtimes are re-pinned to runnable digests) on a Linux CI lane: thread `AgentNamespace` through `gatewaySpec`/`gatewayArgs`, create the agent namespace in the embedded k3s, and gate the switch on the runnable-image precondition.
 
 ### - [x] F-17.4.13 — `lenny logs` cannot tail, cannot follow, and exposes fewer components than the spec [Medium] — CLOSED
 
@@ -45988,7 +46000,7 @@ Reviewed: 2026-05-23
 
 ### Findings
 
-### - [ ] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — OPEN
+### - [ ] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — DEFERRED
 
 Spec §26.11 documents the `crewai` reference runtime as a first-class catalogue entry that bootstraps `crew.kickoff(...)`, streams agent-internal thoughts and tool calls, and maps `Task.delegate` to `lenny/delegate_task`. The repository ships no `cmd/runtimes/crewai/` adapter package (`ls /Users/joan/projects/lenny/cmd/runtimes/` lists only `cred-shell-echo`, `delegation-echo`, `echo`, `echo-embedded`, `elicitation-echo`, `mcp-reference`, `streaming-echo`). `tests/spec-map.json` (`spec/26.11`) points at `cmd/runtimes/crewai` and reports `tests: []`, and `tests/spec-map-exceptions.yaml:177-179` records the gap with `reason: deferred, justification: The crewai reference runtime is built in Wave 6 (Phase 11)`. The current branch is on Wave 5 (per repository state), so this is a known deferral rather than a regression; calling it Medium because the spec section is in force and the binary is the artefact the section describes.
 
@@ -46007,6 +46019,8 @@ registration surfaces (catalog, chart Runtime CR with
 `runtimeOptionsSchemaRef`/`delegationPolicyRef`/`capabilities`, conformance
 fixtures) are already in place (F-26.11.2/.3/.4). Re-DEFERRED to its existing
 Wave-6 exception.
+
+**DEFERRED 2026-06-08 (re-verified; external CrewAI framework + designed Wave-6 schedule).** `cmd/runtimes/` still ships no `crewai` package (only the echo/streaming/elicitation/delegation/cred-shell/mcp/preconnect reference adapters), and `tests/spec-map-exceptions.yaml:176` still records the explicit schedule deferral ("The crewai reference runtime is built in Wave 6 (Phase 11)"). A faithful runtime is a Python, sandboxed, integration-level adapter that imports the external CrewAI framework, resolves the `Crew` object, calls `crew.kickoff(...)`, and maps `Task.delegate` onto `lenny/delegate_task` — it depends on a third-party framework and a Python sandbox that cannot be exercised meaningfully in-tree at this wave (Rule P escape: external dependency + named separate wave). The in-tree registration surfaces are complete (F-26.11.2/.3/.4). Re-attempt in Wave 6 per the recorded exception.
 
 ### - [x] F-26.11.2 — Required §26.11 Runtime fields are not encoded in any installable manifest [Medium] — CLOSED
 
