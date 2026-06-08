@@ -72,7 +72,21 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var slotFailed *podsession.SlotFailedError
 	var demotionUnsupported *podsession.SDKDemotionNotSupported
 	var proxyDialect *PoolProxyDialectError
+	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
 	switch {
+	case errors.As(err, &levelUnderperforms):
+		// spec: §5.1 line 42 — the runtime declares a higher integrationLevel
+		// than the adapter handshake observed it deliver. Permanent for this
+		// runtime: a retry against the same (unfixed) runtime fails
+		// identically, so the envelope is the dedicated 422 rather than the
+		// retryable atomic-unit fallback. F-5.1.11.
+		s.writeError(w, http.StatusUnprocessableEntity, "RUNTIME_LEVEL_UNDERPERFORMS",
+			levelUnderperforms.Error(),
+			map[string]any{
+				"runtime":       levelUnderperforms.Runtime,
+				"declaredLevel": levelUnderperforms.Declared,
+				"observedLevel": levelUnderperforms.Observed,
+			})
 	case errors.As(err, &proxyDialect):
 		// spec: §4.9 line 1476 — an assigned proxy-mode pool declares a
 		// wire dialect the session runtime does not speak. Permanent for
@@ -948,6 +962,23 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 	}
 }
 
+// runtimeIntegrationLevel resolves the runtime's §5.1 author-declared
+// integrationLevel for the §5.1 lines 41-44 first-assignment
+// observed-vs-declared admission check. It returns the empty string (the
+// §5.1 default "basic", which the binder never rejects) when the runtime
+// registry is unwired, the runtime is unresolvable, or the runtime
+// declares no level. spec: §5.1 lines 41-44.
+func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string) string {
+	if s.runtimes == nil {
+		return ""
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeName)
+	if err != nil {
+		return ""
+	}
+	return string(rt.IntegrationLevel)
+}
+
 // resolveCredentialPools runs the §4.9 pre-claim credential
 // availability check for a session and returns the provider→pool map
 // the binder mints leases from. It computes the §4.9 intersection of
@@ -1158,19 +1189,20 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	}
 	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.TenantID, row.RuntimeRef)
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
-		Pool:                 match.Pool,
-		SessionID:            row.ID,
-		TenantID:             row.TenantID,
-		Runtime:              row.RuntimeRef,
-		Plan:                 podsession.WorkspacePlanToProto(plan),
-		ExperimentContext:    experimentContextToProto(row.ExperimentContext),
-		TracingContext:       row.TracingContext,
-		SetupPolicy:          s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-		CredentialPools:      credPools,
-		AgentInterface:       agentInterface,
-		MinPlatformVersion:   minPlatformVersion,
-		PreConnect:           preConnect,
-		SDKWarmBlockingPaths: sdkWarmBlockingPaths,
+		Pool:                     match.Pool,
+		SessionID:                row.ID,
+		TenantID:                 row.TenantID,
+		Runtime:                  row.RuntimeRef,
+		DeclaredIntegrationLevel: s.runtimeIntegrationLevel(ctx, row.RuntimeRef),
+		Plan:                     podsession.WorkspacePlanToProto(plan),
+		ExperimentContext:        experimentContextToProto(row.ExperimentContext),
+		TracingContext:           row.TracingContext,
+		SetupPolicy:              s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		CredentialPools:          credPools,
+		AgentInterface:           agentInterface,
+		MinPlatformVersion:       minPlatformVersion,
+		PreConnect:               preConnect,
+		SDKWarmBlockingPaths:     sdkWarmBlockingPaths,
 	})
 	if err != nil {
 		return nil, err

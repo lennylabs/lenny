@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -138,6 +139,27 @@ type Binder struct {
 	// penalty. The deployer-facing demotion rate (§6.3 line 352) is this
 	// numerator over the ClaimAccepted denominator. Nil is a no-op.
 	SDKDemotion func(pool string, teardownSeconds float64)
+	// IntegrationLevelProbeWaitMs bounds how long the §5.1 first-assignment
+	// observed-integration-level probe waits for the runtime's first §4.7
+	// lifecycle handshake before the adapter classifies the runtime. Zero
+	// selects DefaultIntegrationLevelProbeWaitMs. A Full runtime dials the
+	// channel shortly after boot, so the window is fully consumed only when
+	// a runtime never opens the channel (the underperformance case the
+	// probe catches). spec: §5.1.
+	IntegrationLevelProbeWaitMs int32
+	// IntegrationLevelUnderdeclared records the §5.1 line 43
+	// `runtime.integrationLevel.underdeclared` warning: the observed level
+	// exceeds the declared level, so the author can raise the declared
+	// level in a future release. Called at most once per runtime per
+	// gateway process. Nil is a no-op. spec: §5.1 line 43.
+	IntegrationLevelUnderdeclared func(runtime, declared, observed string)
+	// integrationVerified gates the §5.1 observed-level probe to the first
+	// session assignment per runtime: a runtime whose observed level met or
+	// exceeded its declared level is recorded so later assignments skip the
+	// probe. Underperforming runtimes are not recorded, so every assignment
+	// keeps being rejected. spec: §5.1 line 41 ("the first session
+	// assignment").
+	integrationVerified sync.Map
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -257,6 +279,13 @@ type BindRequest struct {
 	TenantID string
 	// Runtime is the runtime name passed to the adapter's StartSession.
 	Runtime string
+	// DeclaredIntegrationLevel is the runtime's §5.1 author-declared
+	// integrationLevel ("basic", "standard", or "full"; empty is treated as
+	// the §5.1 default "basic"). On the first session assignment to the
+	// runtime, Bind probes the adapter for the observed level and rejects
+	// the assignment with RUNTIME_LEVEL_UNDERPERFORMS when observed <
+	// declared. spec: §5.1 lines 41-44.
+	DeclaredIntegrationLevel string
 	// Plan is the workspace the adapter materializes before start.
 	Plan *adapterv1.WorkspacePlan
 	// ExperimentContext is the §8.3 / §10.7 experiment enrollment
@@ -597,6 +626,18 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
+	}
+	// spec: §5.1 lines 41-44 — the runtime has now booted, so the adapter
+	// has had its first lifecycle_capabilities/lifecycle_support exchange.
+	// On the first assignment to this runtime, compare the observed level
+	// against the declared integrationLevel and reject the assignment with
+	// RUNTIME_LEVEL_UNDERPERFORMS when the runtime delivers less than it
+	// declares. Runs before the attached transition so an underperforming
+	// runtime never reaches attached.
+	if err := b.verifyIntegrationLevel(ctx, cl, req.Runtime, req.DeclaredIntegrationLevel); err != nil {
+		b.failPhase(ctx, sb)
+		cl.Close()
+		return nil, err
 	}
 	if err := b.setPhase(ctx, sb, state.Attached); err != nil {
 		cl.Close()

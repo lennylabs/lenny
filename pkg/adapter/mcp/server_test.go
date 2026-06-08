@@ -92,6 +92,38 @@ func TestServerRejectsBadNonce(t *testing.T) {
 	}
 }
 
+// spec: §5.1 — OnHandshake fires once after a successful nonce-authenticated
+// initialize so the adapter can observe that the runtime reached the
+// platform MCP server (Standard level). F-5.1.11.
+func TestServerOnHandshakeFiresAfterInitialize_spec_5_1(t *testing.T) {
+	s := mcp.NewServer()
+	fired := make(chan struct{}, 1)
+	s.OnHandshake = func() { fired <- struct{}{} }
+	enc, dec := serverPipe(t, s, testNonce)
+	sendRequest(t, enc, 1, "initialize", initParams(testNonce))
+	readResponse(t, dec)
+	select {
+	case <-fired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnHandshake did not fire after a successful initialize")
+	}
+}
+
+// spec: §5.1 — OnHandshake does not fire when the nonce handshake fails,
+// so a process that never authenticated is not counted as Standard.
+func TestServerOnHandshakeNotFiredOnBadNonce_spec_5_1(t *testing.T) {
+	s := mcp.NewServer()
+	var fired bool
+	s.OnHandshake = func() { fired = true }
+	enc, dec := serverPipe(t, s, testNonce)
+	sendRequest(t, enc, 1, "initialize", initParams("the-wrong-nonce"))
+	var resp map[string]json.RawMessage
+	_ = dec.Decode(&resp) // expected to error/close
+	if fired {
+		t.Error("OnHandshake fired for a connection that failed the nonce handshake")
+	}
+}
+
 func TestServerToolsList(t *testing.T) {
 	s := mcp.NewServer()
 	s.Register(mcp.Tool{

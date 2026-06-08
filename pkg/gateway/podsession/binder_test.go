@@ -355,6 +355,69 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	}
 }
 
+// spec: §5.1 line 42 — a runtime declaring integrationLevel `full` whose
+// adapter handshake is observed at Basic (no lifecycle channel, no MCP)
+// has its first session assignment rejected with
+// RUNTIME_LEVEL_UNDERPERFORMS, and the Sandbox is failed rather than
+// advanced to attached.
+func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		DeclaredIntegrationLevel: "full",
+	})
+	var underperf *podsession.RuntimeLevelUnderperforms
+	if !errors.As(err, &underperf) {
+		t.Fatalf("Bind err = %v, want *RuntimeLevelUnderperforms", err)
+	}
+	if underperf.Declared != "full" || underperf.Observed != "basic" {
+		t.Errorf("error levels = declared %q / observed %q, want full / basic", underperf.Declared, underperf.Observed)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase == "attached" {
+		t.Error("Sandbox reached attached despite an underperforming runtime")
+	}
+}
+
+// spec: §5.1 line 44 — a runtime whose observed level meets its declared
+// level is admitted: a Basic-declared runtime observed at Basic binds and
+// reaches attached.
+func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		DeclaredIntegrationLevel: "basic",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != "attached" {
+		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	}
+}
+
 // spec: §6.3 lines 358, 372 — Bind records the per-phase wall-clock
 // durations on its result so the start path can attribute the §6.3
 // latency budget. Each phase duration is non-negative and the recorded

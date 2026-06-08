@@ -547,6 +547,37 @@ func (lc *LifecycleChannel) Supports(capability string) bool {
 	return lc.supported[capability]
 }
 
+// WaitHandshake blocks until the current runtime connection completes its
+// lifecycle_capabilities / lifecycle_support handshake, up to wait or
+// until ctx is cancelled or the channel closes, and reports whether the
+// handshake completed. It returns immediately when the handshake is
+// already done. A non-positive wait checks the current state without
+// blocking. The §5.1 observed-integration-level probe uses it to decide
+// whether the runtime opened the lifecycle channel (Full level).
+func (lc *LifecycleChannel) WaitHandshake(ctx context.Context, wait time.Duration) bool {
+	ready := lc.currentReady()
+	select {
+	case <-ready:
+		return true
+	default:
+	}
+	if wait <= 0 {
+		return false
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return true
+	case <-lc.done:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
 // request registers a pending acknowledgement under key, sends frame,
 // and waits for the runtime's reply.
 func (lc *LifecycleChannel) request(ctx context.Context, key string, frame lifecycleFrame) error {

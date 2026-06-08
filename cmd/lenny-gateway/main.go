@@ -2306,6 +2306,14 @@ func main() {
 			// §5.2 atomic slot counter (Redis-backed); nil falls back
 			// to the SSA-only path documented on SlotClaimer.
 			SlotCounter: slotCounter,
+			// §5.1 line 43 — log the runtime.integrationLevel.underdeclared
+			// warning when the adapter handshake observes a higher level
+			// than the runtime declared, so the author can raise the
+			// declared level in a future release.
+			IntegrationLevelUnderdeclared: func(runtime, declared, observed string) {
+				log.Printf("lenny-gateway: runtime.integrationLevel.underdeclared runtime=%s declaredLevel=%s observedLevel=%s",
+					runtime, declared, observed)
+			},
 		}
 		// §4.6.1 Postgres-backed fallback claim: when Postgres is
 		// configured the binder reads the agent_pod_state mirror to

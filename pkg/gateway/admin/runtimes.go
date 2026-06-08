@@ -868,6 +868,12 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 		"isolationProfile": string(stored.IsolationProfile),
 		"integrationLevel": string(stored.IntegrationLevel),
+		// spec: §5.1 line 41 — admission emits the declared integration
+		// level as a `runtime.integrationLevel.declared` audit field at
+		// registration so the value is recorded alongside the Runtime
+		// definition (ApplyDefaults has stamped the §5.1 default `basic`
+		// onto an agent runtime that declared none). F-5.1.11.
+		"runtime.integrationLevel.declared": string(stored.IntegrationLevel),
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

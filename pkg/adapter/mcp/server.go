@@ -65,6 +65,14 @@ type Server struct {
 	// leaves the server serving only its registered tools (the dev / test
 	// default). spec: §9.1 lines 14-31. F-9.1.1.
 	Provider ToolProvider
+
+	// OnHandshake, when set, is called once per connection immediately
+	// after the runtime completes the §15.4.3 nonce-authenticated
+	// initialize handshake (and the optional challenge), before any tool
+	// is dispatched. The adapter wires it so the §5.1 observed-integration
+	// -level probe can tell that the runtime connected to the platform MCP
+	// server (Standard level). Nil leaves it a no-op. F-5.1.11.
+	OnHandshake func()
 }
 
 // ToolProvider supplies tools a Server forwards rather than handles
@@ -184,6 +192,12 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 	}
 	if err := enc.Encode(s.initializeResponse(initReq.ID)); err != nil {
 		return fmt.Errorf("mcp: write initialize response: %w", err)
+	}
+	// spec: §5.1 — the runtime authenticated and completed the MCP
+	// initialize handshake, so it is observationally at least Standard.
+	// F-5.1.11.
+	if s.OnHandshake != nil {
+		s.OnHandshake()
 	}
 
 	for {

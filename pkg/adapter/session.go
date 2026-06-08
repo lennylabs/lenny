@@ -319,6 +319,10 @@ func (s *Server) releaseSession() {
 	s.sessionID = ""
 	cancel := s.mcpCancel
 	s.mcpCancel = nil
+	// spec: §5.1 — the next session's runtime must reconnect to the
+	// platform MCP server to be observed at Standard; clear the prior
+	// session's signal. F-5.1.11.
+	s.mcpHandshakeSeen = false
 	// §9.3: stop every per-connector MCP server started for the session so
 	// the connector sockets are released alongside the platform socket.
 	// F-9.1.2.

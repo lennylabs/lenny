@@ -166,6 +166,17 @@ service Adapter {
   // RPCs assume the negotiated version. See spec §15.5 (versioning).
   rpc NegotiateVersion(NegotiateVersionRequest) returns (NegotiateVersionResponse) {}
 
+  // GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
+  // level the adapter observed the runtime actually implement, derived
+  // from whether the runtime completed the §4.7
+  // lifecycle_capabilities/lifecycle_support exchange (full) and whether
+  // it connected to the intra-pod platform MCP server (standard). The
+  // gateway calls it once per runtime on the first session assignment to
+  // compare the observed level against the runtime's declared
+  // integrationLevel and reject an underperforming runtime
+  // (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+  rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
+
   // LifecycleChannel is a bidirectional stream the adapter uses to surface
   // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
   // credentials_acknowledged, deadline_approaching). See spec §15.4 for
@@ -1207,6 +1218,25 @@ message NegotiateVersionResponse {
   // replacement pod's adapter can assert "same absolute cwd path".
   // F-7.3.15.
   string workspace_root = 5;
+}
+
+message GetObservedIntegrationLevelRequest {
+  // wait_ms bounds how long the adapter waits for the runtime to complete
+  // its first §4.7 lifecycle handshake before classifying. A Full-level
+  // runtime dials the lifecycle channel shortly after boot, so a generous
+  // window avoids misclassifying a slow-to-connect runtime; the window is
+  // only fully consumed when the runtime never opens the channel. Zero
+  // classifies from the runtime's current connection state with no wait.
+  int32 wait_ms = 1;
+}
+
+message GetObservedIntegrationLevelResponse {
+  // observed_level is "basic", "standard", or "full" — the §5.1 level the
+  // adapter observed the runtime actually implement. "full" when the
+  // runtime completed the lifecycle handshake; "standard" when it
+  // connected to the platform MCP server but not the lifecycle channel;
+  // "basic" otherwise (stdin/stdout binary protocol only).
+  string observed_level = 1;
 }
 
 // Opaque lifecycle event envelope. The lifecycle event taxonomy is defined

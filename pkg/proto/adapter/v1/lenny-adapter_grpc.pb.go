@@ -35,27 +35,28 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Adapter_PrepareWorkspace_FullMethodName   = "/lenny.adapter.v1.Adapter/PrepareWorkspace"
-	Adapter_FinalizeWorkspace_FullMethodName  = "/lenny.adapter.v1.Adapter/FinalizeWorkspace"
-	Adapter_RunSetup_FullMethodName           = "/lenny.adapter.v1.Adapter/RunSetup"
-	Adapter_StartSession_FullMethodName       = "/lenny.adapter.v1.Adapter/StartSession"
-	Adapter_ConfigureWorkspace_FullMethodName = "/lenny.adapter.v1.Adapter/ConfigureWorkspace"
-	Adapter_SendMessage_FullMethodName        = "/lenny.adapter.v1.Adapter/SendMessage"
-	Adapter_Attach_FullMethodName             = "/lenny.adapter.v1.Adapter/Attach"
-	Adapter_AssignCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/AssignCredentials"
-	Adapter_RotateCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/RotateCredentials"
-	Adapter_RevokeCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/RevokeCredentials"
-	Adapter_Interrupt_FullMethodName          = "/lenny.adapter.v1.Adapter/Interrupt"
-	Adapter_Checkpoint_FullMethodName         = "/lenny.adapter.v1.Adapter/Checkpoint"
-	Adapter_Resume_FullMethodName             = "/lenny.adapter.v1.Adapter/Resume"
-	Adapter_CoordinatorFence_FullMethodName   = "/lenny.adapter.v1.Adapter/CoordinatorFence"
-	Adapter_CheckpointBarrier_FullMethodName  = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
-	Adapter_ExportPaths_FullMethodName        = "/lenny.adapter.v1.Adapter/ExportPaths"
-	Adapter_ReportUsage_FullMethodName        = "/lenny.adapter.v1.Adapter/ReportUsage"
-	Adapter_Shutdown_FullMethodName           = "/lenny.adapter.v1.Adapter/Shutdown"
-	Adapter_DemoteSDK_FullMethodName          = "/lenny.adapter.v1.Adapter/DemoteSDK"
-	Adapter_NegotiateVersion_FullMethodName   = "/lenny.adapter.v1.Adapter/NegotiateVersion"
-	Adapter_LifecycleChannel_FullMethodName   = "/lenny.adapter.v1.Adapter/LifecycleChannel"
+	Adapter_PrepareWorkspace_FullMethodName            = "/lenny.adapter.v1.Adapter/PrepareWorkspace"
+	Adapter_FinalizeWorkspace_FullMethodName           = "/lenny.adapter.v1.Adapter/FinalizeWorkspace"
+	Adapter_RunSetup_FullMethodName                    = "/lenny.adapter.v1.Adapter/RunSetup"
+	Adapter_StartSession_FullMethodName                = "/lenny.adapter.v1.Adapter/StartSession"
+	Adapter_ConfigureWorkspace_FullMethodName          = "/lenny.adapter.v1.Adapter/ConfigureWorkspace"
+	Adapter_SendMessage_FullMethodName                 = "/lenny.adapter.v1.Adapter/SendMessage"
+	Adapter_Attach_FullMethodName                      = "/lenny.adapter.v1.Adapter/Attach"
+	Adapter_AssignCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/AssignCredentials"
+	Adapter_RotateCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/RotateCredentials"
+	Adapter_RevokeCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/RevokeCredentials"
+	Adapter_Interrupt_FullMethodName                   = "/lenny.adapter.v1.Adapter/Interrupt"
+	Adapter_Checkpoint_FullMethodName                  = "/lenny.adapter.v1.Adapter/Checkpoint"
+	Adapter_Resume_FullMethodName                      = "/lenny.adapter.v1.Adapter/Resume"
+	Adapter_CoordinatorFence_FullMethodName            = "/lenny.adapter.v1.Adapter/CoordinatorFence"
+	Adapter_CheckpointBarrier_FullMethodName           = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
+	Adapter_ExportPaths_FullMethodName                 = "/lenny.adapter.v1.Adapter/ExportPaths"
+	Adapter_ReportUsage_FullMethodName                 = "/lenny.adapter.v1.Adapter/ReportUsage"
+	Adapter_Shutdown_FullMethodName                    = "/lenny.adapter.v1.Adapter/Shutdown"
+	Adapter_DemoteSDK_FullMethodName                   = "/lenny.adapter.v1.Adapter/DemoteSDK"
+	Adapter_NegotiateVersion_FullMethodName            = "/lenny.adapter.v1.Adapter/NegotiateVersion"
+	Adapter_GetObservedIntegrationLevel_FullMethodName = "/lenny.adapter.v1.Adapter/GetObservedIntegrationLevel"
+	Adapter_LifecycleChannel_FullMethodName            = "/lenny.adapter.v1.Adapter/LifecycleChannel"
 )
 
 // AdapterClient is the client API for Adapter service.
@@ -187,6 +188,16 @@ type AdapterClient interface {
 	// supports; the gateway selects a compatible version. Subsequent
 	// RPCs assume the negotiated version. See spec §15.5 (versioning).
 	NegotiateVersion(ctx context.Context, in *NegotiateVersionRequest, opts ...grpc.CallOption) (*NegotiateVersionResponse, error)
+	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
+	// level the adapter observed the runtime actually implement, derived
+	// from whether the runtime completed the §4.7
+	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
+	// it connected to the intra-pod platform MCP server (standard). The
+	// gateway calls it once per runtime on the first session assignment to
+	// compare the observed level against the runtime's declared
+	// integrationLevel and reject an underperforming runtime
+	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error)
 	// LifecycleChannel is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
 	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
@@ -408,6 +419,16 @@ func (c *adapterClient) NegotiateVersion(ctx context.Context, in *NegotiateVersi
 	return out, nil
 }
 
+func (c *adapterClient) GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetObservedIntegrationLevelResponse)
+	err := c.cc.Invoke(ctx, Adapter_GetObservedIntegrationLevel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[2], Adapter_LifecycleChannel_FullMethodName, cOpts...)
@@ -550,6 +571,16 @@ type AdapterServer interface {
 	// supports; the gateway selects a compatible version. Subsequent
 	// RPCs assume the negotiated version. See spec §15.5 (versioning).
 	NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error)
+	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
+	// level the adapter observed the runtime actually implement, derived
+	// from whether the runtime completed the §4.7
+	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
+	// it connected to the intra-pod platform MCP server (standard). The
+	// gateway calls it once per runtime on the first session assignment to
+	// compare the observed level against the runtime's declared
+	// integrationLevel and reject an underperforming runtime
+	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error)
 	// LifecycleChannel is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
 	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
@@ -623,6 +654,9 @@ func (UnimplementedAdapterServer) DemoteSDK(context.Context, *DemoteSDKRequest) 
 }
 func (UnimplementedAdapterServer) NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method NegotiateVersion not implemented")
+}
+func (UnimplementedAdapterServer) GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetObservedIntegrationLevel not implemented")
 }
 func (UnimplementedAdapterServer) LifecycleChannel(grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]) error {
 	return status.Error(codes.Unimplemented, "method LifecycleChannel not implemented")
@@ -985,6 +1019,24 @@ func _Adapter_NegotiateVersion_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_GetObservedIntegrationLevel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetObservedIntegrationLevelRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).GetObservedIntegrationLevel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_GetObservedIntegrationLevel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).GetObservedIntegrationLevel(ctx, req.(*GetObservedIntegrationLevelRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_LifecycleChannel_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(AdapterServer).LifecycleChannel(&grpc.GenericServerStream[LifecycleChannelRequest, LifecycleChannelResponse]{ServerStream: stream})
 }
@@ -1070,6 +1122,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "NegotiateVersion",
 			Handler:    _Adapter_NegotiateVersion_Handler,
+		},
+		{
+			MethodName: "GetObservedIntegrationLevel",
+			Handler:    _Adapter_GetObservedIntegrationLevel_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

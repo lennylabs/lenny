@@ -124,6 +124,7 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 		{"GIT_CLONE_REF_RESOLVE_TRANSIENT", CategoryTransient, true}, // spec: 15:1066
 		{"ENV_VAR_BLOCKLISTED", CategoryPermanent, false},            // spec: 15:1062
 		{"SDK_DEMOTION_NOT_SUPPORTED", CategoryPermanent, false},     // spec: 15:1083
+		{"RUNTIME_LEVEL_UNDERPERFORMS", CategoryPermanent, false},    // spec: 05:42 (declared > observed integrationLevel)
 		{"POOL_DRAINING", CategoryTransient, true},                   // spec: 15:1034
 		{"ERASURE_IN_PROGRESS", CategoryPolicy, false},               // spec: 15:1040
 		{"TENANT_SUSPENDED", CategoryPolicy, false},                  // spec: 15:1096

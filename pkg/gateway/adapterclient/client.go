@@ -65,6 +65,23 @@ func (c *Client) NegotiateVersion(ctx context.Context, acceptedVersions []string
 	})
 }
 
+// GetObservedIntegrationLevel asks the adapter for the §5.1 / §15.4.3
+// integration level it observed the runtime implement, waiting up to
+// waitMs for the runtime's first §4.7 lifecycle handshake. The gateway
+// compares the returned level ("basic", "standard", or "full") against
+// the runtime's declared integrationLevel on the first session assignment.
+// An adapter on an older protocol returns codes.Unimplemented, which the
+// caller treats as "not reported" and skips the check.
+func (c *Client) GetObservedIntegrationLevel(ctx context.Context, waitMs int32) (string, error) {
+	resp, err := c.rpc.GetObservedIntegrationLevel(ctx, &adapterv1.GetObservedIntegrationLevelRequest{
+		WaitMs: waitMs,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.GetObservedLevel(), nil
+}
+
 // StartSessionParams carries the §15.4 adapter-manifest inputs the
 // gateway delivers to a pod's runtime at session start. SessionID and
 // Runtime are required; the rest populate the §4.7 manifest fields and may

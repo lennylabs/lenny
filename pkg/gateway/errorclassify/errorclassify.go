@@ -334,6 +334,7 @@ var table = map[string]entry{
 	"TARGET_TERMINAL":                              {CategoryPermanent, false}, // spec: 15:998
 	"INVALID_POOL_CONFIGURATION":                   {CategoryPermanent, false}, // spec: 15:1031
 	"INVALID_POOL_PROXY_DIALECT":                   {CategoryPermanent, false}, // spec: 04:1476
+	"RUNTIME_LEVEL_UNDERPERFORMS":                  {CategoryPermanent, false}, // spec: 05:41 (declared > observed integrationLevel)
 	"INVALID_BREAKER_SCOPE":                        {CategoryPermanent, false}, // spec: 15:1033
 	"OUTPUTPART_TOO_LARGE":                         {CategoryPermanent, false}, // spec: 15:1038
 	"LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE":        {CategoryPermanent, false}, // spec: 15:1043

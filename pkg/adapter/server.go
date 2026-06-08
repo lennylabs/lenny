@@ -287,6 +287,12 @@ type Server struct {
 	// time and cleared by DemoteSDK; SDKWarmReady reads it so a readiness
 	// probe can hold the pod un-claimable until the SDK is connected.
 	sdkConnected bool
+	// mcpHandshakeSeen records that the runtime completed a §15.4.3
+	// nonce-authenticated initialize handshake against the platform MCP
+	// server during the current session. The §5.1 observed-integration
+	// -level probe reads it: a runtime that connected to MCP is at least
+	// Standard. Cleared by releaseSession. F-5.1.11.
+	mcpHandshakeSeen bool
 	// sessionID is the session currently assigned to the pod, empty
 	// when the pod is idle. Per §6.1 a session-mode pod is
 	// one-session-only.
