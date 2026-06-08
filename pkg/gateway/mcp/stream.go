@@ -237,11 +237,27 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 // projection (notifications/tasks/statusUpdate, etc.) is F-15.2.13.
 // spec: §15.2 lines 1331, 1370.
 func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
+	b := marshalMCPSessionEvent(ev)
+	if b == nil {
+		return
+	}
+	fmt.Fprintf(w, "id: %d\n", ev.Seq)
+	fmt.Fprintf(w, "data: %s\n\n", b)
+}
+
+// marshalMCPSessionEvent renders one SessionEvent as the
+// `notifications/lenny/sessionEvent` JSON-RPC notification bytes shared by
+// the §15.2 Streamable HTTP SSE channel (writeMCPSessionEvent) and the §4.1
+// WebSocket push (startWSAttach): both legs put the §15.1 wire type in
+// `params.type` and the payload in `params.data` so a client classifies an
+// event the same way regardless of transport. A marshal failure returns nil
+// and the caller drops the frame. spec: §15.2 lines 1331, 1370.
+func marshalMCPSessionEvent(ev sessionevents.Event) []byte {
 	data := json.RawMessage(ev.Data)
 	if len(data) == 0 {
 		data = json.RawMessage("{}")
 	}
-	notif := jsonRPCNotification{
+	b, err := json.Marshal(jsonRPCNotification{
 		JSONRPC: "2.0",
 		Method:  "notifications/lenny/sessionEvent",
 		Params: map[string]any{
@@ -251,13 +267,11 @@ func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
 			"data":      data,
 			"timestamp": ev.Timestamp.UTC().Format(time.RFC3339Nano),
 		},
-	}
-	b, err := json.Marshal(notif)
+	})
 	if err != nil {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "id: %d\n", ev.Seq)
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	return b
 }
 
 // writeMCPGapDetected writes the §15.2 line 1331 gap_detected
@@ -266,19 +280,28 @@ func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
 // because it is not a SessionEvent and not part of the SessionEventKind
 // closed enum. spec: §15.2 line 1331.
 func writeMCPGapDetected(w http.ResponseWriter, lastSeen, next uint64) {
-	notif := jsonRPCNotification{
+	b := marshalMCPGapDetected(lastSeen, next)
+	if b == nil {
+		return
+	}
+	fmt.Fprintf(w, "data: %s\n\n", b)
+}
+
+// marshalMCPGapDetected renders the §15.2 line 1331 gap_detected
+// stream-control notification bytes shared by the SSE and WebSocket legs.
+func marshalMCPGapDetected(lastSeen, next uint64) []byte {
+	b, err := json.Marshal(jsonRPCNotification{
 		JSONRPC: "2.0",
 		Method:  "notifications/lenny/gapDetected",
 		Params: map[string]any{
 			"lastSeenSeq": lastSeen,
 			"nextSeq":     next,
 		},
-	}
-	b, err := json.Marshal(notif)
+	})
 	if err != nil {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	return b
 }
 
 // jsonRPCNotification is a JSON-RPC 2.0 notification (a request with no

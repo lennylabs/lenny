@@ -46395,13 +46395,39 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 
 **Resolution:** Closed by commit c5e50ead. §5.1 defines no general runtime-version field on the `Runtime` record; `minPlatformVersion` is the only version-bearing field, so `RuntimeDiscoveryEntry` now surfaces it as `minPlatformVersion`, and the picker renders a "requires platform ≥ X" line when present and omits the line entirely otherwise. The "version unknown" filler is gone. A general runtime-version field, if §27.4 intends one distinct from the platform-version floor, is a §5.1 spec decision outside this finding's scope.
 
-### - [ ] F-27.4.7 — Chat does not distinguish messages, tool-call events, delegation events, and errors reliably [Medium] — OPEN
+### - [x] F-27.4.7 — Chat does not distinguish messages, tool-call events, delegation events, and errors reliably [Medium] — CLOSED
 - Spec: §27.4 item 3 ("Renders messages, tool-call events, delegation events, and errors").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:404-426` (`dispatchFrame`) attempts the four-way split heuristically by inspecting `frame.result.type`, `frame.result.method`, and substrings of `method` ("delegat"). The matched MCP frame shape does not align with the gateway's actual MCP tool-call/notification structure; for instance the tool name used to send messages is `lenny/session_message` (lines 437-439) but there is no evidence in `pkg/gateway/mcptools/` of any `lenny/session_message`, `lenny/session_interrupt`, or `lenny/session_cancel` tool. `grep -rn "lenny/session_message\|lenny/session_interrupt\|lenny/session_cancel" pkg/gateway/` returns only the SPA file.
 - Impact: chat send, interrupt, and cancel paths target tools that do not exist in the gateway's MCP tool surface; inbound frames will fall through the heuristic dispatch and land in the generic `event/frame` branch. The chat screen will not behave as specified in practice. Severity Medium rather than High because the spec section being audited is the UI surface contract; the missing tool surface is a §27.5 concern but the symptom manifests here.
 
 **Reopened 2026-06-07 — prior deferral:** The finding's primary evidence is stale. The SPA's outbound tool names are now `lenny/send_message`, `lenny/interrupt_session`, and `lenny/cancel_session` (`app.js`), all of which exist in the gateway MCP tool surface (`pkg/gateway/mcptools/mcptools.go`), so the send/interrupt/cancel paths are no longer phantom. The remaining concern — whether `dispatchFrame`'s four-way heuristic (message / tool-call / delegation / error) aligns with the gateway's actual outbound `SessionEvent`→MCP notification frames — requires tracing the §15.2 closed `SessionEventKind` registry and the gateway outbound dispatcher's wire framing, which this batch did not fully map. Re-attempt as a focused §27.5 protocol pass once the outbound event-frame model is pinned.
+
+**Resolution:** Two parts. (1) Prerequisite (Rule P): the §4.1 WebSocket leg
+previously served only request/response frames, so no session event ever
+reached the playground — the `dispatchFrame` heuristic had nothing to classify.
+New `pkg/gateway/mcp/websocket_attach.go` makes an `attach_session` tools/call
+over the WebSocket upgrade to a long-lived server push: it authorizes the
+session, subscribes to the §15.1 event bus, acks, then a goroutine replays the
+retained backlog and tails live events as `notifications/lenny/sessionEvent`
+frames on the same socket (the §15.2-line-1331 gap_detected marker and the
+§27.9 egress redaction both apply; nhooyr serializes the push goroutine against
+the read loop's responses). The shared notification framing was extracted from
+`stream.go` (`marshalMCPSessionEvent`/`marshalMCPGapDetected`) so the SSE and
+WebSocket legs emit byte-identical frames. (2) The finding proper: `app.js`
+sends `attach_session` on WS open, and `dispatchFrame` was rewritten to match
+the actual wire frames — a JSON-RPC `{error}` envelope → error; a
+`notifications/lenny/sessionEvent` classified by the §15.1 `params.type`
+(`response`/`response_degraded`/`agent_output`/`message_delivered` → agent
+message; `tool_use*` → tool call; `delegation*` → delegation; `error` → error;
+everything else → a typed event line); `gapDetected` → a stream-control line;
+a `{result}` → the attach ack (suppressed) or the send receipt. Of the four
+§27.4 categories, message/tool-call/lifecycle have live bus sources today
+(`tool_use_requested` is the tool-call source); delegation events are
+audit-only in v1, so the delegation branch is forward-compatible with the
+F-15.2.13 per-kind projection. 6 tier-1 WebSocket tests (backlog+live push,
+gap, authorize rejection, request/response interleave, missing sessionId,
+playground redaction).
 
 ### - [x] F-27.4.8 — "use this runtime" button label and frame inspector layout match; new-session affordance is additive [Low] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:156-162` emits the "use this runtime" button; lines 319-323 wrap the raw frames in a `<details>` panel; line 345 adds a "new session" button not specified.

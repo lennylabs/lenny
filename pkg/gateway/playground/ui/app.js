@@ -547,6 +547,19 @@
         state.ws = ws;
         ws.onopen = function () {
           appendMsg("event", "connection", "MCP WebSocket open");
+          // §15.2 line 1289 / §27.5 R2: attach to the session event stream so
+          // the gateway pushes the agent's output, tool-call, and lifecycle
+          // events back as notifications/lenny/sessionEvent frames over this
+          // socket. Without the attach the socket would carry only the
+          // request/response receipts for our own tools/call frames.
+          var frame = JSON.stringify({
+            jsonrpc: "2.0",
+            id: "attach-" + Date.now(),
+            method: "tools/call",
+            params: { name: "lenny/attach_session", arguments: { sessionId: state.sessionId } },
+          });
+          ws.send(frame);
+          recordFrame("=>", frame);
         };
         ws.onerror = function () {
           appendMsg("error", "connection", "MCP WebSocket error");
@@ -569,7 +582,16 @@
   }
 
   // dispatchFrame renders an inbound MCP frame: assistant messages,
-  // tool-call events, delegation events, and errors (§27.4).
+  // tool-call events, delegation events, and errors (§27.4 item 3). The
+  // gateway sends three frame families over the §27.5 WebSocket:
+  //   1. JSON-RPC error envelopes ({error}) — a failed tools/call or
+  //      transport error.
+  //   2. Server-pushed session events ({method:"notifications/lenny/
+  //      sessionEvent", params:{type,data}}) — the live agent stream the
+  //      attach_session push delivers (§15.2 lines 1331/1370). The §15.1
+  //      wire type in params.type drives the four-way classification.
+  //   3. tools/call responses ({result}) — the attach ack and the
+  //      send_message delivery receipt.
   function dispatchFrame(raw, appendMsg) {
     var frame;
     try {
@@ -579,19 +601,87 @@
       return;
     }
     if (frame.error) {
-      appendMsg("error", "error", JSON.stringify(frame.error));
+      var ed = frame.error.data || frame.error;
+      appendMsg("error", "error", ed.message || JSON.stringify(frame.error));
       return;
     }
-    var result = frame.result || frame.params || {};
-    if (result.type === "tool_call" || result.method === "tools/call") {
-      appendMsg("event", "tool call", JSON.stringify(result));
-    } else if (result.type === "delegation" || (result.method || "").indexOf("delegat") >= 0) {
-      appendMsg("event", "delegation", JSON.stringify(result));
-    } else if (result.message || result.text || result.content) {
-      appendMsg("agent", "agent", result.message || result.text || JSON.stringify(result.content));
-    } else {
-      appendMsg("event", "frame", raw);
+    if (frame.method === "notifications/lenny/sessionEvent") {
+      dispatchSessionEvent(frame.params || {}, appendMsg);
+      return;
     }
+    if (frame.method === "notifications/lenny/gapDetected") {
+      var g = frame.params || {};
+      appendMsg("event", "stream", "gap detected (missed events " + g.lastSeenSeq + ".." + g.nextSeq + ")");
+      return;
+    }
+    if (frame.result) {
+      dispatchToolResult(frame.result, appendMsg);
+      return;
+    }
+    appendMsg("event", "frame", raw);
+  }
+
+  // dispatchSessionEvent classifies one §15.1 session event by its wire type
+  // (params.type) into the four §27.4 categories. Agent text events render as
+  // a message bubble; tool-use and delegation events render as event lines;
+  // an error event renders as an error; every other lifecycle event
+  // (status_change, session_complete, elicitation_request, ...) renders as a
+  // generic event line tagged with its type.
+  function dispatchSessionEvent(params, appendMsg) {
+    var type = params.type || "";
+    var data = params.data || {};
+    if (type === "response" || type === "response_degraded" ||
+        type === "agent_output" || type === "message_delivered") {
+      appendMsg("agent", "agent", sessionEventText(data) || type);
+    } else if (type.indexOf("tool_use") === 0 || type.indexOf("tool_call") === 0) {
+      appendMsg("event", "tool call", type + " " + JSON.stringify(data));
+    } else if (type.indexOf("delegation") === 0) {
+      appendMsg("event", "delegation", type + " " + JSON.stringify(data));
+    } else if (type === "error") {
+      appendMsg("error", "error", sessionEventText(data) || type);
+    } else {
+      appendMsg("event", type || "event", sessionEventText(data) || JSON.stringify(data));
+    }
+  }
+
+  // dispatchToolResult renders a tools/call response: the attach ack, the
+  // send_message delivery receipt, or a tool error. The agent's reply itself
+  // arrives as a session event, not as a tools/call result, so a result is a
+  // protocol acknowledgement rather than an agent message.
+  function dispatchToolResult(result, appendMsg) {
+    if (result.attached) return; // the attach ack needs no chat line
+    var text = toolResultText(result);
+    if (result.isError) {
+      appendMsg("error", "error", text || "tool call failed");
+    } else if (text) {
+      appendMsg("event", "receipt", text);
+    }
+  }
+
+  // sessionEventText extracts a human-readable string from a session event
+  // payload: a `response` part carries `text`, a `message_delivered` carries
+  // `content`, a `status_change` carries `state`. An object with none of
+  // those falls back to its JSON.
+  function sessionEventText(data) {
+    if (data == null) return "";
+    if (typeof data === "string") return data;
+    if (typeof data.text === "string") return data.text;
+    if (typeof data.message === "string") return data.message;
+    if (data.content != null) {
+      return typeof data.content === "string" ? data.content : JSON.stringify(data.content);
+    }
+    if (typeof data.state === "string") return data.state;
+    return "";
+  }
+
+  // toolResultText pulls the text out of an MCP ToolResult content array.
+  function toolResultText(result) {
+    if (!result || !Array.isArray(result.content)) return "";
+    for (var i = 0; i < result.content.length; i++) {
+      var c = result.content[i];
+      if (c && c.type === "text" && c.text) return c.text;
+    }
+    return "";
   }
 
   // sendMessage sends a chat message over the MCP WebSocket as a

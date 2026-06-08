@@ -162,6 +162,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// F-27.9.1.
 	redactEgress := s.playgroundEgress(r)
 
+	// §15.2 line 1331 / §27.5 R2 — an attach_session tools/call upgrades to a
+	// long-lived server push of the session event stream over this socket
+	// (startWSAttach) instead of a single response frame. attachCancel stops
+	// the most recent attach goroutine; a new attach cancels the prior one and
+	// the deferred cancel stops it when the connection closes.
+	var attachCancel context.CancelFunc
+	defer func() {
+		if attachCancel != nil {
+			attachCancel()
+		}
+	}()
+
 	for {
 		readCtx, cancelRead := context.WithTimeout(watchCtx, wsReadFrameTimeout)
 		msgType, data, err := conn.Read(readCtx)
@@ -176,6 +188,19 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			// protocol violation and the connection is closed.
 			conn.Close(websocket.StatusUnsupportedData, "mcp frames must be text")
 			return
+		}
+		// §15.2 line 1289 — intercept attach_session before the generic
+		// dispatch so the response is the live event push rather than the
+		// snapshot frame. The push goroutine writes concurrently with this
+		// read loop; nhooyr serializes the two writers on the connection.
+		if s.attach.Events != nil {
+			if req, args, ok := wsAttachRequest(data); ok {
+				if attachCancel != nil {
+					attachCancel()
+				}
+				attachCancel = s.startWSAttach(watchCtx, conn, r, req, args, redactEgress)
+				continue
+			}
 		}
 		// Dispatch through the same JSON-RPC handler the POST /mcp
 		// path uses so REST/MCP semantics stay in lockstep per
