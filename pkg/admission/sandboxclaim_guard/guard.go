@@ -19,10 +19,14 @@
 //     CRD-based claim path and produce duplicate claims.
 //
 //  2. PATCH/PUT: read the referenced Sandbox.status.phase via
-//     `.spec.sandboxRef` and reject when it is not "claimed". A stale
-//     write from a failed-over gateway/controller cannot mutate a
-//     SandboxClaim whose underlying pod has already moved past the
-//     claimed phase.
+//     `.spec.sandboxRef` and reject when the pod no longer holds an
+//     active claim — that is, when it has been released back to the pool
+//     (`idle`/`draining`) or reached a terminal state. A write while the
+//     Sandbox is still in a claim-bound, session-serving phase
+//     (`claimed` and the §6.2 setup→attached chain, per §4.6.3 line 591)
+//     is a legitimate mutation, not a stale write. This stops a stale
+//     write from a failed-over gateway/controller mutating a
+//     SandboxClaim whose underlying pod is no longer bound to it.
 //
 // A SandboxClaim that is itself being deleted (a non-zero
 // metadata.deletionTimestamp) is exempt from rule 2. Removing a
@@ -64,11 +68,38 @@ const (
 	PhaseReceivingUploads    SandboxPhase = "receiving_uploads"
 	PhaseFinalizingWorkspace SandboxPhase = "finalizing_workspace"
 	PhaseRunningSetup        SandboxPhase = "running_setup"
+	PhaseStartingSession     SandboxPhase = "starting_session"
 	PhaseAttached            SandboxPhase = "attached"
 	PhaseDraining            SandboxPhase = "draining"
 	PhaseTerminated          SandboxPhase = "terminated"
 	PhaseFailed              SandboxPhase = "failed"
 )
+
+// claimBoundPhases is the set of Sandbox phases in which a `bound`
+// SandboxClaim's pod still holds an active claim to it, so a PATCH/PUT to
+// that claim is a legitimate mutation rather than a stale write. Spec
+// §4.6.3 line 591 states that a `bound` claim coexists with a
+// `Sandbox.status.phase` of `claimed` "or has progressed past `claimed`
+// into session-serving states such as `receiving_uploads`, `attached`,
+// `running`" — the §6.2 lines 83-94 claim→setup→attached chain
+// (`claimed → receiving_uploads → finalizing_workspace → running_setup →
+// starting_session → attached`). The §4.6.1 PATCH/PUT stale-write rule
+// (spec line 384) rejects every other phase: the pod has been released
+// back to the pool (`idle`/`draining`) or has reached a terminal state
+// (`terminated`/`failed`), so it no longer holds an active claim to this
+// SandboxClaim. The §5.2 concurrent-mode `slot_active` phase is bound as
+// well — the pod is actively serving slots — mirroring the CREATE-rule
+// `slot_active` exemption. An unrecognized or future phase is rejected
+// (fail-closed), matching the webhook's failurePolicy: Fail posture.
+var claimBoundPhases = map[SandboxPhase]bool{
+	PhaseClaimed:             true,
+	PhaseReceivingUploads:    true,
+	PhaseFinalizingWorkspace: true,
+	PhaseRunningSetup:        true,
+	PhaseStartingSession:     true,
+	PhaseAttached:            true,
+	PhaseSlotActive:          true,
+}
 
 // ClaimStatus is the SandboxClaim binding state owned by the gateway
 // (§4.6.3 enumeration). Used by the CREATE rule to determine whether
@@ -216,7 +247,16 @@ func Decide(r Request) (Decision, error) {
 		if r.UnderDeletion {
 			return Decision{Allowed: true, Code: 200}, nil
 		}
-		if r.SandboxPhase != PhaseClaimed {
+		// Accept a PATCH/PUT while the referenced Sandbox is still in a
+		// claim-bound, session-serving phase (spec §4.6.3 line 591). The
+		// §6.2 lines 83-94 setup chain advances a claimed pod through
+		// receiving_uploads/finalizing_workspace/running_setup/
+		// starting_session before attached; a write during that chain is
+		// not a stale write because the pod still holds this claim. Only a
+		// pod that has been released to the pool or reached a terminal
+		// state ("not claimed" per spec line 384) triggers the
+		// stale-write rejection.
+		if !claimBoundPhases[r.SandboxPhase] {
 			return Decision{
 				Allowed: false,
 				Reason:  fmt.Sprintf("SandboxClaim stale: referenced Sandbox %s is in phase %s, not claimed; concurrent write rejected", r.SandboxRef, r.SandboxPhase),

@@ -174,11 +174,15 @@ func TestPutAdmitsWhenSandboxClaimed(t *testing.T) {
 	}
 }
 
+// TestPatchRejectsWhenSandboxNotClaimed covers the §4.6.1 line-384
+// stale-write rejection: a PATCH/PUT is rejected when the referenced
+// Sandbox is in a phase where the pod no longer holds an active claim —
+// it has been released back to the pool (idle/draining), reached a
+// terminal state (terminated/failed), or never reached claim (warming).
 func TestPatchRejectsWhenSandboxNotClaimed(t *testing.T) {
 	stalePhases := []SandboxPhase{
-		PhaseIdle, PhaseReceivingUploads, PhaseFinalizingWorkspace,
-		PhaseRunningSetup, PhaseAttached, PhaseDraining,
-		PhaseTerminated, PhaseFailed, PhaseWarming,
+		PhaseIdle, PhaseDraining,
+		PhaseTerminated, PhaseFailed, PhaseWarming, PhaseSDKConnecting,
 	}
 	for _, p := range stalePhases {
 		t.Run(string(p), func(t *testing.T) {
@@ -204,6 +208,41 @@ func TestPatchRejectsWhenSandboxNotClaimed(t *testing.T) {
 				t.Errorf("Reason should embed the observed phase %q: %q", p, d.Reason)
 			}
 		})
+	}
+}
+
+// TestPatchAdmitsSessionServingPhases is the F-6.2.7 regression: once the
+// §6.2 lines 83-94 setup chain is implemented, a PATCH/PUT to a `bound`
+// SandboxClaim whose Sandbox has advanced into a session-serving phase
+// must be admitted, not rejected as stale. Spec §4.6.3 line 591 states a
+// `bound` claim coexists with the Sandbox in `claimed` or the
+// claim→setup→attached chain. spec: §4.6.1 line 384, §4.6.3 line 591,
+// §6.2 lines 83-94.
+func TestPatchAdmitsSessionServingPhases_spec_6_2(t *testing.T) {
+	boundPhases := []SandboxPhase{
+		PhaseClaimed, PhaseReceivingUploads, PhaseFinalizingWorkspace,
+		PhaseRunningSetup, PhaseStartingSession, PhaseAttached, PhaseSlotActive,
+	}
+	for _, op := range []Operation{OpPatch, OpPut} {
+		for _, p := range boundPhases {
+			t.Run(string(op)+"/"+string(p), func(t *testing.T) {
+				d, err := Decide(Request{
+					Operation:    op,
+					ClaimName:    "claim-1",
+					SandboxRef:   "sandbox-1",
+					SandboxPhase: p,
+				})
+				if err != nil {
+					t.Fatalf("Decide: %v", err)
+				}
+				if !d.Allowed {
+					t.Errorf("%s with sandbox in session-serving phase %q should be allowed, got %v", op, p, d)
+				}
+				if d.Code != 200 {
+					t.Errorf("Code: want 200, got %d", d.Code)
+				}
+			})
+		}
 	}
 }
 
