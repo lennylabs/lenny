@@ -214,6 +214,17 @@ type Config struct {
 	// billing/audit integrity-trigger audit. Nil skips the check.
 	// F-17.6.1.
 	BillingTriggerProber BillingTriggerProber
+	// ConnectionPooler is the effective postgres.connectionPooler value
+	// (pgbouncer | external). When "external" the §17.6 line 488
+	// cloud-managed pooler sentinel defense verifies the lenny_tenant_guard
+	// trigger over PoolerSentinelProber. F-17.9.2.
+	ConnectionPooler string
+	// PoolerSentinelProber, when non-nil and ConnectionPooler is
+	// "external", runs the §17.6 line 488 live Postgres probe for the
+	// lenny_tenant_guard tenant-isolation trigger. A nil prober (no DSN
+	// wired, or --skip-network-probes) routes the check through the
+	// runtime-defense advisory. F-17.9.2.
+	PoolerSentinelProber PoolerSentinelProber
 	// OpsIngressClusterIssuer is the cert-manager.io/cluster-issuer
 	// annotation value on ops.ingress. When set, the §17.6 line 520
 	// advisory verifies the ClusterIssuer exists. Empty skips it.
@@ -629,6 +640,26 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		report = append(report, CheckResult{
 			Name:     "redis-maxmemory-policy",
 			Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
+		})
+	}
+
+	// §17.6 line 488 / §17.9.7 — cloud-managed pooler sentinel defense.
+	// When postgres.connectionPooler is "external" the managed proxy
+	// cannot run the connect_query __unset__ sentinel, so the
+	// lenny_tenant_guard per-transaction trigger is the load-bearing RLS
+	// isolation defense; the check connects to Postgres and fails the
+	// install when the trigger is absent from a tenant-scoped table. Runs
+	// only when the pooler is external (the check itself short-circuits to
+	// a pass otherwise) and not under --skip-network-probes (the airgap
+	// path defers to the gateway's runtime LENNY_POOLER_MODE defense).
+	// F-17.9.2.
+	if !cfg.SkipNetworkProbes && strings.EqualFold(strings.TrimSpace(cfg.ConnectionPooler), "external") {
+		report = append(report, CheckResult{
+			Name: "cloud-pooler-sentinel-defense",
+			Decision: CloudPoolerSentinelCheck{
+				ConnectionPooler: cfg.ConnectionPooler,
+				Prober:           cfg.PoolerSentinelProber,
+			}.Decide(ctx),
 		})
 	}
 

@@ -211,6 +211,15 @@ them from the chart's enabled runtimeClasses.profiles entries, skipping:
        F-12.4.15. */ -}}
 {{- $redis := .Values.redis | default dict -}}
 {{- $checkRedis := and .Values.preflight $.Values.preflight.checkRedisMaxmemoryPolicy $redis.url (ne ($redis.url | toString) "") -}}
+{{- /* §17.6 line 488 — the cloud-pooler sentinel defense connects to
+       Postgres to verify the lenny_tenant_guard trigger when the pooler
+       is external. The DSN comes from the lenny-datastore-conn Secret,
+       wired only when postgres.dsn is supplied. On a fresh install the
+       Secret renders after this pre-install hook, so the env var carries
+       optional:true and the binary defers an unwired probe to the
+       gateway's runtime LENNY_POOLER_MODE defense. F-17.9.2. */ -}}
+{{- $pgPooler := .Values.postgres | default dict -}}
+{{- $checkPoolerSentinel := and (eq $connectionPooler "external") $pgPooler.dsn (ne ($pgPooler.dsn | toString) "") -}}
 {{- if and (not $rc.create) (not $global.devMode) -}}
 {{-   range $profile, $cfg := ($rc.profiles | default dict) -}}
 {{-     if and $cfg $cfg.enabled $cfg.name -}}
@@ -295,9 +304,17 @@ spec:
             - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain | default "" }}
             - --sa-token-audience={{ .Values.global.saTokenAudience | default "" }}
             # spec: §17.9.3 / §17.6 line 488 — when "external" the
-            # CloudPoolerSentinelDefense check verifies the
-            # lenny_tenant_guard per-transaction trigger.
+            # cloud-pooler sentinel defense check verifies the
+            # lenny_tenant_guard per-transaction trigger over the
+            # --postgres-dsn connection below.
             - --connection-pooler={{ $connectionPooler }}
+            {{- if $checkPoolerSentinel }}
+            # §17.6 line 488 — Kubernetes expands $(LENNY_POSTGRES_DSN) from
+            # the env below. An undefined optional secret leaves the token
+            # unexpanded; the binary treats a "$(" value as unwired and
+            # defers to the gateway runtime defense. F-17.9.2.
+            - --postgres-dsn=$(LENNY_POSTGRES_DSN)
+            {{- end }}
             {{- if $rcReqs }}
             - --required-runtime-classes={{ join "," $rcReqs }}
             {{- end }}
@@ -390,8 +407,9 @@ spec:
             # internal-TLS handshake) are dropped while the cluster-API checks
             # still run. F-17.9.11.
             - --skip-network-probes={{ .Values.preflight.skipNetworkProbes | default false }}
-          {{- if $hasMinio }}
+          {{- if or $hasMinio $checkPoolerSentinel }}
           env:
+            {{- if $hasMinio }}
             - name: MINIO_ACCESS_KEY_ENV
               valueFrom:
                 secretKeyRef:
@@ -402,6 +420,19 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: minio-secret-key
+            {{- end }}
+            {{- if $checkPoolerSentinel }}
+            # §17.6 line 488 cloud-pooler sentinel defense Postgres DSN.
+            # optional:true so a fresh install (Secret not yet created at
+            # this pre-install hook) still starts; the binary defers the
+            # unwired probe to the gateway runtime defense. F-17.9.2.
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+                  optional: true
+            {{- end }}
           {{- end }}
           securityContext:
             allowPrivilegeEscalation: false

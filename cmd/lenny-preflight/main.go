@@ -44,6 +44,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -60,6 +61,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
@@ -321,6 +323,32 @@ func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.Re
 	})
 }
 
+// poolerSentinelProber builds a PoolerSentinelProber over the operator's
+// Postgres for the §17.6 line 488 cloud-managed pooler sentinel defense.
+// An empty or unexpanded ($(...) placeholder, when the optional
+// datastore Secret is absent at the pre-install hook) DSN returns nil so
+// the check defers to the gateway's runtime LENNY_POOLER_MODE defense
+// rather than blocking the install on a connection it cannot make. The
+// pgx pool is constructed lazily on first probe so a dial failure
+// surfaces as a failed check rather than aborting the Job before the
+// other checks run.
+//
+// spec: §17.6 line 488; §12.3 line 56.
+func poolerSentinelProber(dsn string) preflight.PoolerSentinelProber {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" || strings.Contains(dsn, "$(") {
+		return nil
+	}
+	return preflight.PoolerSentinelProbeFunc(func(ctx context.Context) ([]string, error) {
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			return nil, err
+		}
+		defer pool.Close()
+		return integrity.TenantGuardCoverageGaps(ctx, pool)
+	})
+}
+
 // otlpTLSProber builds an OTLPTLSProber for the §13.2 OTLP-068 live TLS
 // handshake check. It dials the collector endpoint, performs a TLS 1.2+
 // handshake validating the server certificate's SAN against the endpoint
@@ -532,13 +560,19 @@ func main() {
 	acknowledgeNoPrometheus := flag.Bool("acknowledge-no-prometheus", false,
 		"value of the monitoring.acknowledgeNoPrometheus chart value; suppresses the §25.4 Tier 2/3 Prometheus WARN when the operator intentionally runs without Prometheus")
 	// §17.9.3 / §17.6 line 488 — the preflight-job template passes
-	// --connection-pooler so the CloudPoolerSentinelDefense check can
-	// see the effective pooler mode. The flag must be accepted here or
-	// flag.Parse (ExitOnError) aborts the Job before any check runs. The
-	// value is consumed once that check is wired; until then it is
-	// accepted so the rendered Job runs.
-	_ = flag.String("connection-pooler", "",
+	// --connection-pooler so the cloud-pooler sentinel defense check can
+	// see the effective pooler mode. When "external" the check connects to
+	// Postgres (--postgres-dsn) and verifies the lenny_tenant_guard
+	// per-transaction trigger. F-17.9.2.
+	connectionPooler := flag.String("connection-pooler", "",
 		"value of the effective postgres.connectionPooler (pgbouncer | external); §17.9.3")
+	// §17.6 line 488 — the Postgres DSN the cloud-pooler sentinel defense
+	// dials to query pg_trigger for lenny_tenant_guard. The Job wires it
+	// from the lenny-datastore-conn Secret only when connectionPooler is
+	// external; an empty or unexpanded value leaves the prober nil and the
+	// check defers to the gateway's runtime LENNY_POOLER_MODE defense.
+	postgresDSN := flag.String("postgres-dsn", "",
+		"Postgres DSN for the §17.6 line 488 cloud-pooler sentinel defense (lenny_tenant_guard trigger probe). Empty skips the live probe.")
 	acceptDowngrade := flag.String("accept-downgrade", "",
 		"comma-separated feature flags whose admission-plane downgrade is acknowledged")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", "",
@@ -704,12 +738,12 @@ func main() {
 			RegistryDigest: *registryDigest,
 			CosignVerify:   *cosignVerify,
 		},
-		AcceptDowngrade:        parseAcceptDowngrade(*acceptDowngrade),
-		SPIFFETrustDomain:      *spiffeTrustDomain,
-		SATokenAudience:        *saTokenAudience,
-		ComplianceProfile:      *complianceProfile,
-		MinIOBucket:            *minioBucket,
-		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
+		AcceptDowngrade:       parseAcceptDowngrade(*acceptDowngrade),
+		SPIFFETrustDomain:     *spiffeTrustDomain,
+		SATokenAudience:       *saTokenAudience,
+		ComplianceProfile:     *complianceProfile,
+		MinIOBucket:           *minioBucket,
+		MinIOEncryptionProber: minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
 		ObjectStorage: preflight.ObjectStorageConfig{
 			Provider: *objectStorageProvider,
 			Bucket:   *objectStorageBucket,
@@ -727,9 +761,11 @@ func main() {
 			PodLabelKey:   *ingressControllerPodLabelKey,
 			PodLabelValue: *ingressControllerPodLabelValue,
 		},
-		OpsServiceAccount: *opsServiceAccount,
-		OpsSARBACProber:   opsSARProber(cfg, *opsServiceAccount),
-		RedisConfigProber: redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
+		OpsServiceAccount:      *opsServiceAccount,
+		OpsSARBACProber:        opsSARProber(cfg, *opsServiceAccount),
+		RedisConfigProber:      redisMaxmemoryProber(*redisURL, redisPassword, *redisAllowInsecure),
+		ConnectionPooler:       *connectionPooler,
+		PoolerSentinelProber:   poolerSentinelProber(*postgresDSN),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 		ClusterCIDR: preflight.ClusterCIDRConfig{
 			KubeAPIServerCIDR:         *kubeAPIServerCIDR,

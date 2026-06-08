@@ -413,6 +413,51 @@ func TestRunWiresRedisMaxmemoryPolicyCheck_spec_12_4(t *testing.T) {
 	}
 }
 
+// Run runs the §17.6 line 488 cloud-pooler sentinel defense only when
+// the effective connectionPooler is external; an absent lenny_tenant_guard
+// trigger fails the install fail-closed, while a non-external pooler or a
+// nil prober short-circuits to a pass. F-17.9.2.
+func TestRunWiresCloudPoolerSentinelCheck_spec_17_9_2(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	// Non-external pooler: the check does not run at all.
+	pg := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:        preflightNS,
+		ConnectionPooler: "pgbouncer",
+		PoolerSentinelProber: preflight.PoolerSentinelProbeFunc(func(context.Context) ([]string, error) {
+			return []string{"sessions"}, nil
+		}),
+	})
+	if resultByName(pg, "cloud-pooler-sentinel-defense") != (preflight.Decision{}) {
+		t.Error("cloud-pooler-sentinel-defense ran for a pgbouncer pooler")
+	}
+
+	// External pooler with a gap: the install fails closed.
+	gap := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:        preflightNS,
+		ConnectionPooler: "external",
+		PoolerSentinelProber: preflight.PoolerSentinelProbeFunc(func(context.Context) ([]string, error) {
+			return []string{"sessions"}, nil
+		}),
+	})
+	if d := resultByName(gap, "cloud-pooler-sentinel-defense"); d.Passed {
+		t.Error("cloud-pooler-sentinel-defense passed despite a missing lenny_tenant_guard trigger")
+	}
+	if !preflight.Failed(gap) {
+		t.Error("Run did not fail the install despite an unprotected tenant-scoped table under external pooler")
+	}
+
+	// External pooler with no DSN wired: defers to the runtime defense
+	// (advisory pass) rather than blocking the install.
+	noProber := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:        preflightNS,
+		ConnectionPooler: "external",
+	})
+	if d := resultByName(noProber, "cloud-pooler-sentinel-defense"); !d.Passed {
+		t.Errorf("cloud-pooler-sentinel-defense should defer to the runtime defense with no prober; got %q", d.Reason)
+	}
+}
+
 // networkProbeConfig wires every backend-reachability probe (MinIO SSE,
 // BYO-Redis maxmemory, OTLP collector TLS, ops-admin internal TLS) with a
 // closure that records whether it was invoked. The closures flip *called

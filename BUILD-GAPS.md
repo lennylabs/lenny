@@ -36601,7 +36601,7 @@ prior tier-based `--answers` files remain the separate §17.6 wizard input.
 
 ---
 
-### - [ ] F-17.9.2 — §17.9.7 cloud-managed pooler defense (`LENNY_POOLER_MODE`, conditional trigger creation, preflight check) is entirely absent [High] — OPEN
+### - [x] F-17.9.2 — §17.9.7 cloud-managed pooler defense (`LENNY_POOLER_MODE`, conditional trigger creation, preflight check) is entirely absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.14, F-12.3.1 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
@@ -36683,6 +36683,31 @@ giving the preflight Job Postgres connectivity (a DSN flag, a datastore-secret
 mount, and pgx in the binary), a separate lift. The load-bearing runtime
 defense (part 3) is in place and backstops the install-time convenience, so
 the deferral leaves no unguarded window.
+
+**Resolution (this batch):** Part 4 — the preflight binary's actual
+Postgres `Cloud-managed pooler sentinel defense` check (§17.6 line 488) —
+is now built, closing the finding. New `preflight.CloudPoolerSentinelCheck`
+runs only when the effective `connectionPooler == external`: it connects to
+Postgres over a `PoolerSentinelProber` seam and fails the install
+fail-closed (with the §17.6 line-488 error text verbatim plus the
+offending table list) when any tenant-scoped table lacks the
+`lenny_tenant_guard` trigger, reusing `integrity.TenantGuardCoverageGaps`
+for the catalog query (no new query path). `cmd/lenny-preflight`
+consumes the previously-discarded `--connection-pooler` flag, adds
+`--postgres-dsn`, and builds a lazy `pgxpool`-backed prober (nil when the
+DSN is empty or an unexpanded `$(...)` placeholder). The preflight Job
+template wires `--postgres-dsn=$(LENNY_POSTGRES_DSN)` from the
+`lenny-datastore-conn` Secret (`postgres-dsn` key, `optional: true`) only
+when `connectionPooler == external` and `postgres.dsn` is set; a fresh
+install whose Secret is not yet present at the pre-install hook leaves the
+DSN unwired and the check defers to part 3's runtime
+`VerifyCloudManagedPoolerDefense` startup refusal (the load-bearing
+defense). The §17.9.7 line-1541 "exactly one active per deployment"
+invariant is now verifiable at install time. Tests: tier-1
+`cloud_pooler_sentinel_test.go` (skip/advisory/pass/gap-fail/unreachable +
+verbatim-message), tier-1 `run_test.go` wiring (non-external skip,
+gap fail-closed, no-DSN advisory), tier-2 helm-unittest (DSN arg + env
+`optional: true` rendered for external; absent for pgbouncer).
 
 ---
 

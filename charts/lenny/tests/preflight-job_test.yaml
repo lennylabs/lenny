@@ -247,6 +247,44 @@ tests:
       - failedTemplate:
           errorMessage: '§17.9.3: postgres.connectionPooler must be "pgbouncer" or "external", got "rdsproxy"'
 
+  # spec: §17.6 line 488 / F-17.9.2 — when the pooler is external and a
+  # Postgres DSN is supplied, the Job wires --postgres-dsn from the
+  # datastore Secret (optional:true) so the cloud-pooler sentinel defense
+  # can probe lenny_tenant_guard.
+  - it: wires the cloud-pooler sentinel Postgres DSN when external with a DSN
+    set:
+      postgres.connectionPooler: external
+      postgres.dsn: "postgres://u:p@rds.example.com:5432/lenny"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--postgres-dsn=$(LENNY_POSTGRES_DSN)"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+                optional: true
+
+  # The DSN wiring is absent when the pooler is the in-cluster default,
+  # so a pgbouncer install never mounts the Postgres credential.
+  - it: omits the cloud-pooler sentinel DSN for the pgbouncer pooler
+    set:
+      postgres.dsn: "postgres://u:p@pg.lenny-system.svc:5432/lenny"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--postgres-dsn=$(LENNY_POSTGRES_DSN)"
+
   # spec: §27.2 lines 41–42 + §27.3 — the preflight Job renders the
   # playground.* chart values into --playground-* flags so the
   # CheckPlaygroundConfig install-time gate sees them.
