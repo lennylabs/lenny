@@ -69,7 +69,7 @@ type authCase struct {
 func TestReconciledRuntimeRouteAuthorization(t *testing.T) {
 	for _, c := range []authCase{
 		// platform-admin: every route runs.
-		{"platform-admin", withAdminPrincipal, http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{Name: "fresh", Image: "lenny/fresh@sha256:abc"}, http.StatusCreated, false},
+		{"platform-admin", withAdminPrincipal, http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{Name: "fresh", Image: "lenny/fresh@sha256:abc", Labels: map[string]string{"tier": "test"}}, http.StatusCreated, false},
 		{"platform-admin", withAdminPrincipal, http.MethodPut, "/v1/admin/runtimes/echo", admin.UpdateRuntimeRequest{}, http.StatusOK, false},
 		{"platform-admin", withAdminPrincipal, http.MethodDelete, "/v1/admin/runtimes/echo", nil, http.StatusNoContent, false},
 		// tenant-admin: create/delete forbidden; update reachable

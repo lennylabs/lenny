@@ -210,9 +210,10 @@ func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 	post := func(desc, query string) {
 		body := admin.BootstrapRequest{
 			Runtimes: []admin.RuntimePayload{{
-				Name:  "carded",
-				Image: "lenny/carded@sha256:abc",
-				Type:  "agent",
+				Name:   "carded",
+				Image:  "lenny/carded@sha256:abc",
+				Type:   "agent",
+				Labels: map[string]string{"tier": "test"},
 				AgentInterface: &runtimestore.AgentInterface{
 					Description: desc,
 					Skills:      []runtimestore.AgentInterfaceSkill{{ID: "review"}},

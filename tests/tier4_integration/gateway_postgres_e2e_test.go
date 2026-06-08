@@ -83,8 +83,9 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 		// runtime image behavior, so this declaration just lets the
 		// gateway admit the test's message round-trip.
 		"runtimes": []map[string]any{{
-			"name":  "echo",
-			"image": "lenny/echo@sha256:abc",
+			"name":   "echo",
+			"image":  "lenny/echo@sha256:abc",
+			"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
 			"capabilities": map[string]any{
 				"injection": map[string]any{"supported": true},
 			},

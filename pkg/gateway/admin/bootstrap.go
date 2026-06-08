@@ -639,6 +639,13 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 		}
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
 		if errors.Is(err, runtimestore.ErrNotFound) {
+			// §5.1 line 51: labels are required from v1 on a newly-registered
+			// runtime. An update of an existing runtime may omit labels in the
+			// seed (the stored set persists via applyRuntimePayload).
+			if lerr := p.validateLabelsRequired(); lerr != nil {
+				out.add(i, p.Name, actionError, seedValidationCode, lerr.Error(), nil)
+				continue
+			}
 			if !opts.dryRun {
 				row := runtimeFromPayload(p, r.clock())
 				runtimestore.ApplyDefaults(&row, r.devMode)

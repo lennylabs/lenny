@@ -62,6 +62,11 @@ type ReferenceRuntime struct {
 	IntegrationLevel string
 	// Description is the catalog one-line summary.
 	Description string
+	// Labels are the §5.1 line 51 required runtime labels — the primary
+	// mechanism for environment runtimeSelector/connectorSelector matching
+	// (§10.6). Every reference runtime carries the chart's reference-runtime
+	// marker plus the §26.3 maintainer/upstream labels.
+	Labels map[string]string
 
 	// The §26.1 / §26.2 declarations the registered Runtime record
 	// carries. Coding-agent entries populate all of them; chat carries
@@ -129,15 +134,31 @@ func codingAgentShared() ReferenceRuntime {
 }
 
 // codingAgent composes the §26.2 shared block with a coding-agent's
-// per-runtime name, image, providers, and proxy dialect.
-func codingAgent(name string, providers, proxyDialect []string, description string) ReferenceRuntime {
+// per-runtime name, image, providers, proxy dialect, and §26.3
+// maintainer/upstream labels.
+func codingAgent(name string, providers, proxyDialect []string, description, upstream string) ReferenceRuntime {
 	rt := codingAgentShared()
 	rt.Name = name
 	rt.Image = "ghcr.io/lennylabs/runtime-" + name + ":1.0.0" + placeholderDigest
 	rt.Description = description
 	rt.SupportedProviders = providers
 	rt.CredentialCapabilities = &credentialCapabilities{HotRotation: true, ProxyDialect: proxyDialect}
+	rt.Labels = referenceLabels(upstream)
 	return rt
+}
+
+// referenceLabels builds the §5.1-required label set every reference
+// runtime carries: the chart's reference-runtime marker plus the §26.3
+// maintainer/upstream labels.
+func referenceLabels(upstream string) map[string]string {
+	l := map[string]string{
+		"lenny.dev/reference-runtime": "true",
+		"maintainer":                  "lennylabs",
+	}
+	if upstream != "" {
+		l["upstream"] = upstream
+	}
+	return l
 }
 
 // referenceRuntimes is the §26 reference-runtime catalog. lenny up
@@ -150,19 +171,23 @@ var referenceRuntimes = []ReferenceRuntime{
 	codingAgent("claude-code",
 		[]string{"anthropic_direct", "aws_bedrock", "gcp_vertex_anthropic"},
 		[]string{"anthropic"},
-		"Anthropic's Claude Code CLI inside a Lenny-managed sandbox"),
+		"Anthropic's Claude Code CLI inside a Lenny-managed sandbox",
+		"anthropic/claude-code"),
 	codingAgent("gemini-cli",
 		[]string{"gcp_vertex_gemini", "google_ai_studio"},
 		[]string{"google"},
-		"Google's Gemini CLI inside a Lenny-managed sandbox"),
+		"Google's Gemini CLI inside a Lenny-managed sandbox",
+		"google-gemini/gemini-cli"),
 	codingAgent("codex",
 		[]string{"openai_direct", "azure_openai"},
 		[]string{"openai"},
-		"OpenAI's Codex CLI inside a Lenny-managed sandbox"),
+		"OpenAI's Codex CLI inside a Lenny-managed sandbox",
+		"openai/codex"),
 	codingAgent("cursor-cli",
 		[]string{"cursor_direct"},
 		[]string{"cursor"},
-		"Cursor's agent CLI inside a Lenny-managed sandbox"),
+		"Cursor's agent CLI inside a Lenny-managed sandbox",
+		"cursor/cli"),
 	{
 		// spec: §26.1 line 22 / §26.7 — chat is the minimum useful runtime:
 		// Standard level, the small resource class only, multi_turn with
@@ -178,18 +203,21 @@ var referenceRuntimes = []ReferenceRuntime{
 			Injection:   &injectionCaps{Supported: true, Modes: []string{"immediate"}},
 		},
 		CredentialCapabilities: &credentialCapabilities{HotRotation: true, ProxyDialect: []string{"anthropic", "openai", "google"}},
+		Labels:                 referenceLabels(""),
 	},
 	{
 		Name:             "langgraph",
 		Image:            "ghcr.io/lennylabs/runtime-langgraph:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",
 		Description:      "LangGraph graph-based agents (Python)",
+		Labels:           referenceLabels("langchain-ai/langgraph"),
 	},
 	{
 		Name:             "mastra",
 		Image:            "ghcr.io/lennylabs/runtime-mastra:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",
 		Description:      "Mastra agent framework (TypeScript)",
+		Labels:           referenceLabels("mastra-ai/mastra"),
 	},
 	{
 		// spec: §26.10 operator warning — OpenAI's hosted code interpreter
@@ -200,12 +228,14 @@ var referenceRuntimes = []ReferenceRuntime{
 		Image:            "ghcr.io/lennylabs/runtime-openai-assistants:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",
 		Description:      "OpenAI Assistants API-compatible runtime; OpenAI's code_interpreter runs outside Lenny's sandbox (see §26.10).",
+		Labels:           referenceLabels("openai/openai-python"),
 	},
 	{
 		Name:             "crewai",
 		Image:            "ghcr.io/lennylabs/runtime-crewai:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",
 		Description:      "CrewAI multi-agent framework with delegation wired to lenny/delegate_task",
+		Labels:           referenceLabels("crewAIInc/crewAI"),
 	},
 }
 

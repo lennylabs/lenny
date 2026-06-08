@@ -75,8 +75,9 @@ func TestConcurrentWorkspaceMode(t *testing.T) {
 
 	// ---- register the runtime the concurrent pools warm ----
 	code, _ := do(http.MethodPost, "/v1/admin/runtimes", map[string]any{
-		"name":  "concurrent-runtime",
-		"image": "lenny/concurrent@sha256:abc",
+		"name":   "concurrent-runtime",
+		"image":  "lenny/concurrent@sha256:abc",
+		"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
 	})
 	if code != http.StatusCreated {
 		t.Fatalf("register runtime: status %d", code)

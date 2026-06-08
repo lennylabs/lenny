@@ -115,6 +115,10 @@ type seedRuntime struct {
 	IntegrationLevel string `json:"integrationLevel,omitempty"`
 	Description      string `json:"description,omitempty"`
 
+	// Labels are the §5.1 line-51 required runtime labels the bootstrap
+	// handler rejects a create without. JSON tag mirrors RuntimePayload.
+	Labels map[string]string `json:"labels,omitempty"`
+
 	// The §26.1 / §26.2 declarations the bootstrap handler stores on the
 	// Runtime record. The JSON tags mirror the gateway admin
 	// RuntimePayload so the seed reaches §26 parity with the chart's
@@ -160,6 +164,7 @@ func buildBootstrapSeed() bootstrapSeed {
 			Image:                  rt.Image,
 			IntegrationLevel:       rt.IntegrationLevel,
 			Description:            rt.Description,
+			Labels:                 rt.Labels,
 			AllowedResourceClasses: rt.AllowedResourceClasses,
 			SupportedProviders:     rt.SupportedProviders,
 			Capabilities:           rt.Capabilities,

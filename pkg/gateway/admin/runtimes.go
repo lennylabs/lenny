@@ -738,6 +738,18 @@ func (p RuntimePayload) validateIntegrationLevelOnType() error {
 	return nil
 }
 
+// validateLabelsRequired enforces §5.1 line 51 ("Labels are required from
+// v1"): a runtime must declare at least one label. Labels are the primary
+// mechanism for environment runtimeSelector and connectorSelector matching
+// (§10.6); a runtime registered with no labels matches no environment
+// selector, leaving its environment membership undefined.
+func (p RuntimePayload) validateLabelsRequired() error {
+	if len(p.Labels) == 0 {
+		return errors.New("labels are required: a runtime must declare at least one label for environment runtimeSelector/connectorSelector matching (§5.1)")
+	}
+	return nil
+}
+
 func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	var body RuntimePayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -792,6 +804,12 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	// §5.1 line 36: integrationLevel is only valid on type:agent runtimes.
 	if err := body.validateIntegrationLevelOnType(); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_RUNTIME", err.Error(), nil)
+		return
+	}
+	// §5.1 line 51: labels are required from v1.
+	if err := body.validateLabelsRequired(); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"field": "labels"})
 		return
 	}
 	if err := validateCapabilities(body.Capabilities); err != nil {
@@ -1062,6 +1080,15 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 	if body.Image != nil && *body.Image != "" && !strings.Contains(*body.Image, "@sha256:") {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"image must be digest-pinned (contain @sha256:...)", nil)
+		return
+	}
+	// §5.1 line 51: labels are required from v1. A PUT may replace the label
+	// set wholesale, but an explicit empty map would strip the runtime of
+	// the selectors §10.6 matching depends on, so it is rejected.
+	if body.Labels != nil && len(*body.Labels) == 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"labels are required: a runtime must declare at least one label (§5.1)",
+			map[string]any{"field": "labels"})
 		return
 	}
 	// agentInterface: an omitted key leaves the descriptor unchanged; a

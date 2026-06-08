@@ -57,7 +57,7 @@ func newFullBootstrapRouter(t *testing.T, siemConfigured bool) bootstrapStores {
 func TestBootstrapSeedsPoolForRegisteredRuntime_spec_17_6_408(t *testing.T) {
 	s := newFullBootstrapRouter(t, false)
 	rec, resp := postBootstrap(t, s.router, admin.BootstrapRequest{
-		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent"}},
+		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent", Labels: map[string]string{"tier": "test"}}},
 		Pools: []admin.PoolPayload{
 			{Name: "echo-pool", RuntimeRef: "echo", IsolationProfile: "sandboxed", WarmCount: 2},
 		},
@@ -290,7 +290,7 @@ func TestBootstrapSummaryCoversNewTypes_spec_15_1_863(t *testing.T) {
 	s := newFullBootstrapRouter(t, false)
 	_ = s.tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	rec, resp := postBootstrap(t, s.router, admin.BootstrapRequest{
-		Runtimes:           []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent"}},
+		Runtimes:           []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent", Labels: map[string]string{"tier": "test"}}},
 		Pools:              []admin.PoolPayload{{Name: "echo-pool", RuntimeRef: "echo", IsolationProfile: "sandboxed"}},
 		DelegationPolicies: []admin.DelegationPolicyPayload{{TenantID: "acme", Name: "dp"}},
 		Environments: []admin.EnvironmentPayload{{TenantID: "acme", Name: "env", Members: []admin.MemberPayload{

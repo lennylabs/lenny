@@ -36,6 +36,15 @@ func runtimeRequest(t *testing.T, h http.Handler, method, path string, body any)
 	t.Helper()
 	var buf *bytes.Reader
 	if body != nil {
+		// §5.1 line 51 makes labels required on a runtime create. Tests that
+		// are not about the labels contract pass a RuntimePayload with nil
+		// labels; default a benign label so the create reaches the handler
+		// logic under test. Tests exercising the labels-required rejection
+		// pass an explicit empty (non-nil) map, which is left untouched.
+		if p, ok := body.(admin.RuntimePayload); ok && p.Labels == nil {
+			p.Labels = map[string]string{"tier": "test"}
+			body = p
+		}
 		b, _ := json.Marshal(body)
 		buf = bytes.NewReader(b)
 	} else {
@@ -1600,5 +1609,75 @@ func TestCreateRuntimeAcceptsArbitrarySetupTimeoutWithoutCap_spec_6_2(t *testing
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("setupTimeout 36000 without cap: got %d, want 201; body=%s",
 			rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateRuntimeRejectsMissingLabels verifies the §5.1 line 51
+// "Labels are required from v1" contract: a runtime registered through
+// the admin POST with no labels is rejected with VALIDATION_ERROR. An
+// explicit empty (non-nil) Labels map bypasses the runtimeRequest helper's
+// convenience default so the handler sees the empty set.
+//
+// spec: §5.1 line 51.
+func TestCreateRuntimeRejectsMissingLabels_spec_5_1_51(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:   "no-labels",
+		Type:   "agent",
+		Image:  "lenny/no-labels@sha256:abc",
+		Labels: map[string]string{},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("labels are required")) {
+		t.Errorf("body = %s, want labels-required message", rr.Body.String())
+	}
+}
+
+// TestCreateRuntimeAcceptsLabels verifies a runtime with at least one
+// label is accepted and the labels round-trip on GET.
+//
+// spec: §5.1 line 51.
+func TestCreateRuntimeAcceptsLabels_spec_5_1_51(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:   "labelled",
+		Type:   "agent",
+		Image:  "lenny/labelled@sha256:abc",
+		Labels: map[string]string{"team": "platform"},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	get := runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/labelled", nil)
+	var resp admin.RuntimePayload
+	_ = json.Unmarshal(get.Body.Bytes(), &resp)
+	if resp.Labels["team"] != "platform" {
+		t.Errorf("response labels = %v, want team=platform", resp.Labels)
+	}
+}
+
+// TestUpdateRuntimeRejectsEmptyLabels verifies a PUT that carries an
+// explicit empty label map is rejected: §5.1 keeps labels required, so a
+// wholesale replacement cannot strip them.
+//
+// spec: §5.1 line 51.
+func TestUpdateRuntimeRejectsEmptyLabels_spec_5_1_51(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	if err := store.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, Image: "lenny/rt@sha256:abc",
+		Labels: map[string]string{"team": "platform"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	empty := map[string]string{}
+	rr := runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{Labels: &empty})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("labels are required")) {
+		t.Errorf("body = %s, want labels-required message", rr.Body.String())
 	}
 }

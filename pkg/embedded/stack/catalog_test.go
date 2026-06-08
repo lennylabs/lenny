@@ -94,5 +94,14 @@ func TestBuildBootstrapSeed(t *testing.T) {
 		if rt.Image == "" {
 			t.Errorf("runtime %s seeded without an image", rt.Name)
 		}
+		// §5.1 line 51: labels are required from v1. The gateway bootstrap
+		// handler rejects a create without them, so every reference-runtime
+		// seed must carry at least one label or `lenny up` fails to install.
+		if len(rt.Labels) == 0 {
+			t.Errorf("runtime %s seeded without labels (§5.1 line 51 requires them)", rt.Name)
+		}
+		if rt.Labels["lenny.dev/reference-runtime"] != "true" {
+			t.Errorf("runtime %s missing the reference-runtime marker label, got %v", rt.Name, rt.Labels)
+		}
 	}
 }

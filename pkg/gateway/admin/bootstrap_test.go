@@ -85,7 +85,7 @@ func TestBootstrapHappyPath(t *testing.T) {
 			{ID: "acme", DisplayName: "Acme Corp"},
 		},
 		Runtimes: []admin.RuntimePayload{
-			{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent"},
+			{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent", Labels: map[string]string{"tier": "test"}},
 		},
 		Users: []admin.UserPayload{
 			{Subject: "alice@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleUser}},
@@ -306,7 +306,7 @@ func TestBootstrapDryRunValidatesWithoutPersisting_spec_15_1_1140(t *testing.T) 
 	router, tenants, runtimes, users, audit := newBootstrapRouter(t)
 	body := admin.BootstrapRequest{
 		Tenants:  []admin.TenantPayload{{ID: "acme", DisplayName: "Acme Corp"}},
-		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent"}},
+		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent", Labels: map[string]string{"tier": "test"}}},
 		Users:    []admin.UserPayload{{Subject: "alice@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleUser}}},
 	}
 	buf, _ := json.Marshal(body)
@@ -357,7 +357,7 @@ func TestBootstrapAuditCarriesSeedHashAndResourceSummary_spec_15_1_863(t *testin
 	router, _, _, _, audit := newBootstrapRouter(t)
 	body := admin.BootstrapRequest{
 		Tenants:  []admin.TenantPayload{{ID: "acme", DisplayName: "Acme Corp"}},
-		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent"}},
+		Runtimes: []admin.RuntimePayload{{Name: "echo", Image: "lenny/echo@sha256:abc", Type: "agent", Labels: map[string]string{"tier": "test"}}},
 	}
 	buf, _ := json.Marshal(body)
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap", bytes.NewReader(buf)))

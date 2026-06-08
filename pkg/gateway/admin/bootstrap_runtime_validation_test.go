@@ -77,3 +77,26 @@ func TestBootstrapRejectsForbiddenOptionsSchemaProperty(t *testing.T) {
 		t.Errorf("expected forbidden-property error, got %+v", resp.Runtimes)
 	}
 }
+
+// spec: §5.1 line 51 — the bootstrap upsert path enforces labels-required
+// on a newly-registered runtime, mirroring POST /v1/admin/runtimes. An
+// update of an existing runtime may omit labels (the stored set persists).
+func TestBootstrapRejectsRuntimeWithoutLabels_spec_5_1_51(t *testing.T) {
+	router, _, runtimes, _, _ := newBootstrapRouter(t)
+	body := admin.BootstrapRequest{Runtimes: []admin.RuntimePayload{
+		{Name: "nolabels", Image: "lenny/nolabels@sha256:abc", Type: "agent"},
+	}}
+	buf, _ := json.Marshal(body)
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap", bytes.NewReader(buf)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+
+	var resp admin.BootstrapResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes.Errors) != 1 || !strings.Contains(resp.Runtimes.Errors[0].Message, "labels are required") {
+		t.Fatalf("expected 1 labels-required error, got %+v (body %s)", resp.Runtimes, rr.Body.String())
+	}
+	if _, err := runtimes.Get(context.Background(), "nolabels"); err == nil {
+		t.Errorf("runtime with no labels was persisted")
+	}
+}

@@ -69,8 +69,9 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
 		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
 		"runtimes": []map[string]any{{
-			"name":  "echo",
-			"image": "lenny/echo@sha256:abc",
+			"name":   "echo",
+			"image":  "lenny/echo@sha256:abc",
+			"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
 			// §5.1: the runtime must declare injection support for the
 			// test's POST /messages mid-session injection to be accepted.
 			"capabilities": map[string]any{
