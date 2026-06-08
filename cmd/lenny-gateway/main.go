@@ -4158,6 +4158,13 @@ func main() {
 		Audit:                      mcpDelegationAuditor{sink: auditSink},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               policyChain,
+		// spec: §8.3 lines 157-188 / §4.8 lines 1036, 1040 / §13.5
+		// mitigations 2-3 — lenny/delegate_task and lenny/send_message
+		// resolve the effective contentPolicy.interceptorRef and run only
+		// that named external scanner (and enforce the message-side
+		// maxInputSize) rather than every registered external interceptor.
+		// F-8.2.9 / F-13.5.2.
+		ContentPolicies:            delegationSvc,
 		PolicyAudit:                policyAuditSink,
 		Events:                     eventBus,
 		InputWaits:                 inputWaits,

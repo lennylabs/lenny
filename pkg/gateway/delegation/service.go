@@ -1252,22 +1252,51 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 // *Service implements policy.MaxInputSizeResolver. spec: §8.3 lines
 // 149-157; §4.8 line 974. F-13.5.1 / F-8.2.9.
 func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessionID string) (int, bool) {
-	if s.runtimes == nil || s.policies == nil || parentSessionID == "" {
+	maxSize, _, ok := s.ResolveContentPolicy(ctx, tenantID, parentSessionID)
+	if !ok || maxSize <= 0 {
 		return 0, false
 	}
-	parent, err := s.store.Get(ctx, tenantID, parentSessionID)
+	return maxSize, true
+}
+
+// ResolveContentPolicy returns the effective §8.3 contentPolicy
+// maxInputSize byte cap and interceptorRef for the given session — the
+// parent session for a lenny/delegate_task call, the target session for a
+// lenny/send_message delivery. The §4.8 PreDelegation and
+// PreMessageDelivery interceptor phases use the interceptorRef to run the
+// policy-named external content scanner alone rather than every
+// registered external interceptor, and the message path enforces
+// maxInputSize on the body (§4.8 line 1040, §13.5 mitigation 3).
+//
+// The fields are read from the DelegationPolicy named by the session's
+// runtime (DelegationPolicyRef), the same resolution chain
+// ResolveMaxInputSize and the export scan already use. ok is false when
+// no runtime registry or policy store is wired, the session id is empty,
+// the session or its runtime does not resolve, or the runtime names no
+// active policy; the caller then falls back to the platform defaults (no
+// external content scan, default maxInputSize). maxInputSize is returned
+// verbatim from the policy and may be zero, which the caller treats as
+// "use the default" rather than "no limit".
+//
+// spec: §8.3 lines 149-188; §4.8 lines 1036, 1040; §13.5 mitigations 2-3.
+// F-8.2.9 / F-13.5.2.
+func (s *Service) ResolveContentPolicy(ctx context.Context, tenantID, sessionID string) (maxInputSize int, interceptorRef string, ok bool) {
+	if s.runtimes == nil || s.policies == nil || sessionID == "" {
+		return 0, "", false
+	}
+	sess, err := s.store.Get(ctx, tenantID, sessionID)
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
-	rt, err := runtimestore.Resolve(ctx, s.runtimes, parent.RuntimeRef)
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, sess.RuntimeRef)
 	if err != nil || rt.DelegationPolicyRef == "" {
-		return 0, false
+		return 0, "", false
 	}
 	pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef)
-	if err != nil || !pol.IsActive() || pol.ContentPolicy.MaxInputSize <= 0 {
-		return 0, false
+	if err != nil || !pol.IsActive() {
+		return 0, "", false
 	}
-	return pol.ContentPolicy.MaxInputSize, true
+	return pol.ContentPolicy.MaxInputSize, pol.ContentPolicy.InterceptorRef, true
 }
 
 // effContentPolicy is the §8.3 line-157 resolved effective contentPolicy

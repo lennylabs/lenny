@@ -7961,7 +7961,7 @@ delegation `Service.Delegate` enforces the same rule (new
 `ErrTargetNotAgent`) as defence-in-depth so REST and other non-MCP
 entry points cannot bypass the gate.
 
-### - [ ] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — OPEN
+### - [x] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.5.1, F-13.5.2 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
@@ -7976,6 +7976,8 @@ Implementation:
 Consequence: a runtime can submit an arbitrarily large `taskInput` and the gateway will accept it; deployer-configured content interceptors named on the `DelegationPolicy` are bypassed. The prompt-injection mitigation §8.3 names as primary is non-functional on the delegation hop.
 
 **Reopened 2026-06-08 — prior deferral (maxInputSize half resolved by F-13.5.1, commit 840b51c4):** The `maxInputSize` half of this finding is closed — the §4.8 `DelegationPolicyEvaluator` now enforces the parent runtime's effective `contentPolicy.maxInputSize` via the wired `ResolveMaxInputSize` resolver and the delegation path surfaces the canonical `INPUT_TOO_LARGE`. The `interceptorRef` half (resolve the policy-named `PreDelegation` interceptor and run only it) remains blocked: there is no named-interceptor-ref → `interceptor.Chain` registry, and `mcptools.Deps` carries no `DelegationPolicies` store, so the shim runs the gateway-wide PreDelegation chain unconditionally rather than the policy-selected ref. This is the same blocker as F-13.5.2 and F-4.8.15; closing it requires a named-interceptor registry, tracked there.
+
+**Resolution:** The named-interceptor registry premise was stale — `interceptor.Chain` already resolves a ref to a registered interceptor by `Name()` (`ExportScanChainFor`, built for the F-4.8.15 export scan). New `Chain.RunPolicyScoped(ctx, req, interceptorRef)` runs every built-in at the phase (so the §4.8 DelegationPolicyEvaluator maxInputSize cap still fires) plus only the external interceptor the policy names; external interceptors the policy does not name are skipped, and a configured ref that names no registered interceptor fails closed with `INTERCEPTOR_TIMEOUT` (§4.8 line 1032). `delegation.Service.ResolveContentPolicy` returns the parent session runtime's effective `contentPolicy.{maxInputSize,interceptorRef}` (`ResolveMaxInputSize` now delegates to it), wired onto `mcptools.Deps.ContentPolicies`. The `lenny/delegate_task` PreDelegation site now resolves the ref and calls `RunPolicyScoped` instead of the gateway-wide `Run`, so the policy-named scanner runs only for the delegations its policy selects. Closes alongside F-13.5.2 (same change). Commit 5462c9ee.
 
 ### - [x] F-8.2.10 — `independent` experiment-context propagation is not routed afresh through the `ExperimentRouter` [High] — CLOSED
 
@@ -25304,7 +25306,7 @@ canonical `INPUT_TOO_LARGE` code instead of masking it as
 (`ResolveMaxInputSize` matrix) and `pkg/gateway/mcptools`
 (over-cap surfaces `INPUT_TOO_LARGE`, within-cap admitted).
 
-### - [ ] F-13.5.2 — `contentPolicy.interceptorRef` is not resolved at delegation/message time [High] — OPEN
+### - [x] F-13.5.2 — `contentPolicy.interceptorRef` is not resolved at delegation/message time [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.5.1, F-8.2.9 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
@@ -25346,6 +25348,21 @@ and the `interceptorRef` half of F-8.2.9. The sibling `maxInputSize`
 enforcement landed via F-13.5.1 (commit 840b51c4); this ref-resolution work
 should land together with the named-interceptor-ref → Chain registry in a
 dedicated batch.
+
+**Resolution:** Closed with F-8.2.9. The name → interceptor lookup already
+existed (`interceptor.Chain.ExportScanChainFor` / `HasExternalNamed`), so the
+"missing registry" blocker was stale. New `Chain.RunPolicyScoped` runs the
+phase's built-ins plus only the policy-named external interceptor (failing
+closed with `INTERCEPTOR_TIMEOUT` on an unresolvable ref), and
+`delegation.Service.ResolveContentPolicy` resolves the effective ref +
+maxInputSize for any session. Both delegation (`PreDelegation`) and message
+(`PreMessageDelivery`) paths now resolve the per-policy ref — for messaging
+the *target* session's policy — and `lenny/send_message` additionally enforces
+the target's `contentPolicy.maxInputSize` on the body (`INPUT_TOO_LARGE`,
+§4.8 line 1040 / §13.5 mitigation 3). The §8.3 identity-based restrictiveness
+rules already resolve refs by name at lease issuance (`resolveChildContentPolicy`),
+so the per-policy resolution this finding required is now live on both runtime
+hops. Commit 5462c9ee.
 
 ### - [x] F-13.5.3 — `messagingScope` is not enforced [High] — CLOSED
 

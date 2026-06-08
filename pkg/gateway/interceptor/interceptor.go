@@ -380,6 +380,61 @@ func (c *Chain) RunRange(ctx context.Context, req Request, minPriority, maxPrior
 	})
 }
 
+// HasExternalNamed reports whether an external interceptor named ref is
+// registered for phase. The §8.3 contentPolicy.interceptorRef names one
+// such external content scanner; RunPolicyScoped uses this to fail closed
+// when a DelegationPolicy references an interceptor that is not
+// registered in this gateway process rather than silently running no
+// content scan. spec: §8.3 line 183, §4.8 line 1036.
+func (c *Chain) HasExternalNamed(phase Phase, ref string) bool {
+	if ref == "" {
+		return false
+	}
+	for _, e := range c.byPhase[phase] {
+		if !e.ic.Builtin() && e.ic.Name() == ref {
+			return true
+		}
+	}
+	return false
+}
+
+// RunPolicyScoped executes req.Phase with external interceptors scoped to
+// the §8.3 contentPolicy.interceptorRef. Every built-in interceptor runs
+// — so the PreDelegation DelegationPolicyEvaluator maxInputSize cap is
+// always enforced — while an external interceptor runs only when
+// interceptorRef names it. External interceptors the effective policy
+// does not name are skipped, so a registered content scanner fires only
+// for the delegations and messages whose policy selects it, and a policy
+// with interceptorRef: null runs no external content scan. This realizes
+// the §4.8 line 1036/1040 model in which PreDelegation and
+// PreMessageDelivery are the hook points for contentPolicy.interceptorRef
+// rather than phases at which every registered external interceptor runs
+// unconditionally.
+//
+// When interceptorRef is non-empty but no external interceptor of that
+// name is registered for the phase, the call fails closed with
+// CodeInterceptorTimeout: a configured content scanner the gateway cannot
+// reach is treated as a degraded interceptor (§4.8 line 1032) rather than
+// a silent bypass. spec: §8.3 lines 157-188; §4.8 lines 1032, 1036, 1040;
+// §13.5 mitigations 2-3.
+func (c *Chain) RunPolicyScoped(ctx context.Context, req Request, interceptorRef string) Result {
+	if interceptorRef != "" && !c.HasExternalNamed(req.Phase, interceptorRef) {
+		return Result{
+			Action:          ActionReject,
+			Code:            CodeInterceptorTimeout,
+			Reason:          fmt.Sprintf("contentPolicy.interceptorRef %q is not a registered %s interceptor", interceptorRef, req.Phase),
+			ModifiedContent: req.Content,
+			RejectedBy:      interceptorRef,
+		}
+	}
+	return c.run(ctx, req, func(ic Interceptor) bool {
+		if ic.Builtin() {
+			return true
+		}
+		return interceptorRef != "" && ic.Name() == interceptorRef
+	})
+}
+
 // run executes the phase chain, optionally restricted to the
 // interceptors that accept reports true for. A nil accept runs every
 // registered interceptor.

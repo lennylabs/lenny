@@ -210,6 +210,16 @@ type DelegationAuditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
+// ContentPolicyResolver resolves the effective §8.3 contentPolicy for a
+// session: the maxInputSize byte cap and the interceptorRef naming the
+// external content scanner. lenny/delegate_task resolves the parent
+// session's policy; lenny/send_message resolves the target session's
+// policy. *delegation.Service implements it. spec: §8.3 lines 149-188;
+// §4.8 lines 1036, 1040; §13.5 mitigations 2-3. F-8.2.9 / F-13.5.2.
+type ContentPolicyResolver interface {
+	ResolveContentPolicy(ctx context.Context, tenantID, sessionID string) (maxInputSize int, interceptorRef string, ok bool)
+}
+
 // TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle
 // in the §8.2 ParentSessionID lineage. The §8.2 cycle detector
 // prevents cycles at delegation time, so a non-zero call rate signals
@@ -338,6 +348,19 @@ type Deps struct {
 	// non-nil, lenny/send_message runs the PreMessageDelivery phase
 	// over the message body before delivery.
 	Interceptors *interceptor.Chain
+
+	// ContentPolicies resolves the effective §8.3 contentPolicy
+	// (maxInputSize + interceptorRef) for a session so lenny/delegate_task
+	// and lenny/send_message run the policy-named external content scanner
+	// at PreDelegation / PreMessageDelivery rather than every registered
+	// external interceptor, and the message path enforces the target's
+	// maxInputSize on the body. Optional — when nil the handlers run the
+	// gateway-wide chain (built-ins plus every external interceptor at the
+	// phase), the pre-F-8.2.9 behavior the minimal gateway and unit suite
+	// rely on. Production wires *delegation.Service. spec: §8.3 lines
+	// 149-188; §4.8 lines 1036, 1040; §13.5 mitigations 2-3.
+	// F-8.2.9 / F-13.5.2.
+	ContentPolicies ContentPolicyResolver
 
 	// PolicyAudit emits the §16.7 interceptor.rejected audit row when a
 	// chain REJECTs at PreDelegation or PreMessageDelivery. Optional —
@@ -942,19 +965,49 @@ func Register(srv *mcp.Server, deps Deps) {
 		// MODIFY rewrites what the target session receives.
 		messageBody := in.Message
 		if deps.Interceptors != nil {
-			res := deps.Interceptors.Run(ctx, interceptor.Request{
+			req := interceptor.Request{
 				Phase:     interceptor.PhasePreMessageDelivery,
 				SessionID: row.ID,
 				TenantID:  tenant,
 				Content:   []byte(in.Message),
-			})
+			}
+			// spec: §4.8 line 1040 / §13.5 mitigation 3 — apply the same
+			// content policy the delegation path applies: the target
+			// session's effective contentPolicy.maxInputSize bounds the
+			// message body, and contentPolicy.interceptorRef selects the
+			// single external scanner that runs at PreMessageDelivery. A
+			// policy with interceptorRef: null runs no external scan.
+			// F-13.5.2.
+			var res interceptor.Result
+			if deps.ContentPolicies != nil {
+				ref := ""
+				if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, row.ID); ok {
+					ref = r
+					if maxSize > 0 && len(in.Message) > maxSize {
+						return mcp.ToolResult{}, mcp.NewToolError(policy.CodeInputTooLarge,
+							fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(in.Message), maxSize),
+							map[string]any{"phase": string(interceptor.PhasePreMessageDelivery)})
+					}
+				}
+				res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
+			} else {
+				res = deps.Interceptors.Run(ctx, req)
+			}
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, row.ID, interceptor.PhasePreMessageDelivery, res)
-				// spec: §15.2.1 rule 3 — a PreMessageDelivery REJECT is a
-				// policy decision; emit INTERCEPTOR_REJECTED so the
-				// envelope is POLICY / not-retryable, matching the
-				// PostAgentOutput path below. F-15.2.12.
-				return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+				// spec: §15.2.1 rule 3 — a deliberate PreMessageDelivery
+				// REJECT is a policy decision; emit INTERCEPTOR_REJECTED so
+				// the envelope is POLICY / not-retryable, matching the
+				// PostAgentOutput path below. A built-in code on the Result
+				// (e.g. INTERCEPTOR_TIMEOUT when the policy-named scanner is
+				// unreachable, §4.8 line 1032) is surfaced verbatim so the
+				// (category, retryable) pair is correct. F-15.2.12 /
+				// F-13.5.2.
+				code := "INTERCEPTOR_REJECTED"
+				if res.Code != "" {
+					code = res.Code
+				}
+				return mcp.ToolResult{}, mcp.NewToolError(code,
 					fmt.Sprintf("message delivery rejected by policy: %s", res.Reason), nil)
 			}
 			if res.Action == interceptor.ActionModify {
@@ -2452,12 +2505,30 @@ func Register(srv *mcp.Server, deps Deps) {
 			// the interceptor content and child delivery. F-8.2.1.
 			taskInput := flattenTaskInput(in.Task.Input)
 			if taskInput != "" && deps.Interceptors != nil {
-				res := deps.Interceptors.Run(ctx, interceptor.Request{
+				req := interceptor.Request{
 					Phase:     interceptor.PhasePreDelegation,
 					SessionID: in.ParentSessionID,
 					TenantID:  tenant,
 					Content:   []byte(taskInput),
-				})
+				}
+				// spec: §8.3 lines 157-188 / §4.8 line 1036 / §13.5
+				// mitigation 2 — resolve the parent's effective
+				// contentPolicy.interceptorRef and run only that named
+				// external content scanner at PreDelegation, alongside the
+				// built-in DelegationPolicyEvaluator (maxInputSize). External
+				// interceptors the policy does not name are not invoked; a
+				// policy with interceptorRef: null runs no external scan.
+				// F-8.2.9 / F-13.5.2.
+				var res interceptor.Result
+				if deps.ContentPolicies != nil {
+					ref := ""
+					if _, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, in.ParentSessionID); ok {
+						ref = r
+					}
+					res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
+				} else {
+					res = deps.Interceptors.Run(ctx, req)
+				}
 				if res.Action == interceptor.ActionReject {
 					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
 					// spec: §15.2.1 line 1386 — a manual MCP-only tool
