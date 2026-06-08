@@ -38993,7 +38993,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### Findings
 
-### - [ ] F-24.4.1 — (High) — None of the §24.4 pool commands are wired in `lenny-ctl`; the entire `admin pools` group is missing [Medium] — OPEN
+### - [x] F-24.4.1 — (High) — None of the §24.4 pool commands are wired in `lenny-ctl`; the entire `admin pools` group is missing [Medium] — CLOSED
 
 **Spec (R1–R17):** §24.4 lists 18 normative pool subcommands.
 
@@ -39014,9 +39014,23 @@ remains incomplete on `drain`, `exit-bootstrap`, and `circuit-breaker`,
 whose endpoints are still absent (F-24.4.2/F-24.4.6); stays DEFERRED until
 those land so the remaining verbs do not 404.
 
+**Resolution (67c648af):** The blocker has cleared. The `drain`,
+`circuit-breaker`, and `bootstrap-override` endpoints all landed in prior
+batches (`8e31a8db` drain, `7df226ed` circuit-breaker, `2b745ebb`
+bootstrap-override), and the `drain` CLI verb was already wired. This
+batch added the five remaining §24.4 subcommands to `cmdPools`:
+`exit-bootstrap --pool` (DELETE `.../bootstrap-override`),
+`circuit-breaker --pool --state` (If-Match-guarded PUT
+`.../circuit-breaker`), and the `grant-access`/`list-access`/`revoke-access`
+tenant-access trio (mapping to `.../tenant-access`). The full §24.4
+command table (lines 61-78) is now covered by `lenny-ctl admin pools`
+(the historical evidence pointer to `cmd/lenny-ctl/main.go` is stale — the
+CLI lives in `pkg/ctlcli`). The runtime and pool tenant-access verbs now
+share one `tenantAccessVerb` helper.
+
 ---
 
-### - [ ] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — OPEN
+### - [x] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-15.1.3 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
 
@@ -39072,6 +39086,20 @@ store wired into session placement), `PUT .../circuit-breaker` (needs the
 .../bootstrap-override` (needs the PSC bootstrap-convergence field). Stays
 DEFERRED on those three subsystems.
 
+**Resolution (verify-closed, 67c648af):** The three remaining endpoints
+all landed before this batch — `POST .../drain` with the
+`POOL_DRAINING`+`Retry-After` session gate and the
+`lenny_pool_draining_sessions_total` gauge (`8e31a8db`, F-15.1.8),
+`PUT .../circuit-breaker` over the §6.1 `SDKWarmCircuitBreakerOverride`
+poolstore field with If-Match + `409 INVALID_STATE_TRANSITION` on a
+non-SDK-warm pool (`7df226ed`, F-6.1.24), and `DELETE
+.../bootstrap-override` clearing `BootstrapMinWarm` (`2b745ebb`, F-17.8.3).
+A `grep -n "/v1/admin/pools" pkg/gateway/admin/tenants.go` now lists every
+§24.4 endpoint (CRUD, `warm-count`, `circuit-breaker`, `drain`,
+`bootstrap-override`, `resume-reconciliation`, `sync-status`, the
+`tenant-access` trio, and the six `upgrade*` routes). The "only 8 exist"
+count is stale. This batch wired the matching CLI verbs (F-24.4.1).
+
 ---
 
 ### - [x] F-24.4.3 — (High) — `PUT /v1/admin/pools/{name}` does not enforce `If-Match`, contrary to §15.1:795 [Medium] — CLOSED
@@ -39122,7 +39150,7 @@ DEFERRED on those three subsystems.
 
 ---
 
-### - [ ] F-24.4.6 — (Medium) — `lenny-ctl admin pools` would still 404 even if added today: drain/warm-count/sync-status/resume-reconciliation/circuit-breaker/upgrade/bootstrap-override routes are unmounted [Medium] — OPEN
+### - [x] F-24.4.6 — (Medium) — `lenny-ctl admin pools` would still 404 even if added today: drain/warm-count/sync-status/resume-reconciliation/circuit-breaker/upgrade/bootstrap-override routes are unmounted [Medium] — CLOSED
 
 **Spec (R3, R4, R5–R10, R11–R14):** §24.4 names ten distinct REST endpoints (F2 table); only `tenant-access` is present beyond bare CRUD.
 
@@ -39139,6 +39167,13 @@ DEFERRED on those three subsystems.
 `upgrade-status` now mount through a `WithRuntimeUpgrade` seam (same
 template). Only `drain`, `circuit-breaker`, and `bootstrap-override`
 remain unmounted; stays DEFERRED on those three.
+
+**Resolution (verify-closed, 67c648af):** The last three routes are now
+mounted in the `tenants.go` pool block: `POST .../drain` (`8e31a8db`),
+`PUT .../circuit-breaker` (`7df226ed`), and `DELETE .../bootstrap-override`
+(`2b745ebb`). `grep -n "/v1/admin/pools" pkg/gateway/admin/tenants.go`
+confirms no §24.4 route 404s. The CLI verbs added this batch (F-24.4.1)
+therefore reach live handlers, not 404s. Closed alongside F-24.4.2.
 
 ---
 
