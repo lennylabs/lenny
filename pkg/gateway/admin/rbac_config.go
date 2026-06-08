@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -22,8 +24,12 @@ const allowAllWarning = `noEnvironmentPolicy: allow-all grants unrestricted ` +
 // IdentityProviderPayload is the §10.6 line 661 OIDC identity-provider
 // wire shape.
 type IdentityProviderPayload struct {
-	Type                 string `json:"type,omitempty"`
-	IntrospectionEnabled bool   `json:"introspectionEnabled,omitempty"`
+	Type                         string `json:"type,omitempty"`
+	IntrospectionEnabled         bool   `json:"introspectionEnabled,omitempty"`
+	IntrospectionEndpoint        string `json:"introspectionEndpoint,omitempty"`
+	IntrospectionClientID        string `json:"introspectionClientId,omitempty"`
+	IntrospectionClientSecret    string `json:"introspectionClientSecret,omitempty"`
+	IntrospectionCacheTTLSeconds int    `json:"introspectionCacheTtlSeconds,omitempty"`
 }
 
 // RBACConfigPayload is the §10.6 / §15.1 tenant RBAC-config admin
@@ -47,8 +53,12 @@ type RBACConfigPayload struct {
 func toRBACConfig(p RBACConfigPayload) tenantstore.RBACConfig {
 	return tenantstore.RBACConfig{
 		IdentityProvider: tenantstore.IdentityProvider{
-			Type:                 p.IdentityProvider.Type,
-			IntrospectionEnabled: p.IdentityProvider.IntrospectionEnabled,
+			Type:                         p.IdentityProvider.Type,
+			IntrospectionEnabled:         p.IdentityProvider.IntrospectionEnabled,
+			IntrospectionEndpoint:        p.IdentityProvider.IntrospectionEndpoint,
+			IntrospectionClientID:        p.IdentityProvider.IntrospectionClientID,
+			IntrospectionClientSecret:    p.IdentityProvider.IntrospectionClientSecret,
+			IntrospectionCacheTTLSeconds: p.IdentityProvider.IntrospectionCacheTTLSeconds,
 		},
 		TokenPolicy:          p.TokenPolicy,
 		Capabilities:         p.Capabilities,
@@ -65,8 +75,12 @@ func rbacConfigPayload(t tenantstore.Tenant) RBACConfigPayload {
 		TenantID:            t.ID,
 		NoEnvironmentPolicy: effectiveNoEnvironmentPolicy(t),
 		IdentityProvider: IdentityProviderPayload{
-			Type:                 c.IdentityProvider.Type,
-			IntrospectionEnabled: c.IdentityProvider.IntrospectionEnabled,
+			Type:                         c.IdentityProvider.Type,
+			IntrospectionEnabled:         c.IdentityProvider.IntrospectionEnabled,
+			IntrospectionEndpoint:        c.IdentityProvider.IntrospectionEndpoint,
+			IntrospectionClientID:        c.IdentityProvider.IntrospectionClientID,
+			IntrospectionClientSecret:    c.IdentityProvider.IntrospectionClientSecret,
+			IntrospectionCacheTTLSeconds: c.IdentityProvider.IntrospectionCacheTTLSeconds,
 		},
 		TokenPolicy:          c.TokenPolicy,
 		Capabilities:         c.Capabilities,
@@ -83,6 +97,27 @@ func validateRBACConfigExtras(p RBACConfigPayload) string {
 	// reject anything else so a typo fails loudly.
 	if t := p.IdentityProvider.Type; t != "" && t != "oidc" {
 		return fmt.Sprintf("identityProvider.type %q is not supported (use \"oidc\")", t)
+	}
+	// spec: §10.6 line 661 — introspectionEnabled drives an RFC 7662
+	// real-time group check. The check needs an endpoint to call; reject
+	// an enabled config that names none so the toggle never fails closed
+	// silently at request time. The endpoint must be TLS — the gateway
+	// posts the bearer token to it.
+	if ip := p.IdentityProvider; ip.IntrospectionEnabled {
+		ep := strings.TrimSpace(ip.IntrospectionEndpoint)
+		if ep == "" {
+			return "identityProvider.introspectionEndpoint is required when introspectionEnabled is true"
+		}
+		u, err := url.Parse(ep)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return "identityProvider.introspectionEndpoint must be an absolute https URL"
+		}
+		if ip.IntrospectionClientSecret != "" && ip.IntrospectionClientID == "" {
+			return "identityProvider.introspectionClientId is required when introspectionClientSecret is set"
+		}
+	}
+	if s := p.IdentityProvider.IntrospectionCacheTTLSeconds; s < 0 {
+		return "identityProvider.introspectionCacheTtlSeconds must not be negative"
 	}
 	// §10.6 line 665 — tokenPolicy is an opaque object. Reject a non-object
 	// (array/scalar) so the stored value is always a JSON object the GET

@@ -130,8 +130,15 @@ func TestRBACConfigRoundTripsExtraFields_spec_10_6_665(t *testing.T) {
 	router, tenants := newRBACConfigAdmin(t)
 	body, _ := json.Marshal(admin.RBACConfigPayload{
 		NoEnvironmentPolicy: "deny-all",
-		IdentityProvider:    admin.IdentityProviderPayload{Type: "oidc", IntrospectionEnabled: true},
-		TokenPolicy:         json.RawMessage(`{"accessTtlSeconds":900}`),
+		IdentityProvider: admin.IdentityProviderPayload{
+			Type:                         "oidc",
+			IntrospectionEnabled:         true,
+			IntrospectionEndpoint:        "https://idp.acme.com/oauth2/introspect",
+			IntrospectionClientID:        "lenny-gateway",
+			IntrospectionClientSecret:    "s3cret",
+			IntrospectionCacheTTLSeconds: 15,
+		},
+		TokenPolicy: json.RawMessage(`{"accessTtlSeconds":900}`),
 		Capabilities:        []string{"search", "summarize"},
 		MCPAnnotationMapping: map[string][]string{
 			"dangerous_tool": {"read", "write"},
@@ -149,6 +156,11 @@ func TestRBACConfigRoundTripsExtraFields_spec_10_6_665(t *testing.T) {
 	row, _ := tenants.Get(context.Background(), "acme")
 	if row.RBACConfig.IdentityProvider.Type != "oidc" || !row.RBACConfig.IdentityProvider.IntrospectionEnabled {
 		t.Errorf("identityProvider did not persist: %+v", row.RBACConfig.IdentityProvider)
+	}
+	if ip := row.RBACConfig.IdentityProvider; ip.IntrospectionEndpoint != "https://idp.acme.com/oauth2/introspect" ||
+		ip.IntrospectionClientID != "lenny-gateway" || ip.IntrospectionClientSecret != "s3cret" ||
+		ip.IntrospectionCacheTTLSeconds != 15 {
+		t.Errorf("introspection endpoint/credentials did not persist: %+v", ip)
 	}
 	if string(row.RBACConfig.TokenPolicy) != `{"accessTtlSeconds":900}` {
 		t.Errorf("tokenPolicy did not persist verbatim: %s", row.RBACConfig.TokenPolicy)
@@ -194,6 +206,43 @@ func TestRBACConfigPutRejectsUnsupportedIdentityProvider_spec_10_6_661(t *testin
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("unsupported identity provider: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §10.6 line 661 — introspectionEnabled needs an endpoint to call;
+// an enabled config with no endpoint is rejected so the real-time group
+// check never fails closed silently at request time. F-10.6.8.
+func TestRBACConfigPutRejectsIntrospectionEnabledNoEndpoint_spec_10_6_661(t *testing.T) {
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		IdentityProvider: admin.IdentityProviderPayload{Type: "oidc", IntrospectionEnabled: true},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("introspectionEnabled with no endpoint: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §10.6 line 661 — the introspection endpoint must be an https URL;
+// the gateway posts the bearer to it. F-10.6.8.
+func TestRBACConfigPutRejectsNonHTTPSIntrospectionEndpoint_spec_10_6_661(t *testing.T) {
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		IdentityProvider: admin.IdentityProviderPayload{
+			Type:                  "oidc",
+			IntrospectionEnabled:  true,
+			IntrospectionEndpoint: "http://idp.acme.com/introspect",
+		},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("non-https introspection endpoint: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 

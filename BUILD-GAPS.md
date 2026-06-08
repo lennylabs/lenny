@@ -14299,7 +14299,7 @@ by making the env-default participate in the effective scope. Tier-1
 / `...EnvironmentWithNoDefaultPolicyUsesRuntimeOnly` +
 `TestResolveActivePolicy_spec_10_6_601` (+ nil-registry).
 
-### - [ ] F-10.6.8 — 08  OIDC `introspectionEnabled` real-time group check is absent [Medium] — OPEN
+### - [x] F-10.6.8 — 08  OIDC `introspectionEnabled` real-time group check is absent [Medium] — CLOSED
 
 **Spec:** §10.6 line 661 — "Identity: OIDC. Groups from LDAP/AD carried
 as JWT claims. `introspectionEnabled: true` adds real-time group checks
@@ -14333,6 +14333,35 @@ read wired into the auth middleware. That is a new auth subsystem rather
 than wiring an existing surface; deferring leaves no enforcement hole
 because the safe default (introspection off, JWT-claim groups only) is
 already in effect.
+
+**Resolution (this batch):** Built the whole subsystem (a)/(b)/(c). (a)
+`tenantstore.IdentityProvider` gained `introspectionEndpoint`,
+`introspectionClientId`, `introspectionClientSecret`, and
+`introspectionCacheTtlSeconds`, round-tripping through the
+`PUT/GET /v1/admin/tenants/{id}/rbac-config` JSONB column (no migration —
+`rbac_config` is opaque JSON); admission rejects `introspectionEnabled`
+without an https endpoint and a client-secret without a client-id. (b)
+New `pkg/auth/introspection.Verifier` implements RFC 7662 (`POST token=…`
+with optional HTTP Basic client-credentials), reads the configured group
+claim (array or space/comma-delimited string), and caches both the
+per-tenant config and the per-(tenant, token) group result on short TTLs
+so a request burst triggers at most one round-trip per window — the
+"latency cost" mitigation. (c) The auth middleware grew a
+`GroupIntrospector` seam consulted for every verified Bearer: when the
+tenant has `introspectionEnabled`, the provider's real-time group set
+replaces the JWT `groups` claim before the principal is attached;
+introspection off keeps the JWT groups; an inactive-token verdict rejects
+the bearer (401 `TOKEN_INVALID`, `reason=introspection_inactive`) and a
+config/transport failure fails closed (503
+`GROUP_INTROSPECTION_UNAVAILABLE`) rather than honoring the stale JWT
+groups. Wired in `cmd/lenny-gateway` over a `tenantIntrospectionConfig`
+ConfigSource reading the tenant store; a tenant that never enables
+introspection pays only a cached config read. Tests: introspection
+package (disabled-skips-call, enabled-returns-provider-groups,
+cache-within-TTL/expiry, inactive, unreachable, no-endpoint, non-200,
+group-shape variants) and middleware (replace/keep/inactive-401/
+error-503/nil-noop), plus admin payload round-trip + endpoint/scheme
+validation.
 
 ### - [x] F-10.6.9 — 09  Billing-event schema has no `environmentId` field [Medium] — CLOSED
 

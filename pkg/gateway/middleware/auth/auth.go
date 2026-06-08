@@ -229,6 +229,30 @@ type Options struct {
 	// roles claim stays authoritative.
 	// spec: §10.2 line 294. F-10.2.3.
 	PlatformRoles PlatformRoleResolver
+
+	// GroupIntrospector, when set, performs the §10.6 line 661 real-time
+	// group check. The middleware consults it for every verified Bearer.
+	// When the principal's tenant has identityProvider.introspectionEnabled
+	// set, the provider's RFC 7662 introspection endpoint supplies the
+	// authoritative group set, replacing the JWT groups claim; when the
+	// tenant leaves introspection off, the JWT groups stay authoritative.
+	// A transport/config failure or an inactive-token verdict fails closed
+	// (the operator enabled real-time checks for a security reason).
+	// spec: §10.6 line 661. F-10.6.8.
+	GroupIntrospector GroupIntrospector
+}
+
+// GroupIntrospector is the §10.6 line 661 real-time group check. The
+// auth middleware calls it for every verified Bearer; the introspection
+// package satisfies it over the tenant's RFC 7662 endpoint.
+type GroupIntrospector interface {
+	// IntrospectGroups returns the real-time group set for token under
+	// tenantID. enabled is false when the tenant has not turned on
+	// introspectionEnabled (the middleware keeps the JWT groups). When
+	// enabled is true: active is the RFC 7662 token-active verdict, groups
+	// is the authoritative group set, and a non-nil err is a config or
+	// transport failure the middleware fails closed on.
+	IntrospectGroups(ctx context.Context, tenantID, token string) (enabled, active bool, groups []string, err error)
 }
 
 // PlatformRoleResolver is the §10.2 line 294 platform-managed
@@ -477,6 +501,33 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		}
 		if found {
 			p.Roles = append([]auth.Role(nil), roles...)
+		}
+	}
+	// spec: §10.6 line 661 — when the tenant has introspectionEnabled set,
+	// an RFC 7662 introspection of the bearer supplies the authoritative
+	// group set, catching LDAP/AD membership changes the JWT groups claim
+	// has not yet reflected. The check is opt-in per tenant; tenants that
+	// leave it off keep the JWT groups. A config/transport failure fails
+	// closed (503), and an inactive-token verdict rejects the bearer
+	// (401) — the operator enabled the real-time check for a security
+	// reason, so we do not silently fall back to the stale JWT groups.
+	// F-10.6.8.
+	if m.opts.GroupIntrospector != nil {
+		enabled, active, groups, ierr := m.opts.GroupIntrospector.IntrospectGroups(r.Context(), p.TenantID, token)
+		if ierr != nil {
+			writeError(w, http.StatusServiceUnavailable, "GROUP_INTROSPECTION_UNAVAILABLE",
+				"the OIDC introspection endpoint is unreachable; the bearer cannot be validated",
+				map[string]any{"reason": "introspection_unavailable", "retryable": true})
+			return
+		}
+		if enabled {
+			if !active {
+				writeError(w, http.StatusUnauthorized, "TOKEN_INVALID",
+					"the OIDC provider reports this token is no longer active",
+					map[string]any{"reason": "introspection_inactive"})
+				return
+			}
+			p.Groups = append([]string(nil), groups...)
 		}
 	}
 	ctx := WithPrincipal(r.Context(), p)

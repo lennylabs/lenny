@@ -80,6 +80,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
@@ -5522,6 +5523,11 @@ func main() {
 		// returns the user's stored Roles when the row exists; missing
 		// rows fall through to the JWT claim. F-10.2.3.
 		PlatformRoles: userstorePlatformRoles{store: users},
+		// spec: §10.6 line 661 — real-time group check. The introspection
+		// verifier reads each tenant's identityProvider record; a tenant
+		// that leaves introspectionEnabled off pays nothing beyond a cached
+		// config read and keeps its JWT groups. F-10.6.8.
+		GroupIntrospector: introspection.New(tenantIntrospectionConfig{store: tenants}),
 	}
 	// §13.3 line 601 — fail-closed token validation. Only when Postgres
 	// backs the revocation rehydration (below) is the staleness gate
@@ -7790,6 +7796,36 @@ func (r userstorePlatformRoles) ResolveRoles(ctx context.Context, tenantID, subj
 		return nil, false, err
 	}
 	return append([]auth.Role(nil), row.Roles...), row.RoleAssigned, nil
+}
+
+// tenantIntrospectionConfig resolves the §10.6 line 661 real-time
+// group-check configuration from a tenant's stored identityProvider
+// record, satisfying introspection.ConfigSource. A tenant that has not
+// set introspectionEnabled yields a disabled Config, so the auth
+// middleware keeps the JWT groups claim for it. F-10.6.8.
+type tenantIntrospectionConfig struct {
+	store tenantstore.Store
+}
+
+func (s tenantIntrospectionConfig) IntrospectionConfig(ctx context.Context, tenantID string) (introspection.Config, error) {
+	if s.store == nil {
+		return introspection.Config{}, nil
+	}
+	row, err := s.store.Get(ctx, tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return introspection.Config{}, nil
+	}
+	if err != nil {
+		return introspection.Config{}, err
+	}
+	ip := row.RBACConfig.IdentityProvider
+	return introspection.Config{
+		Enabled:      ip.IntrospectionEnabled,
+		Endpoint:     ip.IntrospectionEndpoint,
+		ClientID:     ip.IntrospectionClientID,
+		ClientSecret: ip.IntrospectionClientSecret,
+		CacheTTL:     time.Duration(ip.IntrospectionCacheTTLSeconds) * time.Second,
+	}, nil
 }
 
 // bearerTenantRegistry is the §10.2 line 219 multi-tenant bearer-chain

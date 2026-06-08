@@ -357,6 +357,27 @@ type IdentityProvider struct {
 	// cost. The default is off — JWT group claims alone carry group
 	// identity.
 	IntrospectionEnabled bool `json:"introspectionEnabled,omitempty"`
+
+	// IntrospectionEndpoint is the RFC 7662 token-introspection endpoint
+	// URL the gateway calls on the auth hot path when IntrospectionEnabled
+	// is true. Required (https) when introspection is enabled; the global
+	// OIDC issuer config carries no per-tenant introspection endpoint, so
+	// the real-time group check resolves it from here. spec: §10.6 line 661.
+	IntrospectionEndpoint string `json:"introspectionEndpoint,omitempty"`
+
+	// IntrospectionClientID / IntrospectionClientSecret authenticate the
+	// gateway to the introspection endpoint via HTTP Basic auth
+	// (RFC 7662 §2.1). Optional for endpoints that authenticate by other
+	// means.
+	IntrospectionClientID     string `json:"introspectionClientId,omitempty"`
+	IntrospectionClientSecret string `json:"introspectionClientSecret,omitempty"`
+
+	// IntrospectionCacheTTLSeconds bounds how long an introspection
+	// result is reused for a (tenant, token) pair before the endpoint is
+	// re-queried. Zero applies the introspection package default. This is
+	// the knob that trades real-time freshness against the §10.6 latency
+	// cost.
+	IntrospectionCacheTTLSeconds int `json:"introspectionCacheTtlSeconds,omitempty"`
 }
 
 // RBACConfig is the §10.6 tenant RBAC configuration carried by
