@@ -57,6 +57,21 @@ type Metrics struct {
 	gatewayQueueDepthThreshold     prometheus.Gauge
 	gatewayLatencyThresholdSeconds prometheus.Gauge
 	credentialPoolLowThreshold     prometheus.Gauge
+	// sloBurnRateFastMultiplier / sloBurnRateSlowMultiplier expose the
+	// §16.5 line 640 operator-configurable burn-rate window multipliers
+	// (slo.burnRate.fastMultiplier default 14, slowMultiplier default 3).
+	// Every burn-rate alert compares its budget-normalised ratio against
+	// scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(default))
+	// so the multipliers retune when the bundled alerts page without
+	// regenerating the PrometheusRule. F-16.5.3.
+	sloBurnRateFastMultiplier prometheus.Gauge
+	sloBurnRateSlowMultiplier prometheus.Gauge
+	// sessionUnavailabilityRatio is the §16.5 SessionAvailabilityBurnRate
+	// SLI source: the fraction of active sessions currently in a
+	// retry/recovery state (resume_pending, resuming,
+	// awaiting_client_action). The gateway export loop refreshes it from
+	// the session store. F-16.5.3.
+	sessionUnavailabilityRatio prometheus.Gauge
 	// auditSIEMConfigured / auditRetentionDays / envProduction are the
 	// §16.4 / §16.5 startup-set scalar gauges the AuditSIEMNotConfigured
 	// and AuditRetentionLow alerts read. auditSIEMConfigured is 1 when
@@ -905,6 +920,27 @@ func New() (*Metrics, error) {
 	credentialPoolLowThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_credential_pool_low_threshold",
 		Help: "Configured §16.5 CredentialPoolLow utilisation fraction (§25.13 line 4737).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	sloBurnRateFastMultiplier, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_slo_burn_rate_fast_multiplier",
+		Help: "Configured §16.5 line 640 fast-window burn-rate multiplier (slo.burnRate.fastMultiplier, default 14).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	sloBurnRateSlowMultiplier, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_slo_burn_rate_slow_multiplier",
+		Help: "Configured §16.5 line 640 slow-window burn-rate multiplier (slo.burnRate.slowMultiplier, default 3).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	sessionUnavailabilityRatio, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_session_unavailability_ratio",
+		Help: "Fraction of active sessions in a retry/recovery state, read by SessionAvailabilityBurnRate (§16.5).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -2570,6 +2606,18 @@ func New() (*Metrics, error) {
 	gatewayLatencyThresholdSecondsChild.Set(3.0)
 	credentialPoolLowThresholdChild := credentialPoolLowThreshold.WithLabelValues()
 	credentialPoolLowThresholdChild.Set(0.80)
+	// §16.5 line 640: pre-materialize the burn-rate multiplier scalars
+	// with their base-Helm defaults so scalar(...) in every burn-rate
+	// alert resolves to a finite multiplier even before the gateway main
+	// has called SetSLOBurnRateMultipliers. F-16.5.3.
+	sloBurnRateFastMultiplierChild := sloBurnRateFastMultiplier.WithLabelValues()
+	sloBurnRateFastMultiplierChild.Set(14)
+	sloBurnRateSlowMultiplierChild := sloBurnRateSlowMultiplier.WithLabelValues()
+	sloBurnRateSlowMultiplierChild.Set(3)
+	// §16.5: pre-materialize the session-unavailability ratio at 0 so
+	// /metrics emits the series (and SessionAvailabilityBurnRate resolves)
+	// before the first export-loop sample. F-16.5.3.
+	sessionUnavailabilityRatioChild := sessionUnavailabilityRatio.WithLabelValues()
 	// §12.3 line 97: pre-materialize the SIEM delivery-lag threshold
 	// scalar with the default 30s so AuditSIEMDeliveryLag resolves
 	// scalar(lenny_audit_siem_max_delivery_lag_seconds) to a finite
@@ -2606,6 +2654,8 @@ func New() (*Metrics, error) {
 		gatewayQueueDepthThreshold,
 		gatewayLatencyThresholdSeconds,
 		credentialPoolLowThreshold,
+		sloBurnRateFastMultiplier, sloBurnRateSlowMultiplier,
+		sessionUnavailabilityRatio,
 		auditSIEMConfigured, auditRetentionDays, envProduction)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
@@ -2627,6 +2677,9 @@ func New() (*Metrics, error) {
 		gatewayQueueDepthThreshold:           gatewayQueueDepthThresholdChild,
 		gatewayLatencyThresholdSeconds:       gatewayLatencyThresholdSecondsChild,
 		credentialPoolLowThreshold:           credentialPoolLowThresholdChild,
+		sloBurnRateFastMultiplier:            sloBurnRateFastMultiplierChild,
+		sloBurnRateSlowMultiplier:            sloBurnRateSlowMultiplierChild,
+		sessionUnavailabilityRatio:           sessionUnavailabilityRatioChild,
 		auditSIEMConfigured:                  auditSIEMConfiguredChild,
 		auditRetentionDays:                   auditRetentionDaysChild,
 		envProduction:                        envProductionChild,
@@ -4474,6 +4527,26 @@ func (m *Metrics) SetGatewayQueueDepthThreshold(value float64) {
 // scalar(lenny_gateway_latency_threshold_seconds). F-25.13.2.
 func (m *Metrics) SetGatewayLatencyThresholdSeconds(value float64) {
 	m.gatewayLatencyThresholdSeconds.Set(value)
+}
+
+// SetSLOBurnRateMultipliers emits the §16.5 line 640 operator-configurable
+// burn-rate window multipliers. Every burn-rate alert compares its
+// budget-normalised ratio against
+// scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(default)),
+// so changing slo.burnRate.{fast,slow}Multiplier retunes when the bundled
+// alerts page without regenerating the PrometheusRule. F-16.5.3.
+func (m *Metrics) SetSLOBurnRateMultipliers(fast, slow float64) {
+	m.sloBurnRateFastMultiplier.Set(fast)
+	m.sloBurnRateSlowMultiplier.Set(slow)
+}
+
+// SetSessionUnavailabilityRatio publishes the §16.5
+// SessionAvailabilityBurnRate SLI: the fraction of active sessions in a
+// retry/recovery state. The gateway export loop computes it as
+// recovery_sessions / active_sessions (0 when there are no active
+// sessions). F-16.5.3.
+func (m *Metrics) SetSessionUnavailabilityRatio(ratio float64) {
+	m.sessionUnavailabilityRatio.Set(ratio)
 }
 
 // SetCredentialPoolLowThreshold emits the §25.13 line 4737 / §16.5

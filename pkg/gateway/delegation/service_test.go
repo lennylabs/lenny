@@ -464,6 +464,9 @@ func (c *countingStore) CountActiveSessionsByRuntime(ctx context.Context, tenant
 func (c *countingStore) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	return c.inner.CountActiveSessionsGlobal(ctx)
 }
+func (c *countingStore) CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error) {
+	return c.inner.CountActiveSessionsInRecoveryGlobal(ctx)
+}
 func (c *countingStore) CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return c.inner.CountActiveDelegatedChildrenByUser(ctx, tenantID, userID)
 }

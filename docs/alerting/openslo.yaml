@@ -15,17 +15,17 @@ metadata:
 spec:
   description: Session creation success rate >= 99.5%
   ratioMetric:
-    counter: false
+    counter: true
     good:
       metricSource:
         type: prometheus
         spec:
-          query: (1 - lenny_session_creation_error_ratio{deployment_tier="tier1"})
+          query: sum(rate(lenny_gateway_requests_total{deployment_tier="tier1",method="POST",route="/v1/sessions",status_class!="5xx"}[1h]))
     total:
       metricSource:
         type: prometheus
         spec:
-          query: vector(1)
+          query: sum(rate(lenny_gateway_requests_total{deployment_tier="tier1",method="POST",route="/v1/sessions"}[1h]))
 ---
 apiVersion: openslo/v1
 kind: SLO
@@ -96,12 +96,12 @@ spec:
       metricSource:
         type: prometheus
         spec:
-          query: sum(rate(lenny_session_creation_duration_seconds_bucket{deployment_tier="tier1",le="0.5"}[1h]))
+          query: sum(rate(lenny_gateway_request_duration_seconds_bucket{deployment_tier="tier1",method="POST",route="/v1/sessions",le="0.5"}[1h]))
     total:
       metricSource:
         type: prometheus
         spec:
-          query: sum(rate(lenny_session_creation_duration_seconds_count{deployment_tier="tier1"}[1h]))
+          query: sum(rate(lenny_gateway_request_duration_seconds_count{deployment_tier="tier1",method="POST",route="/v1/sessions"}[1h]))
 ---
 apiVersion: openslo/v1
 kind: SLO
@@ -243,17 +243,17 @@ metadata:
 spec:
   description: Gateway availability >= 99.95%
   ratioMetric:
-    counter: false
+    counter: true
     good:
       metricSource:
         type: prometheus
         spec:
-          query: (1 - lenny_gateway_unavailability_ratio{deployment_tier="tier1"})
+          query: sum(rate(lenny_gateway_requests_total{deployment_tier="tier1",status_class!="5xx"}[1h]))
     total:
       metricSource:
         type: prometheus
         spec:
-          query: vector(1)
+          query: sum(rate(lenny_gateway_requests_total{deployment_tier="tier1"}[1h]))
 ---
 apiVersion: openslo/v1
 kind: SLO
@@ -547,17 +547,17 @@ metadata:
 spec:
   description: Checkpoint duration P95 < 2s (<= 100MB)
   ratioMetric:
-    counter: false
+    counter: true
     good:
       metricSource:
         type: prometheus
         spec:
-          query: (1 - lenny_checkpoint_duration_slow_ratio{deployment_tier="tier1"})
+          query: sum(rate(lenny_checkpoint_duration_seconds_bucket{deployment_tier="tier1",le="2"}[1h]))
     total:
       metricSource:
         type: prometheus
         spec:
-          query: vector(1)
+          query: sum(rate(lenny_checkpoint_duration_seconds_count{deployment_tier="tier1"}[1h]))
 ---
 apiVersion: openslo/v1
 kind: SLO

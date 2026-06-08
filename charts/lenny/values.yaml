@@ -1010,6 +1010,17 @@ slo:
   # unvalidated defaults cannot silently treat them as SLA commitments.
   # The benchmark automation sets this true on the validated release.
   validated: false
+  # burnRate configures the §16.5 line 640 multi-window burn-rate alert
+  # thresholds. The gateway mirrors these onto the
+  # lenny_slo_burn_rate_{fast,slow}_multiplier gauges, and every bundled
+  # burn-rate alert compares its budget-normalised ratio against
+  # scalar(...) of the gauge, so changing a multiplier retunes when the
+  # alerts page without re-rendering the PrometheusRule. fastMultiplier is
+  # the 1h fast-window page threshold; slowMultiplier is the 6h slow-window
+  # warn threshold. Both must be > 0.
+  burnRate:
+    fastMultiplier: 14
+    slowMultiplier: 3
 
 # observability configures the §16 OpenTelemetry trace export. Agent
 # runtimes that emit OTLP spans need egress to the OTLP collector; the

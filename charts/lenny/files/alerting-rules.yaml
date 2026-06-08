@@ -331,82 +331,82 @@ groups:
             runbook_url: https://docs.lenny.dev/runbooks/ops-lock-split-brain
             summary: lenny-ops remediation lock split-brain detected
         - alert: SessionCreationSuccessRateBurnRate
-          expr: lenny_session_creation_error_ratio / (1 - 0.995) > 14
+          expr: (sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions",status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions"}[1h]))) / (1 - 0.995) > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/session-creation-success-rate-burn-rate
             slo: Session creation success rate >= 99.5%
             summary: Fast-window error-budget burn for Session creation success rate >= 99.5%
         - alert: SessionCreationLatencyBurnRate
-          expr: lenny_session_creation_latency_slow_ratio / 0.01 > 14
+          expr: (1 - (sum(rate(lenny_gateway_request_duration_seconds_bucket{method="POST",route="/v1/sessions",le="0.5"}[1h])) / sum(rate(lenny_gateway_request_duration_seconds_count{method="POST",route="/v1/sessions"}[1h])))) / 0.01 > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/session-creation-latency-burn-rate
             slo: Session creation latency P99 < 500ms
             summary: Fast-window error-budget burn for Session creation latency P99 < 500ms
         - alert: SessionAvailabilityBurnRate
-          expr: lenny_session_unavailability_ratio / (1 - 0.999) > 14
+          expr: lenny_session_unavailability_ratio / (1 - 0.999) > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/session-availability-burn-rate
             slo: Session availability >= 99.9%
             summary: Fast-window error-budget burn for Session availability >= 99.9%
         - alert: GatewayAvailabilityBurnRate
-          expr: lenny_gateway_unavailability_ratio / (1 - 0.9995) > 14
+          expr: (sum(rate(lenny_gateway_requests_total{status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total[1h]))) / (1 - 0.9995) > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/gateway-availability-burn-rate
             slo: Gateway availability >= 99.95%
             summary: Fast-window error-budget burn for Gateway availability >= 99.95%
         - alert: StartupLatencyBurnRate
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/startup-latency-burn-rate
             slo: Startup latency P95 < 2s (runc)
             summary: Fast-window error-budget burn for Startup latency P95 < 2s (runc)
         - alert: StartupLatencyGVisorBurnRate
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/startup-latency-gvisor-burn-rate
             slo: Startup latency P95 < 5s (gVisor)
             summary: Fast-window error-budget burn for Startup latency P95 < 5s (gVisor)
         - alert: TTFTBurnRate
-          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/ttft-burn-rate
             slo: Time to first token P95 < 10s
             summary: Fast-window error-budget burn for Time to first token P95 < 10s
         - alert: CheckpointDurationBurnRate
-          expr: lenny_checkpoint_duration_slow_ratio / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_checkpoint_duration_seconds_bucket{le="2"}[1h])) / sum(rate(lenny_checkpoint_duration_seconds_count[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))
           for: 1h
           labels:
             severity: critical
           annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
             runbook_url: https://docs.lenny.dev/runbooks/checkpoint-duration-burn-rate
             slo: Checkpoint duration P95 < 2s (<= 100MB)
             summary: Fast-window error-budget burn for Checkpoint duration P95 < 2s (<= 100MB)
@@ -1291,75 +1291,75 @@ groups:
             description: One or more in-flight operations exceeded their expected inter-step cadence (stalledForSeconds > 0) per the §25.2 Progress Envelope. The gauge clears when every operation advances within its cadence. Investigate via GET /v1/admin/operations/{id}.
             summary: An in-flight operation has stalled
         - alert: SessionCreationSuccessRateBurnRateSlow
-          expr: lenny_session_creation_error_ratio / (1 - 0.995) > 3
+          expr: (sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions",status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions"}[1h]))) / (1 - 0.995) > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session creation success rate >= 99.5%
             summary: Slow-window error-budget burn for Session creation success rate >= 99.5%
         - alert: SessionCreationLatencyBurnRateSlow
-          expr: lenny_session_creation_latency_slow_ratio / 0.01 > 3
+          expr: (1 - (sum(rate(lenny_gateway_request_duration_seconds_bucket{method="POST",route="/v1/sessions",le="0.5"}[1h])) / sum(rate(lenny_gateway_request_duration_seconds_count{method="POST",route="/v1/sessions"}[1h])))) / 0.01 > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session creation latency P99 < 500ms
             summary: Slow-window error-budget burn for Session creation latency P99 < 500ms
         - alert: SessionAvailabilityBurnRateSlow
-          expr: lenny_session_unavailability_ratio / (1 - 0.999) > 3
+          expr: lenny_session_unavailability_ratio / (1 - 0.999) > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session availability >= 99.9%
             summary: Slow-window error-budget burn for Session availability >= 99.9%
         - alert: GatewayAvailabilityBurnRateSlow
-          expr: lenny_gateway_unavailability_ratio / (1 - 0.9995) > 3
+          expr: (sum(rate(lenny_gateway_requests_total{status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total[1h]))) / (1 - 0.9995) > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Gateway availability >= 99.95%
             summary: Slow-window error-budget burn for Gateway availability >= 99.95%
         - alert: StartupLatencyBurnRateSlow
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Startup latency P95 < 2s (runc)
             summary: Slow-window error-budget burn for Startup latency P95 < 2s (runc)
         - alert: StartupLatencyGVisorBurnRateSlow
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Startup latency P95 < 5s (gVisor)
             summary: Slow-window error-budget burn for Startup latency P95 < 5s (gVisor)
         - alert: TTFTBurnRateSlow
-          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Time to first token P95 < 10s
             summary: Slow-window error-budget burn for Time to first token P95 < 10s
         - alert: CheckpointDurationBurnRateSlow
-          expr: lenny_checkpoint_duration_slow_ratio / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_checkpoint_duration_seconds_bucket{le="2"}[1h])) / sum(rate(lenny_checkpoint_duration_seconds_count[1h])))) / 0.05 > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h
           labels:
             severity: warning
           annotations:
-            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
+            description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Checkpoint duration P95 < 2s (<= 100MB)
             summary: Slow-window error-budget burn for Checkpoint duration P95 < 2s (<= 100MB)
     - name: lenny.info

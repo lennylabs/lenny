@@ -955,6 +955,15 @@ type Store interface {
 	// spec: §11.1 line 8 (Concurrency limits — global).
 	CountActiveSessionsGlobal(ctx context.Context) (int, error)
 
+	// CountActiveSessionsInRecoveryGlobal returns the number of live
+	// sessions across every tenant currently in a retry/recovery state
+	// (resume_pending, resuming, awaiting_client_action). The gateway
+	// export loop divides it by CountActiveSessionsGlobal to publish the
+	// §16.5 lenny_session_unavailability_ratio SLI the
+	// SessionAvailabilityBurnRate alert reads.
+	// spec: §16.5 line 616 (Session availability SLO). F-16.5.3.
+	CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error)
+
 	// CountActiveDelegatedChildrenByUser returns the number of live
 	// (non-terminal) delegated child sessions owned by userID within
 	// tenantID — sessions carrying a non-empty ParentSessionID. It backs

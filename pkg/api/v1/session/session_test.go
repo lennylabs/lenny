@@ -33,6 +33,28 @@ func TestIsTerminalCoversFourStates(t *testing.T) {
 	}
 }
 
+// TestIsRecoveryCoversRetryStates verifies the §16.5 line 616 Session
+// availability SLI recovery-state set: exactly resume_pending, resuming
+// (the internal transient §15.1 normalises to resume_pending), and
+// awaiting_client_action are retry/recovery states; running, input
+// required, and terminal states are not. F-16.5.3.
+func TestIsRecoveryCoversRetryStates(t *testing.T) {
+	want := []State{StateResumePending, StateResuming, StateAwaitingClientAction}
+	if got := RecoveryStates(); len(got) != len(want) {
+		t.Errorf("RecoveryStates() returned %d, want %d", len(got), len(want))
+	}
+	for _, s := range want {
+		if !IsRecovery(s) {
+			t.Errorf("IsRecovery(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []State{StateRunning, StateCompleted, StateFailed, StateInputRequired, StateSuspended} {
+		if IsRecovery(s) {
+			t.Errorf("IsRecovery(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestFailureClassEnumIsExhaustive(t *testing.T) {
 	got := AllFailureClasses()
 	if len(got) != 5 {

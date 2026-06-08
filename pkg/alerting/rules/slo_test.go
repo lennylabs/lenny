@@ -11,9 +11,11 @@ import (
 // TestSLODefinitionsBackEveryBurnRateAlert asserts the §16.5 burn-rate
 // alerts are derived from the single SLODefinitions catalog: every SLO
 // yields exactly a fast-window critical rule and a slow-window warning
-// rule whose expressions embed the SLO's budget-normalised base ratio at
-// the 14x / 3x multipliers. This is the single-source invariant the
-// §16.10 OpenSLO export depends on (slo.go).
+// rule whose expressions embed the SLO's budget-normalised base ratio
+// compared against the §16.5 line 640 operator-tunable multiplier scalars
+// (scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(14|3))).
+// This is the single-source invariant the §16.10 OpenSLO export depends
+// on (slo.go).
 func TestSLODefinitionsBackEveryBurnRateAlert(t *testing.T) {
 	defs := SLODefinitions()
 	alerts := burnRateAlerts()
@@ -35,10 +37,10 @@ func TestSLODefinitionsBackEveryBurnRateAlert(t *testing.T) {
 			t.Errorf("SLO %q: no slow-window alert %q in catalog", d.Name, d.AlertName+"Slow")
 			continue
 		}
-		if want := fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateFastMultiplier); fast.Expr != want {
+		if want := fmt.Sprintf(`%s > %s`, d.BurnRateExpr, burnRateFastMultiplierThreshold); fast.Expr != want {
 			t.Errorf("SLO %q fast expr = %q, want %q", d.Name, fast.Expr, want)
 		}
-		if want := fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateSlowMultiplier); slow.Expr != want {
+		if want := fmt.Sprintf(`%s > %s`, d.BurnRateExpr, burnRateSlowMultiplierThreshold); slow.Expr != want {
 			t.Errorf("SLO %q slow expr = %q, want %q", d.Name, slow.Expr, want)
 		}
 		if fast.Severity != SeverityCritical {

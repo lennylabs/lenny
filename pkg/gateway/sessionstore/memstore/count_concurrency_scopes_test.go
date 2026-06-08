@@ -89,6 +89,33 @@ func TestCountActiveSessionsGlobal_spec_11_1(t *testing.T) {
 	}
 }
 
+// TestCountActiveSessionsInRecoveryGlobal_spec_16_5 verifies the §16.5
+// Session availability SLI numerator: it spans every tenant, counts only
+// the retry/recovery states (resume_pending, resuming,
+// awaiting_client_action), and excludes running and terminal rows.
+// F-16.5.3.
+func TestCountActiveSessionsInRecoveryGlobal_spec_16_5(t *testing.T) {
+	s := memstore.New()
+	seedFull(t, s, sessionstore.Session{ID: "running", TenantID: "acme", State: session.StateRunning})
+	seedFull(t, s, sessionstore.Session{ID: "rp", TenantID: "acme", State: session.StateResumePending})
+	seedFull(t, s, sessionstore.Session{ID: "rs", TenantID: "globex", State: session.StateResuming})
+	seedFull(t, s, sessionstore.Session{ID: "aca", TenantID: "initech", State: session.StateAwaitingClientAction})
+	seedFull(t, s, sessionstore.Session{ID: "done", TenantID: "acme", State: session.StateCompleted})
+
+	got, err := s.CountActiveSessionsInRecoveryGlobal(context.Background())
+	if err != nil {
+		t.Fatalf("CountActiveSessionsInRecoveryGlobal: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("recovery global = %d, want 3 (resume_pending + resuming + awaiting_client_action; running and completed excluded)", got)
+	}
+
+	// An empty store reports zero (an idle gateway is fully available).
+	if got, err := memstore.New().CountActiveSessionsInRecoveryGlobal(context.Background()); err != nil || got != 0 {
+		t.Fatalf("empty store recovery = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
 // TestCountActiveDelegatedChildrenByUser_spec_11_1 verifies only
 // non-terminal delegated children (non-empty ParentSessionID) owned by
 // the user within the tenant are counted.

@@ -30465,7 +30465,7 @@ The 55 absent series (with the alert(s) that reference each):
   recording-rule definitions plus burn-rate Helm-value mechanism for the
   five `*_ratio` series stay tracked under F-16.5.3.
 
-### - [ ] F-16.5.3 — Eight burn-rate alerts reference six invented `*_ratio` series that are nowhere defined. [High] — OPEN
+### - [x] F-16.5.3 — Eight burn-rate alerts reference six invented `*_ratio` series that are nowhere defined. [High] — CLOSED
 
 §16.5 specifies the multi-window burn-rate alerts in conceptual terms — for example "Session creation success rate ≥ 99.5%, Critical (fast) / Warning (slow), 1h 14× / 6h 3×" — and gives the burn-rate formula textually ("burn rate is `error_rate / (1 - slo_target)`"). It never names the underlying metric series. The impl `burnRateAlerts()` in `pkg/alerting/rules/rules.go:1510-1591` invents six error-ratio series and references them in every burn-rate `Expr`:
 
@@ -30504,6 +30504,37 @@ The spec also requires the burn-rate metric source be tunable: §16.5 ends with 
   (`scalar(lenny_slo_burn_rate_*_multiplier)`) and should land together
   with the recording-rule definitions so the burn-rate alerts can
   actually fire; doing the Helm values alone leaves the alerts inert.
+
+- **Resolution (this batch):** All eight burn-rate alerts now evaluate
+  against real series, and the prior batch's premise that the three
+  availability/error ratios need a Wave-3 instrumentation vertical was
+  stale — the honest signals already exist. The five invented `*_ratio`
+  series are gone: `SessionCreationSuccessRate` and `GatewayAvailability`
+  derive their error rate inline from the gateway HTTP middleware counter
+  `lenny_gateway_requests_total{status_class="5xx"}` (5xx over total;
+  scoped to `route="/v1/sessions",method="POST"` for creation, which is
+  the two-step `handleCreate` admission, not the pod-claim path);
+  `SessionCreationLatency` from the `lenny_gateway_request_duration_seconds`
+  histogram (le="0.5" over the same route); `CheckpointDuration` from the
+  catalogued `lenny_checkpoint_duration_seconds` histogram (le="2"). The
+  fifth, `SessionAvailability`, reads a genuinely new gauge
+  `lenny_session_unavailability_ratio` the gateway export loop refreshes
+  every 5s as recovery_sessions / active_sessions (new
+  `session.IsRecovery`/`RecoveryStates` for the §16.5 line-616
+  retry/recovery set: `resume_pending`, `resuming`,
+  `awaiting_client_action`; new
+  `sessionstore.CountActiveSessionsInRecoveryGlobal` on memstore+pgstore;
+  new `exportSessionAvailabilityRatio`). The §16.5 line 640 Helm
+  `slo.burnRate.{fast,slow}Multiplier` values now exist (default 14 / 3),
+  flow through `LENNY_SLO_BURN_RATE_{FAST,SLOW}_MULTIPLIER` env into
+  `gatewaymetrics.SetSLOBurnRateMultipliers`, and every burn-rate `Expr`
+  compares against `scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or
+  vector(14|3))` instead of the hard-coded `> 14`/`> 3` — the
+  `or vector(default)` fallback keeps the alerts firing at the base
+  multiplier during a gateway-down window. `AlertSupportCatalog` drops the
+  four inlined phantoms and adds the two HTTP series + the two multiplier
+  gauges so the F-16.5.2 cross-check resolves; `charts/lenny/files/alerting-rules.yaml`
+  and `openslo.yaml` regenerated. Resolved in commit <PENDING>.
 
 ### - [x] F-16.5.4 — `WarmPoolReplenishmentSlow` does not derive its threshold from `scalingPolicy.podWarmupSecondsBaseline`. [Medium] — CLOSED
 

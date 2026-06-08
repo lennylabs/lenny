@@ -599,6 +599,15 @@ spec:
             # automation sets it true on the validated release. F-16.5.5.
             - name: LENNY_SLO_VALIDATED
               value: {{ .Values.slo.validated | default false | quote }}
+            # §16.5 line 640 — slo.burnRate.{fast,slow}Multiplier are the
+            # operator-configurable multi-window burn-rate thresholds. The
+            # gateway mirrors them onto the
+            # lenny_slo_burn_rate_{fast,slow}_multiplier gauges every
+            # burn-rate alert reads via scalar(...). F-16.5.3.
+            - name: LENNY_SLO_BURN_RATE_FAST_MULTIPLIER
+              value: {{ .Values.slo.burnRate.fastMultiplier | default 14 | quote }}
+            - name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER
+              value: {{ .Values.slo.burnRate.slowMultiplier | default 3 | quote }}
             {{- if .Values.gateway.opsEvents.nonceCheckpointPath }}
             # §25.3 line 748 — the operational-event nonce checkpoint path.
             # Set with a stable LENNY_REPLICA_ID and a writable volume

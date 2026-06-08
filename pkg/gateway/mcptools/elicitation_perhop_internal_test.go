@@ -78,6 +78,9 @@ func (s *slowAncestorStore) CountActiveSessionsByRuntime(context.Context, string
 func (s *slowAncestorStore) CountActiveSessionsGlobal(context.Context) (int, error) {
 	panic("unused")
 }
+func (s *slowAncestorStore) CountActiveSessionsInRecoveryGlobal(context.Context) (int, error) {
+	panic("unused")
+}
 func (s *slowAncestorStore) CountActiveDelegatedChildrenByUser(context.Context, string, string) (int, error) {
 	panic("unused")
 }

@@ -1707,22 +1707,22 @@ func burnRateAlerts() []Rule {
 	for _, d := range defs {
 		rs = append(rs, Rule{
 			Name:        d.AlertName,
-			Expr:        fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateFastMultiplier),
+			Expr:        fmt.Sprintf(`%s > %s`, d.BurnRateExpr, burnRateFastMultiplierThreshold),
 			For:         burnRateFastWindow,
 			Severity:    SeverityCritical,
 			Summary:     "Fast-window error-budget burn for " + d.Objective,
-			Description: "Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.",
+			Description: "Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.fastMultiplier (default 14) times the sustainable rate over a 1-hour window. The fast-window alert pages on-call.",
 			RunbookURL:  runbook(d.RunbookSlug),
 			SLO:         d.Objective,
 			SpecRef:     "§16.5",
 		})
 		rs = append(rs, Rule{
 			Name:        d.AlertName + "Slow",
-			Expr:        fmt.Sprintf(`%s > %d`, d.BurnRateExpr, burnRateSlowMultiplier),
+			Expr:        fmt.Sprintf(`%s > %s`, d.BurnRateExpr, burnRateSlowMultiplierThreshold),
 			For:         burnRateSlowWindow,
 			Severity:    SeverityWarning,
 			Summary:     "Slow-window error-budget burn for " + d.Objective,
-			Description: "Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.",
+			Description: "Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than slo.burnRate.slowMultiplier (default 3) times the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.",
 			SLO:         d.Objective,
 			SpecRef:     "§16.5",
 		})

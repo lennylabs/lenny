@@ -835,10 +835,13 @@ tests:
       #   gc.leaderElection defaults to true and renders)
       # + LENNY_EVAL_AGGREGATION_REFRESH_SECONDS (§10.7 line 1088,
       #   F-10.7.12 — evalAggregationRefreshSeconds defaults to 0 and
-      #   renders) = 75.
+      #   renders)
+      # + LENNY_SLO_BURN_RATE_FAST_MULTIPLIER /
+      #   LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER (§16.5 line 640, F-16.5.3 —
+      #   slo.burnRate.{fast,slow}Multiplier default 14 / 3 and render) = 77.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 75
+          count: 77
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -880,6 +883,18 @@ tests:
           content:
             name: LENNY_SLO_VALIDATED
             value: "false"
+      # §16.5 line 640 / F-16.5.3 — slo.burnRate.{fast,slow}Multiplier
+      # default to 14 / 3, mirrored onto the burn-rate threshold gauges.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLO_BURN_RATE_FAST_MULTIPLIER
+            value: "14"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER
+            value: "3"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -1251,6 +1266,28 @@ tests:
           content:
             name: LENNY_SLO_VALIDATED
             value: "true"
+
+  # spec: §16.5 line 640 / F-16.5.3 — operator-tuned burn-rate window
+  # multipliers flow through to the gateway env that mirrors them onto
+  # the lenny_slo_burn_rate_{fast,slow}_multiplier threshold gauges.
+  - it: renders overridden LENNY_SLO_BURN_RATE multipliers
+    set:
+      slo.burnRate.fastMultiplier: 10
+      slo.burnRate.slowMultiplier: 2
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLO_BURN_RATE_FAST_MULTIPLIER
+            value: "10"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER
+            value: "2"
 
   # spec: §25.3 line 748 / F-25.3.8 — the operational-event nonce
   # checkpoint path is rendered as LENNY_OPS_NONCE_CHECKPOINT_PATH only

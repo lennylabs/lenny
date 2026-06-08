@@ -409,15 +409,23 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_postgres_write_burst_ceiling_iops", TypeGauge, "Per-tier Postgres burst write-IOPS ceiling"},
 	{"lenny_sandbox_finalizer_terminating_seconds", TypeGauge, "Seconds a sandbox has been blocked on finalizer cleanup, read by FinalizerStuck"},
 
-	// --- Computed / recording-rule output series. The latency and
-	// availability burn-rate alerts read these budget-normalised ratios;
-	// the rendered PrometheusRule recording rules define them from the
-	// underlying histograms and counters.
-	{"lenny_session_creation_error_ratio", TypeGauge, "Session-creation error fraction, read by SessionCreationSuccessRateBurnRate"},
-	{"lenny_session_creation_latency_slow_ratio", TypeGauge, "Fraction of session creations slower than the latency SLO, read by SessionCreationLatencyBurnRate"},
-	{"lenny_session_unavailability_ratio", TypeGauge, "Session unavailability fraction, read by SessionAvailabilityBurnRate"},
-	{"lenny_gateway_unavailability_ratio", TypeGauge, "Gateway unavailability fraction, read by GatewayAvailabilityBurnRate"},
-	{"lenny_checkpoint_duration_slow_ratio", TypeGauge, "Fraction of checkpoints slower than the duration SLO, read by CheckpointDurationBurnRate"},
+	// --- §16.5 burn-rate SLO support. The SessionCreationSuccessRate,
+	// SessionCreationLatency, and GatewayAvailability burn-rate alerts
+	// derive their budget-normalised ratios inline from the gateway HTTP
+	// middleware series (lenny_gateway_requests_total /
+	// lenny_gateway_request_duration_seconds), so those two underlying
+	// series must be catalogued. SessionAvailability reads the
+	// gateway-emitted lenny_session_unavailability_ratio gauge. The
+	// fast/slow multipliers are the §16.5 line 640 operator-tunable
+	// thresholds every burn-rate alert compares against via scalar(...).
+	// CheckpointDuration reads the §16.1 lenny_checkpoint_duration_seconds
+	// histogram (in MetricCatalog), so no support series is needed there.
+	// F-16.5.3.
+	{"lenny_gateway_requests_total", TypeCounter, "Gateway HTTP requests by method/route/status_class, read by GatewayAvailabilityBurnRate and SessionCreationSuccessRateBurnRate"},
+	{"lenny_gateway_request_duration_seconds", TypeHistogram, "Gateway HTTP request duration by method/route, read by SessionCreationLatencyBurnRate"},
+	{"lenny_session_unavailability_ratio", TypeGauge, "Fraction of active sessions in a retry/recovery state, read by SessionAvailabilityBurnRate"},
+	{"lenny_slo_burn_rate_fast_multiplier", TypeGauge, "Operator-configured §16.5 fast-window burn-rate multiplier (default 14), read by every fast-window burn-rate alert"},
+	{"lenny_slo_burn_rate_slow_multiplier", TypeGauge, "Operator-configured §16.5 slow-window burn-rate multiplier (default 3), read by every slow-window burn-rate alert"},
 	{"lenny_artifact_gc_backlog", TypeGauge, "Pending artifact-GC backlog count, read by ArtifactGCBacklog"},
 	{"lenny_billing_correction_rate_24h", TypeGauge, "24-hour billing-correction rate, read by BillingCorrectionRateHigh"},
 	{"lenny_credential_pool_assignable_count", TypeGauge, "Assignable credentials per pool, read by CredentialPoolExhausted"},

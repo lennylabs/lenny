@@ -170,13 +170,17 @@ func TestRenderOpenSLOReferencesCanonicalMetrics(t *testing.T) {
 	}
 	s := string(out)
 	for _, metric := range []string{
-		"lenny_session_creation_error_ratio",
-		"lenny_session_creation_duration_seconds_bucket",
+		// SessionCreationSuccessRate + GatewayAvailability derive from
+		// the gateway HTTP request counter; SessionCreationLatency from
+		// the gateway request-duration histogram; CheckpointDuration from
+		// the checkpoint-duration histogram; SessionAvailability from the
+		// session-unavailability ratio gauge. F-16.5.3.
+		"lenny_gateway_requests_total",
+		"lenny_gateway_request_duration_seconds_bucket",
 		"lenny_session_unavailability_ratio",
-		"lenny_gateway_unavailability_ratio",
 		"lenny_session_startup_duration_seconds_bucket",
 		"lenny_session_time_to_first_token_seconds_bucket",
-		"lenny_checkpoint_duration_slow_ratio",
+		"lenny_checkpoint_duration_seconds_bucket",
 	} {
 		if !strings.Contains(s, metric) {
 			t.Errorf("rendered OpenSLO does not reference canonical metric %q", metric)

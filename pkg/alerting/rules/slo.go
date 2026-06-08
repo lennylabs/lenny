@@ -2,7 +2,10 @@
 
 package rules
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // SLOTierPlaceholder is the token the canonical SLO query templates carry
 // in place of a concrete deployment tier. RenderOpenSLO substitutes it
@@ -27,6 +30,21 @@ const SLOTierPlaceholder = "__DEPLOYMENT_TIER__"
 const (
 	burnRateFastMultiplier = 14
 	burnRateSlowMultiplier = 3
+)
+
+// burnRateFastMultiplierThreshold / burnRateSlowMultiplierThreshold are
+// the PromQL the burn-rate alerts compare against. §16.5 line 640 makes
+// the window multipliers operator-configurable via Helm
+// (slo.burnRate.fastMultiplier / slowMultiplier). The gateway mirrors
+// those values onto the lenny_slo_burn_rate_{fast,slow}_multiplier gauges
+// (gatewaymetrics.SetSLOBurnRateMultipliers), and each alert reads the
+// gauge via scalar(...). The `or vector(default)` fallback keeps the
+// alert firing at the §16.5 base multiplier when the gauge is absent (a
+// gateway-down window), so an operator cannot silence the burn-rate
+// alerts by losing the threshold-mirror gauge. F-16.5.3.
+var (
+	burnRateFastMultiplierThreshold = fmt.Sprintf("scalar(lenny_slo_burn_rate_fast_multiplier or vector(%d))", burnRateFastMultiplier)
+	burnRateSlowMultiplierThreshold = fmt.Sprintf("scalar(lenny_slo_burn_rate_slow_multiplier or vector(%d))", burnRateSlowMultiplier)
 )
 
 var (
@@ -98,11 +116,21 @@ func SLODefinitions() []SLODefinition {
 			AlertName:    "SessionCreationSuccessRateBurnRate",
 			Objective:    "Session creation success rate >= 99.5%",
 			Target:       0.995,
-			RunbookSlug:  "session-creation-success-rate-burn-rate",
-			BurnRateExpr: `lenny_session_creation_error_ratio / (1 - 0.995)`,
+			RunbookSlug: "session-creation-success-rate-burn-rate",
+			// Session creation is the two-step POST /v1/sessions handler
+			// (handleCreate): a 5xx response is a failed creation attempt,
+			// a 4xx is a client error excluded from the availability
+			// budget. The error rate over total attempts is the §16.5
+			// "Successful session starts / total attempts" SLI. The
+			// gateway HTTP middleware (gatewaymetrics.Middleware) emits
+			// lenny_gateway_requests_total{method,route,status_class} with
+			// route="/v1/sessions" for the create handler. spec: §16.5
+			// lines 613, 631, 640.
+			BurnRateExpr: `(sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions",status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions"}[1h]))) / (1 - 0.995)`,
 			SLI: SLIRatio{
-				Good:  `(1 - lenny_session_creation_error_ratio{` + t + `})`,
-				Total: `vector(1)`,
+				Counter: true,
+				Good:    `sum(rate(lenny_gateway_requests_total{` + t + `,method="POST",route="/v1/sessions",status_class!="5xx"}[1h]))`,
+				Total:   `sum(rate(lenny_gateway_requests_total{` + t + `,method="POST",route="/v1/sessions"}[1h]))`,
 			},
 		},
 		{
@@ -110,12 +138,20 @@ func SLODefinitions() []SLODefinition {
 			AlertName:    "SessionCreationLatencyBurnRate",
 			Objective:    "Session creation latency P99 < 500ms",
 			Target:       0.99,
-			RunbookSlug:  "session-creation-latency-burn-rate",
-			BurnRateExpr: `lenny_session_creation_latency_slow_ratio / 0.01`,
+			RunbookSlug: "session-creation-latency-burn-rate",
+			// The slow fraction is the share of POST /v1/sessions creation
+			// requests slower than the 500ms SLO, against the 1% error
+			// budget (P99). The le="0.5" boundary is a prometheus.DefBuckets
+			// bucket on lenny_gateway_request_duration_seconds, the HTTP
+			// middleware histogram labelled by method/route; route is
+			// "/v1/sessions" for the two-step create handler, which does no
+			// pod-claim work (startup latency is the separate
+			// StartupLatencyBurnRate SLO). spec: §16.5 lines 614, 632, 640.
+			BurnRateExpr: `(1 - (sum(rate(lenny_gateway_request_duration_seconds_bucket{method="POST",route="/v1/sessions",le="0.5"}[1h])) / sum(rate(lenny_gateway_request_duration_seconds_count{method="POST",route="/v1/sessions"}[1h])))) / 0.01`,
 			SLI: SLIRatio{
 				Counter: true,
-				Good:    `sum(rate(lenny_session_creation_duration_seconds_bucket{` + t + `,le="0.5"}[1h]))`,
-				Total:   `sum(rate(lenny_session_creation_duration_seconds_count{` + t + `}[1h]))`,
+				Good:    `sum(rate(lenny_gateway_request_duration_seconds_bucket{` + t + `,method="POST",route="/v1/sessions",le="0.5"}[1h]))`,
+				Total:   `sum(rate(lenny_gateway_request_duration_seconds_count{` + t + `,method="POST",route="/v1/sessions"}[1h]))`,
 			},
 		},
 		{
@@ -123,7 +159,14 @@ func SLODefinitions() []SLODefinition {
 			AlertName:    "SessionAvailabilityBurnRate",
 			Objective:    "Session availability >= 99.9%",
 			Target:       0.999,
-			RunbookSlug:  "session-availability-burn-rate",
+			RunbookSlug: "session-availability-burn-rate",
+			// lenny_session_unavailability_ratio is the fraction of active
+			// sessions currently in a retry/recovery state (resume_pending,
+			// resuming, awaiting_client_action) — the inverse of "uptime of
+			// sessions not in retry/recovery state". The gateway export
+			// loop refreshes it (SetSessionUnavailabilityRatio) as
+			// recovery_sessions / active_sessions. spec: §16.5 lines 616,
+			// 633, 640.
 			BurnRateExpr: `lenny_session_unavailability_ratio / (1 - 0.999)`,
 			SLI: SLIRatio{
 				Good:  `(1 - lenny_session_unavailability_ratio{` + t + `})`,
@@ -135,11 +178,18 @@ func SLODefinitions() []SLODefinition {
 			AlertName:    "GatewayAvailabilityBurnRate",
 			Objective:    "Gateway availability >= 99.95%",
 			Target:       0.9995,
-			RunbookSlug:  "gateway-availability-burn-rate",
-			BurnRateExpr: `lenny_gateway_unavailability_ratio / (1 - 0.9995)`,
+			RunbookSlug: "gateway-availability-burn-rate",
+			// Gateway availability is the share of HTTP requests served
+			// without a 5xx across every route — a request that returns
+			// 5xx was not served by a healthy replica. The HTTP middleware
+			// emits lenny_gateway_requests_total{status_class}; the 5xx
+			// fraction over total is the error rate, normalised by the
+			// 0.05% availability budget. spec: §16.5 lines 617, 634, 640.
+			BurnRateExpr: `(sum(rate(lenny_gateway_requests_total{status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total[1h]))) / (1 - 0.9995)`,
 			SLI: SLIRatio{
-				Good:  `(1 - lenny_gateway_unavailability_ratio{` + t + `})`,
-				Total: `vector(1)`,
+				Counter: true,
+				Good:    `sum(rate(lenny_gateway_requests_total{` + t + `,status_class!="5xx"}[1h]))`,
+				Total:   `sum(rate(lenny_gateway_requests_total{` + t + `}[1h]))`,
 			},
 		},
 		{
@@ -202,11 +252,17 @@ func SLODefinitions() []SLODefinition {
 			AlertName:    "CheckpointDurationBurnRate",
 			Objective:    "Checkpoint duration P95 < 2s (<= 100MB)",
 			Target:       0.95,
-			RunbookSlug:  "checkpoint-duration-burn-rate",
-			BurnRateExpr: `lenny_checkpoint_duration_slow_ratio / 0.05`,
+			RunbookSlug: "checkpoint-duration-burn-rate",
+			// The slow fraction is the share of checkpoints slower than the
+			// 2s SLO, against the 5% error budget. le="2" is an explicit
+			// bucket boundary on lenny_checkpoint_duration_seconds, the
+			// end-to-end checkpoint wall-time histogram the gateway emits.
+			// spec: §16.5 line 638, §16.1 line 103.
+			BurnRateExpr: `(1 - (sum(rate(lenny_checkpoint_duration_seconds_bucket{le="2"}[1h])) / sum(rate(lenny_checkpoint_duration_seconds_count[1h])))) / 0.05`,
 			SLI: SLIRatio{
-				Good:  `(1 - lenny_checkpoint_duration_slow_ratio{` + t + `})`,
-				Total: `vector(1)`,
+				Counter: true,
+				Good:    `sum(rate(lenny_checkpoint_duration_seconds_bucket{` + t + `,le="2"}[1h]))`,
+				Total:   `sum(rate(lenny_checkpoint_duration_seconds_count{` + t + `}[1h]))`,
 			},
 		},
 	}

@@ -168,6 +168,28 @@ func IsTerminal(s State) bool {
 	return false
 }
 
+// RecoveryStates returns the retry/recovery subset: states in which a
+// session is not actively serving because it is waiting on a resume
+// (resume_pending), mid-resume (resuming), or stalled awaiting a client
+// action (awaiting_client_action). The §16.5 Session availability SLO is
+// the "uptime of sessions not in retry/recovery state", so these states
+// are the unavailable fraction the SessionAvailabilityBurnRate alert
+// reads. spec: §16.5 line 616, §6.2 lines 246-254, §7.3.
+func RecoveryStates() []State {
+	return []State{StateResumePending, StateResuming, StateAwaitingClientAction}
+}
+
+// IsRecovery reports whether s is a retry/recovery state per §16.5
+// line 616.
+func IsRecovery(s State) bool {
+	for _, r := range RecoveryStates() {
+		if s == r {
+			return true
+		}
+	}
+	return false
+}
+
 // CascadePolicy is the §8.10 cascadeOnFailure policy: it governs the
 // fate of a session's children when the session reaches a terminal
 // state. The name is historical — it applies on every terminal

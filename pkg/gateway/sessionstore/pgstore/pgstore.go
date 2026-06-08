@@ -783,6 +783,24 @@ func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// CountActiveSessionsInRecoveryGlobal implements Store — the §16.5
+// Session availability SLI numerator. It counts live sessions across
+// every tenant in a retry/recovery state; the recovery predicate matches
+// session.RecoveryStates() verbatim.
+// spec: §16.5 line 616 (Session availability SLO). F-16.5.3.
+func (s *Store) CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error) {
+	var count int
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE state IN ('resume_pending', 'resuming', 'awaiting_client_action')`).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active sessions in recovery global: %w", err)
+	}
+	return count, nil
+}
+
 // CountActiveDelegatedChildrenByUser implements Store — the §11.1
 // per-user active-delegated-children admission count. It counts live
 // (non-terminal) sessions owned by userID within the tenant that carry

@@ -379,6 +379,21 @@ func (s *Store) CountActiveSessionsGlobal(_ context.Context) (int, error) {
 	return count, nil
 }
 
+// CountActiveSessionsInRecoveryGlobal implements the §16.5 Session
+// availability SLI numerator: live sessions across every tenant in a
+// retry/recovery state. F-16.5.3.
+func (s *Store) CountActiveSessionsInRecoveryGlobal(_ context.Context) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if session.IsRecovery(row.State) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // CountActiveDelegatedChildrenByUser implements the §11.1 per-user
 // active-delegated-children admission count: live (non-terminal)
 // sessions owned by userID within tenantID that carry a non-empty

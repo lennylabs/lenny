@@ -607,6 +607,12 @@ func main() {
 	credentialPoolLowThreshold := flag.Float64("credential-pool-low-threshold",
 		envFloat("LENNY_CREDENTIAL_POOL_LOW_THRESHOLD", 0.80),
 		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: the per-pool utilisation fraction the CredentialPoolLow alert reads via scalar(lenny_credential_pool_low_threshold). Tier presets tighten this (Tier 2: 0.70, Tier 3: 0.60). Override via LENNY_CREDENTIAL_POOL_LOW_THRESHOLD. F-25.13.2.")
+	sloBurnRateFastMultiplier := flag.Float64("slo-burn-rate-fast-multiplier",
+		envFloat("LENNY_SLO_BURN_RATE_FAST_MULTIPLIER", 14),
+		"§16.5 line 640 slo.burnRate.fastMultiplier: the fast-window (1h) burn-rate multiplier every burn-rate alert pages at, read via scalar(lenny_slo_burn_rate_fast_multiplier). Default 14. Override via LENNY_SLO_BURN_RATE_FAST_MULTIPLIER. F-16.5.3.")
+	sloBurnRateSlowMultiplier := flag.Float64("slo-burn-rate-slow-multiplier",
+		envFloat("LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER", 3),
+		"§16.5 line 640 slo.burnRate.slowMultiplier: the slow-window (6h) burn-rate multiplier every burn-rate alert warns at, read via scalar(lenny_slo_burn_rate_slow_multiplier). Default 3. Override via LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER. F-16.5.3.")
 	billingFlushIntervalMs := flag.Int("billing-flush-interval-ms",
 		envInt("LENNY_BILLING_FLUSH_INTERVAL_MS", int(failover.DefaultFlushInterval/time.Millisecond)),
 		"§12.3 line 76 billingFlushIntervalMs: cadence (ms) at which the billing failover flusher drains the Tier 2 write-ahead buffer into Postgres in multi-row batches. Default 500. Override via LENNY_BILLING_FLUSH_INTERVAL_MS. F-12.3.13.")
@@ -2830,6 +2836,15 @@ func main() {
 		log.Fatalf("lenny-gateway: --credential-pool-low-threshold must be in [0, 1] (got %v) (§25.13 line 4737)", *credentialPoolLowThreshold)
 	}
 	gwMetrics.SetCredentialPoolLowThreshold(*credentialPoolLowThreshold)
+	// §16.5 line 640: mirror the operator-configured burn-rate window
+	// multipliers onto the lenny_slo_burn_rate_{fast,slow}_multiplier
+	// gauges every burn-rate alert reads via scalar(...). Both must be
+	// positive — a non-positive multiplier would make every burn-rate
+	// alert fire continuously (ratio > 0 always exceeds it). F-16.5.3.
+	if *sloBurnRateFastMultiplier <= 0 || *sloBurnRateSlowMultiplier <= 0 {
+		log.Fatalf("lenny-gateway: --slo-burn-rate-fast-multiplier and --slo-burn-rate-slow-multiplier must be > 0 (got %v / %v) (§16.5 line 640)", *sloBurnRateFastMultiplier, *sloBurnRateSlowMultiplier)
+	}
+	gwMetrics.SetSLOBurnRateMultipliers(*sloBurnRateFastMultiplier, *sloBurnRateSlowMultiplier)
 
 	// §4.1 extractionThresholds: read the configured per-subsystem
 	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered
@@ -6788,6 +6803,7 @@ func main() {
 	// and the §16.5 GatewaySessionBudgetNearExhaustion alert.
 	hpaTenantLister := tenantsLister{tenants}
 	exportHPAGauges(context.Background(), sessions, hpaTenantLister, eventBus, gwMetrics)
+	exportSessionAvailabilityRatio(context.Background(), sessions, gwMetrics)
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -6797,6 +6813,7 @@ func main() {
 				return
 			case <-ticker.C:
 				exportHPAGauges(watchdogCtx, sessions, hpaTenantLister, eventBus, gwMetrics)
+				exportSessionAvailabilityRatio(watchdogCtx, sessions, gwMetrics)
 			}
 		}
 	}()
@@ -8719,6 +8736,35 @@ func exportHPAGauges(ctx context.Context, sessions sessionstore.Store, lister te
 		}
 	}
 	m.SetActiveSessions(active)
+}
+
+// exportSessionAvailabilityRatio refreshes the §16.5 Session availability
+// SLI: lenny_session_unavailability_ratio is the fraction of active
+// sessions currently in a retry/recovery state (resume_pending, resuming,
+// awaiting_client_action), the inverse of "uptime of sessions not in
+// retry/recovery state". The SessionAvailabilityBurnRate alert reads it.
+// The ratio is 0 when there are no active sessions (an idle gateway is
+// fully available). F-16.5.3.
+func exportSessionAvailabilityRatio(ctx context.Context, sessions sessionstore.Store, m *gatewaymetrics.Metrics) {
+	active, err := sessions.CountActiveSessionsGlobal(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("lenny-gateway: session-availability gauge export: active count failed: %v", err)
+		}
+		return
+	}
+	if active == 0 {
+		m.SetSessionUnavailabilityRatio(0)
+		return
+	}
+	recovery, err := sessions.CountActiveSessionsInRecoveryGlobal(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("lenny-gateway: session-availability gauge export: recovery count failed: %v", err)
+		}
+		return
+	}
+	m.SetSessionUnavailabilityRatio(float64(recovery) / float64(active))
 }
 
 // exportCircuitBreakerMetrics refreshes the §16.1 circuit-breaker

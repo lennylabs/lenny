@@ -443,6 +443,62 @@ func TestSetAlertThresholds_spec_25_13_4737(t *testing.T) {
 	}
 }
 
+// TestSetSLOBurnRateMultipliers_spec_16_5_640 verifies the §16.5 line
+// 640 operator-tunable burn-rate window multipliers: both gauges
+// pre-materialize at their base-Helm defaults (14 / 3) so every
+// burn-rate alert's scalar(lenny_slo_burn_rate_*_multiplier) lookup is
+// finite before the gateway main has called the setter, and the setter
+// flows an operator override through to /metrics. F-16.5.3.
+func TestSetSLOBurnRateMultipliers_spec_16_5_640(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_slo_burn_rate_fast_multiplier 14",
+		"lenny_slo_burn_rate_slow_multiplier 3",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing default burn-rate multiplier %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+	m.SetSLOBurnRateMultipliers(10, 2)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_slo_burn_rate_fast_multiplier 10",
+		"lenny_slo_burn_rate_slow_multiplier 2",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing overridden burn-rate multiplier %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+}
+
+// TestSetSessionUnavailabilityRatio_spec_16_5 verifies the §16.5
+// SessionAvailabilityBurnRate SLI gauge: it materializes at 0 (an idle
+// gateway is fully available) and the setter publishes the export-loop
+// recovery/active fraction. F-16.5.3.
+func TestSetSessionUnavailabilityRatio_spec_16_5(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_session_unavailability_ratio 0") {
+		t.Errorf("/metrics missing default unavailability ratio 0\n---\n%s", rr.Body.String())
+	}
+	m.SetSessionUnavailabilityRatio(0.25)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_session_unavailability_ratio 0.25") {
+		t.Errorf("/metrics missing set unavailability ratio 0.25\n---\n%s", rr.Body.String())
+	}
+}
+
 // spec: §4.1 / §16.5 — SetMinReplicas / SetStreamCeiling /
 // SetReplicaCount drive the three scalar gauges referenced from the
 // §16.5 alert rules. Each value must round-trip through /metrics so

@@ -432,7 +432,9 @@ func TestTTFTBurnRateUsesInlineHistogramExpression_spec_6_3_F_6_3_3(t *testing.T
 		`le="10"`,
 		"lenny_session_time_to_first_token_seconds_count",
 		"/ 0.05",
-		"> 14",
+		// §16.5 line 640 — the fast-window page threshold is the
+		// operator-tunable multiplier scalar (default 14). F-16.5.3.
+		"> scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))",
 	}
 	for _, frag := range wantFragments {
 		if !strings.Contains(got.Expr, frag) {
