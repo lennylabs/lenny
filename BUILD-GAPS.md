@@ -12389,7 +12389,7 @@ Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:98`.
 
 **Resolution:** F6 (the preStop staged drain) has since landed in `pkg/gateway/prestop`. Added the `lenny_gateway_sigkill_streams_total{pool,service_instance_id}` counter to `gatewaymetrics`, extended the prestop `CapMetricsEmitter` interface with `IncSigkillStreams`, and emit it once per session whose eviction checkpoint returns `context.DeadlineExceeded` during the drain — those are the in-flight streams the kubelet SIGKILLs at the grace deadline. The hook `Summary` also reports `sigkilled_streams`. Three tier-1 unit tests cover the deadline-exceeded emission, the non-deadline-failure no-emit path, and the label values. (commit 7655a55a)
 
-### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — OPEN
+### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — DEFERRED
 
 Spec: line 61 ("increment the `lenny_coordinator_handoff_stale_total` counter for observability").
 
@@ -12398,6 +12398,8 @@ Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:221`
 **Reopened 2026-06-07 — prior deferral:** The adapter-side `CoordinatorFence` and `CheckpointBarrier` server handlers (`pkg/adapter/coordination.go:117/182`) return `coordinator_handoff_stale` on stale-generation rejections (added by F-4.7.2 / F-10.1.7-precursor commit `d353a8ef`), but `pkg/gateway/adapterclient/client.go` has no `CoordinatorFence` / `CheckpointBarrier` wrappers yet, so no gateway code path observes such a rejection. The counter activates when the gateway gains those callers — pairs with the still-OPEN F-10.1.7 (CheckpointBarrier protocol). Deferring until that wiring lands.
 
 **Re-deferred (commit `88cbaeb8`):** Partially unblocked but not cleanly. F-10.1.7 closed and `adapterclient.Client.CheckpointBarrier` now exists, surfacing the FailedPrecondition stale rejection, and `barrier.Coordinator.Dispatch` records a `Stale` outcome per target — so a gateway caller can now observe the rejection. The remaining blockers are the still-absent `CoordinatorFence` client wrapper (F-11.3.14) and the live binary wiring that drives the barrier coordinator and emits the counter in production (F-10.1.19). Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19; the counter genuinely activates when that wiring lands.
+
+**Re-verified (this batch) — status DEFERRED:** The counter has a production emit site only once a gateway caller drives `barrier.Coordinator.Dispatch` (or a `CoordinatorFence` client wrapper) on the live drain/handoff path and observes the `Stale` outcome. That driver is the still-DEFERRED F-10.1.19 cluster-integration wiring; no `barrier.` caller exists in `pkg/gateway/prestop` or `cmd/lenny-gateway` today. Emitting the counter now would require fabricating a stale-rejection observation with no real coordinator dispatch behind it, so this stays blocked on the F-10.1.19 cluster-infra integration (and the F-11.3.14 `CoordinatorFence` wrapper).
 
 ### - [x] F-10.1.17 — Concurrent-workspace pod connection-loss whole-pod replacement trigger uncovered. (Low) [Medium] — CLOSED
 
@@ -12415,7 +12417,7 @@ Implementation: no `sessionAffinity` is configured on the `lenny-gateway` Servic
 
 **Resolution (positive confirmation, no code change):** Informational finding; the implementation is spec-aligned. `charts/lenny/templates/gateway-deployment.yaml` Service block sets no `sessionAffinity` (the spec's Correctness rule treats sticky routing as optimization), and `pkg/storerouter` carries `SessionShard` for prefix-based routing. The finding's own conclusion ("No action required") stands.
 
-### - [ ] F-10.1.19 — CheckpointBarrier protocol: cmd/lenny-gateway integration wiring. (High) [Medium] — OPEN
+### - [ ] F-10.1.19 — CheckpointBarrier protocol: cmd/lenny-gateway integration wiring. (High) [Medium] — DEFERRED
 
 Carved from F-10.1.7. The §10.1 lines 163-181 CheckpointBarrier protocol logic, persistence (`session_checkpoint_meta` migration 0148 + `pkg/gateway/sessioncheckpointmeta`), gateway client RPC (`adapterclient.Client.CheckpointBarrier`), coordinator (`pkg/gateway/barrier`), adapter side (`pkg/adapter/coordination.go`), and the two previously-missing emitters (`lenny_coordinator_resume_deduplicated_total`, `lenny_prestop_barrier_target_source_total`) are all built and unit-tested. The remaining work is the binary-level integration that connects those pieces to the live drain/resume paths against cluster primitives:
 
@@ -12425,6 +12427,8 @@ Carved from F-10.1.7. The §10.1 lines 163-181 CheckpointBarrier protocol logic,
 - Hooking `barrier.Coordinator.Dispatch` into `pkg/gateway/prestop` Stage 1 (so the barrier fires when readiness flips) and `barrier.Coordinator.ResumeDedup` into the coordinator-handoff resume path, plus stamping the live `tool_call_sequence_number` onto dispatched tool calls so the dedup comparison has a real sequence to compare against.
 
 DEFERRED because this wiring depends on cluster-resident primitives (per-pod adapter dial targets, the lease-mirror / EndpointSlice surface, and MinIO) that are exercised at tier 4/5 integration rather than tier-1 here.
+
+**Re-verified (this batch) — status DEFERRED:** Re-confirmed the split. `pkg/gateway/barrier` carries the `Coordinator`, the `Dispatcher` / `TargetLister` / `ManifestReader` interfaces, and the unit-tested `Dispatch` / `ResumeDedup` logic, but a grep for `barrier.` across `pkg/gateway/prestop` and `cmd/lenny-gateway/main.go` returns nothing — no production constructs a Dispatcher that dials each coordinated pod by IP, no TargetLister enumerates the held coordination leases, no ManifestReader reads the MinIO checkpoint manifest, and nothing hooks `Coordinator.Dispatch` into the preStop drain. Each of those is a cluster-runtime integration (pod-IP dialing, a `coordination_lease` mirror table or EndpointSlice watch, MinIO) with no tier-1-exercisable surface on this darwin/no-cluster host, which is the Rule-P "infrastructure unavailable in this environment" exception. The protocol, persistence, client RPC, and coordinator are complete; only the binary integration against cluster primitives remains.
 
 ### Severity summary
 
@@ -16499,13 +16503,15 @@ Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Me
 
 **Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed; this batch added the sibling `adapterclient.Client.CheckpointBarrier` wrapper but not a `CoordinatorFence` client wrapper, and the 5s-timeout retry/relinquish driver still depends on the live handoff wiring. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19 (the carved cmd/lenny-gateway barrier/handoff integration), which is where the `CoordinatorFence` wrapper and its driver land.
 
-### - [ ] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — OPEN
+### - [ ] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 210. The pool-config validator (`pkg/admission/pool_config_validator/validator.go:18`) defers it as a Postgres-authoritative field, and metric catalog entries exist (`pkg/observability/metrics/catalog.go:93-94`). There is no gateway-side enforcement: `grep -rn "BarrierAck\|barrier_ack" --include="*.go" pkg/` returns only the metric registrations and the validator comment.
 
 **Reopened 2026-06-07 — prior deferral:** gated on F-10.1.7 (CheckpointBarrier protocol unimplemented, High, OPEN). The 90s timer is the per-replica ACK budget for that protocol; landing it without the protocol is meaningless.
 
 **Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed. `barrier.Coordinator.Dispatch` now fans out under the caller-bounded single wall-clock deadline the spec sets to `checkpointBarrierAckTimeoutSeconds` (§10.1 line 167), so the protocol the 90s timer budgets exists. The remaining gap is the live binary wiring that reads the pool's `checkpointBarrierAckTimeoutSeconds`, bounds the Dispatch context with it during the preStop drain, and enforces the per-replica ACK budget. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19.
+
+**Re-verified (this batch) — status DEFERRED:** The 90s budget is the per-replica ACK deadline the preStop-drain `Coordinator.Dispatch` enforces, and that drain wiring is exactly the still-DEFERRED F-10.1.19 (no `barrier.` caller exists in `pkg/gateway/prestop` or `cmd/lenny-gateway`). Reading the pool's `checkpointBarrierAckTimeoutSeconds` and bounding the Dispatch context with it cannot be exercised without the cluster-resident Dispatcher/TargetLister/ManifestReader F-10.1.19 supplies, so this remains blocked on that cluster-infra integration rather than being a standalone tier-1 fix.
 
 ### - [x] F-11.3.16 — Elicitation per-hop forwarding timeout (30s, hard-coded) is absent [Medium] — CLOSED
 
