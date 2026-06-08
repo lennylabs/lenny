@@ -380,3 +380,148 @@ func TestExperimentResultsNotFound(t *testing.T) {
 		t.Errorf("results for unknown experiment: status %d, want 404", rr.Code)
 	}
 }
+
+// fakeAggReader wraps a real evalstore.Store and adds the §10.7
+// materialized-view read path, returning canned aggregates distinct
+// from the base-table rows so a test can tell which path served the
+// response. spec: §10.7 lines 954, 1088. F-10.7.12.
+type fakeAggReader struct {
+	evalstore.Store
+	aggregates map[string]evalstore.VariantAggregate
+	reads      int
+	refreshed  int
+}
+
+func (f *fakeAggReader) AggregatesByExperiment(_ context.Context, _, _ string) (map[string]evalstore.VariantAggregate, error) {
+	f.reads++
+	return f.aggregates, nil
+}
+
+func (f *fakeAggReader) RefreshAggregates(context.Context) error { f.refreshed++; return nil }
+
+func newMatviewAdmin(t *testing.T, agg *fakeAggReader, enabled bool) (*admin.Router, experimentstore.Store) {
+	t.Helper()
+	exps := experimentstore.NewMemory()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+	}).WithExperiments(exps).WithEvalResults(agg).WithEvalAggregateView(enabled)
+	return router, exps
+}
+
+// spec: §10.7 line 1088 — an unfiltered, no-breakdown request is served
+// from the lenny_eval_aggregates matview when the view is enabled.
+func TestExperimentResultsRoutesUnfilteredToMatview_spec_10_7_1088(t *testing.T) {
+	agg := &fakeAggReader{
+		Store: evalstore.NewMemory(0, nil),
+		aggregates: map[string]evalstore.VariantAggregate{
+			"treatment": {
+				VariantID: "treatment", SampleCount: 5,
+				Scorers: map[string]evalstore.ScorerAggregate{
+					"judge": {Count: 3, Mean: 0.9, P50: 0.9, P95: 0.95,
+						Dimensions: map[string]evalstore.ScorerAggregate{
+							"coherence": {Count: 2, Mean: 0.8, P50: 0.8, P95: 0.85},
+						}},
+				},
+			},
+		},
+	}
+	router, exps := newMatviewAdmin(t, agg, true)
+	seedExperiment(t, exps, "exp_1")
+	// Base-table rows say something different (mean 0.1); the matview path
+	// must win.
+	seedEval(t, agg.Store, "s9", "exp_1", "treatment", "judge", 0.1)
+
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_1/results?tenantId=acme", nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if agg.reads != 1 {
+		t.Fatalf("matview AggregatesByExperiment calls = %d, want 1", agg.reads)
+	}
+	var res admin.ExperimentResults
+	_ = json.Unmarshal(rr.Body.Bytes(), &res)
+	var treatment admin.VariantResults
+	for _, v := range res.Variants {
+		if v.VariantID == "treatment" {
+			treatment = v
+		}
+	}
+	if treatment.SampleCount != 5 {
+		t.Errorf("sampleCount = %d, want 5 (matview value, not the base-table 1)", treatment.SampleCount)
+	}
+	st := treatment.Scorers["judge"]
+	if st.Count != 3 || st.Mean < 0.89 || st.Mean > 0.91 {
+		t.Errorf("judge stats = %+v, want count 3 mean ~0.9 from the matview", st)
+	}
+	if st.Dimensions["coherence"].Count != 2 {
+		t.Errorf("coherence dimension not projected from the matview: %+v", st.Dimensions)
+	}
+}
+
+// spec: §10.7 line 954 — a filtered or broken-down request bypasses the
+// matview and recomputes from the base table.
+func TestExperimentResultsFilteredBypassesMatview_spec_10_7_954(t *testing.T) {
+	agg := &fakeAggReader{
+		Store:      evalstore.NewMemory(0, nil),
+		aggregates: map[string]evalstore.VariantAggregate{"treatment": {VariantID: "treatment", SampleCount: 999}},
+	}
+	router, exps := newMatviewAdmin(t, agg, true)
+	seedExperiment(t, exps, "exp_1")
+	seedEval(t, agg.Store, "s1", "exp_1", "treatment", "judge", 0.4)
+
+	for _, query := range []string{
+		"?tenantId=acme&inherited=true",
+		"?tenantId=acme&delegation_depth=0",
+		"?tenantId=acme&exclude_post_conclusion=true",
+		"?tenantId=acme&breakdown_by=inherited",
+	} {
+		agg.reads = 0
+		rr := doAdminReq(t, router.Handler(), http.MethodGet,
+			"/v1/admin/experiments/exp_1/results"+query, nil, withAdminPrincipal)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status %d, body %s", query, rr.Code, rr.Body.String())
+		}
+		if agg.reads != 0 {
+			t.Errorf("%s: matview was consulted (reads=%d), want base-table path", query, agg.reads)
+		}
+	}
+}
+
+// spec: §10.7 line 1088 — with the matview disabled, even an unfiltered
+// request aggregates on read from the base table.
+func TestExperimentResultsMatviewDisabledUsesBaseTable_spec_10_7_1088(t *testing.T) {
+	agg := &fakeAggReader{
+		Store:      evalstore.NewMemory(0, nil),
+		aggregates: map[string]evalstore.VariantAggregate{"treatment": {VariantID: "treatment", SampleCount: 999}},
+	}
+	router, exps := newMatviewAdmin(t, agg, false)
+	seedExperiment(t, exps, "exp_1")
+	seedEval(t, agg.Store, "s1", "exp_1", "treatment", "judge", 0.4)
+
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_1/results?tenantId=acme", nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if agg.reads != 0 {
+		t.Errorf("matview consulted while disabled (reads=%d)", agg.reads)
+	}
+}
+
+// spec: §10.7 line 950 — a malformed filter is a 400 on the matview path
+// too (validated before the read path is chosen).
+func TestExperimentResultsMalformedFilterRejected_spec_10_7_950(t *testing.T) {
+	agg := &fakeAggReader{Store: evalstore.NewMemory(0, nil)}
+	router, exps := newMatviewAdmin(t, agg, true)
+	seedExperiment(t, exps, "exp_1")
+
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_1/results?tenantId=acme&inherited=maybe", nil, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed inherited: status %d, want 400", rr.Code)
+	}
+	if agg.reads != 0 {
+		t.Errorf("matview consulted on a malformed request (reads=%d)", agg.reads)
+	}
+}

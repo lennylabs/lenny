@@ -832,10 +832,13 @@ tests:
       #   LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR (§12.6 lines 683-699,
       #   F-12.6.22 / F-12.6.23 — all four render at their defaults)
       # + LENNY_GATEWAY_LEADER_ELECTION (§12.5 lines 317, 332, F-12.5.10 —
-      #   gc.leaderElection defaults to true and renders) = 74.
+      #   gc.leaderElection defaults to true and renders)
+      # + LENNY_EVAL_AGGREGATION_REFRESH_SECONDS (§10.7 line 1088,
+      #   F-10.7.12 — evalAggregationRefreshSeconds defaults to 0 and
+      #   renders) = 75.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 74
+          count: 75
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1502,6 +1505,34 @@ tests:
           content:
             name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
             value: "500"
+
+  # spec: §10.7 line 1088 — the lenny_eval_aggregates materialized-view
+  # refresh interval. The chart default (0) keeps on-read aggregation;
+  # a positive override enables the matview read + periodic REFRESH.
+  # F-10.7.12.
+  - it: renders the eval-aggregation refresh interval from gateway.evalAggregationRefreshSeconds
+    set:
+      gateway.evalAggregationRefreshSeconds: 60
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS
+            value: "60"
+
+  - it: renders the eval-aggregation refresh interval at the chart default of zero
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS
+            value: "0"
 
   # spec: §11.1 lines 10-11 — upload-admission caps. The chart default
   # (0) leaves each scope unlimited, so no env var is rendered. F-11.1.5,

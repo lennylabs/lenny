@@ -15148,7 +15148,7 @@ documented error catalog is divergent from the actual wire response.
 
 ---
 
-### - [ ] F-10.7.12 — 12  `lenny_eval_aggregates` materialized view is not defined in any migration [Medium] — OPEN
+### - [ ] F-10.7.12 — 12  `lenny_eval_aggregates` materialized view is not defined in any migration [Medium] — CLOSED
 
 **Spec:** §10.7 line 1088 — "the materialized view (`lenny_eval_aggregates`)
 is defined in the schema migration system (alongside all other DDL) and is
@@ -15187,6 +15187,35 @@ the tier-2 `tests/tier2_component/migrations` harness cannot run). Deferring to
 a dedicated batch where the migration can be applied and the cross-tenant
 isolation re-verified, rather than ship unvalidated DDL that could break the
 prod-schema migration round-trip. The default on-read path remains functional.
+
+**Resolution (commit `<PENDING>`):** Built the full vertical, validated
+against real Postgres (Docker is available here). Migration 0156 defines
+`lenny_eval_aggregates` as a `WITH DATA` matview carrying three grains
+disambiguated by an `agg_kind` column — `variant` (`count(DISTINCT
+session_id)` per variant), `scorer` (`count`/`avg`/`percentile_disc(0.5)`/
+`percentile_disc(0.95)` over the top-level `score`), and `dimension` (the same
+over each `jsonb_each_text(scores)` value). `percentile_disc` reproduces the
+gateway's on-read nearest-rank percentile (`ceil(q*n)`) exactly, so the matview
+and base-table paths return identical numbers. The §12.3 RLS tension the prior
+note named is resolved without a spec change: a dedicated `BYPASSRLS`
+`lenny_eval_aggregator` role owns the matview and the `SECURITY DEFINER`
+`refresh_lenny_eval_aggregates()` function (so a cross-tenant `REFRESH ...
+CONCURRENTLY` populates every tenant while `lenny_app` never gains BYPASSRLS),
+and `lenny_app` reads only through the tenant-scoped `lenny_eval_aggregates_tenant`
+view (filtered by `app.current_tenant`, `security_barrier`, no direct matview
+grant). `evalpg.Store` gained `AggregatesByExperiment` (reads the tenant view)
+and `RefreshAggregates` (calls the definer function); the gateway adds the
+`--eval-aggregation-refresh-seconds` flag / `LENNY_EVAL_AGGREGATION_REFRESH_SECONDS`
+env / `gateway.evalAggregationRefreshSeconds` Helm value (default 0). When
+positive against Postgres, the gateway schedules `REFRESH MATERIALIZED VIEW
+CONCURRENTLY` on the interval and the §10.7 results handler routes the
+unfiltered, no-breakdown request to the matview (filtered or broken-down
+requests still recompute from `eval_results`, §10.7 line 954). Tier-1 routing
+tests (matview vs base-table selection, malformed-filter 400) and a tier-2
+component suite against a real container (DDL/ownership/BYPASSRLS/SECURITY
+DEFINER, cross-tenant refresh, lenny_app tenant-view isolation + direct-access
+denial, aggregation equivalence incl. a dimension-only scorer, down rollback)
+all pass; the gateway env-count helm-unittest was updated 74 → 75.
 
 ---
 

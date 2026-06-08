@@ -22,6 +22,18 @@ func (r *Router) WithEvalResults(s evalstore.Store) *Router {
 	return r
 }
 
+// WithEvalAggregateView enables the §10.7 lenny_eval_aggregates
+// materialized-view read path. The gateway sets it when
+// evalAggregationRefreshSeconds is positive (the same condition that
+// schedules the periodic REFRESH); with it enabled and the store
+// implementing evalstore.AggregateReader, an unfiltered no-breakdown
+// results request is served from the matview instead of recomputing
+// from eval_results. spec: §10.7 lines 954, 1088.
+func (r *Router) WithEvalAggregateView(enabled bool) *Router {
+	r.evalMatview = enabled
+	return r
+}
+
 // ScorerStats is the §10.7 per-scorer aggregate for one variant. When
 // the scorer's eval results carried a multi-dimensional `scores` map,
 // Dimensions holds the per-dimension aggregate under the same shape.
@@ -87,17 +99,15 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	rows, err := r.evals.ListByExperiment(req.Context(), tenant, name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	rows, ferr := filterEvalRows(rows, req.URL.Query())
-	if ferr != "" {
+	q := req.URL.Query()
+	// Validate the §10.7 query parameters before either read path so a
+	// malformed filter is a 400 regardless of whether the request routes
+	// to the materialized view or the base table.
+	if ferr := validateResultsFilters(q); ferr != "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr, nil)
 		return
 	}
-	breakdownBy := req.URL.Query().Get("breakdown_by")
+	breakdownBy := q.Get("breakdown_by")
 	if breakdownBy != "" && !validBreakdownField(breakdownBy) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"breakdown_by must be delegation_depth, inherited, or submitted_after_conclusion", nil)
@@ -107,17 +117,13 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 	// equality/exclusion filter on the same field, since filtering a field
 	// to a single value and then bucketing by it yields a degenerate
 	// single-bucket response. F-10.7.10.
-	if p := conflictingFilterParam(breakdownBy); p != "" && req.URL.Query().Get(p) != "" {
+	if p := conflictingFilterParam(breakdownBy); p != "" && q.Get(p) != "" {
 		writeError(w, http.StatusBadRequest, "INVALID_QUERY_PARAMS",
 			"breakdown_by="+breakdownBy+" cannot be combined with the "+p+
 				" filter on the same field", nil)
 		return
 	}
 
-	byVariant := map[string][]evalstore.EvalResult{}
-	for _, row := range rows {
-		byVariant[row.VariantID] = append(byVariant[row.VariantID], row)
-	}
 	// Report every named variant plus the implicit control group, in a
 	// stable order, so a variant with no eval data still appears.
 	variantIDs := make([]string, 0, len(exp.Variants)+1)
@@ -125,6 +131,30 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 		variantIDs = append(variantIDs, v.ID)
 	}
 	variantIDs = append(variantIDs, experiment.ControlVariantID)
+
+	// spec: §10.7 lines 954, 1088 — when the gateway enables the
+	// lenny_eval_aggregates matview (evalAggregationRefreshSeconds > 0),
+	// route the unfiltered, no-breakdown request to it; filtered or
+	// broken-down requests always recompute from the base table.
+	if r.evalMatview && breakdownBy == "" && !hasResultsFilter(q) {
+		if ar, ok := r.evals.(evalstore.AggregateReader); ok {
+			if r.serveResultsFromMatview(w, req, ar, exp, tenant, name, variantIDs) {
+				return
+			}
+		}
+	}
+
+	rows, err := r.evals.ListByExperiment(req.Context(), tenant, name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	rows, _ = filterEvalRows(rows, q)
+
+	byVariant := map[string][]evalstore.EvalResult{}
+	for _, row := range rows {
+		byVariant[row.VariantID] = append(byVariant[row.VariantID], row)
+	}
 
 	out := ExperimentResults{ExperimentID: exp.ID, Status: string(exp.Status)}
 	for _, vid := range variantIDs {
@@ -136,6 +166,85 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// serveResultsFromMatview answers the §10.7 results request from the
+// lenny_eval_aggregates materialized view. It reports true when it has
+// written the response (success or a surfaced 500); false signals the
+// caller to fall back to the base-table aggregation. spec: §10.7 lines
+// 954, 1088.
+func (r *Router) serveResultsFromMatview(w http.ResponseWriter, req *http.Request,
+	ar evalstore.AggregateReader, exp experimentstore.Experiment,
+	tenant, name string, variantIDs []string) bool {
+	aggs, err := ar.AggregatesByExperiment(req.Context(), tenant, name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return true
+	}
+	out := ExperimentResults{ExperimentID: exp.ID, Status: string(exp.Status)}
+	for _, vid := range variantIDs {
+		out.Variants = append(out.Variants, variantResultsFromAggregate(vid, aggs[vid]))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+	return true
+}
+
+// variantResultsFromAggregate projects a §10.7 materialized-view
+// VariantAggregate onto the VariantResults response, mirroring the
+// shape aggregateVariant produces from the base table.
+func variantResultsFromAggregate(variantID string, agg evalstore.VariantAggregate) VariantResults {
+	scorers := map[string]ScorerStats{}
+	for scorer, sa := range agg.Scorers {
+		st := ScorerStats{Count: sa.Count, Mean: sa.Mean, P50: sa.P50, P95: sa.P95}
+		if len(sa.Dimensions) > 0 {
+			st.Dimensions = map[string]ScorerStats{}
+			for dim, ds := range sa.Dimensions {
+				st.Dimensions[dim] = ScorerStats{Count: ds.Count, Mean: ds.Mean, P50: ds.P50, P95: ds.P95}
+			}
+		}
+		scorers[scorer] = st
+	}
+	return VariantResults{VariantID: variantID, SampleCount: agg.SampleCount, Scorers: scorers}
+}
+
+// validateResultsFilters reports a non-empty error message when any
+// §10.7 results filter parameter is malformed. It mirrors the parse
+// checks in filterEvalRows so both read paths reject the same
+// malformed input. spec: §10.7 line 950.
+func validateResultsFilters(q url.Values) string {
+	if v := q.Get("delegation_depth"); v != "" {
+		if _, err := strconv.ParseUint(v, 10, 32); err != nil {
+			return "delegation_depth must be a non-negative integer"
+		}
+	}
+	if v := q.Get("inherited"); v != "" {
+		if _, err := strconv.ParseBool(v); err != nil {
+			return "inherited must be true or false"
+		}
+	}
+	if v := q.Get("exclude_post_conclusion"); v != "" {
+		if _, err := strconv.ParseBool(v); err != nil {
+			return "exclude_post_conclusion must be true or false"
+		}
+	}
+	return ""
+}
+
+// hasResultsFilter reports whether the request narrows the result set
+// with a §10.7 equality/exclusion filter. A present-but-false
+// exclude_post_conclusion is not a filter (it excludes nothing), so the
+// matview path still applies. Callers must validate the parameters with
+// validateResultsFilters first. spec: §10.7 line 954.
+func hasResultsFilter(q url.Values) bool {
+	if q.Get("delegation_depth") != "" || q.Get("inherited") != "" {
+		return true
+	}
+	if v := q.Get("exclude_post_conclusion"); v != "" {
+		b, _ := strconv.ParseBool(v)
+		return b
+	}
+	return false
 }
 
 // filterEvalRows applies the §10.7 results-API query filters. A

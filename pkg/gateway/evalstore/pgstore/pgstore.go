@@ -214,6 +214,97 @@ func (s *Store) ListByExperiment(ctx context.Context, tenantID, experimentID str
 	return out, nil
 }
 
+var _ evalstore.AggregateReader = (*Store)(nil)
+
+// AggregatesByExperiment reads the §10.7 results aggregation from the
+// lenny_eval_aggregates materialized view (migration 0156) through the
+// tenant-scoped lenny_eval_aggregates_tenant view, which filters by
+// app.current_tenant. It returns the per-variant aggregates keyed by
+// variant id; a variant with no eval rows is absent from the map. The
+// matview pre-aggregates across all rows, so this read path serves only
+// the unfiltered, no-breakdown request — the handler routes filtered or
+// broken-down requests to the base table. spec: §10.7 lines 954, 1088.
+func (s *Store) AggregatesByExperiment(ctx context.Context, tenantID, experimentID string) (map[string]evalstore.VariantAggregate, error) {
+	out := map[string]evalstore.VariantAggregate{}
+	if experimentID == "" {
+		return out, nil
+	}
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT variant_id, agg_kind, scorer, dimension,
+			        sample_count, mean_score, p50_score, p95_score
+			 FROM lenny_eval_aggregates_tenant
+			 WHERE tenant_id = $1 AND experiment_id = $2`,
+			tenantID, experimentID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				variantID, aggKind, scorer, dimension string
+				sampleCount                           int64
+				mean, p50, p95                        *float64
+			)
+			if err := rows.Scan(&variantID, &aggKind, &scorer, &dimension,
+				&sampleCount, &mean, &p50, &p95); err != nil {
+				return err
+			}
+			va := out[variantID]
+			va.VariantID = variantID
+			if va.Scorers == nil {
+				va.Scorers = map[string]evalstore.ScorerAggregate{}
+			}
+			switch aggKind {
+			case "variant":
+				va.SampleCount = int(sampleCount)
+			case "scorer":
+				sa := va.Scorers[scorer]
+				sa.Count = int(sampleCount)
+				sa.Mean, sa.P50, sa.P95 = deref(mean), deref(p50), deref(p95)
+				va.Scorers[scorer] = sa
+			case "dimension":
+				sa := va.Scorers[scorer]
+				if sa.Dimensions == nil {
+					sa.Dimensions = map[string]evalstore.ScorerAggregate{}
+				}
+				sa.Dimensions[dimension] = evalstore.ScorerAggregate{
+					Count: int(sampleCount),
+					Mean:  deref(mean), P50: deref(p50), P95: deref(p95),
+				}
+				va.Scorers[scorer] = sa
+			}
+			out[variantID] = va
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RefreshAggregates runs one cross-tenant REFRESH MATERIALIZED VIEW
+// CONCURRENTLY of lenny_eval_aggregates via the SECURITY DEFINER
+// refresh_lenny_eval_aggregates() function (migration 0156). The
+// function executes with its BYPASSRLS owner's privileges, so the
+// gateway's non-superuser lenny_app role drives the refresh without
+// itself bypassing row-level security. spec: §10.7 line 1088.
+func (s *Store) RefreshAggregates(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `SELECT refresh_lenny_eval_aggregates()`)
+	return err
+}
+
+// deref returns the pointed-to float, or 0 for a NULL aggregate column
+// (a scorer with no top-level score reports zero count/mean/percentiles,
+// matching the base-table aggregation).
+func deref(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
+}
+
 // DeleteBySession removes every eval result for the session and
 // returns the count deleted — the §12.8 GDPR-erasure adapter. A
 // session with no eval results yields (0, nil).

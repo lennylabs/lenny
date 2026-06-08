@@ -203,6 +203,7 @@ type Router struct {
 	stickyFlusher StickyFlusher
 	environments  environmentstore.Store
 	evals         evalstore.Store
+	evalMatview   bool
 	clock         func() time.Time
 	audit         AuditSink
 	metrics       RBACConfigMetrics

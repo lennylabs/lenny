@@ -2215,6 +2215,14 @@ gateway:
   evalRateLimit:
     perSessionPerMinute: 100
     perTenantPerMinute: 10000
+  # evalAggregationRefreshSeconds — §10.7 line 1088. When 0 (default),
+  # the lenny_eval_aggregates materialized view exists in the schema but
+  # is never queried; the §10.7 results API aggregates on read from
+  # eval_results. When positive, the gateway routes unfiltered results
+  # queries to the materialized view and schedules
+  # REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires the
+  # Postgres datastore. F-10.7.12.
+  evalAggregationRefreshSeconds: 0
   # uploadLimits — §11.1 lines 10-11 upload-admission caps. These are
   # the policy fairness caps, distinct from the §4.1 upload-handler
   # back-pressure semaphore (extractionThresholds.uploadHandler). Each

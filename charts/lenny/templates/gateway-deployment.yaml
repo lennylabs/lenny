@@ -696,6 +696,13 @@ spec:
               value: {{ .perTenantPerMinute | quote }}
             {{- end }}
             {{- end }}
+            # §10.7 line 1088 — lenny_eval_aggregates materialized-view
+            # refresh interval. 0 keeps on-read aggregation; positive
+            # enables the matview read + periodic REFRESH. F-10.7.12.
+            {{- if hasKey .Values.gateway "evalAggregationRefreshSeconds" }}
+            - name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS
+              value: {{ .Values.gateway.evalAggregationRefreshSeconds | quote }}
+            {{- end }}
             # §11.1 lines 10-11 — concurrent-upload and per-session
             # upload-size admission caps, distinct from the §4.1 upload
             # handler back-pressure semaphore. Zero leaves each scope

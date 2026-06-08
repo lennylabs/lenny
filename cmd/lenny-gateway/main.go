@@ -487,6 +487,9 @@ func main() {
 	evalRLPerTenantPerMin := flag.Int("eval-rate-limit-per-tenant-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN", sessionserver.DefaultEvalPerTenantPerMin),
 		"§10.7 line 938 evalRateLimit.perTenantPerMinute: per-tenant eval-submission requests-per-minute limit across all of a tenant's sessions. Default 10000. Negative disables the per-tenant scope. Override via LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN. F-10.7.4.")
+	evalAggregationRefreshSeconds := flag.Int("eval-aggregation-refresh-seconds",
+		envInt("LENNY_EVAL_AGGREGATION_REFRESH_SECONDS", 0),
+		"§10.7 line 1088 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
 	// spec: §11.1 lines 10-11 — concurrent-upload and per-session
 	// upload-size admission caps, distinct from the §4.1 upload-handler
 	// back-pressure semaphore. Zero leaves each scope unlimited; operators
@@ -2450,6 +2453,20 @@ func main() {
 	if pgPool != nil {
 		evals = evalpg.New(pgPool)
 	}
+	// spec: §10.7 line 1088 — the lenny_eval_aggregates materialized-view
+	// read + REFRESH path requires a Postgres backend. Enable it only when
+	// a positive refresh interval is configured against Postgres; with the
+	// default 0 (or no Postgres) the §10.7 results API aggregates on read.
+	evalMatviewEnabled := false
+	if *evalAggregationRefreshSeconds > 0 {
+		if pgPool != nil {
+			evalMatviewEnabled = true
+		} else {
+			log.Printf("warning: --eval-aggregation-refresh-seconds=%d ignored: the §10.7 lenny_eval_aggregates materialized view requires a Postgres backend; aggregating on read", *evalAggregationRefreshSeconds)
+		}
+	} else if *evalAggregationRefreshSeconds < 0 {
+		log.Printf("warning: --eval-aggregation-refresh-seconds=%d is negative; treating as 0 (matview disabled)", *evalAggregationRefreshSeconds)
+	}
 	var experiments experimentstore.Store = experimentstore.NewMemory()
 	if pgPool != nil {
 		experiments = experimentpg.New(pgPool)
@@ -4325,6 +4342,7 @@ func main() {
 		WithStickyFlusher(adminStickyFlusher).
 		WithEnvironments(environments).
 		WithEvalResults(evals).
+		WithEvalAggregateView(evalMatviewEnabled).
 		WithRecommendations(recommendations.NewCapacityServiceWithConfig(
 			recommendationStore,
 			recommendations.Config{
@@ -6716,6 +6734,36 @@ func main() {
 			}
 		}
 	}()
+
+	// spec: §10.7 line 1088 — when evalAggregationRefreshSeconds is
+	// positive, the gateway schedules periodic REFRESH MATERIALIZED VIEW
+	// CONCURRENTLY lenny_eval_aggregates at the configured interval so the
+	// results API (routed to the matview) reads recent aggregates. The
+	// SECURITY DEFINER refresh function (migration 0156) runs the
+	// cross-tenant refresh under its BYPASSRLS owner. F-10.7.12.
+	if evalMatviewEnabled {
+		if ar, ok := evals.(evalstore.AggregateReader); ok {
+			interval := time.Duration(*evalAggregationRefreshSeconds) * time.Second
+			refreshEvalAggregates := func(ctx context.Context) {
+				if err := ar.RefreshAggregates(ctx); err != nil {
+					log.Printf("warning: §10.7 lenny_eval_aggregates refresh failed: %v", err)
+				}
+			}
+			refreshEvalAggregates(context.Background())
+			go func() {
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-watchdogCtx.Done():
+						return
+					case <-ticker.C:
+						refreshEvalAggregates(watchdogCtx)
+					}
+				}
+			}()
+		}
+	}
 
 	// §4.1 SCL-026 HPA scale-out gauges. Polled on a 5s cadence so the
 	// custom-metrics pipeline (Prometheus Adapter / KEDA) observes
