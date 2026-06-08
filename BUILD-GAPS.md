@@ -42814,7 +42814,7 @@ This is a privilege-escalation gap on the most destructive endpoints in the plat
 
 **Resolution (d358fc2e):** New `Server.requirePlatformAdmin` (reusing `callerRole`) guards `handleConfirmLegalHoldLedger`, returning the §25.2 403 envelope for a non-platform-admin caller, per §25.11 line 3897 ("Requires `platform-admin`"). Two opsserver tests assert tenant-admin → 403 and platform-admin → 202. The finding's secondary claim — that `restore/execute` should also be platform-admin-only — is not implemented: §25.11 line 409 states the backup/restore endpoints "require `platform-admin` or `tenant-admin` role (same as the rest of the admin API)", which the existing `requireAdminRole` gate already enforces. Only the one endpoint §25.11 explicitly narrows to platform-admin is narrowed. The `artifact-replication/{region}/resume` platform-admin endpoint (line 3898) is unwired entirely and tracked by F-25.11.1.
 
-### - [ ] F-25.11.7 — Backup metrics (§25.11 Metrics table) never registered [High] — OPEN
+### - [x] F-25.11.7 — Backup metrics (§25.11 Metrics table) never registered [High] — CLOSED
 
 Spec lines 4304–4311 (Metrics table) list six required metrics: `lenny_backup_duration_seconds` (histogram), `lenny_backup_size_bytes` (gauge), `lenny_backup_total` (counter), `lenny_backup_last_successful_timestamp` (gauge), `lenny_restore_duration_seconds` (histogram), `lenny_restore_total` (counter). Spec line 4320 (BackupReconcileBlocked alert) references `lenny_backup_reconcile_blocked_total`.
 
@@ -42845,6 +42845,32 @@ sees it transition to completed, with restart-safe dedup) because a histogram
 cannot be reconstructed from current DB state at scrape time. Deferred to a
 focused metrics batch to get the histogram semantics right rather than rush
 them into this store/launcher batch.
+
+- **Resolution:** New `backup.MetricsCollector`
+  (`pkg/ops/backup/metrics.go`) is a `prometheus.Collector` that derives
+  the five remaining §25.11 Metrics-table series from the durable
+  `ops_backups` / `ops_restore_state` rows at scrape time via const
+  metrics: `lenny_backup_total{type,status}` and `lenny_restore_total{status}`
+  (cumulative counts of terminal outcomes), `lenny_backup_size_bytes{type,backup_id}`
+  (per-completed-backup gauge), and `lenny_backup_duration_seconds{type}` /
+  `lenny_restore_duration_seconds` (`MustNewConstHistogram` reconstructs the
+  full cumulative distribution from each completed row's
+  `CompletedAt − StartedAt`). The reopen note's premise that a histogram
+  cannot be reconstructed at scrape time holds only for a mutable
+  Observe-based histogram; a const histogram is rebuilt from the durable
+  rows, so the series is restart-safe with no completion hook or dedup.
+  `lenny_backup_last_successful_timestamp` continues to publish via the
+  leader-gated `backup-metrics` cron. The collector is registered on the
+  lenny-ops default registry (`cmd/lenny-ops/main.go`) so the §16.9
+  `/metrics` exposition scrapes it. The `lenny_backup_reconcile_blocked_total{reason}`
+  counter (§25.11 line 4320) now increments at the post-restore
+  erasure-reconcile ledger-stale block site (`pkg/ops/backup/postrestore.go`)
+  through a new `ReconcileMetrics` seam wired in `cmd/lenny-ops/deps.go`
+  (mirroring the `ResidencyMetrics` pattern), so `BackupFailed` /
+  `BackupReconcileBlocked` / `BackupOverdue` all read live series. The
+  `lenny_minio_replication_lag_seconds` evidence is stale — that producer
+  now exists (`pkg/gateway/gatewaymetrics`, `cmd/lenny-gateway/replication_wiring.go`).
+  Resolved by this batch.
 
 ### - [x] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — CLOSED
 

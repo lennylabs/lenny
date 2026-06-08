@@ -266,6 +266,12 @@ func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) erro
 		if !ledgerAt.After(takenAt) {
 			// The ledger was restored in lockstep and cannot be trusted to
 			// reflect post-backup hold transitions. Block replay.
+			// spec: §25.11 line 4320 — increment
+			// lenny_backup_reconcile_blocked_total{reason} so the
+			// BackupReconcileBlocked alert can fire.
+			if s.reconcile != nil {
+				s.reconcile.ReconcileBlocked(BlockReasonLedgerStale)
+			}
 			s.emitAudit(AuditEvent{
 				Type:      string(audit.EventGDPRBackupReconcileBlocked),
 				RestoreID: r.ID,

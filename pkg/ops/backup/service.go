@@ -91,6 +91,17 @@ const (
 // most recent write timestamp <= backupTakenAt).
 const BlockReasonLedgerStale = "legal_hold_ledger_stale"
 
+// ReconcileMetrics receives the §25.11 line 4320
+// lenny_backup_reconcile_blocked_total{reason} increment when the
+// post-restore GDPR erasure reconciler blocks replay. A nil sink drops
+// the metric (the gdpr.backup_reconcile_blocked audit event still fires
+// through the Audit sink). It mirrors the ResidencyMetrics seam.
+type ReconcileMetrics interface {
+	// ReconcileBlocked increments lenny_backup_reconcile_blocked_total
+	// for the given reason (the §25.11 enum, e.g. legal_hold_ledger_stale).
+	ReconcileBlocked(reason string)
+}
+
 // scheduler is the §25.11 backup started_by value for a backup the
 // leader-elected cron evaluator created rather than an admin caller.
 const scheduler = "scheduler"

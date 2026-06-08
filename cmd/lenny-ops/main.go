@@ -63,6 +63,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
+	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/doctor"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -821,6 +822,13 @@ func main() {
 		ExcludeTables:          splitCSV(*backupExcludeTables),
 		RedactColumns:          splitCSV(*backupRedactColumns),
 	})
+	// §25.11 Metrics table: the backup/restore outcome series
+	// (lenny_backup_total, lenny_backup_size_bytes, lenny_backup_duration_seconds,
+	// lenny_restore_total, lenny_restore_duration_seconds) derived from the
+	// ops_backups / ops_restore_state rows at scrape time, so they survive a
+	// restart and need no in-process completion hook. Registered on the
+	// default registry so the §16.9 /metrics exposition scrapes them. F-25.11.7.
+	metrics.MustRegister(prometheus.DefaultRegisterer, backup.NewMetricsCollector(backupSvc))
 
 	// The §25.4 escalation service, the §25.10 configuration-drift
 	// service, and the §25.6 DiagnosticService. Each runs against an

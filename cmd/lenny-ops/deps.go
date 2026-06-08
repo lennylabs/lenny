@@ -441,6 +441,9 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 		// §12.8 line 936: the lenny_data_residency_violation_total counter
 		// the fail-closed BACKUP_REGION_UNRESOLVABLE abort increments.
 		Residency: backupResidencyMetrics{},
+		// §25.11 line 4320: the lenny_backup_reconcile_blocked_total counter
+		// the post-restore erasure-reconcile ledger-stale block increments.
+		Reconcile: backupReconcileMetrics{},
 	}
 
 	// §12.8 lines 932-936: when per-region backup endpoints are configured,
@@ -777,6 +780,33 @@ type backupResidencyMetrics struct{}
 func (backupResidencyMetrics) DataResidencyViolation(operation string) {
 	if dataResidencyViolationTotal != nil {
 		dataResidencyViolationTotal.WithLabelValues(operation).Inc()
+	}
+}
+
+// backupReconcileBlockedTotal is the §25.11 line 4320
+// lenny_backup_reconcile_blocked_total{reason} counter the
+// BackupReconcileBlocked alert evaluates. The post-restore erasure
+// reconciler increments it (reason="legal_hold_ledger_stale") when the
+// legal-hold ledger freshness gate blocks replay. F-25.11.7.
+var backupReconcileBlockedTotal = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_backup_reconcile_blocked_total",
+		Help: "§25.11 post-restore erasure-reconcile blocks by reason.",
+	}, []string{"reason"})
+	if err != nil {
+		return nil
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}()
+
+// backupReconcileMetrics adapts the §25.11 backup.ReconcileMetrics seam
+// onto backupReconcileBlockedTotal.
+type backupReconcileMetrics struct{}
+
+func (backupReconcileMetrics) ReconcileBlocked(reason string) {
+	if backupReconcileBlockedTotal != nil {
+		backupReconcileBlockedTotal.WithLabelValues(reason).Inc()
 	}
 }
 

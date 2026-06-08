@@ -88,10 +88,11 @@ func (f *fakeProgress) RestoreProgressed(_ context.Context, info backup.RestoreP
 // completionSeams bundles the optional CompleteRestore dependencies a
 // test injects.
 type completionSeams struct {
-	audit    *recordingAudit
-	erasure  backup.ErasureReconciler
-	gateway  *fakeGateway
-	progress *fakeProgress
+	audit     *recordingAudit
+	erasure   backup.ErasureReconciler
+	gateway   *fakeGateway
+	progress  *fakeProgress
+	reconcile backup.ReconcileMetrics
 }
 
 func newCompletionSvc(t *testing.T, sm completionSeams) (*backup.Service, *backup.MemStore, *backup.FakeLauncher, *backup.MemLocker) {
@@ -123,6 +124,9 @@ func newCompletionSvc(t *testing.T, sm completionSeams) (*backup.Service, *backu
 	}
 	if sm.progress != nil {
 		cfg.Progress = sm.progress
+	}
+	if sm.reconcile != nil {
+		cfg.Reconcile = sm.reconcile
 	}
 	svc, err := backup.NewService(cfg)
 	if err != nil {
@@ -315,6 +319,38 @@ func TestCompleteRestoreLedgerStaleBlocks_spec_25_11(t *testing.T) {
 		t.Errorf("gateway restarts = %d, want 0", gw.calls)
 	}
 	assertLockHeld(t, locker, true)
+}
+
+// fakeReconcileMetrics records §25.11 line 4320
+// lenny_backup_reconcile_blocked_total increments by reason.
+type fakeReconcileMetrics struct {
+	byReason map[string]int
+}
+
+func (f *fakeReconcileMetrics) ReconcileBlocked(reason string) {
+	if f.byReason == nil {
+		f.byReason = map[string]int{}
+	}
+	f.byReason[reason]++
+}
+
+// spec: §25.11 line 4320 — the ledger-stale block increments
+// lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}
+// so the BackupReconcileBlocked alert can fire.
+func TestCompleteRestoreLedgerStaleIncrementsReconcileBlocked_spec_25_11_4320(t *testing.T) {
+	rec := &recordingAudit{}
+	gw := &fakeGateway{}
+	er := &fakeErasure{ledgerAt: fixedNow.Add(-2 * time.Hour)}
+	rm := &fakeReconcileMetrics{}
+	svc, store, _, _ := newCompletionSvc(t, completionSeams{audit: rec, gateway: gw, erasure: er, reconcile: rm})
+	restoreID, _, _ := startRunningRestore(t, svc, store)
+
+	if _, err := svc.CompleteRestore(context.Background(), restoreID, nil); backup.CodeOf(err) != backup.ErrCodeRestoreErasureReconcile {
+		t.Fatalf("error code = %q, want RESTORE_ERASURE_RECONCILE_FAILED", backup.CodeOf(err))
+	}
+	if got := rm.byReason[backup.BlockReasonLedgerStale]; got != 1 {
+		t.Errorf("reconcile-blocked increments for legal_hold_ledger_stale = %d, want 1", got)
+	}
 }
 
 // spec: §25.11 line 4147 — an operator's ConfirmLegalHoldLedger watermark

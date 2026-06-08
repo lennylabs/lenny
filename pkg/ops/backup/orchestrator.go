@@ -101,6 +101,12 @@ type Config struct {
 	// increment on a fail-closed backup abort. A nil sink drops the metric
 	// (the audit event still fires through Audit). spec: §12.8 line 936.
 	Residency ResidencyMetrics
+	// Reconcile receives the §25.11 line 4320
+	// lenny_backup_reconcile_blocked_total{reason} increment when the
+	// post-restore erasure reconciler blocks replay. A nil sink drops the
+	// metric (the gdpr.backup_reconcile_blocked audit event still fires).
+	// spec: §25.11 line 4320.
+	Reconcile ReconcileMetrics
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
 	// NewID generates a backup/restore ID; nil uses a random hex id.
@@ -128,6 +134,7 @@ type Service struct {
 	regions      map[string]RegionBackupConfig
 	shardRegions ShardRegionResolver
 	residency    ResidencyMetrics
+	reconcile    ReconcileMetrics
 	now          func() time.Time
 	newID        func(prefix string) string
 }
@@ -180,6 +187,7 @@ func NewService(cfg Config) (*Service, error) {
 		regions:      cfg.Regions,
 		shardRegions: cfg.ShardRegions,
 		residency:    cfg.Residency,
+		reconcile:    cfg.Reconcile,
 		now:          now,
 		newID:        newID,
 	}, nil
