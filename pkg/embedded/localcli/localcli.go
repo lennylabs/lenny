@@ -2,12 +2,13 @@
 
 // Package localcli implements the §24.19 Embedded Mode local commands
 // (up, down, status, logs, restart, token, image, session). The logic
-// lives in this importable package so the two binaries the §24 preamble
-// describes as "one binary, two names" can share it: the short-name
-// lenny binary (cmd/lenny) dispatches every command here, and the
-// operator CLI lenny-ctl (cmd/lenny-ctl) delegates the same local
-// commands so `lenny-ctl <command>` behaves identically to `lenny
-// <command>` per §24.19 line 266 and §24.9 line 120.
+// lives in this importable package so the unified CLI dispatcher
+// (pkg/ctlcli) can delegate the local-command surface to it: ctlcli.Run
+// — invoked by both the short-name lenny binary and the operator
+// lenny-ctl binary — routes a local command through Local and Run here,
+// so `lenny <command>` and `lenny-ctl <command>` behave identically per
+// §24.19 line 266 and §24.9 line 120. Main is the standalone
+// embedded-only entry point retained for direct use and testing.
 package localcli
 
 import (
