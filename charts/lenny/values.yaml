@@ -2218,6 +2218,17 @@ gateway:
   # crash-recovery exposure. Values below 10 are clamped up by the binary.
   # Default 30. F-11.2.16.
   quotaSyncIntervalSeconds: 30
+  # quotaEnforcementMode — §12.4 line 268. Selects how the gateway enforces
+  # token quota counters. `redis` (the default) reads the Redis token
+  # counters on the admission path. `in_memory_reconciled` has each replica
+  # draw a per-replica budget slice from Postgres (1/N of the tenant's
+  # remaining budget), decrement it locally per request, and reconcile every
+  # quotaSyncIntervalSeconds or when the slice is 80% consumed; it tolerates
+  # full Redis unavailability for quota enforcement with bounded overshoot
+  # (at most one slice per replica), at the cost of a Postgres dependency.
+  # Enable it when Redis-based quota drift during outages is unacceptable.
+  # Default redis. F-12.4.14.
+  quotaEnforcementMode: redis
   # delegationNodeMemoryFootprintBytes — §11.2 line 48. Per-node in-memory
   # footprint estimate the §11.2 delegation-budget crash-recovery
   # reconstruction multiplies by the live descendant count to derive

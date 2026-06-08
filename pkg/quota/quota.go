@@ -244,6 +244,30 @@ func MaxOvershoot(quotaSyncIntervalSeconds int, maxTokensPerSecond float64, acti
 	return float64(quotaSyncIntervalSeconds) * maxTokensPerSecond * float64(activeSessions)
 }
 
+// BudgetSliceReconcileRatio is the §12.4 line 268 local-consumption
+// fraction that triggers an early Postgres reconcile: "reconciles with
+// Postgres periodically (default: every 30s) or when the local slice is
+// 80% consumed". It coincides with the §11.2 soft-warning ratio.
+const BudgetSliceReconcileRatio = 0.80
+
+// DrawBudgetSlice computes the §12.4 line 268 per-replica budget slice:
+// "1/N of the tenant's remaining budget, where N is the replica count".
+// remaining is the tenant's remaining token budget at draw time
+// (limit − persisted usage); a non-positive remaining yields a zero slice
+// (the tenant is exhausted). replicaCount is floored at 1 so a cold-start
+// or single-replica deployment draws the whole remaining budget. The slice
+// bounds this replica's overshoot during a Postgres outage to one slice.
+func DrawBudgetSlice(remaining int64, replicaCount int) int64 {
+	if remaining <= 0 {
+		return 0
+	}
+	n := replicaCount
+	if n < 1 {
+		n = 1
+	}
+	return remaining / int64(n)
+}
+
 // ReconcileMax implements the §11.2 MAX rule on Redis recovery:
 // restored_counter = MAX(in_memory_counter, postgres_checkpoint).
 // Used during Redis recovery so a stale Postgres checkpoint cannot

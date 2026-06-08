@@ -841,10 +841,12 @@ tests:
       #   slo.burnRate.{fast,slow}Multiplier default 14 / 3 and render)
       # + LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED (§25.9 line 3709,
       #   F-25.9.11 — audit.scatterGatherCacheEnabled defaults true and
-      #   renders) = 78.
+      #   renders)
+      # + LENNY_QUOTA_ENFORCEMENT_MODE (§12.4 line 268, F-12.4.14 —
+      #   quotaEnforcementMode defaults to `redis` and renders) = 79.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 78
+          count: 79
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1506,6 +1508,35 @@ tests:
           content:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "10"
+
+  # spec: §12.4 line 268 — quotaEnforcementMode (default `redis`) flows
+  # through to LENNY_QUOTA_ENFORCEMENT_MODE. F-12.4.14.
+  - it: wires LENNY_QUOTA_ENFORCEMENT_MODE from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_ENFORCEMENT_MODE
+            value: redis
+
+  # spec: §12.4 line 268 — selecting the in-memory reconciled mode
+  # propagates to the binary, which draws per-replica Postgres budget
+  # slices instead of reading the Redis counters. F-12.4.14.
+  - it: wires LENNY_QUOTA_ENFORCEMENT_MODE=in_memory_reconciled from an override
+    set:
+      gateway.quotaEnforcementMode: in_memory_reconciled
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_ENFORCEMENT_MODE
+            value: in_memory_reconciled
 
   # spec: §10.7 line 938 — the eval-submission rate limits flow from the
   # chart defaults (100 / 10000) to the binary. F-10.7.4 / F-11.2.19.

@@ -68,6 +68,33 @@ func (s *Store) Write(ctx context.Context, rows []quotacheckpoint.Row) error {
 	return nil
 }
 
+// AddTenantTotal atomically folds delta into the per-tenant rollup
+// (scope='tenant', subject_id=”) token_total for one window and returns
+// the resulting authoritative total. The INSERT … ON CONFLICT DO UPDATE
+// runs in a single statement so concurrent reconciles from several gateway
+// replicas serialize on the row rather than racing a read-modify-write; no
+// replica's contribution is lost. A zero delta reads the current total
+// (the §12.4 line 268 startup slice draw) while still materialising the
+// row. It is the quotabudget.CheckpointAdder used by the
+// in_memory_reconciled enforcement mode. spec: §12.4 line 268; §11.2 line 44.
+func (s *Store) AddTenantTotal(ctx context.Context, tenantID, period, windowLabel string, delta int64) (int64, error) {
+	var total int64
+	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`INSERT INTO token_usage_checkpoint
+			     (tenant_id, scope, subject_id, period, window_label, token_total, checkpoint_at)
+			 VALUES ($1, 'tenant', '', $2, $3, $4, clock_timestamp())
+			 ON CONFLICT (tenant_id, scope, subject_id, period, window_label)
+			 DO UPDATE SET token_total = token_usage_checkpoint.token_total + EXCLUDED.token_total,
+			               checkpoint_at = clock_timestamp()
+			 RETURNING token_total`,
+			tenantID, period, windowLabel, delta).Scan(&total)
+	}); err != nil {
+		return 0, fmt.Errorf("quotacheckpoint/pgstore: add tenant total tenant %q period %q window %q: %w", tenantID, period, windowLabel, err)
+	}
+	return total, nil
+}
+
 // ListActive reads every checkpoint row across all tenants under the
 // platform-admin __all__ sentinel, for the recovery reconstruction.
 func (s *Store) ListActive(ctx context.Context) ([]quotacheckpoint.Row, error) {

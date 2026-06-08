@@ -229,6 +229,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
 	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
@@ -552,6 +553,9 @@ func main() {
 	quotaSyncIntervalSeconds := flag.Int("quota-sync-interval-seconds",
 		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
 		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
+	quotaEnforcementMode := flag.String("quota-enforcement-mode",
+		envOr("LENNY_QUOTA_ENFORCEMENT_MODE", string(quota.DefaultEnforcementMode)),
+		"§12.4 line 268 quotaEnforcementMode: `redis` (default) reads the Redis token counters on the admission path; `in_memory_reconciled` draws a per-replica budget slice from Postgres, decrements it locally, and reconciles every quotaSyncIntervalSeconds (or at 80% slice consumption), tolerating full Redis unavailability for quota enforcement with bounded overshoot. The in-memory mode requires Postgres. Override via LENNY_QUOTA_ENFORCEMENT_MODE.")
 	delegationNodeMemoryFootprintBytes := flag.Int64("delegation-node-memory-footprint-bytes",
 		int64(envInt("LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES", int(delegationbudget.DefaultNodeMemoryFootprintBytes))),
 		"§11.2 line 48 delegationNodeMemoryFootprintBytes: per-node in-memory footprint estimate the delegation-budget crash-recovery reconstruction multiplies by the live descendant count to derive liveMemoryBytes. Default 12288 (12 KB). Override via LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES.")
@@ -3292,11 +3296,66 @@ func main() {
 	var policyAuditSink *policy.AuditSink
 	// quotaCounter / tenantLimits are hoisted out of the redis-only block
 	// so the §4.9 proxy usage recorder (built later) can advance the same
-	// §11.2 hierarchical token counter QuotaEvaluator reads. Both stay nil
-	// when --redis-url is unset, which leaves quota recording disabled.
+	// §11.2 hierarchical token counter QuotaEvaluator reads. quotaCounter
+	// stays nil when --redis-url is unset (Redis mode) or always (in-memory
+	// mode); tenantLimits is resolved whenever either enforcement mode is
+	// active. quotaBudgetTracker is non-nil only in the §12.4 line 268
+	// in_memory_reconciled mode; the recorder feeds it and the periodic
+	// reconcile loop is started under watchdogCtx below.
 	var quotaCounter *quotastore.Counter
 	var tenantLimits *policy.TenantStoreLimits
-	if redisClient != nil {
+	var quotaBudgetTracker *quotabudget.Tracker
+
+	// §12.4 line 224 cached_replica_count, shared by the fail-open ceiling
+	// (buildFailOpenController) and the §12.4 line 268 in-memory budget
+	// slice divisor; the Endpoints poller below updates it in a Kubernetes
+	// deployment and a cold start reads as 1.
+	failOpenReplicas := failopen.NewReplicaCount()
+
+	// spec: §12.4 line 268 — resolve the quota enforcement mode. The
+	// in-memory reconciled mode draws a per-replica budget slice from
+	// Postgres rather than reading the Redis counters; it requires Postgres.
+	quotaMode, qemErr := quota.ParseEnforcementMode(*quotaEnforcementMode)
+	if qemErr != nil {
+		log.Fatalf("lenny-gateway: %v", qemErr)
+	}
+	quotaSyncSeconds := quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)
+	if quotaSyncSeconds != *quotaSyncIntervalSeconds && *quotaSyncIntervalSeconds > 0 {
+		// spec: §11.2 line 44 — clamp the operator-supplied cadence up to
+		// the 10s floor so a misconfiguration cannot drive a busy-loop.
+		log.Printf("lenny-gateway: §11.2 line 44 quotaSyncIntervalSeconds=%d below the %ds floor; clamping to the minimum",
+			*quotaSyncIntervalSeconds, quota.MinSyncIntervalSeconds)
+	}
+
+	switch {
+	case quotaMode == quota.EnforcementModeInMemoryReconciled:
+		// spec: §12.4 line 268 — the per-replica in-memory budget slice is
+		// drawn from and reconciled to the token_usage_checkpoint table, so
+		// Postgres is mandatory. Fail closed rather than silently falling
+		// back to an unmetered admission path.
+		if pgPool == nil {
+			log.Fatalf("lenny-gateway: --quota-enforcement-mode=in_memory_reconciled requires Postgres (--postgres-dsn): the per-replica budget slice is drawn from and reconciled to the token_usage_checkpoint table")
+		}
+		tenantLimits = policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
+			GlobalTokenQuotaPerWindow: *globalTokenQuota,
+			UserTokenQuotaPerWindow:   *userTokenQuota,
+			RollingWindow:             time.Duration(*quotaRollingWindowSeconds) * time.Second,
+		})
+		quotaBudgetTracker = quotabudget.New(quotabudget.Options{
+			Limits:            tenantLimits,
+			Adder:             quotacheckpointpg.New(pgPool),
+			Replicas:          failOpenReplicas,
+			ReconcileInterval: time.Duration(quotaSyncSeconds) * time.Second,
+		})
+		quotaEval := policy.NewQuotaEvaluator(tenantLimits, quotabudget.NewUsageReader(quotaBudgetTracker), nil)
+		if err := policyChain.Register(interceptor.PhasePostAuth, quotaEval); err != nil {
+			log.Fatalf("lenny-gateway: register QuotaEvaluator (in_memory_reconciled): %v", err)
+		}
+		// spec: §11.7 line 428 — route policy-rejection audit rows through
+		// the write-time tenant-scope validator alongside the admin sink.
+		policyAuditSink = policy.NewAuditSink(auditValidator, nil)
+		log.Printf("lenny-gateway: §12.4 quotaEnforcementMode=in_memory_reconciled — QuotaEvaluator enforcing per-tenant token budgets from per-replica Postgres budget slices (reconcile cadence %ds); the Redis quota counters are not consulted", quotaSyncSeconds)
+	case redisClient != nil:
 		quotaCounter = quotastore.New(concernRedis.For(storerouter.RedisConcernQuota))
 		tenantLimits = policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
 			GlobalTokenQuotaPerWindow: *globalTokenQuota,
@@ -3310,16 +3369,6 @@ func main() {
 		// spec: §11.7 line 428 — route policy-rejection audit rows through
 		// the write-time tenant-scope validator alongside the admin sink.
 		policyAuditSink = policy.NewAuditSink(auditValidator, nil)
-		// spec: §11.2 line 44 — quotaSyncIntervalSeconds is the cadence
-		// at which Redis quota and delegation-budget counters checkpoint
-		// to Postgres. Clamp the operator-supplied value up to the 10s
-		// floor so a misconfiguration cannot drive a busy-loop, and log
-		// the effective cadence. F-11.2.16.
-		quotaSyncSeconds := quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)
-		if quotaSyncSeconds != *quotaSyncIntervalSeconds && *quotaSyncIntervalSeconds > 0 {
-			log.Printf("lenny-gateway: §11.2 line 44 quotaSyncIntervalSeconds=%d below the %ds floor; clamping to the minimum",
-				*quotaSyncIntervalSeconds, quota.MinSyncIntervalSeconds)
-		}
 		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain (quota checkpoint cadence %ds)", quotaSyncSeconds)
 	}
 
@@ -5548,7 +5597,6 @@ func main() {
 		log.Printf("lenny-gateway: WARNING QuotaFailOpenUserFractionInoperative — quotaUserFailOpenFraction=%v >= 0.5 weakens the per-user fail-open cap; acknowledge the posture in the deployment answer file",
 			*quotaUserFailOpenFraction)
 	}
-	failOpenReplicas := failopen.NewReplicaCount()
 	failOpenController := buildFailOpenController(failOpenWiring{
 		metrics:              gwMetrics,
 		replicas:             failOpenReplicas,
@@ -5759,6 +5807,11 @@ func main() {
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
 	llmProxyUsage := newProxyUsageRecorder(usage, sessions, quotaCounter, tenantLimits, sessionBudgetEnforcer)
+	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
+	// authoritative per-tenant token accounting feeds the per-replica
+	// budget slice rather than the Redis counter; route the recorder's
+	// quota write to the tracker.
+	llmProxyUsage.setBudgetTracker(quotaBudgetTracker)
 	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
@@ -6182,6 +6235,16 @@ func main() {
 		log.Printf("lenny-gateway: §11.2 token-usage checkpoint cadence %s",
 			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second)
 		go quotaCheckpointReconciler.Run(watchdogCtx)
+	}
+
+	// spec: §12.4 line 268 — in the in_memory_reconciled mode, drive the
+	// per-replica budget-slice reconcile loop ("reconciles with Postgres
+	// periodically (default: every 30s)") and the final flush on shutdown.
+	// The Redis checkpoint Reconciler above does not run in this mode
+	// (quotaCounter is nil), so the budget tracker owns the tenant rollup
+	// checkpoint rows.
+	if quotaBudgetTracker != nil {
+		go quotaBudgetTracker.Run(watchdogCtx)
 	}
 
 	// ----- §25.11 ArtifactStore cross-region replication -----

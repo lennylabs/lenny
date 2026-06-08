@@ -9,6 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -35,6 +36,12 @@ type proxyUsageRecorder struct {
 	// quota is the §11.2 Redis-backed hierarchical token counter. A nil
 	// counter disables quota recording (the metering write still runs).
 	quota *quotastore.Counter
+	// budgetTracker is the §12.4 line 268 in-memory per-replica budget
+	// tracker. When set (the in_memory_reconciled enforcement mode) the
+	// recorder folds the proxy-extracted tenant token count into the
+	// budget slice instead of the Redis counter. A nil tracker selects the
+	// default Redis-counter path.
+	budgetTracker *quotabudget.Tracker
 	// limits resolves the tenant's §11.2 reset period and rolling-window
 	// length so the recorder writes the same window QuotaEvaluator reads.
 	limits policy.TenantLimitLookup
@@ -59,6 +66,18 @@ func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, 
 		limits:   limits,
 		budget:   budget,
 	}
+}
+
+// setBudgetTracker selects the §12.4 line 268 in_memory_reconciled quota
+// path: recordQuota folds the proxy-extracted tenant token count into the
+// per-replica budget slice instead of the Redis counter. Nil-safe so the
+// caller can pass a nil tracker (Redis mode) or invoke it on a nil
+// recorder (no usagestore wired).
+func (r *proxyUsageRecorder) setBudgetTracker(tracker *quotabudget.Tracker) {
+	if r == nil {
+		return
+	}
+	r.budgetTracker = tracker
 }
 
 // RecordUsage implements llmproxy.UsageRecorder. It records the
@@ -146,7 +165,10 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 // not fail the proxied call. spec: §11.2 ("writes them to Redis
 // immediately").
 func (r *proxyUsageRecorder) recordQuota(tenantID, userID string, tokens int64) {
-	if r.quota == nil || r.limits == nil || tokens <= 0 {
+	if r.limits == nil || tokens <= 0 {
+		return
+	}
+	if r.quota == nil && r.budgetTracker == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
@@ -166,6 +188,13 @@ func (r *proxyUsageRecorder) recordQuota(tenantID, userID string, tokens int64) 
 	period := lim.Period
 	if period == "" {
 		period = quota.ResetHourly
+	}
+	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
+	// per-tenant token count decrements the per-replica budget slice; the
+	// Redis hierarchical counter is not the enforcement source.
+	if r.budgetTracker != nil {
+		r.budgetTracker.Add(ctx, tenantID, period, now, tokens)
+		return
 	}
 	if period == quota.ResetRolling {
 		window := lim.RollingWindow

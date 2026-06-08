@@ -20413,7 +20413,7 @@ The `storerouter.RedisConcern` constants (`pkg/storerouter/storerouter.go:48-54`
 
 **Resolution (41f86bf5):** `redisconn.NewUniversalClient` now builds a `redis.NewClusterClient` (the §12.4 line 264 CLUSTER KEYSLOT-aware go-redis client) when `Config.ClusterAddrs` is set, enforcing the same §12.4 line 197 AUTH/TLS invariant as the direct and Sentinel paths; `PingWithTimeout` was widened to `redis.UniversalClient`. The gateway exposes it via `--redis-cluster-addrs` (env `LENNY_REDIS_CLUSTER_ADDRS`, chart `redis.cluster.addrs`); the base Redis client is now `redis.UniversalClient`, so every store (`QuotaStore`, rate limiter, and the rest) runs cluster-aware when the operator points the gateway at a cluster topology, making the Tier 2→3 pre-plan implementable. The per-tenant cutover feature flag (`redis.quotaStoreBackend: sentinel|cluster` settable per-tenant, step 4b) is a separate larger migration mechanism left to the §12.4 migration-runner work; the absent constructor this finding flagged is closed.
 
-### - [ ] F-12.4.14 — `quotaEnforcementMode: in_memory_reconciled` is absent [Medium] — OPEN
+### - [x] F-12.4.14 — `quotaEnforcementMode: in_memory_reconciled` is absent [Medium] — CLOSED
 
 Spec §12.4 "In-memory quota budgets with Postgres reconciliation": "deployers enable it via `quotaEnforcementMode: in_memory_reconciled` when Redis-based quota drift during outages is unacceptable."
 
@@ -20424,6 +20424,37 @@ There is no `QuotaEnforcementMode` enum or `quotaEnforcementMode` Helm value (`g
 **Re-verified (commit `ea041787`):** Half-unblocked — F-11.2.5 (the `delegation_tree_budget` Postgres table + checkpoint/reconstruction) has now landed, but the token-usage half (F-11.2.4: the `quota_usage_checkpoint` table and the per-replica Postgres slice the in-memory mode draws from) is still OPEN, and there is still no request-time token-budget enforcement runtime to host the in-memory slice. Remains DEFERRED on F-11.2.4.
 
 **Re-verified (this batch):** F-11.2.4 has now landed (the `token_usage_checkpoint` table + `pkg/gateway/quotacheckpoint` periodic checkpoint/recovery reconcile), so the Postgres token-budget *source* the in-memory mode draws from now exists. The residual is the `quotaEnforcementMode: in_memory_reconciled` mechanism itself: the `QuotaEnforcementMode` enum + Helm value and the per-replica in-memory budget-slice path (draw a slice from Postgres on startup, decrement locally per request, reconcile every 30s) that the QuotaEvaluator would switch to in this mode. That request-time enforcement runtime is still unbuilt, so adding only the config knob remains hollow. Remains DEFERRED on the in-memory enforcement-mode runtime (the Postgres-source half is now unblocked).
+
+**Resolution:** Built the §12.4 line 268 in-memory enforcement-mode runtime end to
+end (Rule P — the Postgres source from F-11.2.4 was the last prerequisite). New
+`quota.EnforcementMode` enum + `ParseEnforcementMode` + the pure slice arithmetic
+(`DrawBudgetSlice` = 1/N of remaining, `BudgetSliceReconcileRatio` = 80%). New
+`pkg/gateway/quotabudget.Tracker` holds the per-(tenant, period) budget slice:
+the first admission read draws a slice from the durable `token_usage_checkpoint`
+tenant rollup (1/N of `limit − persisted_total`), the recorder decrements it
+locally per response, and it reconciles every `quotaSyncIntervalSeconds` or at 80%
+slice consumption by atomically folding the local delta into Postgres (new
+`quotacheckpoint/pgstore.AddTenantTotal`, `INSERT … ON CONFLICT DO UPDATE SET
+token_total = token_total + EXCLUDED.token_total RETURNING token_total`) and
+redrawing. It tolerates full Redis unavailability with bounded overshoot (≤ one
+slice per replica): a slice-headroom request serves best-effort during a Postgres
+blip, an exhausted slice fails closed. `quotabudget.UsageReader` adapts the tracker
+to `policy.UsageReader` so the existing QuotaEvaluator switches enforcement source
+without change (tenant scope only — the §11.2 user/global scopes stay Redis-backed
+in the default mode). Wired in `cmd/lenny-gateway` behind `--quota-enforcement-mode`
+(env `LENNY_QUOTA_ENFORCEMENT_MODE`, chart `gateway.quotaEnforcementMode`, default
+`redis`); `in_memory_reconciled` requires Postgres (fails closed at startup
+otherwise), shares the §12.4 line 224 `failOpenReplicas` divisor, runs a periodic
+reconcile/final-flush loop under `watchdogCtx`, and feeds the proxy usage recorder.
+The Redis checkpoint Reconciler does not run in this mode (the budget tracker owns
+the tenant rollup rows). Tests: tier-1 unit (enum/slice arithmetic; tracker
+cold-start draw, local decrement, 80% + interval reconcile, multi-replica atomic
+no-lost-update, fail-closed-on-exhaustion vs serve-from-headroom, window rollover,
+unlimited/unknown tenant, rolling-period skip, Flush; UsageReader scoping) and a
+tier-2 component test of the atomic adder against embedded Postgres
+(sequential/concurrent increments, cross-tenant isolation, rollup-row shape); plus
+tier-2 helm-unittest render cases and the env-var count bump. Closed by commit
+&lt;PENDING&gt;.
 
 ### - [x] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — CLOSED
 

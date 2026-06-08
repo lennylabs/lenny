@@ -683,6 +683,17 @@ spec:
             - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
               value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
             {{- end }}
+            # §12.4 line 268 — quotaEnforcementMode: `redis` (default) reads
+            # the Redis token counters on the admission path;
+            # `in_memory_reconciled` draws a per-replica budget slice from
+            # Postgres and reconciles it every quotaSyncIntervalSeconds (or at
+            # 80% slice consumption), tolerating full Redis unavailability for
+            # quota enforcement with bounded overshoot. The in-memory mode
+            # requires Postgres. F-12.4.14.
+            {{- if .Values.gateway.quotaEnforcementMode }}
+            - name: LENNY_QUOTA_ENFORCEMENT_MODE
+              value: {{ .Values.gateway.quotaEnforcementMode | quote }}
+            {{- end }}
             # §11.2 line 48 — delegationNodeMemoryFootprintBytes: per-node
             # footprint the delegation-budget reconstruction multiplies by
             # the live descendant count to derive liveMemoryBytes on Redis
