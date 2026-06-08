@@ -282,6 +282,80 @@ func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason s
 	return revoked, nil
 }
 
+// RevokedToken identifies one token revoked by a cascade: its JTI,
+// subject, and whether it is the cascade root (the explicitly-targeted
+// token) or a delegation descendant reached through parent_jti.
+type RevokedToken struct {
+	JTI     string
+	Subject string
+	IsRoot  bool
+}
+
+// RevokeCascade implements the §13.3 line 603 / §8.3 recursive
+// revocation: it revokes rootJTI and every delegation descendant
+// reachable through the parent_jti edge, in one statement via a
+// recursive CTE. The root row is stamped with rootReason; each
+// descendant with childReason. Already-revoked rows in the subtree are
+// left untouched (idempotent) and excluded from the result, so a repeat
+// call after a partial revocation only revokes the remainder. The
+// returned slice lists every row this call revoked, with IsRoot marking
+// the root. ErrNotFound is returned only when rootJTI does not exist in
+// the tenant. Token lineage is acyclic (a child's parent_jti always
+// references a pre-existing token), so the recursive walk terminates.
+//
+// spec: §13.3 line 603 ("recursive child revocation"); §8.3.
+func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var out []RevokedToken
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		// Confirm the root exists so a typo'd jti is ErrNotFound rather
+		// than a silent no-op; an already-revoked root still cascades to
+		// any not-yet-revoked descendant.
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM issued_tokens WHERE jti = $1 AND tenant_id = $2)`,
+			rootJTI, tenantID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		rows, err := tx.Query(ctx,
+			`WITH RECURSIVE subtree AS (
+				SELECT jti FROM issued_tokens WHERE jti = $1 AND tenant_id = $2
+				UNION ALL
+				SELECT c.jti FROM issued_tokens c
+					JOIN subtree p ON c.parent_jti = p.jti
+					WHERE c.tenant_id = $2
+			)
+			UPDATE issued_tokens t
+			SET revoked_at = $3,
+			    revoked_reason = CASE WHEN t.jti = $1 THEN $4 ELSE $5 END
+			FROM subtree s
+			WHERE t.jti = s.jti AND t.tenant_id = $2 AND t.revoked_at IS NULL
+			RETURNING t.jti, t.sub, (t.jti = $1) AS is_root`,
+			rootJTI, tenantID, at, pgtenant.NullString(rootReason), pgtenant.NullString(childReason))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rt RevokedToken
+			if err := rows.Scan(&rt.JTI, &rt.Subject, &rt.IsRoot); err != nil {
+				return err
+			}
+			out = append(out, rt)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListRevoked returns every revoked token for the tenant, supporting
 // the §12.2 revocation-cache rehydration path. The result is ordered
 // by revocation instant.

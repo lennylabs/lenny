@@ -71,12 +71,28 @@ func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	propagationMode := "postgres_only"
 	if r.revocationCache != nil {
+		// The local cache update keeps this replica's view current;
+		// Postgres remains the authoritative revocation store, so peers
+		// fall back to the issued_tokens.revoked_at check. This admin
+		// HTTP handler does not itself publish to the §12.6 EventBus, so
+		// the §16.7 propagation_mode is recorded as postgres_only. F-16.7.5.
 		r.revocationCache.Revoke(jti)
 	}
+	// spec: §16.7 line 666 — operator-initiated single-token revocation
+	// is the `explicit_revoke` reason. The payload carries the §16.7
+	// fields (revoked_jti, revocation_reason, propagation_mode) rather
+	// than the prior ad-hoc tenantId/reason pair; the free-text operator
+	// reason is preserved under details.reason. revoked_sub is not
+	// resolved here (the revoker keys by jti) and is omitted; there is no
+	// cascade so cascade_root_jti is absent. F-16.7.5.
 	r.emit(req.Context(), principal, "token.revoked", jti, map[string]any{
-		"tenantId": body.TenantID,
-		"reason":   body.Reason,
+		"tenantId":          body.TenantID,
+		"revoked_jti":       jti,
+		"revocation_reason": "explicit_revoke",
+		"propagation_mode":  propagationMode,
+		"reason":            body.Reason,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

@@ -61,6 +61,16 @@ type IssuedTokenAuditStore interface {
 	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
 }
 
+// RevocationStore is the optional §13.3 line 603 / §8.3 recursive
+// revocation surface. When the configured IssuedTokens dependency
+// satisfies it (the Postgres-backed issuedtokenstore.Store does), the
+// Token Service serves the `requested_token_type=...:access_token:revoked`
+// revocation request: it revokes the subject token and cascades to its
+// delegation descendants. F-16.7.5.
+type RevocationStore interface {
+	RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
+}
+
 // Auditor writes §16.7 audit rows on the Token Service's behalf. The
 // in-memory dev path uses an Auditor backed by audit.ChainSet (via
 // pkg/gateway/policy.ChainSetAppender), so a dev install still emits
@@ -98,6 +108,14 @@ type Server struct {
 	// every exchange. A non-nil function returning true causes the
 	// exchange to fail with 503 token_validation_unavailable. F-13.3.5.
 	driftDegraded func() bool
+
+	// revocationPropagator, when set, publishes a revoked jti onto the
+	// §12.6 Redis EventBus so peer replicas load it into their
+	// in-memory revocation cache. Its success/failure sets the §16.7
+	// token.revoked `propagation_mode` field (`eventbus` on success,
+	// `postgres_only` on a nil propagator or a publish error — peers
+	// then fall back to the authoritative Postgres check). F-16.7.5.
+	revocationPropagator func(ctx context.Context, tenantID, jti string) error
 }
 
 // Options configures the Server.
@@ -156,6 +174,14 @@ type Options struct {
 	// Now overrides time.Now for the handler and the rate limiter.
 	// Tests inject a fixed clock; production leaves this nil.
 	Now func() time.Time
+
+	// RevocationPropagator, when set, publishes a revoked jti onto the
+	// §12.6 EventBus for cluster-wide cache invalidation. It backs the
+	// §16.7 token.revoked `propagation_mode` field. Nil leaves every
+	// revocation `postgres_only` (Postgres remains the authoritative
+	// store, so correctness is preserved; peers fall back to the
+	// issued_tokens.revoked_at check). F-16.7.5.
+	RevocationPropagator func(ctx context.Context, tenantID, jti string) error
 }
 
 // NewServer returns a Server. When Options.Verifier is nil and the
@@ -183,6 +209,8 @@ func NewServer(opts Options) *Server {
 		auditor:       opts.Auditor,
 		metrics:       opts.Metrics,
 		driftDegraded: opts.DriftDegraded,
+
+		revocationPropagator: opts.RevocationPropagator,
 	}
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
@@ -222,7 +250,32 @@ type Response struct {
 const (
 	grantTypeExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
 	tokenTypeJWT      = "urn:ietf:params:oauth:token-type:jwt"
+
+	// revokedTokenType is the §13.3 line 603 requested_token_type that
+	// turns a token-exchange into a recursive-revocation request.
+	revokedTokenType = "urn:ietf:params:oauth:token-type:access_token:revoked"
 )
+
+// §16.7 token.revoked revocation_reason and propagation_mode enums.
+const (
+	revocationReasonExplicit = "explicit_revoke"
+	revocationReasonCascade  = "cascade_from_parent"
+
+	propagationModeEventBus     = "eventbus"
+	propagationModePostgresOnly = "postgres_only"
+)
+
+// revokedAuditPayload is the §16.7 line 666 `token.revoked` audit row
+// payload. It carries claim identifiers and revocation provenance only,
+// never the raw token bytes.
+type revokedAuditPayload struct {
+	RevokedJTI       string    `json:"revoked_jti"`
+	RevokedSub       string    `json:"revoked_sub,omitempty"`
+	RevocationReason string    `json:"revocation_reason"`
+	CascadeRootJTI   string    `json:"cascade_root_jti,omitempty"`
+	PropagationMode  string    `json:"propagation_mode"`
+	Timestamp        time.Time `json:"timestamp"`
+}
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	start := s.clockNow()
@@ -326,6 +379,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			finish("rate_limited")
 			return
 		}
+	}
+
+	// §13.3 line 603 / §8.3 recursive revocation: a token-exchange
+	// carrying requested_token_type=...:access_token:revoked is a
+	// revocation request, not a mint. The subject_token is the root to
+	// revoke; the Token Service cascades to its delegation descendants
+	// and emits one token.revoked per revoked node. F-16.7.5.
+	if req.RequestedTokenType == revokedTokenType {
+		s.handleRevocationRequest(w, r, callerClaims, subjectClaims, now, finish)
+		return
 	}
 
 	exchangeReq := tokenexchange.Request{
@@ -596,6 +659,98 @@ func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason 
 		Timestamp time.Time `json:"timestamp"`
 	}{Sub: sub, JTI: jti, Reason: reason, Timestamp: at})
 	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
+}
+
+// handleRevocationRequest serves the §13.3 line 603 / §8.3 recursive
+// revocation request (`requested_token_type=...:access_token:revoked`).
+// It revokes the subject token (the root) and every delegation
+// descendant reachable through parent_jti, then emits one §16.7
+// token.revoked audit row per revoked node — `explicit_revoke` for the
+// root and `cascade_from_parent` for each descendant — and pushes each
+// revoked jti onto the cluster revocation propagation seam. The
+// revocation is durable in Postgres before the success response is
+// returned. F-16.7.5.
+func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request, caller, subject jwt.Claims, now time.Time, finish func(string)) {
+	if caller.TenantID != subject.TenantID {
+		writeOAuthError(w, http.StatusForbidden, "invalid_grant", "cross-tenant revocation is not permitted")
+		finish("invalid_grant")
+		return
+	}
+	if subject.JWTID == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "subject_token carries no jti to revoke")
+		finish("invalid_request")
+		return
+	}
+	rs, ok := s.issuedTokens.(RevocationStore)
+	if !ok {
+		w.Header().Set("Retry-After", "5")
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_store_unavailable",
+			"§13.3 recursive revocation requires a durable issued-token store")
+		finish("token_store_unavailable")
+		return
+	}
+	revoked, err := rs.RevokeCascade(r.Context(), subject.TenantID, subject.JWTID,
+		revocationReasonExplicit, revocationReasonCascade, now)
+	if errors.Is(err, issuedtokenstore.ErrNotFound) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
+			"subject_token jti is not a known issued token")
+		finish("invalid_grant")
+		return
+	}
+	if err != nil {
+		writeIssueStoreError(w, finish, err)
+		return
+	}
+	for _, rt := range revoked {
+		s.emitTokenRevoked(r.Context(), subject.TenantID, rt, subject.JWTID, now)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"revoked":       true,
+		"revoked_count": len(revoked),
+	})
+	finish("")
+}
+
+// emitTokenRevoked writes the §16.7 token.revoked audit row for one
+// revoked node and propagates the revocation cluster-wide. The root of
+// a cascade carries `revocation_reason=explicit_revoke` and no
+// `cascade_root_jti`; each descendant carries `cascade_from_parent` and
+// the root jti. F-16.7.5.
+func (s *Server) emitTokenRevoked(ctx context.Context, tenantID string, rt issuedtokenstore.RevokedToken, rootJTI string, at time.Time) {
+	reason := revocationReasonCascade
+	cascadeRoot := rootJTI
+	if rt.IsRoot {
+		reason = revocationReasonExplicit
+		cascadeRoot = ""
+	}
+	mode := s.propagateRevocation(ctx, tenantID, rt.JTI)
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	body, _ := json.Marshal(revokedAuditPayload{
+		RevokedJTI:       rt.JTI,
+		RevokedSub:       rt.Subject,
+		RevocationReason: reason,
+		CascadeRootJTI:   cascadeRoot,
+		PropagationMode:  mode,
+		Timestamp:        at,
+	})
+	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
+}
+
+// propagateRevocation publishes a revoked jti onto the cluster EventBus
+// and reports the resulting §16.7 propagation_mode. A nil propagator or
+// a publish failure yields `postgres_only`: Postgres remains the
+// authoritative revocation store, so peers fall back to the
+// issued_tokens.revoked_at check. F-16.7.5.
+func (s *Server) propagateRevocation(ctx context.Context, tenantID, jti string) string {
+	if s.revocationPropagator == nil {
+		return propagationModePostgresOnly
+	}
+	if err := s.revocationPropagator(ctx, tenantID, jti); err != nil {
+		return propagationModePostgresOnly
+	}
+	return propagationModeEventBus
 }
 
 // clockNow returns the configured clock or time.Now.
