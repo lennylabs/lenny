@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-// Command lenny is the §17.4 Embedded Mode entry point: a single
-// binary that brings up a complete Lenny stack on localhost with no
+// Command lenny is the §17.4 Embedded Mode entry point: a single binary
+// that brings up a complete Lenny stack on localhost with no
 // pre-existing Kubernetes cluster, Postgres, Redis, or OIDC provider.
 //
-// Command surface (§17.4, §24.19):
+// Embedded Mode command surface (§17.4, §24.19):
 //
 //	lenny up                Start the embedded stack. Idempotent.
 //	lenny down [--purge]    Tear the stack down. --purge removes ~/.lenny.
@@ -15,23 +15,19 @@
 //	lenny image <...>       Manage the embedded containerd image store.
 //	lenny session new       Start a session against the running gateway.
 //
-// The embedded stack runs the production gateway, controllers, CRDs,
-// and storage interfaces. Embedded Mode signals the mode=embedded
-// platform flag through the gateway's standard configuration surface;
-// there are no mode-dependent code splits in platform business logic.
-//
 // The lenny binary is the same executable as lenny-ctl (§24) under a
-// short name. The command logic lives in pkg/embedded/localcli so both
-// binaries share it: invoked as lenny it defaults to Embedded Mode and
-// targets the local stack; invoked as lenny-ctl <same-command> it
-// behaves identically (§24.19 line 266). The Embedded Mode state
-// directory is ~/.lenny/, overridable with LENNY_HOME.
+// short name. Both names dispatch through pkg/ctlcli and support every
+// subcommand per the §24 preamble (line 17): `lenny bootstrap`,
+// `lenny admin tenants list`, and `lenny drift report` behave identically
+// to their `lenny-ctl` forms. Invoked as lenny, the version banner names
+// the short binary; the Embedded Mode local commands target the local
+// stack rooted at ~/.lenny/ (override with LENNY_HOME).
 package main
 
 import (
 	"os"
 
-	"github.com/lennylabs/lenny/pkg/embedded/localcli"
+	"github.com/lennylabs/lenny/pkg/ctlcli"
 )
 
 // version is the CLI build version. The release pipeline stamps it via
@@ -42,5 +38,5 @@ import (
 var version = "dev"
 
 func main() {
-	os.Exit(localcli.Main(os.Args[1:], os.Stdout, os.Stderr, version))
+	os.Exit(ctlcli.Run(os.Args[1:], os.Stdout, os.Stderr, version))
 }

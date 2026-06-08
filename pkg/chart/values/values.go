@@ -80,6 +80,7 @@ type Root struct {
 	PgBouncer                  Object     `json:"pgbouncer,omitempty"`
 	Postgres                   Object     `json:"postgres,omitempty"`
 	StoreRouter                Object     `json:"storeRouter,omitempty"`
+	EventBus                   Object     `json:"eventBus,omitempty"`
 	Billing                    Object     `json:"billing,omitempty"`
 	Audit                      Object     `json:"audit,omitempty"`
 	Features                   Object     `json:"features,omitempty"`
