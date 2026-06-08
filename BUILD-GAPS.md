@@ -25303,7 +25303,7 @@ errors to their canonical envelopes (the codes already existed in
 (pure-logic table for every axis, permitted cases, substitution, defaults)
 and `content_policy_test.go` (Delegate-level stamping, default-not-stamped,
 each rejection with no child row created, transitive inheritance from a
-stamped parent). Resolved by this batch (commit f97d4e55).
+stamped parent). Resolved by this batch (commit 22a74254).
 
 ### - [x] F-13.5.11 — Per-message `from` field is not gateway-set [Medium] — CLOSED
 
