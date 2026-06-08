@@ -2187,6 +2187,12 @@ func main() {
 		// unset, so the §25.3 health surface omits the component on a
 		// Postgres-only deployment with no cluster client.
 		kubeHealthzProbe func(context.Context) error
+		// saTokenVerifier validates the projected SA token's signature and
+		// audience on every pod→gateway GatewayControl request via a
+		// Kubernetes TokenReview (§10.2 line 227). It stays nil when there
+		// is no in-cluster client or no configured audience, in which case
+		// the SA-token interceptor degrades to the audience-only decode.
+		saTokenVerifier leasecontrol.TokenVerifier
 	)
 	if *agentNamespace != "" {
 		cfg, err := ctrl.GetConfig()
@@ -2225,6 +2231,23 @@ func main() {
 			log.Fatalf("lenny-gateway: build apiserver /healthz probe: %v", err)
 		}
 		kubeHealthzProbe = probe
+		// spec: §10.2 line 227 — "Pods cannot forge or extend this token.
+		// The gateway validates the signature on every pod→gateway
+		// request." When an audience is configured the gateway validates
+		// the projected SA token via a Kubernetes TokenReview (the
+		// apiserver checks the SA-issuer signature and expiry), binding the
+		// deployment-specific audience at the same time. Built from a
+		// clientset here where the rest config is in scope; wired onto the
+		// §8.6 GatewayControl listener below. F-10.2.10.
+		if *saTokenAudience != "" {
+			cs, err := kubernetes.NewForConfig(cfg)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §10.2 build TokenReview client: %v", err)
+			}
+			saTokenVerifier = leasecontrol.TokenReviewVerifier{
+				Reviews: cs.AuthenticationV1().TokenReviews(),
+			}
+		}
 		dialOpt, err := adapter.TLSClientOption(*adapterTLSCert, *adapterTLSKey, *adapterCA)
 		if err != nil {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
@@ -5677,7 +5700,7 @@ func main() {
 	// connectorinvoke surface, which dials the external endpoint with the
 	// gateway-held credential. F-9.1.2.
 	connectorToolBridge := connectortools.New(sessions, connectors, connectorAuthorizer, connectorInvoker)
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, mtlsDeny)
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -7242,7 +7265,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -7331,15 +7354,18 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// request body and has no other proof of the caller's identity.
 	// F-8.6.4 / F-15.3.1.
 	//
-	// spec: §10.3 line 334 — the gateway validates the projected SA
-	// token's deployment-specific audience claim on every pod→gateway
-	// request, the SA-token layer of the §10.3 defense-in-depth chain.
-	// The interceptor is a no-op when no audience is configured (the
-	// local-development path), so it composes with the mTLS gate above
-	// without disturbing dev runs. F-10.3.20.
+	// spec: §10.2 line 227 / §10.3 line 334 — the gateway validates the
+	// projected SA token on every pod→gateway request: its signature and
+	// expiry via a Kubernetes TokenReview (when saTokenVerifier is wired)
+	// and its deployment-specific audience claim, the SA-token layer of
+	// the §10.3 defense-in-depth chain. The interceptor is a no-op when no
+	// audience is configured (the local-development path), so it composes
+	// with the mTLS gate above without disturbing dev runs. When an
+	// audience is set but no verifier is available it degrades to the
+	// audience-only decode. F-10.3.20 / F-10.2.10.
 	opts = append(opts, grpc.ChainUnaryInterceptor(
 		leasecontrol.RequireVerifiedPeerInterceptor(clientCA != ""),
-		leasecontrol.RequireSATokenAudienceInterceptor(saTokenAudience),
+		leasecontrol.RequireSATokenInterceptor(saTokenAudience, saTokenVerifier),
 	))
 	// spec: §16.3 line 328 ("Pod → Gateway (delegation tool calls carry
 	// parent trace context)") — extract the inbound traceparent from gRPC

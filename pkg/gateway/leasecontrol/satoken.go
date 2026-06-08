@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -14,33 +15,38 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// RequireSATokenAudienceInterceptor returns a unary server interceptor
-// that validates the projected ServiceAccount token's audience claim on
-// every pod→gateway GatewayControl call. The §10.3 "Projected SA token"
-// clause requires the gateway to validate the audience claim on every
-// pod→gateway request; the audience is deployment-specific
-// (`lenny-gateway-<cluster-name>`, the global.saTokenAudience value) so a
-// token minted for another Lenny deployment's gateway is rejected even
-// when the cluster CA would otherwise trust the peer's certificate. This
-// is the SA-token layer of the §10.3 defense-in-depth chain that sits
-// alongside the mTLS SPIFFE check (RequireVerifiedPeerInterceptor) and
-// the NetworkPolicy isolation.
+// RequireSATokenInterceptor returns a unary server interceptor that
+// validates the projected ServiceAccount token on every pod→gateway
+// GatewayControl call. The §10.2 line 227 contract — "Pods cannot forge
+// or extend this token. The gateway validates the signature on every
+// pod→gateway request" — and the §10.3 line 334 audience binding are both
+// enforced here, the SA-token layer of the defense-in-depth chain that
+// sits alongside the mTLS SPIFFE check (RequireVerifiedPeerInterceptor)
+// and the NetworkPolicy isolation.
 //
 // The token is carried as an `authorization: Bearer <jwt>` gRPC metadata
 // header by the pod adapter (the gatewaycontrol client's per-RPC
-// credential). The interceptor decodes the JWT payload and checks the
-// `aud` claim without verifying the signature: the mTLS handshake has
-// already authenticated the peer, so this layer exists only to bind the
-// token to this deployment's audience and block cross-deployment replay.
-// A missing token, an unparseable token, or an audience that does not
-// include expectedAudience is rejected with Unauthenticated.
+// credential). When a verifier is configured (the production path, a
+// TokenReviewVerifier backed by the in-cluster authentication client), the
+// interceptor submits the token to the kube-apiserver, which validates the
+// signature and expiry against the cluster's service-account issuer and
+// confirms the deployment-specific audience (`lenny-gateway-<cluster>`, the
+// global.saTokenAudience value). A forged, expired, or cross-deployment
+// token is rejected even when the cluster CA would otherwise trust the
+// peer's certificate. Any failure fails closed.
+//
+// When no verifier is configured but an audience is set (an in-cluster
+// client could not be built, e.g. single-process dev with an audience),
+// the interceptor falls back to decoding the JWT payload and matching the
+// `aud` claim without verifying the signature; the mTLS handshake still
+// authenticates the peer in that degraded path.
 //
 // When expectedAudience is empty — the local-development path where
 // global.saTokenAudience is unset — the interceptor passes every call
-// through unchanged, mirroring RequireVerifiedPeerInterceptor's
-// dev-mode behaviour.
-// spec: §10.3 line 334 (Projected SA token).
-func RequireSATokenAudienceInterceptor(expectedAudience string) grpc.UnaryServerInterceptor {
+// through unchanged, mirroring RequireVerifiedPeerInterceptor's dev-mode
+// behaviour.
+// spec: §10.2 line 227 (signature validation); §10.3 line 334 (audience).
+func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if expectedAudience == "" {
 			return handler(ctx, req)
@@ -48,8 +54,26 @@ func RequireSATokenAudienceInterceptor(expectedAudience string) grpc.UnaryServer
 		token, ok := bearerTokenFromContext(ctx)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated,
-				"leasecontrol: GatewayControl requires a projected SA token (reason=token_missing) (§10.3)")
+				"leasecontrol: GatewayControl requires a projected SA token (reason=token_missing) (§10.2)")
 		}
+		if verifier != nil {
+			// spec: §10.2 line 227 — validate the signature (and audience)
+			// on every pod→gateway request. Fail closed on any error.
+			if err := verifier.Verify(ctx, token, expectedAudience); err != nil {
+				reason := "signature_invalid"
+				switch {
+				case errors.Is(err, ErrSATokenAudienceMismatch):
+					reason = "audience_mismatch"
+				case errors.Is(err, ErrSATokenReviewFailed):
+					reason = "tokenreview_unavailable"
+				}
+				return nil, status.Errorf(codes.Unauthenticated,
+					"leasecontrol: SA token rejected (reason=%s): %v (§10.2)", reason, err)
+			}
+			return handler(ctx, req)
+		}
+		// Degraded dev path: no cluster TokenReview client. Decode the
+		// payload and match the audience without a signature check.
 		auds, err := jwtAudiences(token)
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated,
@@ -90,8 +114,9 @@ func bearerTokenFromContext(ctx context.Context) (string, bool) {
 
 // jwtAudiences decodes a JWT's payload and returns its `aud` claim as a
 // slice. RFC 7519 permits `aud` to be either a single string or an array
-// of strings; both forms are handled. The signature is deliberately not
-// verified — see RequireSATokenAudienceInterceptor for why. An absent
+// of strings; both forms are handled. This decode path is the degraded
+// dev fallback used by RequireSATokenInterceptor when no TokenReview
+// verifier is configured; it does not verify the signature. An absent
 // `aud` claim yields an empty slice (no audience matches).
 func jwtAudiences(token string) ([]string, error) {
 	parts := strings.Split(token, ".")

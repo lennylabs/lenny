@@ -12605,7 +12605,7 @@ The main bearer chain reads `claims.TenantID` from the static JSON tag `tenant_i
 
 **Resolution:** `jwt.Claims` now captures every payload claim as `Extras map[string]json.RawMessage` during `Verify`, with a `ClaimString(name)` helper that prefers typed Claims fields and falls back to `Extras`. Auth middleware `Options.TenantClaimName` selects the OIDC claim used for tenant extraction (default `tenant_id`). `cmd/lenny-gateway/main.go` plumbs `--tenant-id-claim` (env `LENNY_TENANT_ID_CLAIM`) and the Helm chart adds `auth.tenantIdClaim` (default `tenant_id`) → renders `--tenant-id-claim=…` on the gateway Deployment. Tier-1 coverage: `TestBearerHonoursConfigurableTenantClaim` (alt claim resolves; default claim still rejects as `TENANT_CLAIM_MISSING`) + `TestClaimsClaimStringResolvesAcrossFields` (typed-precedence, raw fallback, non-string, absent, nil-safe).
 
-### - [ ] F-10.2.10 — Pod → gateway path lacks the spec-promised audience-bound JWT verification — M [Medium] — OPEN
+### - [x] F-10.2.10 — Pod → gateway path lacks the spec-promised audience-bound JWT verification — M [Medium] — CLOSED
 
 Spec L189–190: the boundary table specifies pod ↔ gateway uses "mTLS + projected service account token (audience-bound, short TTL)" and "Pod → Gateway: Projected service account token (audience: deployment-specific, short TTL)". L227: "Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request."
 
@@ -12614,6 +12614,25 @@ Pod-identity enforcement in the codebase is mTLS + the `MCPNonce` (`pkg/adapter/
 **Resolution:** Deferred — runtime SA-token validation requires (a) the adapter to read `/var/run/secrets/lenny.dev/serviceaccount/token` and attach it to each outbound gRPC call, (b) the gateway to install a streaming/unary gRPC interceptor that verifies the projected token via Kubernetes TokenReview against the configured audience, and (c) a fail-closed posture aligned with the existing mTLS layer. This is sizeable enough to warrant its own batch in the §10.3 mTLS/SA-identity cluster (alongside F-10.3.1, F-10.3.20). The mTLS + MCPNonce posture in v1 remains an authenticated channel; the token-audience layer is a defense-in-depth addition tracked here.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**Resolution:** Built the §10.2 line 227 signature-validation path. The adapter-side
+half (a) was already present — `pkg/adapter/gatewaycontrol/satoken.go` attaches the
+projected SA token as the `authorization` bearer on every GatewayControl call, and the
+controller mounts the audience-bound projected token (`podspec.go`). The gateway-side
+half is now real signature verification rather than the prior audience-only decode: new
+`leasecontrol.TokenVerifier` seam + `TokenReviewVerifier`, which submits a Kubernetes
+`TokenReview` (audience-scoped) so the kube-apiserver validates the SA-issuer signature
+and expiry ("pods cannot forge or extend this token") and the granted-audience
+membership binds the deployment. `RequireSATokenInterceptor` (renamed from
+`RequireSATokenAudienceInterceptor`) consults the verifier on the §8.6 GatewayControl
+listener — the channel that actually carries the SA token (ExtendLease plus the §9.1
+intra-pod platform/connector tool forwarding) — failing closed on any verdict error;
+it degrades to the audience-only decode only when no in-cluster verifier is wired (dev),
+and is a no-op when no audience is configured. `cmd/lenny-gateway` builds the verifier
+from a clientset when `--agent-namespace` and `--sa-token-audience` are set; the gateway
+ClusterRole gains `authentication.k8s.io/tokenreviews: create`. Per-request TokenReview
+is acceptable for agent-paced control-plane traffic; a positive-result cache is a noted
+future optimization. Resolved in commit <PENDING>.
 
 ### - [x] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — CLOSED
 

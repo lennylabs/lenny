@@ -146,6 +146,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "patch"]
+  # §10.2 line 227 — "The gateway validates the signature on every
+  # pod→gateway request." The §8.6 GatewayControl listener submits a
+  # TokenReview for each pod-presented projected SA token; the
+  # kube-apiserver verifies the SA-issuer signature, expiry, and the
+  # deployment-specific audience. Equivalent to binding the
+  # system:auth-delegator ClusterRole.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

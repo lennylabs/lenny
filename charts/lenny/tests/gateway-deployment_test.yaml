@@ -697,6 +697,21 @@ tests:
             resources: ["pods"]
             verbs: ["get", "list", "watch", "patch"]
 
+  # spec: §10.2 line 227 — the §8.6 GatewayControl listener verifies each
+  # pod-presented projected SA token via a TokenReview, so the gateway SA
+  # needs create on authentication.k8s.io/tokenreviews. F-10.2.10.
+  - it: grants tokenreviews create for pod-to-gateway SA-token signature verification
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["authentication.k8s.io"]
+            resources: ["tokenreviews"]
+            verbs: ["create"]
+
   - it: renders the lenny-gateway ClusterIP Service with HTTP, gRPC, and metrics ports
     documentIndex: 4
     asserts:

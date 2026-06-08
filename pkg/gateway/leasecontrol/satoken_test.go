@@ -44,7 +44,7 @@ const testAud = "lenny-gateway-acme"
 // check; every call passes through (local-development path).
 func TestSATokenInterceptorEmptyAudiencePasses_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
-	itc := RequireSATokenAudienceInterceptor("")
+	itc := RequireSATokenInterceptor("", nil)
 	if _, err := itc(context.Background(), nil, &grpc.UnaryServerInfo{}, h); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSATokenInterceptorEmptyAudiencePasses_spec_10_3_334(t *testing.T) {
 // deployment audience is admitted.
 func TestSATokenInterceptorStringAudienceMatches_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
-	itc := RequireSATokenAudienceInterceptor(testAud)
+	itc := RequireSATokenInterceptor(testAud, nil)
 	ctx := ctxWithBearer(makeJWT(t, `"`+testAud+`"`))
 	if _, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -71,7 +71,7 @@ func TestSATokenInterceptorStringAudienceMatches_spec_10_3_334(t *testing.T) {
 // the array is admitted.
 func TestSATokenInterceptorArrayAudienceMatches_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
-	itc := RequireSATokenAudienceInterceptor(testAud)
+	itc := RequireSATokenInterceptor(testAud, nil)
 	ctx := ctxWithBearer(makeJWT(t, `["other",`+`"`+testAud+`"]`))
 	if _, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -85,7 +85,7 @@ func TestSATokenInterceptorArrayAudienceMatches_spec_10_3_334(t *testing.T) {
 // is rejected (cross-deployment replay protection).
 func TestSATokenInterceptorAudienceMismatchRejected_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
-	itc := RequireSATokenAudienceInterceptor(testAud)
+	itc := RequireSATokenInterceptor(testAud, nil)
 	ctx := ctxWithBearer(makeJWT(t, `"lenny-gateway-globex"`))
 	_, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h)
 	if status.Code(err) != codes.Unauthenticated {
@@ -100,7 +100,7 @@ func TestSATokenInterceptorAudienceMismatchRejected_spec_10_3_334(t *testing.T) 
 // audience check is active.
 func TestSATokenInterceptorMissingTokenRejected_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
-	itc := RequireSATokenAudienceInterceptor(testAud)
+	itc := RequireSATokenInterceptor(testAud, nil)
 	_, err := itc(context.Background(), nil, &grpc.UnaryServerInfo{}, h)
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected Unauthenticated for a missing token, got %v", err)
@@ -114,7 +114,7 @@ func TestSATokenInterceptorMissingTokenRejected_spec_10_3_334(t *testing.T) {
 // silently admitted.
 func TestSATokenInterceptorMalformedTokenRejected_spec_10_3_334(t *testing.T) {
 	h, _ := passHandler()
-	itc := RequireSATokenAudienceInterceptor(testAud)
+	itc := RequireSATokenInterceptor(testAud, nil)
 	ctx := ctxWithBearer("not-a-jwt")
 	_, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h)
 	if status.Code(err) != codes.Unauthenticated {
