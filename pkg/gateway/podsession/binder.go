@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
@@ -35,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
@@ -1150,6 +1152,19 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state
 		if from := state.State(sb.Status.Phase); state.IsValid(from, terminal) == nil {
 			if err := b.setPhase(ctx, &sb, terminal); err != nil {
 				log.Printf("podsession: record terminal phase %s on sandbox %s: %v", terminal, result.SandboxName, err)
+			} else if reason := sandboxcond.TerminalReason(terminal); reason != "" {
+				// spec: §6.2 line 305 / §4.6.1 — record the disposition as a
+				// status condition so operators can read why the Sandbox
+				// reached its terminal phase. Best-effort, like the phase write.
+				cond := metav1.Condition{
+					Type:    sandboxcond.Terminated,
+					Status:  metav1.ConditionTrue,
+					Reason:  reason,
+					Message: "session ended: " + string(terminal),
+				}
+				if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
+					log.Printf("podsession: record terminal condition %s on sandbox %s: %v", reason, result.SandboxName, err)
+				}
 			}
 		}
 	}
@@ -1177,7 +1192,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state
 //
 // spec: §6.2 line 214 (`running → suspended` interrupt path) projected
 // onto Sandbox.status.phase per §6.2 lines 305-313. F-6.2.13.
-func (b *Binder) Suspend(ctx context.Context, sandboxName string) error {
+func (b *Binder) Suspend(ctx context.Context, sandboxName, reason string) error {
 	if b.Client == nil || sandboxName == "" {
 		return nil
 	}
@@ -1202,6 +1217,21 @@ func (b *Binder) Suspend(ctx context.Context, sandboxName string) error {
 	}
 	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Suspended); err != nil {
 		return fmt.Errorf("podsession: record suspended phase on sandbox %s: %w", sandboxName, err)
+	}
+	// spec: §6.2 line 305 / §4.6.1 — record the suspend in condition history
+	// so an operator can tell an acknowledged interrupt from a forced
+	// (timeout) one. Best-effort, like the phase write above.
+	if reason == "" {
+		reason = "InterruptAcknowledged"
+	}
+	cond := metav1.Condition{
+		Type:    sandboxcond.Suspended,
+		Status:  metav1.ConditionTrue,
+		Reason:  reason,
+		Message: "session suspended on interrupt",
+	}
+	if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
+		log.Printf("podsession: record suspended condition on sandbox %s: %v", sandboxName, err)
 	}
 	return nil
 }

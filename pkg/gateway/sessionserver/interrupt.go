@@ -96,7 +96,7 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	// Best-effort: a Sandbox phase write that races with a concurrent
 	// recovery transition is logged but does not roll back the row
 	// transition that already advanced the session. F-6.2.13.
-	s.suspendSandboxForInterrupt(r.Context(), updated.ID)
+	s.suspendSandboxForInterrupt(r.Context(), updated.ID, timedOut)
 	if timedOut {
 		// spec: §7.2 line 169 / §4.7 InterruptResponse.Status.
 		// Surface INTERRUPT_TIMEOUT to the caller so a UI can flag that
@@ -154,7 +154,7 @@ func (s *Server) signalAdapterInterrupt(r *http.Request, row sessionstore.Sessio
 // not re-bound) is the dev/minimal-gateway posture where no Sandbox
 // exists to update. Best-effort: a Sandbox phase write failure does not
 // roll back the row update. F-6.2.13.
-func (s *Server) suspendSandboxForInterrupt(ctx context.Context, sessionID string) {
+func (s *Server) suspendSandboxForInterrupt(ctx context.Context, sessionID string, timedOut bool) {
 	if s.podBinder == nil || s.podRegistry == nil {
 		return
 	}
@@ -162,7 +162,13 @@ func (s *Server) suspendSandboxForInterrupt(ctx context.Context, sessionID strin
 	if !ok || bind == nil || bind.SandboxName == "" {
 		return
 	}
-	if err := s.podBinder.Suspend(ctx, bind.SandboxName); err != nil {
+	// spec: §7.2 lines 168-169 — distinguish the acknowledged interrupt
+	// from the forced (timeout) one in the §6.2 condition history.
+	reason := "InterruptAcknowledged"
+	if timedOut {
+		reason = "InterruptTimeout"
+	}
+	if err := s.podBinder.Suspend(ctx, bind.SandboxName, reason); err != nil {
 		log.Printf("sessionserver: suspend sandbox %s for session %s: %v", bind.SandboxName, sessionID, err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -82,6 +84,13 @@ func TestInterruptAdvancesSandboxToSuspended_spec_6_2_214(t *testing.T) {
 	if sb.Status.Phase != string(state.Suspended) {
 		t.Errorf("F-6.2.13: Sandbox.status.phase = %q, want suspended", sb.Status.Phase)
 	}
+	// spec: §6.2 line 305 / §4.6.1 — the acknowledged interrupt records a
+	// Suspended condition with the InterruptAcknowledged reason. F-6.2.12.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
+		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
+	} else if cond.Reason != "InterruptAcknowledged" {
+		t.Errorf("F-6.2.12: condition reason = %q, want InterruptAcknowledged", cond.Reason)
+	}
 }
 
 // spec: §7.2 line 169 — adapter-forced suspended (INTERRUPT_TIMEOUT)
@@ -122,6 +131,13 @@ func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
 	}
 	if sb.Status.Phase != string(state.Suspended) {
 		t.Errorf("F-6.2.13 timeout path: Sandbox.status.phase = %q, want suspended", sb.Status.Phase)
+	}
+	// spec: §7.2 line 169 / §4.6.1 — the forced suspend records the
+	// InterruptTimeout reason so the history distinguishes it. F-6.2.12.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
+		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
+	} else if cond.Reason != "InterruptTimeout" {
+		t.Errorf("F-6.2.12: condition reason = %q, want InterruptTimeout", cond.Reason)
 	}
 }
 
@@ -202,7 +218,7 @@ func TestBinderSuspendIsIdempotent_spec_6_2_214(t *testing.T) {
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 
 	for i := 0; i < 2; i++ {
-		if err := binder.Suspend(context.Background(), "sbx-id"); err != nil {
+		if err := binder.Suspend(context.Background(), "sbx-id", ""); err != nil {
 			t.Errorf("Suspend iteration %d: %v", i, err)
 		}
 	}
@@ -218,7 +234,7 @@ func TestBinderSuspendInvalidEdgeIsNoOp_spec_6_2_214(t *testing.T) {
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 
-	if err := binder.Suspend(context.Background(), "sbx-bad"); err != nil {
+	if err := binder.Suspend(context.Background(), "sbx-bad", ""); err != nil {
 		t.Errorf("Suspend on invalid edge must no-op, got error: %v", err)
 	}
 	var sb lennyv1.Sandbox
@@ -235,7 +251,7 @@ func TestBinderSuspendInvalidEdgeIsNoOp_spec_6_2_214(t *testing.T) {
 func TestBinderSuspendMissingSandboxIsNoOp_spec_6_2_214(t *testing.T) {
 	cluster := podBindClient(t /* no sandbox */)
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
-	if err := binder.Suspend(context.Background(), "sbx-missing"); err != nil {
+	if err := binder.Suspend(context.Background(), "sbx-missing", ""); err != nil {
 		t.Errorf("Suspend on missing sandbox: %v", err)
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 )
 
 // stubSessions is a fake §4.6.1 active-session oracle keyed on sessionID.
@@ -77,6 +79,13 @@ func TestGCReclaimsOrphanedClaim(t *testing.T) {
 	}
 	if sb.Status.Phase != "idle" {
 		t.Errorf("sandbox phase = %q, want idle (returned to pool)", sb.Status.Phase)
+	}
+	// spec: §6.2 line 305 / §4.6.1 — the reclaim records an
+	// OrphanClaimReclaimed condition in the Sandbox condition history.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.OrphanClaimReclaimed); cond == nil {
+		t.Errorf("missing %s condition; have %v", sandboxcond.OrphanClaimReclaimed, sb.Status.Conditions)
+	} else if cond.Status != metav1.ConditionTrue || cond.Reason != "OrphanedClaimCollected" {
+		t.Errorf("condition = %+v, want status=True reason=OrphanedClaimCollected", cond)
 	}
 }
 

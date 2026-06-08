@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -888,6 +890,15 @@ func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
 	}
 	if sb.Status.Phase != string(state.Draining) {
 		t.Errorf("final sandbox phase = %q, want draining", sb.Status.Phase)
+	}
+	// spec: §6.2 line 305 / §4.6.1 — the disposition is recorded as a
+	// Terminated condition (with reason Completed) before the drain, and
+	// survives the drain because it is owned by a distinct field manager.
+	// F-6.2.12.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
+		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
+	} else if cond.Reason != "Completed" {
+		t.Errorf("F-6.2.12: condition reason = %q, want Completed", cond.Reason)
 	}
 }
 

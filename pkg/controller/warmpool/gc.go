@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -231,7 +232,23 @@ func (g *ClaimGarbageCollector) returnToIdle(ctx context.Context, namespace, san
 		patch.Status.NodeName = live.Status.NodeName
 		patch.Status.PodIP = live.Status.PodIP
 		patch.Status.ObservedGeneration = live.Generation
-		return g.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+		if err := g.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+			return err
+		}
+		// spec: §6.2 line 305 / §4.6.1 — record the orphan-claim collection
+		// in the Sandbox condition history so an operator can see the pod was
+		// reclaimed from an orphaned claim rather than completing a session.
+		// Best-effort: a condition write failure does not undo the reclaim.
+		cond := metav1.Condition{
+			Type:    sandboxcond.OrphanClaimReclaimed,
+			Status:  metav1.ConditionTrue,
+			Reason:  "OrphanedClaimCollected",
+			Message: "orphaned SandboxClaim collected; pod returned to idle",
+		}
+		if err := sandboxcond.Apply(ctx, g.Client, &live, cond); err != nil {
+			logf.FromContext(ctx).Error(err, "record orphan-claim condition", "sandbox", live.Name)
+		}
+		return nil
 	})
 }
 

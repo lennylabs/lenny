@@ -4,6 +4,7 @@ package connectorinvoke
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"testing"
 
@@ -11,6 +12,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 )
+
+// captureHandler is a minimal slog.Handler that records every WARN-level
+// message verbatim so a test can assert the exact §5.1 line 327 wording.
+type captureHandler struct{ msgs *[]string }
+
+func (h captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.msgs = append(*h.msgs, r.Message)
+	return nil
+}
+func (h captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h captureHandler) WithGroup(string) slog.Handler       { return h }
 
 // toolsListResp builds the tools/list JSON-RPC result body for a list of
 // (name, annotations-json) pairs.
@@ -106,10 +119,53 @@ func TestRefreshCapabilitiesStrictUnannotatedWarns_spec_5_1_327(t *testing.T) {
 	}
 }
 
+// TestRefreshCapabilitiesEmitsVerbatimWarnMessage_spec_5_1_327 verifies
+// the production discovery path logs the verbatim §5.1 line 327 WARN via
+// capabilityinference.WarnMessage (its sole production caller), not a
+// divergent inline string.
+func TestRefreshCapabilitiesEmitsVerbatimWarnMessage_spec_5_1_327(t *testing.T) {
+	var msgs []string
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{msgs: &msgs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	connectors := connectorstore.NewMemory()
+	seedConnector(t, connectors, connectorstore.Connector{
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.example",
+	})
+	doer := &fakeDoer{
+		responses: []*http.Response{
+			jsonResp(200, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`, nil),
+			jsonResp(202, ``, nil),
+			toolsListResp(`[{"name":"mystery_tool"}]`),
+		},
+	}
+	iv := NewInvoker(connectors, connectorcredstore.NewMemory(clock), New(doer), nil, nil).WithClock(clock)
+	if _, err := iv.RefreshCapabilities(context.Background(), "acme", "github", "alice", ""); err != nil {
+		t.Fatalf("RefreshCapabilities: %v", err)
+	}
+
+	want := capabilityinference.WarnMessage("mystery_tool", "github")
+	found := false
+	for _, m := range msgs {
+		if m == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("captured WARN messages = %v, want one equal to %q", msgs, want)
+	}
+}
+
 // TestRefreshCapabilitiesPermissiveUnannotatedIsWrite_spec_5_1_329
 // verifies permissive mode infers an unannotated tool as write and
 // raises no WARN.
 func TestRefreshCapabilitiesPermissiveUnannotatedIsWrite_spec_5_1_329(t *testing.T) {
+	var msgs []string
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{msgs: &msgs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	connectors := connectorstore.NewMemory()
 	seedConnector(t, connectors, connectorstore.Connector{
 		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.example",
@@ -135,6 +191,9 @@ func TestRefreshCapabilitiesPermissiveUnannotatedIsWrite_spec_5_1_329(t *testing
 	}
 	if res.Mode != capabilityinference.ModePermissive {
 		t.Errorf("mode = %q, want permissive", res.Mode)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("permissive mode emitted WARN messages %v, want none (§5.1 line 329 suppresses the warning)", msgs)
 	}
 }
 

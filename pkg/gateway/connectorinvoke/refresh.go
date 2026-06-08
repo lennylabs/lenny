@@ -99,7 +99,14 @@ func inferCapabilities(connectorID string, tools []ToolDescriptor, mode capabili
 		}
 		if res.InferredAdminUnannotated {
 			result.UnannotatedAdminTools = append(result.UnannotatedAdminTools, t.Name)
-			slog.Warn("connector tool has no MCP ToolAnnotations; capability inferred as 'admin' (conservative default). Use toolCapabilityOverrides or add ToolAnnotations to suppress this warning.",
+			// spec: §5.1 line 327 — emit the verbatim registration-time WARN.
+			// WarnMessage is the single source of the spec wording; the
+			// connector capability refresh is the sanctioned outbound
+			// discovery path that stands in for registration-time tool
+			// discovery, because the synchronous create handler makes no
+			// outbound call (§15.1 line 1144). Routing through WarnMessage
+			// gives the spec text a production caller.
+			slog.Warn(capabilityinference.WarnMessage(t.Name, connectorID),
 				"tool", t.Name, "connector", connectorID)
 		}
 	}
