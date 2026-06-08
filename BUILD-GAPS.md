@@ -36684,7 +36684,7 @@ mount, and pgx in the binary), a separate lift. The load-bearing runtime
 defense (part 3) is in place and backstops the install-time convenience, so
 the deferral leaves no unguarded window.
 
-**Resolution (this batch):** Part 4 — the preflight binary's actual
+**Resolution (commit b1e340b3):** Part 4 — the preflight binary's actual
 Postgres `Cloud-managed pooler sentinel defense` check (§17.6 line 488) —
 is now built, closing the finding. New `preflight.CloudPoolerSentinelCheck`
 runs only when the effective `connectionPooler == external`: it connects to
