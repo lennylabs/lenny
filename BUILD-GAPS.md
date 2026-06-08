@@ -31002,7 +31002,7 @@ Evidence: see "Coverage classification" above. The §16.8 names referenced by al
 
 **Resolution:** lenny-ops now serves the §16.9 Prometheus scrape surface. `opsserver` mounts `GET /metrics` (auth-exempt per §16.9 — a scrape carries no bearer; the §13.2 NET-045 NetworkPolicy is the access control) and the binary passes `promhttp.Handler()` over the process default registry, so the instruments already registered there (`lenny_backup_last_successful_timestamp`, `lenny_audit_rate_limited_total`, `lenny_drift_detected_total`/`_reconciled_total`, `lenny_ops_rate_limited_total`, `lenny_diagnostics_request_duration_seconds`) are exposed rather than registered-but-unscraped. A new `lenny_ops_self_health_status{check}` gauge (0/1/2 per §25.4 line 2507) is published on every self-monitor evaluation via the new `opsservice.Config.OnSelfHealthSample` hook. `/metrics` is also excluded from the access log so steady-state scrapes do not flood it. Tier-1 tests cover the route (served/default/auth-exempt), the per-tick sampler hook, and the per-check gauge encoding. The stale "exposition wired in a later commit" comments on the existing instruments are corrected. Remaining alert-referenced series that still have no producer are tracked under F-16.8.2. Resolved this batch.
 
-### - [ ] F-16.8.2 — §16.5 alerts reference §16.8 metrics that have no producer [High] — OPEN
+### - [x] F-16.8.2 — §16.5 alerts reference §16.8 metrics that have no producer [High] — CLOSED
 
 `pkg/alerting/rules/rules.go` bundles alert expressions whose PromQL refers to §16.8 metrics that are never registered. The alerts are valid PromQL syntactically and pass the rule-render unit test, but in production they will never fire — Prometheus will treat the underlying selector as empty and the binary comparison as false. Inventory:
 
@@ -31020,6 +31020,29 @@ Evidence: see "Coverage classification" above. The §16.8 names referenced by al
 All eight alerts are silently inert. None of the eight underlying metrics is constructed anywhere.
 
 **Reopened 2026-06-07 — prior deferral:** The §16.9 `/metrics` exposition surface this finding depended on now exists (F-16.8.1), and two of the eight series have real producers: `lenny_backup_last_successful_timestamp{type}` (sampled by the leader-gated backup-metrics cron) and `lenny_ops_self_health_status{check}` (published every self-monitor tick, F-16.8.1). The remaining six stay producerless because their source subsystems are unbuilt: `lenny_platform_upgrade_phase` and `lenny_platform_version_drift` need the §25.8 / §10.5 platform-upgrade orchestrator (F-10.5.1, OPEN); `lenny_backup_reconcile_blocked_total` needs the §12.8 post-restore GDPR erasure reconciler (F-12.8.3 / F-17.3.3, OPEN); `lenny_ops_lock_split_brain_detected_total` needs a remediation-lock split-brain detector that does not exist; and `lenny_backup_total{status}` / `lenny_ops_operations_stalled_total` need a backup-Job outcome counter and an operations-cadence stall detector respectively. Wiring those emit sites is the work of the owning findings, not a metrics-only change. Re-attempt when those subsystems land.
+
+- **Resolution:** Re-verified every one of the eight metrics against the
+  current tree (rule A): all now have a producer registered on the
+  lenny-ops default registry that the §16.9 `/metrics` exposition scrapes.
+  This batch's F-25.11.7 closure wired the last two producerless series —
+  `lenny_backup_reconcile_blocked_total` (post-restore ledger-stale block
+  site, `pkg/ops/backup/postrestore.go` via the new `ReconcileMetrics`
+  seam) and `lenny_backup_total{status}` (the `backup.MetricsCollector`
+  derived from `ops_backups` rows). The remaining six were wired by prior
+  batches: `lenny_ops_lock_split_brain_detected_total`
+  (`cmd/lenny-ops/locks.go`, the split-brain detector the reopen note
+  thought absent), `lenny_platform_upgrade_phase`
+  (`upgradeservice.MetricsCollector`, registered at
+  `cmd/lenny-ops/main.go`), `lenny_platform_version_drift`
+  (`cmd/lenny-ops/deps.go` + the §25.8 version aggregator),
+  `lenny_backup_last_successful_timestamp` (the leader-gated backup-metrics
+  cron), and `lenny_ops_self_health_status` (the self-monitor tick). The
+  eighth inventory row (`lenny_ops_operations_stalled_total`) is a stale
+  reference: the live alert is `OperationStalled` reading the catalogued
+  gauge `lenny_ops_operations_stalled` (`cmd/lenny-ops/deps.go`
+  `setOperationsStalled`, fed by `opsinventory.Observer`), which has a
+  producer and is not inert. No alert in the inventory is silently inert.
+  Resolved by this batch (final two producers) plus prior-batch wiring.
 
 ### - [x] F-16.8.3 — alert rules reference metrics absent from both §16.1 and §16.8 [High] — CLOSED
 
