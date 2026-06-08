@@ -11139,7 +11139,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 ### Findings
 
-### - [ ] F-9.2.1 — Tamper detector is structurally untriggerable; per-hop content verification is a tautology [High] — OPEN
+### - [x] F-9.2.1 — Tamper detector is structurally untriggerable; per-hop content verification is a tautology [High] — DEFERRED
 
 - **Spec:** Lines 56–62, 68. "Intermediate pods forward elicitations upstream by `elicitation_id` only ... The forward-hop wire mechanism is the native MCP `elicitation/create` frame ... an intermediate pod re-emits the upstream `elicitation/create` frame carrying the original `{message, schema}` payload. The gateway canonicalizes the forwarded frame's `{message, schema}` pair ... and compares its SHA-256 digest against the digest recorded at origination."
 - **Evidence:**
@@ -11149,6 +11149,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** The §9.2 gateway-origin binding cannot detect any tamper attempt because no second submission of `{message, schema}` is ever made for the gateway to compare against. The detector is structurally inert in v1. The `ELICITATION_CONTENT_TAMPERED` error path can only be hit by a contrived caller passing a pre-mutated `OriginalContent` through `WalkChain`, which is not a code path any pod can drive.
 
 **Reopened 2026-06-07 — prior deferral (commit `684ab36e`):** The tautological `VerifyContent(originalDigest, in.OriginalContent)` the finding names was removed in `684ab36e`: `WalkChain` now verifies a forward-hop re-emission only when one is supplied via the new `ChainInput.ForwardedContent` provider, and forwards unverified otherwise (matching the §9.2 "intermediate pods forward by `elicitation_id` only" model). The remaining work is the production wire mechanism that would populate that provider — intermediate pods re-emitting the upstream `elicitation/create` frame over virtual MCP so the gateway receives a second `{message, schema}` submission to compare. That is a dedicated subsystem (per-hop MCP forwarding of elicitation frames), parallel to the SDK-warm path, and is out of scope for a single batch. The handling once a divergence IS surfaced is now spec-correct and tested (F-9.2.2, F-9.2.3); only the triggering wire path remains.
+
+**DEFERRED 2026-06-08 (re-verified this batch).** Re-confirmed against the current tree: `lenny/request_elicitation` (`pkg/gateway/mcptools/mcptools.go`) remains the only elicitation entry point and is a single server-side tool call; `grep -rn "elicitation/create" pkg/` still returns only doc comments, and `WalkChain`'s `ChainInput.ForwardedContent` provider (the seam that would carry a re-emitted `{message, schema}` for the gateway to compare) has no production populator. Closing this requires building the §9.2 lines 56-62 per-hop forward-hop wire mechanism — intermediate pods re-emitting the upstream native MCP `elicitation/create` frame over the virtual-MCP path so the gateway receives a second submission to digest-compare — which is a separate, unbegun subsystem (a §26 reference runtime that re-emits frames plus the virtual-MCP forward path), parallel to and as large as the SDK-warm path. Deferred per Rule P criterion 3 (separate large workstream not begun); the divergence-handling, enforcement-mode resolution, audit emission, metric cardinality, and provenance stamping (F-9.2.2 through F-9.2.6, F-9.2.8, F-9.2.9) all landed and are tested, so only the triggering wire path remains.
 
 ### - [x] F-9.2.2 — Tenant enforcement mode is not consulted at dispatch time [High] — CLOSED
 
@@ -11207,7 +11209,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** The `lenny/request_elicitation` handler now constructs an `elicitation.Provenance` at origination (`origin_pod`=raising session id, `delegation_depth`=origin hop depth from the chain walk, `origin_runtime`=session `RuntimeRef`, `initiator_type`=agent) and stamps `delegationDepth`/`originRuntime` onto the recorded interaction Detail (alongside the existing originPod/initiatorType) AND onto the `elicitation_request` SSE event payload — so the client receives provenance over the live channel and the §16.7 audit row can source delegation_depth/initiator_type from the stored record. The connector-only fields (connector_id, expected_domain, purpose) are correctly empty on the v1 agent-initiated path (F-9.2.19). Tests assert both the recorded Detail and the SSE payload carry the provenance. Commit `ee6f51e4`.
 
-### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — OPEN
+### - [x] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — DEFERRED
 
 - **Spec:** Line 87. "**URL domain validation is a hard enforcement boundary.** The gateway rejects any URL-mode elicitation whose URL domain does not match the registered connector's `expected_domain`. This is not a metadata annotation — the elicitation is dropped and an error is returned to the originator."
 - **Evidence:**
@@ -11217,6 +11219,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** A connector-registered OAuth flow whose URL has been mutated (by a compromised connector, by a man-in-the-middle, or by misconfiguration) is admitted to the chain unchecked. The spec's hardest security boundary on URL-mode elicitations is unenforced.
 
 **Reopened 2026-06-07 — prior deferral:** The hard boundary applies to a *connector-initiated* url-mode elicitation (the §9.3 gateway-OAuth flow, where step 3 emits a url-mode elicitation through the chain). v1 has no connector-initiated elicitation dispatch path: `lenny/request_elicitation` is the only elicitation entry point and is always agent-initiated (F-9.2.19 removed the self-declarable `InitiatorType` input precisely so an agent cannot assert `connector`). With no connector elicitation surface, there is no `connector_id` / `expected_domain` in scope at any dispatch site to enforce against, and `CheckURLModeProvenance` correctly admits the (nonexistent in v1) connector path. The enforcement site is created by the §9.3 gateway-OAuth elicitation subsystem (gateway acting as MCP client, receiving the auth challenge, emitting the url-mode elicitation bound to the registered connector); that subsystem is unbuilt. Re-attempt once the connector-initiated elicitation path exists — the host-vs-`expected_domain` match itself reuses the existing `hostMatchesAllowlist` exact/`*.suffix` logic.
+
+**DEFERRED 2026-06-08 (re-verified this batch).** Re-confirmed: the dispatch sites (`pkg/gateway/mcptools/elicitation.go`, `mcptools.go`) accept no `connector_id`, and `lenny/request_elicitation` is always agent-initiated (F-9.2.19 removed the self-declarable `InitiatorType`), so there is no connector-initiated url-mode elicitation with a registered `expected_domain` in scope at any dispatch site to enforce against; `CheckURLModeProvenance` correctly admits the (nonexistent in v1) connector path. The enforcement site is created only by the §9.3 gateway-OAuth elicitation subsystem (gateway acting as MCP client, receiving the connector auth challenge, emitting a url-mode elicitation bound to the registered connector definition), which is unbuilt. Deferred per Rule P criterion 3 (separate large workstream — §9.3 connector-OAuth elicitation — not begun). When that path lands, the host-vs-`expected_domain` match reuses the existing exact/`*.suffix` `hostMatchesAllowlist` logic.
 
 ### - [x] F-9.2.8 — 30s per-hop forwarding timeout is absent [High] — CLOSED
 
@@ -45806,7 +45810,7 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 ### Findings
 
-### - [ ] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — OPEN
+### - [x] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — DEFERRED
 
 `cmd/runtimes/` contains only the in-tree echo/MCP reference runtimes (`echo`, `streaming-echo`, `cred-shell-echo`, `delegation-echo`, `elicitation-echo`, `echo-embedded`, `mcp-reference`). There is no `cmd/runtimes/openai-assistants/` directory and no producer of an `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0` image in this repo, even though `pkg/embedded/stack/catalog.go:82-86` and `charts/lenny/values.yaml:734-737` register that image as a §26 reference runtime. §26.10 ("Bootstrap: on session start, adapter creates a Thread on OpenAI with the assistant ID … appends to the thread and starts a Run … streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes") describes work that has no implementation. §18 also lists `openai-assistants` among the nine first-party reference runtimes ("packaged, signed, and registered with the gateway via `lenny-ctl admin runtimes register`"); the package/sign step has no source artifact to build. Treated as Medium because the runtime is published as part of the spec's reference catalog and may live in an external `github.com/lennylabs/runtime-openai-assistants` repository per §26.10's **Repository** field. If so, this audit only flags the missing in-monorepo build target; the gap is informational against the in-tree implementation surfaces.
 
@@ -45821,6 +45825,8 @@ in-tree registration surfaces are already correct (catalog, chart Runtime CR
 with `runtimeOptionsSchemaRef`/`capabilities`/`credentialCapabilities`,
 compliance baseline — F-26.10.2/.3/.4/.5). The binary itself stays an external
 artifact.
+
+**DEFERRED 2026-06-08 (re-verified this batch).** Re-confirmed: `cmd/runtimes/` still ships only the in-tree echo/MCP reference runtimes and no `openai-assistants` directory. §26.10 names a **Repository** field, so the runtime is built and signed in the external `github.com/lennylabs/runtime-openai-assistants` repo, not the monorepo, and a real in-tree adapter would require live OpenAI Threads/Runs API integration (Thread bootstrap, Run streaming, `code_interpreter`/`file_search` tool-call envelope mapping, Files-API forwarding) that cannot be built or exercised in this environment. Deferred per Rule P criterion 2 (depends on an external service / infrastructure unavailable here) and the external-Repository framing — every in-tree registration surface (catalog, chart Runtime CR, compliance baseline) is already correct (F-26.10.2/.3/.4/.5).
 
 ### - [x] F-26.10.2 — Registered `Runtime` record omits the §26.10 `runtimeOptionsSchema` (Medium) [Medium] — CLOSED
 
