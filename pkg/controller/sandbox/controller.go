@@ -192,7 +192,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	obs := observePod(&pod, podErr)
 
-	decision := lifecycle.Decide(state.State(sb.Status.Phase), obs)
+	// §6.1 lines 30-69: a pool whose runtime declares capabilities.preConnect
+	// (and whose §6.1 circuit breaker has not disabled SDK-warm) warms
+	// through sdk_connecting rather than straight to pod-warm idle. The
+	// pod-warm planner governs every other pool.
+	var decision lifecycle.Decision
+	sdkWarm := r.resolveSDKWarm(ctx, &sb)
+	if sdkWarm.sdkWarmActive() {
+		in := sdkWarmInputs(&sb, obs, &pod, sdkWarm, time.Now())
+		decision = lifecycle.DecideSDKWarm(in)
+		if in.TimedOut() {
+			sdkConnectTimeoutTotal.WithLabelValues(sb.Spec.PoolRef).Inc()
+		}
+	} else {
+		decision = lifecycle.Decide(state.State(sb.Status.Phase), obs)
+	}
 
 	switch decision.Action {
 	case lifecycle.ActionCreatePod:
