@@ -20454,7 +20454,7 @@ unlimited/unknown tenant, rolling-period skip, Flush; UsageReader scoping) and a
 tier-2 component test of the atomic adder against embedded Postgres
 (sequential/concurrent increments, cross-tenant isolation, rollup-row shape); plus
 tier-2 helm-unittest render cases and the env-var count bump. Closed by commit
-&lt;PENDING&gt;.
+`d0efe164`.
 
 ### - [x] F-12.4.15 — `maxmemory-policy: noeviction` is enforced on cloud Terraform but not on the self-managed compose / chart [Medium] — CLOSED
 
