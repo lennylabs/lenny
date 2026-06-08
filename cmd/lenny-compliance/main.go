@@ -109,10 +109,15 @@ type checkCase struct {
 }
 
 // basicCases is the §15.4.6 Basic-level conformance battery, run as-is by
-// every level. The two schema checks implement the §15.4.6 line 2405
-// ("the response matches schemas/lenny-adapter-jsonl.schema.json") and
-// line 2408 ("Every OutputPart ... validates against
-// schemas/outputpart.schema.json") conformance categories.
+// every level. The three schema-driven checks generate their assertions
+// from the published artifacts §24.8 line 113 names rather than from
+// hand-coded prose: response_matches_jsonl_schema (§15.4.6 line 2405,
+// schemas/lenny-adapter-jsonl.schema.json), outputpart_schema_compliance
+// (§15.4.6 line 2408, schemas/outputpart.schema.json), and
+// response_error_code_in_proto_catalog (§24.8 line 113, the
+// schemas/lenny-adapter.proto Error.ErrorCode enum the JSONL schema leaves
+// open). Each failing assertion is cited in the report by name and source
+// artifact.
 func basicCases() []checkCase {
 	return []checkCase{
 		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
@@ -124,6 +129,7 @@ func basicCases() []checkCase {
 		{"sequential_messages_handled", "15.4", checkSequentialMessages},
 		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
 		{"outputpart_schema_compliance", "15.4.6", checkOutputPartSchemaCompliance},
+		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
 	}
 }
 
@@ -375,6 +381,43 @@ func checkOutputPartSchemaCompliance(binary string, timeout time.Duration, verbo
 		}
 	}
 	return fmt.Sprintf("%d OutputPart(s) validate against %s", len(resp.Output), outputPartFile), nil
+}
+
+// checkResponseErrorCodeCatalog runs the proto-generated error-code
+// assertion against the runtime's response. The §15.4.1 JSONL schema models
+// `error.code` as an open string; the closed catalog is the
+// schemas/lenny-adapter.proto Error.ErrorCode enum (the §15.1 catalog), so a
+// runtime that fails a task with an out-of-catalog code is non-conformant in
+// a way no JSON-Schema assertion can catch. A successful response carries no
+// error and passes vacuously. spec: §24.8 line 113 (schema-driven assertions
+// generated from lenny-adapter.proto, report cites the failing assertion).
+func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	if err := validateResponseErrorCode([]byte(stdout[0])); err != nil {
+		return "", err
+	}
+	var frame struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(stdout[0]), &frame)
+	if frame.Error != nil && frame.Error.Code != "" {
+		return fmt.Sprintf("error code %q is in the %s catalog", frame.Error.Code, adapterProtoFile), nil
+	}
+	if verbose {
+		return "response carries no error; proto error-code catalog assertion vacuously satisfied", nil
+	}
+	return "no error frame to assert against " + adapterProtoFile, nil
 }
 
 // heartbeatAckDeadline is the §15.4.6 line 2406 Basic-conformance bound:

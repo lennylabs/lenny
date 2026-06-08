@@ -67,9 +67,12 @@ func TestStandardBatteryIsBasicPlusStandard(t *testing.T) {
 	if r.Level != "standard" {
 		t.Errorf("report level = %q, want standard", r.Level)
 	}
-	// 9 Basic checks + 4 Standard checks.
-	if r.Summary.Total != 13 {
-		t.Errorf("total checks = %d, want 13 (9 basic + 4 standard)", r.Summary.Total)
+	// The Standard battery is the Basic battery plus the four Standard
+	// categories; derive the expected total from basicCases() so adding a
+	// Basic check does not require updating a hard-coded count here.
+	wantTotal := len(basicCases()) + 4
+	if r.Summary.Total != wantTotal {
+		t.Errorf("total checks = %d, want %d (%d basic + 4 standard)", r.Summary.Total, wantTotal, len(basicCases()))
 	}
 	if r.Summary.Failed != 0 {
 		for _, c := range r.Checks {
