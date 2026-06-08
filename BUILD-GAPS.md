@@ -25244,7 +25244,7 @@ F-8.1.1, `432ef50b` / `6b86cac9`). `maxDepth` is enforced separately by
 `lease.CheckDepth`. The "blast radius" is bounded on every axis, not just
 depth.
 
-### - [ ] F-13.5.10 — `contentPolicy` inheritance and child-lease monotonicity are unenforced [Medium] — OPEN
+### - [x] F-13.5.10 — `contentPolicy` inheritance and child-lease monotonicity are unenforced [Medium] — CLOSED
 
 §8.3 line 157 specifies: "`contentPolicy` is inherited by child leases and
 can only be made stricter (smaller `maxInputSize`, same or more restrictive
@@ -25278,6 +25278,32 @@ delegation admission for every cross-runtime hop and warrant a focused batch
 with the two new error codes (`CONTENT_POLICY_WEAKENING`,
 `CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`) and their reject tests. Not
 self-contained; deferred to avoid a blind partial implementation.
+
+**Resolution:** Took option (a). `sessionstore.DelegationLease` now carries
+the full §8.3 effective contentPolicy (the existing `ContentPolicyRef` plus
+new `ContentMaxInputSize` / `ContentScanExportedFiles` /
+`ContentMaxExportedFileSize`, all on the existing `delegation_lease` JSONB
+column, no migration). `Service.Delegate` resolves the parent's effective
+(transitively-narrowest) policy via `effectiveParentContentPolicy` — read
+from the parent's stamped lease, else derived from the parent's own runtime
+DelegationPolicy, else the §8.3 platform default — and `resolveChildContentPolicy`
+applies the four-axis monotonicity rules against the target runtime's
+DelegationPolicy: a larger `maxInputSize` (line 157), a larger
+`maxExportedFileSize` (line 179), a `scanExportedFiles` `true → false`
+(lines 170-177), or an `interceptorRef` non-null→null (line 187) rejects with
+`*ContentPolicyWeakeningError` (→ `CONTENT_POLICY_WEAKENING`, POLICY/422), and
+a different non-null `interceptorRef` rejects with
+`*ContentPolicyInterceptorSubstitutionError` (→ `CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`,
+line 188). A target runtime with no policy inherits the parent's effective
+verbatim. The resolved effective policy is stamped on the child lease (only
+when it departs from the platform default) so the next hop inherits the
+narrowest cap (line 240); the `lenny/delegate_task` handler maps both typed
+errors to their canonical envelopes (the codes already existed in
+`errorclassify`). Tier-1 coverage: `content_policy_internal_test.go`
+(pure-logic table for every axis, permitted cases, substitution, defaults)
+and `content_policy_test.go` (Delegate-level stamping, default-not-stamped,
+each rejection with no child row created, transitive inheritance from a
+stamped parent). Resolved by this batch (commit f97d4e55).
 
 ### - [x] F-13.5.11 — Per-message `from` field is not gateway-set [Medium] — CLOSED
 

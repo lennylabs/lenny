@@ -634,6 +634,22 @@ type DelegationLease struct {
 	// column, so it is not duplicated here; recovery reads it from the
 	// session row directly.
 	ContentPolicyRef string `json:"contentPolicyRef,omitempty"`
+	// ContentMaxInputSize, ContentScanExportedFiles, and
+	// ContentMaxExportedFileSize are the remaining three §8.3 line-157
+	// `contentPolicy` axes the gateway resolves to their
+	// transitively-narrowest effective value at `delegate_task` approval
+	// time (alongside ContentPolicyRef above). They are stamped so the
+	// next delegation hop inherits the narrowest cap seen anywhere on the
+	// path from root to parent (§8.3 line 240) and so the four-axis
+	// monotonicity check on the child can read the parent's effective
+	// policy from the lease rather than re-resolving the chain. A zero
+	// size field means "the §8.3 platform default" (128 KiB input /
+	// 10 MiB exported file); only a tightened value below the default, a
+	// set interceptor, or `scanExportedFiles: true` is persisted, so a
+	// default-only effective policy leaves the lease unchanged. F-13.5.10.
+	ContentMaxInputSize        int   `json:"contentMaxInputSize,omitempty"`
+	ContentScanExportedFiles   bool  `json:"contentScanExportedFiles,omitempty"`
+	ContentMaxExportedFileSize int64 `json:"contentMaxExportedFileSize,omitempty"`
 	// SnapshottedPoolIDs is the §8.3 line 208 `snapshotted_pool_ids` set,
 	// populated only when the root lease was issued with
 	// `snapshotPolicyAtLease: true`. Empty under the v1 default (live pool
@@ -652,7 +668,9 @@ func (l *DelegationLease) IsZero() bool {
 	return l.MaxTokenBudget == 0 && l.MaxChildrenTotal == 0 && l.MaxTreeSize == 0 &&
 		l.MaxTreeMemoryBytes == 0 && l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0 &&
 		l.DelegationPolicyRef == "" && l.MaxDelegationPolicy == "" &&
-		l.ContentPolicyRef == "" && len(l.SnapshottedPoolIDs) == 0
+		l.ContentPolicyRef == "" && l.ContentMaxInputSize == 0 &&
+		!l.ContentScanExportedFiles && l.ContentMaxExportedFileSize == 0 &&
+		len(l.SnapshottedPoolIDs) == 0
 }
 
 // NodeAttributes is the §8.9 line 1010 per-node tracking projection.

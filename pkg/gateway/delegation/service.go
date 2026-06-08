@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -632,6 +633,45 @@ func (e *TreeVisibilityMessagingScopeError) Error() string {
 		e.EffectiveMessagingScope, e.EffectiveTreeVisibility)
 }
 
+// ContentPolicyWeakeningError reports a §8.3 lines 157-187 contentPolicy
+// monotonicity failure: the child's resolved `contentPolicy` weakens the
+// parent's effective policy on one of the inheritance axes — a larger
+// `maxInputSize`, a larger `maxExportedFileSize`, a `scanExportedFiles`
+// `true → false` transition, or a non-null `interceptorRef` set back to
+// null. The §8.5 delegate_task handler maps it to CONTENT_POLICY_WEAKENING
+// (POLICY, HTTP 422) with `details.axis`, `details.parentValue`, and
+// `details.childValue`. spec: §8.3 lines 157, 177, 179, 187. F-13.5.10.
+type ContentPolicyWeakeningError struct {
+	Axis        string
+	ParentValue string
+	ChildValue  string
+}
+
+func (e *ContentPolicyWeakeningError) Error() string {
+	return fmt.Sprintf(
+		"delegation: child contentPolicy.%s %q weakens the parent's effective %q (§8.3 lines 157-187; a child lease may only make contentPolicy stricter)",
+		e.Axis, e.ChildValue, e.ParentValue)
+}
+
+// ContentPolicyInterceptorSubstitutionError reports the §8.3 line 188
+// identity-based rejection: the child names a different non-null
+// `interceptorRef` than the parent's effective reference. The gateway
+// cannot verify an unrelated interceptor is equally restrictive, so the
+// substitution is rejected unconditionally. The §8.5 handler maps it to
+// CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION (POLICY, HTTP 422) with
+// `details.parentInterceptorRef` and `details.childInterceptorRef`.
+// spec: §8.3 line 188. F-13.5.10.
+type ContentPolicyInterceptorSubstitutionError struct {
+	ParentRef string
+	ChildRef  string
+}
+
+func (e *ContentPolicyInterceptorSubstitutionError) Error() string {
+	return fmt.Sprintf(
+		"delegation: child contentPolicy.interceptorRef %q substitutes the parent's %q (§8.3 line 188; a child cannot swap the parent's named interceptor for an unrelated one)",
+		e.ChildRef, e.ParentRef)
+}
+
 // Delegate validates a §8 delegation request against the parent's
 // lineage and creates the child session. The validation order is:
 //
@@ -817,6 +857,28 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 			}
 		}
 	}
+	// §8.3 lines 157-188: contentPolicy inheritance + four-axis
+	// monotonicity. The child's resolved contentPolicy (from the target
+	// runtime's DelegationPolicy, when one applies) may only tighten the
+	// parent's effective policy; a larger maxInputSize / maxExportedFileSize,
+	// a scanExportedFiles true→false transition, or an interceptorRef
+	// non-null→null rejects with *ContentPolicyWeakeningError, and a
+	// different non-null interceptorRef rejects with
+	// *ContentPolicyInterceptorSubstitutionError. The resolved effective
+	// policy (childContentEff) is stamped on the child lease below so the
+	// next hop inherits the transitively-narrowest cap (§8.3 line 240).
+	// The check runs before pod allocation, alongside the SEC-001
+	// isolation and treeVisibility monotonicity gates above. F-13.5.10.
+	parentContentEff := s.effectiveParentContentPolicy(ctx, tenantID, parent)
+	var childContentInput delegationpolicystore.ContentPolicy
+	if haveEffectivePolicy {
+		childContentInput = effectivePolicy.ContentPolicy
+	}
+	childContentEff, err := resolveChildContentPolicy(parentContentEff, childContentInput, haveEffectivePolicy)
+	if err != nil {
+		return Result{}, err
+	}
+
 	decision := cycle.Decide(lineage, target, settings)
 	s.recordCycleDecision(req.PoolRef, tenantID, decision)
 	s.recordCycleAudit(ctx, tenantID, req, decision)
@@ -1027,7 +1089,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		// F-8.2.2 / F-8.10.5.
 		DelegationLease: stampLeasePolicy(
 			storeLeaseFromSlice(req.LeaseSlice),
-			delegationPolicyRef, effectivePolicy, haveEffectivePolicy),
+			delegationPolicyRef, effectivePolicy, haveEffectivePolicy, childContentEff),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the
@@ -1146,6 +1208,162 @@ func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessi
 		return 0, false
 	}
 	return pol.ContentPolicy.MaxInputSize, true
+}
+
+// effContentPolicy is the §8.3 line-157 resolved effective contentPolicy
+// carried on a delegation lease. The four axes (maxInputSize,
+// interceptorRef, scanExportedFiles, maxExportedFileSize) are the
+// inheritance and monotonicity subjects of §8.3 lines 157-188. The size
+// axes are always concrete here (defaults applied), so a comparison never
+// has to special-case an unset value. spec: §8.3 lines 157-188. F-13.5.10.
+type effContentPolicy struct {
+	MaxInputSize        int
+	InterceptorRef      string
+	ScanExportedFiles   bool
+	MaxExportedFileSize int64
+}
+
+// normalizeContentPolicy lifts a stored DelegationPolicy.ContentPolicy
+// into the concrete effective form, filling the §8.3 platform defaults for
+// any size axis the policy left at zero. A policy persisted through the
+// admin API already carries defaults (ApplyDefaults runs on write), but a
+// directly-constructed policy may not, so the fill is defensive.
+func normalizeContentPolicy(cp delegationpolicystore.ContentPolicy) effContentPolicy {
+	out := effContentPolicy{
+		MaxInputSize:        cp.MaxInputSize,
+		InterceptorRef:      cp.InterceptorRef,
+		ScanExportedFiles:   cp.ScanExportedFiles,
+		MaxExportedFileSize: cp.MaxExportedFileSize,
+	}
+	if out.MaxInputSize <= 0 {
+		out.MaxInputSize = delegationpolicystore.DefaultMaxInputSize
+	}
+	if out.MaxExportedFileSize <= 0 {
+		out.MaxExportedFileSize = delegationpolicystore.DefaultMaxExportedFileSize
+	}
+	return out
+}
+
+// platformDefaultContentPolicy is the §8.3 baseline used when no
+// DelegationPolicy applies anywhere on the path from root to the parent:
+// the default size caps, no interceptor, and no export scanning.
+func platformDefaultContentPolicy() effContentPolicy {
+	return effContentPolicy{
+		MaxInputSize:        delegationpolicystore.DefaultMaxInputSize,
+		MaxExportedFileSize: delegationpolicystore.DefaultMaxExportedFileSize,
+	}
+}
+
+// tighterThanDefault reports whether the effective policy departs from the
+// §8.3 platform default on any axis, so a default-only effective policy is
+// not persisted onto every child lease.
+func (e effContentPolicy) tighterThanDefault() bool {
+	return e.InterceptorRef != "" || e.ScanExportedFiles ||
+		e.MaxInputSize < delegationpolicystore.DefaultMaxInputSize ||
+		e.MaxExportedFileSize < delegationpolicystore.DefaultMaxExportedFileSize
+}
+
+// effectiveParentContentPolicy resolves the parent session's effective
+// (transitively-narrowest) contentPolicy. A parent that was itself
+// delegated under this feature carries the resolved policy on its lease;
+// the gateway reads it back rather than re-walking the chain. A root or
+// pre-feature parent has no stamped policy, so the gateway derives the
+// effective policy from the parent's own runtime DelegationPolicy, falling
+// back to the §8.3 platform default. spec: §8.3 lines 157, 240. F-13.5.10.
+func (s *Service) effectiveParentContentPolicy(ctx context.Context, tenantID string, parent sessionstore.Session) effContentPolicy {
+	if l := parent.DelegationLease; l != nil &&
+		(l.ContentMaxInputSize > 0 || l.ContentPolicyRef != "" ||
+			l.ContentScanExportedFiles || l.ContentMaxExportedFileSize > 0) {
+		eff := effContentPolicy{
+			MaxInputSize:        l.ContentMaxInputSize,
+			InterceptorRef:      l.ContentPolicyRef,
+			ScanExportedFiles:   l.ContentScanExportedFiles,
+			MaxExportedFileSize: l.ContentMaxExportedFileSize,
+		}
+		if eff.MaxInputSize <= 0 {
+			eff.MaxInputSize = delegationpolicystore.DefaultMaxInputSize
+		}
+		if eff.MaxExportedFileSize <= 0 {
+			eff.MaxExportedFileSize = delegationpolicystore.DefaultMaxExportedFileSize
+		}
+		return eff
+	}
+	if s.runtimes != nil && s.policies != nil {
+		if rt, err := runtimestore.Resolve(ctx, s.runtimes, parent.RuntimeRef); err == nil && rt.DelegationPolicyRef != "" {
+			if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
+				return normalizeContentPolicy(pol.ContentPolicy)
+			}
+		}
+	}
+	return platformDefaultContentPolicy()
+}
+
+// resolveChildContentPolicy applies the §8.3 lines 157-188 contentPolicy
+// inheritance and monotonicity rules and returns the child's effective
+// policy. parentEff is the parent's effective (transitively-narrowest)
+// policy. When the child's target runtime resolved a DelegationPolicy
+// (haveChild), that policy's declared contentPolicy is the child's
+// declaration and must be at least as strict as parentEff on every axis;
+// otherwise the child inherits parentEff verbatim. A weakening on any axis
+// returns *ContentPolicyWeakeningError, and a different non-null
+// interceptorRef returns *ContentPolicyInterceptorSubstitutionError. The
+// returned effective policy is the per-axis narrowest, which (because each
+// axis is verified no looser than the parent) equals the child's declared
+// policy when one applies. spec: §8.3 lines 157-188, 240. F-13.5.10.
+func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolicystore.ContentPolicy, haveChild bool) (effContentPolicy, error) {
+	if !haveChild {
+		return parentEff, nil
+	}
+	declared := normalizeContentPolicy(child)
+	// §8.3 line 157: maxInputSize may only shrink across a hop.
+	if declared.MaxInputSize > parentEff.MaxInputSize {
+		return effContentPolicy{}, &ContentPolicyWeakeningError{
+			Axis:        "maxInputSize",
+			ParentValue: strconv.Itoa(parentEff.MaxInputSize),
+			ChildValue:  strconv.Itoa(declared.MaxInputSize),
+		}
+	}
+	// §8.3 line 179: maxExportedFileSize is a protective ceiling; a child
+	// may set a smaller value but never a larger one.
+	if declared.MaxExportedFileSize > parentEff.MaxExportedFileSize {
+		return effContentPolicy{}, &ContentPolicyWeakeningError{
+			Axis:        "maxExportedFileSize",
+			ParentValue: strconv.FormatInt(parentEff.MaxExportedFileSize, 10),
+			ChildValue:  strconv.FormatInt(declared.MaxExportedFileSize, 10),
+		}
+	}
+	// §8.3 lines 170-177: scanExportedFiles uses the ordering false < true;
+	// a parent `true` child `false` removes the scan requirement and is
+	// rejected.
+	if parentEff.ScanExportedFiles && !declared.ScanExportedFiles {
+		return effContentPolicy{}, &ContentPolicyWeakeningError{
+			Axis:        "scanExportedFiles",
+			ParentValue: "true",
+			ChildValue:  "false",
+		}
+	}
+	// §8.3 lines 183-188: interceptorRef restrictiveness is identity-based.
+	switch {
+	case parentEff.InterceptorRef == "":
+		// Null parent: any child (including a new ref) is permitted.
+	case declared.InterceptorRef == parentEff.InterceptorRef:
+		// Condition 1: same reference, always permitted.
+	case declared.InterceptorRef == "":
+		// Condition 3: non-null → null removes a content check (line 187).
+		return effContentPolicy{}, &ContentPolicyWeakeningError{
+			Axis:        "interceptorRef",
+			ParentValue: parentEff.InterceptorRef,
+			ChildValue:  "",
+		}
+	default:
+		// Condition 4: a different non-null reference cannot be verified
+		// as equally restrictive (line 188).
+		return effContentPolicy{}, &ContentPolicyInterceptorSubstitutionError{
+			ParentRef: parentEff.InterceptorRef,
+			ChildRef:  declared.InterceptorRef,
+		}
+	}
+	return declared, nil
 }
 
 // materializeExport runs the §8.7 file-export pipeline for one delegation
@@ -1582,29 +1800,50 @@ func storeLeaseFromSlice(s lease.LeaseSlice) *sessionstore.DelegationLease {
 }
 
 // stampLeasePolicy records the §8.10 lines 1044-1049 lease-scoped policy
-// reference onto the granted lease so tree recovery can bring the node
-// back up against the persisted record instead of re-evaluating the live
-// policy state. It captures the resolved `delegationPolicyRef`, the
-// effective `maxDelegationPolicy` (the resolved DelegationPolicy name),
-// and the `contentPolicy.interceptorRef`. When the resource slice was
-// nil but a policy reference exists, it allocates a lease record so the
-// policy fields persist. The lease-scoped min isolation profile rides
-// the session's first-class IsolationProfile column, so it is not
-// duplicated here. v1 does not implement `snapshotPolicyAtLease`, so
-// `snapshotted_pool_ids` stays empty and post-recovery delegations
-// evaluate live pool labels exactly as a pre-failure call would.
-// F-8.10.5.
-func stampLeasePolicy(dl *sessionstore.DelegationLease, delegationPolicyRef string, pol delegationpolicystore.DelegationPolicy, havePolicy bool) *sessionstore.DelegationLease {
-	if delegationPolicyRef == "" && !havePolicy {
+// reference and the §8.3 line-157 resolved effective contentPolicy onto
+// the granted lease so tree recovery can bring the node back up against
+// the persisted record instead of re-evaluating the live policy state, and
+// so the next delegation hop inherits the transitively-narrowest
+// contentPolicy (§8.3 line 240). It captures the resolved
+// `delegationPolicyRef`, the effective `maxDelegationPolicy` (the resolved
+// DelegationPolicy name), and the four contentPolicy axes via contentEff.
+// Only a contentPolicy that departs from the §8.3 platform default is
+// persisted (interceptor set, scanExportedFiles true, or a size below the
+// default), so a default-only effective policy leaves the content fields
+// empty and the read path treats a zero size as the default. When the
+// resource slice was nil but a policy reference or a non-default
+// contentPolicy exists, it allocates a lease record so those fields
+// persist. The lease-scoped min isolation profile rides the session's
+// first-class IsolationProfile column, so it is not duplicated here. v1
+// does not implement `snapshotPolicyAtLease`, so `snapshotted_pool_ids`
+// stays empty and post-recovery delegations evaluate live pool labels
+// exactly as a pre-failure call would. F-8.10.5 / F-13.5.10.
+func stampLeasePolicy(dl *sessionstore.DelegationLease, delegationPolicyRef string, pol delegationpolicystore.DelegationPolicy, havePolicy bool, contentEff effContentPolicy) *sessionstore.DelegationLease {
+	stampContent := contentEff.tighterThanDefault()
+	if delegationPolicyRef == "" && !havePolicy && !stampContent {
 		return dl
 	}
 	if dl == nil {
 		dl = &sessionstore.DelegationLease{}
 	}
-	dl.DelegationPolicyRef = delegationPolicyRef
+	if delegationPolicyRef != "" {
+		dl.DelegationPolicyRef = delegationPolicyRef
+	}
 	if havePolicy {
 		dl.MaxDelegationPolicy = pol.Name
-		dl.ContentPolicyRef = pol.ContentPolicy.InterceptorRef
+	}
+	if stampContent {
+		dl.ContentPolicyRef = contentEff.InterceptorRef
+		dl.ContentScanExportedFiles = contentEff.ScanExportedFiles
+		// A size at the platform default is left unstamped (zero) so the
+		// read path resolves it back to the default; only a tightened
+		// value is persisted.
+		if contentEff.MaxInputSize < delegationpolicystore.DefaultMaxInputSize {
+			dl.ContentMaxInputSize = contentEff.MaxInputSize
+		}
+		if contentEff.MaxExportedFileSize < delegationpolicystore.DefaultMaxExportedFileSize {
+			dl.ContentMaxExportedFileSize = contentEff.MaxExportedFileSize
+		}
 	}
 	if dl.IsZero() {
 		return nil

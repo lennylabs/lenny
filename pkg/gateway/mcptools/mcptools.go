@@ -2710,6 +2710,38 @@ func Register(srv *mcp.Server, deps Deps) {
 							"childTreeVisibility":  string(tvwErr.ChildVisibility),
 						})
 				}
+				// spec: §8.3 lines 157-187 — the child's resolved
+				// contentPolicy weakens the parent's effective policy on one
+				// of the inheritance axes (maxInputSize, maxExportedFileSize,
+				// scanExportedFiles true→false, or interceptorRef
+				// non-null→null). Surface the canonical CONTENT_POLICY_WEAKENING
+				// (POLICY, HTTP 422) carrying the offending axis so REST and
+				// MCP envelopes share the same (category, retryable) pair.
+				// F-13.5.10.
+				var cpwErr *delegation.ContentPolicyWeakeningError
+				if errors.As(err, &cpwErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("CONTENT_POLICY_WEAKENING",
+						err.Error(),
+						map[string]any{
+							"axis":        cpwErr.Axis,
+							"parentValue": cpwErr.ParentValue,
+							"childValue":  cpwErr.ChildValue,
+						})
+				}
+				// spec: §8.3 line 188 — the child names a different non-null
+				// interceptorRef than the parent's; the substitution cannot be
+				// verified as equally restrictive and is rejected
+				// unconditionally. Surface the canonical
+				// CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION. F-13.5.10.
+				var cpsErr *delegation.ContentPolicyInterceptorSubstitutionError
+				if errors.As(err, &cpsErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION",
+						err.Error(),
+						map[string]any{
+							"parentInterceptorRef": cpsErr.ParentRef,
+							"childInterceptorRef":  cpsErr.ChildRef,
+						})
+				}
 				// spec: §8.3 lines 321-324 — the child's effective
 				// messagingScope is `siblings` but its effective
 				// treeVisibility is not `full`. Surface the canonical
