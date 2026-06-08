@@ -4117,6 +4117,8 @@ Summary: the pod-warm path is largely implemented (state machine, sidecar/embedd
 
 ### - [ ] F-6.1.1 — SDK-warm path is entirely unimplemented end-to-end [High] — OPEN
 
+**Build directive (in scope for this milestone — do not re-defer).** SDK-warm is a §6.1 deliverable, not future scope. Build the end-to-end path: (1) the WarmPoolController driver that drives `warming → sdk_connecting → idle`; (2) the adapter pre-connect entry point that starts the SDK at warm time, alongside the existing `ConfigureWorkspace`/`DemoteSDK` RPCs in `pkg/adapter/sdkwarm.go`; (3) the gateway SDK-warm consumption path (claim of an SDK-warm pod, `requiresDemotion` on `ClaimOpts`, the `DemoteSDK` call); and (4) a §26 reference runtime declaring `capabilities.preConnect: true` so the path is exercised end-to-end by tests. The absence of a preConnect-capable runtime is not a blocker — creating that reference runtime is part of this finding. Defer only F-6.3.11's §16.5 demotion-rate alert, which needs a spec change (rule B).
+
 **Potential duplicate** (confidence: medium) — F-6.2.3 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
 Spec §6.1 lines 22, 30–34, 40 (paraphrased): "SDK-warm (optional): The agent process IS pre-connected and waiting for its first prompt." "Pools referencing a `preConnect`-capable runtime warm **all** pods to SDK-warm state." "the warm pool controller starts the SDK process after the pod reaches `idle` state". "Demotion support is mandatory for `preConnect` runtimes."
@@ -4410,6 +4412,8 @@ This is well-implemented machinery without any feature to actually gate: the SDK
 
 ### - [ ] F-6.1.24 — Admin-API `circuitBreakerOverride` and `sdkWarm.acknowledgeHighDemotionRate` are absent [Info] — OPEN
 
+**Build directive (in scope — do not re-defer).** The prerequisite here is the §6.1 SDK-warm path built under F-6.1.1 (WarmPoolController `sdk_connecting` driver, adapter pre-connect entry point, gateway consumption path, and a §26 `preConnect` reference runtime), which is in scope for this milestone. Implement this finding against that path. If F-6.1.1's path is not yet present when this is picked up, build the slice this finding needs rather than re-deferring, and record what remains.
+
 **Reopened 2026-06-07 — prior deferral:** The override knob only re-enables SDK-warm, which does not exist in v1 (H-1). Implementing it now would add an admin surface for a dormant feature. Deferred to the SDK-warm build.
 
 Spec §6.1 line 63: "Operators must re-enable SDK-warm explicitly via `PUT /v1/admin/pools/{name}` with `{"sdkWarm": {"circuitBreakerOverride": "enabled"}}` after narrowing the blocking paths or adjusting the workload profile."
@@ -4527,6 +4531,8 @@ Implementation tree audited:
 
 ### - [ ] F-6.2.3 — 2-03 SDK-warm path (`warming → sdk_connecting → idle`) entirely unimplemented [High] — OPEN
 
+**Build directive (in scope — do not re-defer).** The prerequisite here is the §6.1 SDK-warm path built under F-6.1.1 (WarmPoolController `sdk_connecting` driver, adapter pre-connect entry point, gateway consumption path, and a §26 `preConnect` reference runtime), which is in scope for this milestone. Implement this finding against that path. If F-6.1.1's path is not yet present when this is picked up, build the slice this finding needs rather than re-deferring, and record what remains.
+
 **Potential duplicate** (confidence: medium) — F-6.1.1 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
 - **Spec:** §6.1 lines 30–70 require all pods in a `preConnect: true` pool to warm to SDK-warm; §6.2 lines 89–93 list `warming → sdk_connecting → idle` and `sdk_connecting → {failed, terminated}` as live edges; §6.2 line 67 mandates SIGTERM handling during `sdk_connecting`; §6.2 line 69 mandates a `sdkConnectTimeoutSeconds` watchdog (default 60s) emitting `lenny_warmpool_sdk_connect_timeout_total`.
@@ -4539,6 +4545,8 @@ Implementation tree audited:
 - **Impl:** No gateway code path calls `Adapter.DemoteSDK` (a grep over `pkg/gateway/**` returns zero hits). `sdkWarmBlockingPaths` matching is not implemented; the `WorkspacePlan` is never checked against any pattern list before `Bind`. `requiresDemotion` is not modeled in `ClaimOpts` (`pkg/podregistry/`).
 - **Effect:** If a runtime ever did declare `preConnect: true`, the spec's safety machinery for blocking-path demotion would silently no-op. Sessions whose workspace plans include `CLAUDE.md` / `.claude/*` would be served by a pre-connected SDK that the spec says must be torn down first.
 - **Reopened 2026-06-07 — prior deferral:** `requiresDemotion` is already modeled on `ClaimOpts` (stale claim). The gateway `DemoteSDK` invocation and the §6.1-line-36 request-time `sdkWarmBlockingPaths` matcher are blocked on the SDK-warm consumption path: the binder calls `StartSession` only, so a pod is never SDK-warm; calling `DemoteSDK` on a pod-warm pod would spuriously fail with `SDK_DEMOTION_NOT_SUPPORTED`, and computing `requiresDemotion` from a matcher would feed a flag no consumer reads. Both land only with the F-6.1.1 controller driver + adapter pre-connect entry point. The backend-independent slice of the §6.1 compatibility matrix — the lines 77-78 cross-mode validation that rejects `preConnect` + concurrent at pool admission — landed this batch (`poolstore.ValidatePreConnectExecutionMode`). Blocked on F-6.1.1.
+
+**Build directive (in scope — do not re-defer).** The prerequisite here is the §6.1 SDK-warm path built under F-6.1.1 (WarmPoolController `sdk_connecting` driver, adapter pre-connect entry point, gateway consumption path, and a §26 `preConnect` reference runtime), which is in scope for this milestone. Implement this finding against that path. If F-6.1.1's path is not yet present when this is picked up, build the slice this finding needs rather than re-deferring, and record what remains.
 
 ### - [x] F-6.2.5 — 2-05 `Sandbox.spec.tenantId` write at claim time silently bypasses the §4.6.3 ownership boundary [High] — CLOSED
 - **Spec:** §6.2 line 305 + §4.6.3 (via `pkg/admission/ownership/ownership.go:113–117`) record `Sandbox.spec.*` and `Sandbox.status.*` as exclusively owned by `WarmPoolController`. §5.2 tenant pinning is the gateway-owned exception, narrowly carved out for `status.tenantId` and `status.activeSlots` (handled by SSA with `ForceOwnership` in `pkg/gateway/podclaim/slotclaimer.go:43–58`).
@@ -4662,6 +4670,8 @@ Implementation tree audited:
 - **Impl:** The breaker decision engine is implemented but its input (`DemotionRate`) is wired only via test sources; production has no `DemotionRateSource` because there is no demotion counter populated (cross-references H-6.2-04).
 - **Effect:** The breaker can never trip in production because no path increments demotions. Recorded as Low because the engine itself is correct; the upstream gap is H-6.2-04.
 - **Reopened 2026-06-07 — prior deferral:** Blocked on the unbuilt SDK-warm demotion producer (F-6.2.4 — `DemoteSDK` invocation / `requiresDemotion` / `sdkWarmBlockingPaths`). Re-verified the current state: `cmd/lenny-pool-scaling-controller/main.go:131` documents that no `DemotionRateSource` is wired in v1; the breaker engine and its persistence are correct and remain on standby. Closes alongside F-6.2.4 when the demotion signal lands.
+
+**Build directive (in scope — do not re-defer).** The prerequisite here is the §6.1 SDK-warm path built under F-6.1.1 (WarmPoolController `sdk_connecting` driver, adapter pre-connect entry point, gateway consumption path, and a §26 `preConnect` reference runtime), which is in scope for this milestone. Implement this finding against that path. If F-6.1.1's path is not yet present when this is picked up, build the slice this finding needs rather than re-deferring, and record what remains.
 
 ### - [x] F-6.2.22 — 2-22 `agent_pod_state` fallback claim writes `state = 'claimed'` directly, skipping the Sandbox-CRD round-trip on conflict [Low] — CLOSED
 - **Spec:** §6.2 line 305 declares the Sandbox CRD authoritative; §4.6.1 fallback claim is a best-effort reconciliation that must still flip the CRD on success.

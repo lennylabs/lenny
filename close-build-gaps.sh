@@ -105,6 +105,8 @@ N. **Re-attempt unblocked deferrals.** Before exiting, scan BUILD-GAPS.md for DE
 
 O. **Do not blindly implement proposed fixes.** Before addressing any gap, re-assess the finding's proposed fix against the spec and the current codebase, as the code may have changed significantlysince the finding was reported.
 
+P. **Build missing prerequisites; do not re-defer for "no backend yet."** Several reopened findings were previously deferred because a backend, producer, consumer, seam, or reference runtime did not yet exist (for example the §6.1 SDK-warm preConnect path, or the §5.2 task-execution driver). For these, building that prerequisite is in scope: implement it as part of closing the finding, including a §26 reference runtime where one is needed to exercise the path end-to-end. Do not mark a finding DEFERRED solely because its prerequisite is unbuilt — build the prerequisite, or land a meaningful slice and record in the finding exactly what was implemented and what remains. Defer only when closing genuinely requires a change under `spec/` (rule B), depends on infrastructure unavailable in this environment (for example a live cloud Kubernetes benchmark cluster), or depends on a separate large workstream that has not begun (name it explicitly). A finding whose description carries a "Build directive" note has already been confirmed in scope; honor it.
+
 YOUR TASK THIS INVOCATION
 
 1. Pick the next 4–8 OPEN findings from BUILD-GAPS.md. Prefer clustering on a shared §X.Y section or on text-flagged duplicates so one fix can close several. Start with:
