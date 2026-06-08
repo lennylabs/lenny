@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics/prodsource"
 	"github.com/lennylabs/lenny/pkg/ops/doctor"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
+	"github.com/lennylabs/lenny/pkg/ops/driftservice/gatewayreader"
 	driftpgstore "github.com/lennylabs/lenny/pkg/ops/driftservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	escpgstore "github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
@@ -1224,10 +1225,13 @@ type driftServiceConfig struct {
 // to the bootstrap_seed_snapshot table (migration 0117) so the live and
 // target rows survive a lenny-ops restart; without it the service falls
 // back to the in-memory snapshot store (single-process degraded mode /
-// dev). The gateway-client running-state reader and the reconcile
-// resource applier remain documented seams (F-25.10.4): until the
-// gateway admin client lands the service reads an empty running state
-// and a confirmed reconcile fails closed with DRIFT_RECONCILE_UNAVAILABLE.
+// dev). When a gateway admin client is configured the running state is
+// read from the gateway admin API (§25.10 line 3770) via the
+// gatewayreader collector; without one (no --gateway-url) the service
+// falls back to the empty running state so a drift report still
+// assembles. The reconcile resource applier remains a documented seam:
+// a confirmed reconcile fails closed with DRIFT_RECONCILE_UNAVAILABLE
+// until that applier lands (F-25.10.1).
 //
 // The §25.10 drift metrics, audit events, and operation_progressed
 // emission are wired here: the two §25.10 line 3858-3859 counters, the
@@ -1238,13 +1242,21 @@ type driftServiceConfig struct {
 // The §25.10 line 3822 running-state cache is wired over the in-memory
 // MemRunningStateCache. A non-positive TTL disables caching, matching
 // the §25.10 line 3824 "0 disables" posture. F-25.10.2, F-25.10.3,
-// F-25.10.5, F-25.10.7, F-25.10.9.
-func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *driftservice.Service {
+// F-25.10.4, F-25.10.5, F-25.10.7, F-25.10.9.
+func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, gwClient *gateway.Client, emitter events.EventEmitter, recorder *opsaudit.Recorder) *driftservice.Service {
 	var store driftservice.SnapshotStore = driftservice.NewMemSnapshotStore()
 	if pgPool != nil {
 		store = driftpgstore.New(pgPool)
 	}
-	svc := driftservice.NewService(store, emptyRunningState{})
+	// §25.10 line 3770: the running state is read from the gateway admin
+	// API. The gatewayreader collector normalizes the admin LIST responses
+	// into the snapshot's resource-keyed structure; without a gateway
+	// client the service degrades to the empty running state. F-25.10.4.
+	var reader driftservice.RunningStateReader = emptyRunningState{}
+	if gwClient != nil {
+		reader = gatewayreader.New(gwClient)
+	}
+	svc := driftservice.NewService(store, reader)
 	svc.StaleWarningDays = cfg.StaleWarningDays
 	if cfg.RunningStateCacheTTLSec > 0 {
 		svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(
@@ -1344,12 +1356,17 @@ func (e driftProgressEmitter) Progressed(ctx context.Context, info driftservice.
 	})
 }
 
-// emptyRunningState is the §25.10 RunningStateReader used until the
-// gateway-client running-state collector is wired. It reports an empty
-// running state, so a drift report against a stored snapshot shows
-// every desired field as removed — the correct cold-start behavior
-// before a gateway connection exists.
+// emptyRunningState is the §25.10 RunningStateReader fallback used when
+// no gateway admin client is configured (no --gateway-url). It reports
+// an empty running state, so a drift report against a stored snapshot
+// shows every desired field as removed — the degraded behavior when no
+// gateway connection exists. When a gateway client is present the
+// gatewayreader collector replaces it. F-25.10.4.
 type emptyRunningState struct{}
+
+// Compile-time guard that the §25.4 gateway admin client satisfies the
+// §25.10 running-state collector's AdminGetter dependency. F-25.10.4.
+var _ gatewayreader.AdminGetter = (*gateway.Client)(nil)
 
 // RunningState returns an empty running state.
 func (emptyRunningState) RunningState(context.Context, string) (map[string]any, error) {

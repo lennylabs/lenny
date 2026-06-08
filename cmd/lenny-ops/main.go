@@ -845,7 +845,7 @@ func main() {
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
-	}, pgPool, opsEmitter, auditRecorder)
+	}, pgPool, gwClient, opsEmitter, auditRecorder)
 	diagnosticDeps := diagnosticSourceDeps{
 		Pool:           pgPool,
 		Gateway:        gwClient,

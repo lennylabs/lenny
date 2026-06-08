@@ -495,6 +495,14 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 		s.applyStaleness(report, snap)
 	}
 
+	// §25.10 line 3828: a narrow scope compares one resource type. The
+	// running-state reader already scoped its collection, so restrict the
+	// desired side to the same resource type — otherwise every non-scoped
+	// desired resource would read as removed drift against a running state
+	// that never collected it. The "all" scope leaves the document whole.
+	// F-25.10.4.
+	desired = filterScope(desired, scope)
+
 	for _, c := range drift.Diff(desired, running) {
 		entry := toDriftEntry(c)
 		report.Drift = append(report.Drift, entry)
@@ -849,6 +857,28 @@ func toDriftEntry(c drift.Change) DriftEntry {
 		Actual:   c.Actual,
 		Severity: string(c.Severity),
 	}
+}
+
+// filterScope restricts a desired-state document to the single resource
+// type a §25.10 line 3828 narrow scope compares. The "all" scope, the
+// empty scope, and any unrecognized value return the document unchanged
+// (the wide comparison). A narrow scope keeps only its top-level
+// resource key, so a scope=pools report does not render every non-pool
+// desired resource as removed drift against a running state the reader
+// scoped to pools alone. F-25.10.4.
+func filterScope(desired map[string]any, scope string) map[string]any {
+	var key string
+	switch scope {
+	case "pools", "runtimes", "tenants", "credential-pools":
+		key = scope
+	default:
+		return desired
+	}
+	out := map[string]any{}
+	if v, ok := desired[key]; ok {
+		out[key] = v
+	}
+	return out
 }
 
 // resourceTypeOf returns the §25.10 resource_type metric label for a
