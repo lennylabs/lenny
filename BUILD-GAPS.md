@@ -7749,7 +7749,7 @@ Consequence: a runtime cannot delegate any file-bearing subtask. The `workspaceF
 
 **Resolution:** Closed by F-8.7.1 (commit d6a197a9). Steps 3, 4, 6, 7 are now implemented end-to-end: `lenny/delegate_task` accepts `fileExport`/`fileExportLimits`; `delegation.Service.Delegate` runs `materializeExport` (the §8.7 pipeline: parent-pod export over the pod registry → §13.4/§7.4 validation and optional §8.3 `scanExportedFiles` content scan → durable §4.5 blob persistence rebased to the child workspace root) before the child row is committed; and the resulting §14 upload sources are stamped on the child `WorkspacePlan` so the §6.3 binder streams them into the child at workspace materialization (steps 6, 7). The `scanExportedFiles` file-channel mitigation is reachable through this path. Verified against the wired path in `pkg/gateway/delegation` (export-wiring tests) and the `export`/`exportwire` packages.
 
-### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — OPEN
+### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — DEFERRED
 
 Spec §8.2 line 77 names four audit events:
 - `delegation.self_recursion_allowed` — emitted on every admitted self-recursive hop when the three-layer AND gate evaluates all `true`.
@@ -7768,6 +7768,8 @@ Implementation:
 Consequence: the operator-facing "where is my admission going?" surface is dark. A deployer running `mode: warn` to scope a rollout has no signal at all (no event, no counter); a deployer running `mode: enforce` cannot see which self-recursion was admitted by the three-layer AND gate because none ever is (see H-3) and the audit trail does not record the decision.
 
 **Reopened 2026-06-07 — prior deferral — re-verified; finding text is stale, 6/7 emitters now exist:** The original "No emitter exists" claim no longer holds. Verified present in current code: `delegation.self_recursion_allowed` and `delegation.cycle_warning` (`pkg/gateway/delegation/service.go:737,748` via `recordCycleAudit`), the `lenny_delegation_would_have_blocked_total` counter (`service.go:782` via `recordCycleDecision`), `delegation.export_file_scan_rejected` / `delegation.export_scan_failed_open` (`pkg/gateway/interceptor/export.go`, `pkg/gateway/policy/exportscanobserver.go`), and `delegation_policy.export_scan_weakened` / `_strengthened` (`pkg/gateway/admin/delegation_policies.go:151,154`). The `service.go` Auditor is wired in `cmd/lenny-gateway/main.go`. The lone residual is `gateway.cycle_detection_mode_changed`, a Helm-upgrade transition event that spec §8.2 line 344 ties to "the same render-time emission discipline as `deployment.feature_flag_downgrade_acknowledged`". That discipline is itself unimplemented (`deployment.feature_flag_downgrade_acknowledged`, `gateway.allow_self_recursion_changed`, and `gateway.default_max_depth_changed` are all catalog/OCSF-only with no emitter and no persisted prior-value comparison point). Closing this requires building the render-time/startup deployment-change-audit subsystem (prior-value stamp + comparison emitting under the platform tenant), a dedicated batch shared with the feature-flag-downgrade family — not the per-request delegation path this finding's text targets.
+
+**Re-verified (this batch) — DEFERRED, residual blocked on the deployment-change-audit subsystem.** Confirmed 6 of the 7 named events now have live emitters (per the reopened note: `delegation.self_recursion_allowed`, `delegation.cycle_warning`, the `lenny_delegation_would_have_blocked_total` counter, `delegation.export_file_scan_rejected`, `delegation.export_scan_failed_open`, and `delegation_policy.export_scan_weakened`/`_strengthened`). The lone residual, `gateway.cycle_detection_mode_changed`, is a Helm install/upgrade transition event the gateway runtime cannot synthesize (no operator OIDC `sub` at startup, no persisted prior cycle-detection-mode value to diff). It needs the chart-hook deployment-change-audit subsystem shared with the feature-flag-downgrade family (the same surface F-9.2.10 defers to). Deferred on that subsystem; the per-request delegation audit path this finding's text targeted is complete.
 
 ### - [x] F-8.2.6 — Cycle-detection runs on the parent's lineage but `delegationLease.maxDepth` precedence chain is not fully wired; `maxDepth` is taken verbatim from the caller [High] — CLOSED
 
@@ -12632,7 +12634,7 @@ and is a no-op when no audience is configured. `cmd/lenny-gateway` builds the ve
 from a clientset when `--agent-namespace` and `--sa-token-audience` are set; the gateway
 ClusterRole gains `authentication.k8s.io/tokenreviews: create`. Per-request TokenReview
 is acceptable for agent-paced control-plane traffic; a positive-result cache is a noted
-future optimization. Resolved in commit <PENDING>.
+future optimization. Resolved in commit e1732370.
 
 ### - [x] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — CLOSED
 
@@ -16292,13 +16294,22 @@ with a `Retry-After` header. The fixed-vs-sliding-window distinction is the
 platform-wide F-11.2.3 concern; the eval limiter shares the platform's
 counter so it inherits that refinement when it lands.
 
-### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — OPEN
+### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — DEFERRED
 
 Spec §11.2 direct-mode residual-risk control: "Deployers should monitor `lenny_gateway_token_usage_anomaly_total` (counter, labeled by `session_id` and `tenant_id`) — the gateway emits this metric when a session's `ReportUsage` delta is zero or implausibly small relative to LLM call frequency."
 
 Grep across `pkg/observability/`, `pkg/gateway/` for the metric name returned no hits. Without it the direct-mode integrity claim is unverifiable.
 
 **Reopened 2026-06-07 — prior deferral (this batch):** The anomaly counter is a direct-mode signal: §11.2 defines its firing condition as "more than 3 `ReportUsage` calls within a session with zero tokens reported while LLM proxy activity is absent." `ReportUsage` is a gateway→pod PULL RPC (`adapterclient.Client.ReportUsage`), and no gateway code drives it — there is no per-session direct-mode usage poller that would observe the deltas the metric measures (the F-11.2.2 resolution names direct-mode usage recording as a follow-on; the proxy path it wired extracts authoritative counts and so has no anomaly to detect). Emitting this metric requires that direct-mode `ReportUsage` ingestion vertical first; gated on it.
+
+**Re-verified (this batch) — DEFERRED on the same workstream as F-15.3.7.** The firing
+condition is observable only once a gateway-side direct-mode `ReportUsage` poller
+exists to count consecutive zero-token reports per session. That poller is the
+two-sided "direct-mode usage-pull" vertical named in F-15.3.7 (adapter
+`UsageMeter` + per-session direct-mode adapter-client registry + periodic pull),
+which has not begun. Registering the counter alone with no real emit site would
+be dead config (rule "no dead config"). Deferred on the direct-mode usage-pull
+workstream; the counter and its >3-zero-delta detector land with the poller.
 
 ### - [x] F-11.2.21 — Mid-session budget enforcement (gateway terminates over-budget session) is not implemented [Medium] — CLOSED
 
@@ -27340,7 +27351,7 @@ no-dead-config rule. Deferred until the adapter-side §4.9 LLM-proxy /
 budget-rejection detector lands; that work then wires both the detector
 and the `LeaseExtender` together.
 
-### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — OPEN
+### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — DEFERRED
 
 §4.7 line 637: "Report LLM token counts extracted from provider responses;
 gateway increments quota counters and persists to Postgres on the next
@@ -27370,6 +27381,18 @@ always returns Unimplemented. The proxy-mode quota path is already wired
 (`newProxyUsageRecorder` feeds `quotaCounter`/`usage` from the §4.9
 in-flight accounting). Deferred until the adapter-side direct-mode
 `UsageMeter` lands; the gateway poll wires on top of it.
+
+**Re-verified (this batch) — DEFERRED, separate large workstream named:** Confirmed
+the blocker is unchanged. `cmd/lenny-adapter/main.go` still sets no
+`Server.Usage`, so `ReportUsage` returns `codes.Unimplemented`; and the gateway
+retains no per-session direct-mode adapter `Client` after Bind (the executor
+holds AttachStreams, not pollable clients), so a gateway-side poll loop would
+need both (a) the adapter direct-mode token-extraction `UsageMeter` and (b) a
+per-session direct-mode adapter-client registry + periodic pull. That two-sided
+"direct-mode usage-pull" vertical has not begun. Wiring a poller now would
+either call an `Unimplemented` handler or dial a fresh adapter connection per
+poll with no lifecycle management. Deferred on the direct-mode usage-pull
+workstream (also blocks F-11.2.20).
 
 ### - [x] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — CLOSED
 
