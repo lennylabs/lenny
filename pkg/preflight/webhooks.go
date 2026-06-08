@@ -29,6 +29,9 @@ var baselineValidatingWebhooks = []string{
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",
 	"lenny-direct-mode-isolation",
+	// §10.5 line 508 — renders unconditionally and is fail-closed, so
+	// the inventory tracks it in the baseline set (F-10.5.14).
+	"lenny-sandboxtemplate-deletion-guard",
 }
 
 // WebhookFeatureFlags are the §17.2 chart feature flags that gate the
@@ -112,11 +115,18 @@ var Spec17_2ValidatingWebhooks = []string{
 //     imageVerification.cosign.enabled.
 //   - lenny-registry-digest is the §5.2 / §25.8 digest-pinning webhook,
 //     gated by platform.registry.requireDigest.
+//   - lenny-sandboxtemplate-deletion-guard is the §10.5 line 508 runtime-
+//     upgrade safety webhook (it blocks deleting a SandboxTemplate while
+//     a RuntimeUpgrade referencing its pool is active). It renders
+//     unconditionally and is part of the baseline set; the §17.2
+//     admission-policies catalogue does not enumerate it (F-10.5.14).
+//
 // spec: §17.2 line 40. F-17.2.12.
 var implementationOnlyValidatingWebhooks = []string{
 	"lenny-pod-security",
 	"lenny-cosign-verify",
 	"lenny-registry-digest",
+	"lenny-sandboxtemplate-deletion-guard",
 }
 
 // CatalogueCoverage cross-checks the preflight inventory against the

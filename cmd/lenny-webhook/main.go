@@ -135,7 +135,7 @@ func (s poolConfigCounterSink) IncPoolTerminationBudgetExceeded(pool string) {
 // requireDigest is the §13.1 platform.registry.requireDigest flag the
 // registry-digest route enforces; drainSink and poolBudgetSink receive
 // the §12.5 and §10.1 webhook counters.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, runtimeUpgradeActiveURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	// §5.2 line 392 — lenny-tenant-label-immutability is a sibling
@@ -163,6 +163,16 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		webhook.HTTPDrainProbe{URL: drainReadinessURL},
 		drainSink,
 		webhook.HTTPForcedDrainAuditSink{URL: drainAuditURL},
+	)))
+	// §10.5 line 508 sandboxtemplate-deletion-guard: blocks a
+	// SandboxTemplate DELETE while a RuntimeUpgrade referencing the
+	// template's pool is still active. The decider lists referencing
+	// SandboxWarmPools via the API-server reader and probes the gateway
+	// GET /internal/runtime-upgrade/active endpoint for each pool's
+	// upgrade state; fail-closed on a list or probe failure.
+	mux.Handle("/sandboxtemplate-deletion-guard", webhook.Handler(webhook.SandboxTemplateDeletionGuard(
+		reader,
+		webhook.HTTPRuntimeUpgradeProbe{URL: runtimeUpgradeActiveURL},
 	)))
 	// §12.8 data-residency-validator: a nil TenantRegionResolver leaves
 	// inheritance to the gateway path; the webhook then validates each
@@ -294,6 +304,8 @@ func main() {
 		"gateway GET /internal/drain-readiness endpoint the §12.5 drain-readiness webhook probes before admitting a node-drain pod eviction.")
 	drainAuditURL := flag.String("gateway-drain-audit-url", os.Getenv("LENNY_GATEWAY_DRAIN_AUDIT_URL"),
 		"gateway POST /internal/audit/node-drain-forced endpoint the §12.5 drain-readiness webhook calls on a drain-force override admission.")
+	runtimeUpgradeActiveURL := flag.String("gateway-runtime-upgrade-active-url", os.Getenv("LENNY_GATEWAY_RUNTIME_UPGRADE_ACTIVE_URL"),
+		"gateway GET /internal/runtime-upgrade/active endpoint the §10.5 sandboxtemplate-deletion-guard webhook probes to verify no active RuntimeUpgrade references the SandboxTemplate being deleted (line 508).")
 	storageRegions := flag.String("storage-regions", os.Getenv("LENNY_STORAGE_REGIONS"),
 		"comma-separated list of regions declared in the storage.regions Helm map. The §12.8 data-residency-validator webhook rejects, fail-closed, any resource whose resolved dataResidencyRegion is not in this set.")
 	cosignEnabled := flag.Bool("cosign-verify", os.Getenv("LENNY_COSIGN_VERIFY") == "true",
@@ -339,7 +351,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metrics.reg, drainCounterSink{vec: metrics.drain}, poolConfigCounterSink{vec: metrics.poolBudget}),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, *runtimeUpgradeActiveURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metrics.reg, drainCounterSink{vec: metrics.drain}, poolConfigCounterSink{vec: metrics.poolBudget}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

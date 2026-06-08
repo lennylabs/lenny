@@ -1,0 +1,46 @@
+suite: sandboxtemplate-deletion-guard webhook
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/sandboxtemplate-deletion-guard-webhook.yaml
+tests:
+  - it: renders the workload and webhook config unconditionally (§10.5 line 508 key safety invariant)
+    asserts:
+      # Deployment, Service, PodDisruptionBudget, Certificate,
+      # ValidatingWebhookConfiguration.
+      - hasDocuments:
+          count: 5
+
+  - it: passes the gateway runtime-upgrade-active URL to the webhook binary
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-runtime-upgrade-active-url=http://lenny-gateway.lenny-system.svc:8080/internal/runtime-upgrade/active
+
+  - it: configures the webhook fail-closed with CA injection on DELETE of sandboxtemplates
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /sandboxtemplate-deletion-guard
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: sandboxtemplates
+      - contains:
+          path: webhooks[0].rules[0].operations
+          content: DELETE
+      - equal:
+          path: webhooks[0].rules[0].apiVersions[0]
+          value: v1alpha1
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: lenny-system/lenny-sandboxtemplate-deletion-guard

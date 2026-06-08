@@ -13624,12 +13624,14 @@ alert can fire; and the rewritten `runtime-upgrade-stuck` runbook (it
 pointed at a nonexistent CRD). The remaining cluster/Job-side enforcement —
 the WarmPoolController/admission SandboxTemplate-deletion guard (line 508)
 and the Phase 3 schema-migration gate (line 502) — is carved into
-**F-10.5.14** (DEFERRED): the deletion guard needs a controller-runtime /
-envtest harness unavailable here, and the Phase 3 gate is forward-looking
-(v1 has no Phase 3 `DROP COLUMN` migration and no gateway endpoint applies
-migrations).
+**F-10.5.14** (now CLOSED): the line-508 deletion guard ships as the
+fail-closed `lenny-sandboxtemplate-deletion-guard` admission webhook
+backed by a gateway `GET /internal/runtime-upgrade/active` endpoint, and
+the line-502 Phase 3 gate is served as that endpoint's `schemaGated` flag
+(forward-looking — v1 has no Phase 3 `DROP COLUMN` migration and no
+gateway endpoint applies migrations, so no live attempt consumes it yet).
 
-### - [ ] F-10.5.14 — RuntimeUpgrade cluster-side enforcement: SandboxTemplate-deletion guard and Phase 3 schema-migration gate [Medium] — OPEN
+### - [x] F-10.5.14 — RuntimeUpgrade cluster-side enforcement: SandboxTemplate-deletion guard and Phase 3 schema-migration gate [Medium] — CLOSED
 
 Carved out of F-10.5.1 (closed by 9aa3b47e/9adde76d, which delivered the
 operator-facing state machine: durable record, admin API, CLI, metric
@@ -13663,6 +13665,37 @@ Deferred reason: cluster/envtest harness unavailable here; Phase 3 gate has
 no v1 migration to gate.
 
 **Reopened 2026-06-07 (was DEFERRED).** No deferral rationale was recorded; re-verify current implementation status against the spec and code before fixing (rules A, O).
+
+**Resolution:** The deferral premise (a controller-runtime / envtest
+harness is required) was stale: the Lenny admission webhooks are pure
+`Decider` functions over an `AdmissionRequest`, unit-tested without
+envtest (see `drain_readiness`, `sandboxclaim_guard`). Built the §10.5
+line-508 "key safety invariant" end to end. New
+`pkg/admission/webhook.SandboxTemplateDeletionGuard` Decider: on a
+SandboxTemplate DELETE it lists every SandboxWarmPool whose
+`spec.templateRef` names the template (via the API-server reader) and
+probes the gateway for each referencing pool's RuntimeUpgrade state;
+it denies with `409` when any referencing pool has an active upgrade and
+fail-closes with `503` when it cannot list the pools or reach the gateway.
+The probe is served by the new gateway `GET
+/internal/runtime-upgrade/active?pool=<name>` endpoint
+(`pkg/gateway/runtimeupgradeguard`), which reports a pool active while its
+durable `runtimeupgradestore.Record` exists and has not reached the
+terminal `complete` phase (a paused upgrade stays active). The webhook is
+wired into `cmd/lenny-webhook` behind
+`--gateway-runtime-upgrade-active-url`, rendered unconditionally as a
+fail-closed `lenny-sandboxtemplate-deletion-guard`
+ValidatingWebhookConfiguration on `sandboxtemplates` DELETE (chart +
+webhook-RBAC `sandboxwarmpools` read grant + `_webhook.tpl` arg), and
+registered in the §17.2 preflight inventory (baseline +
+implementation-only set). The §10.5 line-502 Phase 3 gate is served as the
+same endpoint's `schemaGated` flag (true when the active upgrade carries a
+`schemaVersion`), the gateway-side decision a Phase 3 migration consults;
+v1 ships no Phase 3 (`DROP COLUMN`) migration and migrations apply through
+the `lenny-migrate` Job rather than a gateway endpoint (confirmed under
+F-10.5.2), so there is no live Phase 3 attempt to intercept — the consumer
+wiring lands with the first Phase 3 migration, matching F-10.5.2's
+forward-looking-guard framing. Resolved by this batch.
 
 ### - [x] F-10.5.2 — 02  No production migration runner: Helm chart has no pre-upgrade `lenny-migrate` Job; expand-contract gating absent [High] — CLOSED
 

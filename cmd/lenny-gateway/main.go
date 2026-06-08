@@ -244,6 +244,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
 	runtimeupgradepg "github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
@@ -4286,8 +4287,12 @@ func main() {
 	// so the §16.5 RuntimeUpgradeStuck alert evaluates the durable phase
 	// after a restart. F-10.5.1.
 	var runtimeUpgradeMgr admin.RuntimeUpgradeManager
+	// ruStore is hoisted out of the construction block so the §10.5
+	// GET /internal/runtime-upgrade/active endpoint (line 508 deletion
+	// guard, line 502 Phase 3 gate) can read the same durable record the
+	// manager drives.
+	var ruStore runtimeupgradestore.Store = runtimeupgradestore.NewMemory()
 	{
-		var ruStore runtimeupgradestore.Store = runtimeupgradestore.NewMemory()
 		if pgPool != nil {
 			ruStore = runtimeupgradepg.New(pgPool)
 		}
@@ -5277,6 +5282,15 @@ func main() {
 	// when the artifact store is MinIO-backed, and an always-ready stub
 	// for the process-local in-memory store.
 	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: blobProbe})
+
+	// ----- §10.5 runtime-upgrade-active endpoint (unauthenticated) -----
+	// The lenny-sandboxtemplate-deletion-guard webhook probes this before
+	// admitting a SandboxTemplate DELETE, so the old template cannot be
+	// deleted while a RuntimeUpgrade referencing its pool is still active
+	// (§10.5 line 508). The same record's schemaGated flag gates a Phase 3
+	// migration for the pool (§10.5 line 502). Same internal-port
+	// NetworkPolicy scope and unauthenticated posture as drain-readiness.
+	mux.Handle("GET /internal/runtime-upgrade/active", &runtimeupgradeguard.Handler{Store: ruStore})
 
 	// ----- §12.5 line 291 node.drain.forced audit endpoint (unauthenticated) -----
 	// The webhook POSTs here on a drain-force override admission so the

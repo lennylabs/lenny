@@ -20,6 +20,9 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		// spec: §13.2 line 440 step 2 — renders unconditionally, so the
 		// inventory expects it in the baseline set (F-13.2.12).
 		"lenny-direct-mode-isolation": true,
+		// spec: §10.5 line 508 — renders unconditionally and fail-closed
+		// (F-10.5.14).
+		"lenny-sandboxtemplate-deletion-guard": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("baseline expected %d webhooks, want %d: %v", len(got), len(want), got)
@@ -46,6 +49,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
 		"lenny-direct-mode-isolation":          true,
+		"lenny-sandboxtemplate-deletion-guard": true,
 		"lenny-drain-readiness":                true,
 		"lenny-data-residency-validator":       true,
 		"lenny-t4-node-isolation":              true,
