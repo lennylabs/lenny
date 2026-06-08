@@ -322,6 +322,11 @@ Gateway commands:
   admin pools sync-status <name>        Show Postgres↔CRD reconciliation state
   admin pools resume-reconciliation <name>  Clear PoolScalingAdmissionStuck state
   admin pools set-warm-count --pool <name> --min <N> [--dry-run]
+  admin pools exit-bootstrap --pool <name>   Drop the bootstrap minWarm override
+  admin pools circuit-breaker --pool <name> --state <enabled|disabled|auto>   Override SDK-warm circuit-breaker
+  admin pools grant-access --pool <name> --tenant <id>   Grant a tenant access to a pool
+  admin pools list-access --pool <name>   List tenants with access to a pool
+  admin pools revoke-access --pool <name> --tenant <id>  Revoke a tenant's access to a pool
                                         Override a pool's minWarm for emergency scaling (§24.4)
   admin credential-pools list [--tenant <id>]   List credential pools and their status (§24.5)
   admin credential-pools get --pool <name> [--tenant <id>]   Show a pool with per-credential health and lease counts (§24.5)
@@ -977,10 +982,20 @@ func cmdRuntimesAccess(ctx context.Context, c *ctl.Client, verb string, args []s
 		return 2
 	}
 	base := "/v1/admin/runtimes/" + url.PathEscape(runtime) + "/tenant-access"
+	return tenantAccessVerb(ctx, c, "runtimes", base, verb, tenant, stdout, stderr)
+}
+
+// tenantAccessVerb performs the §15.1 tenant-access grant/list/revoke call
+// against a resource's /tenant-access subresource. base is the full
+// .../tenant-access path; resource names the parent group for error
+// messages (for example "runtimes" or "pools"); verb is one of
+// grant-access, list-access, or revoke-access. spec: §15.1 lines 778-780
+// (runtimes), 802-804 (pools).
+func tenantAccessVerb(ctx context.Context, c *ctl.Client, resource, base, verb, tenant string, stdout, stderr io.Writer) int {
 	switch verb {
 	case "grant-access":
 		if tenant == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: runtimes grant-access requires --tenant <id>")
+			fmt.Fprintf(stderr, "lenny-ctl: %s grant-access requires --tenant <id>\n", resource)
 			return 2
 		}
 		var out map[string]any
@@ -998,7 +1013,7 @@ func cmdRuntimesAccess(ctx context.Context, c *ctl.Client, verb string, args []s
 		printJSON(stdout, out)
 	case "revoke-access":
 		if tenant == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: runtimes revoke-access requires --tenant <id>")
+			fmt.Fprintf(stderr, "lenny-ctl: %s revoke-access requires --tenant <id>\n", resource)
 			return 2
 		}
 		if err := c.Do(ctx, "DELETE", base+"/"+url.PathEscape(tenant), nil, nil); err != nil {
@@ -1060,7 +1075,7 @@ func cmdRuntimesRegister(ctx context.Context, c *ctl.Client, args []string, stdo
 // (spec/15_external-api-surface.md lines 792-799).
 func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation|set-warm-count|upgrade)")
+		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation|set-warm-count|exit-bootstrap|circuit-breaker|grant-access|list-access|revoke-access|upgrade)")
 		return 2
 	}
 	switch args[0] {
@@ -1207,11 +1222,102 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 			return 1
 		}
 		printJSON(stdout, out)
+	case "exit-bootstrap":
+		// spec: §24.4 line 64 — `admin pools exit-bootstrap --pool <name>`
+		// removes the bootstrap minWarm override and switches to
+		// formula-driven scaling immediately. Maps to DELETE
+		// /v1/admin/pools/{name}/bootstrap-override (§15.1 line 875).
+		fs := flag.NewFlagSet("pools exit-bootstrap", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools exit-bootstrap requires --pool <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(*pool)+"/bootstrap-override", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "circuit-breaker":
+		// spec: §24.4 line 75 — `admin pools circuit-breaker --pool <name>
+		// --state <enabled|disabled|auto>` overrides the §6.1 SDK-warm
+		// circuit-breaker state. Maps to PUT
+		// /v1/admin/pools/{name}/circuit-breaker (§15.1 line 801), which
+		// requires If-Match; the ETag is read from the pool resource it
+		// shares pool_config_generation with.
+		fs := flag.NewFlagSet("pools circuit-breaker", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pool := fs.String("pool", "", "pool name (required)")
+		state := fs.String("state", "", "circuit-breaker override: enabled|disabled|auto (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *pool == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --pool <name>")
+			return 2
+		}
+		switch *state {
+		case "enabled", "disabled", "auto":
+		default:
+			fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --state <enabled|disabled|auto>")
+			return 2
+		}
+		body := map[string]any{"sdkWarm": map[string]any{"circuitBreakerOverride": *state}}
+		poolPath := "/v1/admin/pools/" + url.PathEscape(*pool)
+		var out map[string]any
+		if err := c.PutIfMatch(ctx, poolPath, poolPath+"/circuit-breaker", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "grant-access", "list-access", "revoke-access":
+		// spec: §24.4 lines 76-78 — pool tenant-access management.
+		// grant-access and revoke-access take --pool + --tenant;
+		// list-access takes --pool only. They map to the §15.1:802-804
+		// endpoints under /v1/admin/pools/{name}/tenant-access.
+		return cmdPoolsAccess(ctx, c, args[0], args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown pools subcommand %q\n", args[0])
 		return 2
 	}
 	return 0
+}
+
+// cmdPoolsAccess implements the three §24.4 pool tenant-access
+// subcommands: grant-access, list-access, and revoke-access. The verb is
+// passed in so the three share one flag parser. spec: §24.4 lines 76-78.
+func cmdPoolsAccess(ctx context.Context, c *ctl.Client, verb string, args []string, stdout, stderr io.Writer) int {
+	var pool, tenant string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pool":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --pool requires a value")
+				return 2
+			}
+			pool, i = args[i+1], i+1
+		case "--tenant":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --tenant requires a value")
+				return 2
+			}
+			tenant, i = args[i+1], i+1
+		default:
+			fmt.Fprintf(stderr, "lenny-ctl: unknown flag %q for pools %s\n", args[i], verb)
+			return 2
+		}
+	}
+	if pool == "" {
+		fmt.Fprintf(stderr, "lenny-ctl: pools %s requires --pool <name>\n", verb)
+		return 2
+	}
+	base := "/v1/admin/pools/" + url.PathEscape(pool) + "/tenant-access"
+	return tenantAccessVerb(ctx, c, "pools", base, verb, tenant, stdout, stderr)
 }
 
 // cmdPoolsUpgrade implements `lenny-ctl admin pools upgrade

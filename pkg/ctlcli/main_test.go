@@ -456,6 +456,125 @@ func TestAdminPoolsResumeReconciliation(t *testing.T) {
 	}
 }
 
+// TestAdminPoolsExitBootstrap covers
+// DELETE /v1/admin/pools/{name}/bootstrap-override. spec: §24.4 line 64,
+// §15.1 line 875.
+func TestAdminPoolsExitBootstrap(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
+		"admin", "pools", "exit-bootstrap", "--pool", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodDelete || got.path != "/v1/admin/pools/p1/bootstrap-override" {
+		t.Errorf("request: %s %s, want DELETE /v1/admin/pools/p1/bootstrap-override", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsExitBootstrapRequiresPool fails fast with exit code 2 when
+// --pool is omitted. spec: §24.4 line 64.
+func TestAdminPoolsExitBootstrapRequiresPool(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "exit-bootstrap"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("exit-bootstrap without --pool: exit code %d, want 2", code)
+	}
+}
+
+// TestAdminPoolsCircuitBreaker covers
+// PUT /v1/admin/pools/{name}/circuit-breaker. The CLI fetches the pool's
+// ETag (GET) then issues the PUT with the override body; the captured
+// request is the trailing PUT. spec: §24.4 line 75, §15.1 line 801.
+func TestAdminPoolsCircuitBreaker(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
+		"admin", "pools", "circuit-breaker", "--pool", "p1", "--state", "enabled")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPut || got.path != "/v1/admin/pools/p1/circuit-breaker" {
+		t.Fatalf("request: %s %s, want PUT /v1/admin/pools/p1/circuit-breaker", got.method, got.path)
+	}
+	sdkWarm, _ := got.body["sdkWarm"].(map[string]any)
+	if sdkWarm["circuitBreakerOverride"] != "enabled" {
+		t.Errorf("body: %+v, want sdkWarm.circuitBreakerOverride=enabled", got.body)
+	}
+}
+
+// TestAdminPoolsCircuitBreakerRejectsBadState rejects a --state value
+// outside the {enabled, disabled, auto} set before any HTTP call.
+// spec: §24.4 line 75.
+func TestAdminPoolsCircuitBreakerRejectsBadState(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "circuit-breaker", "--pool", "p1", "--state", "sideways"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("circuit-breaker bad --state: exit code %d, want 2", code)
+	}
+}
+
+// TestAdminPoolsGrantAccess covers
+// POST /v1/admin/pools/{name}/tenant-access. spec: §24.4 line 76,
+// §15.1 line 802.
+func TestAdminPoolsGrantAccess(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{}`,
+		"admin", "pools", "grant-access", "--pool", "p1", "--tenant", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/pools/p1/tenant-access" {
+		t.Fatalf("request: %s %s, want POST /v1/admin/pools/p1/tenant-access", got.method, got.path)
+	}
+	if got.body["tenantId"] != "acme" {
+		t.Errorf("body: %+v, want tenantId=acme", got.body)
+	}
+}
+
+// TestAdminPoolsListAccess covers
+// GET /v1/admin/pools/{name}/tenant-access. spec: §24.4 line 77,
+// §15.1 line 803.
+func TestAdminPoolsListAccess(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":[]}`,
+		"admin", "pools", "list-access", "--pool", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/pools/p1/tenant-access" {
+		t.Errorf("request: %s %s, want GET /v1/admin/pools/p1/tenant-access", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsRevokeAccess covers
+// DELETE /v1/admin/pools/{name}/tenant-access/{tenantId}. spec: §24.4 line
+// 78, §15.1 line 804.
+func TestAdminPoolsRevokeAccess(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusNoContent, ``,
+		"admin", "pools", "revoke-access", "--pool", "p1", "--tenant", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodDelete || got.path != "/v1/admin/pools/p1/tenant-access/acme" {
+		t.Errorf("request: %s %s, want DELETE /v1/admin/pools/p1/tenant-access/acme", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsAccessRequiresPool fails fast with exit code 2 when --pool
+// is omitted from a tenant-access verb. spec: §24.4 lines 76-78.
+func TestAdminPoolsAccessRequiresPool(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "grant-access", "--tenant", "acme"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("grant-access without --pool: exit code %d, want 2", code)
+	}
+}
+
+// TestAdminPoolsGrantAccessRequiresTenant fails fast when --tenant is
+// omitted from grant-access. spec: §24.4 line 76.
+func TestAdminPoolsGrantAccessRequiresTenant(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "grant-access", "--pool", "p1"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("grant-access without --tenant: exit code %d, want 2", code)
+	}
+}
+
 // TestAdminPoolsUnknownSubcommand fails fast with exit code 2.
 func TestAdminPoolsUnknownSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
