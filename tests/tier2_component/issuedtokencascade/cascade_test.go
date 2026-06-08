@@ -147,3 +147,112 @@ func TestRevokeCascadeContract_spec_13_3_603(t *testing.T) {
 		}
 	})
 }
+
+// spec: §13.3 line 597 — RecordWithRotationAudit binds the new
+// issued-token INSERT, the token.exchanged audit row, and the revoked_at
+// stamp on the previous token into one transaction: after it returns the
+// replacement exists and the previous token is revoked with
+// rotation_replaced, with no window in which both are live or the old is
+// revoked but the new never issued. A missing or already-revoked
+// previous token reports revoked=false and leaves the mint intact.
+func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
+	t.Parallel()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
+	})
+	store := issuedtokenstore.New(pg.Pool)
+	ctx := context.Background()
+
+	record := func(t *testing.T, tenant, jti, sub string) {
+		t.Helper()
+		now := time.Now().UTC()
+		if err := store.Record(ctx, issuedtokenstore.IssuedToken{
+			JTI: jti, TenantID: tenant, Subject: sub, TokenHash: []byte(jti),
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("Record %s: %v", jti, err)
+		}
+	}
+
+	t.Run("rotation mints replacement and revokes previous atomically", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		record(t, tenant, "old-jti", "alice@acme.com")
+
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		newTok := issuedtokenstore.IssuedToken{
+			JTI: "new-jti", TenantID: tenant, Subject: "alice@acme.com", TokenHash: []byte("new-jti"),
+			Scope: []string{"sessions:read"}, Audiences: []string{"lenny-gateway"},
+			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
+		}
+		sub, revoked, err := store.RecordWithRotationAudit(ctx, newTok, "old-jti",
+			"rotation_replaced", "token.exchanged", []byte(`{"policy_result":"accepted"}`), at)
+		if err != nil {
+			t.Fatalf("RecordWithRotationAudit: %v", err)
+		}
+		if !revoked || sub != "alice@acme.com" {
+			t.Fatalf("revoked=%v sub=%q, want true / alice@acme.com", revoked, sub)
+		}
+		// New token is live.
+		got, err := store.Get(ctx, tenant, "new-jti")
+		if err != nil {
+			t.Fatalf("Get new-jti: %v", err)
+		}
+		if got.Revoked() {
+			t.Error("replacement token is revoked")
+		}
+		// Old token is revoked with rotation_replaced.
+		old, err := store.Get(ctx, tenant, "old-jti")
+		if err != nil {
+			t.Fatalf("Get old-jti: %v", err)
+		}
+		if !old.Revoked() || old.RevokedReason != "rotation_replaced" {
+			t.Errorf("old token revoked=%v reason=%q, want true / rotation_replaced", old.Revoked(), old.RevokedReason)
+		}
+	})
+
+	t.Run("re-rotation against an already-revoked previous token is a no-op revoke", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		record(t, tenant, "prev", "bob@acme.com")
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		// First rotation revokes prev.
+		if _, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
+			JTI: "r1", TenantID: tenant, Subject: "bob@acme.com", TokenHash: []byte("r1"),
+			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
+		}, "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at); err != nil || !revoked {
+			t.Fatalf("first rotation: revoked=%v err=%v", revoked, err)
+		}
+		// Second rotation naming the already-revoked prev still mints but
+		// reports revoked=false.
+		_, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
+			JTI: "r2", TenantID: tenant, Subject: "bob@acme.com", TokenHash: []byte("r2"),
+			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
+		}, "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
+		if err != nil {
+			t.Fatalf("second rotation: %v", err)
+		}
+		if revoked {
+			t.Error("second rotation reported a revoke of an already-revoked previous token")
+		}
+		if got, _ := store.Get(ctx, tenant, "r2"); got.Revoked() {
+			t.Error("second replacement should be live")
+		}
+	})
+
+	t.Run("rotation with absent previous token mints without revoke", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		_, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
+			JTI: "solo", TenantID: tenant, Subject: "carol@acme.com", TokenHash: []byte("solo"),
+			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
+		}, "ghost-prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
+		if err != nil {
+			t.Fatalf("rotation with absent prev: %v", err)
+		}
+		if revoked {
+			t.Error("revoked=true for an absent previous token")
+		}
+		if got, err := store.Get(ctx, tenant, "solo"); err != nil || got.Revoked() {
+			t.Errorf("replacement not minted or revoked: err=%v revoked=%v", err, got.Revoked())
+		}
+	})
+}

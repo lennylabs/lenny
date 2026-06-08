@@ -61,6 +61,26 @@ type IssuedTokenAuditStore interface {
 	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
 }
 
+// IssuedTokenRotationStore extends IssuedTokenAuditStore with the §13.3
+// line 597 atomic token-rotation path: the new token's INSERT, its
+// `token.exchanged` audit row, and the revoked_at stamp on the previous
+// token all commit in one transaction. When the configured IssuedTokens
+// dependency satisfies it (the Postgres-backed issuedtokenstore.Store
+// does), a detected self-rotation revokes the caller's previous token
+// the instant the replacement is minted, with no grace period. The
+// returned `revoked` reports whether the previous token was live and got
+// revoked, and `revokedSub` is its subject for the §16.7 token.revoked
+// row. F-16.7.5.
+type IssuedTokenRotationStore interface {
+	IssuedTokenAuditStore
+	RecordWithRotationAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error)
+}
+
+// The Postgres-backed issuedtokenstore.Store is the production
+// IssuedTokenRotationStore; this assertion fails the build if the
+// rotation write-before-issue surface ever drops off the store.
+var _ IssuedTokenRotationStore = (*issuedtokenstore.Store)(nil)
+
 // RevocationStore is the optional §13.3 line 603 / §8.3 recursive
 // revocation surface. When the configured IssuedTokens dependency
 // satisfies it (the Postgres-backed issuedtokenstore.Store does), the
@@ -258,8 +278,9 @@ const (
 
 // §16.7 token.revoked revocation_reason and propagation_mode enums.
 const (
-	revocationReasonExplicit = "explicit_revoke"
-	revocationReasonCascade  = "cascade_from_parent"
+	revocationReasonExplicit         = "explicit_revoke"
+	revocationReasonCascade          = "cascade_from_parent"
+	revocationReasonRotationReplaced = "rotation_replaced"
 
 	propagationModeEventBus     = "eventbus"
 	propagationModePostgresOnly = "postgres_only"
@@ -543,15 +564,51 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		PolicyResult:    "accepted",
 		Now:             now,
 	}
-	if as, ok := s.issuedTokens.(IssuedTokenAuditStore); ok {
+
+	// §13.3 line 597 token rotation: a self-rotation is an exchange in
+	// which the caller presents its own current token as the subject and
+	// requests a privilege-equivalent replacement (same audience set,
+	// same scope, no actor/delegation). On detection the previous token
+	// is revoked atomically with the mint, and a §16.7 token.revoked row
+	// with revocation_reason=rotation_replaced is emitted. The guard is
+	// deliberately narrow: a cross-audience or scope-narrowing
+	// self-exchange is a scope_narrow / dialect derivation, not a
+	// rotation, so its subject token is left live. F-16.7.5.
+	isRotation := actorClaims == nil &&
+		callerClaims.JWTID != "" &&
+		callerClaims.JWTID == subjectClaims.JWTID &&
+		sameStringSet(issued.Audience, subjectClaims.Audience) &&
+		sameStringSet(issued.Scope, splitScope(subjectClaims.Scope))
+
+	auditStore, _ := s.issuedTokens.(IssuedTokenAuditStore)
+	rotationStore, _ := s.issuedTokens.(IssuedTokenRotationStore)
+	switch {
+	case isRotation && rotationStore != nil:
+		// Postgres rotation path: the new issued-token INSERT, the
+		// token.exchanged audit row, and the revoked_at stamp on the
+		// previous token commit in one transaction (§13.3 line 597).
+		revokedSub, revoked, err := rotationStore.RecordWithRotationAudit(r.Context(), rec,
+			subjectClaims.JWTID, revocationReasonRotationReplaced,
+			string(obsaudit.EventTokenExchanged), auditPayload.JSON(), now)
+		if err != nil {
+			writeIssueStoreError(w, finish, err)
+			return
+		}
+		if revoked {
+			// The token.revoked row and cluster propagation run after the
+			// durable commit so propagation_mode reflects the real publish
+			// outcome.
+			s.emitRotationRevoked(r.Context(), issued.TenantID, subjectClaims.JWTID, revokedSub, now)
+		}
+	case auditStore != nil:
 		// Postgres path: one transaction binds the issued-token
 		// INSERT and the audit_log INSERT under the §11.7 lock.
-		if _, err := as.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
+		if _, err := auditStore.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
 			auditPayload.JSON(), now); err != nil {
 			writeIssueStoreError(w, finish, err)
 			return
 		}
-	} else if s.issuedTokens != nil {
+	case s.issuedTokens != nil:
 		// In-memory dev path: no advisory lock is needed because the
 		// issued-tokens record and the audit append share no Postgres
 		// state. We still write the issued record first so the
@@ -561,7 +618,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
-	} else {
+	default:
 		// Test-only path with no durable issued-token store.
 		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
 	}
@@ -738,6 +795,27 @@ func (s *Server) emitTokenRevoked(ctx context.Context, tenantID string, rt issue
 	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
 }
 
+// emitRotationRevoked writes the §16.7 token.revoked row for a
+// rotation_replaced revocation and propagates the revoked jti
+// cluster-wide. The revoked token is the caller's previous token, which
+// was atomically revoked inside the write-before-issue transaction that
+// minted its replacement (§13.3 line 597). A rotation is not a cascade,
+// so the row carries no cascade_root_jti. F-16.7.5.
+func (s *Server) emitRotationRevoked(ctx context.Context, tenantID, revokedJTI, revokedSub string, at time.Time) {
+	mode := s.propagateRevocation(ctx, tenantID, revokedJTI)
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	body, _ := json.Marshal(revokedAuditPayload{
+		RevokedJTI:       revokedJTI,
+		RevokedSub:       revokedSub,
+		RevocationReason: revocationReasonRotationReplaced,
+		PropagationMode:  mode,
+		Timestamp:        at,
+	})
+	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
+}
+
 // propagateRevocation publishes a revoked jti onto the cluster EventBus
 // and reports the resulting §16.7 propagation_mode. A nil propagator or
 // a publish failure yields `postgres_only`: Postgres remains the
@@ -803,6 +881,35 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		Typ:             tokenexchange.TokenType(c.Typ),
 		Exp:             c.ExpiryTime(),
 	}
+}
+
+// sameStringSet reports whether a and b contain the same set of
+// non-empty strings, ignoring order and duplicates. The §13.3 rotation
+// guard uses it to distinguish a privilege-equivalent self-rotation
+// (issued audience and scope equal the subject's) from a scope-narrowing
+// or cross-dialect self-exchange. F-16.7.5.
+func sameStringSet(a, b []string) bool {
+	sa := stringSet(a)
+	sb := stringSet(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for k := range sa {
+		if _, ok := sb[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSet(xs []string) map[string]struct{} {
+	s := make(map[string]struct{}, len(xs))
+	for _, x := range xs {
+		if x != "" {
+			s[x] = struct{}{}
+		}
+	}
+	return s
 }
 
 func splitScope(s string) []string { return splitSpace(s) }

@@ -175,6 +175,69 @@ func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEvent
 	return committed, nil
 }
 
+// RecordWithRotationAudit performs the §13.3 line 597 atomic
+// token-rotation write-before-issue. In one Postgres transaction it
+// writes the `token.exchanged` audit row, INSERTs the new issued_tokens
+// row, and stamps revoked_at/revoked_reason on the previous token
+// (prevJTI) when that token is still live. The revocation of the
+// previous token and the mint of its replacement therefore commit
+// together: there is no window in which both tokens validate, and none
+// in which the old token is revoked but the replacement was never
+// issued. Only after COMMIT does the Token Service hand the new token to
+// the caller.
+//
+// The previous token is revoked only when its row exists in the tenant
+// and is not already revoked. revoked reports whether a row was revoked,
+// and revokedSub carries that row's subject so the caller can emit the
+// §16.7 token.revoked row with revocation_reason=rotation_replaced. A
+// missing or already-revoked previous token leaves the mint intact and
+// reports revoked=false, so a retried rotation does not double-revoke or
+// double-emit. The §16.7 token.revoked audit row itself is written by
+// the caller after COMMIT because its propagation_mode field records the
+// post-commit EventBus publish outcome.
+//
+// spec: §13.3 line 597.
+func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
+	err = pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
+		// §11.7 advisory lock + token.exchanged audit row first so the
+		// chain prev_hash is stable; the issued_tokens INSERT and the
+		// previous-token revocation below are bound to the same
+		// transaction and roll back together on any failure.
+		if _, aerr := auditstore.AppendInTx(ctx, tx, tok.TenantID, exchangeEventType, exchangePayload, at); aerr != nil {
+			return aerr
+		}
+		if ierr := insertIssued(ctx, tx, tok); ierr != nil {
+			return ierr
+		}
+		var sub string
+		rerr := tx.QueryRow(ctx,
+			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
+			 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL
+			 RETURNING sub`,
+			prevJTI, tok.TenantID, at, pgtenant.NullString(revokedReason)).Scan(&sub)
+		if errors.Is(rerr, pgx.ErrNoRows) {
+			// Previous token absent or already revoked: the mint still
+			// commits, but there is nothing to revoke and no token.revoked
+			// to emit.
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+		revokedSub = sub
+		revoked = true
+		return nil
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return "", false, ErrAlreadyExists
+		}
+		return "", false, err
+	}
+	return revokedSub, revoked, nil
+}
+
 // insertIssued runs the issued_tokens INSERT on tx. It assumes the
 // caller has already opened a pgtenant.InTx and acquired the §11.7
 // audit advisory lock when binding to an audit row.
