@@ -758,6 +758,16 @@ func main() {
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	leaseAutoMaxPerMin := flag.Int("lease-extension-auto-max-per-min", 0,
 		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
+	leaseDefaultBudget := flag.Int64("lease-extension-default-budget", 0,
+		"§8.6 line 660 deployment-default maxExtendableBudget (Helm leaseExtension.defaults.maxExtendableBudget): the token ceiling a delegation tree may extend to absent a tenant or runtime override. Zero registers root trees with no token-extension headroom (every ExtendLease returns CEILING_REACHED). F-15.3.5.")
+	leaseMaxBudget := flag.Int64("lease-extension-max-budget", 0,
+		"§8.6 line 678 absolute maxExtendableBudget ceiling (Helm leaseExtension.max.maxExtendableBudget) no tenant or runtime override may exceed. Zero leaves the deployment default uncapped. F-15.3.5.")
+	leaseDefaultApproval := flag.String("lease-extension-default-approval", "",
+		"§8.6 line 674 deployment-default extensionApproval mode (auto | elicitation). Empty resolves to the spec default (elicitation). F-15.3.5.")
+	leaseCoolOffSec := flag.Int("lease-extension-cooloff-seconds", 0,
+		"§8.6 line 675 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
+	leaseRejectionCoolOffSec := flag.Int("lease-extension-rejection-cooloff-seconds", 0,
+		"§8.6 line 734 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	interceptorNamespaces := flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),
@@ -3609,6 +3619,47 @@ func main() {
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator,
 		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
 
+	// §8.6 GatewayControl lease-extension budget state. Created here, when
+	// the GatewayControl listener is enabled via --grpc-addr, so the same
+	// per-tree denial flags are shared between the ExtendLease handler and
+	// the §15.1 line 868 admin extension-denial clear endpoint — the admin
+	// handler must mutate the very state the handler reads. The session
+	// server registers each root tree (RegisterTree) and the delegation
+	// Service registers each child (AddSession/SetParentLease), so a later
+	// ExtendLease resolves the tree instead of failing ErrSessionNotFound.
+	// F-8.6.8 / F-15.3.5.
+	var leaseBudgets *leasecontrol.MemoryBudgetSource
+	if *grpcAddr != "" {
+		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
+		// §8.6 lines 730-733 durability: when Postgres is configured the
+		// extension-denied flag, cool-off expiry, and grant counters are
+		// persisted to delegation_tree_budget through the denialpg store,
+		// so a coordinator handoff or gateway restart cannot bypass a
+		// user's rejection. Without Postgres (the dev/Embedded path) the
+		// denial stays in-memory. F-8.6.5.
+		if pgPool != nil {
+			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(pgPool))
+		}
+	}
+	// §8.6 lines 660-678: resolve the deployment-level lease-extension
+	// defaults the root tree's budget ceiling is registered with. nil
+	// leaseBudgets (no GatewayControl listener) leaves leaseRegistrar
+	// unset, so RegisterTree is never called. F-15.3.5.
+	leaseExtDefaults := sessionserver.LeaseExtensionDefaults{
+		DeploymentBudget:    *leaseDefaultBudget,
+		DeploymentMaxBudget: *leaseMaxBudget,
+		ApprovalMode:        leasecontrol.ApprovalMode(*leaseDefaultApproval),
+		SuccessCoolOff:      time.Duration(*leaseCoolOffSec) * time.Second,
+		RejectionCoolOff:    time.Duration(*leaseRejectionCoolOffSec) * time.Second,
+		AutoMaxPerMinute:    *leaseAutoMaxPerMin,
+	}
+	var sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
+	var childLeaseRegistrar delegation.LeaseChildRegistrar
+	if leaseBudgets != nil {
+		sessionLeaseRegistrar = leaseBudgets
+		childLeaseRegistrar = leaseBudgets
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
@@ -3713,14 +3764,18 @@ func main() {
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
-		SessionLogHook:        &sessionlogstore.CloseHook{Store: sessionLogs},
-		TreeArchive:           treeArchive,
-		TreeBudgetReturner:    treeBudgetReserver,
-		QuotaCheckpointer:     quotaCheckpointSvc,
-		HighWatermarkReader:   hwmReader,
-		HighWatermarkObserver: gwMetrics,
-		Interceptors:          policyChain,
-		PolicyAuditSink:       policyAuditSink,
+		SessionLogHook:     &sessionlogstore.CloseHook{Store: sessionLogs},
+		TreeArchive:        treeArchive,
+		TreeBudgetReturner: treeBudgetReserver,
+		// §8.6: register each root tree's lease-extension budget so a
+		// later adapter ExtendLease resolves it. F-15.3.5.
+		LeaseRegistrar:         sessionLeaseRegistrar,
+		LeaseExtensionDefaults: leaseExtDefaults,
+		QuotaCheckpointer:      quotaCheckpointSvc,
+		HighWatermarkReader:    hwmReader,
+		HighWatermarkObserver:  gwMetrics,
+		Interceptors:           policyChain,
+		PolicyAuditSink:        policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
@@ -4014,6 +4069,10 @@ func main() {
 		ExportScanChainResolver: exportScanResolver,
 		TreeBudgetReserver:      treeBudgetReserver,
 		ChildTokenMinter:        childTokenMinter,
+		// §8.6 line 648: register each admitted child with the lease-
+		// extension budget source, capped at the parent's own lease, so a
+		// later adapter ExtendLease from the child resolves its tree. F-15.3.5.
+		LeaseRegistrar: childLeaseRegistrar,
 		// §11.1 line 9 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,
@@ -4318,25 +4377,6 @@ func main() {
 	// delegationPolicies was constructed above so the delegation
 	// admission gate (§8.2 LayerPolicy) and the admin CRUD share one
 	// store handle.
-	// §8.6 GatewayControl lease-extension budget state. Created here, when
-	// the GatewayControl listener is enabled via --grpc-addr, so the same
-	// per-tree denial flags are shared between the ExtendLease handler and
-	// the §15.1 line 868 admin extension-denial clear endpoint — the admin
-	// handler must mutate the very state the handler reads. F-8.6.8.
-	var leaseBudgets *leasecontrol.MemoryBudgetSource
-	if *grpcAddr != "" {
-		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
-		// §8.6 lines 730-733 durability: when Postgres is configured the
-		// extension-denied flag, cool-off expiry, and grant counters are
-		// persisted to delegation_tree_budget through the denialpg store,
-		// so a coordinator handoff or gateway restart cannot bypass a
-		// user's rejection. Without Postgres (the dev/Embedded path) the
-		// denial stays in-memory. F-8.6.5.
-		if pgPool != nil {
-			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(pgPool))
-		}
-	}
-
 	// spec: §12.5 line 301 / line 307 — the §12.5 T4 KMS availability
 	// probe Lifecycle, backed by the resolved §4 kms.Provider so the
 	// zero-byte encrypt/decrypt round-trip uses the same provider

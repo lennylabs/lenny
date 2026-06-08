@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
@@ -317,6 +318,48 @@ type Service struct {
 	// unlimited. Operator-tunable via the gateway Helm value
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	maxActiveChildrenPerUser int
+	// leaseRegistrar, when set, registers every admitted child session
+	// with the §8.6 lease-extension budget source so a later ExtendLease
+	// from the child resolves its tree instead of failing
+	// ErrSessionNotFound. The child is added to its root's tree and its
+	// per-extension ceiling is capped at the parent's own granted lease
+	// (§8.6 line 648). Nil leaves extension state unregistered (the
+	// in-process minimal gateway with no GatewayControl listener).
+	// F-15.3.5.
+	leaseRegistrar LeaseChildRegistrar
+}
+
+// LeaseChildRegistrar registers a delegated child session with the §8.6
+// lease-extension budget source. *leasecontrol.MemoryBudgetSource
+// satisfies it. The delegation Service calls AddSession to bind the
+// child to its root's extension tree and SetParentLease to cap the
+// child's per-extension grant at the parent's own lease (§8.6 line
+// 648). F-15.3.5.
+// spec: §8.6 line 648
+type LeaseChildRegistrar interface {
+	AddSession(sessionID, rootSessionID, tenantID string)
+	SetParentLease(sessionID string, parent leasecontrol.SessionLease)
+}
+
+// parentLeaseCeiling projects a parent session's granted §8.2
+// DelegationLease onto the §8.6 line 648 SessionLease ceiling its
+// children inherit: a child can never extend a dimension beyond what
+// the parent's lease itself granted. A root parent carries no granted
+// lease (nil), which yields the zero ceiling (no per-parent cap; the
+// tree's effective-max ceiling still applies). F-15.3.5.
+// spec: §8.6 line 648
+func parentLeaseCeiling(parent sessionstore.Session) leasecontrol.SessionLease {
+	l := parent.DelegationLease
+	if l == nil {
+		return leasecontrol.SessionLease{}
+	}
+	return leasecontrol.SessionLease{
+		TokenCeiling:            l.MaxTokenBudget,
+		MaxAgeCeiling:           int64(l.PerChildMaxAge),
+		ChildrenCeiling:         int64(l.MaxChildrenTotal),
+		ParallelChildrenCeiling: int64(l.MaxParallelChildren),
+		TreeSizeCeiling:         int64(l.MaxTreeSize),
+	}
 }
 
 // Options configures a Service.
@@ -439,6 +482,13 @@ type Options struct {
 	// the scope unlimited. Operator-tunable via the gateway Helm value
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	MaxActiveChildrenPerUser int
+
+	// LeaseRegistrar, when set, registers every admitted child session
+	// with the §8.6 lease-extension budget source (AddSession +
+	// SetParentLease) so an adapter ExtendLease from the child resolves
+	// its tree instead of failing ErrSessionNotFound. Nil leaves
+	// extension state unregistered. F-15.3.5.
+	LeaseRegistrar LeaseChildRegistrar
 }
 
 // NewService returns a delegation Service.
@@ -485,6 +535,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		treeBudget:                   opts.TreeBudgetReserver,
 		tokenMinter:                  opts.ChildTokenMinter,
 		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
+		leaseRegistrar:               opts.LeaseRegistrar,
 	}
 }
 
@@ -1126,6 +1177,15 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	}
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err
+	}
+	// §8.6 line 648: register the committed child with the lease-extension
+	// budget source so an adapter ExtendLease from the child resolves its
+	// tree (AddSession) and is capped at the parent's own granted lease
+	// (SetParentLease). Done after the row commits so a registered child
+	// always has a persisted backing row. F-15.3.5.
+	if s.leaseRegistrar != nil {
+		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
+		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
 	}
 	// §8.2 / §16.1 line 27: observe the admitted child's depth onto
 	// the `lenny_delegation_depth` histogram. Depth is invariant once

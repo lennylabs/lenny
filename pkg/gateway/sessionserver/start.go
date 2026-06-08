@@ -522,6 +522,9 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordSessionCreated(r.Context(), row)
+	// §8.6: register the root tree's lease-extension budget so a later
+	// adapter ExtendLease resolves it instead of ErrSessionNotFound. F-15.3.5.
+	s.registerLeaseTree(row)
 	s.registerBinding(r.Context(), bound)
 	// spec: §14 lines 100, 334, 338 — publish parse-time
 	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`

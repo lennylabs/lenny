@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
@@ -256,17 +257,25 @@ type Server struct {
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
 	treeBudgetReturner    TreeBudgetReturner
-	quotaCheckpointer     QuotaFinalCheckpointer
-	hwmObserver           DelegationHighWatermarkObserver
-	hwmReader             DelegationHighWatermarkReader
-	maxOrphanTasks        int
-	evals                 evalstore.Store
-	memory                memorystore.Store
-	experiments           experimentstore.Store
-	pools                 poolstore.Store
-	experimentReporter    ExperimentRejectionReporter
-	stickyCache           StickyCache
-	runtimes              runtimestore.Store
+	// leaseRegistrar, when set, registers a newly created root session
+	// with the §8.6 lease-extension budget source so a later adapter
+	// ExtendLease resolves the tree instead of failing
+	// ErrSessionNotFound. leaseExtDefaults carries the deployment-level
+	// configuration the root tree's budget ceiling is resolved from.
+	// F-15.3.5.
+	leaseRegistrar     LeaseTreeRegistrar
+	leaseExtDefaults   LeaseExtensionDefaults
+	quotaCheckpointer  QuotaFinalCheckpointer
+	hwmObserver        DelegationHighWatermarkObserver
+	hwmReader          DelegationHighWatermarkReader
+	maxOrphanTasks     int
+	evals              evalstore.Store
+	memory             memorystore.Store
+	experiments        experimentstore.Store
+	pools              poolstore.Store
+	experimentReporter ExperimentRejectionReporter
+	stickyCache        StickyCache
+	runtimes           runtimestore.Store
 	// capOverrides applies the §5.1 line 49 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
@@ -631,6 +640,77 @@ type PartialManifestLookup interface {
 // implements it. A nil returner on the Server disables the decrement.
 type TreeBudgetReturner interface {
 	Return(ctx context.Context, r treebudget.Reservation) error
+}
+
+// LeaseTreeRegistrar registers a root session's §8.6 lease-extension
+// budget tree so a later adapter ExtendLease from the root session or
+// its delegated descendants resolves the tree instead of failing
+// ErrSessionNotFound. *leasecontrol.MemoryBudgetSource satisfies it.
+// F-15.3.5.
+// spec: §8.6 line 660 (configuration layering)
+type LeaseTreeRegistrar interface {
+	RegisterTree(rootSessionID string, cfg leasecontrol.TreeConfig)
+}
+
+// LeaseExtensionDefaults is the §8.6 deployment-level lease-extension
+// configuration (Helm `leaseExtension.defaults` / `leaseExtension.max`)
+// the gateway registers each root tree with. The token dimension's
+// effective ceiling is resolved from DeploymentBudget and
+// DeploymentMaxBudget through leaseextension.ResolveEffectiveMax; the
+// remaining §8.6 line 643 dimensions have no deployment-level config
+// surface and are registered without extension headroom. F-15.3.5.
+// spec: §8.6 lines 660-678
+type LeaseExtensionDefaults struct {
+	// DeploymentBudget is the §8.6 deployment-default maxExtendableBudget
+	// (Helm leaseExtension.defaults.maxExtendableBudget). Zero registers a
+	// tree with no token-extension headroom.
+	DeploymentBudget int64
+	// DeploymentMaxBudget is the §8.6 absolute ceiling no override may
+	// exceed (Helm leaseExtension.max.maxExtendableBudget).
+	DeploymentMaxBudget int64
+	// ApprovalMode is the §8.6 deployment-default extensionApproval mode.
+	// Unspecified resolves to leasecontrol.DefaultApprovalMode.
+	ApprovalMode leasecontrol.ApprovalMode
+	// SuccessCoolOff is the §8.6 line 675 coolOffSeconds post-approval
+	// window. Zero applies leasecontrol.DefaultSuccessCoolOff.
+	SuccessCoolOff time.Duration
+	// RejectionCoolOff is the §8.6 line 734 rejectionCoolOffSeconds. Zero
+	// applies leasecontrol.DefaultRejectionCoolOff.
+	RejectionCoolOff time.Duration
+	// AutoMaxPerMinute is the §8.6 line 712 autoModeRateLimit
+	// maxAutoExtensionsPerMinute. Zero means no limit.
+	AutoMaxPerMinute int
+}
+
+// registerLeaseTree registers a newly created root session with the
+// §8.6 lease-extension budget source. It is a no-op when no registrar
+// is wired or the row is a delegated child (children are registered by
+// the delegation Service, keyed to their root's tree). The token
+// dimension's current value is seeded from a granted DelegationLease
+// when the row carries one; the deployment-level ceiling comes from the
+// configured defaults. F-15.3.5.
+// spec: §8.6 lines 643-678
+func (s *Server) registerLeaseTree(row sessionstore.Session) {
+	if s.leaseRegistrar == nil || row.ParentSessionID != "" {
+		return
+	}
+	cfg := leasecontrol.TreeConfig{
+		TenantID:         row.TenantID,
+		DeploymentBase:   s.leaseExtDefaults.DeploymentBudget,
+		DeploymentMax:    s.leaseExtDefaults.DeploymentMaxBudget,
+		ApprovalMode:     s.leaseExtDefaults.ApprovalMode,
+		SuccessCoolOff:   s.leaseExtDefaults.SuccessCoolOff,
+		RejectionCoolOff: s.leaseExtDefaults.RejectionCoolOff,
+		AutoMaxPerMinute: s.leaseExtDefaults.AutoMaxPerMinute,
+	}
+	if l := row.DelegationLease; l != nil {
+		cfg.CurrentTokenBudget = l.MaxTokenBudget
+		cfg.CurrentChildren = int64(l.MaxChildrenTotal)
+		cfg.CurrentParallelChildren = int64(l.MaxParallelChildren)
+		cfg.CurrentTreeSize = int64(l.MaxTreeSize)
+		cfg.CurrentMaxAgeSeconds = int64(l.PerChildMaxAge)
+	}
+	s.leaseRegistrar.RegisterTree(row.ID, cfg)
 }
 
 // DelegationHighWatermarkReader reads and clears the §8.3 line 379
@@ -1109,6 +1189,16 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
+	// LeaseRegistrar, when set, registers each newly created root session
+	// with the §8.6 lease-extension budget source (RegisterTree) so an
+	// adapter ExtendLease from the root or its delegated descendants
+	// resolves the tree instead of failing ErrSessionNotFound. Nil leaves
+	// the tree unregistered (the in-process gateway with no GatewayControl
+	// listener). LeaseExtensionDefaults supplies the §8.6 deployment-level
+	// ceiling the root tree is registered with. F-15.3.5.
+	LeaseRegistrar         LeaseTreeRegistrar
+	LeaseExtensionDefaults LeaseExtensionDefaults
+
 	// QuotaCheckpointer, when set, persists the §11.2 line 44 final
 	// token-usage checkpoint for the session's (tenant, user) when the
 	// session reaches a terminal state. Nil disables the final write
@@ -1434,6 +1524,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		partialManifestLookup:    opts.PartialManifestLookup,
 		treeArchive:              opts.TreeArchive,
 		treeBudgetReturner:       opts.TreeBudgetReturner,
+		leaseRegistrar:           opts.LeaseRegistrar,
+		leaseExtDefaults:         opts.LeaseExtensionDefaults,
 		quotaCheckpointer:        opts.QuotaCheckpointer,
 		hwmReader:                opts.HighWatermarkReader,
 		hwmObserver:              opts.HighWatermarkObserver,
@@ -2252,6 +2344,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 	s.recordSessionCreated(r.Context(), row)
+	// §8.6: register the root tree's lease-extension budget so a later
+	// adapter ExtendLease resolves it instead of ErrSessionNotFound. F-15.3.5.
+	s.registerLeaseTree(row)
 	// spec: §14 lines 100, 334, 338 — each plan warning is an "event"
 	// the gateway emits, not just an echo-in-response. Publish the
 	// parse-time `workspace_plan_unknown_source_type` and
