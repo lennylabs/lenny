@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
@@ -32,6 +33,14 @@ import (
 type proxyUsageRecorder struct {
 	usage    usagestore.Store
 	sessions sessionstore.Store
+
+	// sessionUsage is the §8.8 per-session token accumulator. Each
+	// proxy-extracted (input, output) pair is folded into the originating
+	// session's running totals so the §8.8 TaskResult.usage / treeUsage
+	// rollups can read a settled task's token consumption. A nil store
+	// disables per-session metering (the rollups surface zero tokens).
+	// spec: §8.8 lines 897-917.
+	sessionUsage sessionusage.Store
 
 	// quota is the §11.2 Redis-backed hierarchical token counter. A nil
 	// counter disables quota recording (the metering write still runs).
@@ -55,16 +64,17 @@ type proxyUsageRecorder struct {
 	now func() time.Time
 }
 
-func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup, budget *sessionbudget.Enforcer) *proxyUsageRecorder {
+func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, sessUsage sessionusage.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup, budget *sessionbudget.Enforcer) *proxyUsageRecorder {
 	if usage == nil {
 		return nil
 	}
 	return &proxyUsageRecorder{
-		usage:    usage,
-		sessions: sessions,
-		quota:    quotaCounter,
-		limits:   limits,
-		budget:   budget,
+		usage:        usage,
+		sessions:     sessions,
+		sessionUsage: sessUsage,
+		quota:        quotaCounter,
+		limits:       limits,
+		budget:       budget,
 	}
 }
 
@@ -143,6 +153,16 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 	ctx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
 	_ = r.usage.Record(ctx, rec)
 	cancel()
+
+	// spec: §8.8 lines 897-917 — fold the proxy-extracted counts into the
+	// originating session's per-session totals so the §8.8 TaskResult
+	// usage / treeUsage rollups can read them at settle time. Best-effort
+	// for the same reason as the metering write.
+	if r.sessionUsage != nil && lease.SessionID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
+		_ = r.sessionUsage.Add(ctx, lease.TenantID, lease.SessionID, int64(u.InputTokens), int64(u.OutputTokens))
+		cancel()
+	}
 
 	tokens := int64(u.InputTokens) + int64(u.OutputTokens)
 	r.recordQuota(lease.TenantID, userID, tokens)

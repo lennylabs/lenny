@@ -765,14 +765,15 @@ func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root se
 // output.parts (the child's final emitted turn) and output.artifactRefs
 // (the child's catalogued `lenny-blob://` artifacts) for a completed
 // child, and the error block (code, category, retriesExhausted) for a
-// terminal failure. usage / treeUsage stay nil: per-task usage metering
-// is not yet tracked (F-8.8.3), and §8.8 line 917 keeps treeUsage null
-// until every descendant settles. existingSchemaVersion carries the
-// version a prior archive of this node already recorded (0 when none);
-// the body preserves it per the §8.8 immutability rule. The `state`
-// field uses the §8.8 line 857 MCP protocol spelling so a resumed parent
-// replaying the archive sees the same value a live row would yield.
-// spec: §8.8 lines 855-940. F-8.8.2 / F-8.8.4 / F-8.8.7 / F-8.8.11.
+// terminal failure. When a §8.8 usage Builder is wired it also stamps
+// usage (this task's own consumption) and treeUsage (the subtree rollup,
+// null until every descendant settles per §8.8 line 917).
+// existingSchemaVersion carries the version a prior archive of this node
+// already recorded (0 when none); the body preserves it per the §8.8
+// immutability rule. The `state` field uses the §8.8 line 857 MCP
+// protocol spelling so a resumed parent replaying the archive sees the
+// same value a live row would yield.
+// spec: §8.8 lines 855-940. F-8.8.2 / F-8.8.3 / F-8.8.4 / F-8.8.7 / F-8.8.11.
 func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Session, existingSchemaVersion int) task.Result {
 	res := task.Result{
 		SchemaVersion: task.ReconcileSchemaVersion(existingSchemaVersion, task.SchemaVersion),
@@ -783,6 +784,10 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 		res.Output = s.buildTaskOutput(ctx, sess)
 	} else {
 		res.Error = taskErrorForSession(sess)
+	}
+	if s.taskUsage != nil {
+		res.Usage = s.taskUsage.Usage(ctx, sess)
+		res.TreeUsage = s.taskUsage.TreeUsage(ctx, sess, res.Usage)
 	}
 	return res
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
@@ -45,7 +46,7 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, sessions, nil, nil, nil)
+	rec := newProxyUsageRecorder(usage, sessions, nil, nil, nil, nil)
 	if rec == nil {
 		t.Fatal("newProxyUsageRecorder returned nil with a usage store set")
 	}
@@ -74,7 +75,7 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 // spec: spec/04_system-components.md line 1468.
 func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil)
+	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(credential.Lease{
 		LeaseID: "cl-2", SessionID: "s_2", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
@@ -91,7 +92,7 @@ func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 // spec: spec/04_system-components.md line 1468.
 func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil)
+	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(credential.Lease{
 		LeaseID: "cl-3", SessionID: "s_3", TenantID: "",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -108,7 +109,7 @@ func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 // spec: spec/04_system-components.md line 1468.
 func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil)
+	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(credential.Lease{
 		LeaseID: "cl-4", SessionID: "missing", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -125,7 +126,7 @@ func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 // TestProxyUsageRecorderNilUsageReturnsNil confirms the recorder skips
 // wiring when no usagestore is configured.
 func TestProxyUsageRecorderNilUsageReturnsNil(t *testing.T) {
-	if rec := newProxyUsageRecorder(nil, memstore.New(), nil, nil, nil); rec != nil {
+	if rec := newProxyUsageRecorder(nil, memstore.New(), nil, nil, nil, nil); rec != nil {
 		t.Errorf("newProxyUsageRecorder(nil, _) = %v, want nil", rec)
 	}
 }
@@ -153,7 +154,7 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 	}
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, enforcer)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	lease := credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
@@ -192,7 +193,7 @@ func TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2(t *testing.T) {
 	}
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, enforcer)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	rec.RecordUsage(credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -227,7 +228,7 @@ func TestProxyUsageRecorderAdvancesQuotaCounter_Spec11_2(t *testing.T) {
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
 	rec.now = func() time.Time { return now }
 
 	rec.RecordUsage(credential.Lease{
@@ -278,7 +279,7 @@ func TestProxyUsageRecorderRollingWritesSlidingWindow_Spec11_2(t *testing.T) {
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, quotaCounter,
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
 		fakeQuotaLimits{period: quota.ResetRolling, rollingWindow: time.Hour}, nil)
 	rec.now = func() time.Time { return now }
 
@@ -301,5 +302,46 @@ func TestProxyUsageRecorderRollingWritesSlidingWindow_Spec11_2(t *testing.T) {
 	}
 	if fixed.User != 0 {
 		t.Errorf("fixed-window user counter = %d, want 0 (rolling write must not land in a fixed bucket)", fixed.User)
+	}
+}
+
+// TestProxyUsageRecorderRecordsPerSession_spec_8_8_897 confirms the
+// recorder folds a proxy-mode lease's authoritative counts into the §8.8
+// per-session accumulator (the source the TaskResult usage / treeUsage
+// rollups read), keyed by the lease's session, and ignores a direct-mode
+// lease.
+// spec: §8.8 lines 897-917; §4.9 line 1468. F-8.8.3.
+func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_1", TenantID: "acme", RuntimeRef: "claude-prod", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	sessUsage := sessionusage.NewMemory()
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, sessUsage, nil, nil, nil)
+
+	lease := credential.Lease{
+		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
+	}
+	rec.RecordUsage(lease, llmproxy.Usage{InputTokens: 100, OutputTokens: 30})
+	rec.RecordUsage(lease, llmproxy.Usage{InputTokens: 50, OutputTokens: 20})
+
+	got, _ := sessUsage.Get(ctx, "acme", "s_1")
+	if got.Input != 150 || got.Output != 50 {
+		t.Errorf("per-session tokens = %+v, want {Input:150 Output:50}", got)
+	}
+
+	// A direct-mode lease never reaches the proxy hot path; the recorder
+	// ignores it so a future regression cannot double-count.
+	rec.RecordUsage(credential.Lease{
+		LeaseID: "cl-2", SessionID: "s_1", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
+	}, llmproxy.Usage{InputTokens: 999, OutputTokens: 999})
+	got, _ = sessUsage.Get(ctx, "acme", "s_1")
+	if got.Input != 150 || got.Output != 50 {
+		t.Errorf("direct-mode leaked into per-session accumulator: %+v", got)
 	}
 }

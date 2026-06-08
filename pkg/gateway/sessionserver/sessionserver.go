@@ -68,6 +68,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
@@ -256,6 +257,7 @@ type Server struct {
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
+	taskUsage             *taskusage.Builder
 	treeBudgetReturner    TreeBudgetReturner
 	// leaseRegistrar, when set, registers a newly created root session
 	// with the §8.6 lease-extension budget source so a later adapter
@@ -1182,6 +1184,12 @@ type Options struct {
 	// delegation-tree archiving.
 	TreeArchive treearchive.Store
 
+	// TaskUsage, when set, assembles the §8.8 TaskResult.usage and
+	// TaskResult.treeUsage rollups stamped on every materialized result.
+	// Nil leaves both absent (the pre-metering behaviour).
+	// spec: §8.8 lines 897-917.
+	TaskUsage *taskusage.Builder
+
 	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
 	// budget a settled child consumed: the §8.2 line 130 maxTreeMemoryBytes
 	// offload decrement and the per-parent parallel_children decrement
@@ -1523,6 +1531,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		evictionStateLookup:      opts.EvictionStateLookup,
 		partialManifestLookup:    opts.PartialManifestLookup,
 		treeArchive:              opts.TreeArchive,
+		taskUsage:                opts.TaskUsage,
 		treeBudgetReturner:       opts.TreeBudgetReturner,
 		leaseRegistrar:           opts.LeaseRegistrar,
 		leaseExtDefaults:         opts.LeaseExtensionDefaults,

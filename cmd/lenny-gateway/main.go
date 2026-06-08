@@ -259,10 +259,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
+	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -3258,6 +3261,18 @@ func main() {
 		usage = usagepg.New(pgPool, usagepg.WithReadPool(readPool))
 	}
 
+	// spec: §8.8 lines 897-917 — the per-session token accumulator the
+	// §4.9 proxy folds proxy-extracted counts into; the §8.8 TaskResult
+	// usage / treeUsage rollups read it at settle time.
+	var sessionUsage sessionusage.Store = sessionusage.NewMemory()
+	if pgPool != nil {
+		sessionUsage = sessionusagepg.New(pgPool, sessionusagepg.WithReadPool(readPool))
+	}
+	// spec: §8.8 lines 897-917 — the shared usage Builder both the
+	// sessionserver materialization path and the MCP lenny/await_children
+	// path use to stamp usage / treeUsage on every TaskResult.
+	taskUsageBuilder := taskusage.New(sessions, sessionUsage, treeArchive, clockinject.Now)
+
 	// ----- §4.8 policy interceptor chain -----
 	// The PostAuth chain runs the built-in §4.8 QuotaEvaluator (priority
 	// 200) on the session-creation path. QuotaEvaluator enforces the
@@ -3766,6 +3781,7 @@ func main() {
 		// the SessionLogStore drops or persists best-effort.
 		SessionLogHook:     &sessionlogstore.CloseHook{Store: sessionLogs},
 		TreeArchive:        treeArchive,
+		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: treeBudgetReserver,
 		// §8.6: register each root tree's lease-extension budget so a
 		// later adapter ExtendLease resolves it. F-15.3.5.
@@ -4146,6 +4162,7 @@ func main() {
 		Events:                     eventBus,
 		InputWaits:                 inputWaits,
 		TreeArchive:                treeArchive,
+		TaskUsage:                  taskUsageBuilder,
 		Interactions:               interactions,
 		Memory:                     memories,
 		ElicitationMetrics:         gwMetrics,
@@ -5851,7 +5868,7 @@ func main() {
 	// proxy-extracted (authoritative) counts are persisted as the
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
-	llmProxyUsage := newProxyUsageRecorder(usage, sessions, quotaCounter, tenantLimits, sessionBudgetEnforcer)
+	llmProxyUsage := newProxyUsageRecorder(usage, sessions, sessionUsage, quotaCounter, tenantLimits, sessionBudgetEnforcer)
 	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
 	// authoritative per-tenant token accounting feeds the per-replica
 	// budget slice rather than the Redis counter; route the recorder's

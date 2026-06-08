@@ -26,7 +26,7 @@ func TestCollectChildResultsOrdersBySettlement_spec_8_10_1062(t *testing.T) {
 	seedSettled(t, store, "b", base.Add(3*time.Second))
 	seedSettled(t, store, "c", base.Add(1*time.Second))
 
-	got, done, err := collectChildResults(context.Background(), store, nil, "acme", []string{"a", "b", "c"}, "all")
+	got, done, err := collectChildResults(context.Background(), store, nil, nil, "acme", []string{"a", "b", "c"}, "all")
 	if err != nil {
 		t.Fatalf("collectChildResults: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestCollectChildResultsStableTieBreak_spec_8_10_1062(t *testing.T) {
 	seedSettled(t, store, "x", at)
 	seedSettled(t, store, "y", at)
 
-	got, done, err := collectChildResults(context.Background(), store, nil, "acme", []string{"y", "x"}, "settled")
+	got, done, err := collectChildResults(context.Background(), store, nil, nil, "acme", []string{"y", "x"}, "settled")
 	if err != nil || !done {
 		t.Fatalf("collectChildResults: done=%v err=%v", done, err)
 	}

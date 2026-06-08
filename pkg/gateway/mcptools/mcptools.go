@@ -74,6 +74,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -356,6 +357,12 @@ type Deps struct {
 	// non-nil, lenny/cancel_child archives each cancelled child's
 	// §8.8 TaskResult so a resumed parent can replay it.
 	TreeArchive treearchive.Store
+
+	// TaskUsage, when set, stamps the §8.8 usage / treeUsage rollups on a
+	// lenny/await_children child result resolved from the live row (the
+	// archived body already carries them). Optional — nil leaves the
+	// row-only result without rollups. spec: §8.8 lines 897-917.
+	TaskUsage *taskusage.Builder
 
 	// DeadlockTracker records the §8.8 await edges (which session awaits
 	// which children) so the subtree deadlock detector can decide whether
@@ -1303,7 +1310,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// child whose live row is gone is resolved from the §8.10
 		// archive so a resumed parent can still re-await it.
 		for _, cid := range in.ChildIDs {
-			oc, err := resolveChild(ctx, deps.Store, deps.TreeArchive, tenant, cid)
+			oc, err := resolveChild(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, tenant, cid)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -1332,7 +1339,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
 		for {
-			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, tenant, in.ChildIDs, mode)
+			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, tenant, in.ChildIDs, mode)
 			if err != nil {
 				obstracing.RecordError(span, err)
 				return mcp.ToolResult{}, err
@@ -3832,13 +3839,22 @@ type childOutcome struct {
 // live session row, falling back to the §8.10 archive when the row is
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
-func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
+func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *taskusage.Builder,
 	tenant, childID string,
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
 		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row)}
 		if session.IsTerminal(row.State) {
+			// spec: §8.8 lines 897-917 — stamp the usage / treeUsage rollups
+			// on the row-only projection so a terminal child resolved before
+			// its archive body exists carries the same rollups the archived
+			// body does (§15.2.1 REST/MCP equivalence). The richer archive
+			// body below overrides this when present.
+			if usage != nil {
+				oc.result.Usage = usage.Usage(ctx, row)
+				oc.result.TreeUsage = usage.TreeUsage(ctx, row, oc.result.Usage)
+			}
 			// spec: §8.8 line 945 — the live row mutates on terminal
 			// transition; UpdatedAt is the closest in-tree witness of when
 			// the row reached that state. The archive's SettledAt is more
@@ -3933,7 +3949,7 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // at the head of the list. A child whose live row is gone is resolved
 // from the §8.10 archive. F-8.8.12.
 // spec: §8.8 lines 945-949
-func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
+func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *taskusage.Builder,
 	tenant string, childIDs []string, mode string,
 ) ([]task.Result, bool, error) {
 	type settled struct {
@@ -3944,7 +3960,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 	var terminal []settled
 	allTerminal := true
 	for i, cid := range childIDs {
-		oc, err := resolveChild(ctx, store, archive, tenant, cid)
+		oc, err := resolveChild(ctx, store, archive, usage, tenant, cid)
 		if err != nil {
 			return nil, false, err
 		}

@@ -22,12 +22,11 @@ import (
 // The transcript's §7.2 user/assistant/system roles map onto the §8.8
 // caller/agent message roles (user → caller; assistant and system →
 // agent). The terminal task state lands on the final agent turn per the
-// §8.8 example. usage / treeUsage are left nil: per-task token,
-// wall-clock, and credential-lease accounting is not yet tracked
-// (F-8.8.3), and §8.8 line 917 specifies treeUsage is null until every
-// descendant settles.
+// §8.8 example. When a TaskUsage Builder is wired, usage carries the
+// task's own consumption (available at any state) and treeUsage the
+// subtree rollup (null until every descendant settles per §8.8 line 917).
 //
-// spec: §8.8 lines 806-823; §4.2 line 157.
+// spec: §8.8 lines 806-823, 897-917; §4.2 line 157. F-8.8.3.
 func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) *task.Record {
 	if s.transcripts == nil {
 		return nil
@@ -61,6 +60,13 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 	// terminal state belongs on the final agent turn.
 	if session.IsTerminal(row.State) && lastAgent >= 0 {
 		rec.Messages[lastAgent].State = rec.State
+	}
+	// spec: §8.8 lines 897-917 — stamp the per-task usage and the subtree
+	// rollup (null until every descendant settles) when the Builder is
+	// wired. F-8.8.3.
+	if s.taskUsage != nil {
+		rec.Usage = s.taskUsage.Usage(ctx, row)
+		rec.TreeUsage = s.taskUsage.TreeUsage(ctx, row, rec.Usage)
 	}
 	return rec
 }

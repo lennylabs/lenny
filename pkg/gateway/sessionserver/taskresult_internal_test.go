@@ -12,6 +12,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
+	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/task"
@@ -35,8 +37,8 @@ var taskResultClock = func() time.Time { return time.Date(2026, 5, 30, 12, 0, 0,
 // TestMaterializeTaskResultCompletedOutput_spec_8_8_2 asserts a completed
 // child's §8.8 TaskResult.output carries the child's final emitted turn
 // as a part and only its deliverable (live, non-internal) artifacts as
-// blob refs. usage / treeUsage stay nil pending per-task metering
-// (F-8.8.3). F-8.8.2.
+// blob refs. usage / treeUsage stay nil when no TaskUsage Builder is
+// wired (the developer posture). F-8.8.2.
 func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 	tx := transcriptstore.NewMemory()
 	if err := tx.Append(context.Background(), "acme", "sess_c",
@@ -59,7 +61,7 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 		t.Fatalf("result = %+v, want schemaVersion=%d state=completed error=nil", res, task.SchemaVersion)
 	}
 	if res.Usage != nil || res.TreeUsage != nil {
-		t.Errorf("usage/treeUsage = %+v/%+v, want nil until per-task metering lands (F-8.8.3)", res.Usage, res.TreeUsage)
+		t.Errorf("usage/treeUsage = %+v/%+v, want nil when no TaskUsage Builder is wired", res.Usage, res.TreeUsage)
 	}
 	if res.Output == nil || len(res.Output.Parts) != 1 || res.Output.Parts[0].Inline != "result: done" {
 		t.Fatalf("output.parts = %+v, want the final agent turn 'result: done'", res.Output)
@@ -191,6 +193,53 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 		sessionstore.Session{ID: "sess_e", TenantID: "acme", State: session.StateCompleted}, 9)
 	if res.SchemaVersion != 9 {
 		t.Errorf("materialize with existing=9 → schemaVersion %d, want 9", res.SchemaVersion)
+	}
+}
+
+// TestMaterializeTaskResultStampsUsage_spec_8_8_3 asserts that with a
+// TaskUsage Builder wired, a settled leaf task's materialized §8.8
+// TaskResult carries its own usage (tokens from the accumulator, time
+// dimensions derived from the row) and a treeUsage with totalTasks=1.
+// F-8.8.3 / F-8.9.4.
+func TestMaterializeTaskResultStampsUsage_spec_8_8_3(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+
+	created := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	terminal := created.Add(90 * time.Second) // 1.5 pod/lease minutes
+	sess := sessionstore.Session{
+		ID: "sess_u", TenantID: "acme", RootSessionID: "sess_u",
+		State: session.StateCompleted, PodAssignment: "pod-1",
+		CreatedAt: created, UpdatedAt: terminal,
+	}
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := tokens.Add(ctx, "acme", "sess_u", 15000, 8000); err != nil {
+		t.Fatalf("add tokens: %v", err)
+	}
+
+	builder := taskusage.New(store, tokens, archive, func() time.Time { return terminal })
+	srv := New(store, Options{Clock: taskResultClock, TreeArchive: archive, TaskUsage: builder})
+
+	res := srv.materializeTaskResult(ctx, sess, 0)
+	if res.Usage == nil {
+		t.Fatal("usage nil; want the §8.8 per-task usage block")
+	}
+	if res.Usage.InputTokens != 15000 || res.Usage.OutputTokens != 8000 {
+		t.Errorf("usage tokens = %d/%d, want 15000/8000", res.Usage.InputTokens, res.Usage.OutputTokens)
+	}
+	if res.Usage.WallClockSeconds != 90 || res.Usage.PodMinutes != 1.5 || res.Usage.CredentialLeaseMinutes != 1.5 {
+		t.Errorf("usage time dims = %v/%v/%v, want 90/1.5/1.5",
+			res.Usage.WallClockSeconds, res.Usage.PodMinutes, res.Usage.CredentialLeaseMinutes)
+	}
+	if res.TreeUsage == nil {
+		t.Fatal("treeUsage nil; a settled leaf should roll up to its own usage")
+	}
+	if res.TreeUsage.TotalTasks != 1 || res.TreeUsage.InputTokens != 15000 {
+		t.Errorf("treeUsage = %+v, want totalTasks=1 inputTokens=15000", res.TreeUsage)
 	}
 }
 
