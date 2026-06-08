@@ -20011,7 +20011,7 @@ The six specifically required coverage points are all absent:
 
 **Resolution:** `tests/tier4_integration/redis_tenant_isolation_test.go` adds `TestRedisTenantKeyIsolation` (build tag `integration`), one subtest per mandated coverage point against the real stores over a miniredis-backed client with the §12.4 Guard installed: (a) tenant-B `DLQ.DrainAll` of tenant-A's key is rejected with `ErrCrossTenant`; (b) tenant-B `DLQ.SweepExpired` on its own key returns zero of A's messages; (c) tenant-B `RedisInbox.Drain` of A's key is rejected and B's own inbox length is zero; (d) a tenant-B `semanticcache` Get for the identical query misses and a B-scoped Get of A's key is rejected; (e) the delegation-budget ownership gate rejects a B-scoped `{root-A}:dlg:tokens` (budget_reserve target) and `{root-A}:dlg:tree_memory` (budget_return target) and admits the owning scope — full `budget_reserve.lua`/`budget_return.lua` script coverage tracks F-12.4.8, which has not yet shipped the scripts; (f) a tenant-B `EventBus.Publish` on tenant-A's channel is rejected at the `PUBLISH` command. Depends on F-12.4.3 (the Guard wrapper). F-12.4.4.
 
-### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — OPEN
+### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — DEFERRED
 
 The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores must use. The implementation diverges in two directions:
 
@@ -20043,6 +20043,8 @@ The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores mus
 The cumulative effect is that the §12.4 table is no longer the authoritative key namespace; an operator reading §12.4 cannot enumerate what Redis keys the gateway actually writes.
 
 **Reopened 2026-06-07 — prior deferral:** the implementation half of this finding is now fully resolved — every spec-listed prefix that this finding flagged as missing has a backing implementation: the DLQ and durable inbox (`pkg/gateway/sessioninbox`, F-12.4.6/F-7.2.4), the experiment sticky cache (`pkg/gateway/experimentsticky`, F-12.4.7), the slot-counter `rehydrated`/`rehydrating` sentinels (`pkg/gateway/slotcounter`, F-12.4.19/F-5.2.4), and the `{root_session_id}:dlg:*` budget keys (`pkg/gateway/treebudget`, F-12.4.18). The residual half — implementation prefixes not declared in the §12.4 table (`rl:`, `sq:`, `pg:`, `cb:events`), and the observation that `rl:`/`sq:` do not lead with `t:{tenant_id}:` — splits into (a) a §12.4 spec-table documentation addition, which is outside the editable code surface (the spec is the source of truth; consistent with the verify-close of F-12.4.25's undocumented `cb:events` channel), and (b) a key-naming migration that would need a tenant-isolation review and is not clearly mandated against the current spec table. Deferred pending a spec-table reconciliation; the High-severity missing-implementation concern is no longer present.
+
+**Deferred (rule B — spec edit required).** Re-verified this batch: every prefix the finding flagged as missing implementation now has a backing store (DLQ/inbox `pkg/gateway/sessioninbox`, sticky cache `pkg/gateway/experimentsticky`, slot-counter rehydration sentinels `pkg/gateway/slotcounter`, `dlg:*` budget keys `pkg/gateway/treebudget`), so the High-severity half is fully resolved. The only residual is (a) adding the undeclared implementation prefixes (`rl:`, `sq:`, `pg:`, `cb:events`) to the canonical §12.4 key-prefix table — a `spec/` edit that rule B forbids from the build loop — and (b) an unmandated key-naming migration to make `rl:`/`sq:` lead with `t:{tenant_id}:`, which is not required by the current spec table (the table already lists platform-scoped non-tenant-prefixed keys such as `lenny:pod:{pod_id}:active_slots` and `cb:{name}`, so a non-tenant-leading prefix is not a violation). Both actionable residuals require a spec-side decision; deferred consistent with the F-12.4.25 verify-close of the undocumented `cb:events` channel.
 
 ### - [x] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — CLOSED
 
@@ -20251,11 +20253,13 @@ The §12.4 spec calls out four exception prefixes: `lenny:pod:`, `cb:`, `{root_s
 
 - **Resolution:** The rewritten `slotcounter` package doc (F-5.2.4) now documents the `lenny:pod:` prefix as one of §12.4's key-prefix exception classes (pod-scoped, not tenant-scoped) and cross-references the breaker store's `cb:` prefix comment, matching the rationale that file already carries. Commit 8412834a.
 
-### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — OPEN
+### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — DEFERRED
 
 `tests/tier8_chaos/scaffolds_test.go:66-69` records the test as a stub log message. The compose Sentinel topology exists (`compose/default.yml:104-130`) and `pkg/redisconn` carries the Sentinel-aware client construction, but no end-to-end exercise drives a master kill and asserts the gateway transparently follows the new master. The §12.8 / §12.4 Sentinel topology promise (3 sentinels, 1 primary + 1 replica) is therefore not enforced by tier-8.
 
 **Reopened 2026-06-07 — prior deferral:** A real Sentinel failover exercise requires a chaos-tier harness that drives the compose stack, kills the primary, and observes gateway reconnection — work that belongs to the broader tier-8 chaos buildout (see F-7.3 / F-7.5 chaos cluster) rather than a one-shot fix. The stub placeholder is correct as a hook for the future harness; closing this finding ahead of that work would only re-open it.
+
+**Deferred 2026-06-07 (accurate blocker re-verified; the "Docker unavailable" framing is wrong — Docker IS available here).** The compose harness (`tests/testinfra/compose`) already exposes `RedisSentinelAddrs()`, `RedisSentinelMasterName()`, and `SkipUnlessAvailable`, and `pkg/redisconn.NewClient` builds a go-redis `FailoverClient` from those. The real blocker is the compose Sentinel topology itself: `compose/default.yml` renders `sentinel monitor lenny-master redis 6379` with `resolve-hostnames yes`, so a sentinel queried from the host returns the Docker-internal address `redis:6379` (and after a promotion, `redis-replica:6379`); a host-side `FailoverClient` cannot resolve those hostnames. Worse, only the master service publishes a host port (`16379:6379`) — `redis-replica` publishes no Redis port — so even with `replica-announce-ip`/`announce-ip` overrides the host cannot reach the promoted master after failover. A faithful exercise therefore needs either an in-Docker-network test client (a sidecar container, the e2e-overlay approach the stub names) or a reworked, host-failover-capable Sentinel topology (publish every node's port plus per-node announce addresses) in the *shared* `compose/default.yml` that every other tier-2 test depends on. That is a focused, regression-risky harness workstream, not a single-batch stub fill; the stub correctly marks the hook for it.
 
 ### - [x] F-12.4.25 — `cb:events` cross-replica pub/sub channel is platform-scoped but not in the §12.4 table [Info] — CLOSED
 
@@ -34177,7 +34181,7 @@ Each comment block describes the future swap ("a cloud deployment swaps in an AW
 
 ---
 
-### - [ ] F-17.5.3 — 1 — `objectStorage.provider` Helm-values surface is absent end-to-end (chart, install schema, preflight wiring) [Medium] — OPEN
+### - [x] F-17.5.3 — 1 — `objectStorage.provider` Helm-values surface is absent end-to-end (chart, install schema, preflight wiring) [Medium] — CLOSED
 
 **Spec basis.** §17.9.3 "Cloud-Managed Backends" canonical example (`spec/17_deployment-topology.md:1402`):
 
@@ -34212,6 +34216,24 @@ per-cloud bucket versioning + lifecycle validator (S3 `GetBucketVersioning` /
 versioning) behind the `MinIOEncryptionProber`-style prober seam, dispatched on
 the now-available `objectStorage.provider`. That cloud-lifecycle prober is a
 focused preflight batch; the gating value it dispatches on is no longer absent.
+
+**Resolution (verify-close):** All three named components now exist; the
+deferral's "pkg/preflight/ carries no object-storage-lifecycle check at all"
+evidence is stale. (1) The canonical `objectStorage` block (`provider | bucket
+| region | accountUrl`, default `minio`) is in `charts/lenny/values.yaml`
+(F-17.5.1). (2) The install-CLI `installObjectStorage` schema carries
+`Provider`/`Region`/`AccountURL` with `minio|s3|gcs|azure` validation
+(`cmd/lenny-ctl/install.go:131-135,580-589`). (3) The §17.6 line 494
+`cloud-object-storage-lifecycle` preflight check was built under F-17.9.3
+(`pkg/preflight/cloud_object_storage.go`): `CloudObjectStorageLifecycleCheck.Decide`
+self-skips for `provider=minio`/empty and verifies bucket versioning +
+noncurrent-version/delete-marker expiration for `s3|gcs|azure` through the
+`CloudObjectStorageLifecycleProber` seam. It is wired in `preflight.Run`
+(run.go:497-509, dispatching on `cfg.ObjectStorage.Provider`), fed by the chart
+(`preflight-job.yaml` passes `--object-storage-provider/-bucket/-region`), and
+`cmd/lenny-preflight` constructs a real S3 reader via `cloudLifecycleProber`.
+The dispatcher lands on the cloud branches; the MinIO no-op is by design.
+Verify-closed this batch.
 
 ### - [x] F-17.5.4 — 2 — Per-cluster answer-file catalog (`eks-small-team.yaml`, `gke-production.yaml`, `aks-production.yaml`, `openshift-self-managed.yaml`, `bare-metal-self-managed.yaml`, `airgap-self-managed.yaml`) is unimplemented [Medium] — CLOSED
 
