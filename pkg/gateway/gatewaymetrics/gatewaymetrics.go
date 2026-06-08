@@ -216,6 +216,13 @@ type Metrics struct {
 	// pool. It is the denominator of the §6.3 line 352 SDK-warm
 	// demotion-rate ratio. spec: §6.3 line 352, §16.1 line 122.
 	warmpoolClaims *prometheus.CounterVec
+	// warmpoolSDKDemotions is the §6.1 line 34 / §16.1 line 121
+	// `lenny_warmpool_sdk_demotions_total{pool}` counter: incremented each
+	// time the binder demotes an SDK-warm pod to pod-warm because the
+	// workspace plan matched a sdkWarmBlockingPaths pattern. It is the
+	// numerator of the §6.3 line 352 demotion-rate ratio over
+	// warmpoolClaims. spec: §6.1 line 34, §16.1 line 121.
+	warmpoolSDKDemotions *prometheus.CounterVec
 	// sessionRetryTotal counts the §16.1 / §7.3
 	// `lenny_session_retry_total{failure_class}` retries of a logical
 	// session. Each successful pod recovery (the v1 retry path) bumps
@@ -1493,6 +1500,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §6.1 line 34 / §16.1 line 121 — `lenny_warmpool_sdk_demotions_total`
+	// counts SDK-warm pods demoted to pod-warm before session assignment
+	// because the workspace plan matched sdkWarmBlockingPaths.
+	warmpoolSDKDemotions, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_warmpool_sdk_demotions_total",
+		Help: "SDK-warm pods demoted to pod-warm before session assignment per pool (§6.1 line 34, §16.1 line 121).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 / §7.3 — `lenny_session_retry_total{failure_class}` counts
 	// the retries of a logical session. Each pod-recovery retry bumps
 	// the counter with the failure_class label echoing the row's §7.1
@@ -2447,7 +2464,7 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
-		sessionTimeToFirstToken, warmpoolClaims,
+		sessionTimeToFirstToken, warmpoolClaims, warmpoolSDKDemotions,
 		sessionRetryTotal, sessionResumeAttempts,
 		warmpoolWarmupFailure,
 		workspaceSealDuration,
@@ -2651,6 +2668,7 @@ func New() (*Metrics, error) {
 		sessionStartupPhaseDuration:          sessionStartupPhaseDuration,
 		sessionTimeToFirstToken:              sessionTimeToFirstToken,
 		warmpoolClaims:                       warmpoolClaims,
+		warmpoolSDKDemotions:                 warmpoolSDKDemotions,
 		sessionRetryTotal:                    sessionRetryTotal,
 		deriveFailureAudit:                   deriveFailureAudit,
 		sessionResumeAttempts:                sessionResumeAttempts,
@@ -3097,14 +3115,27 @@ func (m *Metrics) ObserveSessionTimeToFirstToken(pool, runtimeClass, isolationPr
 // denominator of the §6.3 SDK-warm demotion-rate ratio
 // (`lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total`)
 // that deployers must track to verify SDK-warm net benefit. The
-// numerator (`lenny_warmpool_sdk_demotions_total`) is gated on the
-// SDK-warm demotion path itself; see F-6.1.1 for the §4.7 DemoteSDK
-// stub. spec: §6.3 line 352, §16.1 line 122.
+// numerator (`lenny_warmpool_sdk_demotions_total`) is emitted by
+// IncWarmpoolSDKDemotion on the §6.1 binder demotion path. spec: §6.3
+// line 352, §16.1 line 122.
 func (m *Metrics) IncWarmpoolClaim(pool, runtimeClass string) {
 	if m == nil {
 		return
 	}
 	m.warmpoolClaims.WithLabelValues(pool, runtimeClass).Inc()
+}
+
+// IncWarmpoolSDKDemotion increments the §6.1 line 34 / §16.1 line 121
+// `lenny_warmpool_sdk_demotions_total{pool}` counter each time the binder
+// demotes an SDK-warm pod to pod-warm because the workspace plan matched a
+// sdkWarmBlockingPaths pattern. It is the numerator of the §6.3 line 352
+// demotion-rate ratio over IncWarmpoolClaim. spec: §6.1 line 34, §16.1
+// line 121.
+func (m *Metrics) IncWarmpoolSDKDemotion(pool string) {
+	if m == nil {
+		return
+	}
+	m.warmpoolSDKDemotions.WithLabelValues(pool).Inc()
 }
 
 // IncSessionRetry increments the §16.1 / §7.3

@@ -28,6 +28,12 @@ const CapabilityPreConnect = "preConnect"
 // contract for non-preConnect pods.
 type SDKWarmRuntime interface {
 	RuntimeProcess
+	// PreConnect starts the agent SDK at warm time, before any session is
+	// assigned, leaving it connected and waiting for its first prompt
+	// (§6.1 line 30). The adapter calls it once during startup for a
+	// preConnect runtime. It MUST be idempotent: a repeat call while the
+	// SDK is already connected is a no-op success.
+	PreConnect(ctx context.Context) error
 	// ConfigureWorkspace points the pre-connected SDK session at cwd and
 	// binds it to sessionID. It MUST be idempotent: a repeat call with the
 	// same cwd is a no-op success (§4.7, the gateway bounds it at 10s).
@@ -43,6 +49,48 @@ type SDKWarmRuntime interface {
 func (s *Server) sdkWarmRuntime() (SDKWarmRuntime, bool) {
 	sw, ok := s.Runtime.(SDKWarmRuntime)
 	return sw, ok
+}
+
+// PreConnect runs the §6.1 line 30 SDK-warm pre-connect: for a preConnect
+// runtime it starts the agent SDK at warm time so a later
+// ConfigureWorkspace points the already-connected SDK at the workspace
+// rather than starting a runtime from cold. It is a no-op success for a
+// pod-warm runtime (there is no SDK to pre-connect) and idempotent for an
+// already-connected SDK. The adapter calls it once during startup; on
+// failure the pod stays pod-warm and the gateway uses StartSession.
+func (s *Server) PreConnect(ctx context.Context) error {
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return nil
+	}
+	s.mu.Lock()
+	already := s.sdkConnected
+	s.mu.Unlock()
+	if already {
+		return nil
+	}
+	if err := sw.PreConnect(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.sdkConnected = true
+	s.mu.Unlock()
+	return nil
+}
+
+// SDKWarmReady reports whether this pod is SDK-warm and its SDK has
+// completed pre-connection. It is false for a pod-warm runtime (which has
+// no SDK to pre-connect) and false for an SDK-warm pod whose PreConnect has
+// not yet completed or that was demoted. A readiness probe consumes it so
+// the §6.1 readiness gate can hold the pod un-claimable until the SDK is
+// connected.
+func (s *Server) SDKWarmReady() bool {
+	if _, ok := s.sdkWarmRuntime(); !ok {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sdkConnected
 }
 
 // ConfigureWorkspace is the §4.7 SDK-warm counterpart of StartSession: it
@@ -134,8 +182,12 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 	if err := sw.DemoteSDK(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
 	}
-	// Return the pod to pod-warm: drop any tentatively configured session
-	// and stop the platform MCP so a subsequent StartSession starts fresh.
+	// Return the pod to pod-warm: the SDK is no longer connected, so clear
+	// the warm-readiness flag, drop any tentatively configured session, and
+	// stop the platform MCP so a subsequent StartSession starts fresh.
+	s.mu.Lock()
+	s.sdkConnected = false
+	s.mu.Unlock()
 	s.releaseSession()
 	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil
 }

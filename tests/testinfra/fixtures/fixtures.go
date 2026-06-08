@@ -35,6 +35,11 @@ const (
 	RuntimeEcho           = "echo"
 	RuntimeStreamingEcho  = "streaming-echo"
 	RuntimeDelegationEcho = "delegation-echo"
+	// RuntimePreConnectEcho is the §6.1 SDK-warm reference runtime
+	// (cmd/runtimes/preconnect-echo): it declares capabilities.preConnect
+	// so a pool warms its pods through sdk_connecting and the gateway
+	// drives them via ConfigureWorkspace / DemoteSDK.
+	RuntimePreConnectEcho = "preconnect-echo"
 
 	RuntimeClaudeCode       = "claude-code"
 	RuntimeGeminiCLI        = "gemini-cli"

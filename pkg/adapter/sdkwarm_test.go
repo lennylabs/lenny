@@ -36,10 +36,20 @@ func readManifest(t *testing.T, dir string) adapter.Manifest {
 // engage instead of returning Unimplemented.
 type fakeSDKWarmRuntime struct {
 	fakeRuntime
-	configured []string // cwd of each ConfigureWorkspace call
-	configErr  error
-	demoted    int
-	demoteErr  error
+	preConnected int   // number of PreConnect calls
+	preConnErr   error // error PreConnect returns
+	configured   []string // cwd of each ConfigureWorkspace call
+	configErr    error
+	demoted      int
+	demoteErr    error
+}
+
+func (f *fakeSDKWarmRuntime) PreConnect(_ context.Context) error {
+	if f.preConnErr != nil {
+		return f.preConnErr
+	}
+	f.preConnected++
+	return nil
 }
 
 func (f *fakeSDKWarmRuntime) ConfigureWorkspace(_ context.Context, _ string, cwd string) error {
@@ -231,4 +241,68 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// spec: §6.1 line 30 — PreConnect starts the SDK at warm time for a
+// preConnect runtime and is idempotent; SDKWarmReady gates claimability.
+func TestPreConnect_spec_6_1(t *testing.T) {
+	t.Run("preConnect starts the SDK once and reports ready", func(t *testing.T) {
+		s, rt := sdkWarmServer(t)
+		if s.SDKWarmReady() {
+			t.Fatalf("not ready before PreConnect")
+		}
+		if err := s.PreConnect(context.Background()); err != nil {
+			t.Fatalf("PreConnect: %v", err)
+		}
+		if rt.preConnected != 1 {
+			t.Fatalf("PreConnect called %d times, want 1", rt.preConnected)
+		}
+		if !s.SDKWarmReady() {
+			t.Fatalf("expected SDKWarmReady after PreConnect")
+		}
+		// Idempotent: a second call does not restart the SDK.
+		if err := s.PreConnect(context.Background()); err != nil {
+			t.Fatalf("PreConnect repeat: %v", err)
+		}
+		if rt.preConnected != 1 {
+			t.Fatalf("PreConnect re-invoked runtime %d times, want 1", rt.preConnected)
+		}
+	})
+
+	t.Run("pod-warm runtime PreConnect is a no-op and never ready", func(t *testing.T) {
+		s, _, _ := sessionServer(t) // plain fakeRuntime: pod-warm
+		if err := s.PreConnect(context.Background()); err != nil {
+			t.Fatalf("pod-warm PreConnect should be a no-op success: %v", err)
+		}
+		if s.SDKWarmReady() {
+			t.Fatalf("pod-warm pod must never report SDKWarmReady")
+		}
+	})
+
+	t.Run("PreConnect failure leaves the pod not ready", func(t *testing.T) {
+		s, rt := sdkWarmServer(t)
+		rt.preConnErr = errors.New("sdk boot failed")
+		if err := s.PreConnect(context.Background()); err == nil {
+			t.Fatalf("expected PreConnect error")
+		}
+		if s.SDKWarmReady() {
+			t.Fatalf("a failed PreConnect must not report ready")
+		}
+	})
+
+	t.Run("DemoteSDK clears warm readiness", func(t *testing.T) {
+		s, _ := sdkWarmServer(t)
+		if err := s.PreConnect(context.Background()); err != nil {
+			t.Fatalf("PreConnect: %v", err)
+		}
+		if !s.SDKWarmReady() {
+			t.Fatalf("expected ready after PreConnect")
+		}
+		if _, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{}); err != nil {
+			t.Fatalf("DemoteSDK: %v", err)
+		}
+		if s.SDKWarmReady() {
+			t.Fatalf("DemoteSDK must clear SDKWarmReady")
+		}
+	})
 }

@@ -106,6 +106,33 @@ func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 	return err
 }
 
+// ConfigureWorkspace is the §6.1 SDK-warm counterpart of StartSession: on
+// a preConnect pod it points the already-connected SDK at the finalized
+// workspace cwd rather than starting the runtime from cold (§4.7
+// ConfigureWorkspace RPC). It is idempotent. A pod-warm adapter returns
+// Unimplemented, which the binder treats as a signal to fall back to
+// StartSession.
+func (c *Client) ConfigureWorkspace(ctx context.Context, sessionID, cwd string, experiment *adapterv1.ExperimentContext, tracing map[string]string) error {
+	_, err := c.rpc.ConfigureWorkspace(ctx, &adapterv1.ConfigureWorkspaceRequest{
+		SessionId:         &adapterv1.SessionId{Value: sessionID},
+		Cwd:               cwd,
+		ExperimentContext: experiment,
+		TracingContext:    tracing,
+	})
+	return err
+}
+
+// DemoteSDK tears down a preConnect pod's pre-connected SDK so the pod
+// falls back to pod-warm before the workspace is materialized (§6.1 line
+// 34 / §4.7 DemoteSDK RPC). reason rides the request for the adapter's
+// observability. A pod-warm adapter returns Unimplemented; per §6.1 line
+// 40 the binder surfaces that as SDK_DEMOTION_NOT_SUPPORTED rather than
+// silently proceeding with stale SDK state.
+func (c *Client) DemoteSDK(ctx context.Context, reason string) error {
+	_, err := c.rpc.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{Reason: reason})
+	return err
+}
+
 // AssignCredentials pushes the session's per-provider §4.9 credential
 // leases to the pod's adapter ahead of StartSession (§4.7, the fourth
 // session-assignment RPC). leases is keyed by provider; the adapter

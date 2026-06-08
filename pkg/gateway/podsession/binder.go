@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/sdkwarm"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -128,6 +131,47 @@ type Binder struct {
 	// keys off this denominator. Nil is a no-op.
 	// spec: §6.3 line 352, §16.1 line 122.
 	ClaimAccepted func(pool, runtimeClass string)
+	// SDKDemotion records the §6.1 line 34 `lenny_warmpool_sdk_demotions_total{pool}`
+	// counter increment each time the binder demotes an SDK-warm pod to
+	// pod-warm because the workspace plan matched a sdkWarmBlockingPaths
+	// pattern. The deployer-facing demotion rate (§6.3 line 352) is this
+	// numerator over the ClaimAccepted denominator. Nil is a no-op.
+	SDKDemotion func(pool string)
+}
+
+// SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
+// workspace plan requires demotion but the pod's adapter does not
+// implement the DemoteSDK RPC (it returns UNIMPLEMENTED). Per §6.1 line 40
+// the gateway fails the session with SDK_DEMOTION_NOT_SUPPORTED rather than
+// serving the session with stale SDK state.
+type SDKDemotionNotSupported struct {
+	Pod string
+}
+
+func (e *SDKDemotionNotSupported) Error() string {
+	return fmt.Sprintf("podsession: pod %s requires SDK demotion but its adapter does not implement DemoteSDK (SDK_DEMOTION_NOT_SUPPORTED)", e.Pod)
+}
+
+// workspacePlanPaths returns the relative workspace paths the plan places,
+// one per §14 WorkspaceSource, for matching against sdkWarmBlockingPaths
+// (§6.1 line 34).
+func workspacePlanPaths(plan *adapterv1.WorkspacePlan) []string {
+	if plan == nil {
+		return nil
+	}
+	paths := make([]string, 0, len(plan.GetSources()))
+	for _, src := range plan.GetSources() {
+		if p := src.GetPath(); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// isUnimplemented reports whether err is a gRPC UNIMPLEMENTED status, the
+// §6.1 line 40 signal that a preConnect pod's adapter cannot DemoteSDK.
+func isUnimplemented(err error) bool {
+	return status.Code(err) == codes.Unimplemented
 }
 
 // §5.2 line 12 lenny_slot_failure_total error_type labels: the
@@ -250,6 +294,16 @@ type BindRequest struct {
 	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
 	// into the §15.4 manifest. Empty when the runtime specifies no minimum.
 	MinPlatformVersion string
+	// PreConnect is the runtime's §5.1 capabilities.preConnect flag. When
+	// true the pod is SDK-warm: the binder either points the pre-connected
+	// SDK at the workspace (ConfigureWorkspace) or, when the plan matches a
+	// blocking path, demotes it (DemoteSDK) and proceeds pod-warm.
+	PreConnect bool
+	// SDKWarmBlockingPaths is the runtime's §5.1 sdkWarmBlockingPaths glob
+	// list. When PreConnect is true and any workspace path matches, the
+	// binder demotes the SDK-warm pod before materializing the workspace
+	// (§6.1 line 34). An empty list disables demotion (§6.1 line 38).
+	SDKWarmBlockingPaths []string
 }
 
 // BindResult reports the pod a session was bound to.
@@ -429,6 +483,32 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	sandboxName := sb.Name
 	t.PodClaim = time.Since(phaseStart)
 
+	// spec: §6.1 lines 34-40 — on an SDK-warm (preConnect) pod, decide
+	// whether the workspace plan forces a demotion before the workspace is
+	// materialized. A blocking-path match tears down the pre-connected SDK
+	// (DemoteSDK) and the pod proceeds via the normal pod-warm StartSession
+	// path; no match keeps the pod SDK-warm and the final step points the
+	// SDK at the finalized workspace (ConfigureWorkspace) instead.
+	demoted := false
+	if req.PreConnect {
+		if mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths); requires {
+			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
+				cl.Close()
+				if isUnimplemented(err) {
+					// spec: §6.1 line 40 — the runtime declared preConnect
+					// but its adapter cannot tear down the SDK; fail the
+					// session rather than serve it with stale SDK state.
+					return nil, &SDKDemotionNotSupported{Pod: sandboxName}
+				}
+				return nil, fmt.Errorf("podsession: demote SDK on pod %s: %w", sandboxName, err)
+			}
+			demoted = true
+			if b.SDKDemotion != nil {
+				b.SDKDemotion(req.Pool)
+			}
+		}
+	}
+
 	// spec: §6.2 lines 83-94, 305-313 — advance Sandbox.status.phase through
 	// the setup chain (claimed → receiving_uploads → finalizing_workspace →
 	// running_setup → starting_session → attached) so the authoritative state
@@ -492,7 +572,18 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase starting_session on pod %s: %w", sandboxName, err)
 	}
-	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
+	// spec: §6.1 lines 30-34 — a still-SDK-warm pod (preConnect, not
+	// demoted) is started by pointing the pre-connected SDK at the
+	// finalized workspace (ConfigureWorkspace) rather than booting the
+	// runtime from cold (StartSession). A demoted or pod-warm pod uses
+	// StartSession.
+	if req.PreConnect && !demoted {
+		if err := cl.ConfigureWorkspace(ctx, req.SessionID, neg.WorkspaceRoot, req.ExperimentContext, req.TracingContext); err != nil {
+			b.failPhase(ctx, sb)
+			cl.Close()
+			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
+		}
+	} else if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
 		Runtime:            req.Runtime,
 		ExperimentContext:  req.ExperimentContext,

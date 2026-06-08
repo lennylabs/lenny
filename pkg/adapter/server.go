@@ -279,8 +279,14 @@ type Server struct {
 	// attached; emitControlEvent drops events when it is nil.
 	controlSink chan controlEvent
 
-	// mu guards sessionID, mcpCancel, and the credential fields.
+	// mu guards sessionID, mcpCancel, sdkConnected, and the credential
+	// fields.
 	mu sync.Mutex
+	// sdkConnected records that the §6.1 SDK-warm pre-connect has
+	// completed for a preConnect runtime. It is set by PreConnect at warm
+	// time and cleared by DemoteSDK; SDKWarmReady reads it so a readiness
+	// probe can hold the pod un-claimable until the SDK is connected.
+	sdkConnected bool
 	// sessionID is the session currently assigned to the pod, empty
 	// when the pod is idle. Per §6.1 a session-mode pod is
 	// one-session-only.

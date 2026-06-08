@@ -70,7 +70,17 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var credAssign *podsession.CredentialAssignmentError
 	var setupFail *podsession.SetupCommandFailure
 	var slotFailed *podsession.SlotFailedError
+	var demotionUnsupported *podsession.SDKDemotionNotSupported
 	switch {
+	case errors.As(err, &demotionUnsupported):
+		// spec: §6.1 line 40 — a preConnect pod whose adapter cannot
+		// DemoteSDK fails the session with the dedicated permanent code
+		// rather than serving it with stale SDK state. Not retryable on a
+		// fresh pod from the same pool (every pod runs the same adapter).
+		s.writeError(w, http.StatusUnprocessableEntity, "SDK_DEMOTION_NOT_SUPPORTED",
+			"the runtime declares capabilities.preConnect but its adapter does not implement DemoteSDK; "+
+				"the request includes sdkWarmBlockingPaths files that require demotion",
+			map[string]any{"reason": "sdk_demotion_not_supported"})
 	case errors.As(err, &setupFail):
 		// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — the
 		// gateway records the setup_command_failed audit row + metric so
@@ -1098,18 +1108,21 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		}
 		return s.bindSlotWithRetry(ctx, slotReq)
 	}
+	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.RuntimeRef)
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
-		Pool:               match.Pool,
-		SessionID:          row.ID,
-		TenantID:           row.TenantID,
-		Runtime:            row.RuntimeRef,
-		Plan:               podsession.WorkspacePlanToProto(plan),
-		ExperimentContext:  experimentContextToProto(row.ExperimentContext),
-		TracingContext:     row.TracingContext,
-		SetupPolicy:        s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-		CredentialPools:    credPools,
-		AgentInterface:     agentInterface,
-		MinPlatformVersion: minPlatformVersion,
+		Pool:                 match.Pool,
+		SessionID:            row.ID,
+		TenantID:             row.TenantID,
+		Runtime:              row.RuntimeRef,
+		Plan:                 podsession.WorkspacePlanToProto(plan),
+		ExperimentContext:    experimentContextToProto(row.ExperimentContext),
+		TracingContext:       row.TracingContext,
+		SetupPolicy:          s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		CredentialPools:      credPools,
+		AgentInterface:       agentInterface,
+		MinPlatformVersion:   minPlatformVersion,
+		PreConnect:           preConnect,
+		SDKWarmBlockingPaths: sdkWarmBlockingPaths,
 	})
 	if err != nil {
 		return nil, err
