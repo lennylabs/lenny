@@ -150,3 +150,58 @@ func TestDeleteByUserEmptyOrchestrator(t *testing.T) {
 		t.Errorf("Total = %d, want 0", res.Total)
 	}
 }
+
+// fakeCounting implements erasure.CountingEraser (the first-party
+// (int, error) contract).
+type fakeCounting struct{ n int }
+
+func (f fakeCounting) DeleteByUser(context.Context, string, string) (int, error) {
+	return f.n, nil
+}
+func (f fakeCounting) DeleteByTenant(context.Context, string) (int, error) { return f.n, nil }
+
+// fakeStore implements erasure.StoreEraser (the pluggable-role error-only
+// contract) and records that DeleteByUser ran.
+type fakeStore struct{ called *bool }
+
+func (f fakeStore) DeleteByUser(context.Context, string, string) error { *f.called = true; return nil }
+func (f fakeStore) DeleteByTenant(context.Context, string) error       { return nil }
+
+// TestFromCountingWiresTypedStore verifies erasure.FromCounting adapts a
+// CountingEraser onto the orchestrator, preserving the deleted-row count.
+//
+// spec: §12.1 line 5.
+func TestFromCountingWiresTypedStore_spec_12_1(t *testing.T) {
+	o := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
+		erasure.FromCounting("sessions", fakeCounting{n: 7}),
+	}})
+	res, err := o.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if res.Deleted["sessions"] != 7 || res.Total != 7 {
+		t.Errorf("Deleted = %v Total = %d, want sessions=7 total=7", res.Deleted, res.Total)
+	}
+}
+
+// TestFromStoreAdaptsPluggableRole verifies erasure.FromStore adapts a
+// StoreEraser (error-only) onto the orchestrator with a 0 count and still
+// invokes the underlying DeleteByUser.
+//
+// spec: §12.1 line 5; §9.4.
+func TestFromStoreAdaptsPluggableRole_spec_12_1(t *testing.T) {
+	called := false
+	o := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
+		erasure.FromStore("memory", fakeStore{called: &called}),
+	}})
+	res, err := o.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if !called {
+		t.Error("FromStore did not invoke the underlying DeleteByUser")
+	}
+	if res.Deleted["memory"] != 0 {
+		t.Errorf("Deleted[memory] = %d, want 0 (pluggable role reports no count)", res.Deleted["memory"])
+	}
+}

@@ -4417,18 +4417,18 @@ func main() {
 		userScoped := []erasure.Eraser{}
 		if erasureLeaseStore != nil {
 			// step 1: release the user's active session-coordination leases.
+			// Typed via erasure.FromCounting so the §12.1 erasure contract is
+			// compile-checked at this wiring site (F-12.1.5).
 			userScoped = append(userScoped,
-				erasure.Eraser{Name: "leases", DeleteByUser: erasureLeaseStore.DeleteByUser})
+				erasure.FromCounting("leases", erasureLeaseStore))
 		}
 		if erasureSemanticCache != nil {
 			// step 2: purge the user's cached LLM query/response pairs. The
-			// §4.9 SemanticCache.DeleteByUser returns only an error; the
-			// orchestrator adapter reports the count it cannot supply as 0.
-			sc := erasureSemanticCache
+			// §4.9 SemanticCache is a §12.1 pluggable role; erasure.FromStore
+			// adapts its error-only DeleteByUser to the orchestrator adapter
+			// and compile-checks it against StoreEraser (F-12.1.5).
 			userScoped = append(userScoped,
-				erasure.Eraser{Name: "semantic_cache", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
-					return 0, sc.DeleteByUser(ctx, tenantID, userID)
-				}})
+				erasure.FromStore("semantic_cache", erasureSemanticCache))
 		}
 		if erasureSticky != nil {
 			// step 4: delete the user's experiment sticky assignments.
@@ -4446,16 +4446,14 @@ func main() {
 				erasure.Eraser{Name: "quota", DeleteByUser: quotaCounter.DeleteByUser})
 		}
 		userScoped = append(userScoped,
-			// step 8: §9.4 MemoryStore.DeleteByUser returns only an error;
-			// the orchestrator's adapter reports the count it cannot supply
-			// as 0. Memory and the session-keyed interaction rows precede
-			// SessionStore (step 17).
-			erasure.Eraser{Name: "memory", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
-				return 0, memories.DeleteByUser(ctx, tenantID, userID)
-			}},
-			erasure.Eraser{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
+			// step 8: §9.4 MemoryStore is a §12.1 pluggable role; FromStore
+			// adapts its error-only DeleteByUser and compile-checks it against
+			// StoreEraser. Memory and the session-keyed interaction rows
+			// precede SessionStore (step 17).
+			erasure.FromStore("memory", memories),
+			erasure.FromCounting("interactions", interactions),
 			// step 17: SessionStore, the FK parent, after every child store.
-			erasure.Eraser{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
+			erasure.FromCounting("sessions", sessions),
 		)
 		if pgPool != nil {
 			// step 18: TokenStore — delete the user's issued OAuth/refresh

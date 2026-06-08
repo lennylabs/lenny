@@ -47,3 +47,30 @@ type CountingEraser interface {
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
+
+// FromCounting builds a user-scoped Eraser from a typed CountingEraser
+// store. Wiring a store through this constructor makes the §12.1
+// interface-satisfaction check land at the orchestrator call site itself:
+// a store that drops DeleteByUser stops satisfying CountingEraser and the
+// gateway binary fails to compile, rather than being silently registered
+// as a no-op function pointer.
+//
+// spec: §12.1 line 5 (compile-time erasure-method enforcement).
+func FromCounting(name string, e CountingEraser) Eraser {
+	return Eraser{Name: name, DeleteByUser: e.DeleteByUser}
+}
+
+// FromStore builds a user-scoped Eraser from a typed StoreEraser — the
+// §12.1 / §9.4 pluggable roles (MemoryStore, SemanticCache) a deployer may
+// replace with a custom backend. The error-only contract signature is
+// adapted to the orchestrator's (count, error) adapter with a 0 count,
+// since these roles report no deleted-row tally. As with FromCounting, a
+// substitute backend that omits a method fails to satisfy StoreEraser at
+// this call site.
+//
+// spec: §12.1 line 5; §9.4.
+func FromStore(name string, e StoreEraser) Eraser {
+	return Eraser{Name: name, DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
+		return 0, e.DeleteByUser(ctx, tenantID, userID)
+	}}
+}
