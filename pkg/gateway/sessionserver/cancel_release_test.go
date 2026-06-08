@@ -109,6 +109,45 @@ func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	}
 }
 
+// TestSessionModePodDrainedOnTerminalTransition_spec_6_1 asserts the §6.1
+// "pods are one-session-only" invariant has an automatic pod-drain on every
+// terminal transition. The gateway's single terminal funnel
+// (recordSessionCompleted, reached here through the watchdog / orphan-cleanup
+// OnSessionTerminal hook) releases the session-mode pod through the executor
+// with the matching §6.2 disposition; a pod-backed executor (SessionReleaser)
+// records the disposition and then drains the pod, so it is reclaimed rather
+// than left resident for the next session. spec: §6.1 (one-session-only);
+// §6.2 lines 105-117; §11.4 line 258. F-6.1.25.
+func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		state session.State
+		want  executor.Disposition
+	}{
+		{session.StateCompleted, executor.DispositionCompleted},
+		{session.StateFailed, executor.DispositionFailed},
+		{session.StateExpired, executor.DispositionExpired},
+	} {
+		store := memstore.New()
+		exec := newCancelTrackingExecutor()
+		srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
+		if err := store.Create(ctx, sess); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+
+		// The watchdog / force-terminate path drives the terminal funnel.
+		srv.OnSessionTerminal(ctx, sess)
+
+		d, ok := exec.dispositionOf("sm")
+		if !ok || d != tc.want {
+			t.Fatalf("F-6.1.25: terminal %s released disposition = %q (present=%v), want %q",
+				tc.state, d, ok, tc.want)
+		}
+	}
+}
+
 // TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9 asserts the
 // cascade-drain respects the per-node §8.10 policy: a detach child shields its
 // own subtree, so the cascade neither cancels nor drains a grandchild under a

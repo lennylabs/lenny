@@ -687,6 +687,63 @@ func (s *Server) treeRoot(ctx context.Context, sess sessionstore.Session) string
 	return cur.ID
 }
 
+// subtreeSessionIDs returns the session's own id plus every descendant
+// session id in its §8 delegation subtree. It unions the live session
+// store (running and not-yet-GC'd rows) with the §8.10 tree archive
+// (settled children whose live rows may already be reclaimed) so a
+// tree-aggregated usage total reflects the whole subtree rather than only
+// the sessions that happen to still be resident. The returned slice
+// always contains root.ID; a leaf session with no descendants returns a
+// single-element slice. spec: §15.1 line 676 (tree-aggregated usage
+// including all descendant tasks). F-15.1.31.
+func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root sessionstore.Session) []string {
+	children := map[string][]string{}
+	addEdge := func(parent, child string) {
+		if parent == "" || child == "" || parent == child {
+			return
+		}
+		children[parent] = append(children[parent], child)
+	}
+	if rows, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{}); err == nil {
+		for _, row := range rows {
+			addEdge(row.ParentSessionID, row.ID)
+		}
+	}
+	if s.treeArchive != nil {
+		// The archive is keyed by the tree's root session, so resolve the
+		// apex before replaying: a delegated child carries its root id
+		// directly, and a root resolves to itself via the live lineage walk.
+		// Replaying the apex yields every archived node in the whole tree;
+		// the breadth-first walk below restricts the result to the subtree
+		// under root.ID, so the handler works for a mid-tree node too.
+		rootID := root.RootSessionID
+		if rootID == "" {
+			rootID = s.treeRoot(ctx, root)
+		}
+		if nodes, err := s.treeArchive.Replay(ctx, tenantID, rootID); err == nil {
+			for _, n := range nodes {
+				addEdge(n.ParentSessionID, n.NodeSessionID)
+			}
+		}
+	}
+	seen := map[string]bool{root.ID: true}
+	ids := []string{root.ID}
+	queue := []string{root.ID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, child := range children[cur] {
+			if seen[child] {
+				continue
+			}
+			seen[child] = true
+			ids = append(ids, child)
+			queue = append(queue, child)
+		}
+	}
+	return ids
+}
+
 // materializeTaskResult builds the §8.8 TaskResult body the tree archive
 // stores for a settled child. This is the single materialization site
 // for the rich body: the gateway has the session row, its transcript,

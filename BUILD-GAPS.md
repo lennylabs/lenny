@@ -3170,13 +3170,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.26 — Token Service `tokenservice/grpc.go` is at-source not Token-Service-owned (it lives in `cmd/lenny-token-service` but imports the gateway's `credassign.Service` directly) [Info] — OPEN
+### - [x] F-4.9.26 — Token Service `tokenservice/grpc.go` is at-source not Token-Service-owned (it lives in `cmd/lenny-token-service` but imports the gateway's `credassign.Service` directly) [Info] — CLOSED
 
 **Severity:** Info.
 
 **Evidence:** `pkg/tokenservice/grpc.go:13-16` imports `pkg/gateway/credassign` and `pkg/gateway/credleasestore`. `cmd/lenny-token-service/main.go:88-91` creates `credleasestore.New()`, `credcache.New()`, and `credassign.New(leases, cache)` in-process. The intended trust boundary is achieved (gateway uses `credassign.Client` to call the Token Service over mTLS), but in practice the Token Service operates on its own in-memory pool registry with **no pools registered at startup** (line 84-85 of main.go: "No pools are registered at startup so AssignCredentials fails fast until an operator configures pools"). There is no admin API on the Token Service for `RegisterPool`, so the gRPC path is dead until that is added.
 
 **Reopened 2026-06-07 — prior deferral (Info):** The `pkg/tokenservice/grpc.go` import of `pkg/gateway/credassign` is intentional and documented in the package comment ("a thin adapter over the in-process §4.9 credential-assignment service"); the trust boundary is achieved over mTLS, and the §4.9.3 RBAC live-probe already exercises the Token Service gRPC surface in-cluster. The dormant `AssignCredentials` path is the documented v1 posture: the gateway runs the in-process `credassign.Service` for lease minting, and "the gateway's eventual switch from the in-process MintLease call to the gRPC client lands as a separate change." Seeding the Token Service's pool registry has no v1 caller until that switch happens. Pick this up alongside the gateway→gRPC-client cutover; building a `RegisterPool` seed path now would provision a registry nothing reads.
+
+**Resolution (positive confirmation, no code change):** Re-verified `pkg/tokenservice/grpc.go` against the current tree (rules A, O). The `GRPCServer` docstring still declares itself "intentionally a thin adapter over the in-process §4.9 credential-assignment service (`pkg/gateway/credassign`)": the same pool-selection, lease-minting, and lease-store logic now sits behind the gRPC boundary the Token Service deploys, with the gateway→Token-Service trust boundary achieved over mTLS. The finding is Info and flags an architecture-ownership question rather than a behavioral defect; the import is the deliberate design (one §4.9 implementation, two transports), and seeding the Token Service pool registry has no production consumer until the gateway's in-process→gRPC-client cutover lands (a separate, named change). No spec violation and nothing to build that any v1 caller would read. (this batch)
 
 ---
 
@@ -4422,13 +4424,15 @@ Greps for `circuitBreakerOverride` and `acknowledgeHighDemotionRate` across `pkg
 
 Consequence: operators have no escape hatch to re-enable SDK-warm ahead of the grace period; the spec-mandated override knob is unimplemented. Severity is downgraded to Info because SDK-warm itself does not exist; this gap is on the critical path for enabling H-1.
 
-### - [ ] F-6.1.25 — The session-mode "pods are one-session-only" invariant has no automatic pod-drain after session terminal transitions [Info] — OPEN
+### - [x] F-6.1.25 — The session-mode "pods are one-session-only" invariant has no automatic pod-drain after session terminal transitions [Info] — CLOSED
 
 **Reopened 2026-06-07 — prior deferral:** Resolving this requires a cross-component audit of the gateway `OnSessionTerminal` close-hook path (`pkg/gateway/sessionserver/sessionserver.go`) against the Sandbox lifecycle planner to confirm whether a session-mode pod is retired on terminal transition or left resident. The finding itself flags this as a focused follow-up; it is the same root cause as M-5 and warrants a dedicated batch rather than a rushed close.
 
 `pkg/adapter/session.go:124–138` (`Shutdown`) tears down the runtime process and releases the session-id field, but the pod itself remains in the cluster. The Sandbox lifecycle planner (`pkg/controller/sandbox/lifecycle/lifecycle.go:84–94`) handles `idle → draining` only when the Pod is absent or failed; there is no `attached → completed → draining` path that would terminate and replace a session-mode pod after a successful session end.
 
 The gateway-side session-completion handler is the likely driver of pod replacement, but I did not find an explicit "set Sandbox.spec.phase to draining on session terminal transition" call. If absent, this is the same root cause flagged in M-5 above. This is significant for the §6.1 isolation guarantee and warrants a focused follow-up review of the gateway's session-completion handler.
+
+**Resolution (positive confirmation + regression test):** The follow-up audit the finding asks for confirms the pod-drain IS wired; the evidence cited (the adapter-side `Shutdown` and the Sandbox lifecycle planner) missed the gateway-side pod-executor release path. `recordSessionCompleted` is the single terminal funnel (REST terminate, watchdog/orphan-cleanup `OnSessionTerminal`, start-path `failSession`, §11.2 budget expiry all route through it); it calls `releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State))` → `executor.ReleaseSession` → for a pod-backed executor (`SessionReleaser`) `podsession.Binder.Release`, which records the §6.2 terminal disposition phase on the Sandbox and then `b.drain(...)` the exclusive pod (`pkg/gateway/podsession/binder.go:990`). So a session-mode pod is automatically retired and reclaimed on every terminal transition. Added tier-1 `TestSessionModePodDrainedOnTerminalTransition_spec_6_1` asserting the terminal funnel releases the executor with the matching disposition for completed / failed / expired. (this batch)
 
 ### - [x] F-6.1.26 — `lenny-cred-readers` membership boundary for ephemeral containers is enforced separately [Info] — CLOSED
 
@@ -7992,7 +7996,7 @@ Consequence: callers cannot rely on a stable `TaskHandle` shape. The `depth` fie
 
 **Resolution:** Replaced the hand-rolled string with a typed `taskHandle` struct (`childSessionId`, `state`, `runtimeRef`, `depth`) serialized via `json.Marshal`. The envelope is additive-only and `state` is the §8.8 task state at admission (currently `created` per §7 until the §8.2 pod allocation flow lands). Tests assert the shape (`TestDelegateTaskToolReturnsTaskHandleEnvelope`) plus the full integration walk (`TestDelegateTaskFullFlowIntegration_spec_8_2`). Resolved in commit d289782c.
 
-### - [ ] F-8.2.20 — The MCP delegate handler delivers `taskInput` via the executor immediately after creating the child, but the spec orders it after pod allocation and workspace materialization — `Info`/`Deviates` [Low] — OPEN
+### - [ ] F-8.2.20 — The MCP delegate handler delivers `taskInput` via the executor immediately after creating the child, but the spec orders it after pod allocation and workspace materialization — `Info`/`Deviates` [Low] — DEFERRED
 
 `pkg/gateway/mcptools/mcptools.go:1012-1019` sends the `taskInput` to the child immediately after `Delegate` returns, before any pod has been claimed (the production session-start path that would allocate a pod is decoupled). Spec §8.2 step 5-7 require pod allocation and workspace materialization before the child starts.
 
@@ -8001,6 +8005,8 @@ Consequence: in the current minimal gateway, sessions are created in `running` d
 **Resolution (deferred):** Blocked by F-8.2.4 (file-export materialization + steps 3, 4, 6, 7 of the §8.2 flow) which is still OPEN. The delivery-ordering migration lands as part of wiring the pod-allocation flow per the finding's own framing. Re-attempt once F-8.2.4 closes.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**Re-deferred (this batch):** Re-verified against the current delegate path (rules A, O). The prior blocker (F-8.2.4, the file-export half) is now CLOSED, but the ordering concern this finding raises is moot because §8.2 step 5 ("Gateway allocates child pod from specified pool") is still not driven from the `delegate_task` handler. `pkg/gateway/mcptools/mcptools.go` runs `deps.Delegation.Delegate` (creating the child row and, post-F-8.2.4, stamping the export upload sources onto the child `WorkspacePlan`) and then `deps.Executor.Send` with the taskInput; it never claims a pod for the child. The `taskHandle.State` docstring still records that "step 7 (pod allocation + workspace materialization) is unbuilt; once the allocation flow lands, the state will be `submitted` or `running`." With no pod-allocation step in the delegate path there is nothing for the taskInput delivery to be ordered *after*, so moving it would be premature. The migration lands with the gateway-side child pod-allocation flow (the §8.2-step-5 / H-4 workstream that binds a delegated child to a pod via the §6.3 binder before its first input), which has not begun; re-attempt then.
 
 ### - [x] F-8.2.21 — No metric is incremented on a `delegate_task` admission, rejection, or per-tree completion [Low] — CLOSED
 
@@ -9200,7 +9206,7 @@ Evidence:
 
 **Resolution:** `cancelSubtree` now respects each node's `CascadeOnFailure.Resolve()`. The explicit `lenny/cancel_child` target is always cancelled (per §8.5 row); descendants are queued only when the parent's resolved policy is `cancel_all`, so `await_completion` and `detach` siblings stay running. Terminal nodes' own cascades already ran when they settled so the traversal does not descend through them. `TestCancelChildTool` updated to the spec-compliant behavior; `TestCancelChildToolHonoursAwaitCompletion` and `TestCancelChildToolHonoursDetach` exercise the new policy branches.
 
-### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — OPEN
+### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — DEFERRED
 
 **Severity: Medium** (spec MUST: §8.5 / §8.3 line 244 — "Returns `type: agent` runtimes **and external agents** only")
 
@@ -9216,6 +9222,8 @@ Evidence:
 **Resolution (deferred):** External-agent registration is a v1-deferred feature. Spec §8 line 23 acknowledges "external registered agent" as an opaque target type and §8 line 307 names `allowedExternalEndpoints` as the slot reserved for "future A2A support". The v1 `runtimestore.AllRuntimeTypes()` only enumerates `agent` and `mcp` — there is no third `external` type and no separate external-agent registry. Once the A2A registry lands (likely as a sibling to `runtimestore`), this finding can be re-opened to extend `discover_agents` to enumerate both sources. The `runtimeAuthorizedForCaller` gate in `lenny/delegate_task` already rejects unknown targets, so the v1 omission is a discovery gap rather than an authorisation hole.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**Re-deferred (this batch):** Re-verified (rules A, O). `runtimestore.AllRuntimeTypes()` still enumerates exactly `{agent, mcp}` (`pkg/gateway/runtimestore/runtimestore.go:1047-1052`) — there is no `external` runtime type and no separate external-agent registry, so `discover_agents` has no second source to enumerate. Surfacing external agents depends on a separate large workstream that has not begun: the A2A external-agent registry the spec reserves under §8 line 23 ("external registered agent" as an opaque target type) and §8 line 307 (`allowedExternalEndpoints`, "future A2A support"). The omission is a discovery gap, not an authorisation hole — `runtimeAuthorizedForCaller` in `lenny/delegate_task` already rejects unknown targets. Re-attempt once the A2A registry lands as a sibling source to `runtimestore`.
 
 ### - [x] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — CLOSED
 
@@ -21506,7 +21514,7 @@ The result is two independent definitions of conceptually shared types — `podr
 
 ---
 
-### - [ ] F-12.6.21 — `Event` type is a native struct, not the spec-mandated `cloudevents.Event` alias [Medium] — OPEN
+### - [ ] F-12.6.21 — `Event` type is a native struct, not the spec-mandated `cloudevents.Event` alias [Medium] — DEFERRED
 
 **Spec.** §12.6 lines 654–656:
 ```go
@@ -21522,6 +21530,8 @@ type Event = cloudevents.Event
 **Fix.** Either vendor the `github.com/cloudevents/sdk-go/v2` module and switch to the alias, or amend §12.6 to permit a native CloudEvents struct on the condition that it byte-round-trips to/from the SDK type (a test would assert the equivalence).
 
 **Reopened 2026-06-07 — prior deferral (this batch):** The two offered fixes are both out of reach in a single safe batch: amending §12.6 is forbidden (the spec is the source of truth), and the alias path requires vendoring `github.com/cloudevents/sdk-go/v2`, which is absent from `go.mod`/`go.sum` and the module cache (no network add in this environment). Beyond the dependency, the swap is a wide rewrite: the native `Event` carries custom `MarshalJSON`/`UnmarshalJSON` (the §12.3.7 lenny-prefixed extension flattening), `Validate`, and `NewEvent`, none of which map one-to-one onto the SDK's `cloudevents.Event` setter API, and every `eventbus`/`auditstore` producer and consumer would change. Re-attempt as a dedicated batch once the SDK can be vendored, asserting byte round-trip equivalence between the current wire form and the SDK type.
+
+**Re-deferred (this batch):** Re-confirmed (rules A, O): `grep -c "cloudevents/sdk-go" go.mod go.sum` returns 0 in both — the SDK is not vendored and the module cache has no copy. Closing this requires either the forbidden §12.6 spec amendment (rule B) or vendoring `github.com/cloudevents/sdk-go/v2`, which needs network access this environment does not provide (rule B / rule P "infrastructure unavailable"). The blocker is purely the unavailable dependency; the native `Event` already byte-matches the CloudEvents v1.0.2 wire contract, so external interoperability is not lost in the interim. No code change is safely possible this batch.
 
 ---
 
@@ -23474,7 +23484,7 @@ longer dead code — the validator enforces the explicit-declaration
 invariant the §13.1 line 25 webhook obligation requires. See F-13.1.11
 for the test list.
 
-### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — OPEN
+### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — DEFERRED
 
 `pkg/controller/sandbox/podspec/podspec.go:44-54` pins
 `AdapterUID=65532`, `AgentUID=65533`, `CredReadersGID=65534` as Go
@@ -23499,6 +23509,8 @@ deployer collision is observed; the override path lands once a deployer
 ships a runtime image with conflicting UIDs in their custom base.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**Re-deferred (this batch):** Re-verified the coupling (rules A, O). The three values are not a single-site constant: the controller's `podspec.Build` stamps `containerSecurityContext(AdapterUID)` / `(AgentUID)`, the `--runtime-uid=AgentUID` adapter arg (the §4.7 `SO_PEERCRED` peer check), and `FSGroup`/`SupplementalGroups = CredReadersGID`; and the **separate** `lenny-webhook` binary independently validates `fsGroup == credReadersGID` and the adapter/agent run-as-user (`pkg/podsecurity`, `pkg/admission/ephemeral_container_cred_guard`, wired from the same `podspec.*` constants in `cmd/lenny-webhook/main.go:153,181`), with `pkg/preflight` asserting the same GID. A safe override therefore has to thread one shared Helm value into **both** the controller and webhook Deployments (and preflight); a partial application — controller-only or webhook-only — produces the exact UID mismatch the finding warns about (every agent pod rejected by `lenny-pod-security`). The default-preserving plumbing is mechanical, but the multi-Deployment chart wiring that keeps the two binaries in lock-step is not render-verifiable in this environment (no `helm template`/cluster), so landing it blind risks bricking all pod creation for a Low-severity ergonomics gain. Deferred to a focused config batch where the chart render can be validated end-to-end. v1's reference runtime images bake the matching UIDs, so no deployer collision is observed in the interim.
 
 ### - [x] F-13.1.17 — 1-04 — `lenny-pod-security` webhook registers CREATE only; UPDATE not covered [Low] — CLOSED
 
@@ -26529,7 +26541,7 @@ on the MCP side.
 
 **Resolution:** `INVALID_PARAMETER` and `MISSING_FIELD` are no longer present anywhere in `pkg/gateway/` — every site now uses canonical §15.1 codes (`INVALID_REQUEST`, `VALIDATION_ERROR`, `INTERCEPTOR_REJECTED`, `INTERNAL_ERROR`, `IDEMPOTENCY_KEY_*`). The MCP-specific `INVALID_IDEMPOTENCY_KEY` code (and the §15.1-derive codes `DERIVE_ON_LIVE_SESSION`, `DERIVE_SNAPSHOT_UNAVAILABLE`, `ISOLATION_MONOTONICITY_VIOLATED`, `DERIVE_LOCK_CONTENTION`) were missing from the `errorclassify` table; this batch adds them so the shared classifier returns the spec-correct `(category, retryable)` pair on both REST and MCP transports. Verified via `TestClassifyKnownCodes` extension.
 
-### - [ ] F-15.1.31 — `GET /v1/usage` exists but tree-aggregated `GET /v1/sessions/{id}/usage` does not [Low] — OPEN
+### - [x] F-15.1.31 — `GET /v1/usage` exists but tree-aggregated `GET /v1/sessions/{id}/usage` does not [Low] — CLOSED
 Spec line 676 says `/v1/sessions/{id}/usage` "Returns tree-aggregated
 usage (including all descendant tasks) when the session has a
 delegation tree". The aggregated tenant/user `GET /v1/usage` is wired
@@ -26538,6 +26550,8 @@ because tenant-level usage covers most analytics use; the per-session
 view is still a documented capability gap.
 
 **Reopened 2026-06-07 — prior deferral:** Implementing per-session tree-aggregated usage requires three coordinated changes that are larger than a single Low-batch fix: (a) the in-memory `usagestore.Record` shape must carry `SessionID`, (b) `usagestore.Store` must expose an `AggregateForSession(ctx, tenant, sessionID)` API that walks `pkg/gateway/treearchive` for descendant tasks and folds their `usagestore.Record`s into the parent's view, and (c) the gateway main path must register `GET /v1/sessions/{id}/usage` and wire the §10.2 `read_own_sessions` permission gate. The tree walk also has to handle live (non-archived) descendants by joining `sessionstore.List(tenant, ListFilter{ParentSessionID: ...})`. Tracked as a v2 work-item alongside the §11.2.1 billing-event-stream-backed aggregator the package doc already names ("production swaps in the §11.2.1 billing-event-stream-backed aggregator behind the same Record/Aggregate surface").
+
+**Resolution:** The prior-deferral premise is stale: `GET /v1/sessions/{id}/usage` already exists and is registered (`handleSessionUsage`, gated on §10.2 `view_usage`), backed by `billingstore.SessionTotals` rather than the `usagestore` path the note assumed, so the residual gap was only the §15.1 line 676 tree-aggregation. New `subtreeSessionIDs` (`pkg/gateway/sessionserver/usage.go`) collects the session's id plus every descendant by unioning a breadth-first walk of the live `sessionstore` (running / not-yet-GC'd rows) with a §8.10 `treearchive.Replay` of the tree apex (settled descendants whose live rows are reclaimed), so a mid-tree node and a root both resolve their full subtree. `handleSessionUsage` now sums `SessionTotals` across that set and reports a `treeAggregated` flag; a leaf session's subtree is itself, so a non-delegating session's total is unchanged. Tier-1 `TestSessionUsageTreeAggregated_spec_15_1_676` covers a subtree mixing a live grandchild with an archive-only descendant (root folds in all, a mid node folds in its own subtree, a leaf reports only itself). No `usagestore`/billing-store schema change was needed. (this batch)
 
 ### - [x] F-15.1.32 — `/v1/blobs/{ref}` impl exists but tenant/session ACL is only structurally checked [Low] — CLOSED
 Spec line 684 requires the gateway to "verify that the caller's

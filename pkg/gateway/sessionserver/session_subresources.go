@@ -118,12 +118,16 @@ func toArtifactPayload(row artifactcatalog.Record) artifactPayload {
 }
 
 // handleSessionUsage implements GET /v1/sessions/{id}/usage per §15.1:
-// the reconciled per-session token + compute total drawn from the
-// §11.2.1 billing ledger. It requires the §10.2 view_usage permission
-// (the same gate the tenant /v1/usage and /v1/metering/events reports
-// run). A session with no billing events, or a gateway with metering
-// disabled, returns a zero-valued report rather than an error. spec:
-// §15.1; §11.2.1; §10.2 view_usage. F-15.2.3 / F-15.1.3.
+// the reconciled token + compute total drawn from the §11.2.1 billing
+// ledger. Per §15.1 line 676 the total is tree-aggregated — when the
+// session has a §8 delegation subtree the report folds in every
+// descendant task's usage, not just this session's own ledger rows. A
+// leaf session's subtree is itself, so the single-session total is
+// unchanged. It requires the §10.2 view_usage permission (the same gate
+// the tenant /v1/usage and /v1/metering/events reports run). A session
+// with no billing events, or a gateway with metering disabled, returns a
+// zero-valued report rather than an error. spec: §15.1 lines 676, 661;
+// §11.2.1; §10.2 view_usage. F-15.1.31 / F-15.2.3 / F-15.1.3.
 func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 	principal, ok := getPrincipal(r)
 	if ok && !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
@@ -150,24 +154,37 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §15.1 line 676 — sum the §11.2.1 ledger totals across the
+	// session and every descendant in its delegation subtree. The subtree
+	// is {id} for a leaf, so a non-delegating session reports its own
+	// total unchanged. F-15.1.31.
 	usage := billingstore.SessionUsage{}
+	treeAggregated := false
 	if s.billing != nil {
-		u, err := s.billing.SessionTotals(r.Context(), tenantID, id)
-		if err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
+		ids := s.subtreeSessionIDs(r.Context(), tenantID, row)
+		treeAggregated = len(ids) > 1
+		for _, sid := range ids {
+			u, err := s.billing.SessionTotals(r.Context(), tenantID, sid)
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+				return
+			}
+			usage.TokensInput += u.TokensInput
+			usage.TokensOutput += u.TokensOutput
+			usage.PodMinutes += u.PodMinutes
+			usage.EventCount += u.EventCount
 		}
-		usage = u
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"sessionId":    id,
-		"tokensInput":  usage.TokensInput,
-		"tokensOutput": usage.TokensOutput,
-		"podMinutes":   usage.PodMinutes,
-		"eventCount":   usage.EventCount,
+		"sessionId":      id,
+		"tokensInput":    usage.TokensInput,
+		"tokensOutput":   usage.TokensOutput,
+		"podMinutes":     usage.PodMinutes,
+		"eventCount":     usage.EventCount,
+		"treeAggregated": treeAggregated,
 	})
 }
 
