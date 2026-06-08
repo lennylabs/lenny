@@ -349,6 +349,23 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 				"caller cannot write to this tenant's blob namespace", nil)
 			return
 		}
+		if errors.Is(err, blobstore.ErrClassificationControlViolation) {
+			// §12.9 line 1048 / §15.1 line 1078 — the storage boundary
+			// rejected the write because the tenant's data classification
+			// is not satisfiable by the configured store. details.reason
+			// distinguishes a tier_store_mismatch (store not configured for
+			// envelope encryption) from a kms_unavailable (envelope-capable
+			// store whose per-tenant key is unreachable). Client-side
+			// configuration error, not a breaker failure.
+			reason := "kms_unavailable"
+			if errors.Is(err, blobstore.ErrTierStoreMismatch) {
+				reason = "tier_store_mismatch"
+			}
+			s.writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+				"the workspace data-classification tier is not satisfiable by the configured artifact store",
+				map[string]any{"reason": reason})
+			return
+		}
 		// Downstream blob store failure — feed the §4.1 Upload Handler
 		// subsystem breaker so repeated MinIO outages trip it open and
 		// new uploads return 503 SUBSYSTEM_UNAVAILABLE.

@@ -22453,7 +22453,7 @@ microvm pool otherwise clears the existing isolation gate). The webhook
 no longer needs an out-of-band Runtime lookup; the tier rides the pool
 CR it already validates. (commit `1e7de66f`)
 
-### - [ ] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — OPEN
+### - [x] F-12.9.6 — 9-05 — `CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch` is never raised; tier mismatches are not detected at the storage boundary [High] — CLOSED
 
 Spec line 1048: "Each store method receives the applicable tier as
 context and applies the corresponding controls. Tier mismatches (e.g.,
@@ -22500,6 +22500,32 @@ residual `tier_store_mismatch` reason needs the tier-on-method interface
 change, which is scoped to its own batch rather than bundled with the
 narrower §12.9 credential-lease encryption work (F-12.9.11) this batch
 carried.
+
+**Resolution (this batch):** Built the §12.9 line 1048 `tier_store_mismatch`
+rejection at the storage boundary without the proposed cross-cutting
+`blobstore.Store` interface change (rule O). The two non-envelope-capable
+backends — the in-memory `MemoryStore` and the §17.4 local-filesystem
+`FilesystemStore` — gained a `TierGuardFunc` seam (`SetTierGuard` /
+`SetOnTierStoreMismatch`): every `Put` and `Copy` runs the shared
+`checkTierStoreMismatch`, which rejects a confirmed-T4 tenant's write with
+the new `blobstore.ErrTierStoreMismatch` (wrapping
+`ErrClassificationControlViolation` via double-`%w`, so the
+`CLASSIFICATION_CONTROL_VIOLATION` family still resolves while
+`details.reason` distinguishes it from `kms_unavailable`). The store learns
+the writing tenant's tier from the tenant_id it already carries on the URI:
+`providerflags.Resolve` derives the guard from the existing
+`SSEKeyResolver` (`tierGuardFromSSE` — `requireKey=true` is the T4 signal)
+and installs it on the memory/filesystem backends; the cloud backends keep
+their own `requireKey`-based fail-closed path (F-12.9.10). The guard passes
+through on a tenant-lookup error (only a confirmed T4 fires) so the
+dev/minimal path is unaffected. The upload handler maps the error to
+`422 CLASSIFICATION_CONTROL_VIOLATION` with `details.reason` (`tier_store_mismatch`
+vs `kms_unavailable`); `gatewaymetrics.IncCheckpointTierStoreMismatch` emits
+`lenny_checkpoint_storage_failure_total{reason="tier_store_mismatch"}`, wired
+through a `tierMismatchSink` assertion in `cmd/lenny-gateway`. Tier-1
+coverage: blobstore guard (Memory + Filesystem, accept/reject/nil-noop/
+lookup-error-passthrough/Copy), providerflags wiring (memory + filesystem),
+and the upload-path 422+reason mapping. Resolved by this batch.
 
 ### - [x] F-12.9.7 — 9-06 — Gateway policy engine does not validate tenant classification at session creation [High] — CLOSED
 - **Resolution:** New `policy.ValidateTenantClassification` (`pkg/gateway/policy/classification.go`) returns a `ClassificationError` for a tenant whose `workspaceTier` is not a recognized §12.9 tier. The session-creation path calls it through `sessionserver.requireTenantClassification` (`pkg/gateway/sessionserver/quota.go`), wired into `handleCreateAndStart` ahead of the quota and interceptor chain: a misconfigured tier rejects the create with 422 `CLASSIFICATION_CONTROL_VIOLATION` carrying `details.reason = invalid_workspace_tier`, instead of deferring the violation to a runtime write the happy path may never reach. Unknown/unwired tenants admit (the §10.2 tenant-claim path governs them). (commit `d625cbe2`)

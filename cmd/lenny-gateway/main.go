@@ -2623,6 +2623,17 @@ func main() {
 			gwMetrics.IncArtifactUploadError(tenantID, errorType)
 		})
 	}
+	// §12.9 line 1048 — the in-memory / filesystem backends reject a T4
+	// tenant's write (they cannot envelope-encrypt at rest). Wire the
+	// rejection to the tier_store_mismatch reason of the same
+	// checkpoint-storage-failure counter so the misconfiguration is
+	// visible to operators.
+	if sink, ok := objectStore.(tierMismatchSink); ok {
+		sink.SetOnTierStoreMismatch(func(tenantID string) {
+			gwMetrics.IncCheckpointTierStoreMismatch()
+			log.Printf("lenny-gateway: §12.9 line 1048 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s workspaceTier requires envelope encryption but the artifact store is not configured for it (tier_store_mismatch)", tenantID)
+		})
+	}
 
 	// §12.8 line 735 / §12.5 ll. 297 — the durable artifact_store
 	// catalog reader and the startup T4 KMS probe are MinIO-specific
@@ -7772,6 +7783,18 @@ type sessionArtifactDeleter interface {
 type artifactMetricsSink interface {
 	SetOnArtifactUploadError(func(tenantID, errorType string))
 	SetOnKMSUnavailable(func(tenantID string))
+}
+
+// tierMismatchSink is implemented by the non-envelope-capable artifact
+// stores (the in-memory and §17.4 local-filesystem backends) that reject
+// a T4 tenant's write under the §12.9 line 1048 storage-boundary tier
+// check. The cloud backends do not implement it: they enforce the T4
+// contract through their own SSE-KMS resolver and surface
+// kms_unavailable instead.
+//
+// spec: §12.9 line 1048.
+type tierMismatchSink interface {
+	SetOnTierStoreMismatch(func(tenantID string))
 }
 
 // objectStoreBackendName returns the human-readable backend name for

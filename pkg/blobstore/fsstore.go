@@ -43,7 +43,25 @@ type FilesystemStore struct {
 	root  string
 	mu    sync.RWMutex
 	clock func() time.Time
+
+	// tierGuard / onTierMismatch enforce the §12.9 line 1048
+	// storage-boundary classification check: the local-filesystem store
+	// writes plaintext bytes, so a T4 tenant's write is rejected with
+	// CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch.
+	tierGuard      TierGuardFunc
+	onTierMismatch func(tenantID string)
 }
+
+// SetTierGuard installs the §12.9 line 1048 storage-boundary tier check.
+// The §17.4 local-filesystem store persists plaintext, so a T4 tenant is
+// rejected at Put / Copy rather than written in the clear.
+//
+// spec: §12.9 line 1048.
+func (s *FilesystemStore) SetTierGuard(g TierGuardFunc) { s.tierGuard = g }
+
+// SetOnTierStoreMismatch registers the per-rejection hook (wired by the
+// gateway to the §12.5 checkpoint-storage-failure counter).
+func (s *FilesystemStore) SetOnTierStoreMismatch(fn func(tenantID string)) { s.onTierMismatch = fn }
 
 // fsMeta is the persisted sidecar metadata for one blob.
 type fsMeta struct {
@@ -173,6 +191,11 @@ func (m fsMeta) info() BlobInfo {
 // tombstoned) returns ErrConflict, matching the §4.5 immutability
 // guarantee MemoryStore enforces.
 func (s *FilesystemStore) Put(u URI, mimeType string, data io.Reader) (string, error) {
+	// spec: §12.9 line 1048 — the filesystem store cannot envelope-encrypt
+	// at rest; reject a T4 write before touching the body.
+	if err := checkTierStoreMismatch(s.tierGuard, "filesystem", u.TenantID, s.onTierMismatch); err != nil {
+		return "", err
+	}
 	body, err := io.ReadAll(data)
 	if err != nil {
 		return "", err
@@ -363,6 +386,10 @@ func (s *FilesystemStore) StatIncludingTombstones(u URI) (BlobInfo, BlobState, e
 func (s *FilesystemStore) Copy(src, dst URI) error {
 	if src.TenantID != dst.TenantID {
 		return ErrCrossTenant
+	}
+	// spec: §12.9 line 1048 — the derive byte-copy is a write to dst.
+	if err := checkTierStoreMismatch(s.tierGuard, "filesystem", dst.TenantID, s.onTierMismatch); err != nil {
+		return err
 	}
 	srcDir, err := s.blobDir(src)
 	if err != nil {

@@ -3208,6 +3208,23 @@ func (m *Metrics) IncCheckpointKMSUnavailable() {
 	m.checkpointStorageFailure.WithLabelValues("", "", "", "kms_unavailable").Inc()
 }
 
+// IncCheckpointTierStoreMismatch increments the §12.9 line 1048
+// `lenny_checkpoint_storage_failure_total{reason="tier_store_mismatch"}`
+// counter when a non-envelope-capable artifact store (the in-memory or
+// §17.4 local-filesystem backend) rejects a T4 tenant's write because it
+// cannot envelope-encrypt at rest. The store fires its
+// SetOnTierStoreMismatch callback; the gateway main wires it here so the
+// rejection drives the same CheckpointStorageUnavailable alert family as
+// the KMS-unavailable case, with the reason label distinguishing them.
+//
+// spec: §12.9 line 1048; §15.1 line 1078.
+func (m *Metrics) IncCheckpointTierStoreMismatch() {
+	if m == nil {
+		return
+	}
+	m.checkpointStorageFailure.WithLabelValues("", "", "", "tier_store_mismatch").Inc()
+}
+
 // AddGCTombstonesPruned bumps the §12.5 ll. 341
 // `lenny_gc_tombstones_pruned_total{table}` counter by n. The §12.5
 // hard-prune sweep emits the count of rows it removed for each table it

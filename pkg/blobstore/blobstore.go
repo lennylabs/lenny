@@ -78,7 +78,63 @@ var (
 	//
 	// spec: §12.5 line 303; §12.9 line 1046.
 	ErrClassificationControlViolation = errors.New("blobstore: T4 tenant KMS key unavailable; CLASSIFICATION_CONTROL_VIOLATION")
+
+	// ErrTierStoreMismatch is the §12.9 line 1048
+	// `details.reason="tier_store_mismatch"` sentinel: a tenant whose
+	// `workspaceTier` requires envelope encryption at rest (T4) wrote to
+	// a backend that is not configured for it (the in-memory store or the
+	// §17.4 local-filesystem store). The spec's worked example —
+	// "writing T4 data to a store not configured for envelope encryption"
+	// — is exactly this case. It is distinct from
+	// ErrClassificationControlViolation's KMS-unavailable case, where the
+	// store IS envelope-capable but the per-tenant key is unreachable.
+	// The error wraps ErrClassificationControlViolation so the §15.1
+	// mapping still resolves the CLASSIFICATION_CONTROL_VIOLATION family
+	// while `details.reason` distinguishes the two.
+	//
+	// spec: §12.9 line 1048; §15.1 line 1078.
+	ErrTierStoreMismatch = errors.New("blobstore: tier_store_mismatch — store not configured for envelope encryption")
 )
+
+// TierGuardFunc reports whether the writing tenant's §12.9
+// data-classification tier requires envelope encryption at rest (true
+// for T4). A non-envelope-capable backend (the in-memory store, the
+// §17.4 local-filesystem store) calls it on every write so a T4 tenant's
+// Put / Copy is rejected at the storage boundary with
+// CLASSIFICATION_CONTROL_VIOLATION rather than silently persisting
+// restricted data without envelope encryption. An envelope-capable
+// backend (MinIO, S3, GCS, Azure with an SSE-KMS resolver) enforces the
+// T4 contract through its own key resolver and does not install a guard.
+//
+// spec: §12.9 line 1048 — "Each store method receives the applicable
+// tier as context ... Tier mismatches ... are rejected at write time".
+type TierGuardFunc func(tenantID string) (requireEnvelope bool, err error)
+
+// checkTierStoreMismatch returns the §12.9 line 1048
+// CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch error when guard
+// reports the writing tenant requires envelope encryption. A nil guard
+// (the production envelope-capable path, or a dev deployment with no
+// tenant tier source) is a no-op. A guard lookup error is treated as
+// indeterminate and passes through: the guard only fires on a confirmed
+// T4 tenant so a flaky tenant-store lookup cannot wedge the in-memory or
+// filesystem dev path, and the envelope-capable backends carry their own
+// fail-closed posture independent of this guard.
+//
+// spec: §12.9 line 1048.
+func checkTierStoreMismatch(guard TierGuardFunc, backend, tenantID string, onMismatch func(string)) error {
+	if guard == nil {
+		return nil
+	}
+	requireEnvelope, err := guard(tenantID)
+	if err != nil || !requireEnvelope {
+		return nil
+	}
+	if onMismatch != nil {
+		onMismatch(tenantID)
+	}
+	return fmt.Errorf("%w: tenant=%s: %s artifact store is not configured for envelope encryption (T4 requires it): %w",
+		ErrClassificationControlViolation, tenantID, backend, ErrTierStoreMismatch)
+}
 
 // ObjectType is the §12.5 line 295 / §4.5 line 309 object-class tag
 // embedded into every blob URI and into every object key (path
@@ -416,7 +472,30 @@ type MemoryStore struct {
 	mu    sync.RWMutex
 	blobs map[string]memBlob
 	clock func() time.Time
+
+	// tierGuard, when set, enforces the §12.9 line 1048 storage-boundary
+	// classification check: a T4 tenant's write is rejected because the
+	// in-memory store cannot envelope-encrypt at rest. onTierMismatch is
+	// the optional metrics/log hook the gateway wires to the §12.5
+	// `lenny_checkpoint_storage_failure_total{reason="tier_store_mismatch"}`
+	// counter.
+	tierGuard      TierGuardFunc
+	onTierMismatch func(tenantID string)
 }
+
+// SetTierGuard installs the §12.9 line 1048 storage-boundary tier check.
+// The in-memory store is not envelope-capable, so a tenant whose
+// `workspaceTier` requires envelope encryption (T4) is rejected at Put /
+// Copy with CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch
+// instead of silently persisting restricted data in the clear.
+//
+// spec: §12.9 line 1048.
+func (s *MemoryStore) SetTierGuard(g TierGuardFunc) { s.tierGuard = g }
+
+// SetOnTierStoreMismatch registers the hook fired on every
+// tier_store_mismatch rejection (the gateway wires it to the §12.5
+// checkpoint-storage-failure counter).
+func (s *MemoryStore) SetOnTierStoreMismatch(fn func(tenantID string)) { s.onTierMismatch = fn }
 
 type memBlob struct {
 	info BlobInfo
@@ -452,6 +531,11 @@ func (s *MemoryStore) key(u URI) string {
 
 // Put implements Store.
 func (s *MemoryStore) Put(u URI, mimeType string, data io.Reader) (string, error) {
+	// spec: §12.9 line 1048 — reject a T4 write before reading the body
+	// because the in-memory store cannot envelope-encrypt at rest.
+	if err := checkTierStoreMismatch(s.tierGuard, "in-memory", u.TenantID, s.onTierMismatch); err != nil {
+		return "", err
+	}
 	body, err := io.ReadAll(data)
 	if err != nil {
 		return "", err
@@ -691,6 +775,11 @@ func (s *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, e
 func (s *MemoryStore) Copy(src, dst URI) error {
 	if src.TenantID != dst.TenantID {
 		return ErrCrossTenant
+	}
+	// spec: §12.9 line 1048 — the derive byte-copy is a write; a T4
+	// destination is rejected for the same reason a Put is.
+	if err := checkTierStoreMismatch(s.tierGuard, "in-memory", dst.TenantID, s.onTierMismatch); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

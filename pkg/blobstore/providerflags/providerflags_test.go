@@ -4,6 +4,7 @@ package providerflags
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -142,5 +143,49 @@ func TestURIResolverForwardsTenantID_spec_12_5_297(t *testing.T) {
 func TestURIResolverNilIsNil(t *testing.T) {
 	if uriResolver(nil) != nil {
 		t.Fatal("uriResolver(nil) must return nil")
+	}
+}
+
+// spec: §12.9 line 1048 — the in-memory backend resolved with an SSE
+// resolver installs a tier guard, so a confirmed-T4 tenant's write is
+// rejected with CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch
+// rather than persisted in the clear.
+func TestResolveMemoryInstallsTierGuard_spec_12_9_1048(t *testing.T) {
+	s, err := Resolve(context.Background(), Options{
+		Provider: ProviderMemory,
+		SSEKeyResolver: func(tenantID string) (string, bool, error) {
+			return "tenant:" + tenantID, tenantID == "restricted", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve(memory): %v", err)
+	}
+	u := blobstore.URI{TenantID: "restricted", SessionID: "s", PartID: "p"}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrTierStoreMismatch) {
+		t.Fatalf("T4 Put on memory store = %v, want ErrTierStoreMismatch", err)
+	}
+	// A non-T4 tenant writes normally through the same guarded store.
+	ok := blobstore.URI{TenantID: "acme", SessionID: "s", PartID: "p"}
+	if _, err := s.Put(ok, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("non-T4 Put on memory store: %v", err)
+	}
+}
+
+// spec: §12.9 line 1048 — the filesystem backend likewise installs the
+// tier guard from the SSE resolver.
+func TestResolveFilesystemInstallsTierGuard_spec_12_9_1048(t *testing.T) {
+	s, err := Resolve(context.Background(), Options{
+		Provider:       ProviderFilesystem,
+		FilesystemRoot: t.TempDir(),
+		SSEKeyResolver: func(tenantID string) (string, bool, error) {
+			return "tenant:" + tenantID, tenantID == "restricted", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve(filesystem): %v", err)
+	}
+	u := blobstore.URI{TenantID: "restricted", SessionID: "s", PartID: "p"}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrTierStoreMismatch) {
+		t.Fatalf("T4 Put on filesystem store = %v, want ErrTierStoreMismatch", err)
 	}
 }
