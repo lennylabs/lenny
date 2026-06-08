@@ -28,6 +28,46 @@ func decodeErrorBody(t *testing.T, body []byte) map[string]any {
 	return env.Error
 }
 
+// spec: §4.9 line 1476 — a runtime↔pool proxy-dialect mismatch surfaces
+// as 422 INVALID_POOL_PROXY_DIALECT (PERMANENT, not retryable) carrying
+// the offending pool and dialect in details and the verbatim spec
+// message. The errors.As check sees through %w wrapping.
+func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
+	s := New(memstore.New(), Options{})
+	base := &PoolProxyDialectError{Pool: "claude-prod", Dialect: "openai"}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"direct", base},
+		{"wrapped", fmt.Errorf("resolve credential pools: %w", base)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, tc.err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
+			if w.Code != 422 {
+				t.Errorf("status = %d, want 422", w.Code)
+			}
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != "INVALID_POOL_PROXY_DIALECT" {
+				t.Errorf("code = %v, want INVALID_POOL_PROXY_DIALECT", body["code"])
+			}
+			if body["category"] != "PERMANENT" || body["retryable"] != false {
+				t.Errorf("category/retryable = %v/%v, want PERMANENT/false", body["category"], body["retryable"])
+			}
+			want := "pool proxyDialect openai is not declared in runtime credentialCapabilities.proxyDialect"
+			if body["message"] != want {
+				t.Errorf("message = %v, want %q", body["message"], want)
+			}
+			details, _ := body["details"].(map[string]any)
+			if details["pool"] != "claude-prod" || details["proxyDialect"] != "openai" {
+				t.Errorf("details = %v, want pool=claude-prod proxyDialect=openai", details)
+			}
+		})
+	}
+}
+
 // spec: §5.2 line 519 — pod and slot exhaustion both map to
 // WARM_POOL_EXHAUSTED, with details.reason distinguishing the cause:
 // an empty pool is "no_idle_pods" and pods-exist-but-full is

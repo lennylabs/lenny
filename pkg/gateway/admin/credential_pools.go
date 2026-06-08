@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
 // CredentialPoolPayload is the §4.9 / §15.1 admin CredentialPool wire
@@ -143,6 +144,57 @@ func (r *Router) validateCacheScope(w http.ResponseWriter, req *http.Request, te
 		writeError(w, http.StatusBadRequest, "COMPLIANCE_CROSS_USER_CACHE_PROHIBITED",
 			"cacheScope tenant is prohibited for a tenant with a regulated complianceProfile",
 			map[string]any{"complianceProfile": row.ComplianceProfile})
+		return false
+	}
+	return true
+}
+
+// validatePoolProxyDialect enforces the §4.9 line 1476 proxy-dialect
+// admission boundary at pool registration/update. A credential pool
+// carries no static runtime binding, so "the Runtime's
+// credentialCapabilities.proxyDialect set" is resolved as the set of
+// agent runtimes whose supportedProviders includes the pool's provider.
+// The pool is rejected with 422 INVALID_POOL_PROXY_DIALECT only when at
+// least one such runtime exists and none of them declares the pool's
+// dialect (a pool no runtime can speak). When no agent runtime
+// references the provider yet, the check is deferred to the
+// session-creation runtime↔pool join (sessionserver.resolveCredentialPools),
+// which enforces the same boundary per-runtime before a pod is claimed.
+// A direct-mode pool (empty proxyDialect) and an unwired runtime
+// registry skip the check. It reports whether the request may proceed;
+// on rejection it has already written the response.
+func (r *Router) validatePoolProxyDialect(w http.ResponseWriter, req *http.Request, provider, dialect string) bool {
+	if dialect == "" || provider == "" || r.runtimes == nil {
+		return true
+	}
+	rts, err := r.runtimes.List(req.Context(), runtimestore.ListFilter{Type: runtimestore.TypeAgent})
+	if err != nil {
+		// A registry read failure must not block pool admin; the
+		// session-creation join still enforces the boundary fail-closed.
+		return true
+	}
+	var supports, declares bool
+	for _, rt := range rts {
+		matched := false
+		for _, p := range rt.SupportedProviders {
+			if p == provider {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		supports = true
+		if rt.CredentialCapabilities.AllowsProxyDialect(dialect) {
+			declares = true
+			break
+		}
+	}
+	if supports && !declares {
+		writeError(w, http.StatusUnprocessableEntity, "INVALID_POOL_PROXY_DIALECT",
+			fmt.Sprintf("pool proxyDialect %s is not declared in runtime credentialCapabilities.proxyDialect", dialect),
+			map[string]any{"provider": provider, "proxyDialect": dialect})
 		return false
 	}
 	return true
@@ -420,6 +472,11 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
 		return
 	}
+	// spec: §4.9 line 1476 — reject a proxy-mode pool whose proxyDialect
+	// no agent runtime serving its provider can speak.
+	if !r.validatePoolProxyDialect(w, req, body.Provider, body.ProxyDialect) {
+		return
+	}
 	// §4.9 admin-time RBAC live-probe over every referenced Secret. A
 	// new pool introduces all of its secretRefs.
 	if !r.probeSecretRefs(w, req, secretRefsOf(body.Credentials)) {
@@ -608,6 +665,13 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 		return
 	}
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
+		return
+	}
+	// spec: §4.9 line 1476 — PUT is a full replace, so the body carries
+	// the effective provider/proxyDialect; reject when the updated
+	// proxy-mode pool declares a dialect no agent runtime serving its
+	// provider can speak.
+	if !r.validatePoolProxyDialect(w, req, body.Provider, body.ProxyDialect) {
 		return
 	}
 	// Resolve the current pool once: the §15.1 If-Match precondition reads

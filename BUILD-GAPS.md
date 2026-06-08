@@ -3080,7 +3080,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.18 — `proxyDialect` admission control mismatch validation not enforced [Medium] — OPEN
+### - [x] F-4.9.18 — `proxyDialect` admission control mismatch validation not enforced [Medium] — CLOSED
 
 **Severity:** Medium (spec MUSTs `422 INVALID_POOL_PROXY_DIALECT` when the pool's `proxyDialect` is not in the Runtime's `credentialCapabilities.proxyDialect`).
 
@@ -3089,6 +3089,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 **Evidence:** `pkg/gateway/admin/credential_pools.go` admission path validates `assignmentStrategy` only (lines 112-117, 208-213). No `proxyDialect` validation. The `CredentialPool` struct (`pkg/gateway/credentialpoolstore`) has no `ProxyDialect`, `DeliveryMode`, or `ProxyEndpoint` field; the spec example at line 1503-1511 carries these.
 
 **Reopened 2026-06-07 — prior deferral:** The two halves of the data model this validation joins now exist — the pool's `proxyDialect` (F-4.9.19, commit e5da86ba) and the runtime's `credentialCapabilities.proxyDialect` (F-5.1.3, commit ad0443b3). The remaining work is the cross-validation itself, which is blocked on the pool→runtime binding being undefined in the current model: a `CredentialPool` carries no runtime reference, and the runtime→pool binding (`defaultPoolConfig`, F-5.1.8) is itself still unmodeled. Without a defined join point, the spec's "the Runtime's credentialCapabilities.proxyDialect" cannot be resolved at pool admission. Pick this up once F-5.1.8 lands a binding, then enforce `422 INVALID_POOL_PROXY_DIALECT` at that join.
+
+**Resolution:** `defaultPoolConfig` (F-5.1.8) carries pool sizing, not a pool-name reference, so a credential pool still has no static runtime binding; the runtime and pool first meet concretely at session creation (the §4.9 provider-intersection in `sessionserver.resolveCredentialPools`). The boundary is now enforced at two points. (1) Session-creation join (the per-runtime guarantee): after the pre-claim pool assignment, any assigned proxy-mode pool whose `proxyDialect` the session runtime does not declare in `credentialCapabilities.proxyDialect` rejects the session with `422 INVALID_POOL_PROXY_DIALECT` (new `sessionserver.PoolProxyDialectError`, mapped in `writePodClaimError`, verbatim spec message) before a pod is claimed; a direct-mode pool (empty `proxyDialect`) is skipped, and a runtime that declares no `credentialCapabilities` speaks no proxy dialect so any proxy pool is rejected. (2) Pool admission (the spec's "pool registration or update" location, best-effort given the model): the admin `POST`/`PUT /v1/admin/credential-pools` handlers run `validatePoolProxyDialect`, which resolves "the Runtime" as the set of `type:agent` runtimes whose `supportedProviders` includes the pool's provider and rejects with `422 INVALID_POOL_PROXY_DIALECT` when at least one such runtime exists but none declares the pool's dialect (a pool no runtime can speak); when no agent runtime references the provider yet the check defers to the session-creation join. `INVALID_POOL_PROXY_DIALECT` added to the `errorclassify` table (`PERMANENT`, not retryable). Resolved by this batch.
 
 ---
 

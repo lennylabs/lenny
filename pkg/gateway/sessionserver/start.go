@@ -71,7 +71,17 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var setupFail *podsession.SetupCommandFailure
 	var slotFailed *podsession.SlotFailedError
 	var demotionUnsupported *podsession.SDKDemotionNotSupported
+	var proxyDialect *PoolProxyDialectError
 	switch {
+	case errors.As(err, &proxyDialect):
+		// spec: §4.9 line 1476 — an assigned proxy-mode pool declares a
+		// wire dialect the session runtime does not speak. Permanent for
+		// this (runtime, pool) pairing: a retry against the same pool from
+		// the same runtime fails identically, so the envelope is the
+		// dedicated 422 rather than the retryable atomic-unit fallback.
+		s.writeError(w, http.StatusUnprocessableEntity, "INVALID_POOL_PROXY_DIALECT",
+			proxyDialect.Error(),
+			map[string]any{"pool": proxyDialect.Pool, "proxyDialect": proxyDialect.Dialect})
 	case errors.As(err, &demotionUnsupported):
 		// spec: §6.1 line 40 — a preConnect pod whose adapter cannot
 		// DemoteSDK fails the session with the dedicated permanent code
@@ -1024,7 +1034,44 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	if err != nil {
 		return nil, err
 	}
+
+	// spec: §4.9 line 1476 — the proxy-dialect admission boundary at the
+	// runtime↔pool join. A proxy-mode pool declares the wire dialect its
+	// lease exposes (`proxyDialect`); the agent pod's SDK can only speak a
+	// dialect the runtime declares in credentialCapabilities.proxyDialect.
+	// A credential pool carries no static runtime binding, so the runtime
+	// and pool first meet concretely here, at the session's pre-claim
+	// provider intersection. Reject the session with
+	// INVALID_POOL_PROXY_DIALECT before a pod is claimed when an assigned
+	// proxy-mode pool declares a dialect the session runtime does not
+	// speak (a direct-mode pool declares no dialect and is skipped).
+	for _, poolName := range res.PoolAssignments {
+		p, ok := byName[poolName]
+		if !ok || p.ProxyDialect == "" {
+			continue
+		}
+		if !rt.CredentialCapabilities.AllowsProxyDialect(p.ProxyDialect) {
+			return nil, &PoolProxyDialectError{Pool: poolName, Dialect: p.ProxyDialect}
+		}
+	}
 	return res.PoolAssignments, nil
+}
+
+// PoolProxyDialectError is the §4.9 line 1476 runtime↔pool proxy-dialect
+// mismatch surfaced at session-creation credential resolution: an
+// assigned proxy-mode pool declares a wire dialect the session runtime
+// does not declare in credentialCapabilities.proxyDialect.
+// writePodClaimError maps it to 422 INVALID_POOL_PROXY_DIALECT carrying
+// the spec-verbatim message.
+type PoolProxyDialectError struct {
+	Pool    string
+	Dialect string
+}
+
+func (e *PoolProxyDialectError) Error() string {
+	return fmt.Sprintf(
+		"pool proxyDialect %s is not declared in runtime credentialCapabilities.proxyDialect",
+		e.Dialect)
 }
 
 // poolDescriptor maps a §4.9 credential pool to the router's pool
