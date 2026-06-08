@@ -78,6 +78,7 @@ type EventStore interface {
 // cross-tenant drain visits every audit shard.
 type Router interface {
 	AuditShard(ctx context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error)
+	AuditReadShard(ctx context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error)
 	AllAuditShards(ctx context.Context) ([]storerouter.ShardHandle, error)
 }
 
@@ -171,10 +172,18 @@ func New(router Router, opts ...Option) *Store {
 }
 
 // shard resolves the audit Postgres pool for tenantID through the
-// §12.3 R-03 router. Reads (Rows, Get, Verify) and the §12.3 outbox
-// scatter reads use it.
+// §12.3 R-03 router. The §12.3 outbox scatter reads and the writeShard
+// fallback use it; it always resolves to the audit write pool.
 func (s *Store) shard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
 	return s.router.AuditShard(ctx, storerouter.TenantID(tenantID))
+}
+
+// readShard resolves the audit pool for read-heavy queries (Rows, Get,
+// Verify). When a read replica is configured it returns the replica so
+// the §12.3 line 146 audit-read class lands off the primary; otherwise
+// it resolves to the same pool as shard. spec: §12.3 line 146.
+func (s *Store) readShard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+	return s.router.AuditReadShard(ctx, storerouter.TenantID(tenantID))
 }
 
 // writeShard resolves the pool for the synchronous audit write path.
@@ -271,7 +280,7 @@ func (s *Store) appendOnPool(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 
 // Rows returns the tenant's audit rows in sequence order.
 func (s *Store) Rows(ctx context.Context, tenantID string) ([]audit.Row, error) {
-	pool, err := s.shard(ctx, tenantID)
+	pool, err := s.readShard(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +321,7 @@ func (s *Store) Verify(ctx context.Context, tenantID string) (audit.VerifyResult
 
 // Get returns the row at seq for the tenant, or ErrNotFound.
 func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row, error) {
-	pool, err := s.shard(ctx, tenantID)
+	pool, err := s.readShard(ctx, tenantID)
 	if err != nil {
 		return audit.Row{}, err
 	}

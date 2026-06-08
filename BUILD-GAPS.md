@@ -19705,7 +19705,7 @@ batchingEnabled, siemConfigured)` holds (production + `audit.batchingEnabled`
 + no `audit.siem.endpoint`). The batch buffer it warns about is wired by
 **F-12.3.14**.
 
-### - [ ] F-12.3.16 — Read replica routing is unimplemented (§12.3 line 146) [Medium] — OPEN
+### - [x] F-12.3.16 — Read replica routing is unimplemented (§12.3 line 146) [Medium] — CLOSED
 
 "The gateway should use separate connection strings for read and write
 traffic. Read-heavy queries (session status, task tree, audit reads, usage
@@ -19730,6 +19730,30 @@ read-path vertical rather than part of this §12.3 audit-pipeline batch;
 wiring only a subset (e.g. audit reads) would leave the SHOULD half-met
 and misrepresent the split. Deferred as a standalone read-replica change.
 Not blocked on any finding closed in this batch.
+
+- **Resolution:** Built the read/write split as its own store-layer
+  vertical and routed every read-heavy class §12.3 line 146 names. The
+  gateway gains `--postgres-read-dsn` / `LENNY_PG_READ_DSN` (requires
+  `--postgres-dsn`); when set it opens and schema-verifies a read-replica
+  pool (`readPool`) that every write path ignores. The four named read
+  classes route to it: **audit reads** via a new `AuditReadShard` on the
+  `StoreRouter` (and the `auditstore` `readShard()` used by `Rows`/`Get`/
+  `Verify`); **session status** via a `WithReadPool` option on
+  `sessionstore/pgstore` (`Get`/`GetByID`/`List`); **task tree** via the
+  same option (`sessionstore` `ListByRoot`) plus a `WithReadPool` on
+  `treearchive/pgstore` (`Replay`/`Get`/`GetByNode`); and **usage
+  reports** via `WithReadPool` on `usagestore/pgstore`
+  (`Aggregate`/`tenantIDs`). The admission-critical reads (`CountActive*`,
+  slot rehydration, drain stats) deliberately stay on the primary so a
+  replication-lag window cannot relax a quota gate. With no read DSN every
+  store's read pool falls back to the primary, so a single-instance
+  deployment is unchanged. The Helm `postgres.readDsn` value renders the
+  `read-postgres-dsn` Secret key and the gateway reads `LENNY_PG_READ_DSN`
+  from it (closes F-17.9.13 in the same batch). Tier-1 tests cover the
+  router routing decision (replica/primary/separate-instance/empty-tenant)
+  and the three stores' read-pool wiring; helm-unittest covers the Secret
+  key and the deployment env var (present-when-set / absent-when-unset).
+  Resolved by this batch.
 
 ### - [x] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — CLOSED
 
@@ -36936,7 +36960,7 @@ endpoints, the single Redis URL becomes the bottleneck.
 
 ---
 
-### - [ ] F-17.9.13 — `postgres.readDsn` (read-replica reader endpoint) is not a Helm value [Medium] — OPEN
+### - [x] F-17.9.13 — `postgres.readDsn` (read-replica reader endpoint) is not a Helm value [Medium] — CLOSED
 
 **Spec:** §17.9.3 (line 1400): "`readDsn: 'postgres://...'  # Read
 replica endpoint (provider reader endpoint)"
@@ -36954,6 +36978,16 @@ operator-facing knob is missing either way.
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:259-284`
 
 - **Reopened 2026-06-07 — prior deferral:** The gateway has no read/write-split store layer. It constructs a single `*pgxpool.Pool` from `--postgres-dsn` (plus the optional `--postgres-billing-audit-dsn` for the §12.3 R-03 split), and the `storerouter.StoreRouter` interface exposes only write-or-either shard pools — there is no `ReadShard`/read-pool seam, and read-heavy callers (session status, task tree, audit reads, usage reports) read through the primary. §12.3 line 146 is a SHOULD. Adding only a `postgres.readDsn` Helm value + gateway env would be a hollow knob (rule O): the gateway would open a pool nothing routes to. Read-replica routing is a dedicated store-layer effort (thread a read pool through the read-only query paths) and is deferred to that batch; the Helm value lands with it.
+
+- **Resolution:** Closed by F-12.3.16 (same batch). The dedicated
+  store-layer read/write split now exists: `postgres.readDsn` renders the
+  `read-postgres-dsn` key into the `lenny-datastore-conn` Secret and the
+  gateway reads it as `LENNY_PG_READ_DSN`, opening a read-replica pool that
+  the audit-read, session-status, task-tree, and usage-report paths route
+  to. The knob is no longer hollow — it is wired through to the actual
+  read routing rather than opening a pool nothing uses. helm-unittest
+  asserts the Secret key and the deployment env var render when
+  `postgres.readDsn` is set and are absent otherwise.
 
 ---
 

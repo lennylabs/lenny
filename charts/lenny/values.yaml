@@ -1273,6 +1273,17 @@ postgres:
   # value into the lenny-datastore-conn Secret and the gateway reads
   # LENNY_PG_BILLING_AUDIT_DSN from it. F-12.3.5.
   billingAuditDSN: ""
+  # §12.3 line 146 readDsn: optional read-replica reader endpoint
+  # (provider reader endpoint). When set, the gateway routes the
+  # read-heavy query classes the spec names — session status, task tree,
+  # audit reads, and usage reports — to this replica while every write
+  # stays on the primary `dsn`. The replica serves the same migrations/
+  # schema (it replicates the primary). Empty (the default) keeps reads
+  # on the primary, so a single primary serves reads and writes
+  # unchanged. When set, the chart renders the value into the
+  # lenny-datastore-conn Secret and the gateway reads LENNY_PG_READ_DSN
+  # from it. F-12.3.16 / F-17.9.13.
+  readDsn: ""
   # §12.3 line 123 writeCeilingIops: the measured sustained write-IOPS
   # ceiling for the primary Postgres instance. The gateway emits it
   # unlabelled on lenny_postgres_write_ceiling_iops at startup so the

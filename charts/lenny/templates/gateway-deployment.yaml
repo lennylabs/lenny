@@ -39,6 +39,7 @@ only the env vars it can satisfy.
 {{- $minio := .Values.minio -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- $hasBillingAuditPg := and $pg (hasKey $pg "billingAuditDSN") (ne $pg.billingAuditDSN "") -}}
+{{- $hasReadPg := and $pg (hasKey $pg "readDsn") (ne ($pg.readDsn | toString) "") -}}
 {{- /* §17.9.3 — the effective Redis topology gates which connection env
    block renders so two topologies cannot be wired at once. The helper
    validates an explicit redis.provider and derives one from the
@@ -1158,6 +1159,17 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: billing-audit-postgres-dsn
+            {{- end }}
+            {{- if $hasReadPg }}
+            # §12.3 line 146 LENNY_PG_READ_DSN: the read-replica reader
+            # endpoint. When set, read-heavy queries (session status, task
+            # tree, audit reads, usage reports) route here while all writes
+            # stay on the primary. F-12.3.16 / F-17.9.13.
+            - name: LENNY_PG_READ_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: read-postgres-dsn
             {{- end }}
             {{- if $hasRedis }}
             - name: LENNY_REDIS_URL

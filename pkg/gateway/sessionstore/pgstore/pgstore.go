@@ -32,11 +32,38 @@ import (
 // Store is the Postgres-backed SessionStore. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
+	// read is the §12.3 line 146 read-replica pool for the read-heavy
+	// query classes the spec names (session status, task tree). It is set
+	// to pool unless WithReadPool wires a separate reader endpoint, so a
+	// single primary serves reads and writes unchanged. Writes always use
+	// pool. spec: §12.3 line 146.
+	read *pgxpool.Pool
+}
+
+// Option configures a Store at construction time.
+type Option func(*Store)
+
+// WithReadPool routes the read-heavy session-status and task-tree
+// queries (§12.3 line 146) to a separate read-replica pool. A nil pool
+// keeps reads on the primary. spec: §12.3 line 146.
+func WithReadPool(read *pgxpool.Pool) Option {
+	return func(s *Store) {
+		if read != nil {
+			s.read = read
+		}
+	}
 }
 
 // New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// database that has the migrations/ schema applied. Without WithReadPool
+// the read-heavy query paths share pool.
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
+	s := &Store{pool: pool, read: pool}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 var _ sessionstore.Store = (*Store)(nil)
 
@@ -253,7 +280,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 // miss is indistinguishable from a missing row (§4.2 isolation).
 func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	var out sessionstore.Session
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	// spec: §12.3 line 146 — session-status read routes to the read replica.
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
 			id, tenantID)
@@ -280,7 +308,8 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 // line 163.
 func (s *Store) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
 	var out sessionstore.Session
-	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+	// spec: §12.3 line 146 — session-status read routes to the read replica.
+	err := pgtenant.InAllTenants(ctx, s.read, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid`, id)
 		sess, err := scanSession(row)
@@ -485,7 +514,8 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 	q += ` ORDER BY created_at DESC, id`
 
 	var out []sessionstore.Session
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	// spec: §12.3 line 146 — session-status listing routes to the read replica.
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
 			return err
@@ -521,7 +551,8 @@ func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) 
 		AND root_session_id = $2::uuid
 		ORDER BY created_at ASC, id`
 	var out []sessionstore.Session
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	// spec: §12.3 line 146 — task-tree projection routes to the read replica.
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, tenantID, rootSessionID)
 		if err != nil {
 			return err

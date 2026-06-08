@@ -2100,6 +2100,38 @@ tests:
             name: LENNY_PG_BILLING_AUDIT_DSN
           any: true
 
+  # spec: §12.3 line 146 — the gateway reads LENNY_PG_READ_DSN from the
+  # datastore Secret when a read replica is configured so read-heavy
+  # queries route off the primary. F-12.3.16 / F-17.9.13.
+  - it: wires LENNY_PG_READ_DSN from the datastore Secret when postgres.readDsn is set
+    set:
+      postgres.readDsn: "postgres://lenny:lenny@replica-db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_READ_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: read-postgres-dsn
+
+  - it: omits LENNY_PG_READ_DSN when only postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_READ_DSN
+          any: true
+
   - it: wires LENNY_REDIS_URL from the datastore Secret when redis.url is set
     set:
       redis.url: "redis://redis.svc:6379"

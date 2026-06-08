@@ -94,6 +94,14 @@ type StoreRouter interface {
 	// AuditShard returns the pool for audit log writes (R-03).
 	AuditShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
 
+	// AuditReadShard returns the pool for read-heavy audit queries
+	// (§12.3 line 146: "Read-heavy queries ... audit reads ... should be
+	// routed to read replicas"). When a read-replica DSN is configured
+	// (LENNY_PG_READ_DSN / postgres.readDsn) and the audit log lives on
+	// the primary, this resolves to the replica; otherwise it resolves to
+	// the same pool AuditShard returns. spec: §12.3 line 146.
+	AuditReadShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
+
 	// RedisShard returns the Redis client for a given concern.
 	RedisShard(ctx context.Context, tenantID TenantID, concern RedisConcern) (redis.UniversalClient, error)
 
@@ -169,6 +177,7 @@ var (
 // only billing/audit accessors.
 type SingleShardRouter struct {
 	pg             *pgxpool.Pool
+	readPG         *pgxpool.Pool
 	billingPG      *pgxpool.Pool
 	rdb            redis.UniversalClient
 	redisByConcern map[RedisConcern]redis.UniversalClient
@@ -203,6 +212,23 @@ type Config struct {
 	// When configured, billing and audit inserts are routed to this
 	// instance while all other writes continue to the primary."
 	BillingAuditPostgres *pgxpool.Pool
+	// ReadPostgres is the optional read-replica pool for the primary
+	// instance (the §12.3 line 146 LENNY_PG_READ_DSN / postgres.readDsn
+	// reader endpoint). When set, the read-only accessors that the spec
+	// names read-heavy (AuditReadShard here; the session-status, task-tree,
+	// and usage-report read paths in their own stores) resolve to it while
+	// every write path stays on Postgres. When nil every read resolves to
+	// the same pool as its write counterpart, so a single primary serves
+	// reads and writes unchanged. The replica is the primary's reader, so
+	// AuditReadShard uses it only when the audit log lives on the primary
+	// (BillingAuditPostgres nil); a separate billing/audit instance has no
+	// reader split in v1.
+	//
+	// spec: §12.3 line 146 — "The gateway should use separate connection
+	// strings for read and write traffic. Read-heavy queries (session
+	// status, task tree, audit reads, usage reports) should be routed to
+	// read replicas."
+	ReadPostgres *pgxpool.Pool
 	// Redis is the single Redis client every concern resolves to.
 	// Optional: when nil the router runs in Postgres-only mode and the
 	// Redis accessors (RedisShard, PlatformRedis) return
@@ -306,6 +332,7 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	}
 	return &SingleShardRouter{
 		pg:              cfg.Postgres,
+		readPG:          cfg.ReadPostgres,
 		billingPG:       cfg.BillingAuditPostgres,
 		rdb:             cfg.Redis,
 		redisByConcern:  cfg.RedisByConcern,
@@ -342,6 +369,17 @@ func (r *SingleShardRouter) SetScatterMetrics(m ScatterMetrics) { r.scatterMetri
 func (r *SingleShardRouter) billingAuditPool() *pgxpool.Pool {
 	if r.billingPG != nil {
 		return r.billingPG
+	}
+	return r.pg
+}
+
+// readPool returns the primary's read-replica pool when one is
+// configured (Config.ReadPostgres), otherwise the primary pool itself.
+// It is the §12.3 line 146 reader endpoint for read-heavy queries that
+// run against the primary instance. spec: §12.3 line 146.
+func (r *SingleShardRouter) readPool() *pgxpool.Pool {
+	if r.readPG != nil {
+		return r.readPG
 	}
 	return r.pg
 }
@@ -387,6 +425,22 @@ func (r *SingleShardRouter) AuditShard(_ context.Context, tenantID TenantID) (*p
 		return nil, ErrInvalidTenantID
 	}
 	return r.billingAuditPool(), nil
+}
+
+// AuditReadShard returns the pool for read-heavy audit queries, routed
+// by tenant_id. When the audit log lives on the primary (no separate
+// §12.3 LENNY_PG_BILLING_AUDIT_DSN instance) and a read replica is
+// configured, audit reads route to the replica; otherwise they resolve
+// to the same pool AuditShard returns (the separate billing/audit
+// instance has no reader split in v1). spec: §12.3 line 146.
+func (r *SingleShardRouter) AuditReadShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidTenantID
+	}
+	if r.billingPG != nil {
+		return r.billingPG, nil
+	}
+	return r.readPool(), nil
 }
 
 // RedisShard returns the Redis client for a concern. When the router

@@ -20,6 +20,9 @@ type fakeRouter struct {
 func (f *fakeRouter) AuditShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
 	return f.audit, nil
 }
+func (f *fakeRouter) AuditReadShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
+	return f.audit, nil
+}
 func (f *fakeRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle, error) {
 	return []storerouter.ShardHandle{{Pool: f.audit}}, nil
 }

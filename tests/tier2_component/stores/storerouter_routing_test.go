@@ -48,6 +48,11 @@ func (r *recordingRouter) AuditShard(_ context.Context, t storerouter.TenantID) 
 	return nil, errSentinel
 }
 
+func (r *recordingRouter) AuditReadShard(_ context.Context, t storerouter.TenantID) (*pgxpool.Pool, error) {
+	r.auditTenants = append(r.auditTenants, t)
+	return nil, errSentinel
+}
+
 func (r *recordingRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle, error) {
 	return nil, errSentinel
 }

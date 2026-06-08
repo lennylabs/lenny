@@ -26,11 +26,36 @@ import (
 // Store is the Postgres-backed usage accumulator. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
+	// read is the §12.3 line 146 read-replica pool for usage reports.
+	// It is set to pool unless WithReadPool wires a separate reader; the
+	// Record write always uses pool. spec: §12.3 line 146.
+	read *pgxpool.Pool
+}
+
+// Option configures a Store at construction time.
+type Option func(*Store)
+
+// WithReadPool routes the read-heavy usage-report aggregation (§12.3
+// line 146) to a separate read-replica pool. A nil pool keeps reads on
+// the primary. spec: §12.3 line 146.
+func WithReadPool(read *pgxpool.Pool) Option {
+	return func(s *Store) {
+		if read != nil {
+			s.read = read
+		}
+	}
 }
 
 // New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// database that has the migrations/ schema applied. Without WithReadPool
+// the usage-report read path shares pool.
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
+	s := &Store{pool: pool, read: pool}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 var _ usagestore.Store = (*Store)(nil)
 
@@ -73,7 +98,8 @@ func (s *Store) Aggregate(ctx context.Context, tenantFilter string) (usagestore.
 // matching userstore/pgstore and sessionstore/pgstore.
 func (s *Store) aggregateTenant(ctx context.Context, tenantID string) (usagestore.Report, error) {
 	var report usagestore.Report
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	// spec: §12.3 line 146 — usage-report aggregation routes to the read replica.
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		r, err := aggregateTx(ctx, tx, tenantID)
 		if err != nil {
 			return err
@@ -140,7 +166,8 @@ func (s *Store) aggregateAll(ctx context.Context) (usagestore.Report, error) {
 // tenantIDs returns every tenant id, ascending. The tenants table is
 // platform-global and unguarded, so the read needs no tenant context.
 func (s *Store) tenantIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id FROM tenants ORDER BY id`)
+	// spec: §12.3 line 146 — usage-report tenant enumeration routes to the read replica.
+	rows, err := s.read.Query(ctx, `SELECT id FROM tenants ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

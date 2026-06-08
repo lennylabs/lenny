@@ -158,6 +158,9 @@ type errAuditRouter struct{}
 func (errAuditRouter) AuditShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
 	return nil, errors.New("no audit shard in unit test")
 }
+func (errAuditRouter) AuditReadShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
+	return nil, errors.New("no audit read shard in unit test")
+}
 func (errAuditRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle, error) {
 	return nil, errors.New("no audit shards in unit test")
 }

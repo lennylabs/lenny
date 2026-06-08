@@ -362,6 +362,13 @@ func main() {
 	// be applied on the separate instance. F-12.3.5.
 	billingAuditDSN := flag.String("postgres-billing-audit-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DSN"),
 		"§12.3 line 103 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
+	// spec: §12.3 line 146 — read-replica reader endpoint. When set, the
+	// read-heavy query classes the spec names (session status, task tree,
+	// audit reads, usage reports) route to this replica while every write
+	// stays on the primary. Requires --postgres-dsn; the replica serves the
+	// same migrations/ schema. Empty keeps reads on the primary. F-12.3.16 / F-17.9.13.
+	readDSN := flag.String("postgres-read-dsn", os.Getenv("LENNY_PG_READ_DSN"),
+		"§12.3 line 146 read-replica reader endpoint. When set (requires --postgres-dsn), read-heavy queries (session status, task tree, audit reads, usage reports) route to this replica while all writes stay on the primary. Empty keeps reads on the primary. Override via LENNY_PG_READ_DSN.")
 	scatterMaxConcurrency := flag.Int("scatter-max-concurrency", envInt("LENNY_SCATTER_MAX_CONCURRENCY", 16),
 		"§12.6 line 556 storeRouter.maxScatterGatherConcurrency: at most this many shards are queried in parallel by a scatter-gather fan-out (list-sessions, GDPR erasure, tenant deletion). v1 is single-shard so the bound is inert; it becomes load-bearing under a multi-shard router. Override via LENNY_SCATTER_MAX_CONCURRENCY. F-12.6.18.")
 	scatterPerShardTimeoutSeconds := flag.Int("scatter-per-shard-timeout-seconds", envInt("LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS", 10),
@@ -1236,6 +1243,7 @@ func main() {
 		connectors       connectorstore.Store
 		billing          billingstore.Store
 		pgPool           *pgxpool.Pool
+		readPool         *pgxpool.Pool
 		billingAuditPool *pgxpool.Pool
 		auditSyncPool    *pgxpool.Pool
 	)
@@ -1260,6 +1268,25 @@ func main() {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
 		pgPool = pool
+		// spec: §12.3 line 146 — the optional read-replica reader endpoint.
+		// When --postgres-read-dsn is set, the read-heavy query classes the
+		// spec names route to this replica (the StoreRouter audit-read path
+		// and the session-status / task-tree / usage-report read paths in
+		// their stores); every write stays on the primary. The replica
+		// serves the same migrations/ schema, so the same startup schema
+		// verification applies. Empty keeps reads on the primary (readPool
+		// stays nil and every read shares pgPool). F-12.3.16 / F-17.9.13.
+		if *readDSN != "" {
+			rpool, err := pgxpool.New(context.Background(), *readDSN)
+			if err != nil {
+				log.Fatalf("lenny-gateway: read-replica postgres: %v", err)
+			}
+			if err := verifyPostgresSchema(context.Background(), rpool); err != nil {
+				log.Fatalf("lenny-gateway: read-replica postgres: %v", err)
+			}
+			readPool = rpool
+			log.Printf("lenny-gateway: §12.3 routing read-heavy queries (session status, task tree, audit reads, usage reports) to the LENNY_PG_READ_DSN read replica")
+		}
 		// §12.3 line 103 — when the separate billing/audit instance is
 		// configured, open and verify its pool here so the §12.3 R-03
 		// StoreRouter below can route billing/audit writes to it. The
@@ -1321,7 +1348,7 @@ func main() {
 			}
 			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
 		}
-		sessions = sessionpg.New(pool)
+		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool))
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
 		transcripts = transcriptpg.New(pool)
@@ -1636,6 +1663,7 @@ func main() {
 		// Coordination instance per the §12.4 table.
 		r, err := storerouter.NewSingleShardRouter(storerouter.Config{
 			Postgres:             pgPool,
+			ReadPostgres:         readPool,
 			BillingAuditPostgres: billingAuditPool,
 			Redis:                redisClient,
 			RedisByConcern:       concernRedis.ByConcern(),
@@ -2338,7 +2366,7 @@ func main() {
 	// which is durable for the lifetime of the single replica.
 	var treeArchive treearchive.Store = treearchive.NewMemory()
 	if pgPool != nil {
-		treeArchive = treearchive.NewCached(treearchivepg.New(pgPool, nil), *treeArchiveCacheEntries)
+		treeArchive = treearchive.NewCached(treearchivepg.New(pgPool, nil, treearchivepg.WithReadPool(readPool)), *treeArchiveCacheEntries)
 	}
 	// §8.2 lines 57, 127 / §12.4 lines 193, 213: the Redis-backed
 	// per-tree delegation budget counters gate every admission and are
@@ -3104,7 +3132,7 @@ func main() {
 
 	var usage usagestore.Store = usagestore.NewMemory()
 	if pgPool != nil {
-		usage = usagepg.New(pgPool)
+		usage = usagepg.New(pgPool, usagepg.WithReadPool(readPool))
 	}
 
 	// ----- §4.8 policy interceptor chain -----
