@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -173,6 +174,15 @@ type SlotRequest struct {
 	// this many slots simultaneously; the (MaxConcurrent+1)-th slot
 	// request claims a fresh warm pod instead.
 	MaxConcurrent int32
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// pod-uptime retirement cap. Before a slot is placed on a candidate
+	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
+	// Sandbox's creation timestamp) against this value; a pod over the
+	// cap is transitioned to draining (slot_active → draining when it
+	// still hosts slots, idle → draining otherwise) and skipped, so it
+	// accepts no new slots and is replaced from the warm pool. Zero
+	// leaves uptime retirement off.
+	MaxPodUptimeSeconds int64
 }
 
 // SlotResult reports the slot a concurrent-mode session was placed on.
@@ -224,6 +234,18 @@ type SlotClaimer struct {
 	// (labeled by pod and pool) and fires exactly once per pod per Redis
 	// restart (the replica that won the rehydration). Nil is a no-op.
 	OnRehydrate func(podID, pool string)
+	// Now supplies the wall clock for the §6.2 lines 166-167 pod-uptime
+	// retirement check. Nil defaults to time.Now.
+	Now func() time.Time
+}
+
+// now returns the claimer's clock, defaulting to time.Now. spec: §6.2
+// lines 166-167 — the pod-uptime retirement check needs a wall clock.
+func (c *SlotClaimer) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
 }
 
 // recordSlotConflict reports a §5.2 line 519 slot-contention reservation
@@ -239,6 +261,60 @@ func (c *SlotClaimer) recordSlotConflict(pool string) {
 func (c *SlotClaimer) recordRehydration(podID, pool string) {
 	if c.OnRehydrate != nil {
 		c.OnRehydrate(podID, pool)
+	}
+}
+
+// expiredByUptime reports whether sb has exceeded the pool's
+// concurrent-workspace maxPodUptimeSeconds and is therefore due for
+// §6.2 lines 166-167 retirement. The pod's wall-clock uptime is measured
+// from the Sandbox's creation timestamp, which the WarmPoolController
+// stamps when it provisions the warm pod; a zero cap disables the check.
+//
+// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
+	if req.MaxPodUptimeSeconds <= 0 {
+		return false
+	}
+	created := sb.CreationTimestamp.Time
+	if created.IsZero() {
+		return false
+	}
+	limit := time.Duration(req.MaxPodUptimeSeconds) * time.Second
+	return c.now().Sub(created) > limit
+}
+
+// drainExpiredPod transitions an over-uptime concurrent-workspace pod to
+// the §6.2 draining phase so the pod accepts no new slots (its existing
+// slots run to completion) and the WarmPoolController provisions a
+// replacement. The legal source phases are slot_active (§6.2 line 166)
+// and idle (§6.2 line 167); the transition is idempotent (a no-op when
+// the pod is already draining or gone) and conflict-retried so a status
+// race re-reads and re-applies.
+//
+// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+func (c *SlotClaimer) drainExpiredPod(ctx context.Context, sb *lennyv1.Sandbox) error {
+	const maxConflictRetries = 3
+	name := sb.Name
+	for attempt := 0; ; attempt++ {
+		var cur lennyv1.Sandbox
+		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, &cur); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("podclaim: get sandbox %s: %w", name, err)
+		}
+		if cur.Status.Phase == string(state.Draining) {
+			return nil
+		}
+		cur.Status.Phase = string(state.Draining)
+		err := c.Client.Status().Update(ctx, &cur)
+		if err == nil {
+			return nil
+		}
+		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
+			continue
+		}
+		return fmt.Errorf("podclaim: drain over-uptime sandbox %s: %w", name, err)
 	}
 }
 
@@ -308,6 +384,15 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			sawTenantMismatch = true
 			continue
 		}
+		if c.expiredByUptime(sb, req) {
+			// §6.2 line 166: maxPodUptimeSeconds exceeded — the pod
+			// accepts no new slots and its existing slots drain. Drain it
+			// (slot_active → draining) and skip it as a candidate.
+			if err := c.drainExpiredPod(ctx, sb); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		res, conflict, err := c.reserveSlot(ctx, sb, req)
 		if err != nil {
 			return nil, err
@@ -325,6 +410,16 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if sb.Status.Phase != string(state.Idle) {
+			continue
+		}
+		if c.expiredByUptime(sb, req) {
+			// §6.2 line 167: maxPodUptimeSeconds exceeded while idle,
+			// checked before next assignment — drain (idle → draining)
+			// and skip rather than opening a fresh slot on a pod that is
+			// already due for retirement.
+			if err := c.drainExpiredPod(ctx, sb); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		res, conflict, err := c.reserveSlot(ctx, sb, req)

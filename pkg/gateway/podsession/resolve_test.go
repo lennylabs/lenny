@@ -95,6 +95,49 @@ func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 	}
 }
 
+// TestResolvePoolSurfacesConcurrentMaxPodUptime covers the §6.2 lines
+// 166-167 retirement cap: ResolvePool must surface the concurrent-
+// workspace pool's maxPodUptimeSeconds so the slot-claim path drains an
+// over-uptime pod before its next slot assignment.
+//
+// spec: §6.2 lines 166-167.
+func TestResolvePoolSurfacesConcurrentMaxPodUptime(t *testing.T) {
+	tmpl := concurrentTemplate("cw-tmpl", "cw-runtime", "sandboxed", "workspace", 4)
+	uptime := int64(86400)
+	tmpl.Spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
+		AcknowledgeProcessLevelIsolation: true,
+		MaxPodUptimeSeconds:              &uptime,
+	}
+	c := k8sClient(t, warmPool("cw-pool", "cw-tmpl"), tmpl)
+
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "cw-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("MaxPodUptimeSeconds = %d, want 86400", got.MaxPodUptimeSeconds)
+	}
+}
+
+// TestResolvePoolLeavesUptimeUnsetWithoutPolicy covers the optional cap:
+// a concurrent-workspace pool with no maxPodUptimeSeconds leaves the
+// PoolMatch field zero so the slot-claim path disables the check.
+func TestResolvePoolLeavesUptimeUnsetWithoutPolicy(t *testing.T) {
+	tmpl := concurrentTemplate("cw2-tmpl", "cw2-runtime", "sandboxed", "workspace", 4)
+	tmpl.Spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
+		AcknowledgeProcessLevelIsolation: true,
+	}
+	c := k8sClient(t, warmPool("cw2-pool", "cw2-tmpl"), tmpl)
+
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "cw2-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.MaxPodUptimeSeconds != 0 {
+		t.Errorf("MaxPodUptimeSeconds = %d, want 0 (cap unset)", got.MaxPodUptimeSeconds)
+	}
+}
+
 func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	c := k8sClient(
 		t,

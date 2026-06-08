@@ -330,6 +330,32 @@ func TestValidateConcurrentConfig(t *testing.T) {
 			},
 			ok: true,
 		},
+		{
+			// spec: §6.2 lines 166-167.
+			name: "concurrent-workspace pool with a pod-uptime cap is valid",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+				AcknowledgeProcessLevelIsolation: true, ConcurrentMaxPodUptimeSeconds: 86400,
+			},
+			ok: true,
+		},
+		{
+			// spec: §6.2 lines 166-167 — the cap is concurrent-only.
+			name: "session-mode pool with concurrentMaxPodUptimeSeconds is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession,
+				ConcurrentMaxPodUptimeSeconds: 86400,
+			},
+		},
+		{
+			name: "concurrent pool with a negative pod-uptime cap is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
+				ConcurrentMaxPodUptimeSeconds: -1,
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

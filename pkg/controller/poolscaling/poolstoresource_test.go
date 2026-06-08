@@ -189,6 +189,7 @@ func TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy(t *testing.T) {
 		MaxConcurrent:                    4,
 		AcknowledgeProcessLevelIsolation: true,
 		CleanupTimeoutSeconds:            60,
+		ConcurrentMaxPodUptimeSeconds:    86400,
 		WarmCount:                        1,
 	})
 	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
@@ -208,5 +209,10 @@ func TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy(t *testing.T) {
 	}
 	if cw.CleanupTimeoutSeconds != 60 {
 		t.Errorf("CleanupTimeoutSeconds = %d", cw.CleanupTimeoutSeconds)
+	}
+	// spec: §6.2 lines 166-167 — the concurrent-workspace pod-uptime
+	// retirement cap flows into the CRD so ResolvePool can surface it.
+	if cw.MaxPodUptimeSeconds == nil || *cw.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("MaxPodUptimeSeconds = %#v, want 86400", cw.MaxPodUptimeSeconds)
 	}
 }

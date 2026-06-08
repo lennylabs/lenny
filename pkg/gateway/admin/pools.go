@@ -111,6 +111,15 @@ type PoolPayload struct {
 	CleanupTimeoutSeconds            int    `json:"cleanupTimeoutSeconds,omitempty"`
 	AllowCrossTenantReuse            bool   `json:"allowCrossTenantReuse,omitempty"`
 
+	// ConcurrentMaxPodUptimeSeconds is the §6.2 lines 166-167
+	// concurrent-workspace pod-uptime retirement cap: a pod whose
+	// wall-clock uptime since first boot exceeds it is drained before
+	// its next slot assignment (no new slots accepted; existing slots
+	// drain). It is meaningful only on a concurrent-mode pool;
+	// ValidateConcurrentConfig rejects it on any other pool. Zero leaves
+	// uptime retirement off.
+	ConcurrentMaxPodUptimeSeconds int `json:"concurrentMaxPodUptimeSeconds,omitempty"`
+
 	// PoolCondition and IdlePodCount are the §5.2 line 629 live
 	// bootstrap-status fields, populated on GET when the gateway is
 	// wired with a PoolStatusReader and the pool's SandboxWarmPool
@@ -252,6 +261,7 @@ type UpdatePoolRequest struct {
 	MaxConcurrent                    *int               `json:"maxConcurrent,omitempty"`
 	AcknowledgeProcessLevelIsolation *bool              `json:"acknowledgeProcessLevelIsolation,omitempty"`
 	CleanupTimeoutSeconds            *int               `json:"cleanupTimeoutSeconds,omitempty"`
+	ConcurrentMaxPodUptimeSeconds    *int               `json:"concurrentMaxPodUptimeSeconds,omitempty"`
 	AllowCrossTenantReuse            *bool              `json:"allowCrossTenantReuse,omitempty"`
 	TaskPolicy                       *TaskPolicyPayload `json:"taskPolicy,omitempty"`
 	// ClearTaskPolicy, when true, removes the persisted task policy block
@@ -290,6 +300,7 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		MaxConcurrent:                    p.MaxConcurrent,
 		AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
 		CleanupTimeoutSeconds:            p.CleanupTimeoutSeconds,
+		ConcurrentMaxPodUptimeSeconds:    p.ConcurrentMaxPodUptimeSeconds,
 		AllowCrossTenantReuse:            p.AllowCrossTenantReuse,
 		CreatedAt:                        rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                        rfc3339Nano(p.UpdatedAt),
@@ -398,6 +409,7 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		MaxConcurrent:                    body.MaxConcurrent,
 		AcknowledgeProcessLevelIsolation: body.AcknowledgeProcessLevelIsolation,
 		CleanupTimeoutSeconds:            body.CleanupTimeoutSeconds,
+		ConcurrentMaxPodUptimeSeconds:    body.ConcurrentMaxPodUptimeSeconds,
 		AllowCrossTenantReuse:            body.AllowCrossTenantReuse,
 		ResourceClass:                    body.ResourceClass,
 		WarmCount:                        body.WarmCount,
@@ -1023,6 +1035,9 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.CleanupTimeoutSeconds != nil {
 		p.CleanupTimeoutSeconds = *body.CleanupTimeoutSeconds
 	}
+	if body.ConcurrentMaxPodUptimeSeconds != nil {
+		p.ConcurrentMaxPodUptimeSeconds = *body.ConcurrentMaxPodUptimeSeconds
+	}
 	if body.AllowCrossTenantReuse != nil {
 		p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
 	}
@@ -1581,6 +1596,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.CleanupTimeoutSeconds != nil {
 		out = append(out, "cleanupTimeoutSeconds")
+	}
+	if b.ConcurrentMaxPodUptimeSeconds != nil {
+		out = append(out, "concurrentMaxPodUptimeSeconds")
 	}
 	if b.AllowCrossTenantReuse != nil {
 		out = append(out, "allowCrossTenantReuse")

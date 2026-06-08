@@ -40,6 +40,11 @@ type SlotBindRequest struct {
 	Style podclaim.ConcurrencyStyle
 	// MaxConcurrent is the §5.2 per-pod slot bound.
 	MaxConcurrent int32
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// pod-uptime retirement cap. The slot-claim path drains a candidate
+	// pod whose uptime exceeds it before assigning a slot. Zero leaves
+	// uptime retirement off.
+	MaxPodUptimeSeconds int64
 	// Plan is the per-slot workspace the adapter materializes under
 	// /workspace/slots/{slotId}/ before start. It is honored only in
 	// workspace-concurrent mode; stateless-concurrent ignores it because
@@ -218,11 +223,12 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		OnRehydrate:    b.Rehydration,
 	}
 	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
-		Pool:          req.Pool,
-		SessionID:     req.SessionID,
-		TenantID:      req.TenantID,
-		Style:         req.Style,
-		MaxConcurrent: req.MaxConcurrent,
+		Pool:                req.Pool,
+		SessionID:           req.SessionID,
+		TenantID:            req.TenantID,
+		Style:               req.Style,
+		MaxConcurrent:       req.MaxConcurrent,
+		MaxPodUptimeSeconds: req.MaxPodUptimeSeconds,
 	})
 	if err != nil {
 		// The §5.2 line 519 exhaustion sentinels are returned unwrapped

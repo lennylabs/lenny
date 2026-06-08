@@ -1067,3 +1067,66 @@ func TestPoolUpdateBumpsGeneration_Spec4_6_2_558(t *testing.T) {
 		t.Errorf("Update did not advance Generation: %d -> %d", startGen, updated.Generation)
 	}
 }
+
+// spec: §6.2 lines 166-167 — the concurrent-workspace pod-uptime
+// retirement cap is accepted on the admin POST and round-trips into the
+// pool store so the PoolScalingController renders it onto the
+// SandboxTemplate and the slot-claim path drains an over-uptime pod.
+func TestCreateConcurrentPoolPersistsMaxPodUptime_spec_6_2(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:                             "cw-pool",
+		RuntimeRef:                       "echo",
+		IsolationProfile:                 "sandboxed",
+		ExecutionMode:                    "concurrent",
+		ConcurrencyStyle:                 "workspace",
+		MaxConcurrent:                    4,
+		AcknowledgeProcessLevelIsolation: true,
+		CleanupTimeoutSeconds:            20,
+		ConcurrentMaxPodUptimeSeconds:    3600,
+		ResourceClass:                    "small",
+		WarmCount:                        1,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "cw-pool")
+	if row.ConcurrentMaxPodUptimeSeconds != 3600 {
+		t.Fatalf("stored ConcurrentMaxPodUptimeSeconds = %d, want 3600", row.ConcurrentMaxPodUptimeSeconds)
+	}
+
+	// A PUT updates the cap (If-Match the created pool's version 1).
+	uptime := 7200
+	put := putPoolRaw(t, router.Handler(), "cw-pool", `"1"`, admin.UpdatePoolRequest{
+		ConcurrentMaxPodUptimeSeconds: &uptime,
+	})
+	if put.Code != http.StatusOK {
+		t.Fatalf("update status: %d, body=%s", put.Code, put.Body.String())
+	}
+	row, _ = store.Get(context.Background(), "cw-pool")
+	if row.ConcurrentMaxPodUptimeSeconds != 7200 {
+		t.Errorf("after PUT ConcurrentMaxPodUptimeSeconds = %d, want 7200", row.ConcurrentMaxPodUptimeSeconds)
+	}
+}
+
+// spec: §6.2 lines 166-167 — the cap is concurrent-only; a session-mode
+// pool that sets it is rejected by ValidateConcurrentConfig at admission.
+func TestCreateSessionPoolRejectsMaxPodUptime_spec_6_2(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:                          "bad-pool",
+		RuntimeRef:                    "echo",
+		IsolationProfile:              "sandboxed",
+		ExecutionMode:                 "session",
+		ConcurrentMaxPodUptimeSeconds: 3600,
+		ResourceClass:                 "small",
+		WarmCount:                     1,
+	})
+	if rr.Code == http.StatusCreated {
+		t.Fatalf("a session-mode pool with concurrentMaxPodUptimeSeconds must be rejected; got %d", rr.Code)
+	}
+}

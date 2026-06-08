@@ -1092,19 +1092,20 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
 		slotReq := podsession.SlotBindRequest{
-			Pool:               match.Pool,
-			SessionID:          row.ID,
-			TenantID:           row.TenantID,
-			Runtime:            row.RuntimeRef,
-			Style:              podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
-			MaxConcurrent:      match.MaxConcurrent,
-			Plan:               podsession.WorkspacePlanToProto(plan),
-			ExperimentContext:  experimentContextToProto(row.ExperimentContext),
-			TracingContext:     row.TracingContext,
-			SetupPolicy:        s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-			CredentialPools:    credPools,
-			AgentInterface:     agentInterface,
-			MinPlatformVersion: minPlatformVersion,
+			Pool:                match.Pool,
+			SessionID:           row.ID,
+			TenantID:            row.TenantID,
+			Runtime:             row.RuntimeRef,
+			Style:               podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
+			MaxConcurrent:       match.MaxConcurrent,
+			MaxPodUptimeSeconds: match.MaxPodUptimeSeconds,
+			Plan:                podsession.WorkspacePlanToProto(plan),
+			ExperimentContext:   experimentContextToProto(row.ExperimentContext),
+			TracingContext:      row.TracingContext,
+			SetupPolicy:         s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+			CredentialPools:     credPools,
+			AgentInterface:      agentInterface,
+			MinPlatformVersion:  minPlatformVersion,
 		}
 		return s.bindSlotWithRetry(ctx, slotReq)
 	}

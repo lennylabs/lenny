@@ -80,6 +80,13 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 			AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
 			CleanupTimeoutSeconds:            int64(p.CleanupTimeoutSeconds),
 		}
+		// spec: §6.2 lines 166-167 — carry the concurrent-workspace
+		// pod-uptime retirement cap so ResolvePool surfaces it to the
+		// slot-claim path's drain-before-assign check.
+		if p.ConcurrentMaxPodUptimeSeconds > 0 {
+			n := int64(p.ConcurrentMaxPodUptimeSeconds)
+			spec.ConcurrentWorkspacePolicy.MaxPodUptimeSeconds = &n
+		}
 	}
 	cfg := PoolConfig{
 		Name:        p.Name,

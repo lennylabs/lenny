@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -700,5 +701,113 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	}
 	if len(conflicts) != 1 || conflicts[0] != testPool {
 		t.Errorf("OnSlotConflict calls = %v, want one call for pool %q", conflicts, testPool)
+	}
+}
+
+// spec: §6.2 lines 166-167 — concurrent-workspace pod-uptime retirement.
+// diagnosis: ClaimSlot placed a slot on a pod whose wall-clock uptime had
+// exceeded the pool's maxPodUptimeSeconds. §6.2 line 166: an over-uptime
+// slot_active pod accepts no new slots and its existing slots drain — it
+// must transition to draining and be skipped as a candidate.
+func TestClaimSlotDrainsOverUptimeSlotActivePod_spec_6_2(t *testing.T) {
+	claimer, c := slotClaimerFor(t,
+		concurrentSandbox("sbx-old", "slot_active", 1, "acme"))
+	// The pod was created ~now; advance the claimer's clock two hours
+	// past creation so its uptime exceeds the 60s cap.
+	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req.MaxPodUptimeSeconds = 60
+	_, err := claimer.ClaimSlot(context.Background(), req)
+	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
+		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was drained)", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-old"}, &sb); err != nil {
+		t.Fatalf("get sbx-old: %v", err)
+	}
+	if sb.Status.Phase != string(state.Draining) {
+		t.Errorf("over-uptime slot_active pod phase = %q, want draining (§6.2 line 166)", sb.Status.Phase)
+	}
+}
+
+// spec: §6.2 line 167 — maxPodUptimeSeconds exceeded while idle, checked
+// before next assignment.
+// diagnosis: ClaimSlot opened a fresh slot on an idle pod that was already
+// past its uptime cap instead of draining it first.
+func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
+	claimer, c := slotClaimerFor(t,
+		concurrentSandbox("sbx-old", "idle", 0, ""))
+	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req.MaxPodUptimeSeconds = 60
+	_, err := claimer.ClaimSlot(context.Background(), req)
+	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
+		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was drained)", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-old"}, &sb); err != nil {
+		t.Fatalf("get sbx-old: %v", err)
+	}
+	if sb.Status.Phase != string(state.Draining) {
+		t.Errorf("over-uptime idle pod phase = %q, want draining (§6.2 line 167)", sb.Status.Phase)
+	}
+}
+
+// spec: §6.2 lines 166-167.
+// diagnosis: ClaimSlot drained a pod still within its uptime budget. A pod
+// under maxPodUptimeSeconds must serve the slot normally.
+func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
+	claimer, c := slotClaimerFor(t,
+		concurrentSandbox("sbx-fresh", "idle", 0, ""))
+	// Real clock: the pod was created ~now, well under the one-day cap.
+
+	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req.MaxPodUptimeSeconds = 86400
+	res, err := claimer.ClaimSlot(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if res.SandboxName != "sbx-fresh" {
+		t.Errorf("claimed %q, want sbx-fresh", res.SandboxName)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-fresh"}, &sb); err != nil {
+		t.Fatalf("get sbx-fresh: %v", err)
+	}
+	if sb.Status.Phase != string(state.SlotActive) {
+		t.Errorf("under-uptime pod phase = %q, want slot_active (served the slot)", sb.Status.Phase)
+	}
+}
+
+// spec: §6.2 lines 166-167 — the cap is optional; zero disables retirement.
+// diagnosis: ClaimSlot drained a pod even though the pool set no
+// maxPodUptimeSeconds, retiring pods that should run indefinitely.
+func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
+	claimer, c := slotClaimerFor(t,
+		concurrentSandbox("sbx-fresh", "idle", 0, ""))
+	// Even with the clock far in the future, a zero cap means no check.
+	claimer.Now = func() time.Time { return time.Now().Add(1000 * time.Hour) }
+
+	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req.MaxPodUptimeSeconds = 0
+	res, err := claimer.ClaimSlot(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if res.SandboxName != "sbx-fresh" {
+		t.Errorf("claimed %q, want sbx-fresh", res.SandboxName)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-fresh"}, &sb); err != nil {
+		t.Fatalf("get sbx-fresh: %v", err)
+	}
+	if sb.Status.Phase == string(state.Draining) {
+		t.Error("pod drained despite maxPodUptimeSeconds=0 (uptime check must be disabled)")
 	}
 }

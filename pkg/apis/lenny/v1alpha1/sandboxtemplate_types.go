@@ -105,6 +105,16 @@ type ConcurrentWorkspacePolicy struct {
 	// 5 seconds.
 	// +optional
 	CleanupTimeoutSeconds int64 `json:"cleanupTimeoutSeconds,omitempty"`
+
+	// MaxPodUptimeSeconds retires a concurrent-workspace pod once its
+	// wall-clock uptime since first boot exceeds this value: the pod
+	// accepts no new slots and its existing slots drain (§6.2 line 166
+	// slot_active → draining), and an idle pod is drained before its next
+	// slot assignment (§6.2 line 167 idle → draining). When unset, a
+	// concurrent-workspace pod is retired only by the unhealthy-slot
+	// threshold. spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+	// +optional
+	MaxPodUptimeSeconds *int64 `json:"maxPodUptimeSeconds,omitempty"`
 }
 
 // SandboxTemplateSpec is the desired state of a SandboxTemplate — the

@@ -87,6 +87,12 @@ type PoolMatch struct {
 	// resume path forwards it to the adapter for the §7.3 line 397
 	// pre-extraction symmetric size check. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// pod-uptime retirement cap copied from the SandboxTemplate's
+	// concurrentWorkspacePolicy. Zero leaves uptime retirement off. The
+	// slot-claim path drains an over-uptime pod before its next slot
+	// assignment. Zero on non-concurrent pools.
+	MaxPodUptimeSeconds int64
 }
 
 // poolWarming derives the §5.2 PoolWarmingUp signal and the warming-pod
@@ -146,6 +152,12 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		if tp := tmpl.Spec.TaskPolicy; tp != nil {
 			m.AllowCrossTenantReuse = tp.AllowCrossTenantReuse
 			m.MicrovmScrubMode = tp.MicrovmScrubMode
+		}
+		// spec: §6.2 lines 166-167 — surface the concurrent-workspace
+		// pod-uptime cap so the slot-claim path drains an over-uptime pod
+		// before its next slot assignment.
+		if cwp := tmpl.Spec.ConcurrentWorkspacePolicy; cwp != nil && cwp.MaxPodUptimeSeconds != nil {
+			m.MaxPodUptimeSeconds = *cwp.MaxPodUptimeSeconds
 		}
 		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
 		// workspace size cap so the resume path can pass it to the adapter

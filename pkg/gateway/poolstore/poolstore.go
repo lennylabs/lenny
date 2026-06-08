@@ -67,6 +67,16 @@ type Pool struct {
 	// budget clears the 5-second floor.
 	CleanupTimeoutSeconds int
 
+	// ConcurrentMaxPodUptimeSeconds retires a concurrent-workspace pod
+	// once its wall-clock uptime since first boot exceeds this value. The
+	// gateway slot-claim path drains an over-uptime pod (slot_active →
+	// draining, no new slots accepted; idle → draining before the next
+	// assignment) and skips it as a slot candidate. Zero leaves uptime
+	// retirement off (only the unhealthy-slot threshold retires the pod).
+	// It is the concurrent-mode counterpart of TaskPolicy.MaxPodUptimeSeconds.
+	// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+	ConcurrentMaxPodUptimeSeconds int
+
 	// AllowCrossTenantReuse mirrors the §5.2 task-mode field. Concurrent
 	// modes have no cross-tenant isolation boundary, so
 	// ValidateConcurrentConfig rejects a concurrent-mode pool that sets
@@ -467,7 +477,13 @@ func ValidateConcurrentConfig(p Pool) error {
 		if p.MaxConcurrent != 0 {
 			return errors.New("poolstore: maxConcurrent is valid only when executionMode is concurrent (§5.2)")
 		}
+		if p.ConcurrentMaxPodUptimeSeconds != 0 {
+			return errors.New("poolstore: concurrentMaxPodUptimeSeconds is valid only when executionMode is concurrent (§6.2)")
+		}
 		return nil
+	}
+	if p.ConcurrentMaxPodUptimeSeconds < 0 {
+		return errors.New("poolstore: concurrentMaxPodUptimeSeconds must be >= 0 (§6.2)")
 	}
 
 	if !p.ConcurrencyStyle.IsValid() {
