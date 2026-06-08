@@ -4,11 +4,13 @@ package leasecontrol_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -157,5 +159,35 @@ func TestCallConnectorToolSuccess_spec_9_3_142(t *testing.T) {
 	}
 	if !resp.GetIsError() || string(resp.GetResult()) != `{"content":[{"type":"text","text":"x"}],"isError":true}` {
 		t.Errorf("resp = %+v, want the forwarded isError result", resp)
+	}
+}
+
+// spec: §4.8 line 1077, §15.1 lines 1014-1015 — a connector interceptor
+// REJECT carries the §15.1 code; CallConnectorTool maps it to the matching
+// gRPC status code so the pod's MCP client sees the policy rejection.
+// F-4.8.14.
+func TestCallConnectorToolInterceptorRejection_spec_4_8_1077(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+		want codes.Code
+	}{
+		{"request rejected", connectorinvoke.CodeConnectorRequestRejected, codes.PermissionDenied},
+		{"response rejected", connectorinvoke.CodeConnectorResponseRejected, codes.FailedPrecondition},
+		{"fail-closed timeout", "INTERCEPTOR_TIMEOUT", codes.Unavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := &fakeConnectorTools{callErr: &connectorinvoke.RejectionError{Code: tc.code, Reason: "blocked"}}
+			svc := newServiceWithConnectors(t, ct)
+			_, err := svc.CallConnectorTool(context.Background(),
+				&adapterv1.CallConnectorToolRequest{SessionId: &adapterv1.SessionId{Value: "sess_1"}, ConnectorId: "github", ToolName: "t"})
+			if status.Code(err) != tc.want {
+				t.Errorf("code = %v, want %v (err=%v)", status.Code(err), tc.want, err)
+			}
+			if !strings.Contains(status.Convert(err).Message(), tc.code) {
+				t.Errorf("status message %q does not carry the §15.1 code %q", status.Convert(err).Message(), tc.code)
+			}
+		})
 	}
 }

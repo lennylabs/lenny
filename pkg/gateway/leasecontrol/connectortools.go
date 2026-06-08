@@ -157,8 +157,52 @@ func (s *Service) CallConnectorTool(ctx context.Context, req *adapterv1.CallConn
 		case errors.Is(err, ErrConnectorNotPermitted):
 			return nil, status.Errorf(codes.PermissionDenied, "leasecontrol: connector %s not permitted for session %s", req.GetConnectorId(), sessionID)
 		default:
+			// spec: §4.8 line 1077, §15.1 lines 1014-1015 — a connector
+			// interceptor REJECT (PreConnectorRequest/PostConnectorResponse)
+			// carries the §15.1 code; surface it to the pod with a matching
+			// gRPC status code so the runtime sees the policy rejection
+			// rather than a generic Internal fault.
+			if rej, ok := asConnectorRejection(err); ok {
+				return nil, status.Errorf(connectorRejectionGRPCCode(rej.ConnectorRejectionCode()),
+					"leasecontrol: %s: %s", rej.ConnectorRejectionCode(), rej.ConnectorRejectionReason())
+			}
 			return nil, status.Errorf(codes.Internal, "leasecontrol: dispatch connector %s tool %s for session %s: %v", req.GetConnectorId(), req.GetToolName(), sessionID, err)
 		}
 	}
 	return &adapterv1.CallConnectorToolResponse{Result: result, IsError: isErr}, nil
+}
+
+// connectorRejection is implemented by the connector proxy's
+// interceptor-REJECT error so this handler can read the §15.1 code without
+// importing the connectorinvoke package. spec: §4.8 line 1077.
+type connectorRejection interface {
+	ConnectorRejectionCode() string
+	ConnectorRejectionReason() string
+}
+
+func asConnectorRejection(err error) (connectorRejection, bool) {
+	var rej connectorRejection
+	if errors.As(err, &rej) {
+		return rej, true
+	}
+	return nil, false
+}
+
+// connectorRejectionGRPCCode maps a §15.1 connector-interceptor error code
+// to the gRPC status code the pod's MCP client surfaces. A
+// PreConnectorRequest REJECT (HTTP 403) maps to PermissionDenied; a
+// PostConnectorResponse REJECT (HTTP 502) and a fail-closed timeout map to
+// codes the runtime treats as a non-retryable upstream rejection. spec:
+// §15.1 lines 1012-1015.
+func connectorRejectionGRPCCode(code string) codes.Code {
+	switch code {
+	case "CONNECTOR_REQUEST_REJECTED":
+		return codes.PermissionDenied
+	case "CONNECTOR_RESPONSE_REJECTED":
+		return codes.FailedPrecondition
+	case "INTERCEPTOR_TIMEOUT":
+		return codes.Unavailable
+	default:
+		return codes.FailedPrecondition
+	}
 }

@@ -53,6 +53,10 @@ type Invoker struct {
 	// open. spec: §10.6 line 607.
 	environments EnvironmentResolver
 	clock        func() time.Time
+	// interceptors is the §4.8 policy chain run at the PreConnectorRequest
+	// and PostConnectorResponse phases. nil disables the connector
+	// interceptor phases. spec: §4.8 line 1077.
+	interceptors ConnectorChain
 }
 
 // NewInvoker wires the connector registry, the connector-credential
@@ -74,6 +78,15 @@ func (iv *Invoker) WithClock(now func() time.Time) *Invoker {
 	if now != nil {
 		iv.clock = now
 	}
+	return iv
+}
+
+// WithInterceptors wires the §4.8 policy chain the connector proxy runs at
+// the PreConnectorRequest and PostConnectorResponse phases. A nil chain
+// (or one with no interceptor registered for the connector phases) leaves
+// every connector call uninspected. spec: §4.8 line 1077.
+func (iv *Invoker) WithInterceptors(chain ConnectorChain) *Invoker {
+	iv.interceptors = chain
 	return iv
 }
 
@@ -129,6 +142,19 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		defer span.End()
 	}
 
+	// spec: §4.8 line 1057, 1077 — the PreConnectorRequest chain runs over
+	// the serialized outgoing tool call before the gateway proxies it to
+	// the external connector. A MODIFY may redact/transform arguments
+	// (tool_name/connector_id are immutable); a REJECT short-circuits with
+	// CONNECTOR_REQUEST_REJECTED before any external dial.
+	arguments, err = iv.runPreConnectorRequest(ctx, tenantID, sessionID, conn.ID, toolName, arguments)
+	if err != nil {
+		if span != nil {
+			tracing.RecordError(span, err)
+		}
+		return nil, err
+	}
+
 	bearer := iv.bearerFor(ctx, conn, userID, environment)
 	sess, _, err := iv.client.Initialize(ctx, conn.MCPServerURL, bearer)
 	if err != nil {
@@ -138,6 +164,18 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		return nil, fmt.Errorf("connectorinvoke: initialize %q: %w", connectorID, err)
 	}
 	result, err := sess.CallTool(ctx, toolName, arguments)
+	if err != nil {
+		if span != nil {
+			tracing.RecordError(span, err)
+		}
+		return result, err
+	}
+
+	// spec: §4.8 line 1058, 1077 — the PostConnectorResponse chain runs
+	// over the connector's MCP tool result before it reaches the pod. A
+	// MODIFY may redact/transform content or set isError; a REJECT
+	// short-circuits with CONNECTOR_RESPONSE_REJECTED.
+	result, err = iv.runPostConnectorResponse(ctx, tenantID, sessionID, conn.ID, toolName, result)
 	if err != nil && span != nil {
 		tracing.RecordError(span, err)
 	}

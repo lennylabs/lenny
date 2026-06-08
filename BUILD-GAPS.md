@@ -2396,7 +2396,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   non-retryable). The 100ms phase default was already in the chain
   (`phaseDefaultTimeout`). Resolved in commit a382f873.
 
-### - [ ] F-4.8.14 — `PreConnectorRequest`, `PostConnectorResponse` chains not invoked (Missing) [Medium] — OPEN
+### - [x] F-4.8.14 — `PreConnectorRequest`, `PostConnectorResponse` chains not invoked (Missing) [Medium] — CLOSED
 
 > **Reopened 2026-06-07 — prior deferral (verified iter17):** There is no gateway-proxied connector path
 > to wire into — `PreConnectorRequest`/`PostConnectorResponse` appear only in
@@ -2417,6 +2417,28 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   built (it is currently scaffolded by `connectoroauth` and the
   admin connector store), insert the two `Chain.Run` calls and add
   the codes. Severity Medium.
+
+**Resolution:** The reopen premise was stale — the gateway-proxied
+connector path is `connectorinvoke.Invoker.CallTool` (the §9.3 path where
+the gateway acts as the MCP client to the external connector, NetworkPolicy
+forbids pod-direct dials), and the two REJECT codes already existed in
+`errorclassify` (PERMANENT, 403/502) and the 200 ms default in
+`interceptor.phaseDefaultTimeout`. New `connectorinvoke/interceptor.go`
+wires the chain: `runPreConnectorRequest` runs `PhasePreConnectorRequest`
+over `{tool_name, arguments, connector_id}` before the outbound dial (a
+MODIFY rewrites `arguments`; the chain enforces the immutable
+`tool_name`/`connector_id` per §4.8 line 1060), and
+`runPostConnectorResponse` runs `PhasePostConnectorResponse` over
+`{tool_name, connector_id, content, isError}` over the MCP result before it
+reaches the pod (a MODIFY rewrites `content`/`isError` and preserves other
+result fields). A deliberate REJECT surfaces a typed `RejectionError`
+carrying `CONNECTOR_REQUEST_REJECTED` / `CONNECTOR_RESPONSE_REJECTED`; a
+fail-closed error carries `INTERCEPTOR_TIMEOUT`; an immutable-field MODIFY
+carries `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. `leasecontrol.CallConnectorTool`
+maps the rejection code to the matching gRPC status (PermissionDenied /
+FailedPrecondition / Unavailable) via an interface so it need not import
+connectorinvoke. Wired in `cmd/lenny-gateway` by passing the gateway-wide
+`policyChain` to `Invoker.WithInterceptors`. Resolved in commit <pending>.
 
 ### - [x] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — CLOSED
 
@@ -2523,7 +2545,7 @@ closed. Closed by F-13.5.5.
   `interceptor.fail_open_restored` to the per-tenant §11.7 chain. The
   zero-value chain keeps plain fail-open semantics. Resolved in commit 19273cb6.
 
-### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — OPEN
+### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — DEFERRED
 
 > **Reopened 2026-06-07 — prior deferral (verified iter17):** The capability depends on F-4.8.9 — there is
 > still no admin/config surface that mutates an external interceptor's
@@ -2562,6 +2584,29 @@ closed. Closed by F-13.5.5.
   `lenny/delegate_task` / `lenny/send_message` entry points with a
   shared timer; add the `INTERCEPTOR_WEAKENING_COOLDOWN` rejection
   code. Severity Medium — depends on F-4.8.9.
+
+**Deferred 2026-06-08 (re-verified after F-4.8.9 landed):** F-4.8.9 closed,
+but it built only *startup* external-interceptor registration (the
+`--external-interceptor` flag dials and registers at boot). The §4.8
+line-1034 / §8.3 rule-5 semantics require a *runtime* `failPolicy`
+**transition**, and §8.3 line 218–224 (SEC-013) ties the whole control to a
+**shared, admin-mutable, cross-replica interceptor registry**: the cooldown
+is computed as `now - transition_ts < cooldownSeconds` against a
+server-minted, admin-immutable `transition_ts` recorded in that registry
+alongside the new `failPolicy` and the `cooldown_seconds` in force at
+transition time, with a meta-cooldown on cluster-config reductions and an
+append-only writer-identity audit. No `POST /v1/admin/interceptors` /
+`PUT /v1/admin/interceptors/{name}` endpoint, no persistent interceptor
+store, and no cross-replica transition_ts state exist today (grep for
+`admin/interceptors` / `InterceptorRegistry` is empty). Building that
+persistent admin-mutable cross-replica registry is a separate large
+workstream that has not begun; landing the cooldown timer, the
+`INTERCEPTOR_WEAKENING_COOLDOWN` code, and the three audit events in
+isolation would be dead config with no producer (the exact situation Rule P
+forbids re-deferring for, but here the prerequisite is a named, un-started
+large workstream, which Rule P permits). Defer until the admin interceptor
+registry CRUD surface lands; that task then wires the transition emit, the
+cooldown, and the `delegate_task` / `send_message` rejection together.
 
 ### - [x] F-4.8.18 — `interceptor.rejected` audit row emitted only for PostAuth (Partial) [Medium] — CLOSED
 

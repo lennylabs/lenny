@@ -4362,7 +4362,12 @@ func main() {
 		// spec: §10.6 line 607 — enforce the calling session's environment
 		// connectorSelector capability filter on each connector tools/call.
 		// F-10.6.2.
-		WithEnvironments(environments)
+		WithEnvironments(environments).
+		// spec: §4.8 lines 1057-1058, 1077 — run the PreConnectorRequest and
+		// PostConnectorResponse interceptor phases on the gateway-proxied
+		// connector path. All connector traffic flows through the gateway, so
+		// the phases always apply. F-4.8.14.
+		WithInterceptors(policyChain)
 
 	// §25.3 capacity recommendations: the per-replica sliding-window
 	// metric store backing the rules engine, plus its §25.3 metrics
