@@ -4332,6 +4332,13 @@ func main() {
 		// hoursOfData / estimatedConvergenceAt from the SandboxWarmPool
 		// CRD status the PoolScalingController writes.
 		adminRouter = adminRouter.WithPoolBootstrapStatusReader(lookup)
+		// spec: §4.6.2 lines 558-560 — populate crdGeneration /
+		// lastReconciledAt / lagSeconds / inSync on the sync-status
+		// endpoint from the SandboxTemplate annotations the
+		// PoolScalingController stamps. Only available with a cluster
+		// client; the Postgres-only posture leaves the reader unwired and
+		// the sync-status handler reports the Postgres-only generation.
+		adminRouter = adminRouter.WithCRDGenerationReader(lookup)
 	}
 	if *elicitationFloor != "" {
 		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)

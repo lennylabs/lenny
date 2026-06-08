@@ -130,6 +130,16 @@ type PoolConfig struct {
 	// PoolConfigDrift check can compare Postgres- and CRD-side
 	// generations. spec: spec/04_system-components.md lines 557-560.
 	Generation int64
+
+	// ResumeEpoch is the §4.6.2 item 3 condition (c) cross-process resume
+	// signal read from the pool's reconciliation_resume_epoch column. The
+	// gateway's resume-reconciliation handler bumps it (without changing
+	// Generation) when an operator clears a stuck pool; the reconciler
+	// detects the advance against its last-seen value and clears the
+	// pool's in-memory admission-denial backoff so the stuck pool is
+	// retried on this tick. spec: spec/04_system-components.md §4.6.2
+	// item 3 condition (c).
+	ResumeEpoch int64
 }
 
 // Demand is the observed claim-rate signal for one pool — the input
@@ -307,6 +317,15 @@ type Reconciler struct {
 	// history the §17.8.2 step-4 stability criterion reads. Lazily
 	// constructed on the first Sync.
 	bootstrapTracker *convergence.Tracker
+
+	// resumeEpochs records the last-observed reconciliation_resume_epoch
+	// per pool name (§4.6.2 item 3 condition (c)). When a pool's epoch
+	// advances since the previous Sync, the operator has requested a
+	// cross-process resume through the gateway, so the reconciler clears
+	// the pool's in-memory admission-denial backoff this tick. Lazily
+	// constructed on the first Sync; keyed by pool name (the source
+	// supplies a single agent namespace).
+	resumeEpochs map[string]int64
 }
 
 // StuckPools returns the list of <namespace>/<name> pool keys with at
@@ -397,6 +416,9 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		r.bootstrapTracker = convergence.NewTrackerWithWindow(
 			r.BootstrapStabilityWindow, convergence.DefaultMaxCoefficientOfVariation)
 	}
+	if r.resumeEpochs == nil {
+		r.resumeEpochs = map[string]int64{}
+	}
 	configs, err := r.Source.ListPoolConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
@@ -409,6 +431,13 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	for i := range configs {
 		cfg := configs[i]
 		desired[cfg.Name] = struct{}{}
+		// spec: §4.6.2 item 3 condition (c) — an operator
+		// resume-reconciliation through the gateway advances the pool's
+		// reconciliation_resume_epoch. Detect that advance and clear the
+		// pool's in-memory admission-denial backoff before the sync
+		// below, so a stuck pool is retried this tick without a
+		// configuration change.
+		r.applyResumeEpoch(cfg)
 		// syncTemplate and syncWarmPool both call into
 		// controllerutil.CreateOrUpdate; an admission webhook rejection
 		// surfaces as a Forbidden / Invalid / BadRequest status error.
@@ -448,7 +477,30 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	r.warmupMeter.forgetNotIn(desired)
 	r.bootstrapMeter.forgetNotIn(desired)
 	r.bootstrapTracker.ForgetNotIn(desired)
+	for name := range r.resumeEpochs {
+		if _, ok := desired[name]; !ok {
+			delete(r.resumeEpochs, name)
+		}
+	}
 	return nil
+}
+
+// applyResumeEpoch implements the §4.6.2 item 3 condition (c)
+// cross-process resume. The gateway's resume-reconciliation handler
+// bumps the pool's reconciliation_resume_epoch in Postgres (without
+// changing the config generation); the PoolScalingController, reading
+// the same store, observes the advance here and clears the pool's
+// in-memory admission-denial backoff so a stuck pool is retried on this
+// tick. On the first observation of a pool the epoch is recorded without
+// clearing: a freshly-started leader has no denial state to clear (the
+// §4.6.2 condition (b) leader-restart fallback already covers that), so
+// only a strictly-increasing epoch triggers a resume.
+func (r *Reconciler) applyResumeEpoch(cfg PoolConfig) {
+	last, seen := r.resumeEpochs[cfg.Name]
+	r.resumeEpochs[cfg.Name] = cfg.ResumeEpoch
+	if seen && cfg.ResumeEpoch > last {
+		r.retryState.resumePool(cfg.Namespace, cfg.Name)
+	}
 }
 
 // syncTuple applies one CRD tuple for a pool through the §4.6.2
@@ -457,12 +509,12 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 // admission denial extends the backoff and a clean apply clears it. An
 // admission denial is swallowed (the next tick retries after backoff);
 // a non-admission error is returned so the pass aborts.
-func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, now time.Time, apply func(context.Context, PoolConfig) error) error {
+func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, now time.Time, apply func(context.Context, PoolConfig, time.Time) error) error {
 	key := denialKey{namespace: cfg.Namespace, pool: cfg.Name, crd: crd}
 	if !r.retryState.readyToSync(key, now) {
 		return nil
 	}
-	err := apply(ctx, cfg)
+	err := apply(ctx, cfg, now)
 	r.retryState.recordOutcome(key, err, now)
 	if err == nil {
 		return nil
@@ -477,7 +529,7 @@ func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, 
 // PoolScalingController-owned, so it is replaced wholesale. The §5.2
 // topology-spread defaults are stamped in when the pool definition
 // carries none.
-func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig) error {
+func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.Time) error {
 	spec := cfg.Template
 	// spec: §5.2 lines 631-636 — the PoolScalingController owns
 	// SandboxTemplate.spec and writes the soft zone/node spread defaults
@@ -490,33 +542,43 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig) error {
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tmpl, func() error {
 		tmpl.Spec = spec
-		// spec: §4.6.2 line 558 — stamp pool_config_generation onto the
-		// CRD so the gateway-side PoolConfigDrift check can compare it
-		// to Postgres.
-		setConfigGenerationAnnotation(&tmpl.ObjectMeta, cfg.Generation)
+		// spec: §4.6.2 lines 558, 560 — stamp pool_config_generation and
+		// the last-reconciled timestamp onto the CRD so the gateway-side
+		// PoolConfigDrift / sync-status check can compare it to Postgres.
+		stampReconcileAnnotations(&tmpl.ObjectMeta, cfg.Generation, now)
 		return nil
 	})
 	return err
 }
 
-// configGenerationAnnotation is the §4.6.2 line 558 annotation key the
-// PoolScalingController stamps on every Sandbox CRD it reconciles. The
-// gateway-side PoolConfigDrift check reads it and compares to the
-// Postgres pool_config_generation; a mismatch over the drift window
-// fires the PoolConfigDrift alert.
-const configGenerationAnnotation = "lenny.dev/config-generation"
-
-// setConfigGenerationAnnotation writes the §4.6.2 pool_config_generation
-// onto the resource. A zero generation leaves the annotation untouched
-// (the spec implies a real generation count starts at 1).
-func setConfigGenerationAnnotation(meta *metav1.ObjectMeta, generation int64) {
+// stampReconcileAnnotations writes the §4.6.2 line 558
+// pool_config_generation onto the resource together with the §4.6.2 line
+// 560 last-reconciled timestamp. The gateway-side PoolConfigDrift /
+// sync-status check reads the generation and compares it to the Postgres
+// pool_config_generation; a mismatch over the drift window fires the
+// PoolConfigDrift alert. A zero generation leaves both annotations
+// untouched (a real generation count starts at 1).
+//
+// The reconcile timestamp is refreshed only when the generation actually
+// changes. A steady-state pool reconciles every tick but its CRD spec
+// and generation are unchanged, so controllerutil.CreateOrUpdate skips
+// the write; refreshing the timestamp unconditionally would make the
+// object differ every tick and rewrite the CRD on every reconcile. The
+// timestamp therefore records the last time new config was applied,
+// which is the lastReconciledAt the §4.6.2 line 560 sync-status endpoint
+// reports.
+func stampReconcileAnnotations(meta *metav1.ObjectMeta, generation int64, now time.Time) {
 	if generation <= 0 {
 		return
 	}
 	if meta.Annotations == nil {
 		meta.Annotations = map[string]string{}
 	}
-	meta.Annotations[configGenerationAnnotation] = strconv.FormatInt(generation, 10)
+	gen := strconv.FormatInt(generation, 10)
+	if meta.Annotations[lennyv1.AnnotationConfigGeneration] != gen {
+		meta.Annotations[lennyv1.AnnotationLastReconciledAt] = now.UTC().Format(time.RFC3339Nano)
+	}
+	meta.Annotations[lennyv1.AnnotationConfigGeneration] = gen
 }
 
 // topology spread keys the §5.2 defaults distribute pods over. The
@@ -565,7 +627,7 @@ func defaultTopologySpreadConstraints(poolName string) []corev1.TopologySpreadCo
 // own SDKWarmDisabled stays authoritative when no DemotionRateSource
 // is wired and no breaker is currently persisted, so an operator
 // override via the admin API still takes effect.
-func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
+func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.Time) error {
 	wd, err := r.resolveWarm(ctx, cfg)
 	if err != nil {
 		return err
@@ -594,10 +656,10 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 		} else {
 			pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
 		}
-		// spec: §4.6.2 line 558 — same generation stamp on the
-		// SandboxWarmPool so a partial sync (template-only) still
-		// exposes the mismatch.
-		setConfigGenerationAnnotation(&pool.ObjectMeta, cfg.Generation)
+		// spec: §4.6.2 lines 558, 560 — same generation + reconcile-time
+		// stamp on the SandboxWarmPool so a partial sync (template-only)
+		// still exposes the mismatch.
+		stampReconcileAnnotations(&pool.ObjectMeta, cfg.Generation, now)
 		return nil
 	})
 	if err != nil {
@@ -623,7 +685,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 // place by the caller. A SandboxWarmPool that is already gone is a
 // no-op, so a concluded experiment that lingers in the registry does
 // not churn after its pool has been reclaimed.
-func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig) error {
+func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig, now time.Time) error {
 	pool := &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
@@ -648,7 +710,7 @@ func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig)
 	}
 	pool.Spec.MinWarm = 0
 	pool.Spec.MaxWarm = 0
-	setConfigGenerationAnnotation(&pool.ObjectMeta, cfg.Generation)
+	stampReconcileAnnotations(&pool.ObjectMeta, cfg.Generation, now)
 	if err := r.Client.Update(ctx, pool); err != nil {
 		return fmt.Errorf("drain warm pool: %w", err)
 	}

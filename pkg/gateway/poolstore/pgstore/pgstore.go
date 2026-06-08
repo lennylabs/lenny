@@ -48,7 +48,7 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
 	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 	pool_config_generation, task_policy, elicitation_policy, draining_since,
-	bootstrap_min_warm`
+	bootstrap_min_warm, reconciliation_resume_epoch`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -228,14 +228,14 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
 		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 		pool_config_generation, task_policy, elicitation_policy, draining_since,
-		bootstrap_min_warm
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		bootstrap_min_warm, reconciliation_resume_epoch
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm)
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -304,14 +304,14 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
 		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
 		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20,
-		bootstrap_min_warm = $21
+		bootstrap_min_warm = $21, reconciliation_resume_epoch = $22
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm); err != nil {
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -384,6 +384,28 @@ func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error
 	return nil
 }
 
+// BumpResumeEpoch increments the pool's reconciliation_resume_epoch and
+// returns the new value (§4.6.2 item 3 condition (c) cross-process
+// resume channel). pool_config_generation is deliberately left
+// untouched: a resume is an operator request to retry a stuck pool, not
+// a configuration change. A missing or soft-deleted pool returns
+// ErrNotFound — a deleted pool has no reconciliation to resume.
+func (s *Store) BumpResumeEpoch(ctx context.Context, name string) (int64, error) {
+	var epoch int64
+	err := s.pool.QueryRow(ctx,
+		`UPDATE sandbox_warm_pools
+			SET reconciliation_resume_epoch = reconciliation_resume_epoch + 1
+		 WHERE name = $1 AND deleted_at IS NULL
+		 RETURNING reconciliation_resume_epoch`, name).Scan(&epoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, poolstore.ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return epoch, nil
+}
+
 // scanPool reads one row in selectList order into a Pool.
 func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	var (
@@ -402,7 +424,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
-		&bootstrapMinWarm,
+		&bootstrapMinWarm, &p.ReconciliationResumeEpoch,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}

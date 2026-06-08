@@ -145,6 +145,10 @@ func (m *fakeMirror) MirrorLagSeconds(context.Context, string) (float64, error) 
 	return m.lag, nil
 }
 
+func (m *fakeMirror) GetByPodID(context.Context, string) (agentpodstate.PodState, bool, error) {
+	return agentpodstate.PodState{}, false, nil
+}
+
 func (m *fakeMirror) ClaimIdle(_ context.Context, poolID, sessionID, tenantID string) (agentpodstate.PodState, bool, error) {
 	pods := m.idle[poolID]
 	if len(pods) == 0 {

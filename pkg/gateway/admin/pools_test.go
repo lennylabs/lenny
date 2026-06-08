@@ -439,19 +439,56 @@ func TestResumeReconciliationUnknownPool(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 item 3 (route absent without a wired PoolScalingController)
-// The endpoint is registered only when a resumer is wired; otherwise
-// the gateway has no PSC to address and the route 404s as unrouted.
-func TestResumeReconciliationRouteAbsentWithoutResumer(t *testing.T) {
-	router, pools, runtimes, _ := newPoolAdmin(t)
+// spec: §4.6.2 item 3 condition (c) (durable cross-process resume)
+// Without an in-process resumer (the production split deployment) the
+// route is still registered; the handler bumps the pool's durable
+// reconciliation_resume_epoch and reports it on the async response so the
+// PoolScalingController honors the resume on its next reconcile tick.
+func TestResumeReconciliationBumpsEpochWithoutResumer_spec_4_6_2(t *testing.T) {
+	router, pools, runtimes, audit := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
 	_ = pools.Create(context.Background(), poolstore.Pool{
 		Name: "p", RuntimeRef: "echo", IsolationProfile: isolation.Default(),
 	})
 	rr := poolReq(t, router.Handler(), http.MethodPost,
 		"/v1/admin/pools/p/resume-reconciliation", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Pool          string `json:"pool"`
+		ClearedTuples int    `json:"clearedTuples"`
+		WasStuck      bool   `json:"wasStuck"`
+		Async         bool   `json:"async"`
+		ResumeEpoch   int64  `json:"resumeEpoch"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Async || body.ResumeEpoch != 1 {
+		t.Errorf("body = %+v, want async=true resumeEpoch=1", body)
+	}
+	// The bump is durable: re-reading the pool reflects the new epoch.
+	got, err := pools.Get(context.Background(), "p")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ReconciliationResumeEpoch != 1 {
+		t.Errorf("stored resume epoch = %d, want 1", got.ReconciliationResumeEpoch)
+	}
+	if len(audit.snapshot()) != 1 {
+		t.Errorf("audit: %+v", audit.snapshot())
+	}
+}
+
+// spec: §4.6.2 item 3 condition (c) — the durable path 404s for an
+// unknown pool without recording a phantom resume.
+func TestResumeReconciliationDurableUnknownPool_spec_4_6_2(t *testing.T) {
+	router, _, _, _ := newPoolAdmin(t)
+	rr := poolReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/pools/ghost/resume-reconciliation", nil)
 	if rr.Code != http.StatusNotFound {
-		t.Errorf("status: %d, want 404 (route unregistered)", rr.Code)
+		t.Errorf("status: %d, want 404 for unknown pool", rr.Code)
 	}
 }
 

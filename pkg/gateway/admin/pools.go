@@ -438,12 +438,14 @@ func (r *Router) WithPools(s poolstore.Store) *Router {
 	return r
 }
 
-// WithReconciliationResumer wires the §4.6.2
-// POST /v1/admin/pools/{name}/resume-reconciliation endpoint onto the
-// Router. Without it the route is not registered (the gateway has no
-// PoolScalingController to address). The resumer is the PSC's denial
-// tracker, reachable from the gateway only when both run in the same
-// process or through a control channel the deployer supplies.
+// WithReconciliationResumer wires an in-process §4.6.2 resumer onto the
+// Router. It is an optional override for the single-process / test
+// deployment, where the PoolScalingController's denial tracker is
+// reachable directly and the resume can clear the counter synchronously.
+// The POST /v1/admin/pools/{name}/resume-reconciliation route is
+// registered regardless: in the production split deployment (no
+// in-process resumer) the handler bumps the durable
+// reconciliation_resume_epoch the PSC observes on its next tick.
 func (r *Router) WithReconciliationResumer(rr ReconciliationResumer) *Router {
 	r.reconciliationResumer = rr
 	return r
@@ -850,11 +852,14 @@ func (r *Router) resolveSyncStatus(ctx context.Context, row poolstore.Pool) stri
 }
 
 // handleResumeReconciliation implements §4.6.2 item 3 condition (c):
-// an operator resets a stuck pool's in-memory admission-denial counter
-// so the PoolScalingController retries the pool on its next tick
-// without requiring a Postgres configuration change. The pool must
-// exist; the response reports how many CRD tuples were cleared and
-// whether the pool was actually stuck.
+// an operator resets a stuck pool's admission-denial backoff so the
+// PoolScalingController retries the pool on its next tick without
+// requiring a Postgres configuration change. The pool must exist. With
+// an in-process resumer wired the denial counter is cleared
+// synchronously and the response reports how many CRD tuples were
+// cleared; in the split deployment the handler bumps the durable
+// reconciliation_resume_epoch and the response reports the new epoch the
+// controller acts on (async=true).
 func (r *Router) handleResumeReconciliation(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	if _, err := r.pools.Get(req.Context(), name); err != nil {
@@ -865,10 +870,38 @@ func (r *Router) handleResumeReconciliation(w http.ResponseWriter, req *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	cleared, err := r.reconciliationResumer.ResumePoolReconciliation(req.Context(), name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
+	// Two resolution paths per the deployment topology. A wired
+	// in-process resumer (single-process dev / tests) clears the PSC's
+	// denial counter synchronously and reports the cleared-tuple count.
+	// In the production split deployment the gateway has no live
+	// Reconciler to call, so it bumps the durable
+	// reconciliation_resume_epoch the PoolScalingController reads from
+	// this same Postgres store on its next reconcile tick (§4.6.2 item 3
+	// condition (c)).
+	var (
+		cleared int
+		epoch   int64
+		async   bool
+	)
+	if r.reconciliationResumer != nil {
+		c, err := r.reconciliationResumer.ResumePoolReconciliation(req.Context(), name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		cleared = c
+	} else {
+		e, err := r.pools.BumpResumeEpoch(req.Context(), name)
+		if err != nil {
+			if errors.Is(err, poolstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		epoch = e
+		async = true
 	}
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
@@ -876,16 +909,30 @@ func (r *Router) handleResumeReconciliation(w http.ResponseWriter, req *http.Req
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	r.emit(req.Context(), principal, "admin.pool.reconciliation_resumed", name, map[string]any{
+	detail := map[string]any{
 		"clearedTuples": cleared,
 		"wasStuck":      cleared > 0,
-	})
+		"async":         async,
+	}
+	if async {
+		detail["resumeEpoch"] = epoch
+	}
+	r.emit(req.Context(), principal, "admin.pool.reconciliation_resumed", name, detail)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"pool":          name,
 		"clearedTuples": cleared,
 		"wasStuck":      cleared > 0,
-	})
+		"async":         async,
+	}
+	if async {
+		// In the split deployment the resume is recorded durably and
+		// honored on the controller's next reconcile tick; the gateway
+		// cannot observe the cleared-tuple count, so it reports the new
+		// epoch the PSC acts on instead.
+		resp["resumeEpoch"] = epoch
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // applyPoolUpdateMerge merges a §15.1 UpdatePoolRequest onto a pool in

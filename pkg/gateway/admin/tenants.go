@@ -742,12 +742,14 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("DELETE /v1/admin/pools/{name}/bootstrap-override", poolManage(http.HandlerFunc(r.handleClearBootstrapOverride)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 		// §4.6.2 item 3 (c): operator-initiated reset of a stuck pool's
-		// admission-denial backoff. Only registered when a
-		// PoolScalingController denial tracker is wired.
-		if r.reconciliationResumer != nil {
-			mux.Handle("POST /v1/admin/pools/{name}/resume-reconciliation",
-				poolManage(http.HandlerFunc(r.handleResumeReconciliation)))
-		}
+		// admission-denial backoff. Registered unconditionally: when an
+		// in-process PoolScalingController denial tracker is wired the
+		// handler clears the counter synchronously; otherwise (the
+		// production split deployment, where gateway and PSC are separate
+		// binaries) it bumps the durable reconciliation_resume_epoch the
+		// PSC observes on its next reconcile tick.
+		mux.Handle("POST /v1/admin/pools/{name}/resume-reconciliation",
+			poolManage(http.HandlerFunc(r.handleResumeReconciliation)))
 		// §4.6.2 item 4: GET /v1/admin/pools/{name}/sync-status reports
 		// the Postgres vs CRD generation comparison. spec:
 		// spec/04_system-components.md line 560. The route is

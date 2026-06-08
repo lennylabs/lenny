@@ -82,12 +82,13 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		}
 	}
 	cfg := PoolConfig{
-		Name:       p.Name,
-		Namespace:  s.Namespace,
-		Template:   spec,
-		MinWarm:    warm,
-		MaxWarm:    warm,
-		Generation: p.Generation,
+		Name:        p.Name,
+		Namespace:   s.Namespace,
+		Template:    spec,
+		MinWarm:     warm,
+		MaxWarm:     warm,
+		Generation:  p.Generation,
+		ResumeEpoch: p.ReconciliationResumeEpoch,
 	}
 	// spec: §17.8.2 — carry the bootstrapMinWarm override so the
 	// controller can pin the pool to it (status.scalingMode: bootstrap)

@@ -119,6 +119,18 @@ type Pool struct {
 	// generations. spec: spec/04_system-components.md lines 558-560.
 	Generation int64
 
+	// ReconciliationResumeEpoch is the §4.6.2 item 3 condition (c)
+	// cross-process resume signal. The admin
+	// POST /v1/admin/pools/{name}/resume-reconciliation handler bumps it
+	// (BumpResumeEpoch) without touching Generation, since a resume is an
+	// operator request to retry a stuck pool rather than a configuration
+	// change. The PoolScalingController — which runs in a separate
+	// process and reads this store as its source of truth — observes the
+	// advance on its next reconcile tick and clears the pool's in-memory
+	// admission-denial backoff. spec: spec/04_system-components.md §4.6.2
+	// item 3 condition (c).
+	ReconciliationResumeEpoch int64
+
 	// DrainingSince records when the pool entered the §15.1 line 797
 	// `draining` phase. A zero value means the pool is `active`. While
 	// it is set the gateway stops admitting new sessions to the pool
@@ -585,6 +597,12 @@ type Store interface {
 	Update(ctx context.Context, name string, mutate func(*Pool) error) (Pool, error)
 	List(ctx context.Context, filter ListFilter) ([]Pool, error)
 	SoftDelete(ctx context.Context, name string, at time.Time) error
+	// BumpResumeEpoch increments the pool's ReconciliationResumeEpoch and
+	// returns the new value, implementing the durable cross-process
+	// channel for §4.6.2 item 3 condition (c). It does NOT bump
+	// Generation: a resume is not a configuration change. It returns
+	// ErrNotFound for an unknown or soft-deleted pool.
+	BumpResumeEpoch(ctx context.Context, name string) (int64, error)
 }
 
 // ListFilter narrows the List result.
@@ -798,4 +816,22 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	row.Generation++
 	m.pools[name] = row
 	return nil
+}
+
+// BumpResumeEpoch implements Store. It increments the pool's
+// ReconciliationResumeEpoch (the §4.6.2 item 3 condition (c)
+// cross-process resume signal) and returns the new value. Generation is
+// intentionally left untouched so a resume is not a configuration
+// change. A soft-deleted pool returns ErrNotFound: a deleted pool has no
+// reconciliation to resume.
+func (m *Memory) BumpResumeEpoch(_ context.Context, name string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.pools[name]
+	if !ok || !row.DeletedAt.IsZero() {
+		return 0, ErrNotFound
+	}
+	row.ReconciliationResumeEpoch++
+	m.pools[name] = row
+	return row.ReconciliationResumeEpoch, nil
 }
