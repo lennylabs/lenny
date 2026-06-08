@@ -46427,7 +46427,7 @@ a `{result}` → the attach ack (suppressed) or the send receipt. Of the four
 audit-only in v1, so the delegation branch is forward-compatible with the
 F-15.2.13 per-kind projection. 6 tier-1 WebSocket tests (backlog+live push,
 gap, authorize rejection, request/response interleave, missing sessionId,
-playground redaction).
+playground redaction). Resolved in commit 42b157e4.
 
 ### - [x] F-27.4.8 — "use this runtime" button label and frame inspector layout match; new-session affordance is additive [Low] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:156-162` emits the "use this runtime" button; lines 319-323 wrap the raw frames in a `<details>` panel; line 345 adds a "new session" button not specified.
