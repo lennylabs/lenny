@@ -2532,11 +2532,11 @@ func main() {
 		// on each idle→claimed transition so deployers can read the
 		// denominator of the SDK-warm demotion-rate ratio.
 		podBinder.ClaimAccepted = gwMetrics.IncWarmpoolClaim
-		// §6.1 line 34 / §16.1 line 121: emit lenny_warmpool_sdk_demotions_total
-		// each time an SDK-warm pod is demoted to pod-warm because the
-		// workspace plan matched sdkWarmBlockingPaths — the numerator of
-		// the §6.3 line 352 demotion-rate ratio.
-		podBinder.SDKDemotion = gwMetrics.IncWarmpoolSDKDemotion
+		// §6.1 line 34 / §6.3 line 352 / §16.1 line 121: emit
+		// lenny_warmpool_sdk_demotions_total (the demotion-rate numerator)
+		// and lenny_warmpool_sdk_demotion_duration_seconds (the SDK
+		// teardown penalty) on each SDK-warm demotion.
+		podBinder.SDKDemotion = gwMetrics.RecordSDKDemotion
 	}
 	// §16.1 lines 51, 53, 55: emit credential-lease assignment, lease
 	// duration, and pool-utilization telemetry from the in-process

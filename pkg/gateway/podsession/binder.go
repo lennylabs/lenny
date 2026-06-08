@@ -131,12 +131,13 @@ type Binder struct {
 	// keys off this denominator. Nil is a no-op.
 	// spec: §6.3 line 352, §16.1 line 122.
 	ClaimAccepted func(pool, runtimeClass string)
-	// SDKDemotion records the §6.1 line 34 `lenny_warmpool_sdk_demotions_total{pool}`
-	// counter increment each time the binder demotes an SDK-warm pod to
-	// pod-warm because the workspace plan matched a sdkWarmBlockingPaths
-	// pattern. The deployer-facing demotion rate (§6.3 line 352) is this
+	// SDKDemotion records one §6.1 line 34 SDK-warm demotion: the binder
+	// demoted an SDK-warm pod to pod-warm because the workspace plan
+	// matched a sdkWarmBlockingPaths pattern. pool is the demoted pod's
+	// pool and teardownSeconds is the §6.3 line 352 DemoteSDK teardown
+	// penalty. The deployer-facing demotion rate (§6.3 line 352) is this
 	// numerator over the ClaimAccepted denominator. Nil is a no-op.
-	SDKDemotion func(pool string)
+	SDKDemotion func(pool string, teardownSeconds float64)
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -492,6 +493,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	demoted := false
 	if req.PreConnect {
 		if mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths); requires {
+			demoteStart := time.Now()
 			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
 				cl.Close()
 				if isUnimplemented(err) {
@@ -504,7 +506,8 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 			}
 			demoted = true
 			if b.SDKDemotion != nil {
-				b.SDKDemotion(req.Pool)
+				// spec: §6.3 line 352 — record the SDK teardown penalty.
+				b.SDKDemotion(req.Pool, time.Since(demoteStart).Seconds())
 			}
 		}
 	}

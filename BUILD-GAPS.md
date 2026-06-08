@@ -4883,13 +4883,15 @@ Consequence: even if `lenny_session_creation_duration_seconds` were treated as t
 
 - **Resolution:** The §6.3 hot-path phase set now has its own metric, `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` (F-6.3.1), carrying exactly the §6.3 phases with the `runtime_class` dimension. `lenny_session_creation_duration_seconds` remains the §16.1 `POST /v1/sessions` handler-envelope metric with its own phase set. The two metrics are distinct by design — handler envelope versus pod-warm hot path — so no cross-walk of the handler metric's phase enum is required. Commit 0ce97870.
 
-### - [x] F-6.3.8 — No measurement of "SDK teardown penalty (typically 1–3s)" on demotion path [Medium] — DEFERRED
+### - [x] F-6.3.8 — No measurement of "SDK teardown penalty (typically 1–3s)" on demotion path [Medium] — CLOSED
 
 Spec §6.3 line 352: "A session that triggers demotion (workspace includes a `sdkWarmBlockingPaths` match) incurs pod-warm latency plus an additional SDK teardown penalty (typically 1–3s)."
 
 The catalog has no `lenny_warmpool_sdk_demotion_duration_seconds` or similar. The `DemoteSDK` RPC at `pkg/adapter/lifecycle.go:99–102` is a hard-coded `Unimplemented` stub (per `6.1.md:22`, H-1), so no demotion path executes. Even if the path existed, the per-demotion teardown duration would not be observable.
 
 - **Deferred:** Blocked on F-6.1.1 (SDK-warm path entirely unimplemented). The §6.3 line 352 SDK teardown penalty histogram has no call site until the `DemoteSDK` RPC stub is replaced with the §6.1 demotion implementation. Reopen once F-6.1.1 lands; the metric can be added in the same change that wires the demotion path.
+
+- **Resolution (Rule N — unblocked by F-6.1.1/F-6.2.4; commit pending this batch):** The gateway demotion path now has a `DemoteSDK` call site (the binder), so the teardown penalty is observable. Added `lenny_warmpool_sdk_demotion_duration_seconds{pool}` (buckets 0.25–10s, bracketing the §6.3 line 352 "typically 1–3s" band). `Binder.Bind` times the `DemoteSDK` call and reports the duration through the `SDKDemotion` callback (now `func(pool string, teardownSeconds float64)`); `gatewaymetrics.RecordSDKDemotion` increments the demotion counter and observes the histogram in one call, wired in `cmd/lenny-gateway`. Deployers can now confirm the teardown penalty stays in band when weighing SDK-warm net benefit.
 
 Consequence: the spec's "typically 1–3s" claim cannot be empirically tracked. Operators cannot validate whether the 1–3s estimate matches reality, nor distinguish a fast demotion (where SDK-warm is still net-positive) from a slow demotion (where the penalty erodes the saving from skipped agent start).
 

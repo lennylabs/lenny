@@ -88,7 +88,13 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder := newBinder(c, adapterDialer(t, srv))
 	var demotedPools []string
-	binder.SDKDemotion = func(pool string) { demotedPools = append(demotedPools, pool) }
+	var teardownSeen bool
+	binder.SDKDemotion = func(pool string, teardownSeconds float64) {
+		demotedPools = append(demotedPools, pool)
+		if teardownSeconds >= 0 {
+			teardownSeen = true
+		}
+	}
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -112,6 +118,9 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 	}
 	if len(demotedPools) != 1 || demotedPools[0] != testPool {
 		t.Errorf("SDKDemotion metric = %v, want [%q]", demotedPools, testPool)
+	}
+	if !teardownSeen {
+		t.Errorf("SDKDemotion did not report a teardown duration (§6.3 line 352)")
 	}
 }
 
