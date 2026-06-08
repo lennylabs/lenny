@@ -83,6 +83,14 @@ type Propagator struct {
 	// onError observes a publish failure. Nil means failures are
 	// swallowed; the gateway passes a logging callback.
 	onError func(error)
+	// onRevoke is a per-replica side effect run on every applied
+	// revocation, whether it originated locally (Revoke) or arrived from a
+	// peer (the subscribe loop). The §4.9 emergency-revocation direct-mode
+	// rotate wires it so a revoked pool credential proactively rotates the
+	// direct-delivery pods bound on this replica — fanning the rotate out
+	// fleet-wide alongside the deny-list propagation. Nil disables it.
+	// spec: spec/04_system-components.md line 1649.
+	onRevoke func(credential.CredentialKey)
 }
 
 // Option configures a Propagator at construction.
@@ -94,6 +102,19 @@ type Option func(*Propagator)
 // propagation.
 func WithErrorHandler(fn func(error)) Option {
 	return func(p *Propagator) { p.onError = fn }
+}
+
+// WithRevokeHook registers a per-replica side effect run on every
+// applied credential revocation — both a local Revoke and a peer
+// revocation delivered over pub/sub. The §4.9 emergency-revocation
+// direct-mode rotate wires it so a revoked pool credential proactively
+// rotates the direct-delivery pods this replica holds, fanning the
+// rotate out fleet-wide through the same propagation as the deny list.
+// The hook runs inline under the applying goroutine, so a slow hook (a
+// RotateCredentials RPC) must hand off its own work. spec:
+// spec/04_system-components.md line 1649.
+func WithRevokeHook(fn func(credential.CredentialKey)) Option {
+	return func(p *Propagator) { p.onRevoke = fn }
 }
 
 // WithFallback wires the §4.9 Postgres LISTEN/NOTIFY fallback. A Revoke
@@ -219,5 +240,11 @@ func (p *Propagator) applyLocal(key credential.CredentialKey) {
 	p.denyList.Revoke(key)
 	if p.worker != nil && key.Source == credential.SourcePool && key.CredentialID != "" {
 		p.worker.Revoke(key.CredentialID)
+	}
+	// §4.9 line 1649: a revocation also drives the per-replica direct-mode
+	// rotate when one is wired, so every replica that applies the
+	// revocation rotates its own direct-delivery pods off the credential.
+	if p.onRevoke != nil {
+		p.onRevoke(key)
 	}
 }

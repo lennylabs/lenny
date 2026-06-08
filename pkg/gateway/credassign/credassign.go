@@ -117,6 +117,12 @@ type poolState struct {
 	// active counts in-use leases per credential ID, feeding the
 	// least-loaded strategy.
 	active map[string]int
+	// revoked holds the credential IDs an emergency revocation
+	// (§4.9 emergency credential revocation, line 1645) has marked
+	// unselectable. A revoked credential is treated as unhealthy at
+	// selection time so a replacement mint — the §4.9 line 1649 step-5
+	// rotate — never re-selects the credential the operator just revoked.
+	revoked map[string]bool
 }
 
 // Metrics receives §16.1 credential-pool telemetry from the assignment
@@ -204,7 +210,36 @@ func (s *Service) OnAssigned(fn func(LeaseAssignment)) {
 func (s *Service) RegisterPool(p Pool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pools[p.Name] = &poolState{pool: p, active: make(map[string]int)}
+	s.pools[p.Name] = &poolState{
+		pool:    p,
+		active:  make(map[string]int),
+		revoked: make(map[string]bool),
+	}
+}
+
+// RevokeCredential marks a credential unselectable in the named pool, so
+// every subsequent §4.9 lease mint from the pool skips it. It backs the
+// §4.9 emergency credential revocation rotate (line 1649, step 5): once
+// the gateway revokes a pool credential, a replacement lease minted from
+// the same pool must come from a *different* credential, never the one
+// just revoked. RevokeCredential is the in-process selection's side of
+// that guarantee — the deny list stops the revoked credential reaching
+// the provider; this stops the assignment service from handing it back
+// out. A revocation against an unknown pool or credential is a no-op
+// (the pool may not be registered on this replica). It is goroutine-safe.
+//
+// spec: spec/04_system-components.md lines 1645, 1649.
+func (s *Service) RevokeCredential(poolName, credentialID string) {
+	if poolName == "" || credentialID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.pools[poolName]
+	if !ok {
+		return
+	}
+	ps.revoked[credentialID] = true
 }
 
 // Assign leases a credential from the named pool to a session. It
@@ -262,7 +297,11 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 		candidates[i] = credential.CredentialCandidate{
 			CredentialID:   c.ID,
 			ActiveSessions: ps.active[c.ID],
-			Healthy:        c.Healthy,
+			// A credential the §4.9 emergency revocation marked is never
+			// assignable, regardless of its declared health, so a step-5
+			// replacement mint never re-selects the revoked credential.
+			// spec: spec/04_system-components.md line 1649.
+			Healthy: c.Healthy && !ps.revoked[c.ID],
 		}
 	}
 

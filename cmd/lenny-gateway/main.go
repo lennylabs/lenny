@@ -4169,6 +4169,28 @@ func main() {
 	if pgPool != nil {
 		credDenyPropOpts = append(credDenyPropOpts, credrenewalprop.WithFallback(pgnotify.New(pgPool)))
 	}
+	// §4.9 line 1649 emergency-revocation step 5: when the gateway mints
+	// leases in-process, wire the direct-mode rotate as a revoke hook on
+	// the credential-lease propagator. A revoked pool credential then
+	// proactively rotates every direct-delivery pod off the materialized
+	// key on whichever replica holds the binding, minting the replacement
+	// from a different credential in the same pool. The deny list already
+	// terminates proxy-mode access fleet-wide; this adds the direct-mode
+	// proactive push the deny list cannot deliver. The token-service
+	// minting path (--token-service-grpc-addr) carries no per-credential
+	// revocation surface yet, so the rotate is wired only for the
+	// in-process path; the deny-list termination still applies in both.
+	if inProcessAssign != nil {
+		if ls, ok := llmLeases.(poolLeaseStore); ok {
+			directRotator := &directModeRevocationRotator{
+				leases:      ls,
+				markRevoked: inProcessAssign.RevokeCredential,
+				rotate:      proxyFallbackRotator{assign: credAssign, registry: podRegistry}.Rotate,
+			}
+			credDenyPropOpts = append(credDenyPropOpts,
+				credrenewalprop.WithRevokeHook(directRotator.onRevoke))
+		}
+	}
 	var credRenewalWorker *credrenewal.Worker
 	credRenewalProp := credrenewalprop.New(credDeny, nil, securityBus, credDenyPropOpts...)
 	if credRenewal != nil {

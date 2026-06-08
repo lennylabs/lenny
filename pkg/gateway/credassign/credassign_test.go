@@ -290,3 +290,55 @@ func TestProtoLeaseByIDUnknownLease(t *testing.T) {
 		t.Error("ProtoLeaseByID for an unrecorded lease succeeded, want an error")
 	}
 }
+
+// spec: §4.9 lines 1645, 1649 — RevokeCredential marks a credential
+// unselectable so a §4.9 emergency-revocation step-5 replacement mint
+// draws a different credential from the same pool, never the one revoked.
+
+func TestRevokeCredentialSkipsRevokedOnReassign(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
+		healthyCred("key-1", "sk-ant-1"), healthyCred("key-2", "sk-ant-2")))
+
+	// The sticky-free least-loaded strategy ties toward the earlier
+	// candidate, so a fresh pool assigns key-1 first.
+	first, err := svc.Assign("claude-prod", "s_1", "", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if first.CredentialID != "key-1" {
+		t.Fatalf("first assignment = %q, want key-1", first.CredentialID)
+	}
+
+	// Revoking key-1 must force every later mint onto key-2 even though
+	// key-1 carries fewer active leases (the least-loaded preference).
+	svc.RevokeCredential("claude-prod", "key-1")
+	for i := 0; i < 3; i++ {
+		got, err := svc.Assign("claude-prod", "s_after", "", "")
+		if err != nil {
+			t.Fatalf("Assign after revoke: %v", err)
+		}
+		if got.CredentialID != "key-2" {
+			t.Fatalf("post-revoke assignment %d = %q, want key-2 (key-1 revoked)", i, got.CredentialID)
+		}
+		svc.Release(got.LeaseID)
+	}
+}
+
+func TestRevokeCredentialExhaustsSingleCredentialPool(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
+		healthyCred("key-1", "sk-ant-1")))
+
+	svc.RevokeCredential("claude-prod", "key-1")
+	if _, err := svc.Assign("claude-prod", "s_1", "", ""); !errors.Is(err, credential.ErrPoolExhausted) {
+		t.Fatalf("Assign from a pool whose only credential is revoked = %v, want ErrPoolExhausted", err)
+	}
+}
+
+func TestRevokeCredentialUnknownPoolIsNoOp(t *testing.T) {
+	svc, _, _ := newService(t)
+	// Neither an unknown pool nor empty identifiers may panic.
+	svc.RevokeCredential("absent", "key-1")
+	svc.RevokeCredential("", "")
+}

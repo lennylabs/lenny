@@ -271,3 +271,55 @@ type noopRenewer struct{}
 func (noopRenewer) Renew(context.Context, credrenewal.Lease) (credrenewal.Lease, error) {
 	return credrenewal.Lease{}, nil
 }
+
+// TestRevokeHookFiresOnLocalRevoke confirms WithRevokeHook runs the §4.9
+// line 1649 per-replica side effect on a local Revoke, with the credential
+// key the revocation carried.
+func TestRevokeHookFiresOnLocalRevoke(t *testing.T) {
+	var got []credential.CredentialKey
+	p := New(denylist.New(), nil, nil, WithRevokeHook(func(key credential.CredentialKey) {
+		got = append(got, key)
+	}))
+
+	key := poolKey("claude-prod", "key-1")
+	p.Revoke(key)
+
+	if len(got) != 1 || got[0] != key {
+		t.Fatalf("revoke hook keys = %v, want exactly %v", got, key)
+	}
+}
+
+// TestRevokeHookFiresOnPeerApply confirms the hook also runs when a peer
+// replica's revocation arrives over the subscribe loop, so the §4.9
+// direct-mode rotate fans out fleet-wide and not only on the originating
+// replica.
+func TestRevokeHookFiresOnPeerApply(t *testing.T) {
+	var got []credential.CredentialKey
+	p := New(denylist.New(), nil, nil, WithRevokeHook(func(key credential.CredentialKey) {
+		got = append(got, key)
+	}))
+
+	key := poolKey("claude-prod", "key-7")
+	p.apply(mustEncode(t, key))
+
+	if len(got) != 1 || got[0] != key {
+		t.Fatalf("peer-apply hook keys = %v, want exactly %v", got, key)
+	}
+}
+
+// TestRevokeHookReceivesUserKey confirms the hook is handed the raw key
+// for both sources; the direct-mode rotate itself filters to pool-backed
+// keys, so the propagator stays source-agnostic.
+func TestRevokeHookReceivesUserKey(t *testing.T) {
+	var got []credential.CredentialKey
+	p := New(denylist.New(), nil, nil, WithRevokeHook(func(key credential.CredentialKey) {
+		got = append(got, key)
+	}))
+
+	key := userKey("acme", "user-cred-1")
+	p.Revoke(key)
+
+	if len(got) != 1 || got[0] != key {
+		t.Fatalf("revoke hook keys = %v, want exactly %v", got, key)
+	}
+}
