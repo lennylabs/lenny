@@ -33915,7 +33915,7 @@ backends are `MemoryStore`, MinIO, S3, Azure, GCS. Uploads via
   `paths.Artifacts`, so uploads and snapshots survive a restart. Closed
   with F-17.4.7.
 
-### - [ ] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — DEFERRED
+### - [x] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.0.1 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
 
@@ -33943,6 +33943,8 @@ The spec contract that "every command is available under both names" is not sati
 in either direction.
 
 **Deferred:** Confirmed duplicate of F-24.0.1; deferred for the same reason. Unifying `cmd/lenny` and `cmd/lenny-ctl` into one binary that exposes every subcommand under both names is a dedicated refactor batch.
+
+**Resolution:** Closed by F-24.0.1 (commit fd2d69ee). Confirmed duplicate — both `cmd/lenny/main.go` and `cmd/lenny-ctl/main.go` now delegate to the shared `pkg/ctlcli.Run` dispatcher, so every command is available under both invocation names. The §17.4 lines 188-189 contract ("Every command is available under both names") is satisfied at the dispatch level; the two thin shims build from identical command logic.
 
 ### - [x] F-17.4.10 — `lenny session` covers only `new`; spec §24.17 lists eight verbs [High] — CLOSED
 
@@ -37884,7 +37886,7 @@ authoring follows from that remediation and need not double-track here.
 
 ### Findings
 
-### - [ ] F-24.0.1 — 1 — `lenny` and `lenny-ctl` are separate binaries with disjoint command sets (R2 unmet) [High] — OPEN
+### - [x] F-24.0.1 — 1 — `lenny` and `lenny-ctl` are separate binaries with disjoint command sets (R2 unmet) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.4.9 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
 
@@ -37897,6 +37899,8 @@ The implementation has two distinct Go packages with disjoint command surfaces:
 Neither binary detects its invocation name (`os.Args[0]` / `filepath.Base`) to alias to the other surface. `lenny bootstrap`, `lenny admin tenants list`, `lenny-ctl up`, and `lenny-ctl session new` all exit non-zero with "unknown command". The release pipeline `release.yml:226-232` even builds the two from different packages (`./cmd/lenny` and `./cmd/lenny-ctl`).
 
 **Reopened 2026-06-07 — prior deferral:** Closing this requires merging `cmd/lenny` and `cmd/lenny-ctl` into one binary (or a shared `pkg/cli` dispatch) so both invocation names expose every subcommand per §24 preamble line 17. That is a dedicated refactor batch touching every command implementation and its tests. The invocation-name detection added in f5a77e54 (`progName`) is a step toward it but does not unify the two command surfaces.
+
+**Resolution (commit fd2d69ee):** Extracted the `lenny-ctl` dispatcher into the importable `pkg/ctlcli` package (all top-level `cmd/lenny-ctl/*.go` moved, `package main` → `package ctlcli`; `runtimescaffold` stays in place). Both `cmd/lenny/main.go` and `cmd/lenny-ctl/main.go` are now thin shims over the single exported `ctlcli.Run(args, stdout, stderr, version)`, so both invocation names dispatch through identical command logic and support every subcommand per §24 preamble line 17. `lenny bootstrap`, `lenny admin tenants list`, and `lenny drift report` now reach their handlers (verified by smoke test and `TestRunIsTheUnifiedEntryForBothNames_spec_24_0`); the §24.19 local commands (`up`/`down`/`session`/...) remain reachable under both names via the existing `localcli` delegation. `progName` resolves `lenny` / `lenny-ctl` / `kubectl-lenny` from `os.Args[0]` so the version banner names whichever name ran. Each thin shim keeps its own `var version` for the `-X main.version` release ldflag and passes it into `Run`.
 
 ### - [x] F-24.0.2 — 2 — Standalone `lenny-ctl` archive and Homebrew formula install `lenny`, not `lenny-ctl` (R3, R4 unmet) [High] — CLOSED
 
