@@ -171,6 +171,75 @@ type Pool struct {
 	// store admission with URL_MODE_ELICITATION_DOMAIN_REQUIRED.
 	// spec: §9.2 line 86.
 	URLModeElicitation elicitation.URLModeAllowlist
+
+	// SDKWarmCircuitBreakerOverride is the §6.1 line 63 operator override
+	// of the SDK-warm circuit breaker. The empty value leaves the breaker
+	// under automatic control (equivalent to `auto`). `enabled` clears a
+	// tripped breaker ahead of its grace window and evaluates SDK-warm on
+	// the live demotion rate; `disabled` forces SDK-warm off regardless of
+	// the rate; `auto` restores automatic control. The PoolScalingController
+	// reads it via the PoolStoreSource and applies it in its breaker
+	// decision. The admin API mutates it via
+	// PUT /v1/admin/pools/{name}/circuit-breaker. spec: §6.1 lines 63-65,
+	// §15.1 line 801.
+	SDKWarmCircuitBreakerOverride SDKWarmCircuitBreakerOverride
+
+	// AcknowledgeHighDemotionRate is the §6.1 line 48
+	// `sdkWarm.acknowledgeHighDemotionRate` flag. When true the
+	// PoolScalingController suppresses the SDKWarmDemotionRateHigh warning
+	// event for this pool: the operator has accepted that the rolling
+	// 1-hour demotion rate exceeds demotionRateThreshold (60%). It does not
+	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1 line 48.
+	AcknowledgeHighDemotionRate bool
+}
+
+// SDKWarmCircuitBreakerOverride is the §6.1 line 63 closed enum of
+// operator overrides for the SDK-warm circuit breaker.
+type SDKWarmCircuitBreakerOverride string
+
+const (
+	// SDKWarmOverrideUnset is the absence of an explicit override. The
+	// breaker stays under automatic control, identical to
+	// SDKWarmOverrideAuto. It is the value persisted for a pool that has
+	// never had the circuit-breaker endpoint called.
+	SDKWarmOverrideUnset SDKWarmCircuitBreakerOverride = ""
+	// SDKWarmOverrideEnabled forces SDK-warm on: the PoolScalingController
+	// bypasses the breaker's minOpenUntil grace window and evaluates the
+	// live demotion rate, so a tripped breaker clears immediately and only
+	// re-trips if the rate is still at or above the 90% safety threshold.
+	// spec: §6.1 lines 63-65, §15.1 line 801.
+	SDKWarmOverrideEnabled SDKWarmCircuitBreakerOverride = "enabled"
+	// SDKWarmOverrideDisabled forces SDK-warm off regardless of the
+	// demotion rate (the PoolScalingController writes spec.sdkWarmDisabled
+	// with an operator_manual reason). spec: §15.1 line 801.
+	SDKWarmOverrideDisabled SDKWarmCircuitBreakerOverride = "disabled"
+	// SDKWarmOverrideAuto clears any override and restores automatic
+	// circuit-breaker control. spec: §15.1 line 801.
+	SDKWarmOverrideAuto SDKWarmCircuitBreakerOverride = "auto"
+)
+
+// AllSDKWarmCircuitBreakerOverrides returns the closed §15.1 line 801
+// override vocabulary the admin endpoint accepts (the unset value is not
+// an accepted request value; it is the stored default).
+func AllSDKWarmCircuitBreakerOverrides() []SDKWarmCircuitBreakerOverride {
+	return []SDKWarmCircuitBreakerOverride{
+		SDKWarmOverrideEnabled, SDKWarmOverrideDisabled, SDKWarmOverrideAuto,
+	}
+}
+
+// IsValid reports whether o is the unset value or one of the closed
+// §15.1 override values. The unset value is valid because it is the
+// stored default for a pool that never set an override.
+func (o SDKWarmCircuitBreakerOverride) IsValid() bool {
+	if o == SDKWarmOverrideUnset {
+		return true
+	}
+	for _, v := range AllSDKWarmCircuitBreakerOverrides() {
+		if o == v {
+			return true
+		}
+	}
+	return false
 }
 
 // TaskPolicy mirrors the §5.2 taskPolicy block declared on
@@ -458,6 +527,17 @@ func ValidateElicitationPolicy(p Pool) error {
 	return nil
 }
 
+// ValidateSDKWarmConfig rejects a pool whose §6.1 SDK-warm
+// circuit-breaker override is outside the closed §15.1 line 801
+// vocabulary. The unset value passes (it is the stored default).
+// spec: §6.1 lines 63-65, §15.1 line 801.
+func ValidateSDKWarmConfig(p Pool) error {
+	if !p.SDKWarmCircuitBreakerOverride.IsValid() {
+		return errors.New("poolstore: sdkWarm.circuitBreakerOverride is not a recognised §15.1 value (enabled, disabled, auto)")
+	}
+	return nil
+}
+
 // ValidateTaskPolicy enforces the §5.2 task-mode taskPolicy invariants
 // at admin admission time. The same invariants are re-checked at the CRD
 // layer by `lenny-pool-config-validator`; running them here makes a
@@ -670,6 +750,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if err := ValidateElicitationPolicy(p); err != nil {
 		return err
 	}
+	if err := ValidateSDKWarmConfig(p); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.pools[p.Name]; exists {
@@ -760,6 +843,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 		return Pool{}, err
 	}
 	if err := ValidateElicitationPolicy(row); err != nil {
+		return Pool{}, err
+	}
+	if err := ValidateSDKWarmConfig(row); err != nil {
 		return Pool{}, err
 	}
 	now := time.Now().UTC()

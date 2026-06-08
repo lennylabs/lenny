@@ -31,6 +31,10 @@ func (m *recordingMirror) MirrorLagSeconds(context.Context, string) (float64, er
 	return 0, nil
 }
 
+func (m *recordingMirror) GetByPodID(context.Context, string) (agentpodstate.PodState, bool, error) {
+	return agentpodstate.PodState{}, false, nil
+}
+
 func (m *recordingMirror) ClaimIdle(context.Context, string, string, string) (agentpodstate.PodState, bool, error) {
 	return agentpodstate.PodState{}, false, nil
 }

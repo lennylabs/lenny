@@ -26,12 +26,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/convergence"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 )
 
 // failoverSeconds is the §4.6.2 worst-case controller failover window
@@ -88,6 +90,18 @@ type PoolConfig struct {
 	// SDKWarmDisabled is the SDK-warm circuit-breaker flag (§4.6.3
 	// PoolScalingController-owned).
 	SDKWarmDisabled bool
+	// SDKWarmCircuitBreakerOverride is the §6.1 line 63 operator override
+	// read from the pool's sdk_warm_config column. An empty value (or
+	// `auto`) leaves the breaker under automatic control; `enabled`
+	// bypasses the minOpenUntil grace window and evaluates the live
+	// demotion rate so a tripped breaker clears ahead of the grace period;
+	// `disabled` forces SDK-warm off regardless of the rate. spec: §6.1
+	// lines 63-65, §15.1 line 801.
+	SDKWarmCircuitBreakerOverride poolstore.SDKWarmCircuitBreakerOverride
+	// AcknowledgeHighDemotionRate is the §6.1 line 48 operator
+	// acknowledgment that suppresses this pool's SDKWarmDemotionRateHigh
+	// warning event. It does not affect the 90% circuit-breaker trip.
+	AcknowledgeHighDemotionRate bool
 	// PoolType selects which §4.6.2 formula sizes the pool: a standard
 	// (non-experiment) pool or an A/B experiment variant pool (§10.7).
 	// An empty value is treated as strategy.PoolStandard. A
@@ -193,8 +207,10 @@ type PoolConfigSource interface {
 	ListPoolConfigs(ctx context.Context) ([]PoolConfig, error)
 }
 
-// DemotionSignal is the rolling 5-minute SDK-warm demotion signal for
-// one pool — the input the §6.1 circuit breaker consumes.
+// DemotionSignal is the rolling SDK-warm demotion signal for one pool —
+// the input the §6.1 controls consume. The 5-minute window drives the
+// circuit-breaker trip; the 1-hour window drives the
+// SDKWarmDemotionRateHigh warning event (§6.1 line 48).
 type DemotionSignal struct {
 	// Rate is the rolling 5-minute demotion rate in [0,1]: SDK-warm
 	// demotions divided by claims over the window.
@@ -204,6 +220,14 @@ type DemotionSignal struct {
 	// has refilled; the breaker holds a tripped pool open in that case
 	// rather than auto-closing on a cold-start zero rate.
 	HasSample bool
+	// HourRate is the rolling 1-hour demotion rate in [0,1]. The §6.1
+	// line 48 SDKWarmDemotionRateHigh event fires when it exceeds
+	// demotionRateThreshold (60%). A source that does not compute the
+	// 1-hour window leaves it zero with HourHasSample=false.
+	HourRate float64
+	// HourHasSample is true once the 1-hour window holds a usable sample.
+	// The demotion-rate-high event never fires without it.
+	HourHasSample bool
 }
 
 // DemotionRateSource yields the rolling SDK-warm demotion signal for a
@@ -249,6 +273,13 @@ type Reconciler struct {
 	// trips the breaker but still honors a breaker already persisted on
 	// a pool's status until its grace window elapses.
 	Demotion DemotionRateSource
+	// Events records the §6.1 line 48 SDKWarmDemotionRateHigh warning
+	// event on the SandboxWarmPool when a pool's rolling 1-hour demotion
+	// rate exceeds demotionRateThreshold and the pool has not set
+	// acknowledgeHighDemotionRate. When nil, the event is not emitted; the
+	// circuit-breaker trip is unaffected. The binary wires
+	// mgr.GetEventRecorderFor.
+	Events record.EventRecorder
 	// ModeFactors supplies the §5.2 line 569 observed-reuse signal that
 	// drives the mode-adjusted formula's `mode_factor` for task-mode
 	// pools. When nil, the controller derives `mode_factor` from the
@@ -633,6 +664,22 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 		return err
 	}
 
+	// Read the rolling SDK-warm demotion signal once for this pool. Both
+	// the §6.1 circuit-breaker decision and the §6.1 line 48
+	// SDKWarmDemotionRateHigh event consume it, and reading it here (rather
+	// than inside the CreateOrUpdate mutate closure, which can run more than
+	// once on a write conflict) issues at most one metrics query per pool
+	// per reconcile.
+	var sig DemotionSignal
+	var haveSig bool
+	if r.Demotion != nil {
+		sig, err = r.Demotion.PoolDemotionSignal(ctx, cfg.Name)
+		if err != nil {
+			return fmt.Errorf("read demotion signal: %w", err)
+		}
+		haveSig = true
+	}
+
 	pool := &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
@@ -643,10 +690,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	// decision pointer means no breaker evaluation ran for this pool.
 	var decision *BreakerDecision
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, pool, func() error {
-		decision, err = r.evaluateBreaker(ctx, cfg, pool)
-		if err != nil {
-			return err
-		}
+		decision = r.evaluateBreaker(cfg, pool, sig, haveSig)
 		pool.Spec.TemplateRef = cfg.Name
 		pool.Spec.MinWarm = wd.MinWarm
 		pool.Spec.MaxWarm = cfg.MaxWarm
@@ -672,10 +716,35 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	if err := r.syncPoolStatus(ctx, pool, decision, wd.ScalingMode, wd.HoursOfData); err != nil {
 		return err
 	}
+	// spec: §6.1 line 48 — emit the SDKWarmDemotionRateHigh warning event
+	// when the rolling 1-hour demotion rate exceeds the threshold and the
+	// pool has not acknowledged it.
+	r.emitDemotionRateHigh(pool, cfg, sig, haveSig)
 	// spec: §17.8.2 steps 4, 5 — publish the cold-start gauges the
 	// PoolBootstrapMode / PoolBootstrapUnderprovisioned alerts read.
 	r.bootstrapMeter.Set(cfg.Name, wd.Sample)
 	return nil
+}
+
+// emitDemotionRateHigh records the §6.1 line 48 SDKWarmDemotionRateHigh
+// warning event on the pool when the rolling 1-hour demotion rate exceeds
+// demotionRateThreshold (60%). The pool's acknowledgeHighDemotionRate flag
+// suppresses it. The event is skipped when no recorder is wired, when no
+// 1-hour sample is available yet, or when the rate is below the threshold.
+// The controller-runtime EventRecorder aggregates repeated emissions into
+// a single Event object with a running count, so emitting on each reconcile
+// while the rate stays high does not spam the API server.
+func (r *Reconciler) emitDemotionRateHigh(pool *lennyv1.SandboxWarmPool, cfg PoolConfig, sig DemotionSignal, haveSig bool) {
+	if r.Events == nil || !haveSig || !sig.HourHasSample {
+		return
+	}
+	if sig.HourRate <= demotionRateHighThresholdDefault || cfg.AcknowledgeHighDemotionRate {
+		return
+	}
+	r.Events.Eventf(pool, corev1.EventTypeWarning, "SDKWarmDemotionRateHigh",
+		"SDK-warm demotion rate %.0f%% over the last hour exceeds the %.0f%% demotionRateThreshold for pool %q; "+
+			"narrow sdkWarmBlockingPaths, set capabilities.preConnect=false, or set sdkWarm.acknowledgeHighDemotionRate to suppress",
+		sig.HourRate*100, demotionRateHighThresholdDefault*100, cfg.Name)
 }
 
 // drainAndDeleteWarmPool implements the §10.7 line 1104 conclude
@@ -718,22 +787,38 @@ func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig,
 }
 
 // evaluateBreaker runs the §6.1 SDK-warm circuit-breaker decision for
-// one pool. It reads the rolling demotion signal from the
-// DemotionRateSource and the persisted breaker state from the live
-// pool, then returns the decision the caller writes to
-// spec.sdkWarmDisabled and status.sdkWarmCircuitBreaker.
+// one pool. It consumes the rolling demotion signal the caller read once
+// (haveSig is false when no DemotionRateSource is wired) and the
+// persisted breaker state from the live pool, then returns the decision
+// the caller writes to spec.sdkWarmDisabled and
+// status.sdkWarmCircuitBreaker. It also applies the §6.1 line 63 operator
+// override (enabled / disabled / auto) on top of the automatic decision.
 //
-// It returns a nil decision when no breaker evaluation applies: when
-// no DemotionRateSource is configured and the pool has no breaker
-// currently persisted. In that case the pool's PoolConfig value stays
-// authoritative, preserving the admin-API operator override path. When
-// a breaker IS persisted, the decision runs even without a
-// DemotionRateSource so the breaker is held open until its grace
-// window elapses (the §6.1 leader-failover guard).
-func (r *Reconciler) evaluateBreaker(ctx context.Context, cfg PoolConfig, pool *lennyv1.SandboxWarmPool) (*BreakerDecision, error) {
+// It returns a nil decision when no breaker evaluation applies: when no
+// demotion signal is available, the pool has no breaker currently
+// persisted, and no `enabled` override is forcing a re-evaluation. In
+// that case the pool's PoolConfig value stays authoritative, preserving
+// the admin-API operator override path. When a breaker IS persisted, the
+// decision runs even without a signal so the breaker is held open until
+// its grace window elapses (the §6.1 leader-failover guard).
+func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.SandboxWarmPool, sig DemotionSignal, haveSig bool) *BreakerDecision {
 	cur := breakerStateFromStatus(pool.Status.SDKWarmCircuitBreaker)
-	if r.Demotion == nil && !cur.Open {
-		return nil, nil
+	override := cfg.SDKWarmCircuitBreakerOverride
+
+	// spec: §6.1 line 63, §15.1 line 801 — `disabled` forces SDK-warm off
+	// regardless of the demotion rate. It is evaluated before the automatic
+	// decision and ignores the rolling window entirely.
+	if override == poolstore.SDKWarmOverrideDisabled {
+		d := operatorDisabledDecision(cur, r.now())
+		return &d
+	}
+
+	// No automatic evaluation applies when there is no DemotionRateSource,
+	// no breaker is currently persisted, and no `enabled` override is asking
+	// for a fresh re-evaluation. The PoolConfig's SDKWarmDisabled stays
+	// authoritative (the v1 bootstrap default).
+	if !haveSig && !cur.Open && override != poolstore.SDKWarmOverrideEnabled {
+		return nil
 	}
 
 	in := BreakerInputs{
@@ -741,17 +826,23 @@ func (r *Reconciler) evaluateBreaker(ctx context.Context, cfg PoolConfig, pool *
 		MinOpenDuration: scalePolicyMinOpenDuration(cfg.ScalePolicy),
 		Now:             r.now(),
 	}
-	if r.Demotion != nil {
-		sig, err := r.Demotion.PoolDemotionSignal(ctx, cfg.Name)
-		if err != nil {
-			return nil, fmt.Errorf("read demotion signal: %w", err)
-		}
+	if haveSig {
 		in.DemotionRate = sig.Rate
 		in.HasWindowSample = sig.HasSample
 	}
 
+	// spec: §6.1 lines 63-65 — `enabled` clears a tripped breaker ahead of
+	// its minOpenUntil grace window by evaluating against a closed Current.
+	// The live demotion rate (0 when no source is wired) then drives the
+	// decision: SDK-warm is restored, and the breaker re-trips only if the
+	// rate is still at or above the 90% safety threshold ("one-shot ... does
+	// not suppress future trips").
+	if override == poolstore.SDKWarmOverrideEnabled {
+		in.Current = BreakerState{}
+	}
+
 	decision := EvaluateBreaker(in)
-	return &decision, nil
+	return &decision
 }
 
 // syncPoolStatus writes the §6.1 circuit-breaker state and the §17.8.2

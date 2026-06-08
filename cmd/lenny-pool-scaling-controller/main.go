@@ -44,6 +44,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/metrics"
 )
 
 // §4.6.2 leader-election lease parameters, matching the
@@ -74,6 +75,7 @@ func main() {
 		capTier       string
 		capPlanning   poolscaling.CapacityPlanning
 		safetyFactor  float64
+		prometheusURL string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -115,6 +117,8 @@ func main() {
 	// override automatically; a positive value pins it for every pool.
 	flag.Float64Var(&safetyFactor, "default-safety-factor", envFloatOr("LENNY_POOL_SCALING_SAFETY_FACTOR", 0),
 		"§17.8.2 line 1008 poolScaling.safetyFactor — the agent-type safety_factor applied to pools that do not pin one. 0 (default) resolves the per-tier default from --capacity-tier (1.2 at Tier 3, else 1.5).")
+	flag.StringVar(&prometheusURL, "prometheus-url", os.Getenv("LENNY_PROMETHEUS_URL"),
+		"§6.1 Prometheus HTTP API base URL the SDK-warm circuit breaker reads the rolling demotion rate from (lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total). When unset, the breaker only honors a state already persisted on a pool and never auto-trips (the v1 bootstrap default).")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -164,11 +168,24 @@ func main() {
 		Store:     poolstorepg.New(pgPool),
 		Namespace: agentNS,
 	}
+	// spec: §6.1 lines 48, 50 — when a Prometheus backend is configured the
+	// SDK-warm circuit breaker reads the rolling demotion rate from it and
+	// auto-trips at 90%; the SDKWarmDemotionRateHigh event fires at the
+	// 60% 1-hour threshold. Without --prometheus-url the breaker still
+	// honors a state already persisted on a pool's status but never
+	// auto-trips (the v1 bootstrap default).
+	var demotionSource poolscaling.DemotionRateSource
+	if prometheusURL != "" {
+		promClient, perr := metrics.NewPrometheusClient(metrics.PrometheusConfig{BaseURL: prometheusURL})
+		if perr != nil {
+			log.Fatalf("lenny-pool-scaling-controller: prometheus client: %v", perr)
+		}
+		demotionSource = &poolscaling.PrometheusDemotionSource{Querier: promClient}
+		log.Printf("lenny-pool-scaling-controller: §6.1 SDK-warm demotion source wired to %s", prometheusURL)
+	}
 	// v1 runs every pool in §4.6.2 bootstrap mode: no DemandSource is
 	// wired, so each pool holds at its operator-set warmCount floor until
-	// a deployer supplies observed-demand metrics. The SDK-warm circuit
-	// breaker honors any state already persisted on a pool's status even
-	// without a DemotionRateSource.
+	// a deployer supplies observed-demand metrics.
 	// spec: §17.8.2 line 1008 — resolve the agent-type safety_factor a pool
 	// inherits when it does not pin one. An explicit --default-safety-factor
 	// pins it for every pool; 0 selects the per-tier default so a Tier 3
@@ -182,6 +199,8 @@ func main() {
 	reconciler := &poolscaling.Reconciler{
 		Client:              mgr.GetClient(),
 		Source:              source,
+		Demotion:            demotionSource,
+		Events:              mgr.GetEventRecorderFor("lenny-pool-scaling-controller"),
 		DefaultSafetyFactor: effectiveSafetyFactor,
 	}
 	if err := mgr.Add(&poolscaling.Runnable{Reconciler: reconciler, Interval: syncInterval}); err != nil {

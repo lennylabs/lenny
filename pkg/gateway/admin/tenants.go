@@ -749,6 +749,10 @@ func (r *Router) Handler() http.Handler {
 		// warm-count sub-route with the `minWarm` field. It runs on the same
 		// manage_pools gate as the §15.1 PUT it delegates to.
 		mux.Handle("PUT /v1/admin/pools/{name}/warm-count", poolManage(http.HandlerFunc(r.handleUpdatePoolWarmCount)))
+		// §6.1 line 63, §15.1 line 801: override the SDK-warm circuit-breaker
+		// state for a pool (enabled | disabled | auto). Runs on the same
+		// manage_pools gate as the §15.1 PUT it shares the resource with.
+		mux.Handle("PUT /v1/admin/pools/{name}/circuit-breaker", poolManage(http.HandlerFunc(r.handleUpdatePoolCircuitBreaker)))
 		// §15.1 line 797: drain a pool. Transitions the pool to `draining`
 		// so the gateway stops admitting new sessions to it and reports the
 		// in-flight count + estimated drain seconds. Runs on the same

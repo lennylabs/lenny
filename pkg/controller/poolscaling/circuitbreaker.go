@@ -50,6 +50,11 @@ const (
 	// breakerReasonDemotionRate marks a breaker tripped automatically
 	// because the rolling demotion rate crossed the trip threshold.
 	breakerReasonDemotionRate = "demotion_rate_exceeded"
+	// breakerReasonOperatorManual marks a breaker held open by the §6.1
+	// line 63 `circuitBreakerOverride: disabled` operator override. Unlike
+	// an automatic trip it carries no minOpenUntil — it stays open until the
+	// operator sets `enabled` or `auto`. spec: §6.1 line 54.
+	breakerReasonOperatorManual = "operator_manual"
 )
 
 // BreakerState is the input the breaker decision consumes and the
@@ -188,6 +193,26 @@ func openDecision(cur BreakerState) BreakerDecision {
 // closedDecision builds the decision for a closed breaker.
 func closedDecision() BreakerDecision {
 	return BreakerDecision{State: BreakerState{}, SDKWarmDisabled: false}
+}
+
+// operatorDisabledDecision builds the decision for the §6.1 line 63
+// `circuitBreakerOverride: disabled` override: SDK-warm is forced off
+// regardless of the demotion rate. The breaker is recorded open with the
+// operator_manual reason and no minOpenUntil, since an operator disable is
+// not grace-window bounded. When the breaker is already operator-disabled
+// the original openedAt is preserved so a steady-state reconcile does not
+// churn the status timestamp.
+func operatorDisabledDecision(cur BreakerState, now time.Time) BreakerDecision {
+	openedAt := now
+	if cur.Open && cur.OpenedReason == breakerReasonOperatorManual && cur.OpenedAt != nil {
+		openedAt = *cur.OpenedAt
+	}
+	st := BreakerState{
+		Open:         true,
+		OpenedAt:     &openedAt,
+		OpenedReason: breakerReasonOperatorManual,
+	}
+	return BreakerDecision{State: st, SDKWarmDisabled: true}
 }
 
 // breakerStateFromStatus reads a persisted SDKWarmCircuitBreakerStatus

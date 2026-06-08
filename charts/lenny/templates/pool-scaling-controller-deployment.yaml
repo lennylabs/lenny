@@ -93,6 +93,15 @@ spec:
             - name: LENNY_POOL_SCALING_SAFETY_FACTOR
               value: {{ .Values.poolScalingController.safetyFactor | quote }}
             {{- end }}
+            # §6.1 lines 48, 50 — the Prometheus HTTP API the SDK-warm
+            # circuit breaker reads the rolling demotion rate from
+            # (lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total).
+            # When unset the breaker only honors a state already persisted on a
+            # pool and never auto-trips (the v1 bootstrap default). F-6.2.21.
+            {{- with .Values.poolScalingController.prometheusURL }}
+            - name: LENNY_PROMETHEUS_URL
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080

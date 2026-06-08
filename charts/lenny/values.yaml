@@ -118,6 +118,15 @@ poolScalingController:
   # API. The §17.8.2 validation gate requires raising this universally
   # (e.g. 1.3 or 1.5) when the failover-warm-serve SLO is not met.
   safetyFactor: 0
+  # prometheusURL is the §6.1 Prometheus HTTP API base URL the SDK-warm
+  # circuit breaker reads the rolling demotion rate from
+  # (lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total).
+  # When empty the breaker honors a state already persisted on a pool but
+  # never auto-trips and never emits the SDKWarmDemotionRateHigh event
+  # (the v1 bootstrap default). Set it to a Prometheus-compatible endpoint
+  # (e.g. http://prometheus-server.monitoring.svc:80) to enable automatic
+  # SDK-warm circuit-breaking.
+  prometheusURL: ""
   image:
     repository: ghcr.io/lennylabs/lenny-pool-scaling-controller
     # tag defaults to the chart appVersion when left empty.

@@ -140,6 +140,32 @@ tests:
             name: LENNY_POOL_SCALING_SAFETY_FACTOR
             value: "1.3"
 
+  # spec: §6.1 lines 48, 50 / F-6.2.21 — the SDK-warm circuit-breaker
+  # demotion source is wired only when prometheusURL is set; the v1
+  # bootstrap default omits LENNY_PROMETHEUS_URL so the breaker never
+  # auto-trips.
+  - it: omits LENNY_PROMETHEUS_URL by default
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PROMETHEUS_URL
+            value: ""
+  - it: renders LENNY_PROMETHEUS_URL when prometheusURL is set
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      poolScalingController.prometheusURL: http://prometheus-server.monitoring.svc:80
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PROMETHEUS_URL
+            value: http://prometheus-server.monitoring.svc:80
+
   # spec: §17.8.6 ImageResolver — the PSC resolves its image from the
   # single-source platform.registry.*. F-17.8.2.
   - it: resolves the PSC image from platform.registry.url

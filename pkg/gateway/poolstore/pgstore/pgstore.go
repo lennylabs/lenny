@@ -48,7 +48,7 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
 	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 	pool_config_generation, task_policy, elicitation_policy, draining_since,
-	bootstrap_min_warm, reconciliation_resume_epoch`
+	bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -75,7 +75,49 @@ func validatePool(p poolstore.Pool) error {
 	if err := poolstore.ValidateTaskPolicy(p); err != nil {
 		return err
 	}
-	return poolstore.ValidateElicitationPolicy(p)
+	if err := poolstore.ValidateElicitationPolicy(p); err != nil {
+		return err
+	}
+	return poolstore.ValidateSDKWarmConfig(p)
+}
+
+// sdkWarmConfigJSON is the JSONB wire shape for the §6.1 per-pool
+// SDK-warm circuit-breaker operability config. The keys match the §6.1
+// spec yaml so a database operator inspecting the row sees the field
+// names the deployer wrote.
+type sdkWarmConfigJSON struct {
+	CircuitBreakerOverride      string `json:"circuitBreakerOverride,omitempty"`
+	AcknowledgeHighDemotionRate bool   `json:"acknowledgeHighDemotionRate,omitempty"`
+}
+
+// encodeSDKWarmConfig returns the JSONB blob to persist or a nil byte
+// slice (SQL NULL) when the pool carries no explicit §6.1 SDK-warm
+// override. spec: §6.1 lines 48, 63-65.
+func encodeSDKWarmConfig(p poolstore.Pool) ([]byte, error) {
+	if p.SDKWarmCircuitBreakerOverride == poolstore.SDKWarmOverrideUnset &&
+		!p.AcknowledgeHighDemotionRate {
+		return nil, nil
+	}
+	return json.Marshal(sdkWarmConfigJSON{
+		CircuitBreakerOverride:      string(p.SDKWarmCircuitBreakerOverride),
+		AcknowledgeHighDemotionRate: p.AcknowledgeHighDemotionRate,
+	})
+}
+
+// decodeSDKWarmConfig is the inverse of encodeSDKWarmConfig: a NULL row
+// leaves the §6.1 fields at their zero value (automatic breaker control,
+// unacknowledged demotion rate).
+func decodeSDKWarmConfig(raw []byte, p *poolstore.Pool) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var wire sdkWarmConfigJSON
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return fmt.Errorf("poolstore: decode sdk_warm_config: %w", err)
+	}
+	p.SDKWarmCircuitBreakerOverride = poolstore.SDKWarmCircuitBreakerOverride(wire.CircuitBreakerOverride)
+	p.AcknowledgeHighDemotionRate = wire.AcknowledgeHighDemotionRate
+	return nil
 }
 
 // elicitationPolicyJSON is the JSONB wire shape for the §9.2 per-pool
@@ -221,6 +263,10 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	if err != nil {
 		return err
 	}
+	swJSON, err := encodeSDKWarmConfig(p)
+	if err != nil {
+		return err
+	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
@@ -228,14 +274,14 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
 		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 		pool_config_generation, task_policy, elicitation_policy, draining_since,
-		bootstrap_min_warm, reconciliation_resume_epoch
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch)
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -297,6 +343,10 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	if err != nil {
 		return poolstore.Pool{}, err
 	}
+	swJSON, err := encodeSDKWarmConfig(p)
+	if err != nil {
+		return poolstore.Pool{}, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
@@ -304,14 +354,14 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
 		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
 		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20,
-		bootstrap_min_warm = $21, reconciliation_resume_epoch = $22
+		bootstrap_min_warm = $21, reconciliation_resume_epoch = $22, sdk_warm_config = $23
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch); err != nil {
+		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -416,6 +466,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		taskPolicy                                                       []byte
 		elicitationPolicy                                                []byte
 		bootstrapMinWarm                                                 *int
+		sdkWarmConfig                                                    []byte
 	)
 	if err := row.Scan(
 		&p.Name, &p.RuntimeRef, &isolationProfile, &executionMode,
@@ -424,7 +475,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
-		&bootstrapMinWarm, &p.ReconciliationResumeEpoch,
+		&bootstrapMinWarm, &p.ReconciliationResumeEpoch, &sdkWarmConfig,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}
@@ -448,6 +499,9 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	}
 	p.TaskPolicy = tp
 	if err := decodeElicitationPolicy(elicitationPolicy, &p); err != nil {
+		return poolstore.Pool{}, err
+	}
+	if err := decodeSDKWarmConfig(sdkWarmConfig, &p); err != nil {
 		return poolstore.Pool{}, err
 	}
 	return p, nil

@@ -175,9 +175,27 @@ type PoolPayload struct {
 	// url-mode elicitation allowlist. spec: §9.2 line 86.
 	URLModeElicitation *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
 
+	// SDKWarm is the §6.1 SDK-warm circuit-breaker operability block:
+	// the operator `circuitBreakerOverride` (line 63) and the
+	// `acknowledgeHighDemotionRate` flag (line 48). It is populated on GET
+	// when the pool carries either setting. The override is set via the
+	// dedicated PUT /v1/admin/pools/{name}/circuit-breaker endpoint;
+	// acknowledgeHighDemotionRate is set via the main PUT. spec: §6.1
+	// lines 48, 63-65.
+	SDKWarm *SDKWarmPayload `json:"sdkWarm,omitempty"`
+
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	DeletedAt string `json:"deletedAt,omitempty"`
+}
+
+// SDKWarmPayload is the §6.1 `sdkWarm` block on the admin wire:
+// `{"circuitBreakerOverride": "enabled"|"disabled"|"auto",
+// "acknowledgeHighDemotionRate": bool}`. spec: §6.1 lines 48, 63-65,
+// §15.1 line 801.
+type SDKWarmPayload struct {
+	CircuitBreakerOverride      string `json:"circuitBreakerOverride,omitempty"`
+	AcknowledgeHighDemotionRate bool   `json:"acknowledgeHighDemotionRate,omitempty"`
 }
 
 // URLModeElicitationPayload is the §9.2 line 86 per-pool
@@ -247,6 +265,14 @@ type UpdatePoolRequest struct {
 	ElicitationDepthPolicy     *string                    `json:"elicitationDepthPolicy,omitempty"`
 	ElicitationSuppressAtDepth *int                       `json:"elicitationSuppressAtDepth,omitempty"`
 	URLModeElicitation         *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
+
+	// SDKWarm carries the §6.1 SDK-warm operability fields. The main PUT
+	// honors `acknowledgeHighDemotionRate` (line 48); the
+	// `circuitBreakerOverride` is set via the dedicated
+	// PUT /v1/admin/pools/{name}/circuit-breaker endpoint (line 63) which
+	// enforces the non-SDK-warm-pool 409 and emits the override audit
+	// event, so the override field here is ignored by the main PUT.
+	SDKWarm *SDKWarmPayload `json:"sdkWarm,omitempty"`
 }
 
 func fromPool(p poolstore.Pool) PoolPayload {
@@ -284,6 +310,12 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		out.URLModeElicitation = &URLModeElicitationPayload{
 			Enabled:         p.URLModeElicitation.Enabled,
 			DomainAllowlist: append([]string(nil), p.URLModeElicitation.DomainAllowlist...),
+		}
+	}
+	if p.SDKWarmCircuitBreakerOverride != poolstore.SDKWarmOverrideUnset || p.AcknowledgeHighDemotionRate {
+		out.SDKWarm = &SDKWarmPayload{
+			CircuitBreakerOverride:      string(p.SDKWarmCircuitBreakerOverride),
+			AcknowledgeHighDemotionRate: p.AcknowledgeHighDemotionRate,
 		}
 	}
 	return out
@@ -379,6 +411,13 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		CreatedAt:                        r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
+	// spec: §6.1 lines 48, 63-65 — carry the SDK-warm operability block
+	// onto a created pool so a bootstrap seed or POST can set the override
+	// and demotion-rate acknowledgment up front.
+	if body.SDKWarm != nil {
+		pl.SDKWarmCircuitBreakerOverride = poolstore.SDKWarmCircuitBreakerOverride(body.SDKWarm.CircuitBreakerOverride)
+		pl.AcknowledgeHighDemotionRate = body.SDKWarm.AcknowledgeHighDemotionRate
+	}
 	if pl.EgressProfile == "" {
 		// spec: §13.2 — an omitted egress profile resolves to the
 		// narrowest egress (`restricted`), so the stored record reflects
@@ -1001,6 +1040,13 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.URLModeElicitation != nil {
 		p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
 	}
+	// spec: §6.1 line 48 — the main PUT honors acknowledgeHighDemotionRate.
+	// The circuitBreakerOverride is left to the dedicated /circuit-breaker
+	// endpoint (which enforces the non-SDK-warm 409 and the override audit
+	// event), so it is not merged here.
+	if body.SDKWarm != nil {
+		p.AcknowledgeHighDemotionRate = body.SDKWarm.AcknowledgeHighDemotionRate
+	}
 }
 
 func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
@@ -1086,6 +1132,125 @@ func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Requ
 	// spec: §25.17 — the warm-count sub-route does not support the §15.1
 	// ?dryRun=true query convention; it has its own confirm-flag preview.
 	r.applyPoolUpdate(w, req, name, UpdatePoolRequest{WarmCount: &warmCount}, false)
+}
+
+// CircuitBreakerOverrideRequest is the §15.1 line 801
+// PUT /v1/admin/pools/{name}/circuit-breaker body:
+// `{"sdkWarm": {"circuitBreakerOverride": "enabled"|"disabled"|"auto"}}`.
+// spec: §6.1 lines 63-65, §15.1 line 801.
+type CircuitBreakerOverrideRequest struct {
+	SDKWarm *SDKWarmOverridePayload `json:"sdkWarm,omitempty"`
+}
+
+// SDKWarmOverridePayload carries the circuitBreakerOverride value of the
+// §15.1 line 801 request body.
+type SDKWarmOverridePayload struct {
+	CircuitBreakerOverride string `json:"circuitBreakerOverride,omitempty"`
+}
+
+// handleUpdatePoolCircuitBreaker serves the §15.1 line 801
+// PUT /v1/admin/pools/{name}/circuit-breaker endpoint. It overrides the
+// §6.1 SDK-warm circuit-breaker state: `enabled` clears a tripped breaker
+// ahead of its grace window, `disabled` forces SDK-warm off, and `auto`
+// restores automatic control. The PoolScalingController reads the stored
+// override via the §4.6.2 PoolStoreSource and applies it on its next
+// reconcile. The endpoint requires If-Match, returns 409
+// INVALID_STATE_TRANSITION for a non-SDK-warm pool, and emits the
+// pool.sdk_warm_circuit_breaker_override audit event. spec: §6.1 lines
+// 63-65, §15.1 line 801.
+func (r *Router) handleUpdatePoolCircuitBreaker(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	var body CircuitBreakerOverrideRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		return
+	}
+	if body.SDKWarm == nil || body.SDKWarm.CircuitBreakerOverride == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"sdkWarm.circuitBreakerOverride is required", nil)
+		return
+	}
+	override := poolstore.SDKWarmCircuitBreakerOverride(body.SDKWarm.CircuitBreakerOverride)
+	// spec: §15.1 line 801 — the request value must be one of the explicit
+	// override actions; the unset/empty value is not an accepted request.
+	if override == poolstore.SDKWarmOverrideUnset || !override.IsValid() {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"sdkWarm.circuitBreakerOverride must be one of enabled, disabled, auto",
+			map[string]any{"field": "sdkWarm.circuitBreakerOverride"})
+		return
+	}
+	current, err := r.pools.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 lines 1207-1211 — the override is a PUT and requires
+	// If-Match against the pool_config_generation.
+	if !enforceIfMatch(w, req, current.Generation) {
+		return
+	}
+	// spec: §15.1 line 801 — circuit-breaker override has no effect on a
+	// non-SDK-warm pool; reject with 409 INVALID_STATE_TRANSITION.
+	if !r.poolIsSDKWarm(req.Context(), current) {
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+			"circuit-breaker override has no effect on a pool whose runtime is not SDK-warm (capabilities.preConnect)",
+			map[string]any{"pool": name})
+		return
+	}
+	previous := current.SDKWarmCircuitBreakerOverride
+	updated, err := r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {
+		p.SDKWarmCircuitBreakerOverride = override
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	// spec: §15.1 line 801 — record operator identity (carried by emit),
+	// the previous override state, and the new value.
+	prevWire := string(previous)
+	if previous == poolstore.SDKWarmOverrideUnset {
+		prevWire = string(poolstore.SDKWarmOverrideAuto)
+	}
+	r.emit(req.Context(), principal, "pool.sdk_warm_circuit_breaker_override", name, map[string]any{
+		"previousOverride": prevWire,
+		"newOverride":      string(override),
+	})
+	w.Header().Set("ETag", formatETag(updated.Generation))
+	w.Header().Set("Content-Type", "application/json")
+	payload := fromPool(updated)
+	payload.SyncStatus = r.resolveSyncStatus(req.Context(), updated)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// poolIsSDKWarm reports whether the pool's runtime declares the §6.1
+// preConnect capability, i.e. whether the pool warms SDK-warm pods. The
+// §15.1 circuit-breaker override is only meaningful on such a pool. When
+// no runtime store is wired the check is skipped (the override is
+// permitted); a runtime that does not resolve is treated as not SDK-warm.
+func (r *Router) poolIsSDKWarm(ctx context.Context, p poolstore.Pool) bool {
+	if r.runtimes == nil {
+		return true
+	}
+	rt, err := r.runtimes.Get(ctx, p.RuntimeRef)
+	if err != nil {
+		return false
+	}
+	return poolstore.RuntimePreConnect(rt)
 }
 
 // applyPoolUpdate validates the §15.1 pool-update body, applies it, emits
@@ -1425,6 +1590,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.ClearTaskPolicy {
 		out = append(out, "taskPolicy.cleared")
+	}
+	if b.SDKWarm != nil {
+		out = append(out, "sdkWarm.acknowledgeHighDemotionRate")
 	}
 	return out
 }
