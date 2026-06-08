@@ -4041,11 +4041,24 @@ Consequence: operators flipping a pool to runc via the explicit opt-in do not se
 
 **Resolution (re-verified, no code change):** Confirmed the finding's own conclusion. The monotonicity helpers are correct and `AtLeastAsRestrictive` fails closed on unknown values, and the call sites guard with `isolation.IsValid` first (`experimentrouter.go:344`, `experiments.go:148/157/197`, `derive.go`, `replay.go`). The "short-circuit caching" is a micro-optimization with no behavioral or correctness implication; there is no spec basis to add it. Closed as a positive confirmation.
 
-### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — OPEN
+### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — DEFERRED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
 
 **Reopened 2026-06-07 — prior deferral to F-4.7.9:** The finding's suggested resolution (wire `SecurityDegradedMode` to RuntimeClass absence) is spec-incorrect. The spec reserves two distinct conditions: `Degraded` for RuntimeClass absence (already wired by F-5.3.1 in `pkg/controller/warmpool/runtimeclass.go`), and `SecurityDegradedMode` exclusively for the §4.7 `SO_PEERCRED` nonce-only fallback — set when a pod carries `SOPeercredDisabled=True` and surfaced by the pool controller onto the `SandboxTemplate` (`spec/04_system-components.md:887`, `spec/13_security-model.md:14`, `spec/18_build-sequence.md:182`). Its producer path (the adapter setting the pod condition + the Sandbox surfacing it) is the unbuilt F-4.7.9 nonce-only/HMAC supplement; wiring the controller's surfacing half now would be dead code with no producer and no Sandbox-status field to read. The condition string is correctly named in the CRD comment for that future use.
+
+**Re-verified + DEFERRED (this batch):** F-4.7.9 (the nonce-only / HMAC
+challenge-response logic) has since CLOSED, but that did not unblock this finding —
+the F-4.7.9 resolution explicitly hands the producer chain to **F-4.7.15** (OPEN):
+"The `SOPeercredDisabled=True` pod condition and its propagation to `SecurityDegradedMode=True`
+... needs an adapter in-cluster client plus RBAC and a controller reconciler — a standalone
+effort tracked separately." So the real blocker is the unbuilt F-4.7.15 producer (the adapter
+has no Kubernetes client today, and the downward API cannot write status conditions). Wiring
+the pool-controller surfacing half of `SecurityDegradedMode` now would still be dead code with
+no `SOPeercredDisabled` condition to read and no Sandbox-status field carrying it. Re-blocked
+on F-4.7.15 (adapter pod-condition producer); re-attempt in the same cluster-bound batch that
+builds the adapter→pod-status client + RBAC + the controller reconciler that surfaces the
+condition onto the SandboxTemplate.
 
 ### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
 
@@ -45189,7 +45202,7 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 
 ### Findings
 
-### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — OPEN
+### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — DEFERRED
 - §26.1 catalog table (line 22) lists `chat` as **Standard**.
 - §26.7 body lists `chat` as **Full** in three places: prose line 309 ("smallest useful Full-level runtime"), Conformance level line 313 ("Full"), and YAML highlights line 322 (`integrationLevel: full`).
 - Implementation (`pkg/embedded/stack/catalog.go` line 66, `pkg/embedded/stack/catalog_test.go` lines 36–39, `pkg/compliance/reference_catalog.yaml` line 56) all hard-code `standard`, citing §26.1.
@@ -45199,6 +45212,18 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 Resolution (pending): deferred. Closing requires a `spec/` edit (one of §26.1 line 22 or §26.7 lines 309/313/322 has to give) which this task is not authorised to make. The implementation has picked the §26.1 catalog-table value (Standard); the spec arbitration belongs to the spec maintainer.
 
 **Reopened 2026-06-07 (was DEFERRED).** No deferral rationale was recorded; re-verify current implementation status against the spec and code before fixing (rules A, O).
+
+**Re-verified + re-DEFERRED (this batch):** The implementation is internally
+consistent and faithful to one side of the contradiction. `pkg/embedded/stack/catalog.go`
+(the `chat` entry, level `standard`, citing §26.1 line 22), `pkg/compliance/reference_catalog.yaml`
+(`level: standard`), and the catalog test all agree on `standard`. The §26.7 body
+(lines 309/313/322) still states `full`. Reconciling the two requires editing one
+of those spec lines, which the build loop is not authorised to do (rule B — the spec
+is the source of truth and a hook blocks writes under `spec/`). The code side is
+already correct against §26.1; no code change closes a spec-internal disagreement.
+Deferred to the spec maintainer to arbitrate §26.1 line 22 against §26.7 lines 309/313/322;
+once one gives, the catalog entry / compliance YAML / test assertion re-align in a
+trivial follow-up.
 
 ### - [x] F-26.7.2 — (Info) — Image tag matches §26.7 YAML highlights [Medium] — CLOSED
 `ghcr.io/lennylabs/runtime-chat:1.0.0` in `catalog.go` line 65 matches the spec line 320 image tag exactly. Digest is a placeholder per the §17.4 pattern documented in `catalog.go` lines 19–30; on first session start the gateway will fail the pull until the operator re-registers with the published digest or imports the image locally. Noted as expected behavior, not a defect.
