@@ -388,6 +388,14 @@ mappings:
     category_name: Discovery
     activity_id: 4
     activity_name: Delete
+  - event_type: admin.tenant.runtime_capability_override
+    match: prefix
+    class_uid: 5001
+    class_name: Entity Management
+    category_uid: 5
+    category_name: Discovery
+    activity_id: 3
+    activity_name: Update
   - event_type: admin.user.created
     match: prefix
     class_uid: 3006

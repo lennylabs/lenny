@@ -13,6 +13,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -213,11 +214,14 @@ func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) in
 // binder uses to decide demotion. A pod-warm or unresolvable runtime
 // returns (false, nil) so the binder takes the pod-warm path. spec: §5.1
 // capabilities.preConnect / sdkWarmBlockingPaths; §6.1 lines 30-40.
-func (s *Server) runtimeSDKWarm(ctx context.Context, runtimeRef string) (preConnect bool, blockingPaths []string) {
+func (s *Server) runtimeSDKWarm(ctx context.Context, tenantID, runtimeRef string) (preConnect bool, blockingPaths []string) {
 	if s.runtimes == nil || runtimeRef == "" {
 		return false, nil
 	}
-	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
+	// §5.1 line 49: a tenant may toggle preConnect or add demotion blockers
+	// to sdkWarmBlockingPaths for this runtime; overlay the override before
+	// the binder reads the SDK-warm inputs. F-5.1.20.
+	rt, err := runtimecapoverride.ResolveForTenant(ctx, s.runtimes, s.capOverrides, tenantID, runtimeRef)
 	if err != nil || rt.Capabilities == nil || !rt.Capabilities.PreConnect {
 		return false, nil
 	}

@@ -1108,7 +1108,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		}
 		return s.bindSlotWithRetry(ctx, slotReq)
 	}
-	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.RuntimeRef)
+	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.TenantID, row.RuntimeRef)
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
 		Pool:                 match.Pool,
 		SessionID:            row.ID,

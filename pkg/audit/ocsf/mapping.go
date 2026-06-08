@@ -171,6 +171,9 @@ var prefixCatalog = []struct {
 	// §12.8 / §24.10 tenant-deletion lifecycle events. F-12.8.1, F-24.10.3.
 	{"admin.tenant.deletion_initiated", entityMgmt(ActivityDelete)},
 	{"admin.tenant.deletion_blocked", entityMgmt(ActivityDelete)},
+	// §5.1 line 49 per-tenant runtime capability override (updated /
+	// deleted). F-5.1.20.
+	{"admin.tenant.runtime_capability_override", entityMgmt(ActivityUpdate)},
 	{"admin.user.created", accountChange(ActivityCreate)},
 	{"admin.user.updated", accountChange(ActivityUpdate)},
 	{"admin.user.deleted", accountChange(ActivityDelete)},

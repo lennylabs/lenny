@@ -238,6 +238,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
+	capoverridepg "github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
@@ -1238,6 +1240,7 @@ func main() {
 		sessions         sessionstore.Store
 		tenants          tenantstore.Store
 		runtimes         runtimestore.Store
+		capOverrides     runtimecapoverride.Store
 		transcripts      transcriptstore.Store
 		users            userstore.Store
 		connectors       connectorstore.Store
@@ -1351,6 +1354,7 @@ func main() {
 		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool))
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
+		capOverrides = capoverridepg.New(pool)
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
 		connectors = connectorpg.New(pool)
@@ -1362,6 +1366,7 @@ func main() {
 		sessions = memstore.New()
 		tenants = tenantstore.NewMemory()
 		runtimes = runtimestore.NewMemory()
+		capOverrides = runtimecapoverride.NewMemory()
 		transcripts = transcriptstore.NewMemory()
 		users = userstore.NewMemory()
 		connectors = connectorstore.NewMemory()
@@ -3509,6 +3514,7 @@ func main() {
 		Experiments:                experiments,
 		Pools:                      pools,
 		Runtimes:                   runtimes,
+		CapabilityOverrides:        capOverrides,
 		Environments:               environments,
 		TenantAccess:               tenantAccess,
 		OpsEmitter:                 opsEmitter,
@@ -3933,6 +3939,7 @@ func main() {
 		Delegation:                 delegationSvc,
 		Users:                      users,
 		Runtimes:                   runtimes,
+		CapabilityOverrides:        capOverrides,
 		Environments:               environments,
 		Tenants:                    tenants,
 		Pools:                      pools,
@@ -4256,6 +4263,7 @@ func main() {
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(runtimes).
+		WithRuntimeCapabilityOverrides(capOverrides).
 		WithUsers(users).
 		WithPools(pools).
 		// §15.1 line 797: the pool-drain endpoint updates the

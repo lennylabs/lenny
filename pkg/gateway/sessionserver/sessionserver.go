@@ -58,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
@@ -266,18 +267,22 @@ type Server struct {
 	experimentReporter    ExperimentRejectionReporter
 	stickyCache           StickyCache
 	runtimes              runtimestore.Store
-	environments          environmentstore.Store
-	tenantAccess          tenantaccessstore.Store
-	opsEmitter            events.EventEmitter
-	budgetForget          func(sessionID string)
-	refResolver           workspaceplan.RefResolver
-	credPools             credentialpoolstore.Store
-	vcsCreds              vcscred.Resolver
-	defaultNoEnvPolicy    string
-	customRoles           customrolestore.Store
-	interceptors          *interceptor.Chain
-	policyAuditSink       *policy.AuditSink
-	uploadSubsystem       *subsystem.Subsystem
+	// capOverrides applies the §5.1 line 49 per-tenant capability override
+	// on top of a resolved runtime at every capability consumer. Optional;
+	// nil falls back to the platform-default capabilities. F-5.1.20.
+	capOverrides       runtimecapoverride.Store
+	environments       environmentstore.Store
+	tenantAccess       tenantaccessstore.Store
+	opsEmitter         events.EventEmitter
+	budgetForget       func(sessionID string)
+	refResolver        workspaceplan.RefResolver
+	credPools          credentialpoolstore.Store
+	vcsCreds           vcscred.Resolver
+	defaultNoEnvPolicy string
+	customRoles        customrolestore.Store
+	interceptors       *interceptor.Chain
+	policyAuditSink    *policy.AuditSink
+	uploadSubsystem    *subsystem.Subsystem
 	// uploadMetrics, when set, receives the §16.1 upload-handler
 	// byte-count and queue-depth observations. Nil drops them. F-13.4.12.
 	uploadMetrics UploadHandlerMetrics
@@ -1149,6 +1154,13 @@ type Options struct {
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
 
+	// CapabilityOverrides is the §5.1 line 49 per-tenant runtime
+	// capability override store. Optional — when set, the gateway overlays
+	// a tenant's override onto the resolved runtime at every §5.1
+	// capability consumer (injection gate, SDK-warm decision, mid-session
+	// upload gate, and the GET /v1/runtimes discovery exposure). F-5.1.20.
+	CapabilityOverrides runtimecapoverride.Store
+
 	// Environments is the §10.6 environment registry. Optional — when
 	// set together with Tenants, GET /v1/runtimes applies §10.6
 	// transparent filtering so a caller sees only the runtimes its
@@ -1427,6 +1439,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		hwmObserver:              opts.HighWatermarkObserver,
 		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,
 		runtimes:                 opts.Runtimes,
+		capOverrides:             opts.CapabilityOverrides,
 		environments:             opts.Environments,
 		tenantAccess:             opts.TenantAccess,
 		opsEmitter:               opts.OpsEmitter,
@@ -2535,7 +2548,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 // sort contract for GET /v1/sessions: created_at (default) and
 // updated_at, descending by default.
 var (
-	sessionListSortFields = []string{"created_at", "updated_at"}
+	sessionListSortFields  = []string{"created_at", "updated_at"}
 	sessionListDefaultSort = pagination.Sort{Field: "created_at", Direction: pagination.DirectionDesc}
 )
 

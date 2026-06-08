@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -213,6 +214,58 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "INJECTION_REJECTED") {
 		t.Errorf("body: %s, want INJECTION_REJECTED", rr.Body.String())
+	}
+}
+
+// spec: §5.1 line 49 — a tenant capability override that disables
+// injection.supported on an injection-capable runtime narrows the
+// injection gate for that tenant's sessions, while a tenant with no
+// override keeps the runtime's declared (injection-on) default.
+func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection:   runtimestore.InjectionCapability{Supported: true},
+		},
+	})
+	overrides := runtimecapoverride.NewMemory()
+	off := false
+	_ = overrides.Put(context.Background(), "acme", "chatty",
+		runtimestore.CapabilityOverride{InjectionSupported: &off})
+
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:            executor.NewEchoExecutor(),
+		Transcripts:         transcriptstore.NewMemory(),
+		Runtimes:            runtimes,
+		CapabilityOverrides: overrides,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// acme has the override → injection rejected.
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "acme1", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
+	})
+	// globex has no override → inherits the platform default (injection on).
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "glx1", TenantID: "globex", State: session.StateRunning,
+		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
+	})
+
+	rrAcme := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rrAcme.Code != http.StatusForbidden || !strings.Contains(rrAcme.Body.String(), "INJECTION_REJECTED") {
+		t.Errorf("acme (override off): status %d body=%s, want 403 INJECTION_REJECTED", rrAcme.Code, rrAcme.Body.String())
+	}
+
+	rrGlx := sendMessageRequest(t, srv.Handler(), "glx1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rrGlx.Code == http.StatusForbidden {
+		t.Errorf("globex (no override) should keep the injection-on default; got 403 body=%s", rrGlx.Body.String())
 	}
 }
 

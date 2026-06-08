@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -270,7 +270,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// the runtime is not found, so a gateway without a wired registry
 	// does not block injection.
 	if s.runtimes != nil && row.RuntimeRef != "" {
-		if rt, err := runtimestore.Resolve(r.Context(), s.runtimes, row.RuntimeRef); err == nil && !rt.InjectionSupported() {
+		// §5.1 line 49: overlay the session tenant's capability override so
+		// a tenant that disabled injection.supported on this runtime has
+		// the injection gate enforce its narrowed value. F-5.1.20.
+		if rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef); err == nil && !rt.InjectionSupported() {
 			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
 				"runtime does not support mid-session message injection", nil)
 			return

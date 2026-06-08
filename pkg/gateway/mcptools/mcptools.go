@@ -47,11 +47,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -67,6 +67,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
@@ -288,6 +289,12 @@ type Deps struct {
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
 	Runtimes runtimestore.Store
+
+	// CapabilityOverrides is the §5.1 line 49 per-tenant runtime
+	// capability override store. Optional — when set, the §8.8 one_shot
+	// input-round gate resolves the session tenant's overridden
+	// capabilities.interaction. F-5.1.20.
+	CapabilityOverrides runtimecapoverride.Store
 
 	// Environments is the §10.6 environment registry. Optional — when
 	// set together with Tenants, lenny/discover_agents applies §10.6
@@ -1527,7 +1534,11 @@ func Register(srv *mcp.Server, deps Deps) {
 			callTimeout := requestInputTimeout
 			oneShot := false
 			if deps.Runtimes != nil && row.RuntimeRef != "" {
-				if rt, rerr := runtimestore.Resolve(ctx, deps.Runtimes, row.RuntimeRef); rerr == nil {
+				// §5.1 line 49: overlay the session tenant's capability
+				// override so a tenant that pinned this runtime to one_shot
+				// (or back to multi_turn) governs the §8.8 input-round gate.
+				// F-5.1.20.
+				if rt, rerr := runtimecapoverride.ResolveForTenant(ctx, deps.Runtimes, deps.CapabilityOverrides, tenant, row.RuntimeRef); rerr == nil {
 					if rt.Limits != nil && rt.Limits.MaxRequestInputWaitSeconds > 0 {
 						callTimeout = time.Duration(rt.Limits.MaxRequestInputWaitSeconds) * time.Second
 					}

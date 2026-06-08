@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -161,11 +162,14 @@ type Router struct {
 	poolCredHealth          PoolCredentialHealthReader
 	customRoles             customrolestore.Store
 	tenantAccess            tenantaccessstore.Store
-	auditLog                AuditLog
-	auditPruner             AuditPartitionDropper
-	auditMetrics            AuditQueryMetrics
-	tokenRevoker            IssuedTokenRevoker
-	revocationCache         RevocationCache
+	// capOverrides backs the §5.1 line 49 per-tenant runtime capability
+	// override CRUD surface. Nil leaves the routes unregistered. F-5.1.20.
+	capOverrides    runtimecapoverride.Store
+	auditLog        AuditLog
+	auditPruner     AuditPartitionDropper
+	auditMetrics    AuditQueryMetrics
+	tokenRevoker    IssuedTokenRevoker
+	revocationCache RevocationCache
 	// adminToken provisions/rotates the §17.6 initial admin credential
 	// (lenny-admin + lenny-admin-token Secret). Nil leaves the bootstrap
 	// admin-token step and the rotate-token route inactive. F-17.6.3.
@@ -525,6 +529,21 @@ func (r *Router) Handler() http.Handler {
 			rbacConfigAdmin(http.HandlerFunc(r.handleGetRBACConfig)))
 		mux.Handle("PUT /v1/admin/tenants/{id}/rbac-config",
 			rbacConfigAdmin(http.HandlerFunc(r.handlePutRBACConfig)))
+		// §5.1 line 49: per-tenant runtime capability customization. A
+		// tenant-scoped config sub-resource gated, like rbac-config, on
+		// manage_rbac_config (platform-admin or tenant-admin scoped to the
+		// path tenant). F-5.1.20.
+		if r.capOverrides != nil {
+			capOverrideAdmin := r.requirePermission(auth.PermManageRBACConfig)
+			mux.Handle("GET /v1/admin/tenants/{id}/runtime-capability-overrides",
+				capOverrideAdmin(http.HandlerFunc(r.handleListRuntimeCapabilityOverrides)))
+			mux.Handle("GET /v1/admin/tenants/{id}/runtime-capability-overrides/{runtime}",
+				capOverrideAdmin(http.HandlerFunc(r.handleGetRuntimeCapabilityOverride)))
+			mux.Handle("PUT /v1/admin/tenants/{id}/runtime-capability-overrides/{runtime}",
+				capOverrideAdmin(http.HandlerFunc(r.handlePutRuntimeCapabilityOverride)))
+			mux.Handle("DELETE /v1/admin/tenants/{id}/runtime-capability-overrides/{runtime}",
+				capOverrideAdmin(http.HandlerFunc(r.handleDeleteRuntimeCapabilityOverride)))
+		}
 	}
 	if r.runtimes != nil {
 		// §10.2 / §15.1: runtime create and delete create or remove a

@@ -1128,6 +1128,63 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/tenants/{id}/runtime-capability-overrides": {
+      "get": {
+        "operationId": "getV1AdminTenantsByIdRuntimeCapabilityOverrides",
+        "summary": "List per-tenant runtime capability overrides",
+        "x-lenny-mcp-tool": "admin.list_runtime_capability_overrides",
+        "x-lenny-scope": "admin.rbac.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/runtime-capability-overrides/{runtime}": {
+      "get": {
+        "operationId": "getV1AdminTenantsByIdRuntimeCapabilityOverride",
+        "summary": "Get a per-tenant runtime capability override",
+        "x-lenny-mcp-tool": "admin.get_runtime_capability_override",
+        "x-lenny-scope": "admin.rbac.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "runtime", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "No override recorded" } }
+      },
+      "put": {
+        "operationId": "putV1AdminTenantsByIdRuntimeCapabilityOverride",
+        "summary": "Set a per-tenant runtime capability override",
+        "x-lenny-mcp-tool": "admin.set_runtime_capability_override",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "runtime", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Runtime not found" } }
+      },
+      "delete": {
+        "operationId": "deleteV1AdminTenantsByIdRuntimeCapabilityOverride",
+        "summary": "Delete a per-tenant runtime capability override",
+        "x-lenny-mcp-tool": "admin.delete_runtime_capability_override",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "runtime", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
     "/v1/admin/tenants/{id}/access-report": {
       "get": {
         "operationId": "getV1AdminTenantsByIdAccessReport",
