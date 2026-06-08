@@ -430,6 +430,13 @@ func (r *Router) commitCorrection(req *http.Request, decider authmw.Principal, p
 		CorrectionReasonCode: pending.ReasonCode,
 		CorrectionDetail:     pending.Detail,
 	}
+	// spec: §14 line 106 — a correction inherits the labels of the event
+	// it corrects so a label-scoped metering query returns the original
+	// and its correction together. Best-effort: a lookup miss leaves the
+	// correction unlabelled rather than failing the commit. F-14.1.13.
+	if original, err := r.findBillingEvent(req, pending.TenantID, pending.CorrectsSequence); err == nil {
+		correctionEvent.Labels = original.Labels
+	}
 	committed, err := r.billing.Append(req.Context(), correctionEvent)
 	if err != nil {
 		return correctionstore.PendingCorrection{}, err

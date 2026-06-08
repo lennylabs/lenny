@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,7 +62,7 @@ var _ billingstore.Store = (*Store)(nil)
 const selectList = `sequence_number, schema_version, user_id, session_id,
 	experiment_id, variant_id, event_type, tokens_input, tokens_output,
 	pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-	environment_id, conditional_fields, created_at`
+	environment_id, conditional_fields, labels, created_at`
 
 // Append commits a billing event to the tenant's ledger and returns
 // the sealed event. The per-tenant advisory lock makes the tail read
@@ -95,17 +96,21 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 		if err != nil {
 			return err
 		}
+		labels, err := labelsValue(e.Labels)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO billing_events (
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-			environment_id, conditional_fields, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+			environment_id, conditional_fields, labels, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
 			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
-			e.CorrectionDetail, e.EnvironmentID, conditional, e.CreatedAt); err != nil {
+			e.CorrectionDetail, e.EnvironmentID, conditional, labels, e.CreatedAt); err != nil {
 			return err
 		}
 		committed = e
@@ -120,6 +125,16 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 // Since returns the tenant's events with sequence_number greater than
 // since, in ascending sequence order, capped at limit.
 func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit int) ([]billingstore.Event, error) {
+	return s.SinceFiltered(ctx, tenantID, since, limit, nil)
+}
+
+// SinceFiltered returns the tenant's events with sequence_number greater
+// than since whose §14 labels contain every key=value pair in
+// labelFilter, in ascending sequence order, capped at limit. The label
+// predicate is pushed into the query (via the labels GIN index), so the
+// §15.1 cursor/hasMore pagination stays correct: the limit applies to the
+// matching rows. spec: §14 line 106; §15.1 lines 1228-1253. F-14.1.13.
+func (s *Store) SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]billingstore.Event, error) {
 	pool, err := s.shard(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -127,12 +142,20 @@ func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit 
 	var out []billingstore.Event
 	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		q := `SELECT ` + selectList + ` FROM billing_events
-			WHERE tenant_id = $1 AND sequence_number > $2
-			ORDER BY sequence_number`
+			WHERE tenant_id = $1 AND sequence_number > $2`
 		args := []any{tenantID, int64(since)}
+		if len(labelFilter) > 0 {
+			want, err := json.Marshal(labelFilter)
+			if err != nil {
+				return err
+			}
+			args = append(args, string(want))
+			q += fmt.Sprintf(" AND labels @> $%d::jsonb", len(args))
+		}
+		q += ` ORDER BY sequence_number`
 		if limit > 0 {
-			q += ` LIMIT $3`
 			args = append(args, limit)
+			q += fmt.Sprintf(" LIMIT $%d", len(args))
 		}
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
@@ -249,11 +272,12 @@ func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 		reasonCode  string
 		detail      string
 		conditional []byte
+		labels      []byte
 	)
 	if err := row.Scan(&seq, &schemaVer, &e.UserID, &sessionID,
 		&e.ExperimentID, &e.VariantID, &eventType, &tokensIn, &tokensOut,
 		&e.PodMinutes, &correctsTo, &reasonCode, &detail, &e.EnvironmentID,
-		&conditional, &e.CreatedAt); err != nil {
+		&conditional, &labels, &e.CreatedAt); err != nil {
 		return billingstore.Event{}, err
 	}
 	if len(conditional) > 0 {
@@ -262,6 +286,13 @@ func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 			return billingstore.Event{}, err
 		}
 		e.Conditional = &c
+	}
+	if len(labels) > 0 {
+		var m map[string]string
+		if err := json.Unmarshal(labels, &m); err != nil {
+			return billingstore.Event{}, err
+		}
+		e.Labels = m
 	}
 	e.TenantID = tenantID
 	e.SequenceNumber = uint64(seq)
@@ -290,6 +321,21 @@ func conditionalValue(e billingstore.Event) (any, error) {
 		return nil, nil
 	}
 	b, err := json.Marshal(e.Conditional)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// labelsValue maps an event's §14 labels map to the nullable labels JSONB
+// column value: nil (SQL NULL) when the event carries no labels so a
+// NULL-labels row never matches a non-empty containment filter, the JSON
+// encoding otherwise. spec: §14 line 106. F-14.1.13.
+func labelsValue(m map[string]string) (any, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}

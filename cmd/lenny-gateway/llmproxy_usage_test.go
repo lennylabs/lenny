@@ -55,7 +55,7 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
 	}, llmproxy.Usage{InputTokens: 100, OutputTokens: 30})
 
-	report, err := usage.Aggregate(context.Background(), "acme")
+	report, err := usage.Aggregate(context.Background(), "acme", nil)
 	if err != nil {
 		t.Fatalf("usage.Aggregate: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 		LeaseID: "cl-2", SessionID: "s_2", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
 	}, llmproxy.Usage{InputTokens: 99, OutputTokens: 1})
-	report, _ := usage.Aggregate(context.Background(), "acme")
+	report, _ := usage.Aggregate(context.Background(), "acme", nil)
 	if report.TotalTokens.Input != 0 || report.TotalTokens.Output != 0 {
 		t.Errorf("direct-mode counts leaked into usagestore: %+v", report.TotalTokens)
 	}
@@ -96,7 +96,7 @@ func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 		LeaseID: "cl-3", SessionID: "s_3", TenantID: "",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
 	}, llmproxy.Usage{InputTokens: 5, OutputTokens: 5})
-	report, _ := usage.Aggregate(context.Background(), "")
+	report, _ := usage.Aggregate(context.Background(), "", nil)
 	if report.TotalSessions != 0 || report.TotalTokens.Input != 0 {
 		t.Errorf("tenantless lease leaked into the usagestore: %+v", report)
 	}
@@ -113,7 +113,7 @@ func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 		LeaseID: "cl-4", SessionID: "missing", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
 	}, llmproxy.Usage{InputTokens: 7, OutputTokens: 3})
-	report, _ := usage.Aggregate(context.Background(), "acme")
+	report, _ := usage.Aggregate(context.Background(), "acme", nil)
 	if report.TotalTokens.Input != 7 || report.TotalTokens.Output != 3 {
 		t.Errorf("tokens not recorded on session miss: %+v", report.TotalTokens)
 	}

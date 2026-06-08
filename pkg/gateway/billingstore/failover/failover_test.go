@@ -55,6 +55,16 @@ func (f *flakyStore) Since(ctx context.Context, tenantID string, since uint64, l
 	return f.inner.Since(ctx, tenantID, since, limit)
 }
 
+func (f *flakyStore) SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]billingstore.Event, error) {
+	f.mu.Lock()
+	down := f.down
+	f.mu.Unlock()
+	if down {
+		return nil, errPrimaryDown
+	}
+	return f.inner.SinceFiltered(ctx, tenantID, since, limit, labelFilter)
+}
+
 func (f *flakyStore) SessionTotals(ctx context.Context, tenantID, sessionID string) (billingstore.SessionUsage, error) {
 	f.mu.Lock()
 	down := f.down

@@ -930,6 +930,10 @@ func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Sessio
 		EnvironmentID: sess.Environment,
 		ExperimentID:  expID,
 		VariantID:     varID,
+		// spec: §14 line 106 — the watchdog-forced terminal event also
+		// carries the session's labels so the metering stream stays
+		// label-filterable. F-14.1.13.
+		Labels: sess.Labels,
 	})
 }
 

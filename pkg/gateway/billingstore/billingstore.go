@@ -130,6 +130,14 @@ type Event struct {
 	// the session row. spec: §10.6 line 663, §10.6 line 674. F-10.6.9.
 	EnvironmentID string
 
+	// Labels is the §14 line 106 session-label set denormalized from the
+	// originating session row so the §11.2.1 billing stream is filterable
+	// by session label in GET /v1/metering/events without re-joining the
+	// (eventually-erased) session. Nil when the session carried no labels;
+	// a billing_correction inherits the labels of the event it corrects so
+	// it appears under the same label filter. spec: §14 line 106. F-14.1.13.
+	Labels map[string]string
+
 	// CorrectsSequence references the original event a billing_correction
 	// adjusts (§11.2.1). It is zero for every non-correction event;
 	// sequence numbers start at 1, so zero is never a valid reference.
@@ -267,6 +275,14 @@ type Store interface {
 	// than since, in ascending sequence order, capped at limit. A
 	// limit of zero or less applies no cap.
 	Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error)
+
+	// SinceFiltered is Since narrowed to events whose denormalized §14
+	// labels contain every key=value pair in labelFilter (AND-containment).
+	// An empty labelFilter is identical to Since. The label predicate is
+	// applied inside the store query so the §15.1 cursor/hasMore
+	// pagination contract is preserved (a post-hoc filter on a page would
+	// break it). spec: §14 line 106; §15.1 lines 1228-1253. F-14.1.13.
+	SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]Event, error)
 
 	// SessionTotals returns the reconciled token + compute usage for one
 	// session: the sum of tokens_input, tokens_output, and pod_minutes
@@ -568,20 +584,46 @@ func (m *Memory) EnvironmentTotals(_ context.Context, tenantID, environmentID st
 }
 
 // Since implements Store.
-func (m *Memory) Since(_ context.Context, tenantID string, since uint64, limit int) ([]Event, error) {
+func (m *Memory) Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error) {
+	return m.SinceFiltered(ctx, tenantID, since, limit, nil)
+}
+
+// SinceFiltered implements Store.
+func (m *Memory) SinceFiltered(_ context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Event, 0)
 	for _, e := range m.events[tenantID] {
-		if e.SequenceNumber > since {
-			out = append(out, e)
+		if e.SequenceNumber <= since {
+			continue
 		}
+		// spec: §14 line 106 — narrow to events whose labels contain every
+		// requested pair. The cap is applied after the label filter so a
+		// filtered page carries up to limit matching events.
+		if !labelsContain(e.Labels, labelFilter) {
+			continue
+		}
+		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SequenceNumber < out[j].SequenceNumber })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// labelsContain reports whether have contains every key=value pair in
+// want (AND-containment). An empty want matches every event. It mirrors
+// the §15.1 line 598 session-list label semantics so the metering stream
+// and the session list agree on what a label filter means. spec: §14
+// line 106. F-14.1.13.
+func labelsContain(have, want map[string]string) bool {
+	for k, v := range want {
+		if hv, ok := have[k]; !ok || hv != v {
+			return false
+		}
+	}
+	return true
 }
 
 var _ Store = (*Memory)(nil)

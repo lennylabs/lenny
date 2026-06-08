@@ -303,6 +303,14 @@ func (p *Pipeline) Since(ctx context.Context, tenantID string, since uint64, lim
 	return p.primary.Since(ctx, tenantID, since, limit)
 }
 
+// SinceFiltered implements billingstore.Store. Like Since it reads the
+// label-filtered events from the durable primary store; buffered
+// (not-yet-renumbered) events are intentionally excluded under the same
+// gap-then-replay contract. spec: §14 line 106; §15.1. F-14.1.13.
+func (p *Pipeline) SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]billingstore.Event, error) {
+	return p.primary.SinceFiltered(ctx, tenantID, since, limit, labelFilter)
+}
+
 // SessionTotals implements billingstore.Store. Per-session usage is read
 // from the durable primary store; events still buffered behind a primary
 // outage have not been renumbered yet and are intentionally excluded, the

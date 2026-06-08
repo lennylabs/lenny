@@ -99,6 +99,11 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 		ctx, cancel := context.WithTimeout(context.Background(), proxyUsageLookupTimeout)
 		if sess, err := r.sessions.Get(ctx, lease.TenantID, lease.SessionID); err == nil {
 			rec.Runtime = sess.RuntimeRef
+			// spec: §14 line 106 — denormalize the session's labels onto the
+			// proxy-extracted usage record so a label-scoped usage report
+			// captures the session's token consumption, not only its
+			// session.created count. F-14.1.13.
+			rec.Labels = sess.Labels
 			// spec: §11.2 — the per-user quota window keys on the
 			// authenticated subject, the same id QuotaEvaluator reads from
 			// the request metadata at admission.

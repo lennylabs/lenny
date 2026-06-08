@@ -14,6 +14,8 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -62,14 +64,33 @@ var _ usagestore.Store = (*Store)(nil)
 // Record appends a usage event to the tenant's accumulator. The row's
 // synthetic id is assigned by the usage_events DEFAULT.
 func (s *Store) Record(ctx context.Context, r usagestore.Record) error {
+	labels, err := labelsValue(r.Labels)
+	if err != nil {
+		return err
+	}
 	return pgtenant.InTx(ctx, s.pool, r.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO usage_events (
-			tenant_id, runtime, sessions, tokens_input, tokens_output, pod_minutes
-		) VALUES ($1, $2, $3, $4, $5, $6)`,
+			tenant_id, runtime, sessions, tokens_input, tokens_output, pod_minutes, labels
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			r.TenantID, r.Runtime, r.Sessions,
-			r.Tokens.Input, r.Tokens.Output, r.PodMinutes)
+			r.Tokens.Input, r.Tokens.Output, r.PodMinutes, labels)
 		return err
 	})
+}
+
+// labelsValue maps a §14 label map to the nullable labels JSONB column
+// value: nil (SQL NULL) when the map is empty so a NULL-labels row never
+// matches a non-empty containment filter, the JSON encoding otherwise.
+// spec: §14 line 106. F-14.1.13.
+func labelsValue(m map[string]string) (any, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // Aggregate returns the §15.1 usage report, computing the same rollup
@@ -84,11 +105,11 @@ func (s *Store) Record(ctx context.Context, r usagestore.Record) error {
 // platform-wide path enumerates the tenants table (which is
 // platform-global and unguarded), aggregates each tenant under its own
 // transaction context, and merges the per-tenant reports.
-func (s *Store) Aggregate(ctx context.Context, tenantFilter string) (usagestore.Report, error) {
+func (s *Store) Aggregate(ctx context.Context, tenantFilter string, labelFilter map[string]string) (usagestore.Report, error) {
 	if tenantFilter != "" {
-		return s.aggregateTenant(ctx, tenantFilter)
+		return s.aggregateTenant(ctx, tenantFilter, labelFilter)
 	}
-	return s.aggregateAll(ctx)
+	return s.aggregateAll(ctx, labelFilter)
 }
 
 // aggregateTenant computes the report for one tenant. The rollup
@@ -96,11 +117,11 @@ func (s *Store) Aggregate(ctx context.Context, tenantFilter string) (usagestore.
 // an explicit tenant_id predicate: the predicate is the load-bearing
 // scoping, with the RLS policy as the §12.3 defence-in-depth backstop,
 // matching userstore/pgstore and sessionstore/pgstore.
-func (s *Store) aggregateTenant(ctx context.Context, tenantID string) (usagestore.Report, error) {
+func (s *Store) aggregateTenant(ctx context.Context, tenantID string, labelFilter map[string]string) (usagestore.Report, error) {
 	var report usagestore.Report
 	// spec: §12.3 line 146 — usage-report aggregation routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
-		r, err := aggregateTx(ctx, tx, tenantID)
+		r, err := aggregateTx(ctx, tx, tenantID, labelFilter)
 		if err != nil {
 			return err
 		}
@@ -118,7 +139,7 @@ func (s *Store) aggregateTenant(ctx context.Context, tenantID string) (usagestor
 // contribute nothing, matching usagestore.Memory, which only ever
 // emits a per-tenant or per-runtime rollup entry for a tenant or
 // runtime that appears in at least one event.
-func (s *Store) aggregateAll(ctx context.Context) (usagestore.Report, error) {
+func (s *Store) aggregateAll(ctx context.Context, labelFilter map[string]string) (usagestore.Report, error) {
 	tenantIDs, err := s.tenantIDs(ctx)
 	if err != nil {
 		return usagestore.Report{}, err
@@ -129,7 +150,7 @@ func (s *Store) aggregateAll(ctx context.Context) (usagestore.Report, error) {
 	)
 	report.ByTenant = make([]usagestore.TenantUsage, 0)
 	for _, tenantID := range tenantIDs {
-		one, err := s.aggregateTenant(ctx, tenantID)
+		one, err := s.aggregateTenant(ctx, tenantID, labelFilter)
 		if err != nil {
 			return usagestore.Report{}, err
 		}
@@ -190,22 +211,38 @@ func (s *Store) tenantIDs(ctx context.Context) ([]string, error) {
 // the by-tenant rollup is the single tenant row (absent when the
 // tenant has no events), and the by-runtime rollup drops events whose
 // runtime is empty and is runtime ascending.
-func aggregateTx(ctx context.Context, tx pgx.Tx, tenantID string) (usagestore.Report, error) {
+func aggregateTx(ctx context.Context, tx pgx.Tx, tenantID string, labelFilter map[string]string) (usagestore.Report, error) {
 	var report usagestore.Report
+
+	// spec: §14 line 106 — a non-empty label filter narrows both rollups
+	// to the events whose denormalized labels contain every requested
+	// pair. The predicate is pushed into SQL via the labels GIN index; a
+	// NULL-labels row never matches a non-empty filter, which is the
+	// desired "row lacks the label" semantics.
+	labelPred := ""
+	labelArgs := []any{}
+	if len(labelFilter) > 0 {
+		want, err := json.Marshal(labelFilter)
+		if err != nil {
+			return usagestore.Report{}, err
+		}
+		labelPred = " AND labels @> $2::jsonb"
+		labelArgs = append(labelArgs, string(want))
+	}
 
 	// Per-tenant rollup. Scoped to tenantID, this yields at most one
 	// group. The grand totals are the sums of its rows, derived in the
 	// same pass.
-	tenantRows, err := tx.Query(ctx, `SELECT
+	tenantRows, err := tx.Query(ctx, fmt.Sprintf(`SELECT
 		tenant_id,
 		COALESCE(SUM(sessions), 0),
 		COALESCE(SUM(tokens_input), 0),
 		COALESCE(SUM(tokens_output), 0),
 		COALESCE(SUM(pod_minutes), 0)
 	FROM usage_events
-	WHERE tenant_id = $1
+	WHERE tenant_id = $1%s
 	GROUP BY tenant_id
-	ORDER BY tenant_id`, tenantID)
+	ORDER BY tenant_id`, labelPred), append([]any{tenantID}, labelArgs...)...)
 	if err != nil {
 		return usagestore.Report{}, err
 	}
@@ -233,15 +270,15 @@ func aggregateTx(ctx context.Context, tx pgx.Tx, tenantID string) (usagestore.Re
 	// Per-runtime rollup, runtime ascending. Scoped to tenantID; events
 	// with no runtime are excluded, matching usagestore.Memory's
 	// `if rec.Runtime != ""`.
-	runtimeRows, err := tx.Query(ctx, `SELECT
+	runtimeRows, err := tx.Query(ctx, fmt.Sprintf(`SELECT
 		runtime,
 		COALESCE(SUM(sessions), 0),
 		COALESCE(SUM(tokens_input), 0),
 		COALESCE(SUM(tokens_output), 0)
 	FROM usage_events
-	WHERE tenant_id = $1 AND runtime <> ''
+	WHERE tenant_id = $1 AND runtime <> ''%s
 	GROUP BY runtime
-	ORDER BY runtime`, tenantID)
+	ORDER BY runtime`, labelPred), append([]any{tenantID}, labelArgs...)...)
 	if err != nil {
 		return usagestore.Report{}, err
 	}

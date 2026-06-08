@@ -89,7 +89,11 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	// the minimal gateway does not yet distinguish — scope to the
 	// caller's tenant unconditionally).
 	tenant := s.resolveTenant(r)
-	report, err := s.usage.Aggregate(r.Context(), tenant)
+	// spec: §14 line 106 — the repeatable `?label=key=value` query scopes
+	// the usage report to sessions carrying every requested label.
+	// F-14.1.13.
+	labelFilter := parseLabelFilter(r.URL.Query()["label"])
+	report, err := s.usage.Aggregate(r.Context(), tenant, labelFilter)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -108,6 +112,9 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 			TenantID: sess.TenantID,
 			Runtime:  sess.RuntimeRef,
 			Sessions: 1,
+			// spec: §14 line 106 — denormalize the session's labels so the
+			// usage report is filterable by session label. F-14.1.13.
+			Labels: cloneMetadata(sess.Labels),
 		})
 	}
 	if s.billing != nil {
@@ -125,6 +132,9 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 			EnvironmentID: sess.Environment,
 			ExperimentID:  expID,
 			VariantID:     varID,
+			// spec: §14 line 106 — denormalize the session's labels so the
+			// metering stream is filterable by session label. F-14.1.13.
+			Labels: cloneMetadata(sess.Labels),
 		})
 	}
 	// §7.1 / §16.6: write the `session.created` event to the §11.7
@@ -415,6 +425,10 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		EnvironmentID: sess.Environment,
 		ExperimentID:  expID,
 		VariantID:     varID,
+		// spec: §14 line 106 — denormalize the session's labels onto the
+		// terminal billing event so the metering stream stays label-
+		// filterable across the session's full lifecycle. F-14.1.13.
+		Labels: cloneMetadata(sess.Labels),
 	})
 }
 

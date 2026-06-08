@@ -121,6 +121,67 @@ func TestSinceRespectsLimit(t *testing.T) {
 	}
 }
 
+// TestSinceFilteredLabelContainment_spec_14_106 exercises the §14 line
+// 106 label-scoped metering stream: SinceFiltered narrows to events whose
+// denormalized labels contain every requested pair, the limit applies to
+// the matching rows (so the §15.1 cursor stays correct), and an
+// empty/nil filter is identical to Since. F-14.1.13.
+func TestSinceFilteredLabelContainment_spec_14_106(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	withLabels := func(team string) billingstore.Event {
+		e := sessionCreated("acme", "s")
+		e.Labels = map[string]string{"team": team, "env": "prod"}
+		return e
+	}
+	// Three search, two ads, one unlabelled (interleaved sequences).
+	for _, team := range []string{"search", "ads", "search", "ads", "search"} {
+		if _, err := store.Append(ctx, withLabels(team)); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	if _, err := store.Append(ctx, sessionCreated("acme", "s")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	got, err := store.SinceFiltered(ctx, "acme", 0, 0, map[string]string{"team": "search"})
+	if err != nil {
+		t.Fatalf("SinceFiltered: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("team=search: got %d events, want 3", len(got))
+	}
+	for _, e := range got {
+		if e.Labels["team"] != "search" {
+			t.Errorf("matched event carries wrong team: %v", e.Labels)
+		}
+	}
+
+	// The limit applies after the label filter: two matching ads events,
+	// limit 1 returns the first matching one in sequence order.
+	got, err = store.SinceFiltered(ctx, "acme", 0, 1, map[string]string{"team": "ads"})
+	if err != nil {
+		t.Fatalf("SinceFiltered limit: %v", err)
+	}
+	if len(got) != 1 || got[0].Labels["team"] != "ads" {
+		t.Fatalf("team=ads limit 1: got %d events (%v), want 1 ads", len(got), got)
+	}
+
+	// A pair no event fully contains matches nothing (the unlabelled
+	// event is excluded by any non-empty filter).
+	got, _ = store.SinceFiltered(ctx, "acme", 0, 0, map[string]string{"team": "search", "env": "staging"})
+	if len(got) != 0 {
+		t.Errorf("team=search,env=staging: got %d events, want 0", len(got))
+	}
+
+	// nil filter is identical to Since: every event including the
+	// unlabelled one.
+	got, _ = store.SinceFiltered(ctx, "acme", 0, 0, nil)
+	if len(got) != 6 {
+		t.Errorf("nil filter: got %d events, want 6", len(got))
+	}
+}
+
 func TestSinceUnknownTenantIsEmpty(t *testing.T) {
 	store := billingstore.NewMemory()
 	got, err := store.Since(context.Background(), "ghost", 0, 0)

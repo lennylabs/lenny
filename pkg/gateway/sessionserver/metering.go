@@ -50,7 +50,11 @@ type meteringEvent struct {
 	CorrectsSequence     uint64  `json:"correctsSequence,omitempty"`
 	CorrectionReasonCode string  `json:"correctionReasonCode,omitempty"`
 	CorrectionDetail     string  `json:"correctionDetail,omitempty"`
-	Timestamp            string  `json:"timestamp"`
+	// Labels echoes the §14 session-label set denormalized onto the event
+	// so a consumer can read the labels it filters on. Omitted when the
+	// event carries none. spec: §14 line 106. F-14.1.13.
+	Labels    map[string]string `json:"labels,omitempty"`
+	Timestamp string            `json:"timestamp"`
 	*billingstore.Conditional
 }
 
@@ -93,11 +97,17 @@ func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 		since = n
 	}
 
+	// spec: §14 line 106 — the repeatable `?label=key=value` query scopes
+	// the billing stream to events carrying every requested label. The
+	// predicate is pushed into the store query so the cursor/hasMore
+	// pagination below stays correct. F-14.1.13.
+	labelFilter := parseLabelFilter(r.URL.Query()["label"])
+
 	envelope := pagination.Envelope[meteringEvent]{Items: []meteringEvent{}}
 	if s.billing != nil {
 		tenantID := s.resolveTenant(r)
 		// Fetch one extra row to detect whether a further page exists.
-		events, err := s.billing.Since(r.Context(), tenantID, since, params.Limit+1)
+		events, err := s.billing.SinceFiltered(r.Context(), tenantID, since, params.Limit+1, labelFilter)
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 			return
@@ -137,6 +147,7 @@ func toMeteringEvent(e billingstore.Event) meteringEvent {
 		CorrectsSequence:     e.CorrectsSequence,
 		CorrectionReasonCode: string(e.CorrectionReasonCode),
 		CorrectionDetail:     e.CorrectionDetail,
+		Labels:               e.Labels,
 		Timestamp:            e.CreatedAt.UTC().Format(time.RFC3339Nano),
 		Conditional:          e.Conditional,
 	}

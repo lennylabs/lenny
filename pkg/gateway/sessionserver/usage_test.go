@@ -65,6 +65,55 @@ func TestUsageRecordsSessionCreation(t *testing.T) {
 	}
 }
 
+// TestUsageLabelFilter_spec_14_106 drives the §14 line 106 label-scoped
+// usage report end to end: two sessions are created with distinct labels
+// and GET /v1/usage?label=team=search returns only the matching session's
+// usage. F-14.1.13.
+func TestUsageLabelFilter_spec_14_106(t *testing.T) {
+	usage := usagestore.NewMemory()
+	var n int
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc: func() string { n++; return "sess_ul" + string(rune('0'+n)) },
+		Usage:  usage,
+	})
+	handler := srv.Handler()
+
+	create := func(labels map[string]string) {
+		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", Labels: labels})
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("create: %d, body=%s", rr.Code, rr.Body.String())
+		}
+	}
+	create(map[string]string{"team": "search"})
+	create(map[string]string{"team": "ads"})
+
+	// Filtered: only the search session's usage.
+	req := withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage?label=team=search", nil))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("filtered usage: %d", rr.Code)
+	}
+	var report usagestore.Report
+	_ = json.Unmarshal(rr.Body.Bytes(), &report)
+	if report.TotalSessions != 1 {
+		t.Errorf("team=search usage: got %d sessions, want 1", report.TotalSessions)
+	}
+
+	// Unfiltered: both sessions.
+	req = withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage", nil))
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	_ = json.Unmarshal(rr.Body.Bytes(), &report)
+	if report.TotalSessions != 2 {
+		t.Errorf("unfiltered usage: got %d sessions, want 2", report.TotalSessions)
+	}
+}
+
 func TestUsageRejectsCallerWithoutViewUsage(t *testing.T) {
 	// §10.2 grants the `user` role no view_usage permission, so a plain
 	// user cannot read the usage report.

@@ -70,6 +70,62 @@ func decodeMeteringPage(t *testing.T, rr *httptest.ResponseRecorder) meteringPag
 	return page
 }
 
+// TestMeteringEventsLabelFilter_spec_14_106 drives the §14 line 106
+// label-scoped billing stream end to end: events carrying distinct labels
+// are seeded and GET /v1/metering/events?label=team=search returns only
+// the matching events, echoing the labels on the wire. The label
+// predicate is pushed into the store query so the §15.1 cursor/hasMore
+// pagination stays correct under the filter. F-14.1.13.
+func TestMeteringEventsLabelFilter_spec_14_106(t *testing.T) {
+	billing := billingstore.NewMemory()
+	seed := func(team string) {
+		if _, err := billing.Append(context.Background(), billingstore.Event{
+			TenantID:  "acme",
+			EventType: billingstore.EventSessionCreated,
+			Labels:    map[string]string{"team": team},
+		}); err != nil {
+			t.Fatalf("seed billing event: %v", err)
+		}
+	}
+	for _, team := range []string{"search", "ads", "search", "ads", "search"} {
+		seed(team)
+	}
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+
+	rr := meteringRequest(t, srv.Handler(), "?label=team=search", pkgauth.RoleBillingViewer)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("filtered metering: %d", rr.Code)
+	}
+	var page struct {
+		Items []struct {
+			SequenceNumber uint64            `json:"sequenceNumber"`
+			Labels         map[string]string `json:"labels"`
+		} `json:"items"`
+		HasMore bool `json:"hasMore"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page: %v; body=%s", err, rr.Body.String())
+	}
+	if len(page.Items) != 3 {
+		t.Fatalf("team=search: got %d items, want 3", len(page.Items))
+	}
+	for _, it := range page.Items {
+		if it.Labels["team"] != "search" {
+			t.Errorf("item carries wrong team: %v", it.Labels)
+		}
+	}
+
+	// Pagination under the filter: limit 2 returns a first page of 2
+	// matching events with hasMore set.
+	rr = meteringRequest(t, srv.Handler(), "?label=team=search&limit=2", pkgauth.RoleBillingViewer)
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page 2: %v", err)
+	}
+	if len(page.Items) != 2 || !page.HasMore {
+		t.Errorf("team=search limit 2: got %d items hasMore=%v, want 2/true", len(page.Items), page.HasMore)
+	}
+}
+
 func TestMeteringEventsRequiresViewUsage(t *testing.T) {
 	srv := meteringServer(t, 3)
 

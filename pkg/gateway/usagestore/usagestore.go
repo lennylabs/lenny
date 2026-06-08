@@ -28,6 +28,12 @@ type Record struct {
 	Sessions   int64
 	Tokens     Tokens
 	PodMinutes float64
+
+	// Labels is the §14 line 106 session-label set denormalized from the
+	// originating session row so a label-scoped usage report can be
+	// computed without re-joining the (eventually-erased) session. Nil
+	// when the session carried no labels. spec: §14 line 106. F-14.1.13.
+	Labels map[string]string
 }
 
 // TenantUsage is the §15.1 per-tenant usage rollup.
@@ -59,8 +65,26 @@ type Store interface {
 	Record(ctx context.Context, r Record) error
 
 	// Aggregate returns the §15.1 usage report. When tenantFilter is
-	// non-empty the report is scoped to that one tenant.
-	Aggregate(ctx context.Context, tenantFilter string) (Report, error)
+	// non-empty the report is scoped to that one tenant. When labelFilter
+	// is non-empty the report covers only the events whose denormalized
+	// §14 labels contain every key=value pair (AND-containment), so a
+	// caller can scope a usage report by session label. spec: §15.1;
+	// §14 line 106. F-14.1.13.
+	Aggregate(ctx context.Context, tenantFilter string, labelFilter map[string]string) (Report, error)
+}
+
+// labelsContain reports whether have contains every key=value pair in
+// want (AND-containment). An empty want matches every record. It mirrors
+// the §15.1 line 598 session-list label semantics so the usage report and
+// the session list agree on what a label filter means. spec: §14 line
+// 106. F-14.1.13.
+func labelsContain(have, want map[string]string) bool {
+	for k, v := range want {
+		if hv, ok := have[k]; !ok || hv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // Memory is the in-memory Store implementation.
@@ -81,7 +105,7 @@ func (m *Memory) Record(_ context.Context, r Record) error {
 }
 
 // Aggregate implements Store.
-func (m *Memory) Aggregate(_ context.Context, tenantFilter string) (Report, error) {
+func (m *Memory) Aggregate(_ context.Context, tenantFilter string, labelFilter map[string]string) (Report, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -91,6 +115,11 @@ func (m *Memory) Aggregate(_ context.Context, tenantFilter string) (Report, erro
 
 	for _, rec := range m.records {
 		if tenantFilter != "" && rec.TenantID != tenantFilter {
+			continue
+		}
+		// spec: §14 line 106 — a label filter scopes the report to the
+		// events whose denormalized labels contain every requested pair.
+		if !labelsContain(rec.Labels, labelFilter) {
 			continue
 		}
 		report.TotalSessions += rec.Sessions
