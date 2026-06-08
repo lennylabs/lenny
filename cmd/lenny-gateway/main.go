@@ -4959,6 +4959,13 @@ func main() {
 			return e.Firing()
 		},
 	}
+	// spec: §25.3 lines 443-451 — derive each dependency/subsystem
+	// component's /v1/admin/health verdict from the §16.5 alert catalogue:
+	// a firing critical alert mapped to the component reports unhealthy, a
+	// warning reports degraded. The firing set comes from this replica's
+	// in-process tracker (late-bound via alertEvalPtr); the alert→component
+	// mapping lives in pkg/alerting/rules so it shares the rule catalogue.
+	healthAgg.SetAlertSource(alertHealthSource{eval: &alertEvalPtr})
 	healthHandler := health.Handler(healthAgg, poolHealthResolver)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)
@@ -8597,6 +8604,43 @@ func exportCircuitBreakerMetrics(ctx context.Context, breakers breakerRegistry, 
 		return
 	}
 	m.SetCircuitBreakerCache(time.Since(last).Seconds(), true)
+}
+
+// alertHealthSource implements health.AlertStatusSource over this
+// replica's in-process §25.13 alert tracker. For a component it returns
+// the worst severity among firing §16.5 alerts mapped to it: any firing
+// critical alert reports unhealthy, otherwise a firing warning reports
+// degraded. ok is false when no firing alert maps to the component, in
+// which case the dependency probe's verdict stands.
+// spec: §25.3 lines 443-451.
+type alertHealthSource struct {
+	eval *atomic.Pointer[evaluator.Evaluator]
+}
+
+func (s alertHealthSource) ComponentStatus(component string) (health.Status, []string, bool) {
+	e := s.eval.Load()
+	if e == nil {
+		return "", nil, false
+	}
+	var firing []string
+	hasCritical := false
+	for _, al := range e.FiringAlerts() {
+		comp, ok := rules.HealthComponentFor(al.Rule.Name)
+		if !ok || comp != component {
+			continue
+		}
+		firing = append(firing, al.Rule.Name)
+		if al.Rule.Severity == rules.SeverityCritical {
+			hasCritical = true
+		}
+	}
+	if len(firing) == 0 {
+		return "", nil, false
+	}
+	if hasCritical {
+		return health.StatusUnhealthy, firing, true
+	}
+	return health.StatusDegraded, firing, true
 }
 
 // staticHealthy returns a §25.3 health Checker that always reports

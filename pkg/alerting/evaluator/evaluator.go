@@ -209,6 +209,25 @@ func (e *Evaluator) Firing() []string {
 	return out
 }
 
+// FiringAlerts returns the full Alert (carrying the rule, hence its
+// severity, and the instant it went active) for every rule currently in
+// StateFiring. The §25.3 Platform Health API consumes this to derive each
+// component's verdict from firing alerts: a critical-severity alert maps
+// to `unhealthy`, a warning-severity alert to `degraded`. Firing() returns
+// only names and cannot drive that severity-aware derivation.
+// spec: §25.3 lines 443-451.
+func (e *Evaluator) FiringAlerts() []Alert {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []Alert
+	for _, rs := range e.states {
+		if rs.state == StateFiring {
+			out = append(out, Alert{Rule: rs.rule, State: StateFiring, Since: rs.activeSince})
+		}
+	}
+	return out
+}
+
 // Run drives the evaluation sweep on the configured interval until ctx
 // is done.
 func (e *Evaluator) Run(ctx context.Context) {

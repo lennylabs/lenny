@@ -13,6 +13,7 @@ package health
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +90,18 @@ type Component struct {
 	SuggestedActions []conventions.SuggestedAction `json:"suggestedActions,omitempty"`
 }
 
+// AlertStatusSource reports the §25.3 alert-derived health of a component:
+// the worst severity among firing §16.5 alerts mapped to it (a critical
+// alert maps to unhealthy, a warning alert to degraded). The gateway wires
+// this over its in-process alert tracker (§25.13) so /v1/admin/health
+// reflects firing alerts even when Prometheus is unreachable. ok is false
+// when no firing alert maps to the component, in which case the dependency
+// probe's verdict stands. firing names the firing alerts for the Detail
+// line. spec: §25.3 lines 443-451.
+type AlertStatusSource interface {
+	ComponentStatus(component string) (status Status, firing []string, ok bool)
+}
+
 // Checker reports the health of one subsystem. Implementations must
 // be fast and non-blocking — Check runs on the §25.3 health request
 // path; expensive probes belong in a background goroutine that
@@ -159,6 +172,14 @@ type Aggregator struct {
 	// prom-backed emitter; the Aggregator records probe latency and the
 	// derived status on every real (cache-miss) probe.
 	metrics Metrics
+
+	// §25.3 lines 443-451 alert-derived status overlay. Nil until
+	// SetAlertSource wires the in-process alert tracker; when set, the
+	// /v1/admin/health verdict (Report and the public Component) overlays
+	// the worst firing-alert severity onto each component's probe verdict.
+	// The readiness path (HardDependencyStatus) deliberately reads the raw
+	// probe so a transient alert cannot pull a replica out of the Service.
+	alertSource AlertStatusSource
 }
 
 // NewAggregator returns an empty Aggregator with the §25.3 5-second
@@ -190,7 +211,10 @@ func newAggregator(ttl time.Duration, now func() time.Time) *Aggregator {
 
 // probe runs c's Check unless a result cached within probeCacheTTL is
 // still fresh, in which case the cached Component is returned without
-// touching the backing dependency. spec: §25.3 line 526.
+// touching the backing dependency. It returns the raw probe verdict; the
+// §25.3 alert overlay is applied separately by componentWithAlerts so the
+// readiness path can read the dependency verdict without alert-driven
+// flapping. spec: §25.3 line 526.
 func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	name := c.Name()
 	if a.cacheTTL > 0 {
@@ -209,12 +233,11 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	if comp.Name == "" {
 		comp.Name = name
 	}
-	// spec: §25.3 lines 538-542 — record probe latency and the derived
-	// verdict only on a real Check (a cache hit ran no probe; its gauge
-	// value still reflects the last real probe).
+	// spec: §25.3 lines 538-542 — record probe latency only on a real
+	// Check (a cache hit ran no probe). The derived-status gauge is set by
+	// componentWithAlerts so it reflects the alert overlay.
 	if m != nil {
 		m.ObserveCheckDuration(comp.Name, a.now().Sub(started).Seconds())
-		m.SetStatus(comp.Name, comp.Status)
 	}
 	// spec: §25.3 lines 459-501 / §25.7 line 3234 — when the checker
 	// stamps an Issue but leaves the remediation hint empty, the catalog
@@ -235,12 +258,78 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	return comp
 }
 
+// componentWithAlerts runs the raw probe and overlays the §25.3
+// alert-derived verdict: a firing alert mapped to this component
+// degrades/fails it even when the dependency probe itself is healthy. The
+// overlay is evaluated fresh on every call (never cached) because the
+// in-process alert tracker reads the live metric registry, so a cache hit
+// would otherwise mask a just-fired alert. This is the verdict the
+// /v1/admin/health endpoint reports, and the only path that records the
+// derived status on lenny_health_status.
+// spec: §25.3 lines 443-451, 538-542.
+func (a *Aggregator) componentWithAlerts(ctx context.Context, c Checker) Component {
+	comp := a.probe(ctx, c)
+	a.mu.RLock()
+	src := a.alertSource
+	m := a.metrics
+	a.mu.RUnlock()
+	comp = applyAlertStatus(src, comp)
+	if m != nil {
+		m.SetStatus(comp.Name, comp.Status)
+	}
+	return comp
+}
+
+// applyAlertStatus overlays the §25.3 alert-derived verdict onto a probe
+// result. The overlay only ever worsens the status (a firing alert cannot
+// mark a probe-failed component healthy); on a worsening it appends the
+// firing alert names to the Detail line so the operator sees why.
+// spec: §25.3 lines 443-451.
+func applyAlertStatus(src AlertStatusSource, comp Component) Component {
+	if src == nil {
+		return comp
+	}
+	st, firing, ok := src.ComponentStatus(comp.Name)
+	if !ok || st.rank() <= comp.Status.rank() {
+		return comp
+	}
+	comp.Status = st
+	if d := firingDetail(firing); d != "" {
+		if comp.Detail == "" {
+			comp.Detail = d
+		} else {
+			comp.Detail += "; " + d
+		}
+	}
+	return comp
+}
+
+// firingDetail renders the firing-alert names into a stable Detail string.
+func firingDetail(firing []string) string {
+	if len(firing) == 0 {
+		return ""
+	}
+	names := append([]string(nil), firing...)
+	sort.Strings(names)
+	return "firing alerts: " + strings.Join(names, ", ")
+}
+
 // SetMetrics wires the §25.3 health metrics. The Aggregator records each
 // real probe's latency on lenny_health_check_duration_seconds and the
 // derived verdict on lenny_health_status. spec: §25.3 lines 538-542.
 func (a *Aggregator) SetMetrics(m Metrics) {
 	a.mu.Lock()
 	a.metrics = m
+	a.mu.Unlock()
+}
+
+// SetAlertSource wires the §25.3 alert-derived status overlay. Once set,
+// Report and the public Component overlay the worst firing-alert severity
+// onto each component so /v1/admin/health reflects the §16.5 alert
+// catalogue, not only the dependency probes. spec: §25.3 lines 443-451.
+func (a *Aggregator) SetAlertSource(src AlertStatusSource) {
+	a.mu.Lock()
+	a.alertSource = src
 	a.mu.Unlock()
 }
 
@@ -283,7 +372,7 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 		wg.Add(1)
 		go func(i int, c Checker) {
 			defer wg.Done()
-			components[i] = a.probe(ctx, c)
+			components[i] = a.componentWithAlerts(ctx, c)
 		}(i, c)
 	}
 	wg.Wait()
@@ -346,8 +435,10 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 		return Component{}, false
 	}
 	// Shares the §25.3 line 526 probe-result cache with Report so a
-	// single-component pull does not bypass the 5-second window.
-	return a.probe(ctx, c), true
+	// single-component pull does not bypass the 5-second window, and
+	// applies the same alert-derived overlay so GET /v1/admin/health/{name}
+	// matches the aggregate Report's per-component verdict.
+	return a.componentWithAlerts(ctx, c), true
 }
 
 // HardDependencyStatus probes the named checkers and returns the worst
@@ -363,15 +454,22 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 // replica out of the Service. The probe-result cache is shared with
 // Report so the readiness probe does not stampede the backend.
 //
+// The readiness verdict reads the raw dependency probes (no §25.3 alert
+// overlay) so a transient firing alert cannot pull a replica out of the
+// Service; only an actual backend probe failure removes a replica.
+//
 // spec: §10.4 line 386 ("Readiness probes remove unhealthy replicas
 // from traffic"). F-10.4.6.
 func (a *Aggregator) HardDependencyStatus(ctx context.Context, names ...string) Status {
 	worst := StatusHealthy
 	for _, name := range names {
-		comp, ok := a.Component(ctx, name)
+		a.mu.RLock()
+		c, ok := a.checkers[name]
+		a.mu.RUnlock()
 		if !ok {
 			continue
 		}
+		comp := a.probe(ctx, c)
 		if comp.Status.rank() > worst.rank() {
 			worst = comp.Status
 		}
