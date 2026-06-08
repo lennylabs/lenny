@@ -54,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -95,6 +96,33 @@ func splitNamespaces(csv string) []string {
 		}
 	}
 	return out
+}
+
+// repeatableFlag accumulates the value of a flag passed multiple times. It
+// backs --resource-class so an operator can retune several §5.2 classes on
+// one command line. spec: §6.4 line 413.
+type repeatableFlag []string
+
+func (f *repeatableFlag) String() string     { return strings.Join(*f, ",") }
+func (f *repeatableFlag) Set(v string) error { *f = append(*f, v); return nil }
+
+// buildResourceClasses starts from the built-in §5.2 small/medium/large
+// defaults and applies the operator's --resource-class overrides, then
+// validates that every class's memory limit clears the §6.4 tmpfs
+// reservation. spec: §5.2 line 369, §6.4 line 413.
+func buildResourceClasses(overrides []string) (resourceclass.Registry, error) {
+	reg := resourceclass.DefaultRegistry()
+	for _, raw := range overrides {
+		name, req, err := resourceclass.ParseOverride(raw)
+		if err != nil {
+			return nil, err
+		}
+		reg.Set(name, req)
+	}
+	if err := reg.Validate(); err != nil {
+		return nil, err
+	}
+	return reg, nil
 }
 
 // §4.6.1 leader-election lease parameters. The worst-case crash
@@ -144,6 +172,7 @@ func main() {
 		runtimeClassStandard    string
 		runtimeClassSandboxed   string
 		runtimeClassMicrovm     string
+		resourceClassOverrides  repeatableFlag
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -172,6 +201,8 @@ func main() {
 		"§17.5 RuntimeClass name override for the §5.3 standard profile. Empty uses the default 'runc'.")
 	flag.StringVar(&runtimeClassSandboxed, "sandboxed-runtime-class", os.Getenv("LENNY_SANDBOXED_RUNTIME_CLASS"),
 		"§17.5 RuntimeClass name override for the §5.3 sandboxed profile. Empty uses the default 'gvisor'.")
+	flag.Var(&resourceClassOverrides, "resource-class",
+		"override a §5.2 resource class as `name=requests.cpu:250m,requests.memory:512Mi,limits.cpu:1,limits.memory:1Gi` (repeatable; defaults small/medium/large)")
 	flag.StringVar(&runtimeClassMicrovm, "microvm-runtime-class", os.Getenv("LENNY_MICROVM_RUNTIME_CLASS"),
 		"§17.5 RuntimeClass name override for the §5.3 microvm profile. Empty uses the default 'kata'.")
 	flag.StringVar(&egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
@@ -253,6 +284,15 @@ func main() {
 	}
 	if runtimeClassMicrovm != "" {
 		runtimeClassOverrides[isolation.ProfileMicrovm] = runtimeClassMicrovm
+	}
+
+	// spec: §5.2 / §6.4 line 413 — build the resource-class registry from
+	// the built-in small/medium/large defaults plus any operator overrides,
+	// failing closed if a class's memory limit does not clear the tmpfs
+	// reservation.
+	resourceClasses, err := buildResourceClasses(resourceClassOverrides)
+	if err != nil {
+		log.Fatalf("lenny-controller: resource classes: %v", err)
 	}
 
 	// §4.6.1 API server rate limiting: route Create calls for Sandbox
@@ -402,6 +442,9 @@ func main() {
 		StatusDedup:               statusdedup.New(statusDedupWindow),
 		MaxConcurrentReconciles:   maxConcurrentReconciles,
 		QueueFactory:              queueFactory,
+		// spec: §5.2 / §6.4 line 413 — the resolved resource-class registry
+		// the reconciler consults to stamp container CPU/memory requirements.
+		ResourceClasses: resourceClasses,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}

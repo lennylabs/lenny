@@ -322,6 +322,15 @@ type Inputs struct {
 	// the first search domain in the dedicated-DNS dnsConfig so in-cluster
 	// Service short-names resolve as they would under ClusterFirst.
 	ReleaseNamespace string
+
+	// Resources is the §5.2 resource class resolved to container CPU/memory
+	// requests and limits. spec: §6.4 line 413 — the memory limit gives the
+	// pod a predictable OOM boundary that accounts for the memory-backed
+	// tmpfs volumes (/sessions, /tmp, /dev/shm) charging against the pod
+	// memory cgroup. The builder stamps it on every Lenny container (adapter
+	// and runtime). A nil value leaves the containers without explicit
+	// resource requirements (dev / unconfigured), preserving prior behavior.
+	Resources *corev1.ResourceRequirements
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -465,6 +474,9 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	// spec: §6.4 line 413 — stamp the resolved §5.2 resource class on both
+	// Lenny containers before the test-only egress sidecar is injected.
+	applyResources(in, pod)
 	// spec: §10.3 — the adapter is the pod's gateway-facing process, so the
 	// projected token mounts on the adapter container.
 	injectSATokenVolume(in, pod, []int{0})
@@ -527,11 +539,29 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	// spec: §6.4 line 413 — stamp the resolved §5.2 resource class on the
+	// single runtime container before the test-only egress sidecar.
+	applyResources(in, pod)
 	// spec: §10.3 — the embedded runtime is the pod's gateway-facing
 	// process, so the projected token mounts on the runtime container.
 	injectSATokenVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{0})
 	return pod, nil
+}
+
+// applyResources stamps the §5.2 resource class (resolved to CPU/memory
+// requests and limits) onto every Lenny container in the pod. It runs
+// before injectEgressCaptureSidecar so the test-only egress sidecar is not
+// given the agent's resource budget. spec: §6.4 line 413 — the memory limit
+// bounds the pod's combined agent-process-plus-tmpfs footprint with a
+// predictable OOM boundary. A nil Resources leaves containers unconstrained.
+func applyResources(in Inputs, pod *corev1.Pod) {
+	if in.Resources == nil {
+		return
+	}
+	for i := range pod.Spec.Containers {
+		pod.Spec.Containers[i].Resources = *in.Resources.DeepCopy()
+	}
 }
 
 const (

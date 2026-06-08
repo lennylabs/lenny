@@ -436,3 +436,29 @@ tests:
               matchLabels:
                 lenny.dev/component: pool-scaling-controller
             topologyKey: kubernetes.io/hostname
+
+  # spec: §5.2 line 369 / §6.4 line 413 — F-6.1.3. A stock render leaves
+  # the resource classes to the binary defaults (small/medium/large with
+  # tmpfs-accounted memory limits).
+  - it: omits resource-class flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
+
+  - it: renders a --resource-class override when controller.resourceClasses is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.resourceClasses.medium.requests.cpu: 500m
+      controller.resourceClasses.medium.requests.memory: 2Gi
+      controller.resourceClasses.medium.limits.cpu: "2"
+      controller.resourceClasses.medium.limits.memory: 2Gi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi

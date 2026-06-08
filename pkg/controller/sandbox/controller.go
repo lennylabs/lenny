@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -141,6 +142,13 @@ type Reconciler struct {
 	// (--max-concurrent-reconciles, default 1). Zero or negative selects
 	// the controller-runtime default of 1.
 	MaxConcurrentReconciles int
+	// ResourceClasses maps a §5.2 resource-class name (small/medium/large or
+	// a deployer-defined class) to container CPU/memory requests and limits.
+	// spec: §6.4 line 413 — the reconciler resolves each Sandbox's class
+	// through this registry and stamps the result on the agent containers so
+	// the pod carries a per-pod memory cgroup limit that accounts for the
+	// tmpfs volumes. A nil registry uses resourceclass.DefaultRegistry.
+	ResourceClasses resourceclass.Registry
 	// QueueFactory, when set, supplies the §4.6.1 bounded,
 	// depth-instrumented reconciliation work queue (--workqueue-max-depth).
 	// A nil factory uses the controller-runtime default queue.
@@ -283,6 +291,45 @@ func (r *Reconciler) resolveTerminationGrace(ctx context.Context, sb *lennyv1.Sa
 	return tmpl.Spec.TerminationGracePeriodSeconds, tmpl.Spec.MaxTerminationGracePeriodSeconds
 }
 
+// resourceClassName returns the §5.2 resource-class name to resolve for the
+// Sandbox's pod. A §12.6 CreatePod pod stamps the resolved class on
+// Sandbox.spec.resourceClass directly; a warm pod leaves it empty, so the
+// reconciler reads the class from the pool's SandboxTemplate. When neither
+// names a class the §5.1 line 357 deployer-safe default applies. spec:
+// §5.1/§5.2, §6.4 line 413.
+func (r *Reconciler) resourceClassName(ctx context.Context, sb *lennyv1.Sandbox) string {
+	if sb.Spec.ResourceClass != "" {
+		return sb.Spec.ResourceClass
+	}
+	if sb.Spec.PoolRef != "" {
+		var pool lennyv1.SandboxWarmPool
+		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: sb.Spec.PoolRef}, &pool); err == nil && pool.Spec.TemplateRef != "" {
+			var tmpl lennyv1.SandboxTemplate
+			if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: pool.Spec.TemplateRef}, &tmpl); err == nil && tmpl.Spec.ResourceClass != "" {
+				return tmpl.Spec.ResourceClass
+			}
+		}
+	}
+	return resourceclass.DefaultClass
+}
+
+// resolveResources resolves the Sandbox's §5.2 resource class to container
+// CPU/memory requirements through the registry. An unknown class (one not
+// in the registry) resolves to no explicit requirements rather than failing
+// pod creation, matching the pre-registry behavior for deployments that
+// have not configured the class. spec: §6.4 line 413.
+func (r *Reconciler) resolveResources(ctx context.Context, sb *lennyv1.Sandbox) *corev1.ResourceRequirements {
+	reg := r.ResourceClasses
+	if reg == nil {
+		reg = resourceclass.DefaultRegistry()
+	}
+	req, ok := reg.Resolve(r.resourceClassName(ctx, sb))
+	if !ok {
+		return nil
+	}
+	return &req
+}
+
 // createPod resolves the Sandbox's Runtime, builds the agent Pod, and
 // creates it with an owner reference back to the Sandbox.
 func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
@@ -351,6 +398,11 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// pool opted out via the lenny.dev/dns-policy: cluster-default label.
 		DedicatedDNSClusterIP: r.DedicatedDNSClusterIP,
 		ReleaseNamespace:      r.ReleaseNamespace,
+		// spec: §5.2 / §6.4 line 413 — resolve the Sandbox's resource class
+		// to container CPU/memory requests and limits so the pod has a
+		// per-pod cgroup boundary that accounts for the memory-backed tmpfs
+		// volumes charging against the pod memory limit.
+		Resources: r.resolveResources(ctx, sb),
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

@@ -68,6 +68,18 @@ controller:
     # workqueueMaxDepth: 500         # --workqueue-max-depth
     # statusUpdateDedupWindow: 500ms # --status-update-dedup-window
     # initialFillGracePeriod: 60s    # --initial-fill-grace-period
+  # resourceClasses overrides the §5.2 small/medium/large resource
+  # classes the controller stamps onto agent-pod containers. Each entry
+  # sets the container CPU/memory requests and limits; the memory limit
+  # must exceed the §6.4 line 413 tmpfs reservation (576Mi: /sessions
+  # 256Mi + /tmp 256Mi + /dev/shm 64Mi) so tmpfs growth has a predictable
+  # OOM boundary and the agent process retains working memory. An unset
+  # class falls back to the binary default (small 1Gi, medium 2Gi, large
+  # 4Gi memory limits). F-6.1.3.
+  resourceClasses: {}
+    # medium:
+    #   requests: { cpu: 500m, memory: 2Gi }
+    #   limits:   { cpu: "2",  memory: 2Gi }
   # antiAffinity selects the §17.8.2 controller pod anti-affinity mode
   # shared by the WarmPoolController (this Deployment) and the
   # PoolScalingController so the two leaders schedule onto different

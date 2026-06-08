@@ -4173,7 +4173,7 @@ Consequence: the pod has no in-pod path for session transcripts, runtime state, 
 
 - **Resolution:** Closed by `a4fa7a64` (the `/sessions` + `/artifacts` volumes and per-container mounts) and `e9ff206d` (the `/dev/shm` 64Mi cap, F-6.1.14). All three paths the finding named are now in the pod spec, with the §6.4 medium split (tmpfs `/sessions`+`/tmp`, disk `/workspace`+`/artifacts`). Same `/sessions`+`/artifacts` fix as F-6.4.1.
 
-### - [ ] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — OPEN
+### - [x] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.4.6 — Both report no sizeLimit set on the tmpfs/emptyDir volumes in podspec.go:358-368 against the §6.4 256Mi recommendation.
 
@@ -4191,6 +4191,8 @@ No container declares `Resources.Requests` or `Resources.Limits` either; greps f
 Consequence: the runtime container can fill the tmpfs without bound until the pod hits the cgroup memory limit (which itself is unset) and the kernel OOM-kills a container. The §6.4-promised "predictable OOM boundaries" do not exist. A multi-tenant cluster has no per-pod memory/CPU isolation from the Lenny pod spec — only whatever the namespace LimitRange or admission webhook injects out-of-band.
 
 - **Reopened 2026-06-07 — prior deferral:** The `sizeLimit` half is already closed — `/sessions` and `/tmp` carry the §6.4 line-413 256Mi cap (F-6.4.6) and `/dev/shm` the 64Mi cap (F-6.1.14). The remaining half (per-container `Resources.Requests`/`Limits` derived from `SandboxTemplate.spec.resourceClass`) is deferred: §5.2/§6.4 name the `small`/`medium`/`large` classes and require tmpfs accounting in memory requests, but the spec pins no concrete CPU/memory quantity per class anywhere in the repo. Wiring it needs an operator-tunable resource-class→quantity registry (flag/config + documented defaults per `feedback_fixes_must_align_with_spec`), which is its own batch rather than an inline default.
+
+- **Resolution:** Built the operator-tunable resource-class registry the reopen note called for. New `pkg/controller/sandbox/resourceclass` maps a §5.2 class name to `corev1.ResourceRequirements`; `DefaultRegistry` ships small/medium/large (1Gi/2Gi/4Gi memory limits) whose memory limit clears the §6.4 line-413 tmpfs reservation (`TmpfsReservationMiB` = 256+256+64 = 576Mi), and `Registry.Validate` fails closed on any class whose memory limit does not exceed it. `podspec.Inputs.Resources` is now stamped on every Lenny container (adapter+runtime, both deployment models) via `applyResources`, run before the test-only egress sidecar so the sidecar keeps no agent budget; each pod gets an independent DeepCopy. The sandbox reconciler resolves the class per Sandbox (`sb.Spec.resourceClass` for the §12.6 CreatePod path, else the pool→SandboxTemplate `resourceClass`, else the §5.1 line-357 deployer-safe `medium` default) and passes the resolved requirements to the builder; an unknown class leaves containers unconstrained rather than failing pod creation. Operators retune classes via the repeatable `--resource-class name=requests.cpu:..,requests.memory:..,limits.cpu:..,limits.memory:..` controller flag (rendered from the `controller.resourceClasses` Helm value), validated at controller startup. Resolved by this batch.
 
 ### - [x] F-6.1.4 — Projected service-account token mount is not produced by the pod builder [High] — CLOSED
 
