@@ -15188,7 +15188,7 @@ a dedicated batch where the migration can be applied and the cross-tenant
 isolation re-verified, rather than ship unvalidated DDL that could break the
 prod-schema migration round-trip. The default on-read path remains functional.
 
-**Resolution (commit `<PENDING>`):** Built the full vertical, validated
+**Resolution (commit `0acbe7a2`):** Built the full vertical, validated
 against real Postgres (Docker is available here). Migration 0156 defines
 `lenny_eval_aggregates` as a `WITH DATA` matview carrying three grains
 disambiguated by an `agg_kind` column — `variant` (`count(DISTINCT
