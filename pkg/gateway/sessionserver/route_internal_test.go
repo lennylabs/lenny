@@ -152,3 +152,87 @@ func TestRunRouteChainPostRouteModifyResolvedRuntimeRejected(t *testing.T) {
 		t.Errorf("interceptorCode = %v, want %s", body.Details["interceptorCode"], interceptor.CodeInterceptorImmutableFieldViolation)
 	}
 }
+
+// recordingRouteInterceptor records each invocation by name and returns
+// ALLOW. It is external (priority > 100) so it is legal at PreRoute.
+type recordingRouteInterceptor struct {
+	name     string
+	priority int32
+	calls    *[]string
+}
+
+func (r recordingRouteInterceptor) Name() string                       { return r.name }
+func (r recordingRouteInterceptor) Priority() int32                    { return r.priority }
+func (recordingRouteInterceptor) Builtin() bool                        { return false }
+func (recordingRouteInterceptor) FailPolicy() interceptor.FailPolicy   { return interceptor.FailClosed }
+func (recordingRouteInterceptor) Timeout() time.Duration               { return 0 }
+func (r recordingRouteInterceptor) Intercept(context.Context, interceptor.Request) (interceptor.Result, error) {
+	*r.calls = append(*r.calls, r.name)
+	return interceptor.Result{Action: interceptor.ActionAllow}, nil
+}
+
+// spec: §4.8 line 115 — runRouteChainRange splits the PreRoute chain
+// around the ExperimentRouter built-in (priority 300): the below segment
+// runs only the priority 101–299 interceptors, the at-or-above segment
+// runs only the priority ≥ 300 interceptors.
+func TestRunRouteChainRangeSplitsAroundExperimentPivot_spec_4_8(t *testing.T) {
+	var calls []string
+	chain := interceptor.NewChain()
+	for _, ic := range []recordingRouteInterceptor{
+		{name: "before", priority: 150, calls: &calls},
+		{name: "after", priority: 350, calls: &calls},
+	} {
+		if err := chain.Register(interceptor.PhasePreRoute, ic); err != nil {
+			t.Fatalf("register %s: %v", ic.name, err)
+		}
+	}
+	s := &Server{interceptors: chain}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", nil)
+	if _, ok := s.runRouteChainRange(rec, req, interceptor.PhasePreRoute,
+		routeTaskSpec{TenantID: "acme"}, -2147483648, ExperimentRouterPriority); !ok {
+		t.Fatalf("below-pivot segment rejected: status %d", rec.Code)
+	}
+	if len(calls) != 1 || calls[0] != "before" {
+		t.Fatalf("below-pivot calls = %v, want [before]", calls)
+	}
+
+	calls = nil
+	rec = httptest.NewRecorder()
+	if _, ok := s.runRouteChainRange(rec, req, interceptor.PhasePreRoute,
+		routeTaskSpec{TenantID: "acme"}, ExperimentRouterPriority, 2147483647); !ok {
+		t.Fatalf("at-or-above-pivot segment rejected: status %d", rec.Code)
+	}
+	if len(calls) != 1 || calls[0] != "after" {
+		t.Fatalf("at-or-above-pivot calls = %v, want [after]", calls)
+	}
+}
+
+// spec: §4.8 line 115 — the at-or-above segment of the PreRoute chain
+// may rewrite the runtime hint after experiment routing; runRouteChain
+// (full window) is unchanged for PostRoute and the other phases.
+func TestRunRouteChainRangeAfterPivotRewritesRuntime_spec_4_8(t *testing.T) {
+	modified, _ := json.Marshal(routeTaskSpec{TenantID: "acme", RequestedRuntime: "claude-code-override"})
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreRoute, routeModifyInterceptor{priority: 350, out: modified}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	s := &Server{interceptors: chain}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", nil)
+
+	// The below-pivot segment selects no interceptor (the only one is at
+	// 350) and passes the spec through unchanged.
+	out, ok := s.runRouteChainRange(rec, req, interceptor.PhasePreRoute,
+		routeTaskSpec{TenantID: "acme", RequestedRuntime: "claude-code"}, -2147483648, ExperimentRouterPriority)
+	if !ok || out.RequestedRuntime != "claude-code" {
+		t.Fatalf("below-pivot = %q (ok=%v), want claude-code unchanged", out.RequestedRuntime, ok)
+	}
+	// The at-or-above segment applies the priority-350 MODIFY.
+	out, ok = s.runRouteChainRange(rec, req, interceptor.PhasePreRoute,
+		routeTaskSpec{TenantID: "acme", RequestedRuntime: "claude-code"}, ExperimentRouterPriority, 2147483647)
+	if !ok || out.RequestedRuntime != "claude-code-override" {
+		t.Fatalf("at-or-above-pivot = %q (ok=%v), want claude-code-override", out.RequestedRuntime, ok)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -370,15 +371,19 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §4.8 PreRoute: run the interceptor chain over the TaskSpec after
+	// §4.8 PreRoute (below the ExperimentRouter pivot): run the PreRoute
+	// interceptors with priority < 300 over the TaskSpec after
 	// authentication and before runtime selection. A REJECT blocks the
 	// create; a MODIFY may rewrite runtime hints (the requested runtime)
-	// but not the authenticated identity, which the chain enforces.
-	preRoute, ok := s.runRouteChain(w, r, interceptor.PhasePreRoute, routeTaskSpec{
+	// but not the authenticated identity, which the chain enforces. This
+	// segment runs before routeExperiment so a priority 101–299 MODIFY of
+	// the runtime hint affects which variant the ExperimentRouter assigns
+	// (spec: §4.8 line 115).
+	preRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
 		TenantID:         tenantID,
 		UserID:           req.UserID,
 		RequestedRuntime: req.RuntimeRef,
-	})
+	}, math.MinInt32, ExperimentRouterPriority)
 	if !ok {
 		return
 	}
@@ -433,6 +438,28 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// the session's profile.
 	if !s.routeExperiment(w, r, &row) {
 		return
+	}
+	// §4.8 PreRoute (at or above the ExperimentRouter pivot): run the
+	// PreRoute interceptors with priority ≥ 300 after experiment routing,
+	// so an external interceptor at priority ≥ 300 orders after the
+	// ExperimentRouter built-in per the §4.8 line-12 ascending-priority
+	// rule. It sees the experiment-assigned runtime as the requested
+	// runtime; a runtime-hint MODIFY here gets the final say on the
+	// runtime before runtime selection completes, with the isolation
+	// level re-resolved so executionMode/scrubPolicy stay consistent.
+	afterRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
+		TenantID:         tenantID,
+		UserID:           req.UserID,
+		RequestedRuntime: row.RuntimeRef,
+	}, ExperimentRouterPriority, math.MaxInt32)
+	if !ok {
+		return
+	}
+	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
+		row.RuntimeRef = afterRoute.RequestedRuntime
+		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
+		row.ExecutionMode = afterLevel.ExecutionMode
+		row.ScrubPolicy = afterLevel.ScrubPolicy
 	}
 	// §4.8 PostRoute: run the interceptor chain after runtime selection
 	// with the resolved runtime metadata. A REJECT blocks the create; a

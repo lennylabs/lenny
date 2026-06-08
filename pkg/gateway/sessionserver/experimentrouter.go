@@ -21,6 +21,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
+// ExperimentRouterPriority is the §4.8 built-in priority the
+// ExperimentRouter occupies in the PreRoute phase chain (spec: §4.8
+// line 21 priority table, line 115 field-dependency table). The
+// ExperimentRouter runs in-process at session creation (routeExperiment)
+// rather than as a generic interceptor.Interceptor because it operates
+// on the session row and pool registry, not on the serialized chain
+// payload. The gateway preserves the §4.8 line-12 ascending-priority
+// ordering by running PreRoute external interceptors below this priority
+// before routeExperiment and those at or above it after.
+const ExperimentRouterPriority int32 = 300
+
 // variantIsolationError is returned by ApplyExperimentRouting when the
 // §10.7 ExperimentRouter fails closed: the assigned variant pool's
 // isolation profile is weaker than the session's. The handler maps it

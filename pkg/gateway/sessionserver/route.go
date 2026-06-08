@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -54,7 +55,21 @@ type routeTaskSpec struct {
 // changes (runtime hints, input content at PreRoute; runtime-specific
 // parameters at PostRoute).
 func (s *Server) runRouteChain(w http.ResponseWriter, r *http.Request, phase interceptor.Phase, spec routeTaskSpec) (routeTaskSpec, bool) {
-	if s.interceptors == nil || s.interceptors.Len(phase) == 0 {
+	return s.runRouteChainRange(w, r, phase, spec, math.MinInt32, math.MaxInt32)
+}
+
+// runRouteChainRange is runRouteChain restricted to the interceptors
+// whose priority falls in the half-open window [minPriority,
+// maxPriority). The PreRoute chain runs in two segments around the §4.8
+// ExperimentRouter built-in (priority 300, spec: §4.8 line 115): the
+// segment below 300 runs before experiment routing so a priority 101–299
+// MODIFY of the runtime hint affects which variant the router assigns
+// (spec: §4.8 line 115), and the segment at or above 300 runs after it
+// so a priority ≥ 300 external interceptor orders after the built-in per
+// the §4.8 line-12 ascending-priority rule. PostRoute and the other
+// single-segment phases pass the full window via runRouteChain.
+func (s *Server) runRouteChainRange(w http.ResponseWriter, r *http.Request, phase interceptor.Phase, spec routeTaskSpec, minPriority, maxPriority int32) (routeTaskSpec, bool) {
+	if s.interceptors == nil || s.interceptors.LenRange(phase, minPriority, maxPriority) == 0 {
 		return spec, true
 	}
 	payload, err := json.Marshal(spec)
@@ -63,7 +78,7 @@ func (s *Server) runRouteChain(w http.ResponseWriter, r *http.Request, phase int
 			"route task spec could not be serialized for the policy chain: "+err.Error(), nil)
 		return routeTaskSpec{}, false
 	}
-	res := s.interceptors.Run(r.Context(), interceptor.Request{
+	res := s.interceptors.RunRange(r.Context(), interceptor.Request{
 		Phase:    phase,
 		TenantID: spec.TenantID,
 		Content:  payload,
@@ -71,7 +86,7 @@ func (s *Server) runRouteChain(w http.ResponseWriter, r *http.Request, phase int
 			policy.MetadataTenantID: spec.TenantID,
 			policy.MetadataUserID:   spec.UserID,
 		},
-	})
+	}, minPriority, maxPriority)
 	switch res.Action {
 	case interceptor.ActionReject:
 		if !s.recordRouteRejection(r.Context(), w, phase, spec.TenantID, spec.UserID, res) {

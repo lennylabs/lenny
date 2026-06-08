@@ -2082,7 +2082,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `delegation.Service` (per the finding's alternative framing).
   Resolved in commit 4916d354.
 
-### - [ ] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — OPEN
+### - [x] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 968–975, 1069. `ExperimentRouter` at `PreRoute`,
   priority 300; active when experiments are defined.
@@ -2123,6 +2123,27 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   carrying the §15.1 422 + its `details` through the generic
   `interceptor.Result`. None of that is a regression-free single-batch
   change; it is sequenced after the F-4.8 cluster's lower-risk work.
+- **Resolution:** Took the "priority-bounded chain execution" option the
+  reopened note named, which closes the residual ordering gap without
+  rewriting the isolation tests or threading the 422 through
+  `interceptor.Result`. New `interceptor.Chain.RunRange` /
+  `Chain.LenRange` execute the phase chain over only the interceptors in a
+  half-open priority window, with the same ordering/MODIFY/short-circuit/
+  fail-policy semantics as `Run` (refactored to share an internal
+  `run(accept)`). The create-and-start path now runs the PreRoute chain in
+  two segments around `routeExperiment`: the segment below
+  `ExperimentRouterPriority` (300) runs before experiment routing (so a
+  priority 101–299 runtime-hint MODIFY still affects the assigned variant,
+  the §4.8 line-115 contract), and the segment at or above 300 runs after
+  it (so a priority ≥ 300 external PreRoute interceptor orders after the
+  built-in per the §4.8 line-12 ascending-priority rule; an external at
+  exactly 300 sorts after the equal-priority built-in, so the at-or-above
+  window includes the pivot value). An after-segment runtime-hint MODIFY
+  gets the final say on the runtime, with the isolation level re-resolved.
+  `ExperimentRouter` stays in-process (it operates on the session row and
+  pool registry, not the serialized payload), so the isolation tests that
+  build the server with `Interceptors: nil` are unaffected. Resolved in
+  this batch (see commit below).
 
 ### - [x] F-4.8.6 — `GuardrailsInterceptor` not implemented (Missing) [Medium] — CLOSED
 

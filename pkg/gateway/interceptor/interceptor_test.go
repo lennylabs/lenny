@@ -386,3 +386,81 @@ func TestRegistrationErrorCode(t *testing.T) {
 		t.Error("ErrUnknownPhase is not a priority/phase sentinel")
 	}
 }
+
+// spec: §4.8 line 12, line 115 — RunRange executes only the interceptors
+// whose priority falls in the [min,max) window, preserving ascending
+// priority order. This is the building block for splitting the PreRoute
+// chain around the ExperimentRouter built-in at priority 300: the below
+// segment runs the 101–299 interceptors, the at-or-above segment runs
+// the ≥300 interceptors.
+func TestRunRangeExecutesOnlyPriorityWindow_spec_4_8(t *testing.T) {
+	var calls []string
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p150", priority: 150, calls: &calls})
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p250", priority: 250, calls: &calls})
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p300", priority: 300, calls: &calls})
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p350", priority: 350, calls: &calls})
+
+	// Below the pivot: only 150 and 250 run, in ascending order.
+	c.RunRange(context.Background(), interceptor.Request{Phase: interceptor.PhasePreRoute}, -2147483648, 300)
+	if !equal(calls, []string{"p150", "p250"}) {
+		t.Fatalf("below-pivot calls = %v, want [p150 p250]", calls)
+	}
+
+	// At or above the pivot: 300 (an external at exactly the pivot) and
+	// 350 run, in ascending order. An external at the pivot orders after
+	// the built-in, which RunRange models by including the pivot value in
+	// the at-or-above window.
+	calls = nil
+	c.RunRange(context.Background(), interceptor.Request{Phase: interceptor.PhasePreRoute}, 300, 2147483647)
+	if !equal(calls, []string{"p300", "p350"}) {
+		t.Fatalf("at-or-above-pivot calls = %v, want [p300 p350]", calls)
+	}
+}
+
+// spec: §4.8 line 12 — a MODIFY inside a RunRange segment is threaded to
+// the later interceptors of that same segment and surfaces as the
+// segment result, exactly as Run does for the full chain.
+func TestRunRangeThreadsModifyWithinSegment_spec_4_8(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{
+		name: "p120", priority: 120,
+		fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: []byte("rewritten")}, nil
+		},
+	})
+	var seen string
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{
+		name: "p180", priority: 180,
+		fn: func(_ context.Context, req interceptor.Request) (interceptor.Result, error) {
+			seen = string(req.Content)
+			return interceptor.Result{Action: interceptor.ActionAllow}, nil
+		},
+	})
+	res := c.RunRange(context.Background(), interceptor.Request{Phase: interceptor.PhasePreRoute, Content: []byte("orig")}, -2147483648, 300)
+	if seen != "rewritten" {
+		t.Errorf("downstream saw %q, want rewritten", seen)
+	}
+	if res.Action != interceptor.ActionModify || string(res.ModifiedContent) != "rewritten" {
+		t.Errorf("segment result = %v / %q, want MODIFY / rewritten", res.Action, res.ModifiedContent)
+	}
+}
+
+// spec: §4.8 line 12 — LenRange counts only interceptors whose priority
+// falls in the window, so a caller can skip a RunRange that would select
+// none.
+func TestLenRangeCountsWindow_spec_4_8(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p150", priority: 150})
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p300", priority: 300})
+	mustRegister(t, c, interceptor.PhasePreRoute, &fakeInterceptor{name: "p350", priority: 350})
+	if got := c.LenRange(interceptor.PhasePreRoute, -2147483648, 300); got != 1 {
+		t.Errorf("below-pivot count = %d, want 1", got)
+	}
+	if got := c.LenRange(interceptor.PhasePreRoute, 300, 2147483647); got != 2 {
+		t.Errorf("at-or-above-pivot count = %d, want 2", got)
+	}
+	if got := c.LenRange(interceptor.PhasePostRoute, -2147483648, 2147483647); got != 0 {
+		t.Errorf("other-phase count = %d, want 0", got)
+	}
+}

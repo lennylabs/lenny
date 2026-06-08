@@ -332,6 +332,20 @@ func (c *Chain) Register(phase Phase, ic Interceptor) error {
 // Len returns the number of interceptors registered for phase.
 func (c *Chain) Len(phase Phase) int { return len(c.byPhase[phase]) }
 
+// LenRange returns the number of interceptors registered for phase whose
+// priority falls in the half-open window [minPriority, maxPriority). It
+// lets a caller short-circuit a RunRange that would select no
+// interceptor (spec: §4.8 line 12 priority ordering).
+func (c *Chain) LenRange(phase Phase, minPriority, maxPriority int32) int {
+	n := 0
+	for _, e := range c.byPhase[phase] {
+		if p := e.ic.Priority(); p >= minPriority && p < maxPriority {
+			n++
+		}
+	}
+	return n
+}
+
 // Run executes the chain for req.Phase and returns the chain's final
 // decision. Interceptors run in ascending priority order, built-ins
 // before external interceptors at an equal priority, registration
@@ -343,10 +357,40 @@ func (c *Chain) Len(phase Phase) int { return len(c.byPhase[phase]) }
 // CodeInterceptorTimeout, fail-open skips the interceptor. An empty
 // chain returns ActionAllow.
 func (c *Chain) Run(ctx context.Context, req Request) Result {
+	return c.run(ctx, req, nil)
+}
+
+// RunRange executes the chain for req.Phase over only the interceptors
+// whose priority falls in the half-open window [minPriority,
+// maxPriority), with the same ordering, MODIFY, short-circuit, and
+// fail-policy semantics as Run. It is the building block for splitting a
+// single phase chain around an in-process built-in that sits at a fixed
+// priority: the §4.8 ExperimentRouter is a PreRoute built-in at priority
+// 300 (spec: §4.8 line 115), so the gateway runs the external PreRoute
+// interceptors below 300 before it and those at or above 300 after it,
+// preserving the §4.8 line-12 ascending-priority order across the
+// built-in. An external interceptor registered at exactly the pivot
+// priority sorts after the equal-priority built-in (spec: §4.8 line 12,
+// "built-in interceptors run before external ones"), so the at-or-above
+// window includes the pivot value itself.
+func (c *Chain) RunRange(ctx context.Context, req Request, minPriority, maxPriority int32) Result {
+	return c.run(ctx, req, func(ic Interceptor) bool {
+		p := ic.Priority()
+		return p >= minPriority && p < maxPriority
+	})
+}
+
+// run executes the phase chain, optionally restricted to the
+// interceptors that accept reports true for. A nil accept runs every
+// registered interceptor.
+func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) bool) Result {
 	content := req.Content
 	modified := false
 	var failOpenSkips []FailOpenSkip
 	for _, ic := range c.ordered(req.Phase) {
+		if accept != nil && !accept(ic) {
+			continue
+		}
 		call := req
 		call.Content = content
 		res, err := invoke(ctx, ic, call)
