@@ -75,6 +75,16 @@ type Record struct {
 // supplied composite key.
 var ErrNotFound = errors.New("partialmanifeststore: row not found")
 
+// ErrStaleGeneration is returned by Put when an active manifest with a
+// higher generation already exists for the same (tenant, session). The
+// write is a fenced stale-coordinator attempt: honoring it would
+// downgrade the active manifest below the highest fenced generation,
+// which the §10.1 line 155 MAX(coordination_generation) resume selector
+// (CPS-006) forbids. The losing writer rolls back and re-reads.
+//
+// spec: §10.1 lines 137, 155.
+var ErrStaleGeneration = errors.New("partialmanifeststore: a higher-generation active manifest already exists")
+
 // Store persists partial-manifest rows. The in-memory MemoryStore
 // backs unit tests and the developer-mode deployment; the
 // Postgres-backed implementation lives in
@@ -88,6 +98,19 @@ type Store interface {
 	// same key is treated as an idempotent re-write: the existing
 	// row's prefix / encoding fields are refreshed and CreatedAt is
 	// preserved. Returns an error when any required field is empty.
+	//
+	// Put enforces the §10.1 supersede-on-write invariant: a new
+	// active manifest soft-deletes every lower-generation active row
+	// for the same (tenant, session) in the same transaction, so the
+	// table never holds two `deleted_at IS NULL` rows for one
+	// (tenant, session) pair (the `partial_manifest_active_uniq`
+	// partial unique index, migration 0150). A write whose generation
+	// is below an already-active higher generation is a fenced
+	// stale-coordinator write and is rejected with ErrStaleGeneration
+	// so it cannot downgrade the active manifest (§10.1 line 155
+	// MAX(coordination_generation) fencing, CPS-006).
+	//
+	// spec: §10.1 lines 137, 143-151, 155.
 	Put(ctx context.Context, r Record) error
 
 	// Get returns the row for (tenantID, sessionID, generation) or
@@ -153,7 +176,8 @@ type recordKey struct {
 	generation int64
 }
 
-// Put inserts or refreshes a partial-manifest row.
+// Put inserts or refreshes a partial-manifest row, enforcing the §10.1
+// supersede-on-write invariant.
 func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	if r.TenantID == "" || r.SessionID == "" {
 		return fmt.Errorf("partialmanifeststore: tenant and session ids are required")
@@ -169,15 +193,39 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k := recordKey{r.TenantID, r.SessionID, r.Generation}
 	now := m.now()
-	if existing, ok := m.rows[k]; ok {
-		r.CreatedAt = existing.CreatedAt
-		if !existing.DeletedAt.IsZero() {
-			// Re-Put on a soft-deleted row is rejected: a partial
-			// manifest, once cleaned up, is terminal.
-			return fmt.Errorf("partialmanifeststore: row already soft-deleted")
+	// §10.1 line 155 fencing: reject a write whose generation sits below
+	// an already-active higher generation before mutating anything, so a
+	// stale-coordinator write never downgrades the active manifest.
+	for key, row := range m.rows {
+		if key.tenantID != r.TenantID || key.sessionID != r.SessionID {
+			continue
 		}
+		if row.DeletedAt.IsZero() && key.generation > r.Generation {
+			return ErrStaleGeneration
+		}
+	}
+	k := recordKey{r.TenantID, r.SessionID, r.Generation}
+	existing, exists := m.rows[k]
+	if exists && !existing.DeletedAt.IsZero() {
+		// Re-Put on a soft-deleted row is rejected: a partial
+		// manifest, once cleaned up, is terminal.
+		return fmt.Errorf("partialmanifeststore: row already soft-deleted")
+	}
+	// §10.1 line 137 supersede-on-write: soft-delete every lower-generation
+	// active row for this (tenant, session) so at most one row stays
+	// `deleted_at IS NULL` (partial_manifest_active_uniq, migration 0150).
+	for key, row := range m.rows {
+		if key.tenantID != r.TenantID || key.sessionID != r.SessionID {
+			continue
+		}
+		if row.DeletedAt.IsZero() && key.generation < r.Generation {
+			row.DeletedAt = now
+			m.rows[key] = row
+		}
+	}
+	if exists {
+		r.CreatedAt = existing.CreatedAt
 	} else {
 		r.CreatedAt = now
 	}

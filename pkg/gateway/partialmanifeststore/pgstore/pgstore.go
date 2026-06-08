@@ -2,8 +2,10 @@
 
 // Package pgstore is the Postgres-backed §4.4 partial-checkpoint
 // manifest store. It persists rows to the
-// session_partial_checkpoint_manifest table from migration 0062 and
-// applies the §12.3 tenant-context RLS guard via pgtenant.InTx.
+// session_partial_checkpoint_manifest table from migration 0062, with
+// the §10.1 at-most-one-active invariant enforced by the
+// partial_manifest_active_uniq partial unique index (migration 0150),
+// and applies the §12.3 tenant-context RLS guard via pgtenant.InTx.
 package pgstore
 
 import (
@@ -44,6 +46,16 @@ const selectList = `tenant_id, session_id, generation,
 // and preserves the original created_at. Re-Put on a soft-deleted
 // row is rejected because a partial manifest, once cleaned up, is
 // terminal.
+//
+// Put enforces the §10.1 supersede-on-write invariant in a single
+// transaction: a write whose generation is below an already-active
+// higher generation is a fenced stale-coordinator attempt and is
+// rejected with ErrStaleGeneration (§10.1 line 155); otherwise every
+// lower-generation active row for the same (tenant, session) is
+// soft-deleted before the insert so the `partial_manifest_active_uniq`
+// partial unique index (migration 0150) never sees two active rows.
+//
+// spec: §10.1 lines 137, 143-151, 155.
 func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 	if r.TenantID == "" || r.SessionID == "" {
 		return errors.New("partialmanifeststore: tenant and session ids are required")
@@ -58,6 +70,21 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 		return errors.New("partialmanifeststore: invalid chunk_encoding")
 	}
 	return pgtenant.InTx(ctx, s.pool, r.TenantID, func(tx pgx.Tx) error {
+		now := s.now()
+		// §10.1 line 155 fencing: reject a stale write before any mutation.
+		var higherActive bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM session_partial_checkpoint_manifest
+				WHERE tenant_id = $1 AND session_id = $2
+					AND generation > $3 AND deleted_at IS NULL)`,
+			r.TenantID, r.SessionID, r.Generation).Scan(&higherActive); err != nil {
+			return err
+		}
+		if higherActive {
+			return partialmanifeststore.ErrStaleGeneration
+		}
+
 		var (
 			existingDeletedAt *time.Time
 			existingCreatedAt time.Time
@@ -66,9 +93,27 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 			`SELECT created_at, deleted_at FROM session_partial_checkpoint_manifest
 				WHERE tenant_id = $1 AND session_id = $2 AND generation = $3`,
 			r.TenantID, r.SessionID, r.Generation).Scan(&existingCreatedAt, &existingDeletedAt)
-		now := s.now()
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return err
+		case existingDeletedAt != nil:
+			return errors.New("partialmanifeststore: row already soft-deleted")
+		}
+
+		// §10.1 line 137 supersede-on-write: soft-delete every
+		// lower-generation active row in the same transaction as the
+		// insert/refresh so the active set collapses to this row.
+		if _, err := tx.Exec(ctx,
+			`UPDATE session_partial_checkpoint_manifest
+				SET deleted_at = $4
+				WHERE tenant_id = $1 AND session_id = $2
+					AND generation < $3 AND deleted_at IS NULL`,
+			r.TenantID, r.SessionID, r.Generation, now); err != nil {
+			return err
+		}
+
+		if errors.Is(err, pgx.ErrNoRows) {
 			_, err = tx.Exec(ctx,
 				`INSERT INTO session_partial_checkpoint_manifest (
 					tenant_id, session_id, generation,
@@ -78,11 +123,6 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 				r.TenantID, r.SessionID, r.Generation,
 				r.PartialObjectKeyPrefix, string(r.ChunkEncoding), now)
 			return err
-		case err != nil:
-			return err
-		}
-		if existingDeletedAt != nil {
-			return errors.New("partialmanifeststore: row already soft-deleted")
 		}
 		_, err = tx.Exec(ctx,
 			`UPDATE session_partial_checkpoint_manifest SET

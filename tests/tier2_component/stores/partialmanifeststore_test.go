@@ -96,10 +96,15 @@ func TestPartialManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	t.Run("LatestActive returns the highest generation under the active index", func(t *testing.T) {
+	// spec: §10.1 lines 137, 143-151, 155 — supersede-on-write collapses
+	// the active set to one row (enforced by partial_manifest_active_uniq,
+	// migration 0150), a fenced stale lower-generation write is rejected,
+	// and soft-deleting the sole active row leaves nothing active.
+	t.Run("supersede-on-write keeps one active row under the partial unique index", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sessID := newUUID(t)
-		for _, gen := range []int64{1, 5, 3} {
+		// Monotonic generations: each write supersedes the prior active row.
+		for _, gen := range []int64{1, 3, 5} {
 			if err := store.Put(ctx, partialmanifeststore.Record{
 				TenantID: tenant, SessionID: sessID, Generation: gen,
 				PartialObjectKeyPrefix: "/" + tenant + "/x/",
@@ -115,15 +120,26 @@ func TestPartialManifestStoreContract(t *testing.T) {
 		if got.Generation != 5 {
 			t.Errorf("LatestActive.Generation = %d, want 5", got.Generation)
 		}
-
-		// Soft-delete generation 5; LatestActive returns generation 3.
-		_ = store.SoftDelete(ctx, tenant, sessID, 5)
-		got, err = store.LatestActive(ctx, tenant, sessID)
-		if err != nil {
-			t.Fatalf("LatestActive after SoftDelete: %v", err)
+		// gen 3 was superseded by the gen-5 write.
+		if g3, err := store.Get(ctx, tenant, sessID, 3); err != nil {
+			t.Fatalf("Get gen 3: %v", err)
+		} else if g3.DeletedAt.IsZero() {
+			t.Error("gen 3 should be superseded (soft-deleted)")
 		}
-		if got.Generation != 3 {
-			t.Errorf("LatestActive.Generation = %d, want 3 (after soft-deleting 5)", got.Generation)
+
+		// A fenced stale lower-generation write is rejected, not persisted.
+		if err := store.Put(ctx, partialmanifeststore.Record{
+			TenantID: tenant, SessionID: sessID, Generation: 4,
+			PartialObjectKeyPrefix: "/" + tenant + "/x/",
+			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		}); !errors.Is(err, partialmanifeststore.ErrStaleGeneration) {
+			t.Errorf("stale Put gen 4: got %v, want ErrStaleGeneration", err)
+		}
+
+		// Soft-delete the sole active row; nothing remains active.
+		_ = store.SoftDelete(ctx, tenant, sessID, 5)
+		if _, err := store.LatestActive(ctx, tenant, sessID); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive after soft-deleting the sole active row: got %v, want ErrNotFound", err)
 		}
 	})
 

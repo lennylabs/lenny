@@ -88,10 +88,11 @@ func TestSoftDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §4.4 lines 234 / 236 — the resume path selects the highest
-// active generation for (tenant, session) so a late-committed
-// older-generation row cannot win against a fenced newer-generation
-// writer.
+// spec: §4.4 lines 234 / 236, §10.1 line 137 — supersede-on-write
+// collapses the active set to the highest-generation row, so the resume
+// path's LatestActive selector returns it. A stale lower-generation
+// write (gen 3 after gen 5) is fenced off and never inserted, so it
+// cannot win against the fenced newer-generation writer.
 func TestLatestActiveReturnsHighestGeneration(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	for _, gen := range []int64{1, 2, 5, 3} {
@@ -110,33 +111,108 @@ func TestLatestActiveReturnsHighestGeneration(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — `deleted_at IS NULL` is the load-bearing
-// idempotency guard; LatestActive must skip soft-deleted rows so a
-// resume after cleanup does not re-attempt a stale manifest.
-func TestLatestActiveSkipsSoftDeleted(t *testing.T) {
+// spec: §10.1 line 137 — a new active manifest supersedes every
+// lower-generation active row for the same (tenant, session) in the
+// same write, so the table never holds two `deleted_at IS NULL` rows
+// for one (tenant, session). The superseded row carries the
+// supersession timestamp.
+func TestPutSupersedesLowerActiveGeneration(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+
+	if err := store.Put(context.Background(), partialmanifeststore.Record{
+		TenantID: "acme", SessionID: "s1", Generation: 1,
+		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-1/",
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+	}); err != nil {
+		t.Fatalf("Put gen 1: %v", err)
+	}
+	clock = clock.Add(time.Minute)
+	if err := store.Put(context.Background(), partialmanifeststore.Record{
+		TenantID: "acme", SessionID: "s1", Generation: 2,
+		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-2/",
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+	}); err != nil {
+		t.Fatalf("Put gen 2: %v", err)
+	}
+
+	old, _ := store.Get(context.Background(), "acme", "s1", 1)
+	if old.DeletedAt.IsZero() {
+		t.Error("gen 1 should be superseded (soft-deleted) by the gen-2 write")
+	}
+	if !old.DeletedAt.Equal(clock) {
+		t.Errorf("gen 1 DeletedAt = %v, want the gen-2 write time %v", old.DeletedAt, clock)
+	}
+	got, err := store.LatestActive(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("LatestActive: %v", err)
+	}
+	if got.Generation != 2 || !got.DeletedAt.IsZero() {
+		t.Errorf("LatestActive = gen %d (deleted=%v), want gen 2 active", got.Generation, got.DeletedAt)
+	}
+}
+
+// spec: §10.1 line 155 — a write whose generation sits below an
+// already-active higher generation is a fenced stale-coordinator write;
+// Put rejects it with ErrStaleGeneration without mutating the active
+// manifest (CPS-006).
+func TestPutRejectsStaleLowerGeneration(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	_ = store.Put(context.Background(), partialmanifeststore.Record{
+	if err := store.Put(context.Background(), partialmanifeststore.Record{
 		TenantID: "acme", SessionID: "s1", Generation: 5,
 		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-5/",
 		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+	}); err != nil {
+		t.Fatalf("Put gen 5: %v", err)
+	}
+	err := store.Put(context.Background(), partialmanifeststore.Record{
+		TenantID: "acme", SessionID: "s1", Generation: 3,
+		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-3/",
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
 	})
+	if !errors.Is(err, partialmanifeststore.ErrStaleGeneration) {
+		t.Fatalf("Put stale gen 3: got %v, want ErrStaleGeneration", err)
+	}
+	// gen 3 was never inserted; gen 5 remains the sole active manifest.
+	if _, gerr := store.Get(context.Background(), "acme", "s1", 3); !errors.Is(gerr, partialmanifeststore.ErrNotFound) {
+		t.Errorf("gen 3 Get: got %v, want ErrNotFound (stale write not persisted)", gerr)
+	}
+	got, _ := store.LatestActive(context.Background(), "acme", "s1")
+	if got.Generation != 5 {
+		t.Errorf("LatestActive.Generation = %d, want 5 (active manifest unchanged)", got.Generation)
+	}
+}
+
+// spec: §4.4 line 236, §10.1 line 137 — `deleted_at IS NULL` is the
+// load-bearing guard; once the sole active manifest is soft-deleted the
+// at-most-one-active invariant leaves no older active row to fall back
+// to, so LatestActive reports ErrNotFound.
+func TestLatestActiveSkipsSoftDeleted(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
 	_ = store.Put(context.Background(), partialmanifeststore.Record{
 		TenantID: "acme", SessionID: "s1", Generation: 3,
 		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-3/",
 		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
 	})
-	_ = store.SoftDelete(context.Background(), "acme", "s1", 5)
-
+	// gen 5 supersedes the active gen-3 row.
+	_ = store.Put(context.Background(), partialmanifeststore.Record{
+		TenantID: "acme", SessionID: "s1", Generation: 5,
+		PartialObjectKeyPrefix: "/acme/checkpoints/s1/partial/ck-5/",
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+	})
 	got, _ := store.LatestActive(context.Background(), "acme", "s1")
-	if got.Generation != 3 {
-		t.Errorf("LatestActive skipped soft-deleted row, got generation %d, want 3", got.Generation)
+	if got.Generation != 5 {
+		t.Errorf("LatestActive = gen %d, want 5 after supersession", got.Generation)
+	}
+	g3, _ := store.Get(context.Background(), "acme", "s1", 3)
+	if g3.DeletedAt.IsZero() {
+		t.Error("gen 3 should be superseded by the gen-5 write")
 	}
 
-	// Soft-delete the last active row — LatestActive returns
-	// ErrNotFound.
-	_ = store.SoftDelete(context.Background(), "acme", "s1", 3)
+	// Soft-delete the sole active row — LatestActive returns ErrNotFound.
+	_ = store.SoftDelete(context.Background(), "acme", "s1", 5)
 	if _, err := store.LatestActive(context.Background(), "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActive with all rows soft-deleted: got %v, want ErrNotFound", err)
+		t.Errorf("LatestActive with the sole active row soft-deleted: got %v, want ErrNotFound", err)
 	}
 }
 
@@ -225,17 +301,20 @@ func TestListSoftDeletedBeforeWalksTombstones(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
 	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
 
-	for _, gen := range []int64{1, 2, 3} {
+	// One active manifest per session so the §10.1 supersede-on-write does
+	// not auto-soft-delete them at write time; the test controls each
+	// row's tombstone timestamp explicitly.
+	for _, sess := range []string{"s1", "s2"} {
 		_ = store.Put(context.Background(), partialmanifeststore.Record{
-			TenantID: "acme", SessionID: "s1", Generation: gen,
+			TenantID: "acme", SessionID: sess, Generation: 1,
 			PartialObjectKeyPrefix: "/acme/x/",
 			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
 		})
 	}
-	// Soft-delete two rows at distinct timestamps.
+	// Soft-delete the two rows at distinct timestamps.
 	_ = store.SoftDelete(context.Background(), "acme", "s1", 1)
 	clock = clock.Add(time.Hour)
-	_ = store.SoftDelete(context.Background(), "acme", "s1", 2)
+	_ = store.SoftDelete(context.Background(), "acme", "s2", 1)
 
 	cutoff := clock.Add(-30 * time.Minute) // between the two deletes
 	got, err := store.ListSoftDeletedBefore(context.Background(), cutoff)
@@ -243,8 +322,8 @@ func TestListSoftDeletedBeforeWalksTombstones(t *testing.T) {
 		t.Fatalf("ListSoftDeletedBefore: %v", err)
 	}
 	// Only the first soft-delete (at clock - 1h) is older than the cutoff.
-	if len(got) != 1 || got[0].Generation != 1 {
-		t.Errorf("ListSoftDeletedBefore = %+v, want generation 1 only", got)
+	if len(got) != 1 || got[0].SessionID != "s1" {
+		t.Errorf("ListSoftDeletedBefore = %+v, want session s1 only", got)
 	}
 }
 
