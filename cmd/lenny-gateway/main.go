@@ -4077,6 +4077,15 @@ func main() {
 		// counter fire regardless of which surface walked the tree.
 		// F-8.9.10.
 		TreeCycleObserver: mcpToolsTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
+		// spec: §26.2 line 119; §4.9 — the in-pod git-credential helper
+		// (git-credential-lenny) reaches lenny/vcs_token over the §9.1
+		// platform MCP socket to mint a short-lived VCS token from the
+		// session tenant's credential pool. Reuses the same
+		// vcscred.Resolver the §14 gateway-side gitClone path uses. The
+		// §4.9.2 credential.leased audit row binds each minted token to
+		// the originating session id. F-26.2.5.
+		VCSCreds:        vcsCreds,
+		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender},
 	})
 
 	// spec: §15.2 lines 1331-1333 — wire the Streamable HTTP SSE channel
@@ -8154,6 +8163,35 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 		ev.ActorTenantID = p.TenantID
 	}
 	a.sink.EmitAdminEvent(ctx, ev)
+}
+
+// mcpVCSLeaseAuditor writes the §4.9.2 `credential.leased` audit row each
+// time lenny/vcs_token mints a VCS token for a pod's git-credential
+// helper, binding the lease to the originating session id per the §26.2
+// audit-traceability requirement. It appends directly to the §11.7
+// per-tenant hash chain (the §4.9.2 event-type catalog is distinct from
+// the admin-audit catalog the EmitAdminEvent path validates against).
+// The token is never recorded. spec: §26.2 line 119; §4.9.2. F-26.2.5.
+type mcpVCSLeaseAuditor struct {
+	appender policy.AuditAppender
+}
+
+func (a mcpVCSLeaseAuditor) RecordVCSLease(ctx context.Context, lease mcptools.VCSLeaseRecord) {
+	if a.appender == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"session_id": lease.SessionID,
+		"provider":   lease.Provider,
+		"host":       lease.Host,
+		"mode":       lease.Mode,
+		"scope":      fmt.Sprintf("vcs.%s.%s", lease.Provider, lease.Mode),
+	})
+	if err != nil {
+		return
+	}
+	_, _ = a.appender.Append(ctx, lease.TenantID, string(credential.AuditCredentialLeased),
+		json.RawMessage(payload), clockinject.Now().UTC())
 }
 
 // sessionLifecycleAuditor adapts the gateway audit appender to the

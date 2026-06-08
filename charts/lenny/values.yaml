@@ -3910,3 +3910,32 @@ bootstrap:
   credentialPools: []
   delegationPolicies: []
   environments: []
+  # defaultGithubVcsPool seeds the v1 built-in `github` VCS credential
+  # pool (§26.2 line 119) so a session whose WorkspacePlan contains a
+  # private gitClone source against github.com resolves its
+  # vcs.github.read / vcs.github.write lease out of the box, and the
+  # in-pod git-credential-lenny helper can mint tokens. v1 ships `github`
+  # as the only built-in VCS provider.
+  #
+  # Disabled by default because it requires an operator-supplied
+  # Kubernetes Secret holding a GitHub App installation token or a
+  # personal access token (the gateway reads the value via the
+  # credential's secretRef). To activate: create the Secret, then set
+  # enabled: true and secretRef to its name. When enabled with an empty
+  # secretRef, the chart fails the render rather than seeding a pool with
+  # no credential.
+  defaultGithubVcsPool:
+    enabled: false
+    # tenantId the pool is registered under. For a local-profile install
+    # use the default tenant; multi-tenant deployers register a pool per
+    # tenant that needs private GitHub access.
+    tenantId: default
+    name: github-default
+    # hostPatterns the pool matches a gitClone URL host against. Add
+    # GitHub Enterprise hosts (e.g. "*.ghe.acme.com") as needed.
+    hostPatterns:
+      - github.com
+    # secretRef names the Kubernetes Secret (in the gateway namespace)
+    # holding the token. Required when enabled.
+    secretRef: ""
+    credentialId: github-app

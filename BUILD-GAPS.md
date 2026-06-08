@@ -44888,7 +44888,7 @@ SSE surface (F-15.2.2, OPEN). Re-attempt once a gateway upload-binding path land
 
 ---
 
-### - [ ] F-26.2.5 — 2-05 — V1 ships no built-in `github` VCS credential provider; §26.2's `vcs.github.read` / `vcs.github.write` scopes have no implementation [Medium] — OPEN
+### - [x] F-26.2.5 — 2-05 — V1 ships no built-in `github` VCS credential provider; §26.2's `vcs.github.read` / `vcs.github.write` scopes have no implementation [Medium] — CLOSED
 
 **Spec:** §26.2 line 119:
 
@@ -44921,6 +44921,38 @@ implementing) the in-pod VCS-token endpoint contract the spec describes only in 
 Since the finding cannot close until both land, it is deferred as a unit; re-attempt
 once the in-pod VCS-token endpoint exists, building the helper and the default-pool seed
 together.
+
+**Resolution (commit 3f7ed38c):** Both remaining deliverables landed, with the prior
+blocker ("no gateway endpoint returns the materialized VCS token to the pod") built
+as its own §9.1-channel endpoint. (1) **In-pod VCS-token endpoint** — new
+`lenny/vcs_token` platform tool (`pkg/gateway/mcptools`): a pod's git-credential
+helper reaches it over the §9.1 platform MCP socket (the same channel that already
+forwards `lenny/delegate_task`), so it needs no new pod→gateway transport. The
+handler resolves the calling pod's session/tenant from the principal the
+`platformtools.Bridge` installs (`CallerType: agent`, session-bound), materializes
+the token via the existing `vcscred.Resolver` (the §14 gitClone path's resolver) at
+scope `vcs.github.<read|write>`, and returns the HTTP Basic `{username, token}`. A
+caller with no session principal is rejected (the §26.2 "bound to the originating
+session id" requirement); resolution failures map to the same §15.1
+`GIT_CLONE_AUTH_UNSUPPORTED_HOST` / `GIT_CLONE_AUTH_HOST_AMBIGUOUS` codes the
+gateway-side clone uses. The §4.9.2 `credential.leased` audit row binds each minted
+token to the session (token never recorded). (2) **`git-credential-lenny` helper** —
+new `cmd/git-credential-lenny`: implements Git's credential-helper protocol
+(`get`/`store`/`erase`), reads the §15.4.3 nonce + §4.7 platform MCP socket from the
+adapter manifest, performs the MCP nonce handshake, calls `lenny/vcs_token`, and
+emits the Git `username`/`password` response. Non-HTTPS protocols and absent hosts
+decline silently; store/erase are no-ops (the gateway is authoritative). (3)
+**Default `github` credential pool seed** — `bootstrap.defaultGithubVcsPool` (chart
+`values.yaml`, disabled by default) seeds the v1 built-in `github` VCS pool into
+`bootstrap.credentialPools` when enabled with an operator-supplied `secretRef`; the
+render fails closed when enabled without a Secret. The gateway-side materialization
+half was already wired by F-14.1.6/F-14.1.7. Residual (not blocking closure): the
+coding-agent reference images that bundle the helper and set `git config
+credential.helper lenny` are built out-of-tree from `github.com/lennylabs/runtime-templates`
+(placeholder-pinned, F-26.3.6); the helper binary, the endpoint, and the pool seed
+are all in-tree. Tests: 8 tier-1 (`lenny/vcs_token` handler), 8 tier-1
+(`git-credential-lenny` protocol + manifest + socket transport), 3 tier-2 helm-unittest
+(default-pool render + secretRef fail-closed).
 
 ---
 

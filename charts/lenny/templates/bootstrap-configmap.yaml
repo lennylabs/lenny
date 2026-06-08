@@ -26,5 +26,22 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 data:
   bootstrap-values.yaml: |
-    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users "pools" .Values.bootstrap.pools "credentialPools" .Values.bootstrap.credentialPools "delegationPolicies" .Values.bootstrap.delegationPolicies "environments" .Values.bootstrap.environments | toYaml | nindent 4 }}
+    {{- /*
+    §26.2 line 119 — when bootstrap.defaultGithubVcsPool.enabled, append
+    the v1 built-in `github` VCS credential pool to the seeded
+    credentialPools so a private gitClone source resolves its
+    vcs.github.read/.write lease out of the box. Gated on an
+    operator-supplied Secret: an enabled pool with no secretRef fails the
+    render rather than seeding a credential-less pool. F-26.2.5.
+    */ -}}
+    {{- $pools := .Values.bootstrap.credentialPools | default list -}}
+    {{- $gh := .Values.bootstrap.defaultGithubVcsPool -}}
+    {{- if and $gh $gh.enabled -}}
+    {{- if not $gh.secretRef -}}
+    {{- fail "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2 line 119)." -}}
+    {{- end -}}
+    {{- $ghPool := dict "tenantId" ($gh.tenantId | default "default") "name" ($gh.name | default "github-default") "provider" "github" "hostPatterns" ($gh.hostPatterns | default (list "github.com")) "credentials" (list (dict "id" ($gh.credentialId | default "github-app") "secretRef" $gh.secretRef)) -}}
+    {{- $pools = append $pools $ghPool -}}
+    {{- end -}}
+    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users "pools" .Values.bootstrap.pools "credentialPools" $pools "delegationPolicies" .Values.bootstrap.delegationPolicies "environments" .Values.bootstrap.environments | toYaml | nindent 4 }}
 {{- end }}

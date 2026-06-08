@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
@@ -76,6 +77,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
@@ -489,6 +491,44 @@ type Deps struct {
 	// defaults to `standard` (runc) per §5.3 line 677 rather than the
 	// production `sandboxed`.
 	DevMode bool
+
+	// VCSCreds materializes the §26.2 in-pod VCS token. When set,
+	// lenny/vcs_token is registered: a pod's git-credential helper calls
+	// it over the §9.1 platform MCP socket to obtain a short-lived token
+	// for a gitClone/git-over-HTTPS host, resolved against the calling
+	// session's tenant VCS credential pool. The runtime never holds a
+	// long-lived credential; the token is minted per git invocation and
+	// bound to the originating session id. Optional — a nil resolver
+	// leaves the tool unregistered. spec: §26.2 line 119; §4.9. F-26.2.5.
+	VCSCreds vcscred.Resolver
+
+	// VCSLeaseAuditor records the §4.9.2 `credential.leased` event each
+	// time lenny/vcs_token mints a token, bound to the originating
+	// session id for the §26.2 audit-traceability requirement. Optional —
+	// a nil auditor disables the emission. spec: §26.2 line 119; §4.9.2.
+	// F-26.2.5.
+	VCSLeaseAuditor VCSLeaseAuditor
+}
+
+// VCSLeaseAuditor records a §4.9.2 VCS credential lease the
+// lenny/vcs_token tool issues. The implementation writes the
+// `credential.leased` audit row bound to the originating session id so a
+// minted VCS token is traceable to the session that requested it.
+// spec: §26.2 line 119; §4.9.2. F-26.2.5.
+type VCSLeaseAuditor interface {
+	RecordVCSLease(ctx context.Context, lease VCSLeaseRecord)
+}
+
+// VCSLeaseRecord is the §4.9.2 audit payload for one minted VCS token:
+// the session it is bound to, the resolved host, the VCS provider, and
+// the access mode. The token itself is never recorded. spec: §26.2 line
+// 119; §4.9.2. F-26.2.5.
+type VCSLeaseRecord struct {
+	SessionID string
+	TenantID  string
+	Host      string
+	Provider  string
+	Mode      string
 }
 
 // defaultRequestInputTimeout is the §11.3 maxRequestInputWaitSeconds
@@ -2813,6 +2853,10 @@ func Register(srv *mcp.Server, deps Deps) {
 		registerMemoryTools(srv, deps, tenant, clock)
 	}
 
+	if deps.VCSCreds != nil {
+		registerVCSTokenTool(srv, deps, tenant)
+	}
+
 	// spec: §15.2 lines 1284-1306 — the remaining client-facing tools
 	// (create_and_start_session, start_session, finalize_workspace,
 	// terminate_session, resume_session, get_session_status, list_sessions,
@@ -2820,6 +2864,127 @@ func Register(srv *mcp.Server, deps Deps) {
 	// upload_files). Each dispatches through the §15.2.1 rule-1 shared
 	// service layer so the MCP and REST surfaces cannot diverge. F-15.2.3.
 	registerClientFacingTools(srv, deps, tenant)
+}
+
+// vcsTokenResult is the §26.2 lenny/vcs_token tool result: the HTTP Basic
+// credential a pod's git-credential helper feeds to git for an
+// HTTPS clone/fetch/push against host. spec: §26.2 line 119. F-26.2.5.
+type vcsTokenResult struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Token    string `json:"token"`
+}
+
+// registerVCSTokenTool registers lenny/vcs_token — the §26.2 in-pod VCS
+// token endpoint. A pod's git-credential helper (git-credential-lenny)
+// calls it over the §9.1 platform MCP socket on every HTTPS git
+// operation: it names the target host and the access mode, and the
+// gateway materializes a short-lived token from the calling session's
+// tenant VCS credential pool (bound to the host via the pool's
+// hostPatterns). The token is minted per invocation and bound to the
+// originating session id for audit traceability; the runtime never holds
+// a long-lived credential. v1 ships `github` as the only built-in VCS
+// provider. spec: §26.2 line 119; §4.9. F-26.2.5.
+func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
+	srv.RegisterTool(mcp.Tool{
+		Name: "lenny/vcs_token",
+		Description: "Mint a short-lived VCS credential for an HTTPS git operation. " +
+			"Called by the in-pod git credential helper; resolves the host against the " +
+			"session tenant's VCS credential pool and returns an HTTP Basic username/token. " +
+			"v1 ships `github` as the only built-in VCS provider.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["host"],"properties":{"host":{"type":"string","description":"The HTTPS git host (e.g. github.com)."},"provider":{"type":"string","description":"VCS provider; defaults to github (the only built-in v1 provider)."},"mode":{"type":"string","enum":["read","write"],"description":"Access mode; defaults to read."}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §26.2 line 119 — the lease is bound to the originating
+		// session id. The §9.1 bridge installs the calling pod's session
+		// on the principal; a call with no session principal (e.g. a
+		// gateway-edge /mcp caller that is not a pod) cannot mint a
+		// session-bound VCS token. F-26.2.5.
+		sessionID := callerSessionID(ctx, "")
+		if sessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"lenny/vcs_token requires an in-pod session principal", nil)
+		}
+		tenant := callerTenantID(ctx, defaultTenant)
+
+		var in struct {
+			Host     string `json:"host"`
+			Provider string `json:"provider"`
+			Mode     string `json:"mode"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, errInvalidArgs(err)
+		}
+		host := strings.TrimSpace(strings.ToLower(in.Host))
+		if host == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"host is required", map[string]any{"field": "host"})
+		}
+		provider := strings.TrimSpace(in.Provider)
+		if provider == "" {
+			provider = "github"
+		}
+		// spec: §26.2 line 119 — `gitClone.url` is HTTPS-only in v1, so a
+		// read scope covers clone/fetch and a write scope covers push.
+		mode := "read"
+		if strings.TrimSpace(in.Mode) == "write" {
+			mode = "write"
+		}
+		leaseScope := fmt.Sprintf("vcs.%s.%s", provider, mode)
+
+		cred, err := deps.VCSCreds.Resolve(ctx, tenant, "https://"+host, leaseScope)
+		if err != nil {
+			return mcp.ToolResult{}, vcsTokenError(err)
+		}
+		if cred.IsZero() {
+			// No pool/credential resolved to a usable token. Treated as a
+			// configuration failure rather than a public clone, because a
+			// helper only calls this tool when git demanded credentials.
+			return mcp.ToolResult{}, mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST",
+				fmt.Sprintf("no VCS credential pool resolved a token for host %q", host),
+				map[string]any{"host": host, "provider": provider})
+		}
+
+		if deps.VCSLeaseAuditor != nil {
+			deps.VCSLeaseAuditor.RecordVCSLease(ctx, VCSLeaseRecord{
+				SessionID: sessionID,
+				TenantID:  tenant,
+				Host:      host,
+				Provider:  provider,
+				Mode:      mode,
+			})
+		}
+
+		body, merr := json.Marshal(vcsTokenResult{
+			Host:     host,
+			Username: cred.Username,
+			Token:    cred.Token,
+		})
+		if merr != nil {
+			return mcp.ToolResult{}, fmt.Errorf("vcs token serialization: %w", merr)
+		}
+		return textResult(string(body)), nil
+	})
+}
+
+// vcsTokenError maps a vcscred.Resolve failure to the §15.1 git-clone
+// auth error code the REST gitClone path uses, so the in-pod token
+// surface and the gateway-side clone surface report identical codes.
+// spec: §15.1; §26.2 line 119. F-26.2.5.
+func vcsTokenError(err error) error {
+	var resolveErr *credentialpoolstore.VCSResolveError
+	if errors.As(err, &resolveErr) {
+		if resolveErr.Reason == credentialpoolstore.VCSHostAmbiguous {
+			return mcp.NewToolError("GIT_CLONE_AUTH_HOST_AMBIGUOUS", err.Error(),
+				map[string]any{"host": resolveErr.Host, "provider": resolveErr.Provider,
+					"matchingPools": resolveErr.MatchingPools})
+		}
+		return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(),
+			map[string]any{"host": resolveErr.Host, "provider": resolveErr.Provider})
+	}
+	if errors.Is(err, vcscred.ErrNoUsableCredential) {
+		return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(), nil)
+	}
+	return mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
 }
 
 // taskHandle is the §8.2 return envelope for lenny/delegate_task. The

@@ -222,6 +222,47 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[1].mountPath
           value: /var/run/lenny/operator-token
 
+  # §26.2 line 119 / F-26.2.5: the v1 built-in `github` VCS credential
+  # pool is seeded into credentialPools when enabled with a secretRef.
+  - it: seeds the default github VCS credential pool when enabled
+    template: bootstrap-configmap.yaml
+    set:
+      bootstrap:
+        defaultGithubVcsPool:
+          enabled: true
+          secretRef: my-github-token
+    asserts:
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "provider: github"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: github-default"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "secretRef: my-github-token"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "github.com"
+
+  - it: does not seed the github VCS pool by default
+    template: bootstrap-configmap.yaml
+    asserts:
+      - notMatchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "provider: github"
+
+  - it: fails the render when the github VCS pool is enabled without a secretRef
+    template: bootstrap-configmap.yaml
+    set:
+      bootstrap:
+        defaultGithubVcsPool:
+          enabled: true
+          secretRef: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2 line 119)."
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.
