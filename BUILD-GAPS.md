@@ -3031,7 +3031,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.15 — `userCredentialsEnabled` semantics and user-credential resolution at session creation not implemented [Medium] — OPEN
+### - [ ] F-4.9.15 — `userCredentialsEnabled` semantics and user-credential resolution at session creation not implemented [Medium] — DEFERRED
 
 **Severity:** Medium (the §4.9 pre-authorized flow is the user-bring-your-own-key path; without resolution, `POST /v1/credentials` is write-only with no read).
 
@@ -3044,6 +3044,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 - `USER_CREDENTIAL_NOT_FOUND` error code not implemented (`grep -rn "USER_CREDENTIAL_NOT_FOUND" pkg/ cmd/` returns no matches).
 
 **Reopened 2026-06-07 — prior deferral:** The §4.9 resolution layer this finding needs is now in place — `credentialPolicy.userCredentialsEnabled` and the `preferredSource` modes are modeled (F-4.9.4), the `credrouter.Default` router resolves `source: user` per the preferredSource order with a terminal `USER_CREDENTIAL_NOT_FOUND` for the user-only-miss case, that error code maps in the §15.2.1 classifier (PERMANENT/404) and through `writePodClaimError`, and `last_used_at`/`MarkUsed` already exist on the credential store (F-4.9.27). What remains blocked is user-source lease **delivery**: minting a `Source: user` `CredentialLease` from the user's stored secret requires the §4.9 `materializedConfig` wire schema and a Token-Service user-credential producer, which is F-4.9.16 (also unbuilt). The session-creation wiring therefore gates user-source resolution behind an injectable `userCredChecker` (nil in v1 in `sessionserver`); once F-4.9.16 lands the delivery path, wiring the checker (a `credentialstore` lookup that skips revoked entries and calls `MarkUsed`) closes this finding. Picking it up before F-4.9.16 would resolve a `source: user` decision with no deliverable lease.
+
+**Re-verified (this batch) — DEFERRED, prior premise corrected (separate large workstream).** The prior note's premise ("once F-4.9.16 lands the delivery path, wiring the checker closes this finding") overstates F-4.9.16: that finding (commit 017f9a68) landed the direct-mode `materializedConfig` **modeling** + `MintLease` validation + `ProtoLease` rendering and the **pool**-source direct delivery (`directConfigFor` promotes a pool credential's `APIKey`), but it did NOT build a **user**-source producer. End-to-end user-source delivery remains unbuilt across multiple components: (a) `credassign.Service.assignLocked` and the `credassign.Client` Token-Service path both hard-code `Source: SourcePool` with no `AssignUser` entry point; (b) the Token Service (`pkg/tokenservice`, the production materializer when `--token-service-grpc-addr` is set, which holds the KMS decrypt rights) has no path that reads the user credential from `credentialstore` and materializes a `Source: user` lease; (c) the binder request (`podsession.BindRequest.CredentialPools`) carries only pool assignments — `resolveCredentialPools` discards `PreClaimResult.UserProviders`, so a resolved user provider is never delivered; (d) the user `credentialstore.Credential.Secret` is a single string, so multi-field providers (`aws_bedrock`, `vertex_ai`, `github`+expiresAt) cannot materialize from it, and the proxy-vs-direct delivery mode for a user credential is unspecified; (e) revocation needs the §4.9 user-shaped deny-list entry `{source:"user", tenantId, credentialRef}`. Wiring only the `userCredChecker` (the prior note's literal scope) would make `sessionserver` resolve user source while production (Token Service mode) cannot deliver it — a false-availability regression. Honestly closing this is the user-source materialization+delivery vertical across `credassign` + the Token Service + the binder + a single-secret→materializedConfig mapping decision; that is a separate large workstream that has not begun (Rule P), not a checker wiring. Re-deferred with this corrected scope.
 
 ---
 
@@ -11280,7 +11282,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** Dropped the `initiatorType` field from `lenny/request_elicitation`'s input schema. Every elicitation raised through the agent-facing MCP tool is now hard-coded as `InitiatorAgent`, so the §9.2 URL-mode allowlist always governs — a self-asserted `connector` claim no longer bypasses the per-pool allowlist. A future connector-initiated path will go through a separate gateway-authenticated surface keyed off the registered connector binding, not by an input string at this tool.
 
-### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — OPEN
+### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — DEFERRED
 
 **Potential overlap** (confidence: medium) — F-8.8.6 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
 
@@ -11291,6 +11293,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** No deadlock detector exists, so the §9.2 interaction with deadlock detection is moot. This is upstream of §9.2 (the detector itself is unbuilt) and is flagged Info on the §9.2 audit because the §9.2 contract is conditional on a service that does not exist.
 
 **Resolution:** Re-DEFERRED. The detector now exists (F-8.8.6, commit 5b6f5f2b) and participates in `input_required` chains, but it does not yet consider elicitation chains: the snapshot's blocked signal is sourced from the `inputwait` registry only, not the `interactionstore` pending-elicitation set. Honoring §9.2 line 110 ("both participate in the gateway's subtree deadlock detection") requires (a) enumerating pending elicitations per session as a second blocked signal in `deadlock.Node`, and (b) a semantic decision the spec leaves open: an elicitation is answered by the external client, not by the awaiting parent, so a subtree blocked only on elicitations is not parent-resolvable and failing its deepest task with `DEADLOCK_TIMEOUT` (the §8.8 line 981 remedy) is arguably wrong — such waits are already bounded by the elicitation timeout. This Info-level interaction is a focused follow-on that should land with the elicitation-timeout owner rather than be half-wired here; the core detector contract (F-8.8.6) is complete.
+
+**Re-verified (this batch) — DEFERRED.** Re-confirmed against current code: `deadlock.Node`'s blocked signal still derives from the `inputwait` registry only; the `interactionstore` pending-elicitation set is not enumerated as a second blocked input. The blocker is unchanged — closing requires the spec-open semantic decision in (b) (whether an elicitation-only-blocked subtree should ever be `DEADLOCK_TIMEOUT`-failed when the wait is already bounded by the elicitation timeout and is not parent-resolvable). That decision belongs with the elicitation-timeout owner; half-wiring it here would encode an arbitrary policy the spec does not fix. Heading moved OPEN → DEFERRED to reflect the standing re-deferral.
 
 ---
 
@@ -29592,7 +29596,7 @@ materializes setup output for the client API, and there is no durable
 record of successful or failed setup commands beyond a single ephemeral
 log line on the adapter pod's stdout.
 
-### - [ ] F-16.4.6 — EventStore tables are not partitioned; the SIEM-aware partition GC does not exist [High] — OPEN
+### - [ ] F-16.4.6 — EventStore tables are not partitioned; the SIEM-aware partition GC does not exist [High] — DEFERRED
 
 **High.** §16.4 line 378 mandates: "EventStore tables (audit events,
 session logs, stream cursors) are partitioned by time using native
@@ -29713,6 +29717,8 @@ DELETE-based `auditstore.PruneRetention` + `auditretention.Pruner`
 remainder is mechanical once the spec resolves which constraint wins.
 
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
+
+**Re-verified (this batch) — DEFERRED stands (Rule B spec-contradiction).** Confirmed the buildable portion is present in the current tree: migration `0149` creates `session_logs` and `stream_cursors` as native `PARTITION BY RANGE (created_at)` tables (the two greenfield §16.4 EventStore tables that previously did not exist), and `pkg/gateway/partitionmaint` is the leader-gated maintainer that pre-creates the current + N-ahead daily partitions and `DROP TABLE`s whole partitions past the retention window (30d session logs, 7d stream cursors) behind a `DropGuard` seam, wired in `cmd/lenny-gateway` under `pgPool != nil`. The audit-retention behavior is the DELETE-based `auditstore.PruneRetention` + `auditretention.Pruner`. The irreducible remainder — native range partitioning of `audit_log` itself — stays blocked by the §16.4 line 378 vs §12.8 line 812 contradiction: a natively `PARTITION BY RANGE (created_at)` `audit_log` cannot carry the single-column `UNIQUE (id)` the `audit_redaction_receipts` FK requires (Postgres forbids a unique constraint omitting the partition key). Resolving which constraint wins is a `spec/` edit, which Rule B forbids from the build loop.
 
 ### - [x] F-16.4.7 — Audit events are not written for the spec's "all policy decisions" [High] — CLOSED
 
@@ -34343,7 +34349,7 @@ The install schema (`cmd/lenny-ctl/install.go:54-57`) has a `Profile string` fie
 
 ---
 
-### - [ ] F-17.5.5 — 3 — Tier-6 cloud e2e coverage is AWS-only despite multi-provider scaffolding [Medium] — OPEN
+### - [ ] F-17.5.5 — 3 — Tier-6 cloud e2e coverage is AWS-only despite multi-provider scaffolding [Medium] — DEFERRED
 
 **Spec basis.** §17.5 bullet 1 + §17.9.3 imply parity across S3/GCS/Azure for the object-store backend; `tests/tier6_e2e_cloud/scaffolds_test.go:9-27` documents the `LENNY_CLOUD_PROVIDERS=aws,gcp,azure` per-provider iteration TestMain.
 
@@ -34358,6 +34364,8 @@ No `gke_platform_test.go`, `gcs_resources_test.go`, `aks_platform_test.go`, `azu
 **Suggested fix.** Land at minimum `gke_platform_test.go` + `gcs_resources_test.go` and `aks_platform_test.go` + `azure_resources_test.go` so the multi-provider iteration in `scaffolds_test.go::TestMain` lights up real provider-specific assertions for at least one resource on each side. The §17.5 portability claim is unverified until each cloud has a behavioral signal.
 
 **Reopened 2026-06-07 — prior deferral:** This is a tier-6 cloud e2e coverage gap that requires standing up live GKE/AKS clusters with managed CloudSQL/Memorystore/GCS and Azure Database/Cache/Blob, driven by the `LENNY_GCP_*` / `LENNY_AZURE_*` credential bundles and `scripts/cloud/{gcp,azure}/run-e2e.sh`. Those provider-specific assertions cannot be authored or exercised without real cloud infrastructure and provider credentials, which are unavailable in this environment. The multi-provider iteration scaffold (`scaffolds_test.go::TestMain`) and the run scripts already exist; the per-provider behavioral test files land when an operator drives the equivalent cloud bring-up.
+
+**Re-verified (this batch) — DEFERRED (Rule P infra exception).** Re-confirmed `tests/tier6_e2e_cloud/` still carries only AWS-specific behavioral assertions (no `gke_platform_test.go` / `gcs_resources_test.go` / `aks_platform_test.go` / `azure_resources_test.go`); the multi-provider iteration scaffold and `scripts/cloud/{gcp,azure}/run-e2e.sh` exist but the per-provider behavioral files cannot be authored or exercised without live GKE/AKS clusters, managed CloudSQL/Memorystore/GCS + Azure Database/Cache/Blob, and `LENNY_GCP_*` / `LENNY_AZURE_*` credentials — infrastructure unavailable in this environment. Heading moved OPEN → DEFERRED; lands when an operator drives the cloud bring-up.
 
 ---
 
@@ -44572,7 +44580,7 @@ together.
 
 ---
 
-### - [ ] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — OPEN
+### - [ ] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — DEFERRED
 
 **Spec:** §26.2 lines 58–66 declare the shared capabilities block. The four coding-agent runtimes share these — none may, for example, declare `interaction: one_shot` and remain in the coding-agent category, because the lifecycle requirements at §26.2 line 74 ("clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions") only hold for multi-turn sessions.
 
@@ -44586,6 +44594,8 @@ together.
 **Remediation sketch:** When the runtime category lands (H-26.2-02), have `validateCapabilities` enforce the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes` includes both `immediate` and `queued`) for any runtime whose category is `coding-agent`.
 
 **Reopened 2026-06-07 — prior deferral:** Gated on H-26.2-01 (capabilities-block plumbing through the reference-runtime install path) and H-26.2-02 (runtime category field). Per the finding's own framing ("today this is only a latent inconsistency because the reference-runtime install path drops the capabilities block entirely (M-26.2-03), so nothing flows through. Once H-26.2-01 is fixed the validation becomes load-bearing"), the category-conditional `validateCapabilities` branch lands as part of the same fix that introduces the category field; preemptively adding a half-enforced check now would risk diverging when the category model materialises.
+
+**Re-verified (this batch) — DEFERRED.** Re-confirmed the prerequisite is still absent: there is no runtime `category` field on `runtimestore.Runtime` / the Runtime CRD / the admin payload (`grep` for a coding-agent category discriminator finds none), so `validateCapabilities` has no category to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on. The enforcement is structurally un-writable until the H-26.2-02 category model lands and must ship with it to avoid a half-enforced check that diverges when the model materialises. Heading moved OPEN → DEFERRED to reflect the standing dependency.
 
 ---
 
