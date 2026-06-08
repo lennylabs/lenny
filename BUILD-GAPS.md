@@ -1744,7 +1744,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — OPEN
+### - [x] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — DEFERRED
 
 **Severity: Medium.** Operability gap; the nonce-only mode is not surfaced.
 
@@ -1755,6 +1755,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Suggested resolution:** Emit the counter on pod start when the flag is `false`; set the pod condition through the local kubelet downward-API or a controller-owned reconciler.
 
 **Reopened 2026-06-07 — prior deferral (131a5107):** The counter half is done — `cmd/lenny-adapter` increments `lenny_adapter_sopeercred_disabled_total` (registered in `pkg/adapter/metrics.go`) on every start when `--require-so-peercred=false`. The `SOPeercredDisabled=True` pod condition and its propagation to `SecurityDegradedMode=True` on the `SandboxTemplate` is deferred: the adapter has no Kubernetes client today, and the downward API cannot write conditions, so this needs an adapter in-cluster client plus RBAC and a controller reconciler — a standalone effort tracked separately.
+
+**Re-verified 2026-06-08 — DEFERRED (two confirmed blockers; counter half remains done).** The condition half is blocked on a spec-internal tension plus an unbuilt config path, both confirmed this session. (1) §10.3 no-apiserver posture: `pkg/controller/sandbox/podspec/podspec.go:746-750` sets `AutomountServiceAccountToken: false` on every agent pod and mounts only the gateway-audience projected token, so the adapter cannot `PATCH pods/status` to set `SOPeercredDisabled` without re-opening that deliberately locked-down posture (a default-audience SA token + `pods/status` RBAC + an apiserver-egress NetworkPolicy). The §4.7 "adapter MUST set the condition" clause and the §10.3 no-apiserver clause are in tension; choosing which governs (or sanctioning a controller-mediated path the spec does not describe) is a rule-B reconciliation, not a unilateral code change. (2) No v1 activation path: the podspec builder never renders `--require-so-peercred=false` (the flag defaults to `true`) and no pool/runtime field plumbs it, so nonce-only mode — the only state the condition signals — is unreachable in v1; the condition has nothing to surface. The clean implementation is controller-mediated (the WarmPoolController already authors the podspec flag, holds apiserver access, and owns the `SandboxTemplate` `SecurityDegradedMode` slot), landing with the nonce-only-mode config vertical. Heading moved OPEN → DEFERRED.
 
 ---
 
@@ -9452,7 +9454,7 @@ Each is mapped to the implementation below.
 
 **Resolution:** Evidence was partly stale — migration `0115_delegation_tree_budget` already created the table with the `extension_denied`/`cool_off_expiry` columns (no writer). The residual gap, the handoff-safe Postgres `BudgetSource`, is now built. New `leasecontrol.DenialStore` seam: `MemoryBudgetSource.WithDenialStore` makes the §8.6 denial state durable by delegating it to the Postgres-backed `pkg/gateway/leasecontrol/denialpg` store. `Deny` persists the flag and `NOW()`-relative cool-off to `delegation_tree_budget`; `TreeBudget` reads the flag back from Postgres compared against the database clock (§8.6 line 731/733, never `time.Now()`); `ApplyGrant` runs the §8.6 line 732 in-flight atomic re-check as a single `INSERT … ON CONFLICT DO UPDATE … WHERE NOT denied … RETURNING` that locks the tree row, increments the new `ext_*` grant counters, and rolls back to `ErrExtensionDenied` when a rejection landed under the lock; `ClearSubtreeDenial` clears it for the §15.1 line 868 admin endpoint. Migration `0130` adds the seven §8.6 line 643 `ext_*` dimension counters + `updated_at`. Wired in `cmd/lenny-gateway` when `pgPool != nil` (nil-degrades to in-memory for the Embedded/dev path). The per-session extension-delta scoping (F-8.6.12) stays in memory; the denial state is tree-keyed, matching the table PK. Tests: 8 tier-1 (denial-store seam delegation + nil-store invariance) + a real-Postgres tier-2 contract (`tests/tier2_component/leasedenial`: durable round-trip, db-clock cool-off expiry, in-flight gate, counter increment, clear, cross-tenant isolation) + a tier-1 migration static check. Commit 54279ee1.
 
-### - [ ] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — OPEN
+### - [x] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — DEFERRED
 
 **Spec:** §8.6 (line 629) is normative on the trigger: "When the LLM proxy rejects a call for budget exhaustion, the adapter automatically requests a lease extension from the gateway via the gRPC control channel."
 
@@ -9465,6 +9467,8 @@ Each is mapped to the implementation below.
 **Files:** `pkg/adapter/leaseextend.go:49–80`; `pkg/gateway/llmproxy/` (no caller); `BUILD-PROGRESS.md:47`.
 
 **Reopened 2026-06-07 — prior deferral (after d8efc623):** Genuinely blocked on the §4.9 LLM-proxy client path inside the pod adapter, which v1 does not host (re-verified: `pkg/adapter/leaseextend.go:54-59` documents the seam; no production caller of `HandleBudgetExhaustion`). The gateway side of the trigger (the ExtendLease handler with full §8.6 elicitation/auto-mode dispatch) now exists (F-8.6.2/F-8.6.7); what is missing is the adapter-resident LLM-proxy rejection detector that calls it. Closing this requires building the §4.9 adapter LLM-proxy client and wiring its budget-exhaustion rejection to `HandleBudgetExhaustion`. Re-attempt once the adapter hosts the LLM-proxy path.
+
+**Re-verified 2026-06-08 — DEFERRED (separate large workstream unbuilt).** Re-confirmed `pkg/adapter/leaseextend.go` still documents the SEAM and `HandleBudgetExhaustion` has no production caller (only the `if s.LeaseExtender == nil` seam guard; `cmd/lenny-adapter/main.go` constructs no LLM-proxy client and assigns no `LeaseExtender`). The §4.9 LLM proxy lives in the gateway, not the pod adapter, so the in-pod budget-rejection detector that the spec's "automatic" trigger fires from does not exist; constructing a `LeaseExtender` in isolation would produce dead code (no caller). Gated on the adapter-resident §4.9 LLM-proxy client + budget-rejection detector workstream. Heading moved OPEN → DEFERRED.
 
 ### - [x] F-8.6.7 — Auto-mode rate limit and elicitation fallback are unimplemented [High] — CLOSED
 
@@ -11264,7 +11268,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** Registered all four metrics in `gatewaymetrics.go` with the §16.1 catalog names and 4 Inc/Dec/Observe helpers (`IncElicitationPending`, `DecElicitationPending`, `IncElicitationTimeout`, `IncElicitationSuppressed`, `ObserveElicitationRoundtrip`). Added `mcptools.ElicitationLifecycleRecorder` interface + Deps field; the request_elicitation handler stamps admit + every terminal path (responded/dismissed/timeout/ctx-done) with the histogram observation and pending decrement, while the budget-exceeded and depth-suppression drop paths bump the suppressed counter. `cmd/lenny-gateway/main.go` wires `ElicitationLifecycleMetrics: gwMetrics`. The `ElicitationBacklogHigh` alert can now fire.
 
-### - [ ] F-9.2.15 — Idle-timer pause for "waiting_for_human" is unimplemented [Medium] — OPEN
+### - [x] F-9.2.15 — Idle-timer pause for "waiting_for_human" is unimplemented [Medium] — DEFERRED
 
 - **Spec:** Line 102. "When a session is waiting for an elicitation response, the session's `maxIdleTime` timer is paused. The session is in a 'waiting_for_human' state, not idle."
 - **Evidence:**
@@ -11274,6 +11278,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** A session that raises a request_elicitation continues to accumulate idle time against `maxIdleTime`. A long-running human-facing elicitation can therefore time out the session via the idle path, contradicting the §9.2 contract that the elicitation timeout (`maxElicitationWait`) is the only one that applies while waiting on a human.
 
 **Reopened 2026-06-07 — prior deferral:** The §9.2 line 102 contract has two halves, and the one this finding targets — pausing the session `maxIdleTime` timer — has nothing to pause in v1. A repo-wide search (`MaxIdleTime`/`idleTimeout` over `pkg/`, `cmd/`) confirms no session-level idle reaper exists: `runtimestore.Limits` carries `MaxSessionAgeSeconds` but no `maxIdleTimeSeconds`, and the only idle timers are the load-test client (`cmd/lenny-loadctl`) and the playground hard-idle override (`pkg/gateway/playground`), neither of which reaps a production session for inactivity. With no idle accumulator running, a pending elicitation cannot expire a session via the idle path, so the contract is vacuously satisfied today. The visible-state half ("the session is in a 'waiting_for_human' state") is §9.2 prose, not a §15.1 `State` enum value (§15.1 enumerates `input_required` and `suspended` as the `running` sub-states surfaced via `state_change`); introducing a net-new `waiting_for_human` wire value would be a spec-broadening change. Re-attempt once the session-level `maxIdleTime` idle-reaper subsystem is built (it would carry the `maxIdleTimeSeconds` limit, the per-session idle accumulator, and the pause/resume hooks the elicitation admit/resolve path would call); the pause point is the same `request_elicitation` admit/terminal site F-9.2.14 already instruments.
+
+**Re-verified 2026-06-08 — DEFERRED (idle-reaper subsystem unbuilt).** Re-confirmed no production session-level `maxIdleTime` reaper exists (`grep maxIdleTime|MaxIdleTime|idleReaper pkg/gateway` finds only the playground hard-idle override and the load-test client, neither of which reaps a production session for inactivity). With no idle accumulator running, a pending elicitation cannot expire a session via the idle path, so the §9.2 line 102 pause contract is vacuously satisfied; there is nothing to pause. The visible-state half ("waiting_for_human") is §9.2 prose, not a §15.1 `State` enum value, so adding it would broaden the wire (rule B). Gated on the session-level idle-reaper subsystem (the `maxIdleTimeSeconds` limit + per-session idle accumulator + pause/resume hooks), shared with [[F-9.2.15]]'s sibling playground-idle gap noted at §27.3. Heading moved OPEN → DEFERRED.
 
 ### - [x] F-9.2.16 — Depth policy default `suppress_at_depth: 3` is not in effect [Medium] — CLOSED
 
@@ -14763,7 +14769,7 @@ accessors, Clone, and non-negative Validate.
 
 ---
 
-### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — OPEN
+### - [x] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — DEFERRED
 
 **Spec:** §10.7 lines 779–782 — Lenny supports two external-targeting
 integration paths: OFREP (recommended) and "OpenFeature SDK providers linked
@@ -14814,6 +14820,8 @@ externally-targeted experiments. Re-attempt once the vendor SDK modules
 are available offline: add the three providers behind the existing
 `experiment.TargetingProvider` enum, construct each from its config
 sub-block, and replace the OFREP-only guard with a provider switch.
+
+**Re-verified 2026-06-08 — DEFERRED (infra unavailable).** Re-confirmed `go.mod` carries none of the three vendor OpenFeature SDK modules (`grep -c launchdarkly|statsig|unleash|go-sdk-contrib go.mod` = 0), there is no `vendor/` tree, and the build sandbox has no network to `go get` them, so the §10.7-mandated vendor-SDK providers cannot be linked here. This is the "infrastructure unavailable in this environment" defer exception. Heading moved OPEN → DEFERRED; re-attempt once the vendor modules are available offline (the provider-switch insertion point is unchanged).
 
 ---
 
@@ -16051,7 +16059,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — OPEN
+### - [x] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — DEFERRED
 
 Spec §11.2.1 enumerates the closed set of event types the platform "emits": `session.created`, `session.completed`, `delegation.spawned`, `delegation.isolation_violation`, `pool.isolation_warning`, `derive.isolation_downgrade`, `interceptor.fail_policy_weakened`, `interceptor.fail_policy_strengthened`, `interceptor.weakening_cooldown_active`, `delegation.export_file_scan_rejected`, `delegation.export_scan_failed_open`, `delegation_policy.export_scan_weakened`, `delegation_policy.export_scan_strengthened`, `token_usage.checkpoint`, `credential.leased`, `credential.revoked`, plus `billing_correction`.
 
@@ -16078,6 +16086,13 @@ Specifically missing from the billing stream:
 - `credential.leased`, `credential.revoked` — emitted to audit (OCSF mapping at `/Users/joan/projects/lenny/pkg/audit/ocsf/mapping.go:55`) but not to billing.
 
 **Reopened 2026-06-07 — prior deferral (this batch):** Fully closing this finding requires every type in the §11.2.1 closed set to reach the billing stream, but two have no v1 producer: `interceptor.fail_policy_weakened` / `_strengthened` / `weakening_cooldown_active` (no runtime interceptor-`failPolicy` mutation path emits them — grep returns zero emission sites) and `token_usage.checkpoint` (the periodic token-usage checkpoint loop is the separate, also-open F-11.2.4). Routing only the reachable subset (`delegation.spawned`, `delegation.isolation_violation`, `pool.isolation_warning`, `derive.isolation_downgrade`, the export-scan events, `credential.leased` / `credential.revoked`) would half-meet the finding's "complete §11.2.1 cost-attribution stream" invariant while leaving the source-less types unaddressed. The schema and §15.1 wire surface those emissions land on is now built (F-11.2.12, this batch via `billingstore.Conditional`); the emission wiring is gated on F-11.2.4 plus a runtime interceptor-failPolicy-mutation path.
+
+**Re-verified 2026-06-08 — DEFERRED (precise producer map; this is a separate large workstream, not a leaf wiring).** A per-event-type producer sweep this session establishes that the finding cannot close — 7 of the ~14 §11.2.1 types have **no v1 producer at all** (nothing to route to any stream), and the ~5 that do exist emit only to the audit/admin-audit sink, never to the billing ledger. Closing requires both (a) building the 7 missing producers and (b) injecting `billingstore.Store` into 4 distinct, currently-billing-unaware components and dual-emitting at each. Map:
+
+- **Has a v1 producer, but emits only to audit (needs billing-store injection + Conditional construction at the site):** `delegation.spawned` (`pkg/gateway/delegation/service.go:1175`, `auditor.EmitDelegationEvent`); `delegation.isolation_violation` (`pkg/gateway/mcptools/mcptools.go:2580`); `delegation.export_file_scan_rejected` / `delegation.export_scan_failed_open` (`pkg/gateway/policy/exportscanobserver.go`); `delegation_policy.export_scan_weakened` / `_strengthened` (`pkg/gateway/admin/delegation_policies.go:161-164`, `r.emit`); `credential.revoked` (`pkg/gateway/admin/credential_pools.go:1028,1088`, `r.emit` — the admin `Router` already holds `r.billing`, the one near-clean site).
+- **No v1 producer anywhere (gated on building the producer first):** `pool.isolation_warning` and `derive.isolation_downgrade` (grep: zero emit sites); `credential.leased` (only the `pkg/credential/auditevents.go:41` constant, no emit site); `token_usage.checkpoint` (F-11.2.4 landed `quotacheckpoint`, but it checkpoints to Postgres, not the billing ledger); `interceptor.fail_policy_weakened` / `_strengthened` / `_weakening_cooldown_active` (gated on F-4.8.17 / F-4.8.9 — no runtime external-interceptor `failPolicy`-mutation surface exists).
+
+The §11.2.1 "complete cost-attribution stream" invariant the finding names is therefore unreachable until those producers and the cross-component billing seam are built; the schema/wire half (`billingstore.Conditional`) is already complete and ready to receive them. Heading moved OPEN → DEFERRED on the producer/billing-seam build-out.
 
 ### - [x] F-11.2.2 — LLM token usage is never recorded against any quota counter [High] — CLOSED
 
@@ -27346,7 +27361,7 @@ degenerate zero config would silently deny every extension rather than
 fix the path. Deferred until the §8.6 config-layering resolver and the
 session/delegation lifecycle registration hooks land as their own task.
 
-### - [ ] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — OPEN
+### - [x] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — DEFERRED
 
 `pkg/adapter/leaseextend.go:53–58` (`HandleBudgetExhaustion` docstring)
 acknowledges the SEAM and the absence of any production caller:
@@ -27379,6 +27394,8 @@ dead code: with no in-pod LLM-proxy rejection detector to invoke
 no-dead-config rule. Deferred until the adapter-side §4.9 LLM-proxy /
 budget-rejection detector lands; that work then wires both the detector
 and the `LeaseExtender` together.
+
+**Re-verified 2026-06-08 — DEFERRED (shares the F-8.6.6 blocker).** Same root cause confirmed this session: `cmd/lenny-adapter/main.go` sets no `Server.LeaseExtender` and there is no production `gatewaycontrol.Dial`/`New` caller, because the adapter hosts no §4.9 LLM-proxy client to detect a budget-exhaustion rejection and invoke the trigger. Wiring a `LeaseExtender` without that detector is dead config. Gated on the same adapter §4.9 LLM-proxy workstream as F-8.6.6. Heading moved OPEN → DEFERRED.
 
 ### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — DEFERRED
 
