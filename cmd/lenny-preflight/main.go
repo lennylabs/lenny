@@ -567,6 +567,12 @@ func main() {
 		"value of the monitoring.namespace chart value for the §17.6 line 521 advisory.")
 	monitoringPodLabel := flag.String("monitoring-pod-label", "",
 		"value of the monitoring.podLabel chart value (key=value) the Prometheus pod must carry for the §17.6 line 521 advisory.")
+	ingressControllerNamespace := flag.String("ingress-controller-namespace", "",
+		"value of the ingressControllerNamespace chart value for the §13.2 NET-038 ingress-controller advisory. Empty skips the check.")
+	ingressControllerPodLabelKey := flag.String("ingress-controller-pod-label-key", "",
+		"value of ingress.controllerPodLabel.key the Ingress controller pods must carry for the §13.2 NET-038 advisory.")
+	ingressControllerPodLabelValue := flag.String("ingress-controller-pod-label-value", "",
+		"value of ingress.controllerPodLabel.value the Ingress controller pods must carry for the §13.2 NET-038 advisory.")
 	opsServiceAccount := flag.String("ops-service-account", "",
 		"the fully-qualified lenny-ops SA username (system:serviceaccount:<ns>:lenny-ops-sa) for the §17.6 line 519 RBAC audit. Empty skips the check.")
 	redisURL := flag.String("redis-url", "",
@@ -715,6 +721,11 @@ func main() {
 		Monitoring: preflight.MonitoringConfig{
 			Namespace: *monitoringNamespace,
 			PodLabel:  *monitoringPodLabel,
+		},
+		IngressController: preflight.IngressControllerConfig{
+			Namespace:     *ingressControllerNamespace,
+			PodLabelKey:   *ingressControllerPodLabelKey,
+			PodLabelValue: *ingressControllerPodLabelValue,
 		},
 		OpsServiceAccount: *opsServiceAccount,
 		OpsSARBACProber:   opsSARProber(cfg, *opsServiceAccount),

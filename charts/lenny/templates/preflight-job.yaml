@@ -91,7 +91,10 @@ rules:
   # checks read each agent namespace and its ResourceQuota / LimitRange
   # objects. The namespace `get` distinguishes a not-yet-created
   # namespace (fresh install) from an existing one missing governance.
-  # F-17.6.1.
+  # F-17.6.1. The §13.2 NET-038 ingress-controller advisory reuses the
+  # namespace `get` and the pods `list` above to confirm the Ingress
+  # controller namespace exists and runs a labeled controller pod.
+  # F-13.2.8.
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get"]
@@ -322,6 +325,14 @@ spec:
             - --ops-ingress-cluster-issuer={{ index (.Values.ops.ingress.annotations | default dict) "cert-manager.io/cluster-issuer" | default "" }}
             - --monitoring-namespace={{ .Values.monitoring.namespace | default "" }}
             - --monitoring-pod-label={{ .Values.ops.networkPolicy.prometheusPodLabel.key }}={{ .Values.ops.networkPolicy.prometheusPodLabel.value }}
+            {{- /* §13.2 line 292 NET-038 — validate that the
+            ingressControllerNamespace exists and runs a pod carrying the
+            configured controllerPodLabel, so the allow-gateway-ingress
+            NetworkPolicy actually admits external HTTPS to the gateway.
+            Non-blocking advisory. F-13.2.8. */}}
+            - --ingress-controller-namespace={{ .Values.ingressControllerNamespace | default "" }}
+            - --ingress-controller-pod-label-key={{ .Values.ingress.controllerPodLabel.key }}
+            - --ingress-controller-pod-label-value={{ .Values.ingress.controllerPodLabel.value }}
             {{- if $checkRedis }}
             # §12.4 — verify the BYO Redis enforces maxmemory-policy=noeviction
             # so the billing stream and per-tenant counters cannot evict.

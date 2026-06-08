@@ -229,6 +229,24 @@ type Config struct {
 	// OpsSARBACProber, when non-nil, runs the §17.6 line 519 lenny-ops-sa
 	// SubjectAccessReview audit. Nil skips the check. F-17.6.1.
 	OpsSARBACProber OpsSARBACProber
+	// IngressController carries the §13.2 NET-038 ingress-controller
+	// advisory inputs (ingressControllerNamespace,
+	// ingress.controllerPodLabel.key/value). An empty Namespace skips the
+	// check. F-13.2.8.
+	IngressController IngressControllerConfig
+}
+
+// IngressControllerConfig carries the §13.2 NET-038 chart values the
+// ingress-controller advisory evaluates against the cluster.
+//
+// spec: §13.2 line 292. F-13.2.8.
+type IngressControllerConfig struct {
+	// Namespace is the ingressControllerNamespace value.
+	Namespace string
+	// PodLabelKey is the ingress.controllerPodLabel.key value.
+	PodLabelKey string
+	// PodLabelValue is the ingress.controllerPodLabel.value value.
+	PodLabelValue string
 }
 
 // MonitoringConfig carries the §17.6 line 521 monitoring.* chart values
@@ -809,6 +827,33 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Prober:         cfg.OpsSARBACProber,
 		}.Decide(ctx),
 	})
+
+	// §13.2 line 292 NET-038 — non-blocking ingress-controller advisory.
+	// Validates that the ingressControllerNamespace exists and runs at
+	// least one pod carrying the configured controllerPodLabel, so the
+	// allow-gateway-ingress NetworkPolicy actually admits external HTTPS
+	// to the gateway. A read error degrades to a non-blocking WARNING so a
+	// transient list failure does not abort an otherwise-valid install.
+	// F-13.2.8.
+	if cfg.IngressController.Namespace != "" {
+		nsExists, hasPod, err := gatherIngressController(ctx, reader,
+			cfg.IngressController.Namespace, cfg.IngressController.PodLabelKey, cfg.IngressController.PodLabelValue)
+		if err != nil {
+			report = append(report, CheckResult{Name: "ingress-controller", Decision: Decision{Passed: true,
+				Reason: "WARNING: could not determine ingress-controller posture: " + err.Error()}})
+		} else {
+			report = append(report, CheckResult{
+				Name: "ingress-controller",
+				Decision: IngressControllerCheck{
+					Namespace:               cfg.IngressController.Namespace,
+					PodLabelKey:             cfg.IngressController.PodLabelKey,
+					PodLabelValue:           cfg.IngressController.PodLabelValue,
+					NamespaceExists:         nsExists,
+					HasRunningControllerPod: hasPod,
+				}.Decide(),
+			})
+		}
+	}
 
 	return report
 }
