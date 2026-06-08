@@ -19753,7 +19753,7 @@ Not blocked on any finding closed in this batch.
   router routing decision (replica/primary/separate-instance/empty-tenant)
   and the three stores' read-pool wiring; helm-unittest covers the Secret
   key and the deployment env var (present-when-set / absent-when-unset).
-  Resolved by this batch.
+  Resolved in commit 761cc86a.
 
 ### - [x] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — CLOSED
 
@@ -36979,7 +36979,7 @@ operator-facing knob is missing either way.
 
 - **Reopened 2026-06-07 — prior deferral:** The gateway has no read/write-split store layer. It constructs a single `*pgxpool.Pool` from `--postgres-dsn` (plus the optional `--postgres-billing-audit-dsn` for the §12.3 R-03 split), and the `storerouter.StoreRouter` interface exposes only write-or-either shard pools — there is no `ReadShard`/read-pool seam, and read-heavy callers (session status, task tree, audit reads, usage reports) read through the primary. §12.3 line 146 is a SHOULD. Adding only a `postgres.readDsn` Helm value + gateway env would be a hollow knob (rule O): the gateway would open a pool nothing routes to. Read-replica routing is a dedicated store-layer effort (thread a read pool through the read-only query paths) and is deferred to that batch; the Helm value lands with it.
 
-- **Resolution:** Closed by F-12.3.16 (same batch). The dedicated
+- **Resolution:** Closed by F-12.3.16 (commit 761cc86a). The dedicated
   store-layer read/write split now exists: `postgres.readDsn` renders the
   `read-postgres-dsn` key into the `lenny-datastore-conn` Secret and the
   gateway reads it as `LENNY_PG_READ_DSN`, opening a read-replica pool that
