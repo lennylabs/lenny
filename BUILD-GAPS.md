@@ -30534,7 +30534,7 @@ The spec also requires the burn-rate metric source be tunable: §16.5 ends with 
   multiplier during a gateway-down window. `AlertSupportCatalog` drops the
   four inlined phantoms and adds the two HTTP series + the two multiplier
   gauges so the F-16.5.2 cross-check resolves; `charts/lenny/files/alerting-rules.yaml`
-  and `openslo.yaml` regenerated. Resolved in commit <PENDING>.
+  and `openslo.yaml` regenerated. Resolved in commit `3b6fa589`.
 
 ### - [x] F-16.5.4 — `WarmPoolReplenishmentSlow` does not derive its threshold from `scalingPolicy.podWarmupSecondsBaseline`. [Medium] — CLOSED
 
