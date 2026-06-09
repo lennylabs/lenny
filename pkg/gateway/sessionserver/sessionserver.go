@@ -2834,8 +2834,21 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		s.writePreconditionError(w, err)
 		return
 	}
+	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 lines 95-114 — the
+	// §14 WorkspacePlan referencing this session's staged uploadArchive
+	// blob is bound here in the decomposed create → upload → finalize
+	// flow, because the create-time plan is immutable and cannot name an
+	// uploadRef minted only after the session exists. A no-body finalize
+	// keeps the existing plan (or empty workspace). F-24.17.4 / F-26.2.4.
+	planJSON, planWarnings, hasPlan, planOK := s.resolveFinalizePlan(w, r, tenantID, row)
+	if !planOK {
+		return
+	}
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
 		transitionFinalize(r)
+		if hasPlan {
+			r.WorkspacePlan = planJSON
+		}
 		return nil
 	})
 	if err != nil {
@@ -2859,6 +2872,12 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	s.uploadLimits.closeSession(updated.ID)
 	// spec: §7.2 line 137 — surface the created → ready transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §14 lines 100/334/338 — surface any consumer-advisory parse
+	// warnings the finalize-bound plan raised on the same per-session SSE
+	// bus the create path uses. F-24.17.4 / F-26.2.4.
+	if hasPlan {
+		s.publishParsePlanWarnings(updated.TenantID, updated.ID, planWarnings)
+	}
 	// F-7.4.17: §16.6 session.finalize_workspace audit row. The row
 	// records the finalize transition and the consumption of the
 	// single-use uploadToken so SIEM post-incident review can join the

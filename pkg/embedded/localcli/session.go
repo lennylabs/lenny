@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/oidc"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
+	"github.com/lennylabs/lenny/pkg/workspacepack"
 	lenny "github.com/lennylabs/lenny/sdks/client/go/lenny"
 )
 
@@ -21,7 +24,7 @@ import (
 const sessionUsage = `usage: lenny session <subcommand> [flags]
 
 Subcommands (§24.17):
-  lenny session new --runtime <name> [--user <subject>] [--attach]   Create a session
+  lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]... ["prompt"]   Create a session
   lenny session attach <sessionId>                                   Stream an existing session
   lenny session send <sessionId> <message>                           Send a message
   lenny session interrupt <sessionId>                                Interrupt a running session
@@ -77,16 +80,18 @@ func cmdSession(args []string, stdout, stderr io.Writer) int {
 
 // sessionFlags is the parsed flag set shared across the session verbs.
 type sessionFlags struct {
-	apiURL  string
-	token   string
-	user    string
-	runtime string
-	status  string
-	reason  string
-	since   string
-	limit   int
-	attach  bool
-	pos     []string // positional arguments in order
+	apiURL    string
+	token     string
+	user      string
+	runtime   string
+	status    string
+	reason    string
+	since     string
+	limit     int
+	attach    bool
+	workspace string   // --workspace <dir>: local repo to stage as uploadArchive
+	files     []string // --file <path> (repeatable): files to stage as uploadFile
+	pos       []string // positional arguments in order
 }
 
 // parseSessionFlags splits args into the recognized session flags and the
@@ -158,6 +163,18 @@ func parseSessionFlags(args []string) (sessionFlags, error) {
 			f.limit = n
 		case "--attach":
 			f.attach = true
+		case "--workspace":
+			v, ok := next()
+			if !ok {
+				return f, fmt.Errorf("%s requires a value", a)
+			}
+			f.workspace = v
+		case "--file":
+			v, ok := next()
+			if !ok {
+				return f, fmt.Errorf("%s requires a value", a)
+			}
+			f.files = append(f.files, v)
 		default:
 			if len(a) > 2 && a[0] == '-' && a[1] == '-' {
 				return f, fmt.Errorf("unknown flag %q", a)
@@ -239,12 +256,16 @@ func mintEmbeddedBearer() (string, error) {
 	return provider.Issue(oidc.DefaultTokenTTL)
 }
 
-// cmdSessionNew implements `lenny session new` over the §15.2 MCP
-// lenny/create_session tool (the §24.17 line 213 mapping). It prints the
-// created session id. When --attach is set (the §24.17 line 213 default
-// in an interactive TTY), it then opens the §15.1 event stream and
-// renders the session's output, elicitation prompts, and lifecycle
-// transitions inline until the session terminates.
+// cmdSessionNew implements `lenny session new` per §24.17 line 213. With
+// no `--workspace`/`--file` it routes through the §15.2 MCP
+// lenny/create_session tool. With `--workspace <dir>` or `--file <path>`
+// it runs the §26.2 lines 95-114 staging flow: create over REST, tar the
+// workspace honoring `.lennyignore`/`.gitignore`, upload it, bind the
+// resulting `uploadArchive` plan at finalize, then start. A positional
+// argument is delivered as the session's opening prompt. When `--attach`
+// is set (the §24.17 line 213 default in an interactive TTY) it then opens
+// the §15.1 event stream and renders output, elicitation prompts, and
+// lifecycle transitions inline until the session terminates.
 func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -259,24 +280,126 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if !ok {
 		return code
 	}
-	created, err := client.MCP().CreateSession(ctx, f.runtime, f.user)
-	if err != nil {
-		fmt.Fprintf(stderr, "lenny session new: %v\n", err)
-		return 1
+
+	prompt := strings.TrimSpace(strings.Join(f.pos, " "))
+
+	var sessionID string
+	if f.workspace != "" || len(f.files) > 0 {
+		// spec: §26.2 lines 95-114 — stage the local workspace into the
+		// session before it starts.
+		id, werr := createSessionWithWorkspace(ctx, client, f, stderr)
+		if werr != nil {
+			fmt.Fprintf(stderr, "lenny session new: %v\n", werr)
+			return 1
+		}
+		sessionID = id
+	} else {
+		created, cerr := client.MCP().CreateSession(ctx, f.runtime, f.user)
+		if cerr != nil {
+			fmt.Fprintf(stderr, "lenny session new: %v\n", cerr)
+			return 1
+		}
+		sessionID = created.SessionID
 	}
-	if created.SessionID == "" {
+	if sessionID == "" {
 		fmt.Fprintln(stderr, "lenny session new: gateway returned no session id")
 		return 1
 	}
-	fmt.Fprintln(stdout, created.SessionID)
+
+	// spec: §24.17 line 213 / §26.2 line 126 — deliver the positional
+	// prompt as the session's opening message so the agent starts working.
+	if prompt != "" {
+		if _, err := client.SendMessages(ctx, sessionID, lenny.SendMessagesRequest{
+			Messages: []lenny.MessagePayload{{Role: "user", Content: prompt}},
+		}); err != nil {
+			fmt.Fprintf(stderr, "lenny session new: deliver prompt: %v\n", err)
+			return 1
+		}
+	}
+
+	fmt.Fprintln(stdout, sessionID)
 	if attachWanted(f, stdout) {
 		// spec: §24.17 line 213 — render the session inline until it
 		// terminates. The created id is already on stdout so a caller
 		// that captured it can still drive the session even if the
 		// attach stream is interrupted.
-		return streamSession(ctx, client, created.SessionID, stdout, stderr)
+		return streamSession(ctx, client, sessionID, stdout, stderr)
 	}
 	return 0
+}
+
+// createSessionWithWorkspace runs the §26.2 lines 95-114 workspace-staging
+// flow: it creates the session over REST (to obtain the §7.1 uploadToken),
+// tars the `--workspace` directory honoring `.lennyignore`/`.gitignore`
+// and uploads it as an `uploadArchive` source, uploads each `--file` as an
+// `uploadFile` source, binds the resulting §14 plan at finalize, and
+// starts the session. It returns the created session id.
+//
+// spec: §26.2 lines 95-114; §7.1 (decomposed create → upload → finalize →
+// start); §14 uploadArchive / uploadFile.
+func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f sessionFlags, stderr io.Writer) (string, error) {
+	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
+		RuntimeRef: f.runtime,
+		UserID:     f.user,
+	})
+	if err != nil {
+		return "", err
+	}
+	id := created.ID
+	token := created.UploadToken
+
+	var sources []map[string]any
+	if f.workspace != "" {
+		packed, perr := workspacepack.Pack(f.workspace)
+		if perr != nil {
+			return "", perr
+		}
+		ignoreNote := ""
+		if packed.IgnoreFile != "" {
+			ignoreNote = fmt.Sprintf(" (honoring %s)", packed.IgnoreFile)
+		}
+		fmt.Fprintf(stderr, "staging %d file(s) from %s%s\n", packed.Files, f.workspace, ignoreNote)
+		up, uerr := client.UploadArchive(ctx, id, token, packed.Data, lenny.UploadArchiveOptions{})
+		if uerr != nil {
+			return "", uerr
+		}
+		sources = append(sources, map[string]any{
+			"type":       "uploadArchive",
+			"pathPrefix": ".",
+			"uploadRef":  up.UploadRef,
+			"format":     "tar.gz",
+		})
+	}
+	for _, fp := range f.files {
+		data, rerr := os.ReadFile(fp)
+		if rerr != nil {
+			return "", fmt.Errorf("read --file %q: %w", fp, rerr)
+		}
+		up, uerr := client.UploadFile(ctx, id, token, data, lenny.UploadArchiveOptions{})
+		if uerr != nil {
+			return "", uerr
+		}
+		sources = append(sources, map[string]any{
+			"type":      "uploadFile",
+			"path":      filepath.Base(fp),
+			"uploadRef": up.UploadRef,
+		})
+	}
+
+	plan, err := json.Marshal(map[string]any{
+		"schemaVersion": 1,
+		"sources":       sources,
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := client.FinalizeWorkspace(ctx, id, plan); err != nil {
+		return "", err
+	}
+	if _, err := client.Start(ctx, id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // cmdSessionAttach implements `lenny session attach <sessionId>` per

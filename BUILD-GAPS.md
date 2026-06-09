@@ -41003,7 +41003,7 @@ Consequence: the §15.2.1 REST↔MCP parity contract is not exercised by the CLI
 
 **Resolution:** Closed by commit 2458e503. `session new` now drives the §15.2 MCP `lenny/create_session` tool through the Lenny Go client SDK's `MCPClient.CreateSession`, replacing the REST `POST /v1/sessions/start` call (§24.17 line 209). `TestSessionNewRoutesThroughMCP_spec_24_17_209` pins the MCP path.
 
-### - [ ] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — OPEN
+### - [x] F-24.17.4 — `--attach`, `--workspace`, `--file` flags absent from `session new` [High] — CLOSED
 
 The spec signature is `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...`. The `cmdSessionNew` flag parser (`/Users/joan/projects/lenny/cmd/lenny/session.go` lines 46-54) accepts only `--runtime`:
 
@@ -41023,6 +41023,8 @@ Spec also requires `--attach` to default ON in interactive TTYs (line 213). No T
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (`--attach` half now landed; `--workspace`/`--file` upload-binding remains blocked):** The `--attach` flag is implemented end to end: F-9.1.7 (the §15.1 SSE event stream) has closed, and the §24.17 line-213 attach render loop now streams output / elicitation / lifecycle inline until the session terminates (closed under F-24.17.8 this batch; `attachWanted` defaults attach on in an interactive TTY per the spec). The residual is the `--workspace <dir>` / `--file <path>` upload binding, which stays blocked on a genuine ordering tension between §26.2 and §15.1: §26.2 line 95-114 has the CLI tar the workspace, upload it via the upload API, and reference the resulting upload id in the `uploadArchive` workspace source; but the upload endpoint (`POST /v1/sessions/{id}/upload-archive`) mints its server-generated `lenny-blob://` `uploadRef` only against an existing session, while §15.1 scopes the inner `workspacePlan` to `POST /v1/sessions` / `POST /v1/sessions/start` and the plan is immutable after create (no plan-rebind / finalize-with-plan endpoint). There is no client call ordering that attaches a post-create upload into the session's create-time workspace plan. Closing the upload half needs a gateway-side binding path first (a plan-rebind endpoint, a finalize-time bind of the session's staged archive to its plan's `uploadArchive` source, or a create-time deferred-upload sentinel), spanning gateway + the pod-adapter materialization + the client tar/`.lennyignore` walk — a multi-component vertical that is its own batch. Tracked jointly with F-26.2.4.
+
+**Resolution (gateway finalize-bind + client packer):** The §26.2↔§15.1 ordering tension is resolved by binding the §14 plan at **finalize** (§7.1 step 11 `FinalizeWorkspace`), the spec-canonical place: `POST /v1/sessions/{id}/finalize` now accepts an optional `{workspacePlan}` body (`pkg/gateway/sessionserver/finalize.go`), validated through the same `resolvePlanForCreate` path, with every `uploadFile`/`uploadArchive` `uploadRef` scope-checked to the finalizing session's own tenant+session blob prefix (§12.5) and a `plan_already_set` guard against replacing a create-time plan. The decomposed flow create → upload-archive → finalize(plan) → start now binds a session-scoped uploadRef the immutable create-time plan could not name. New `pkg/workspacepack.Pack` tars `--workspace` honoring `.lennyignore`/`.gitignore` (always excluding `.git`); SDK gains `UploadArchive`/`UploadFile` (raw body + `X-Lenny-Upload-Token`) and `FinalizeWorkspace(plan)`; the `lenny session new` CLI (`pkg/embedded/localcli/session.go`) parses `--workspace`/`--file`/positional-prompt and drives create→upload→finalize→start→send→attach. The `--attach` half had already landed (F-24.17.8). Closed by commit e47da448.
 
 ### - [x] F-24.17.5 — MCP server registers no `lenny/interrupt` or `lenny/cancel_session` tools [High] — CLOSED
 
@@ -45047,7 +45049,7 @@ This is a normative MUST: the rejection is the security boundary that prevents a
 
 ---
 
-### - [ ] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — OPEN
+### - [x] F-26.2.4 — 2-04 — `lenny session new` lacks `--workspace`, `--attach`, and the `uploadArchive` pipeline §26.2 anchors as the canonical CLI entry point [Medium] — CLOSED
 
 **Spec:** §26.2 lines 95–114 specify the reference `WorkspacePlan` and the CLI that produces it:
 
@@ -45084,6 +45086,8 @@ which is a gateway design decision outside this client-facing finding's scope. T
 SSE surface (F-15.2.2, OPEN). Re-attempt once a gateway upload-binding path lands.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (`--attach` half landed; `--workspace`/`uploadArchive` upload-binding still blocked):** The `--attach` half is now implemented: the §24.17 line-213 attach render loop streams output / elicitation / lifecycle inline until the session terminates over the §15.1 SSE event stream (closed under F-24.17.8 this batch; the prior `--attach` blocker F-9.1.7 has closed). The `--workspace`/`uploadArchive` upload half remains blocked on the same §26.2↔§15.1 upload-binding ordering tension documented under F-24.17.4 (the upload-archive `uploadRef` is minted only against an existing session, but the create-time `workspacePlan` that must reference it is immutable, and no plan-rebind / finalize-with-plan / deferred-upload gateway path exists). Closed jointly with F-24.17.4 once that gateway binding path lands.
+
+**Resolution:** Closed by F-24.17.4 (same change). The finalize-with-plan gateway path (`POST /v1/sessions/{id}/finalize` now binds an optional `{workspacePlan}`), the `pkg/workspacepack` client tar.gz packer honoring `.lennyignore`/`.gitignore`, the SDK `UploadArchive`/`FinalizeWorkspace` methods, and the `lenny session new --workspace=<dir> --file=<path> "prompt"` CLI flow (create → upload-archive → finalize(plan) → start → deliver prompt → attach) together implement the §26.2 lines 95-114 canonical invocation. Closed by commit e47da448.
 
 ---
 
@@ -46751,6 +46755,8 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 **Reopened 2026-06-08 — prior deferral:** The §27.4 "drag-drop tarball" affordance depends on the server-side §7.4 archive-upload pipeline, which has unfinished pieces (F-7.4.1 archive extraction in the pod adapter rather than the gateway, F-7.4.6 mid-session upload unreachable — both OPEN). `POST /v1/sessions` accepts a §14 JSON `workspacePlan`, not a tarball; the tarball path is the separate `uploadToken` → upload-endpoint flow. Wiring the SPA to read the file and POST it is premature until that endpoint and its size/schema checks are settled. Re-attempt once the §7.4 upload cluster lands.
 
 **Rule-N re-verify 2026-06-08 (after F-7.4.1):** the §7.4 server-side pieces this note named are now closed (F-7.4.1 archive extraction moved into the gateway under commit b7721eab; F-7.4.6 mid-session upload landed earlier; the `POST /v1/sessions/{id}/upload-archive` endpoint and its gateway-enforced §13.4 ceilings are settled). The residual blocker is the same §15.1/§26.2 upload-binding ordering tension tracked under F-24.17.4 / F-26.2.4: `upload-archive` mints a `lenny-blob://` ref only against an existing session, but the create-time `workspacePlan` is immutable, so there is no client ordering to bind a post-create tarball into the session's plan. That gateway-side binding path (plan-rebind / deferred-upload sentinel) plus the SPA file-read/drag-drop wiring is a distinct vertical, not unblocked by the extraction-location fix. Remains OPEN.
+
+**Update 2026-06-08 (gateway binding path now exists):** The cited binding blocker is cleared — `POST /v1/sessions/{id}/finalize` now accepts a `{workspacePlan}` body and binds a session-scoped `uploadArchive` `uploadRef` (closed under F-24.17.4 / F-26.2.4; the CLI drives the create → upload-archive → finalize(plan) → start flow). The only residual for F-27.4.3 is the **SPA-side** wiring in `pkg/gateway/playground/ui/app.js`: read the selected/dropped tarball via `FileReader`, POST it to `/v1/sessions/{id}/upload-archive` with the `uploadToken`, then finalize with the `uploadArchive` plan and start. Ready for a future batch; stays OPEN as a frontend-only task.
 
 ### - [x] F-27.4.4 — SDK snippet emits Python only; spec requires Go/Python/TS [High] — CLOSED
 
