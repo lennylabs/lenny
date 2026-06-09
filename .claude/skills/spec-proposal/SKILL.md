@@ -1,7 +1,7 @@
 ---
 name: spec-proposal
 description: Write an adversarially validated spec change proposal under proposals/ from a problem statement. Use when the user reports a spec defect, contradiction, or gap, or asks for a spec fix or spec extension proposal. The proposal stages spec edits for sign-off; it never modifies spec/ itself.
-argument-hint: <problem statement | BUILD-GAPS finding ID | path to notes>
+argument-hint: <problem statement | finding ID | path to notes>
 allowed-tools: Workflow Agent Bash Read Write Edit Grep Glob
 ---
 
