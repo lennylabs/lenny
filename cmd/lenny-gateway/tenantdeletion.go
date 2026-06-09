@@ -273,7 +273,20 @@ func (rn *tenantDeletionRunner) reconcileOnce(ctx context.Context) {
 // derived from the persisted TenantState; idempotency makes resuming from
 // the start of the state's phase span safe.
 func (rn *tenantDeletionRunner) ensureJob(ctx context.Context, t tenantstore.Tenant) {
-	if _, err := rn.reconciler.Jobs.Get(ctx, t.ID); err == nil {
+	if existing, err := rn.reconciler.Jobs.Get(ctx, t.ID); err == nil {
+		// §12.8 Phase 3.5 override: a force-delete authorized after the job
+		// was already created (e.g. an operator first issued DELETE, then
+		// force-delete) stamps the override on the tenant row. Reconcile it
+		// onto the live job so Phase 3.5 escrows rather than re-blocks.
+		if t.ForceDeleteHoldOverride && !existing.OverrideHoldAck {
+			_, _ = rn.reconciler.Jobs.Update(ctx, t.ID, func(j *tenantdeletion.Job) error {
+				j.OverrideHoldAck = true
+				j.OverrideBy = t.ForceDeleteBy
+				j.OverrideJustification = t.ForceDeleteJustification
+				j.OverrideAt = t.ForceDeleteAt
+				return nil
+			})
+		}
 		return
 	}
 	now := rn.clock()
@@ -286,15 +299,22 @@ func (rn *tenantDeletionRunner) ensureJob(ctx context.Context, t tenantstore.Ten
 		phase = tenantdeletion.PhaseRevokeCredentials
 		state = tenantdeletion.TenantDeleting
 	}
+	// §12.8 Phase 3.5 override: read the durable force-delete override off
+	// the tenant row so a job reconstructed after a gateway restart still
+	// segregates held evidence into the escrow.
 	_ = rn.reconciler.Jobs.Create(ctx, tenantdeletion.Job{
-		TenantID:      t.ID,
-		WorkspaceTier: t.WorkspaceTier,
-		State:         state,
-		Phase:         phase,
-		StartedAt:     now,
-		UpdatedAt:     now,
-		PhaseLog:      map[tenantdeletion.Phase]time.Time{},
-		DeletedCounts: map[string]int{},
+		TenantID:              t.ID,
+		WorkspaceTier:         t.WorkspaceTier,
+		State:                 state,
+		Phase:                 phase,
+		StartedAt:             now,
+		UpdatedAt:             now,
+		PhaseLog:              map[tenantdeletion.Phase]time.Time{},
+		DeletedCounts:         map[string]int{},
+		OverrideHoldAck:       t.ForceDeleteHoldOverride,
+		OverrideBy:            t.ForceDeleteBy,
+		OverrideJustification: t.ForceDeleteJustification,
+		OverrideAt:            t.ForceDeleteAt,
 	})
 }
 

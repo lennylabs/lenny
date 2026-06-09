@@ -1132,6 +1132,16 @@ func main() {
 	// flags. spec: F-4.3.11 / F-10.2.11 / F-17.5.2.
 	kmsOpts, kmsFinalize := providerflags.Bind(flag.CommandLine, os.Getenv,
 		providerflags.Options{Provider: providerflags.ProviderLocal})
+	// §12.8 lines 880-889 — the single-region legal-hold escrow bucket the
+	// Phase 3.5 force-delete override migrates held evidence into. When
+	// `--legal-hold-escrow-bucket` is unset the deployment configures no
+	// escrow, so a force-delete with acknowledgeHoldOverride fails closed
+	// with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE rather than destroying
+	// held evidence with nowhere to segregate it. spec: §12.8 line 883.
+	legalHoldEscrowBucket := flag.String("legal-hold-escrow-bucket", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_BUCKET"),
+		"§12.8 single-region legal-hold escrow bucket name. Empty disables the force-delete override (it fails closed with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE).")
+	legalHoldEscrowEndpoint := flag.String("legal-hold-escrow-endpoint", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_ENDPOINT"),
+		"§12.8 legal-hold escrow bucket endpoint (S3-compatible).")
 	flag.Parse()
 	if err := kmsFinalize(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
@@ -4987,6 +4997,32 @@ func main() {
 			holdEnum.artifacts = artifactCatalog
 		}
 		deletionReconciler.LegalHolds = holdEnum
+
+		// §12.8 Phase 3.5 override path: force-delete with
+		// acknowledgeHoldOverride segregates held evidence into the
+		// region-scoped escrow before deletion proceeds. An unconfigured
+		// escrow (no --legal-hold-escrow-bucket) leaves the migrator
+		// resolving every region as unresolvable, so the override fails
+		// closed rather than destroying evidence. spec: §12.8 lines 880-889.
+		if auditAppender != nil {
+			escrowCfg := escrowConfigFromFlags(*legalHoldEscrowBucket, *legalHoldEscrowEndpoint)
+			deletionReconciler.Escrow = tenantEscrowMigrator{
+				cfg:       escrowCfg,
+				tenants:   tenants,
+				artifacts: artifactCatalog,
+				blobs:     blobs,
+				cipher:    escrowCipherFactory(kmsProvider),
+				ledger:    escrowLedger{appender: auditAppender, clock: clockinject.Now},
+				metrics:   gwMetrics,
+				appender:  auditAppender,
+				clock:     clockinject.Now,
+			}
+			deletionReconciler.Override = escrowOverrideSink{
+				appender: auditAppender,
+				metrics:  gwMetrics,
+				clock:    clockinject.Now,
+			}
+		}
 
 		// The receipt sink is required by the reconciler; without an audit
 		// appender (a minimal no-audit posture) the lifecycle cannot write

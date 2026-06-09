@@ -547,6 +547,9 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetTenant)))
 		mux.Handle("PUT /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateTenant)))
 		mux.Handle("DELETE /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteTenant)))
+		// §24.10 row 4 — platform-admin force-delete with the Phase 3.5
+		// legal-hold escrow override. F-12.8.2, F-24.10.2.
+		mux.Handle("POST /v1/admin/tenants/{id}/force-delete", r.requireAdmin(http.HandlerFunc(r.handleForceDeleteTenant)))
 		if r.saltRotator != nil {
 			// §12.8 line 857: platform-admin compromise-response salt rotation.
 			mux.Handle("POST /v1/admin/tenants/{id}/rotate-erasure-salt",
