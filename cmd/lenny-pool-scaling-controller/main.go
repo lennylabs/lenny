@@ -175,17 +175,28 @@ func main() {
 	// honors a state already persisted on a pool's status but never
 	// auto-trips (the v1 bootstrap default).
 	var demotionSource poolscaling.DemotionRateSource
+	// spec: §5.2 line 573 — when a Prometheus backend is configured the
+	// controller derives concurrent-stateless pools' demand from
+	// rate(lenny_stateless_requests_total[5m]) and
+	// max_over_time(lenny_stateless_concurrent_active[5m]). The same
+	// source reports Observed=false for every non-stateless pool (which
+	// emits no stateless series), so wiring it leaves session / task /
+	// workspace-concurrent pools in bootstrap mode while activating
+	// demand-driven scaling for stateless pools. F-5.2.29.
+	var demandSource poolscaling.DemandSource
 	if prometheusURL != "" {
 		promClient, perr := metrics.NewPrometheusClient(metrics.PrometheusConfig{BaseURL: prometheusURL})
 		if perr != nil {
 			log.Fatalf("lenny-pool-scaling-controller: prometheus client: %v", perr)
 		}
 		demotionSource = &poolscaling.PrometheusDemotionSource{Querier: promClient}
+		demandSource = &poolscaling.PrometheusStatelessDemandSource{Querier: promClient}
 		log.Printf("lenny-pool-scaling-controller: §6.1 SDK-warm demotion source wired to %s", prometheusURL)
+		log.Printf("lenny-pool-scaling-controller: §5.2 line 573 stateless demand source wired to %s", prometheusURL)
 	}
-	// v1 runs every pool in §4.6.2 bootstrap mode: no DemandSource is
-	// wired, so each pool holds at its operator-set warmCount floor until
-	// a deployer supplies observed-demand metrics.
+	// Without --prometheus-url every pool runs in §4.6.2 bootstrap mode:
+	// no DemandSource is wired, so each pool holds at its operator-set
+	// warmCount floor until observed-demand metrics are available.
 	// spec: §17.8.2 line 1008 — resolve the agent-type safety_factor a pool
 	// inherits when it does not pin one. An explicit --default-safety-factor
 	// pins it for every pool; 0 selects the per-tier default so a Tier 3
@@ -199,6 +210,7 @@ func main() {
 	reconciler := &poolscaling.Reconciler{
 		Client:              mgr.GetClient(),
 		Source:              source,
+		Demand:              demandSource,
 		Demotion:            demotionSource,
 		Events:              mgr.GetEventRecorderFor("lenny-pool-scaling-controller"),
 		DefaultSafetyFactor: effectiveSafetyFactor,
