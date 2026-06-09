@@ -126,3 +126,23 @@ func AuditIsolation(policies []DelegationPolicy, pools []PoolCandidate) []Isolat
 	})
 	return out
 }
+
+// ProactiveWarningsForPool runs the §8.3 line 350 proactive
+// pool-registration audit for a single newly registered or updated pool:
+// it returns the subset of the full monotonicity audit where poolName is
+// the less-restrictive delegation target a more-restrictive parent pool
+// could reach through the same allow rule. The gateway emits one
+// pool.isolation_warning per returned violation after a pool create or
+// update. pools must include the registered pool itself.
+//
+// spec: §8.3 lines 349-352 (proactive pool-registration enforcement).
+func ProactiveWarningsForPool(policies []DelegationPolicy, pools []PoolCandidate, poolName string) []IsolationViolation {
+	all := AuditIsolation(policies, pools)
+	out := all[:0]
+	for _, v := range all {
+		if v.TargetPool == poolName {
+			out = append(out, v)
+		}
+	}
+	return out
+}

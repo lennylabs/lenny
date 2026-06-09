@@ -7,14 +7,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -648,6 +652,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
+	r.dispatchPoolIsolationAudit(req.Context(), principal, stored.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromPool(stored))
@@ -673,6 +678,86 @@ func (r *Router) maybeEmitWeakIsolation(ctx context.Context, p authmw.Principal,
 		"severity":               "warning",
 		"reason":                 "pool admitted under standard (runc) isolation via explicit allowStandardIsolation opt-in (§5.3)",
 	})
+}
+
+// dispatchPoolIsolationAudit runs the §8.3 line 350 proactive
+// pool-registration isolation audit for a newly created or updated pool.
+// Per §8.3 the audit is emitted asynchronously and does not block pool
+// registration (the pool is persisted regardless), so it runs in a
+// goroutine on a detached context. It is a no-op unless the pools,
+// runtimes, and delegation-policy stores are all wired (the audit joins
+// all three inventories).
+func (r *Router) dispatchPoolIsolationAudit(ctx context.Context, p authmw.Principal, poolName string) {
+	if r.pools == nil || r.runtimes == nil || r.delegationPolicies == nil {
+		return
+	}
+	detached := context.WithoutCancel(ctx)
+	go r.emitPoolIsolationWarnings(detached, p, poolName)
+}
+
+// emitPoolIsolationWarnings performs the §8.3 lines 349-352 proactive
+// monotonicity audit: for the registered pool, it emits one
+// pool.isolation_warning per active DelegationPolicy rule under which a
+// more-restrictive parent pool could delegate to this weaker pool. Each
+// warning lands on both the §11.7 audit chain (operator visibility) and
+// the §11.2.1 billing stream (the affected tenant's cost-attribution /
+// compliance record). All emissions are best-effort; the pool is already
+// persisted. spec: §8.3 lines 349-352; §11.2.1. F-11.2.1.
+func (r *Router) emitPoolIsolationWarnings(ctx context.Context, p authmw.Principal, poolName string) {
+	pools, err := r.pools.List(ctx, poolstore.ListFilter{})
+	if err != nil {
+		return
+	}
+	runtimes, err := r.runtimes.List(ctx, runtimestore.ListFilter{})
+	if err != nil {
+		return
+	}
+	policies, err := r.delegationPolicies.List(ctx, delegationpolicystore.AllTenantsSentinel, delegationpolicystore.ListFilter{})
+	if err != nil {
+		return
+	}
+	rtByName := make(map[string]runtimestore.Runtime, len(runtimes))
+	for _, rt := range runtimes {
+		rtByName[rt.Name] = rt
+	}
+	candidates := make([]delegationpolicystore.PoolCandidate, 0, len(pools))
+	for _, pl := range pools {
+		if !pl.IsActive() {
+			continue
+		}
+		rt := rtByName[pl.RuntimeRef]
+		candidates = append(candidates, delegationpolicystore.PoolCandidate{
+			PoolName:         pl.Name,
+			IsolationProfile: string(pl.IsolationProfile),
+			IsolationRank:    isolation.Rank(pl.IsolationProfile),
+			Candidate: delegationpolicystore.Candidate{
+				ID:     pl.RuntimeRef,
+				Type:   string(rt.Type),
+				Labels: rt.Labels,
+			},
+		})
+	}
+	active := make([]delegationpolicystore.DelegationPolicy, 0, len(policies))
+	for _, pol := range policies {
+		if pol.IsActive() {
+			active = append(active, pol)
+		}
+	}
+	for _, v := range delegationpolicystore.ProactiveWarningsForPool(active, candidates, poolName) {
+		ruleRef := v.Policy + "#" + strconv.Itoa(v.RuleIndex)
+		r.emit(ctx, p, string(audit.EventPoolIsolationWarning), poolName, map[string]any{
+			"pool_name":             poolName,
+			"pool_isolation":        v.TargetProfile,
+			"matched_policy_rule":   ruleRef,
+			"conflicting_pool_name": v.SourcePool,
+			"conflicting_isolation": v.SourceProfile,
+			"policy_tenant_id":      v.TenantID,
+		})
+		// spec: §11.2.1 — the warning lands on the affected tenant's billing
+		// stream (the DelegationPolicy owner), the per-tenant compliance record.
+		r.appendBilling(ctx, billingfanout.PoolIsolationWarning(
+			v.TenantID, poolName, v.TargetProfile, ruleRef, v.SourcePool, v.SourceProfile))
+	}
 }
 
 func (r *Router) handleListPools(w http.ResponseWriter, req *http.Request) {
@@ -1463,6 +1548,7 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)
 	// spec: §15.1 line 1210 — on a successful PUT the response carries
 	// the new ETag reflecting the incremented version.
 	w.Header().Set("ETag", formatETag(updated.Generation))

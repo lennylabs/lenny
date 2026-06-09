@@ -178,3 +178,39 @@ func TestAuditIsolation_NoPolicies_spec_24_14(t *testing.T) {
 		t.Fatalf("no policies → no violations, got %+v", got)
 	}
 }
+
+// TestProactiveWarningsForPool_spec_8_3_350 verifies the §8.3 line 350
+// proactive single-pool filter: when a weaker pool is registered, the
+// audit reports only the warnings where that pool is the weaker
+// delegation target a stronger parent could reach, and reports nothing
+// when the registered pool is the strongest target.
+func TestProactiveWarningsForPool_spec_8_3_350(t *testing.T) {
+	policies := []DelegationPolicy{{
+		Name:     "team-agents",
+		TenantID: "acme",
+		Rules:    []Rule{{Target: Target{Types: []string{"agent"}}, Allow: true}},
+	}}
+	pools := []PoolCandidate{
+		pc("kata-pool", "microvm", rankMicrovm, Candidate{ID: "coder", Type: "agent"}),
+		pc("runc-pool", "standard", rankStandard, Candidate{ID: "chat", Type: "agent"}),
+	}
+
+	// Registering the weak runc-pool surfaces the kata-pool→runc-pool warning.
+	warns := ProactiveWarningsForPool(policies, pools, "runc-pool")
+	if len(warns) != 1 {
+		t.Fatalf("want 1 warning for runc-pool, got %d: %+v", len(warns), warns)
+	}
+	if warns[0].SourcePool != "kata-pool" || warns[0].TargetPool != "runc-pool" {
+		t.Errorf("warning = %+v, want kata-pool→runc-pool", warns[0])
+	}
+
+	// Registering the strong kata-pool surfaces nothing — no stronger parent.
+	if got := ProactiveWarningsForPool(policies, pools, "kata-pool"); len(got) != 0 {
+		t.Errorf("kata-pool (strongest) must produce no warnings, got %+v", got)
+	}
+
+	// A pool not in the inventory produces nothing.
+	if got := ProactiveWarningsForPool(policies, pools, "ghost"); len(got) != 0 {
+		t.Errorf("unknown pool must produce no warnings, got %+v", got)
+	}
+}

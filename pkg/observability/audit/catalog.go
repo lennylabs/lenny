@@ -346,6 +346,16 @@ const (
 	// affected_policy_names. spec: §8.3 line 218 (SEC-013). F-4.8.17.
 	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
 
+	// EventPoolIsolationWarning is the §8.3 line 350 proactive
+	// pool-registration audit event: a pool created or updated via the
+	// admin API would let a more-restrictive parent pool delegate to this
+	// weaker pool under an active DelegationPolicy rule. It carries
+	// pool_name, pool_isolation, matched_policy_rule, conflicting_pool_name,
+	// and conflicting_isolation. §16.7 does not enumerate it, so it is
+	// recognized via auxKnownEventTypes yet excluded from Catalog().
+	// spec: §8.3 lines 349-352; §11.7. F-11.2.1.
+	EventPoolIsolationWarning EventType = "pool.isolation_warning"
+
 	// EventGDPRErasureJobRetried is the §24.12 line 143 / §12.8 line 766
 	// audit row for an operator retry of a failed erasure job. Emitted by
 	// pkg/gateway/admin handleRetryErasureJob.
@@ -442,6 +452,11 @@ var auxKnownEventTypes = []EventType{
 	EventInterceptorFailPolicyWeakened,
 	EventInterceptorFailPolicyStrengthened,
 	EventInterceptorWeakeningCooldownActive,
+	// §8.3 line 350 proactive pool-registration warning. Emitted through
+	// the §11.7 audit path by the admin pool create/update handlers; §16.7
+	// does not enumerate it, so it is recognized by IsKnownEventType yet
+	// excluded from Catalog(). F-11.2.1.
+	EventPoolIsolationWarning,
 	// §24.12 / §12.8 erasure-job operator actions. §16.7 enumerates the
 	// gdpr.* erasure-receipt and legal-hold rows but not these two
 	// operator-recovery events, so they are recognized by IsKnownEventType
