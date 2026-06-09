@@ -1744,7 +1744,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — OPEN
+### - [-] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — DEFERRED
 
 **Severity: Medium.** Operability gap; the nonce-only mode is not surfaced.
 
@@ -1757,6 +1757,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Reopened 2026-06-07 — prior deferral (131a5107):** The counter half is done — `cmd/lenny-adapter` increments `lenny_adapter_sopeercred_disabled_total` (registered in `pkg/adapter/metrics.go`) on every start when `--require-so-peercred=false`. The `SOPeercredDisabled=True` pod condition and its propagation to `SecurityDegradedMode=True` on the `SandboxTemplate` is deferred: the adapter has no Kubernetes client today, and the downward API cannot write conditions, so this needs an adapter in-cluster client plus RBAC and a controller reconciler — a standalone effort tracked separately.
 
 **Re-verified 2026-06-08 — DEFERRED (two confirmed blockers; counter half remains done).** The condition half is blocked on a spec-internal tension plus an unbuilt config path, both confirmed this session. (1) §10.3 no-apiserver posture: `pkg/controller/sandbox/podspec/podspec.go:746-750` sets `AutomountServiceAccountToken: false` on every agent pod and mounts only the gateway-audience projected token, so the adapter cannot `PATCH pods/status` to set `SOPeercredDisabled` without re-opening that deliberately locked-down posture (a default-audience SA token + `pods/status` RBAC + an apiserver-egress NetworkPolicy). The §4.7 "adapter MUST set the condition" clause and the §10.3 no-apiserver clause are in tension; choosing which governs (or sanctioning a controller-mediated path the spec does not describe) is a rule-B reconciliation, not a unilateral code change. (2) No v1 activation path: the podspec builder never renders `--require-so-peercred=false` (the flag defaults to `true`) and no pool/runtime field plumbs it, so nonce-only mode — the only state the condition signals — is unreachable in v1; the condition has nothing to surface. The clean implementation is controller-mediated (the WarmPoolController already authors the podspec flag, holds apiserver access, and owns the `SandboxTemplate` `SecurityDegradedMode` slot), landing with the nonce-only-mode config vertical. Heading moved OPEN → DEFERRED.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Counter half remains done. The condition half is blocked by a genuine §4.7-vs-§10.3 spec contradiction, re-verified against the spec this session: §4.7 (spec/04 lines 885-888) states the **adapter** sets the `SOPeercredDisabled` pod condition, but §10.3 mandates `AutomountServiceAccountToken: false` on every agent pod (rendered at `pkg/controller/sandbox/podspec/podspec.go`), so the adapter holds no apiserver client and cannot `PATCH pods/status`. The two clauses cannot both hold. Compounding it, no v1 path renders `--require-so-peercred=false`, so nonce-only mode (the only state the condition signals) is unreachable and the condition has nothing to surface. Required spec change: reconcile §4.7 and §10.3 — either sanction a controller-mediated condition path (WarmPoolController writes the condition the adapter detects) or relax the §10.3 no-apiserver posture for a `pods/status` write — and define the pool/runtime field that activates nonce-only mode. This is a `spec/` edit a hook forbids from the build loop.
 
 ---
 
@@ -4174,7 +4176,7 @@ Consequence: operators flipping a pool to runc via the explicit opt-in do not se
 
 **Resolution (re-verified, no code change):** Confirmed the finding's own conclusion. The monotonicity helpers are correct and `AtLeastAsRestrictive` fails closed on unknown values, and the call sites guard with `isolation.IsValid` first (`experimentrouter.go:344`, `experiments.go:148/157/197`, `derive.go`, `replay.go`). The "short-circuit caching" is a micro-optimization with no behavioral or correctness implication; there is no spec basis to add it. Closed as a positive confirmation.
 
-### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — OPEN
+### - [-] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — DEFERRED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
 
@@ -4198,6 +4200,8 @@ condition onto the SandboxTemplate.
 and `SecurityDegradedMode` in `pkg/adapter/` and `pkg/controller/warmpool/` returns nothing —
 no producer exists, so the pool-controller surfacing half would be dead code reading a condition
 that is never set. Blocker unchanged; re-attempt in the cluster-bound batch that builds F-4.7.15.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Transitively blocked on F-4.7.15, which is itself DEFERRED on the §4.7-vs-§10.3 spec contradiction (the adapter cannot write the `SOPeercredDisabled` pod condition under the §10.3 no-apiserver posture, and nonce-only mode has no v1 activation path). `SecurityDegradedMode` is the controller-side surfacing of that condition; with no producer it cannot be wired without authoring dead code. Closing this requires the same `spec/` reconciliation named in F-4.7.15.
 
 ### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
 
@@ -10578,7 +10582,7 @@ skipped. Closed by a1d8fc1e.
 
 ---
 
-### - [ ] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — OPEN
+### - [-] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — DEFERRED
 
 **Severity:** High (cascade behavior conflated with `detach`; spec
 distinguishes them.)
@@ -10626,6 +10630,8 @@ fallback audit (F-8.10.8) and orphan-cap behavior — are already closed.
 **Re-verified 2026-06-08 (rule N — F-8.9.4 blocker cleared; re-DEFERRED on the collection feature itself).** The named data-source blocker is now built: F-8.9.4 (this batch) added `pkg/gateway/taskusage`, so per-node usage and the `treeUsage` subtree rollup are aggregated and baked into each archived `TaskResult`. The result-aggregation *source* this finding waited on therefore exists. The residual is the `await_completion` collection *feature* itself, which is the finding's core rather than a new blocker: a background, `cascadeTimeoutSeconds`-bounded collection process that, after the parent reaches terminal under `await_completion`, waits for the still-running children and synthesizes a parent-collected boundary (aggregating their settled results + the now-available `treeUsage` into the parent's archived TaskResult), distinct from `detach` which terminates them with no collection. That spans `cascadeToChildren`, the orphan sweeper's per-policy handling, and a new archive-synthesis path — a focused High-severity workstream of its own. Re-DEFERRED on that collection-synthesis feature; the data prerequisite is no longer the blocker.
 
 **Re-assessed (this batch) — DEFERRED (Rule B / Rule O: the collected-results artifact is spec-underspecified).** Re-confirmed the data prerequisite is built: `treearchive.Store.Archive` overwrites by `(tenant, root, node)` so a parent's archived `task.Result` can be re-stamped, and `taskusage.TreeUsage` produces the subtree rollup once every descendant settles. The residual blocker is that §8.10 never defines the **observable form** of "then collect results" — the cascade table (lines 1070-1078) names no wire field, no synthetic event, and no archive mutation that would distinguish a collected `await_completion` parent from a `detach` parent on the wire. The natural candidate (re-stamping the parent's `treeUsage`) is not policy-conditioned by the spec: §8.8 (TreeUsage, "null until every descendant settles") implies the rollup populates for **any** settled tree regardless of cascade policy, so using it as the `await_completion`-vs-`detach` discriminator would contradict §8.8 and invent a contract §8.10 does not state. Honestly closing this needs a §8.10 clarification of what artifact "collect results" produces (a parent-collected boundary event? a `collectedChildren` field on the parent's TaskResult? a `treeUsage` that is policy-gated?), which a hook forbids editing. Per Rule O (do not implement a fix the spec does not pin down) and Rule B (a fix requiring a spec change must stop-and-report), this stays DEFERRED on a spec clarification rather than a code build-out. The orphan-cleanup deadline bound (both policies run to `cascadeTimeoutSeconds`) and per-child archival are already correct; only the collection-artifact semantics are undefined. Heading `— OPEN` reconciled to `— DEFERRED`.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Re-read §8.10 (spec/08 lines 1070-1078): the cascade table names "let running children finish … then collect results" for `await_completion` versus "results are stored but no parent collects them" for `detach`, but never defines the **observable artifact** "collect results" produces — no wire field, no synthetic event, no archive mutation distinguishes a collected parent from a detached one. The data prerequisite is built (`taskusage.TreeUsage` + re-stampable `treearchive.Store.Archive`), but the natural discriminator (re-stamping the parent's `treeUsage`) contradicts §8.8, which makes the subtree rollup populate for **any** settled tree regardless of cascade policy. Required spec change: §8.10 must specify the collected-results artifact (a parent-collected boundary event, a `collectedChildren` field on the parent's `TaskResult`, or a policy-gated `treeUsage`). Without it, any implementation invents a contract the spec does not state (rule O) and forces a §8.8 conflict (rule B).
 
 ---
 
@@ -11530,7 +11536,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** Dropped the `initiatorType` field from `lenny/request_elicitation`'s input schema. Every elicitation raised through the agent-facing MCP tool is now hard-coded as `InitiatorAgent`, so the §9.2 URL-mode allowlist always governs — a self-asserted `connector` claim no longer bypasses the per-pool allowlist. A future connector-initiated path will go through a separate gateway-authenticated surface keyed off the registered connector binding, not by an input string at this tool.
 
-### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — OPEN
+### - [-] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — DEFERRED
 
 **Potential overlap** (confidence: medium) — F-8.8.6 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
 
@@ -11545,6 +11551,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 **Re-verified (this batch) — DEFERRED.** Re-confirmed against current code: `deadlock.Node`'s blocked signal still derives from the `inputwait` registry only; the `interactionstore` pending-elicitation set is not enumerated as a second blocked input. The blocker is unchanged — closing requires the spec-open semantic decision in (b) (whether an elicitation-only-blocked subtree should ever be `DEADLOCK_TIMEOUT`-failed when the wait is already bounded by the elicitation timeout and is not parent-resolvable). That decision belongs with the elicitation-timeout owner; half-wiring it here would encode an arbitrary policy the spec does not fix. Heading moved OPEN → DEFERRED to reflect the standing re-deferral.
 
 **Marker reconciled (this batch).** Re-confirmed `deadlock.Node` still sources its blocked signal from the `inputwait` registry only; the `interactionstore` pending-elicitation set is not enumerated. The blocker is the unchanged spec-open semantic decision in (b) (whether an elicitation-only-blocked subtree — bounded by the elicitation timeout, not parent-resolvable — should ever be `DEADLOCK_TIMEOUT`-failed). Resolving it is a `spec/` decision, not a code gap; heading flipped OPEN → DEFERRED to match the prior re-verification.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Re-read §9.2 line 110: elicitation chains and `input_required` chains "both participate in the gateway's subtree deadlock detection." The detector (F-8.8.6) covers `input_required` but the elicitation-participation half turns on an undefined remedy: an elicitation is answered by the external client (not the awaiting parent) and is already bounded by the elicitation timeout, so a subtree blocked only on elicitations is not parent-resolvable and the §8.8 line 981 `DEADLOCK_TIMEOUT` remedy is arguably the wrong action — yet §9.2 leaves whether such a subtree should ever be failed undefined. Required spec change: §9.2/§8.8 must state the remedy for an elicitation-only-blocked subtree (fail with `DEADLOCK_TIMEOUT`, or rely on the elicitation timeout and exclude it from the fail path). Encoding either policy now without that decision invents an arbitrary contract (rule O).
 
 ---
 
@@ -45283,7 +45291,7 @@ are all in-tree. Tests: 8 tier-1 (`lenny/vcs_token` handler), 8 tier-1
 
 ---
 
-### - [ ] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — OPEN
+### - [-] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — DEFERRED
 
 **Spec:** §26.2 lines 58–66 declare the shared capabilities block. The four coding-agent runtimes share these — none may, for example, declare `interaction: one_shot` and remain in the coding-agent category, because the lifecycle requirements at §26.2 line 74 ("clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions") only hold for multi-turn sessions.
 
@@ -45301,6 +45309,8 @@ are all in-tree. Tests: 8 tier-1 (`lenny/vcs_token` handler), 8 tier-1
 **Re-verified (this batch) — DEFERRED.** Re-confirmed the prerequisite is still absent: there is no runtime `category` field on `runtimestore.Runtime` / the Runtime CRD / the admin payload (`grep` for a coding-agent category discriminator finds none), so `validateCapabilities` has no category to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on. The enforcement is structurally un-writable until the H-26.2-02 category model lands and must ship with it to avoid a half-enforced check that diverges when the model materialises. Heading moved OPEN → DEFERRED to reflect the standing dependency.
 
 **Marker reconciled (this batch).** Re-grepped `runtimestore.Runtime`, the Runtime CRD, and the admin runtime payload — still no coding-agent `category` discriminator, so `validateCapabilities` has nothing to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on. Blocked on the unbuilt H-26.2-02 category model; heading flipped OPEN → DEFERRED to match the prior re-verification.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Re-read §5.1 and §26: the §26.1 catalog table carries a documentation-only "Category" column (Coding agent / General-purpose / Framework), but §5.1 defines **no** `category` field on the Runtime record, and §26.2 identifies coding-agent runtimes by name (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`), not by a machine-readable discriminator. `validateCapabilities` (`pkg/gateway/admin/runtimes.go`) therefore has nothing to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on without inventing a spec surface (adding `category` to §5.1) or hardcoding the four reference names (neither generalizes to community coding-agent runtimes, and the latter is not what the finding asks). Required spec change: §5.1 must add a `category` field to the Runtime schema (or §26.2 must name an existing machine-readable discriminator) so the enforcement has a spec-grounded predicate. Per rule B the spec is not edited from the build loop.
 
 ---
 
@@ -46171,7 +46181,7 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 ### Findings
 
-### - [ ] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — OPEN
+### - [x] F-26.10.1 — `openai-assistants` runtime binary is absent from the build tree (Medium) [Medium] — CLOSED
 
 `cmd/runtimes/` contains only the in-tree echo/MCP reference runtimes (`echo`, `streaming-echo`, `cred-shell-echo`, `delegation-echo`, `elicitation-echo`, `echo-embedded`, `mcp-reference`). There is no `cmd/runtimes/openai-assistants/` directory and no producer of an `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0` image in this repo, even though `pkg/embedded/stack/catalog.go:82-86` and `charts/lenny/values.yaml:734-737` register that image as a §26 reference runtime. §26.10 ("Bootstrap: on session start, adapter creates a Thread on OpenAI with the assistant ID … appends to the thread and starts a Run … streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes") describes work that has no implementation. §18 also lists `openai-assistants` among the nine first-party reference runtimes ("packaged, signed, and registered with the gateway via `lenny-ctl admin runtimes register`"); the package/sign step has no source artifact to build. Treated as Medium because the runtime is published as part of the spec's reference catalog and may live in an external `github.com/lennylabs/runtime-openai-assistants` repository per §26.10's **Repository** field. If so, this audit only flags the missing in-monorepo build target; the gap is informational against the in-tree implementation surfaces.
 
@@ -46188,6 +46198,8 @@ compliance baseline — F-26.10.2/.3/.4/.5). The binary itself stays an external
 artifact.
 
 **DEFERRED 2026-06-08 (re-verified this batch).** Re-confirmed: `cmd/runtimes/` still ships only the in-tree echo/MCP reference runtimes and no `openai-assistants` directory. §26.10 names a **Repository** field, so the runtime is built and signed in the external `github.com/lennylabs/runtime-openai-assistants` repo, not the monorepo, and a real in-tree adapter would require live OpenAI Threads/Runs API integration (Thread bootstrap, Run streaming, `code_interpreter`/`file_search` tool-call envelope mapping, Files-API forwarding) that cannot be built or exercised in this environment. Deferred per Rule P criterion 2 (depends on an external service / infrastructure unavailable here) and the external-Repository framing — every in-tree registration surface (catalog, chart Runtime CR, compliance baseline) is already correct (F-26.10.2/.3/.4/.5).
+
+**Resolution (verify-close, this batch — re-read spec per rule A).** This is a false alarm against the monorepo build tree. §26 ("Distinction from bundled runtimes", spec/26 line ~12) states reference runtimes "live in separate repos with independent release cadences", and §26.10 carries an explicit `**Repository:** github.com/lennylabs/runtime-openai-assistants` field; only the `echo` variants are in-monorepo by design. The absence of `cmd/runtimes/openai-assistants/` is therefore spec-conformant, not a gap — building an in-tree adapter would contradict §26 and would in any case require the live OpenAI Threads/Runs API (NEEDS-OPERATOR). All in-tree surfaces the platform owns (embedded catalog `pkg/embedded/stack/catalog.go:227`, chart Runtime CR, compliance baseline) are present and correct (F-26.10.2/.3/.4/.5 CLOSED). The `tests/spec-map-exceptions.yaml` §26.10 justification was reconciled from the stale "Wave 6 in-monorepo" framing to the §26 external-repo reason so the exception no longer implies pending in-tree work.
 
 ### - [x] F-26.10.2 — Registered `Runtime` record omits the §26.10 `runtimeOptionsSchema` (Medium) [Medium] — CLOSED
 
@@ -46231,7 +46243,7 @@ Reviewed: 2026-05-23
 
 ### Findings
 
-### - [ ] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — OPEN
+### - [x] F-26.11.1 — `cmd/runtimes/crewai/` binary is absent [Medium] — CLOSED
 
 Spec §26.11 documents the `crewai` reference runtime as a first-class catalogue entry that bootstraps `crew.kickoff(...)`, streams agent-internal thoughts and tool calls, and maps `Task.delegate` to `lenny/delegate_task`. The repository ships no `cmd/runtimes/crewai/` adapter package (`ls /Users/joan/projects/lenny/cmd/runtimes/` lists only `cred-shell-echo`, `delegation-echo`, `echo`, `echo-embedded`, `elicitation-echo`, `mcp-reference`, `streaming-echo`). `tests/spec-map.json` (`spec/26.11`) points at `cmd/runtimes/crewai` and reports `tests: []`, and `tests/spec-map-exceptions.yaml:177-179` records the gap with `reason: deferred, justification: The crewai reference runtime is built in Wave 6 (Phase 11)`. The current branch is on Wave 5 (per repository state), so this is a known deferral rather than a regression; calling it Medium because the spec section is in force and the binary is the artefact the section describes.
 
@@ -46252,6 +46264,8 @@ fixtures) are already in place (F-26.11.2/.3/.4). Re-DEFERRED to its existing
 Wave-6 exception.
 
 **DEFERRED 2026-06-08 (re-verified; external CrewAI framework + designed Wave-6 schedule).** `cmd/runtimes/` still ships no `crewai` package (only the echo/streaming/elicitation/delegation/cred-shell/mcp/preconnect reference adapters), and `tests/spec-map-exceptions.yaml:176` still records the explicit schedule deferral ("The crewai reference runtime is built in Wave 6 (Phase 11)"). A faithful runtime is a Python, sandboxed, integration-level adapter that imports the external CrewAI framework, resolves the `Crew` object, calls `crew.kickoff(...)`, and maps `Task.delegate` onto `lenny/delegate_task` — it depends on a third-party framework and a Python sandbox that cannot be exercised meaningfully in-tree at this wave (Rule P escape: external dependency + named separate wave). The in-tree registration surfaces are complete (F-26.11.2/.3/.4). Re-attempt in Wave 6 per the recorded exception.
+
+**Resolution (verify-close, this batch — re-read spec per rule A).** False alarm against the monorepo build tree. §26 ("Distinction from bundled runtimes") states reference runtimes "live in separate repos with independent release cadences", and §26.11 carries an explicit `**Repository:** github.com/lennylabs/runtime-crewai` field; only the `echo` variants ship in-monorepo by design. The absence of `cmd/runtimes/crewai/` is spec-conformant — an in-tree adapter would contradict §26 and would require the external CrewAI Python framework + sandbox (NEEDS-OPERATOR). The in-tree surfaces (catalog `pkg/embedded/stack/catalog.go:234`, chart Runtime CR with `runtimeOptionsSchemaRef`/`delegationPolicyRef`, compliance baseline) are present and correct (F-26.11.2/.3/.4 CLOSED). The `tests/spec-map-exceptions.yaml` §26.11 justification was reconciled from the stale "Wave 6 in-monorepo" framing to the §26 external-repo reason; the conformance scaffolds (F-26.11.4) remain the hooks that will exercise the external image when it is registered.
 
 ### - [x] F-26.11.2 — Required §26.11 Runtime fields are not encoded in any installable manifest [Medium] — CLOSED
 
@@ -46899,7 +46913,7 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 
 **Resolution:** Closed by commit c5e50ead. The chat screen now renders a language picker (`<select>` of Go/Python/TypeScript) next to the copy button, and `copySnippet(lang)` delegates to `sdkSnippet(lang, runtime)`, which carries a template for each language. Every template references `LENNY_GATEWAY_URL` / `LENNY_BEARER_TOKEN` through environment variables and embeds no credential, preserving the §27.9 line 256 property. Closes the duplicate F-27.9.4 (already CLOSED as a pointer to this finding).
 
-### - [ ] F-27.4.5 — Delegation policy field is shown unconditionally regardless of scope [Medium] — OPEN
+### - [-] F-27.4.5 — Delegation policy field is shown unconditionally regardless of scope [Medium] — DEFERRED
 - Spec: §27.4 item 2 ("delegation policy selection (if caller has the scope)").
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:232` renders the delegation-policy input for every caller.
@@ -46907,6 +46921,8 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 - Impact: the field appears for callers without the delegation scope; their session-create call will (presumably) be rejected server-side rather than the affordance being hidden. This is a UX deviation from the spec MUST. Severity Medium rather than High because the authorization decision happens at the gateway; the playground misleads but does not bypass.
 
 **Deferred:** The §27.4 "if caller has the scope" gate has no scope to test against. The scope vocabulary defines no delegation scope, the §27.3 `playgroundAllowedScope` ceiling (`token.go:22-30`) excludes delegation entirely, and `delegationPolicyId`/`maxDelegationPolicy` is not even read at session create (the field maps to the §8.3 session-level `maxDelegationPolicy` cap, currently unwired). Correctly hiding or showing the field requires a spec decision on which scope authorizes session-level delegation-policy selection in the playground and whether it belongs in the playground scope ceiling. Re-attempt once that scope is defined.
+
+**Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Re-verified against current code and spec: §27.4 item 2 gates the delegation-policy field on "if caller has the scope", but the scope vocabulary defines no delegation scope, the §27.3 `playgroundAllowedScope` ceiling (`pkg/gateway/playground/token.go`) excludes delegation entirely, and `delegationPolicyId`/`maxDelegationPolicy` is not read at session create (the field maps to the unwired §8.3 `maxDelegationPolicy` cap). The gate references a scope that does not exist, so neither "show conditionally" (no scope to test) nor "always hide" (would hard-code a policy the spec frames as scope-conditional) is faithful. Required spec change: define which scope authorizes session-level delegation-policy selection in the playground and whether it belongs in the §27.3 playground scope ceiling. A `spec/` edit a hook forbids from the build loop.
 
 ### - [x] F-27.4.6 — Runtime picker shows "version unknown" because the discovery response carries no version [Medium] — CLOSED
 - Spec: §27.4 item 1 ("Each entry shows the runtime id, version, description from the Runtime CR ...").

@@ -170,10 +170,10 @@ exceptions:
     justification: The mastra reference runtime is built in Wave 6 (Phase 11).
   - section: "26.10"
     reason: deferred
-    justification: The openai-assistants reference runtime is built in Wave 6 (Phase 11).
+    justification: The openai-assistants reference runtime binary lives in the external repo github.com/lennylabs/runtime-openai-assistants per §26 ("Distinction from bundled runtimes") and the §26.10 Repository field; only echo variants are in-monorepo. In-tree registration surfaces (catalog, chart Runtime CR, compliance baseline) are present and tested.
   - section: "26.11"
     reason: deferred
-    justification: The crewai reference runtime is built in Wave 6 (Phase 11).
+    justification: The crewai reference runtime binary lives in the external repo github.com/lennylabs/runtime-crewai per §26 ("Distinction from bundled runtimes") and the §26.11 Repository field; only echo variants are in-monorepo. In-tree registration surfaces (catalog, chart Runtime CR, compliance baseline) are present and tested.
   - section: "8.7"
     reason: deferred
     justification: The §8.7 file-export model (glob rebasing, destPrefix, symlink validation) is unimplemented; built in Wave 2 (Phase 9).
