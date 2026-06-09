@@ -356,6 +356,12 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
+		// §6.1 line 67 — SIGTERM during sdk_connecting tears the pre-connected
+		// SDK down within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s),
+		// force-terminating it on overrun, so it is not abandoned
+		// mid-connection and cannot leak credentials or hold provider
+		// connections open. A no-op for a pod-warm pod.
+		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
 		if lifecycle != nil {
 			_ = lifecycle.Close()
 		}

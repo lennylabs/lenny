@@ -62,6 +62,18 @@ func (r *SDKWarmInProcessRuntime) DemoteSDK(ctx context.Context) error {
 	return r.InProcessRuntime.Close(ctx, r.boundSession())
 }
 
+// ForceTerminate hard-stops the pre-connected echo loop without waiting for
+// it to drain, backing the §6.1 line 67 force-terminate step the adapter
+// runs when a bounded DemoteSDK overruns its timeout. It clears the warm
+// flag and force-closes the in-process loop. A real agent-SDK runtime
+// SIGKILLs its SDK subprocess here instead. spec: §6.1 line 67.
+func (r *SDKWarmInProcessRuntime) ForceTerminate() {
+	r.mu.Lock()
+	r.preConnected = false
+	r.mu.Unlock()
+	r.InProcessRuntime.ForceClose()
+}
+
 // boundSession returns the session the embedded loop is currently bound
 // to, or empty when idle. It lets DemoteSDK address the live loop without
 // the caller threading the session id.
@@ -72,5 +84,9 @@ func (r *SDKWarmInProcessRuntime) boundSession() string {
 }
 
 // compile-time assertion that SDKWarmInProcessRuntime satisfies the §6.1
-// SDK-warm contract the adapter drives.
-var _ SDKWarmRuntime = (*SDKWarmInProcessRuntime)(nil)
+// SDK-warm contract the adapter drives, including the force-terminate hook
+// the §6.1 line 67 SIGTERM teardown uses on a DemoteSDK overrun.
+var (
+	_ SDKWarmRuntime  = (*SDKWarmInProcessRuntime)(nil)
+	_ ForceTerminator = (*SDKWarmInProcessRuntime)(nil)
+)

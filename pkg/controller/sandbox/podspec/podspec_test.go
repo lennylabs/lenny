@@ -494,6 +494,45 @@ func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67 confirms the §6.1
+// line 67 SDK-warm grace floor: a preConnect pod's
+// terminationGracePeriodSeconds is at least LENNY_DEMOTE_TIMEOUT_SECONDS
+// (default 5s) + 5s = 10s so the adapter can run its bounded DemoteSDK
+// teardown on SIGTERM. The floor takes precedence over a lower §5.2 base or
+// ceiling because abandoning the SDK mid-connection leaks credentials.
+func TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67(t *testing.T) {
+	cases := []struct {
+		name       string
+		preConnect bool
+		base       *int64
+		ceiling    *int64
+		want       int64
+	}{
+		{"preconnect default grace unaffected", true, nil, nil, 120},
+		{"preconnect low base floored", true, ptr.To(int64(4)), nil, 10},
+		{"preconnect low ceiling floored", true, nil, ptr.To(int64(6)), 10},
+		{"preconnect base at floor", true, ptr.To(int64(10)), nil, 10},
+		{"preconnect base above floor unchanged", true, ptr.To(int64(45)), nil, 45},
+		{"pod-warm low base not floored", false, ptr.To(int64(4)), nil, 4},
+		{"pod-warm low ceiling not floored", false, nil, ptr.To(int64(6)), 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := inputs()
+			in.PreConnect = tc.preConnect
+			in.TerminationGraceSeconds = tc.base
+			in.MaxTerminationGraceSeconds = tc.ceiling
+			pod, err := podspec.Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != tc.want {
+				t.Fatalf("terminationGracePeriodSeconds = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildCapsDevShm_spec_6_4 confirms the §6.4 line 420 "/dev/shm is
 // limited to 64MB" invariant: a memory-backed emptyDir with an explicit
 // 64Mi SizeLimit, mounted at /dev/shm in every agent container.

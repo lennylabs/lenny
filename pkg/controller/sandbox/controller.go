@@ -388,6 +388,12 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// grace period down when the deployer has declared a hard cap.
 		TerminationGraceSeconds:    graceBase,
 		MaxTerminationGraceSeconds: graceMax,
+		// spec: §6.1 line 67 — a preConnect (SDK-warm) runtime may reach
+		// `sdk_connecting`, so the pod's grace period is floored at
+		// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` to give the adapter time to run
+		// its bounded DemoteSDK teardown on SIGTERM before the kubelet sends
+		// SIGKILL.
+		PreConnect: rt.Spec.Capabilities != nil && rt.Spec.Capabilities.PreConnect,
 		// spec: §5.2 lines 631-636 — the WarmPoolController copied the
 		// pool's topology spread constraints onto Sandbox.spec; stamp them
 		// onto the pod here.

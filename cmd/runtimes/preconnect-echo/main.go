@@ -107,9 +107,10 @@ func main() {
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
 		// §6.1 line 67 — SIGTERM during sdk_connecting tears the SDK down
-		// before the process exits so it does not leak credentials or hold
-		// provider connections open.
-		_, _ = adapterSrv.DemoteSDK(context.Background(), nil)
+		// within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s), force-terminating
+		// it on overrun, before the process exits so it does not leak
+		// credentials or hold provider connections open.
+		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
 		srv.GracefulStop()
 	}()
 

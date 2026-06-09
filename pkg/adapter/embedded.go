@@ -157,6 +157,31 @@ func (r *InProcessRuntime) Interrupt(_ context.Context, sessionID string, _ bool
 	return nil
 }
 
+// ForceClose hard-stops the runtime loop without waiting for it to return.
+// Unlike Close it does not block on the loop's completion: it closes both
+// pipe ends (unblocking a loop stalled on a read or a write) and drops the
+// session binding immediately, leaving the loop goroutine to exit on its
+// own as the process terminates. It backs the §6.1 line 67 force-terminate
+// step the adapter runs when a bounded DemoteSDK overruns its timeout; a
+// real subprocess SDK substitutes a SIGKILL of the SDK process here.
+// spec: §6.1 line 67.
+func (r *InProcessRuntime) ForceClose() {
+	r.mu.Lock()
+	w := r.inWriter
+	or := r.outReader
+	r.inWriter = nil
+	r.outReader = nil
+	r.loopDone = nil
+	r.session = ""
+	r.mu.Unlock()
+	if w != nil {
+		_ = w.Close()
+	}
+	if or != nil {
+		_ = or.Close()
+	}
+}
+
 // Close stops the runtime loop and waits briefly for it to return. It
 // closes the inbound pipe (the §15.4 clean-exit signal) and drains the
 // loop's completion.

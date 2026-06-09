@@ -74,6 +74,17 @@ const (
 	// while its preStop drain is still in flight.
 	preStopDrainMarginSeconds int64 = 10
 
+	// sdkDemoteTimeoutSeconds mirrors the adapter's DefaultDemoteTimeout
+	// (the §6.1 line 67 LENNY_DEMOTE_TIMEOUT_SECONDS default, 5s) the
+	// adapter bounds its SIGTERM-time DemoteSDK teardown by.
+	sdkDemoteTimeoutSeconds int64 = 5
+
+	// sdkDemoteGraceMarginSeconds is the §6.1 line 67 "+5s" the grace
+	// period of a preConnect pod must exceed the demote timeout by, so the
+	// kubelet does not SIGKILL the adapter before its bounded DemoteSDK (and
+	// the force-terminate fallback) completes.
+	sdkDemoteGraceMarginSeconds int64 = 5
+
 	// adapterPort is the adapter's gRPC listener port (§13.2: the
 	// gateway reaches the adapter on TCP 50051).
 	adapterPort int32 = 50051
@@ -261,6 +272,15 @@ type Inputs struct {
 	// MaxTerminationGraceSeconds ceiling still clamps it down. A nil
 	// value leaves the default in force.
 	TerminationGraceSeconds *int64
+
+	// PreConnect is the §5.1 capabilities.preConnect flag for the pod's
+	// runtime. When true the pod is SDK-warm: it may reach `sdk_connecting`,
+	// so its terminationGracePeriodSeconds is floored at
+	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` (§6.1 line 67) to give the adapter
+	// time to run its bounded DemoteSDK teardown (and the force-terminate
+	// fallback) on SIGTERM before the kubelet sends SIGKILL. The floor is the
+	// §6.1 safety boundary against abandoning the SDK mid-connection.
+	PreConnect bool
 
 	// TopologySpreadConstraints are the §5.2 lines 631-636 spread
 	// constraints resolved for the pool (the PoolScalingController's zone
@@ -1059,6 +1079,21 @@ func terminationGrace(in Inputs) int64 {
 	if in.MaxTerminationGraceSeconds != nil && *in.MaxTerminationGraceSeconds > 0 &&
 		*in.MaxTerminationGraceSeconds < grace {
 		grace = *in.MaxTerminationGraceSeconds
+	}
+	// spec: §6.1 line 67 — a preConnect (SDK-warm) pod may receive SIGTERM
+	// while in `sdk_connecting`. Its grace period must be at least
+	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` so the adapter can run its bounded
+	// DemoteSDK teardown (and the force-terminate fallback) before the
+	// kubelet sends SIGKILL. This safety floor takes precedence over a lower
+	// §5.2 maxTerminationGracePeriodSeconds ceiling because abandoning the
+	// SDK mid-connection leaks credentials; the default 120s grace already
+	// satisfies it. The floor assumes the default demote timeout — a deployer
+	// who raises LENNY_DEMOTE_TIMEOUT_SECONDS must size the pool grace to
+	// match, which the 120s default does for any reasonable timeout.
+	if in.PreConnect {
+		if floor := sdkDemoteTimeoutSeconds + sdkDemoteGraceMarginSeconds; grace < floor {
+			grace = floor
+		}
 	}
 	return grace
 }

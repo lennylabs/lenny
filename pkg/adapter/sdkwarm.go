@@ -4,6 +4,9 @@ package adapter
 
 import (
 	"context"
+	"os"
+	"strconv"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +18,93 @@ import (
 // adapter advertises during version negotiation. The gateway uses it to
 // drive the pod through ConfigureWorkspace rather than StartSession.
 const CapabilityPreConnect = "preConnect"
+
+// DefaultDemoteTimeout is the §6.1 line 67 default bound (5s) the adapter
+// applies to its SIGTERM-time DemoteSDK teardown before it force-terminates
+// the SDK process. The deployer overrides it via LENNY_DEMOTE_TIMEOUT_SECONDS.
+// spec: §6.1 line 67.
+const DefaultDemoteTimeout = 5 * time.Second
+
+// demoteTimeoutEnvVar is the §6.1 line 67 environment variable that bounds
+// the SIGTERM-time DemoteSDK teardown.
+const demoteTimeoutEnvVar = "LENNY_DEMOTE_TIMEOUT_SECONDS"
+
+// ForceTerminator is the optional capability an SDKWarmRuntime implements so
+// the adapter can hard-stop the SDK process when the §6.1 line 67 bounded
+// DemoteSDK teardown overruns its timeout. A runtime that does not implement
+// it relies on adapter-process exit to reap the SDK. spec: §6.1 line 67.
+type ForceTerminator interface {
+	// ForceTerminate hard-stops the SDK process immediately, without waiting
+	// for a graceful teardown. The adapter calls it only after a DemoteSDK
+	// teardown has exceeded its bounded timeout, so an abandoned SDK process
+	// cannot leak credentials or hold provider connections open.
+	ForceTerminate()
+}
+
+// DemoteTimeoutFromEnv resolves the §6.1 line 67 bounded DemoteSDK timeout
+// from LENNY_DEMOTE_TIMEOUT_SECONDS, falling back to DefaultDemoteTimeout
+// when the variable is unset or not a positive integer. spec: §6.1 line 67.
+func DemoteTimeoutFromEnv() time.Duration {
+	v := os.Getenv(demoteTimeoutEnvVar)
+	if v == "" {
+		return DefaultDemoteTimeout
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return DefaultDemoteTimeout
+	}
+	return time.Duration(n) * time.Second
+}
+
+// ShutdownDemoteSDK runs the §6.1 line 67 SIGTERM-during-sdk_connecting
+// teardown. For an SDK-warm pod whose SDK has been pre-connected it calls
+// DemoteSDK bounded by timeout so the in-progress SDK connection is torn
+// down cleanly; if DemoteSDK does not return within the bound it
+// force-terminates the SDK process so it is not abandoned mid-connection and
+// cannot leak credentials or hold provider connections open. It is a no-op
+// for a pod-warm pod (no SDK to tear down) or an SDK-warm pod that never
+// pre-connected, so a SIGTERM handler may call it unconditionally before
+// GracefulStop. A non-positive timeout falls back to DefaultDemoteTimeout.
+// spec: §6.1 line 67.
+func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return // pod-warm: there is no pre-connected SDK to tear down.
+	}
+	s.mu.Lock()
+	connected := s.sdkConnected
+	s.mu.Unlock()
+	if !connected {
+		return // SDK-warm but never pre-connected or already demoted.
+	}
+	if timeout <= 0 {
+		timeout = DefaultDemoteTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// DemoteSDK clears sdkConnected and releases the session on success.
+		_, _ = s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{})
+	}()
+	select {
+	case <-done:
+		// Clean teardown (or a runtime error); either way the SDK is no
+		// longer mid-connection.
+		return
+	case <-ctx.Done():
+		// §6.1 line 67 step 2 — the bounded DemoteSDK overran; force-terminate
+		// the SDK process so it is not abandoned mid-connection. The DemoteSDK
+		// goroutine is left to exit as the adapter process terminates.
+		if ft, ok := sw.(ForceTerminator); ok {
+			ft.ForceTerminate()
+		}
+		s.mu.Lock()
+		s.sdkConnected = false
+		s.mu.Unlock()
+	}
+}
 
 // SDKWarmRuntime is implemented by a RuntimeProcess that supports the
 // §6.1 SDK-warm fast path. Such a runtime declares
