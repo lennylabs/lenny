@@ -320,6 +320,32 @@ const (
 	// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
 	EventInterceptorRejected EventType = "interceptor.rejected"
 
+	// EventInterceptorFailPolicyWeakened is the §4.8 line 1034 audit
+	// event emitted when an admin flips an external interceptor's
+	// failPolicy from fail-closed to fail-open. It carries interceptor_ref,
+	// old_fail_policy, new_fail_policy, the server-minted transition_ts,
+	// the cooldown_seconds in force at the transition, and the
+	// affected_policy_count / affected_policy_names of the active
+	// DelegationPolicy resources whose contentPolicy.interceptorRef names
+	// the interceptor. It is the producer the §8.3 rule-5 weakening
+	// cooldown is paired with. spec: §4.8 line 1034; §8.3 line 224
+	// (SEC-013). F-4.8.17.
+	EventInterceptorFailPolicyWeakened EventType = "interceptor.fail_policy_weakened"
+
+	// EventInterceptorFailPolicyStrengthened is the §4.8 line 1034
+	// audit event emitted on the reverse fail-open to fail-closed
+	// transition, with the same fields. The strengthen takes effect
+	// immediately and arms no cooldown. spec: §4.8 line 1034. F-4.8.17.
+	EventInterceptorFailPolicyStrengthened EventType = "interceptor.fail_policy_strengthened"
+
+	// EventInterceptorWeakeningCooldownActive is the §8.3 line 218
+	// audit event emitted once per cooldown-window entry (not per
+	// rejected request) when a fail-closed to fail-open transition arms
+	// the weakening cooldown. It carries interceptor_ref, transition_ts,
+	// cooldown_seconds, and the affected_policy_count /
+	// affected_policy_names. spec: §8.3 line 218 (SEC-013). F-4.8.17.
+	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
+
 	// EventGDPRErasureJobRetried is the §24.12 line 143 / §12.8 line 766
 	// audit row for an operator retry of a failed erasure job. Emitted by
 	// pkg/gateway/admin handleRetryErasureJob.
@@ -408,6 +434,14 @@ var catalog = []EventType{
 // spec: §11.7 line 331. F-11.7.18.
 var auxKnownEventTypes = []EventType{
 	EventInterceptorRejected,
+	// §4.8 line 1034 / §8.3 SEC-013 interceptor failPolicy-transition
+	// events. Emitted through the §11.7 audit path by the admin
+	// interceptor-registry PUT handler; §16.7 does not enumerate them, so
+	// they are recognized by IsKnownEventType (audit-sink validators must
+	// not discard them) yet excluded from Catalog(). F-4.8.17.
+	EventInterceptorFailPolicyWeakened,
+	EventInterceptorFailPolicyStrengthened,
+	EventInterceptorWeakeningCooldownActive,
 	// §24.12 / §12.8 erasure-job operator actions. §16.7 enumerates the
 	// gdpr.* erasure-receipt and legal-hold rows but not these two
 	// operator-recovery events, so they are recognized by IsKnownEventType
