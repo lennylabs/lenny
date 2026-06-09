@@ -209,6 +209,22 @@ func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) in
 	return rt.Limits.MaxSessionAgeSeconds
 }
 
+// runtimeMaxIdle returns the resolved runtime's limits.maxIdleTimeSeconds
+// in seconds, or 0 when no runtime / limit is registered (no per-runtime
+// idle cap). The §27.6 playground idle override is resolved min-wins
+// against this value at create time. spec: §11.3 line 199; §5.1 limits;
+// §27.6 line 201. F-11.3.7.
+func (s *Server) runtimeMaxIdle(ctx context.Context, runtimeRef string) int {
+	if s.runtimes == nil || runtimeRef == "" {
+		return 0
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
+	if err != nil || rt.Limits == nil {
+		return 0
+	}
+	return rt.Limits.MaxIdleTimeSeconds
+}
+
 // runtimeSDKWarm returns the resolved runtime's §6.1 SDK-warm inputs: the
 // capabilities.preConnect flag and the sdkWarmBlockingPaths glob list the
 // binder uses to decide demotion. A pod-warm or unresolvable runtime

@@ -353,6 +353,16 @@ func writeGapMarkers(w http.ResponseWriter, afterSeq, oldestSeq uint64, now time
 // tenant-isolation predicate. A non-empty tenant id is the production
 // contract; tests may pass "" for the legacy untenanted code path.
 func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any) {
+	// spec: §6.2 lines 273-300 — the agent_output / tool_use events the
+	// adapter surfaces (published here as `response`, `response_degraded`,
+	// and `tool_use*`) are qualifying activity that resets the §11.3
+	// `maxIdleTime` clock so a streaming session is not reaped as idle.
+	// Inbound, lifecycle, and warning events (status_change,
+	// message_delivered, workspace_plan_warning, session.resumed,
+	// session_complete) are not agent activity and do not stamp. F-11.3.7.
+	if s.activityStamper != nil && isAgentActivityEvent(eventType) {
+		s.activityStamper.Stamp(tenantID, sessionID)
+	}
 	if s.events == nil {
 		return
 	}
@@ -365,6 +375,18 @@ func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any
 		return
 	}
 	s.events.PublishForTenant(tenantID, sessionID, eventType, string(data), s.clock())
+}
+
+// isAgentActivityEvent reports whether a published session event type is a
+// §6.2 lines 273-274 qualifying agent activity (agent_output or tool_use
+// from the adapter). The gateway publishes agent output as `response` /
+// `response_degraded` and tool calls under the `tool_use` prefix. F-11.3.7.
+func isAgentActivityEvent(eventType string) bool {
+	switch eventType {
+	case "response", "response_degraded", "agent_output":
+		return true
+	}
+	return strings.HasPrefix(eventType, "tool_use")
 }
 
 // recordTTFTOnce observes the §6.3 line 356 / §16.1 line 15 TTFT

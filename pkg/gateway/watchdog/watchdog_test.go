@@ -15,6 +15,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 )
 
+// idleCapDisabled is a maxIdleTime far larger than any session age these
+// maxSessionAge / resolver tests exercise, so the §11.3 line 199 idle
+// sweep never fires on their stale `running` rows. It lets a test isolate
+// the wall-clock maxSessionAge behaviour from the idle reclamation path
+// (the idle sweep is covered directly in idle_test.go). F-11.3.7.
+const idleCapDisabled = 100 * 24 * 3600
+
 // seedChildRow inserts a session with a parent for the §8.10
 // archive-on-watchdog-transition tests.
 func seedChildRow(t *testing.T, store sessionstore.Store, id, parent string, state session.State, updatedAt time.Time) {
@@ -152,7 +159,7 @@ func TestTickLeavesYoungSessionUnexpired(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, "sess_young", "acme", session.StateRunning, born)
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{MaxIdleSeconds: idleCapDisabled}, nil)
 
 	res, err := w.Tick(context.Background(), born.Add(time.Hour)) // well under 7200s
 	if err != nil {
@@ -620,7 +627,7 @@ func TestMaxAgeHonorsPerRuntimeResolver_spec_11_3_198(t *testing.T) {
 		ID: "sess_long", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "long", CreatedAt: born, UpdatedAt: born,
 	})
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{MaxIdleSeconds: idleCapDisabled}, nil).
 		WithSessionAgeResolver(fakeAgeResolver{"short": 1800})
 
 	// One hour after birth: past the 1800s runtime cap, under the 7200s default.
@@ -672,7 +679,7 @@ func TestResolverZeroLeavesPlatformDefault_spec_11_3_198(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, "sess", "acme", session.StateRunning, born)
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{MaxIdleSeconds: idleCapDisabled}, nil).
 		WithSessionAgeResolver(fakeAgeResolver{}) // no entry → returns 0
 
 	// One hour in: a 0 resolver result must leave the 7200s platform default.

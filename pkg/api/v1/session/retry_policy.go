@@ -259,6 +259,17 @@ const (
 	// `expired:lease`. spec: §8.8 line 867.
 	FailureExpiredLease FailureReason = "expired:lease"
 
+	// FailureExpiredIdle marks a session driven to `expired` by the §11.3
+	// line 199 `maxIdleTime` watchdog — a `running` session that has had
+	// no qualifying agent activity (§6.2 lines 273-278) for longer than
+	// its effective `maxIdleTimeSeconds`. The §8.8 MCP adapter surfaces
+	// this as `failed` with error code `expired:idle` (the open-ended
+	// `expired:*` prefix per §8.8 line 867) so external clients can
+	// distinguish idle reclamation from the wall-clock `maxSessionAge`
+	// deadline (`expired:deadline`). spec: §6.2 lines 273-300; §11.3 line
+	// 199; §8.8 line 867.
+	FailureExpiredIdle FailureReason = "expired:idle"
+
 	// FailureOrphanPodTerminated marks a non-terminal session whose
 	// bound pod reached the §6.2 `terminated` phase without the pod
 	// writing a terminal event back to Postgres — the coordinator was

@@ -376,6 +376,15 @@ type Deps struct {
 	// Optional — when nil, lenny/request_input is not registered.
 	InputWaits *inputwait.Registry
 
+	// ActivityStamper records §6.2 line 276 qualifying activity for a
+	// parent session blocked in lenny/await_children so the §11.3 idle
+	// watchdog does not reap it while it actively waits for children. A
+	// nil stamper disables the reset (the parent then relies on its
+	// agent-output activity and the maxSessionAge backstop). F-11.3.7.
+	ActivityStamper interface {
+		Stamp(tenantID, sessionID string)
+	}
+
 	// TreeArchive is the §8.10 session_tree_archive. Optional — when
 	// non-nil, lenny/cancel_child archives each cancelled child's
 	// §8.8 TaskResult so a resumed parent can replay it.
@@ -1392,6 +1401,14 @@ func Register(srv *mcp.Server, deps Deps) {
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
 		for {
+			// spec: §6.2 line 276 — an await_children invocation and each
+			// poll round while blocked on children is qualifying activity,
+			// so the §11.3 idle watchdog does not falsely expire a parent
+			// actively waiting on slow children. The stamper coalesces to
+			// ≤1/s. F-11.3.7.
+			if deps.ActivityStamper != nil {
+				deps.ActivityStamper.Stamp(tenant, in.SessionID)
+			}
 			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, tenant, in.ChildIDs, mode)
 			if err != nil {
 				obstracing.RecordError(span, err)

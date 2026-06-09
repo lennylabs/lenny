@@ -440,6 +440,56 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §6.2 lines 273-300 — `last_agent_activity_at` round-trips
+	// through Postgres and is nullable so a session with no recorded
+	// qualifying activity reads as zero (the idle watchdog then anchors on
+	// updated_at). F-11.3.7.
+	t.Run("last_agent_activity_at round-trip and zero-default", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		// Unset on Create reads back as zero.
+		idZero := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idZero, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, idZero)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastAgentActivityAt.IsZero() {
+			t.Errorf("unset LastAgentActivityAt = %v, want zero", got.LastAgentActivityAt)
+		}
+
+		// A value set on Create round-trips, and an Update advances it.
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			LastAgentActivityAt: ts,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastAgentActivityAt.Equal(ts) {
+			t.Errorf("LastAgentActivityAt = %v, want %v", got.LastAgentActivityAt, ts)
+		}
+		when := ts.Add(90 * time.Second)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.LastAgentActivityAt = when
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.LastAgentActivityAt.Equal(when) {
+			t.Errorf("Update LastAgentActivityAt = %v, want %v", updated.LastAgentActivityAt, when)
+		}
+	})
+
 	// spec: §4.4 line 258 — never-checkpointed sessions read NULL on
 	// the column, which the sessionstore maps to the zero time.Time
 	// so the `FreshnessCheck` helper can treat them as stale.

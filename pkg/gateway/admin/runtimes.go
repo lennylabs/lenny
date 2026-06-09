@@ -481,7 +481,8 @@ func validateLimits(l *runtimestore.Limits) error {
 		return nil
 	}
 	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 ||
-		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 {
+		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 ||
+		l.MaxIdleTimeSeconds < 0 {
 		return errors.New("limits fields must not be negative")
 	}
 	return nil

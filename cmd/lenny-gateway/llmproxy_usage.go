@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
@@ -59,6 +60,11 @@ type proxyUsageRecorder struct {
 	// session's §8.2 token budget and terminates an over-budget session.
 	// A nil enforcer disables mid-session enforcement (no budget cap).
 	budget *sessionbudget.Enforcer
+	// activity stamps §6.2 line 277 proxy-mode activity: each proxied LLM
+	// response resets the session's idle clock so a session whose agent is
+	// mid-generation is not reaped by the §11.3 idle watchdog. A nil
+	// stamper disables the reset. F-11.3.7.
+	activity *sessionidle.Stamper
 	// now returns the current time; nil selects time.Now. Overridden in
 	// tests so the quota window key is deterministic.
 	now func() time.Time
@@ -90,6 +96,16 @@ func (r *proxyUsageRecorder) setBudgetTracker(tracker *quotabudget.Tracker) {
 	r.budgetTracker = tracker
 }
 
+// setActivityStamper wires the §6.2 idle-timer activity stamper so each
+// proxied LLM response resets the session's idle clock. Nil-safe on both
+// the recorder and the stamper. F-11.3.7.
+func (r *proxyUsageRecorder) setActivityStamper(s *sessionidle.Stamper) {
+	if r == nil {
+		return
+	}
+	r.activity = s
+}
+
 // RecordUsage implements llmproxy.UsageRecorder. It records the
 // proxy-extracted token usage against the lease's owning tenant. A
 // direct-mode lease never reaches the proxy hot path; this recorder
@@ -114,6 +130,13 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 		// §15.1 byTenant rollup and the §11.2 per-tenant window; drop
 		// rather than emit an "unknown" tenant series.
 		return
+	}
+	// spec: §6.2 lines 277 — proxy-mode activity. Each proxied response is
+	// direct evidence of active agent work; reset the idle clock so a
+	// long-running LLM call is not mistaken for idle. The stamper coalesces
+	// to ≤1/s per session. F-11.3.7.
+	if r.activity != nil && lease.SessionID != "" {
+		r.activity.Stamp(lease.TenantID, lease.SessionID)
 	}
 	rec := usagestore.Record{
 		TenantID: lease.TenantID,

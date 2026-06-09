@@ -635,6 +635,15 @@ type Limits struct {
 	// elicitation budget, configurable per pool in the `limits:` block.
 	// Zero selects the platform default (50). spec: §11.3 line 203.
 	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
+
+	// MaxIdleTimeSeconds is the §11.3 line 199 / §6.2 lines 273-300
+	// `maxIdleTime` cap, configurable per pool in the `limits:` block. A
+	// `running` session with no qualifying agent activity for longer than
+	// this is expired by the §11.3 watchdog. Zero selects the platform
+	// default (600s). The per-session §27.6 playground idle override
+	// (`SessionTimeouts.MaxIdleSeconds`) tightens it below this value.
+	// spec: §11.3 line 199; §6.2 lines 273-300. F-11.3.7.
+	MaxIdleTimeSeconds int `json:"maxIdleTimeSeconds,omitempty"`
 }
 
 // Clone returns a copy of the limits block. A nil receiver clones to nil.

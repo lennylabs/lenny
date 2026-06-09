@@ -253,6 +253,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -916,6 +917,9 @@ func main() {
 	maxSuspendedPodHoldSeconds := flag.Int("max-suspended-pod-hold-seconds",
 		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
 		"§11.3 line 233 maxSuspendedPodHoldSeconds: the wall-clock window a `suspended` session may hold its pod before the watchdog transitions it to `expired`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
+	maxIdleTimeSeconds := flag.Int("max-idle-time-seconds",
+		envInt("LENNY_MAX_IDLE_TIME_SECONDS", watchdog.DefaultMaxIdleSeconds),
+		"§11.3 line 199 / §6.2 lines 273-300 maxIdleTimeSeconds: the platform-default idle cap on a `running` session — one with no qualifying agent activity (agent_output / tool_use, await_children poll, proxied LLM response) for longer than this is transitioned to `expired` with reason expired:idle. The per-runtime `limits.maxIdleTimeSeconds` and the §27.6 playground idle override tighten this default. Default 600s. Override via LENNY_MAX_IDLE_TIME_SECONDS.")
 	// spec: §11.3 line 205-206 — grpc.keepaliveTime{,out}Ms on the
 	// adapter client (gateway → pod), operator-tunable. The library
 	// default is no keepalive on the client side, so the §11.3 5s timeout
@@ -3685,7 +3689,18 @@ func main() {
 		childLeaseRegistrar = leaseBudgets
 	}
 
+	// spec: §6.2 lines 273-300 / §11.3 line 199 — the activity stamper
+	// records qualifying agent activity (agent_output / tool_use events,
+	// await_children polls, proxied LLM responses) onto each session's
+	// last_agent_activity_at so the §11.3 idle watchdog (sweepIdle) does
+	// not reap an actively-working session. Coalesces durable writes to
+	// ≤1/s per session. F-11.3.7.
+	activityStamper := sessionidle.NewStamper(sessions, clockinject.Now)
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
+		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
+		// published on the session bus as idle-timer activity. F-11.3.7.
+		ActivityStamper: activityStamper,
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
 		// unbounded.
@@ -4174,15 +4189,19 @@ func main() {
 		// that named external scanner (and enforce the message-side
 		// maxInputSize) rather than every registered external interceptor.
 		// F-8.2.9 / F-13.5.2.
-		ContentPolicies:            delegationSvc,
-		PolicyAudit:                policyAuditSink,
-		Events:                     eventBus,
-		InputWaits:                 inputWaits,
-		TreeArchive:                treeArchive,
-		TaskUsage:                  taskUsageBuilder,
-		Interactions:               interactions,
-		Memory:                     memories,
-		ElicitationMetrics:         gwMetrics,
+		ContentPolicies: delegationSvc,
+		PolicyAudit:     policyAuditSink,
+		Events:          eventBus,
+		InputWaits:      inputWaits,
+		// spec: §6.2 line 276 — keep a parent blocked in await_children
+		// non-idle so the §11.3 watchdog does not reap it while it waits
+		// on slow children. F-11.3.7.
+		ActivityStamper:    activityStamper,
+		TreeArchive:        treeArchive,
+		TaskUsage:          taskUsageBuilder,
+		Interactions:       interactions,
+		Memory:             memories,
+		ElicitationMetrics: gwMetrics,
 		// spec: §16.1 lines 60–63; §16.5 line 458. F-9.2.14 — the
 		// §9.2 dispatcher emits admit/terminal lifecycle samples that
 		// drive the ElicitationBacklogHigh alert and the operator
@@ -5891,6 +5910,10 @@ func main() {
 	// budget slice rather than the Redis counter; route the recorder's
 	// quota write to the tracker.
 	llmProxyUsage.setBudgetTracker(quotaBudgetTracker)
+	// spec: §6.2 line 277 — each proxied LLM response is direct evidence of
+	// active agent work; reset the session's idle clock so a long-running
+	// streaming generation is not reaped by the §11.3 idle watchdog. F-11.3.7.
+	llmProxyUsage.setActivityStamper(activityStamper)
 	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
@@ -5989,6 +6012,7 @@ func main() {
 		MaxResumePendingSeconds:        *maxResumePendingSeconds,
 		MaxResumingSeconds:             *maxResumingSeconds,
 		MaxRetries:                     *retryMaxRetries,
+		MaxIdleSeconds:                 *maxIdleTimeSeconds,
 	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).
@@ -5998,7 +6022,18 @@ func main() {
 		// `maxSessionAgeSeconds` (most-restrictive-wins below the platform
 		// default) instead of expiring every session at the single baked
 		// default. F-11.3.3.
-		WithSessionAgeResolver(sessionage.New(runtimes, pools))
+		WithSessionAgeResolver(sessionage.New(runtimes, pools)).
+		// spec: §11.3 line 199 / §6.2 lines 273-300 — the idle sweep
+		// expires a `running` session idle longer than its effective
+		// `maxIdleTimeSeconds`, honouring the per-runtime
+		// `limits.maxIdleTimeSeconds` and the §27.6 playground idle
+		// override. F-11.3.7.
+		WithIdleResolver(sessionidle.NewResolver(runtimes)).
+		// spec: §9.2 line 102 / §6.2 `input_required` row — pause the idle
+		// timer while a session waits on a pending elicitation or
+		// request_input so a session blocked on a human or peer is not
+		// reaped as idle. F-9.2.15.
+		WithIdlePauseChecker(sessionidle.NewPauseChecker(interactions, inputWaits))
 	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the

@@ -84,7 +84,7 @@ func TestNilRetryPolicyFallsThroughToPlatformCap_F_7_3_24(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRowWithRetryPolicy(t, store, "sess_default", "acme", born, nil)
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{MaxIdleSeconds: idleCapDisabled}, nil)
 
 	// One hour: under both the platform 2h cap and the per-session
 	// override (which is absent here). No expiry.
@@ -113,7 +113,7 @@ func TestZeroRetryPolicyMaxSessionAgeFallsThrough_F_7_3_24(t *testing.T) {
 	seedRowWithRetryPolicy(t, store, "sess_zero", "acme", born, &session.RetryPolicy{
 		MaxSessionAgeSeconds: 0, // explicit zero
 	})
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{MaxIdleSeconds: idleCapDisabled}, nil)
 
 	res, err := w.Tick(context.Background(), born.Add(time.Hour))
 	if err != nil {

@@ -116,7 +116,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	delegation_depth,
 	delegation_lease,
 	env, request_envelope,
-	legal_hold_set_by, legal_hold_set_at, legal_hold_note`
+	legal_hold_set_by, legal_hold_set_at, legal_hold_note,
+	last_agent_activity_at`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -176,7 +177,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		tree_visibility,
 		delegation_depth,
 		delegation_lease,
-		env, request_envelope
+		env, request_envelope,
+		last_agent_activity_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -206,7 +208,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$46,
 		$47,
 		$48::jsonb,
-		$49::jsonb, $50::jsonb
+		$49::jsonb, $50::jsonb,
+		$51
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -266,7 +269,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $50 — §14.1 request envelope bundle (pool, timeouts,
 			// credentialPolicy, delegationLease, runtimeOptions). NULL when
 			// the client supplied none of the bundled fields. F-14.1.14.
-			requestEnvelopeArg(sess))
+			requestEnvelopeArg(sess),
+			// $51 — §6.2 lines 273-300 idle-timer anchor; NULL until the
+			// first qualifying agent activity is recorded, in which case
+			// the watchdog falls back to updated_at. F-11.3.7.
+			pgtenant.NullTime(sess.LastAgentActivityAt))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -378,7 +385,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		request_envelope = $45::jsonb,
 		legal_hold_set_by = $46,
 		legal_hold_set_at = $47,
-		legal_hold_note = $48
+		legal_hold_note = $48,
+		last_agent_activity_at = $49
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -459,6 +467,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $46-$48 — §15.1 line 865 legal-hold provenance (setBy, setAt,
 			// note) reported by GET /v1/admin/legal-holds.
 			sess.LegalHoldSetBy, pgtenant.NullTime(sess.LegalHoldSetAt), sess.LegalHoldNote,
+			// $49 — §6.2 lines 273-300 idle-timer anchor; the activity
+			// stamper advances it ≤1/s on qualifying agent events. NULL
+			// until the first event. F-11.3.7.
+			pgtenant.NullTime(sess.LastAgentActivityAt),
 		); err != nil {
 			return err
 		}
@@ -874,6 +886,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §15.1 line 865 legal-hold provenance from migration 0145.
 		// legal_hold_set_at is nullable (no hold → SQL NULL).
 		legalHoldSetAt *time.Time
+		// §6.2 lines 273-300 idle-timer anchor from migration 0159.
+		// Nullable (NULL until the first qualifying agent event). F-11.3.7.
+		lastAgentActivityAt *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -929,11 +944,17 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&envJSON, &requestEnvelopeJSON,
 		// §15.1 line 865 — legal-hold provenance from migration 0145.
 		&s.LegalHoldSetBy, &legalHoldSetAt, &s.LegalHoldNote,
+		// §6.2 lines 273-300 — idle-timer anchor from migration 0159
+		// (F-11.3.7). NULL → the watchdog falls back to updated_at.
+		&lastAgentActivityAt,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
 	if legalHoldSetAt != nil {
 		s.LegalHoldSetAt = *legalHoldSetAt
+	}
+	if lastAgentActivityAt != nil {
+		s.LastAgentActivityAt = *lastAgentActivityAt
 	}
 	// spec: §14 lines 47-50 — decode the client-supplied env map. A
 	// nil/empty payload leaves Env nil so the read envelope omits it.

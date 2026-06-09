@@ -279,6 +279,20 @@ type Session struct {
 	// spec: §4.2 line 159 — "Resume eligibility and window".
 	ResumeEligibleUntil time.Time
 
+	// LastAgentActivityAt is the §6.2 lines 273-300 idle-timer anchor:
+	// the wall-clock instant of the session's most recent qualifying
+	// agent activity (agent_output / tool_use events, an await_children
+	// invocation, a proxied LLM chunk, or a direct-mode ReportUsage).
+	// The §11.3 line 199 `maxIdleTime` watchdog expires a `running`
+	// session whose elapsed time since this instant exceeds its
+	// effective `maxIdleTimeSeconds`. Zero when no qualifying event has
+	// been recorded yet, in which case the watchdog falls back to
+	// UpdatedAt (the running-entry time) so the idle clock is always
+	// anchored. The column cannot reuse UpdatedAt, which advances on
+	// internal state writes that are not agent activity.
+	// spec: §6.2 lines 273-300; §11.3 line 199. F-11.3.7.
+	LastAgentActivityAt time.Time
+
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
 	// this session — regardless of trigger (periodic, eviction,

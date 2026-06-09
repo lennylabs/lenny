@@ -143,6 +143,11 @@ type Server struct {
 	// array then materializes empty. spec: §8.8 lines 888-896. F-8.8.2.
 	artifacts artifactcatalog.Store
 	events    *sessionevents.Bus
+	// activityStamper records §6.2 lines 273-300 qualifying agent
+	// activity (agent_output / tool_use events) onto the session's
+	// last_agent_activity_at so the §11.3 idle watchdog does not reap an
+	// actively-streaming session. Nil is a no-op. F-11.3.7.
+	activityStamper ActivityStamper
 	// dualStore is the §10.1 dual-store degraded-mode gate consulted at
 	// session.create. Nil leaves the gate open. spec: §10.1 item 2.
 	dualStore DualStoreGate
@@ -747,6 +752,14 @@ type SessionLogHook interface {
 	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
 }
 
+// ActivityStamper records §6.2 lines 273-300 qualifying agent activity for
+// a session so the §11.3 idle watchdog does not reap it as idle. The
+// gateway wires *sessionidle.Stamper here. Implementations coalesce the
+// durable write (≤1/s per session) and are non-blocking. F-11.3.7.
+type ActivityStamper interface {
+	Stamp(tenantID, sessionID string)
+}
+
 // QuotaFinalCheckpointer writes the §11.2 line 44 "final reconciliation"
 // token-usage checkpoint for a (tenant, user) when a session reaches a
 // terminal state: the final cumulative window total is persisted to
@@ -923,6 +936,13 @@ type Options struct {
 	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
 	// event publication.
 	Events *sessionevents.Bus
+
+	// ActivityStamper records §6.2 lines 273-300 qualifying agent
+	// activity onto the session's last_agent_activity_at so the §11.3
+	// idle watchdog (sweepIdle) sees an actively-working session as
+	// non-idle. The gateway wires *sessionidle.Stamper here; nil is a
+	// no-op (the in-memory / dev posture). F-11.3.7.
+	ActivityStamper ActivityStamper
 
 	// DualStore is the §10.1 dual-store degraded-mode gate. When it
 	// reports Unavailable (Postgres and Redis simultaneously
@@ -1490,6 +1510,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		executor:                 opts.Executor,
 		transcripts:              opts.Transcripts,
 		artifacts:                opts.Artifacts,
+		activityStamper:          opts.ActivityStamper,
 		evals:                    opts.Evals,
 		memory:                   opts.Memory,
 		experiments:              opts.Experiments,
