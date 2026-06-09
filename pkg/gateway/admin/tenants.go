@@ -197,6 +197,10 @@ type Router struct {
 	userPlayground UserPlaygroundRevoker
 	erasureRunner  ErasureRunner
 	erasureJobs    erasurejob.Store
+	// impersonation drives the §13.3 platform-admin impersonation flow
+	// (POST/DELETE/GET /v1/admin/impersonation). Nil leaves the routes
+	// unregistered. F-16.7.1.
+	impersonation ImpersonationService
 	// saltRotator backs POST /v1/admin/tenants/{id}/rotate-erasure-salt
 	// (§12.8 line 857). Nil leaves the route unregistered. F-12.8.5.
 	saltRotator       ErasureSaltRotator
@@ -746,6 +750,18 @@ func (r *Router) Handler() http.Handler {
 		// tenant-admin; a tenant-admin is auto-scoped to its own tenant.
 		mux.Handle("GET /v1/admin/legal-holds",
 			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListLegalHolds)))
+	}
+	if r.impersonation != nil {
+		// §13.3 / §16.7 platform-admin impersonation flow. The handlers
+		// enforce platform-admin-only inside (a cross-tenant impersonation
+		// is never available to a tenant-admin); requireAdmin is the outer
+		// admin gate.
+		mux.Handle("POST /v1/admin/impersonation",
+			r.requireAdmin(http.HandlerFunc(r.handleStartImpersonation)))
+		mux.Handle("GET /v1/admin/impersonation",
+			r.requireAdmin(http.HandlerFunc(r.handleListImpersonation)))
+		mux.Handle("DELETE /v1/admin/impersonation/{id}",
+			r.requireAdmin(http.HandlerFunc(r.handleEndImpersonation)))
 	}
 	if r.corrections != nil && r.billing != nil {
 		// §11.2.1 operator-initiated billing corrections (Category 2).

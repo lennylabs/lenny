@@ -196,6 +196,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
@@ -4889,6 +4890,24 @@ func main() {
 	// baseline and emits the gateway.*/platform.*/deployment.* transition
 	// events under the operator's identity. F-8.2.5, F-9.2.10, F-17.2.8.
 	adminRouter = adminRouter.WithDeploymentConfig(deploymentConfig)
+	// §13.3 / §16.7 platform-admin impersonation: the distinct cross-tenant
+	// admin code path (not routed through /v1/oauth/token) that mints a
+	// target-user bearer and emits admin.impersonation_started/_ended. The
+	// started audit row is written under the platform tenant carrying
+	// target_tenant_id, so the auditstore CMP-058 residency gate routes it
+	// to the target's regional platform-Postgres before the bearer is
+	// minted. F-16.7.1.
+	impersonationSvc := impersonation.New(
+		impersonation.NewMemStore(), auditValidator, jwtSigner,
+		impersonation.Config{
+			PlatformTenantID: "platform",
+			MaxDuration:      time.Hour,
+			Issuer:           *bearerExpectedIssuer,
+			Audience:         expectedAuds,
+			Clock:            clockinject.Now,
+			NewID:            func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("imp-%x", b[:]) },
+		})
+	adminRouter = adminRouter.WithImpersonation(impersonationSvc)
 	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
@@ -6520,6 +6539,29 @@ func main() {
 			}
 		}(connectorStateStore)
 	}
+
+	// ----- §13.3 impersonation-session expiry sweep -----
+	// Emits admin.impersonation_ended (reason=expired) once a minted
+	// impersonation bearer reaches its impersonation_duration_seconds. The
+	// bearer self-expires (its exp claim); the sweep records the terminal
+	// audit event so the SIEM sees a matching end for every start.
+	// spec: §16.7 line 680.
+	go func(svc *impersonation.Service) {
+		tick := time.NewTicker(1 * time.Minute)
+		defer tick.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case now := <-tick.C:
+				if n, err := svc.SweepExpired(watchdogCtx, now.UTC()); err != nil {
+					log.Printf("lenny-gateway: §13.3 impersonation expiry sweep: %v", err)
+				} else if n > 0 {
+					log.Printf("lenny-gateway: §13.3 impersonation expiry sweep ended %d session(s)", n)
+				}
+			}
+		}
+	}(impersonationSvc)
 
 	// ----- §7.1 abandoned `created`-state row sweep -----
 	// Drops Session rows that stay in `created` past
