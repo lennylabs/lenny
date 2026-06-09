@@ -22,13 +22,20 @@ import (
 // handler tests can assert the byte counter and depth gauge fire.
 // F-13.4.12.
 type fakeUploadMetrics struct {
-	bytes      int64
-	depthCalls int
-	lastDepth  int
+	bytes       int64
+	depthCalls  int
+	lastDepth   int
+	abortCounts map[string]int
 }
 
 func (m *fakeUploadMetrics) AddUploadBytes(n int64)    { m.bytes += n }
 func (m *fakeUploadMetrics) SetUploadQueueDepth(d int) { m.depthCalls++; m.lastDepth = d }
+func (m *fakeUploadMetrics) AddExtractionAbort(errorType string) {
+	if m.abortCounts == nil {
+		m.abortCounts = map[string]int{}
+	}
+	m.abortCounts[errorType]++
+}
 
 func uploadTestServer(t *testing.T, opts Options) (*Server, *uploadtoken.Issuer, func() time.Time) {
 	t.Helper()

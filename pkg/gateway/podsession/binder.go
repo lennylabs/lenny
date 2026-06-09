@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -25,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
@@ -34,11 +34,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/sdkwarm"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	"github.com/lennylabs/lenny/pkg/upload"
+	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
 
 // Binder places sessions on warm pods.
@@ -162,6 +165,20 @@ type Binder struct {
 	// keeps being rejected. spec: §5.1 line 41 ("the first session
 	// assignment").
 	integrationVerified sync.Map
+	// UploadGate is the §4.1 Upload Handler subsystem the gateway runs
+	// archive extraction inside, so a hostile archive's decompression is
+	// bounded by the same goroutine pool, concurrency limiter, and circuit
+	// breaker that gate the upload HTTP path and cannot starve session
+	// attachment or delegation. Production wires the shared
+	// `upload_handler` subsystem; nil runs extraction ungated (tests).
+	// spec: §7.4 line 448 — F-7.4.1, F-13.4.1.
+	UploadGate *subsystem.Subsystem
+	// ExtractionAbort records one §7.4 line 462 archive-extraction abort,
+	// backing `lenny_upload_extraction_aborted_total{error_type}`. errorType
+	// is the §13.4 sub-code (max_decompressed_size, non_regular_entry,
+	// symlink, etc.). Called only on the gateway extraction path. Nil is a
+	// no-op. spec: §7.4 line 462; §16.1 — F-7.4.11.
+	ExtractionAbort func(errorType string)
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -554,7 +571,16 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase receiving_uploads on pod %s: %w", sandboxName, err)
 	}
-	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan); err != nil {
+	// spec: §7.4 line 458; §13.4 line 665 — symlink targets are
+	// canonicalized against the pod's actual workspace root so the
+	// gateway-side extraction matches the adapter's post-promotion
+	// re-validation location.
+	allow := upload.RuntimeAllow{
+		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.WorkspaceRoot, archive.DefaultWorkspaceRoot),
+	}
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
@@ -563,12 +589,16 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy, false)
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
+	// §7.4 line 459 strip-skip warnings now originate gateway-side (the
+	// archive is no longer decompressed in the pod); merge them ahead of
+	// any adapter-raised advisories for the §7.2 SSE republish.
+	finalizeWarnings = append(stageWarnings, finalizeWarnings...)
 	t.WorkspaceMaterialization = time.Since(phaseStart)
 
 	phaseStart = time.Now()
@@ -576,7 +606,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase running_setup on pod %s: %w", sandboxName, err)
 	}
-	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy)
+	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
@@ -785,86 +815,313 @@ func (b *Binder) releaseCredentials(sessionID string) {
 }
 
 // stageWorkspace prepares the pod's staging area for the plan's
-// non-filesystem-native sources, ahead of FinalizeWorkspace. It fetches
-// the blob content of every uploadFile and uploadArchive source from
-// the §4.5 blob store, clones every gitClone source on the gateway's
-// network path and archives the tree, and streams all of it to the pod
-// via PrepareWorkspace. It is a no-op when the plan has no such
-// sources. A plan that carries upload sources but binds through a
-// Binder with no blob store fails rather than materializing an
-// incomplete workspace.
-func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan) error {
+// non-filesystem-native sources, ahead of FinalizeWorkspace. It extracts
+// every uploadArchive source — and every gitClone source's repository
+// archive — inside the gateway (§7.4 line 448; §13.4 line 652 — the pod
+// never decompresses external archives), rewriting each into the
+// uploadFile / mkdir / symlink sources its already-validated entries
+// produce; it fetches the blob content of every (original) uploadFile
+// source from the §4.5 blob store; and it streams all of it to the pod
+// via PrepareWorkspace. It returns the rewritten plan (which carries no
+// uploadArchive or gitClone sources) and the §7.4 line 459
+// strip-components-skip warnings the gateway raised during extraction. A
+// plan that carries upload sources but binds through a Binder with no
+// blob store fails rather than materializing an incomplete workspace.
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	uploads := make(map[string][]byte)
 
-	if refs := uploadRefs(plan); len(refs) > 0 {
-		if b.Blobs == nil {
-			return fmt.Errorf("plan has %d upload source(s) but the binder has no blob store", len(refs))
-		}
+	// §7.4 line 448 / §13.4 line 652 — extract uploadArchive and gitClone
+	// sources in the gateway and rewrite them into pre-extracted
+	// file/dir/symlink sources whose bytes ride the same PrepareWorkspace
+	// stream.
+	rewritten, warnings, err := b.rewriteExtractedSources(ctx, plan, tenantID, uploads, allow)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if refs := uploadFileRefs(rewritten); len(refs) > 0 {
 		for _, ref := range refs {
+			// Synthetic refs for archive-extracted files already carry
+			// their content; only original client uploadFile refs resolve
+			// through the blob store.
+			if _, ok := uploads[ref]; ok {
+				continue
+			}
+			if b.Blobs == nil {
+				return nil, nil, fmt.Errorf("plan has upload source(s) but the binder has no blob store")
+			}
 			uri, err := blobstore.ParseURI(ref)
 			if err != nil {
-				return fmt.Errorf("parse upload ref %q: %w", ref, err)
+				return nil, nil, fmt.Errorf("parse upload ref %q: %w", ref, err)
 			}
 			_, rc, err := b.Blobs.Get(uri)
 			if err != nil {
-				return fmt.Errorf("fetch upload %q: %w", ref, err)
+				return nil, nil, fmt.Errorf("fetch upload %q: %w", ref, err)
 			}
 			content, err := io.ReadAll(rc)
 			_ = rc.Close()
 			if err != nil {
-				return fmt.Errorf("read upload %q: %w", ref, err)
+				return nil, nil, fmt.Errorf("read upload %q: %w", ref, err)
 			}
 			uploads[ref] = content
 		}
 	}
 
-	for _, src := range plan.GetSources() {
-		if src.GetType() != "gitClone" {
-			continue
+	if len(uploads) > 0 {
+		if _, err := cl.PrepareWorkspace(ctx, sessionID, uploads); err != nil {
+			return nil, nil, err
 		}
-		// §14 line 95: an authenticated clone resolves the §4.9 VCS
-		// credential-lease token on the gateway and injects it into the
-		// fetch, so the pod never sees the raw credential. A public clone
-		// (no auth block) proceeds with a zero credential.
-		var cred gitref.Credential
-		if mode := src.GetAuth().GetMode(); mode != "" {
-			if b.VCSCreds == nil {
-				return fmt.Errorf("gitClone of %q uses auth.mode=%q but no VCS credential resolver is wired",
-					src.GetUrl(), mode)
-			}
-			c, err := b.VCSCreds.Resolve(ctx, tenantID, src.GetUrl(), src.GetAuth().GetLeaseScope())
-			if err != nil {
-				return fmt.Errorf("resolve gitClone credential for %q: %w", src.GetUrl(), err)
-			}
-			cred = gitref.Credential{Username: c.Username, Token: c.Token}
-		}
-		archive, err := gitref.CloneArchive(ctx, src.GetUrl(), src.GetResolvedCommitSha(),
-			gitref.CloneOptions{Depth: int(src.GetDepth()), Submodules: src.GetSubmodules(), Credential: cred})
-		if err != nil {
-			return fmt.Errorf("clone %q: %w", src.GetUrl(), err)
-		}
-		uploads[workspace.GitCloneStagingRef(src)] = archive
 	}
-
-	if len(uploads) == 0 {
-		return nil
-	}
-	_, err := cl.PrepareWorkspace(ctx, sessionID, uploads)
-	return err
+	return rewritten, warnings, nil
 }
 
-// uploadRefs collects the distinct uploadRef values of the plan's
-// uploadFile and uploadArchive sources, in first-seen order.
-func uploadRefs(plan *adapterv1.WorkspacePlan) []string {
+// rewriteExtractedSources rewrites every §14 uploadArchive source and
+// every gitClone source into the uploadFile / mkdir / symlink sources its
+// extracted entries produce. uploadArchive blobs are fetched from the
+// §4.5 blob store; gitClone repositories are cloned on the gateway's
+// network path (so the pod never sees VCS credentials). Both are then
+// decompressed inside the gateway's §4.1 Upload Handler subsystem
+// (UploadGate), so the pod never sees the compressed bytes (§7.4 line
+// 448; §13.4 line 652). Extracted file content is accumulated under
+// synthetic refs in uploads so it rides the same PrepareWorkspace stream;
+// directory and symlink entries become source records the adapter
+// materializes without parsing untrusted input. A plan with no
+// uploadArchive or gitClone source is returned unchanged. spec: §7.4
+// lines 448-462; §13.4 — F-7.4.1, F-13.4.1.
+func (b *Binder) rewriteExtractedSources(ctx context.Context, plan *adapterv1.WorkspacePlan, tenantID string, uploads map[string][]byte, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
+	needsRewrite := false
+	for _, src := range plan.GetSources() {
+		if t := src.GetType(); t == "uploadArchive" || t == "gitClone" {
+			needsRewrite = true
+			break
+		}
+	}
+	if !needsRewrite {
+		return plan, nil, nil
+	}
+	if allow.WorkspaceRoot == "" {
+		allow.WorkspaceRoot = archive.DefaultWorkspaceRoot
+	}
+
+	newSources := make([]*adapterv1.WorkspaceSource, 0, len(plan.GetSources()))
+	var warnings []*adapterv1.WorkspacePlanWarning
+	for i, src := range plan.GetSources() {
+		var res *archive.Result
+		var err error
+		switch src.GetType() {
+		case "uploadArchive":
+			res, err = b.extractOneArchive(ctx, src, i, allow)
+		case "gitClone":
+			res, err = b.extractGitCloneSource(ctx, src, tenantID, i, allow.WorkspaceRoot)
+		default:
+			newSources = append(newSources, src)
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		var expanded []*adapterv1.WorkspaceSource
+		expanded, warnings = appendExtracted(newSources, uploads, res, i, warnings)
+		newSources = expanded
+	}
+	return &adapterv1.WorkspacePlan{
+		SchemaVersion: plan.GetSchemaVersion(),
+		Sources:       newSources,
+		SetupCommands: plan.GetSetupCommands(),
+	}, warnings, nil
+}
+
+// appendExtracted expands one extraction Result onto the source list. It
+// lays directories first (so directory modes survive any implicit parent
+// creation by a later file write), then files (whose content is staged
+// under a synthetic ref), then symlinks (whose targets the gateway
+// already validated). Returns the grown source slice and the accumulated
+// warnings. spec: §7.4 — F-7.4.1.
+func appendExtracted(sources []*adapterv1.WorkspaceSource, uploads map[string][]byte, res *archive.Result, sourceIndex int, warnings []*adapterv1.WorkspacePlanWarning) ([]*adapterv1.WorkspaceSource, []*adapterv1.WorkspacePlanWarning) {
+	for _, d := range res.Dirs {
+		sources = append(sources, &adapterv1.WorkspaceSource{Type: "mkdir", Path: d.Path, Mode: modeOctal(d.Mode)})
+	}
+	for n, f := range res.Files {
+		ref := syntheticArchiveRef(sourceIndex, n)
+		uploads[ref] = f.Content
+		sources = append(sources, &adapterv1.WorkspaceSource{Type: "uploadFile", Path: f.Path, UploadRef: ref, Mode: modeOctal(f.Mode)})
+	}
+	for _, sl := range res.Symlinks {
+		sources = append(sources, &adapterv1.WorkspaceSource{Type: "symlink", Path: sl.Path, LinkTarget: sl.Target})
+	}
+	return sources, append(warnings, archiveWarningsToProto(res.Warnings)...)
+}
+
+// extractOneArchive fetches an uploadArchive source's blob and decodes it
+// inside the §4.1 Upload Handler subsystem gate, recording a §16.1
+// extraction-abort metric for any §13.4 violation. F-7.4.1, F-7.4.11.
+func (b *Binder) extractOneArchive(ctx context.Context, src *adapterv1.WorkspaceSource, sourceIndex int, allow upload.RuntimeAllow) (*archive.Result, error) {
+	if b.Blobs == nil {
+		return nil, fmt.Errorf("plan has an uploadArchive source but the binder has no blob store")
+	}
+	uri, err := blobstore.ParseURI(src.GetUploadRef())
+	if err != nil {
+		return nil, fmt.Errorf("parse uploadArchive ref %q: %w", src.GetUploadRef(), err)
+	}
+	_, rc, err := b.Blobs.Get(uri)
+	if err != nil {
+		return nil, fmt.Errorf("fetch uploadArchive %q: %w", src.GetUploadRef(), err)
+	}
+	data, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read uploadArchive %q: %w", src.GetUploadRef(), err)
+	}
+	res, err := b.gatedExtract(ctx, func() (*archive.Result, error) {
+		return archive.Extract(data, src.GetFormat(), int(src.GetStripComponents()), sourceIndex, src.GetPath(), allow)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("extract uploadArchive %q: %w", src.GetUploadRef(), err)
+	}
+	return res, nil
+}
+
+// extractGitCloneSource clones a §14 gitClone repository on the gateway's
+// network path (so the runtime never sees VCS credentials) and decodes
+// the resulting gzip-tar inside the §4.1 Upload Handler subsystem gate,
+// exactly as an uploadArchive. Git histories commonly carry symlinks, so
+// gitClone opts in to symlinks unconditionally; every target is still
+// resolved through pkg/upload.ValidateSymlinkTarget against the workspace
+// root. spec: §7.4 line 448; §13.4 line 652; §14 line 95 — F-7.4.1.
+func (b *Binder) extractGitCloneSource(ctx context.Context, src *adapterv1.WorkspaceSource, tenantID string, sourceIndex int, workspaceRoot string) (*archive.Result, error) {
+	// §14 line 95: an authenticated clone resolves the §4.9 VCS
+	// credential-lease token on the gateway and injects it into the fetch.
+	// A public clone (no auth block) proceeds with a zero credential.
+	var cred gitref.Credential
+	if mode := src.GetAuth().GetMode(); mode != "" {
+		if b.VCSCreds == nil {
+			return nil, fmt.Errorf("gitClone of %q uses auth.mode=%q but no VCS credential resolver is wired", src.GetUrl(), mode)
+		}
+		c, err := b.VCSCreds.Resolve(ctx, tenantID, src.GetUrl(), src.GetAuth().GetLeaseScope())
+		if err != nil {
+			return nil, fmt.Errorf("resolve gitClone credential for %q: %w", src.GetUrl(), err)
+		}
+		cred = gitref.Credential{Username: c.Username, Token: c.Token}
+	}
+	repoArchive, err := gitref.CloneArchive(ctx, src.GetUrl(), src.GetResolvedCommitSha(),
+		gitref.CloneOptions{Depth: int(src.GetDepth()), Submodules: src.GetSubmodules(), Credential: cred})
+	if err != nil {
+		return nil, fmt.Errorf("clone %q: %w", src.GetUrl(), err)
+	}
+	allow := upload.RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: workspaceRoot}
+	res, err := b.gatedExtract(ctx, func() (*archive.Result, error) {
+		return archive.Extract(repoArchive, "tar.gz", 0, sourceIndex, src.GetPath(), allow)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("extract gitClone %q: %w", src.GetUrl(), err)
+	}
+	return res, nil
+}
+
+// gatedExtract runs one archive decode inside the §4.1 Upload Handler
+// subsystem (UploadGate) so a hostile archive's decompression shares the
+// upload path's goroutine pool, concurrency limiter, and circuit breaker
+// and cannot starve session attachment or delegation. It records the
+// §16.1 extraction-abort metric on any failure. A nil gate runs the
+// decode directly (tests). spec: §7.4 line 448; §16.1 — F-7.4.1, F-7.4.11.
+func (b *Binder) gatedExtract(ctx context.Context, fn func() (*archive.Result, error)) (*archive.Result, error) {
+	var res *archive.Result
+	do := func(context.Context) error {
+		r, err := fn()
+		if err != nil {
+			return err
+		}
+		res = r
+		return nil
+	}
+	var err error
+	if b.UploadGate != nil {
+		err = b.UploadGate.Do(ctx, do)
+	} else {
+		err = do(ctx)
+	}
+	if err != nil {
+		b.recordExtractionAbort(err)
+		return nil, err
+	}
+	return res, nil
+}
+
+// recordExtractionAbort increments lenny_upload_extraction_aborted_total
+// for a §13.4 extraction failure, labeling by the typed sub-code when the
+// error is a *upload.ValidationError and "format_error" otherwise. spec:
+// §7.4 line 462; §16.1 — F-7.4.11.
+func (b *Binder) recordExtractionAbort(err error) {
+	if b.ExtractionAbort == nil {
+		return
+	}
+	errorType := string(upload.ReasonFormatError)
+	var vErr *upload.ValidationError
+	if errors.As(err, &vErr) {
+		errorType = string(vErr.Reason)
+	}
+	b.ExtractionAbort(errorType)
+}
+
+// syntheticArchiveRef is the PrepareWorkspace upload ref for one archive-
+// extracted file. It is a plain token with no path separators (the
+// adapter hashes it into the staging directory), unique across the plan,
+// and namespaced so it never collides with a client-supplied blob ref.
+func syntheticArchiveRef(sourceIndex, fileIndex int) string {
+	return fmt.Sprintf("__archx_%d_%d", sourceIndex, fileIndex)
+}
+
+// modeOctal renders a file mode's permission bits as the octal string the
+// adapter's mkdir / uploadFile materializer parses.
+func modeOctal(mode os.FileMode) string {
+	return "0" + strconv.FormatUint(uint64(mode.Perm()), 8)
+}
+
+// firstNonEmpty returns the first non-empty string in vs, or "".
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// archiveWarningsToProto transcribes the gateway extractor's strip-skip
+// warnings onto the proto warning surface the binder republishes on the
+// session SSE stream. F-7.4.15.
+func archiveWarningsToProto(ws []archive.Warning) []*adapterv1.WorkspacePlanWarning {
+	if len(ws) == 0 {
+		return nil
+	}
+	out := make([]*adapterv1.WorkspacePlanWarning, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, &adapterv1.WorkspacePlanWarning{
+			Code:            w.Code,
+			SourceIndex:     int32(w.SourceIndex),
+			EntryPath:       w.EntryPath,
+			SegmentCount:    int32(w.SegmentCount),
+			StripComponents: int32(w.StripComponents),
+			Message:         w.Message,
+		})
+	}
+	return out
+}
+
+// uploadFileRefs collects the distinct uploadRef values of the plan's
+// uploadFile sources, in first-seen order. After archive rewriting the
+// plan carries no uploadArchive sources, so only uploadFile refs need
+// staging (originals through the blob store, synthetics in memory).
+func uploadFileRefs(plan *adapterv1.WorkspacePlan) []string {
 	seen := make(map[string]bool)
 	var refs []string
 	for _, src := range plan.GetSources() {
-		switch src.GetType() {
-		case "uploadFile", "uploadArchive":
-			if ref := src.GetUploadRef(); ref != "" && !seen[ref] {
-				seen[ref] = true
-				refs = append(refs, ref)
-			}
+		if src.GetType() != "uploadFile" {
+			continue
+		}
+		if ref := src.GetUploadRef(); ref != "" && !seen[ref] {
+			seen[ref] = true
+			refs = append(refs, ref)
 		}
 	}
 	return refs

@@ -1289,7 +1289,7 @@ func (x *WorkspacePlan) GetSetupCommands() []*SetupCommand {
 
 type WorkspaceSource struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	Type              string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // inlineFile|uploadFile|uploadArchive|mkdir|gitClone
+	Type              string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // inlineFile|uploadFile|uploadArchive|mkdir|gitClone|symlink
 	Path              string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	Content           string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`                                                 // inlineFile only
 	UploadRef         string                 `protobuf:"bytes,4,opt,name=upload_ref,json=uploadRef,proto3" json:"upload_ref,omitempty"`                            // uploadFile, uploadArchive
@@ -1302,8 +1302,17 @@ type WorkspaceSource struct {
 	Submodules        bool                   `protobuf:"varint,11,opt,name=submodules,proto3" json:"submodules,omitempty"`                                         // gitClone only
 	Auth              *GitAuth               `protobuf:"bytes,12,opt,name=auth,proto3" json:"auth,omitempty"`                                                      // gitClone only
 	ResolvedCommitSha string                 `protobuf:"bytes,13,opt,name=resolved_commit_sha,json=resolvedCommitSha,proto3" json:"resolved_commit_sha,omitempty"` // gateway-written, readonly
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// link_target is the symlink target for a gateway-produced `symlink`
+	// source. The gateway extracts §14 uploadArchive sources in its own
+	// §4.1 Upload Handler subsystem (§7.4 line 448; §13.4 line 652 — the
+	// pod never decompresses), validates each symlink target with
+	// pkg/upload.ValidateSymlinkTarget against the workspace root, and
+	// rewrites a symlink-bearing archive entry into a `symlink` source so
+	// the adapter recreates the link without canonicalizing untrusted
+	// input. symlink only. F-7.4.1, F-13.4.1.
+	LinkTarget    string `protobuf:"bytes,14,opt,name=link_target,json=linkTarget,proto3" json:"link_target,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WorkspaceSource) Reset() {
@@ -1423,6 +1432,13 @@ func (x *WorkspaceSource) GetAuth() *GitAuth {
 func (x *WorkspaceSource) GetResolvedCommitSha() string {
 	if x != nil {
 		return x.ResolvedCommitSha
+	}
+	return ""
+}
+
+func (x *WorkspaceSource) GetLinkTarget() string {
+	if x != nil {
+		return x.LinkTarget
 	}
 	return ""
 }
@@ -5294,7 +5310,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\rWorkspacePlan\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12;\n" +
 	"\asources\x18\x02 \x03(\v2!.lenny.adapter.v1.WorkspaceSourceR\asources\x12E\n" +
-	"\x0esetup_commands\x18\x03 \x03(\v2\x1e.lenny.adapter.v1.SetupCommandR\rsetupCommands\"\x89\x03\n" +
+	"\x0esetup_commands\x18\x03 \x03(\v2\x1e.lenny.adapter.v1.SetupCommandR\rsetupCommands\"\xaa\x03\n" +
 	"\x0fWorkspaceSource\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
@@ -5312,7 +5328,9 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"submodules\x18\v \x01(\bR\n" +
 	"submodules\x12-\n" +
 	"\x04auth\x18\f \x01(\v2\x19.lenny.adapter.v1.GitAuthR\x04auth\x12.\n" +
-	"\x13resolved_commit_sha\x18\r \x01(\tR\x11resolvedCommitSha\">\n" +
+	"\x13resolved_commit_sha\x18\r \x01(\tR\x11resolvedCommitSha\x12\x1f\n" +
+	"\vlink_target\x18\x0e \x01(\tR\n" +
+	"linkTarget\">\n" +
 	"\aGitAuth\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x1f\n" +
 	"\vlease_scope\x18\x02 \x01(\tR\n" +

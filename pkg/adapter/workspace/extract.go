@@ -20,8 +20,9 @@ const maxExtractBytes = 2 << 30
 // into the workspace directory at root. It is the inverse of Archive:
 // the §4.7 adapter calls it to restore a session workspace from a §4.4
 // checkpoint or a §7.1 snapshot. The §14 uploadArchive source type is
-// materialized separately by extractUploadArchive, which also handles
-// the plain-tar and zip formats and stripComponents.
+// extracted in the gateway (§7.4 line 448), not here; this Extract
+// restores gateway-produced checkpoint/snapshot archives, which are
+// trusted gateway output rather than untrusted client uploads.
 //
 // Every entry is contained within root: an entry whose path escapes
 // root via `..` or an absolute path fails the extract fail-closed. A

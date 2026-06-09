@@ -477,7 +477,7 @@ message WorkspacePlan {
 }
 
 message WorkspaceSource {
-  string type = 1;             // inlineFile|uploadFile|uploadArchive|mkdir|gitClone
+  string type = 1;             // inlineFile|uploadFile|uploadArchive|mkdir|gitClone|symlink
   string path = 2;
   string content = 3;          // inlineFile only
   string upload_ref = 4;       // uploadFile, uploadArchive
@@ -490,6 +490,15 @@ message WorkspaceSource {
   bool submodules = 11;        // gitClone only
   GitAuth auth = 12;           // gitClone only
   string resolved_commit_sha = 13; // gateway-written, readonly
+  // link_target is the symlink target for a gateway-produced `symlink`
+  // source. The gateway extracts §14 uploadArchive sources in its own
+  // §4.1 Upload Handler subsystem (§7.4 line 448; §13.4 line 652 — the
+  // pod never decompresses), validates each symlink target with
+  // pkg/upload.ValidateSymlinkTarget against the workspace root, and
+  // rewrites a symlink-bearing archive entry into a `symlink` source so
+  // the adapter recreates the link without canonicalizing untrusted
+  // input. symlink only. F-7.4.1, F-13.4.1.
+  string link_target = 14;
 }
 
 message GitAuth {

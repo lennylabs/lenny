@@ -3,7 +3,6 @@
 package adapter
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"log"
@@ -108,47 +107,23 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 
 // TestFinalizeWorkspacePlumsArchivePolicy covers F-7.4.4: the
 // FinalizeWorkspaceRequest.archive_policy.allow_symlinks toggle lifts
-// the §7.4 line 458 default-deny on uploadArchive symlink entries. With
-// the gateway-supplied policy set to AllowSymlinks=true and a target
-// inside the workspace, extraction succeeds; without it, the same
-// archive aborts. spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+// the §7.4 line 458 default-deny on symlink sources. The gateway extracts
+// uploadArchive sources and rewrites their symlink entries into `symlink`
+// sources (§7.4 line 448 — the pod never decompresses); the adapter
+// honors the same per-Runtime policy when it materializes them. With the
+// gateway-supplied policy set to AllowSymlinks=true and a target inside
+// the workspace the link is created; without it the same source is
+// rejected. spec: §7.4 lines 448, 458, 462; §13.4 — F-7.4.4, F-7.4.1.
 func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	srv := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
 
-	// Build a one-entry tar archive with a symlink whose target is a
-	// regular file at the workspace root.
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	for _, hdr := range []*tar.Header{
-		{Name: "target.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 2},
-		{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "target.txt", Mode: 0o644},
-	} {
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatalf("write tar header: %v", err)
-		}
-		if hdr.Typeflag == tar.TypeReg {
-			if _, err := tw.Write([]byte("hi")); err != nil {
-				t.Fatalf("write tar body: %v", err)
-			}
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
-	}
-	stagedPath, err := workspace.StagingPath(srv.StagingDir, "arch")
-	if err != nil {
-		t.Fatalf("StagingPath: %v", err)
-	}
-	if err := os.WriteFile(stagedPath, buf.Bytes(), 0o600); err != nil {
-		t.Fatalf("write staging file: %v", err)
-	}
-
-	src := &adapterv1.WorkspaceSource{
-		Type: "uploadArchive", Format: "tar", UploadRef: "arch",
+	sources := []*adapterv1.WorkspaceSource{
+		wsSource("inlineFile", "target.txt", "hi", "644"),
+		{Type: "symlink", Path: "link", LinkTarget: "target.txt"},
 	}
 	reqWithSymlinkOptIn := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
-		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: []*adapterv1.WorkspaceSource{src}},
+		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: srv.WorkspaceRoot},
 	}
 	if _, err := srv.FinalizeWorkspace(context.Background(), reqWithSymlinkOptIn); err != nil {
@@ -158,20 +133,16 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 		t.Fatalf("expected symlink to be created; Lstat = %v %v", info, err)
 	}
 
-	// Default policy (nil) must reject the same archive with
+	// Default policy (nil) must reject the same symlink source with
 	// InvalidArgument (the gRPC mapping of workspace.Materialize errors).
 	srv2 := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
-	staged2, _ := workspace.StagingPath(srv2.StagingDir, "arch")
-	if err := os.WriteFile(staged2, buf.Bytes(), 0o600); err != nil {
-		t.Fatalf("seed staging file: %v", err)
-	}
 	reqDefault := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
-		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: []*adapterv1.WorkspaceSource{src}},
+		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 	}
-	_, err = srv2.FinalizeWorkspace(context.Background(), reqDefault)
+	_, err := srv2.FinalizeWorkspace(context.Background(), reqDefault)
 	if status.Code(err) != codes.InvalidArgument {
-		t.Errorf("FinalizeWorkspace with default policy and a symlink entry = %v, want InvalidArgument", err)
+		t.Errorf("FinalizeWorkspace with default policy and a symlink source = %v, want InvalidArgument", err)
 	}
 }
 

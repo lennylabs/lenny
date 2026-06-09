@@ -17,6 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	"github.com/lennylabs/lenny/pkg/upload"
+	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
 
 // SlotBindRequest describes a session to place on a concurrent-mode
@@ -112,22 +114,30 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	var setupOutputs []*adapterv1.SetupCommandOutput
 	if req.Style == podclaim.StyleWorkspace {
 		// Workspace-concurrent: the slot has its own per-slot workspace
-		// (§6.4). Run the full §4.7 workspace-and-start sequence.
-		if err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan); err != nil {
+		// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
+		// extraction runs gateway-side (§7.4 line 448) exactly as in
+		// session-mode Bind; the adapter re-validates symlinks against the
+		// slot's actual /workspace/slots/{slotId}/current after promotion.
+		allow := upload.RuntimeAllow{
+			AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
+			WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
+		}
+		stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 				fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 		}
-		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy, false)
+		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 				fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 		}
-		finalizeWarnings = warnings
-		outs, err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy)
+		finalizeWarnings = append(stageWarnings, warnings...)
+		outs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)

@@ -3532,6 +3532,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
+	// §7.4 line 448 / §13.4 line 652 — archive extraction runs inside the
+	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
+	// same subsystem gate that bounds the upload HTTP path so a hostile
+	// archive's decompression cannot starve session attachment, and feed
+	// the §16.1 lenny_upload_extraction_aborted_total counter from the
+	// binder's extraction abort path. F-7.4.1, F-13.4.1, F-7.4.11.
+	if podBinder != nil {
+		podBinder.UploadGate = uploadSubsystem
+		podBinder.ExtractionAbort = uploadMetrics.AddExtractionAbort
+	}
 
 	// §8.5 lenny/request_input pending-call registry. Shared across the
 	// sessionserver REST surface and the MCP tools so a REST

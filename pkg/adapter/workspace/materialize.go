@@ -131,10 +131,13 @@ const (
 
 // MaterializeWithPolicy writes the workspace sources into the workspace
 // root in order, using the §7.4 staging→validation→promotion pattern.
-// It handles every §14 source type: inlineFile and mkdir write directly;
-// uploadFile and uploadArchive extract content staged under stagingDir
-// by PrepareWorkspace; gitClone extracts the repository archive the
-// gateway cloned and staged under stagingDir.
+// It handles the §14 source types the adapter materializes: inlineFile
+// and mkdir write directly; uploadFile copies content staged under
+// stagingDir by PrepareWorkspace; symlink recreates a gateway-validated
+// link; gitClone extracts the repository archive the gateway cloned and
+// staged under stagingDir. uploadArchive sources are extracted by the
+// gateway (§7.4 line 448) before they reach the adapter and are rejected
+// here if one is encountered.
 //
 // Per §7.4 line 433 the resolved tree is built in a sibling
 // /workspace/staging directory and atomically promoted onto root only
@@ -475,11 +478,32 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 			return nil, nil, err
 		}
 		return writtenPaths(root, src.GetPath()), nil, nil
-	case "uploadArchive":
-		return extractUploadArchive(root, stagingDir, sourceIndex, src, archive)
-	case "gitClone":
-		written, err := extractGitClone(root, stagingDir, src)
+	case "symlink":
+		// spec: §7.4 line 458; §13.4 line 665 — a `symlink` source is the
+		// gateway's rewrite of a symlink entry from an extracted archive.
+		// The gateway already validated the target against the workspace
+		// root; the adapter recreates the link and the post-promotion
+		// re-validation pass (revalidatePromotedSymlinks) re-checks the
+		// target against /workspace/current. F-7.4.1.
+		written, err := writeSymlink(root, src, archive)
 		return written, nil, err
+	case "uploadArchive":
+		// spec: §7.4 line 448; §13.4 line 652 — "pod binaries neither
+		// decompress archives nor canonicalize paths on untrusted input."
+		// The gateway extracts every uploadArchive source in its §4.1
+		// Upload Handler subsystem and hands the adapter only pre-extracted
+		// uploadFile/mkdir/symlink sources. A uploadArchive source reaching
+		// the adapter is a trust-boundary violation; fail closed rather than
+		// decompress in the pod. F-7.4.1, F-13.4.1.
+		return nil, nil, errors.New("uploadArchive sources are extracted by the gateway; the adapter must not decompress archives")
+	case "gitClone":
+		// spec: §7.4 line 448; §14 line 95 — the gateway clones the
+		// repository on its own network path (so the pod never sees VCS
+		// credentials) and extracts the tree in its §4.1 Upload Handler
+		// subsystem, handing the adapter pre-extracted
+		// uploadFile/mkdir/symlink sources. A gitClone source reaching the
+		// adapter is a trust-boundary violation; fail closed. F-7.4.1.
+		return nil, nil, errors.New("gitClone sources are extracted by the gateway; the adapter must not clone or decompress")
 	default:
 		// spec: §14 line 334 — a consumer that encounters an unknown
 		// source.type MUST skip the entry and emit a
@@ -614,6 +638,35 @@ func writeUploadFile(root, stagingDir string, src *adapterv1.WorkspaceSource) er
 		return fmt.Errorf("set file mode: %w", err)
 	}
 	return nil
+}
+
+// writeSymlink creates a symlink the gateway produced from an extracted
+// archive entry. The link's own path is contained within root (zip-slip
+// on the link location); its allowSymlinks precondition mirrors the
+// gateway's, so a symlink source arriving under a runtime that did not
+// opt in fails closed. The link target itself is re-validated against the
+// workspace root by revalidatePromotedSymlinks after the atomic
+// staging→current promotion, which is the §7.4 post-promotion symlink
+// re-validation pass. spec: §7.4 line 458; §13.4 line 665 — F-7.4.1.
+func writeSymlink(root string, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]string, error) {
+	if !archive.AllowSymlinks {
+		return nil, errors.New("symlink source requires the runtime's allowSymlinks policy")
+	}
+	target := src.GetLinkTarget()
+	if target == "" {
+		return nil, errors.New("symlink source has an empty target")
+	}
+	dst, err := resolvePath(root, src.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, fmt.Errorf("create parent directories: %w", err)
+	}
+	if err := os.Symlink(target, dst); err != nil {
+		return nil, fmt.Errorf("create symlink: %w", err)
+	}
+	return writtenPaths(root, src.GetPath()), nil
 }
 
 // StagingPath maps an upload ref to a deterministic, contained path
