@@ -231,6 +231,67 @@ func TestSyncNoDemotionRateHighWithoutHourSample_spec_6_1(t *testing.T) {
 	}
 }
 
+// floatPtr is a small helper for the *float64 demotion-rate threshold.
+func floatPtr(v float64) *float64 { return &v }
+
+// TestSyncDemotionRateHighHonorsHigherThreshold covers the §6.1 line 48
+// deployer-configurable demotionRateThreshold: a rate that would fire at
+// the 60% default is suppressed when the pool raises the threshold above
+// the observed rate.
+func TestSyncDemotionRateHighHonorsHigherThreshold_spec_6_1_48(t *testing.T) {
+	s := newScheme(t)
+	c := breakerClient(s)
+	rec := record.NewFakeRecorder(8)
+	cfg := config()
+	cfg.DemotionRateThreshold = floatPtr(0.80) // above the 75% observed rate
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client:   c,
+		Source:   src,
+		Events:   rec,
+		Demotion: &fakeDemotion{signal: poolscaling.DemotionSignal{HourRate: 0.75, HourHasSample: true}},
+		Now:      frozenClock(time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)),
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	select {
+	case ev := <-rec.Events:
+		t.Errorf("no event expected when rate 75%% is below the 80%% threshold, got %q", ev)
+	default:
+	}
+}
+
+// TestSyncDemotionRateHighHonorsLowerThreshold covers the inverse: a rate
+// below the 60% default still fires when the pool lowers the
+// demotionRateThreshold under the observed rate.
+func TestSyncDemotionRateHighHonorsLowerThreshold_spec_6_1_48(t *testing.T) {
+	s := newScheme(t)
+	c := breakerClient(s)
+	rec := record.NewFakeRecorder(8)
+	cfg := config()
+	cfg.DemotionRateThreshold = floatPtr(0.50) // below the 55% observed rate
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client:   c,
+		Source:   src,
+		Events:   rec,
+		Demotion: &fakeDemotion{signal: poolscaling.DemotionSignal{HourRate: 0.55, HourHasSample: true}},
+		Now:      frozenClock(time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)),
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	select {
+	case ev := <-rec.Events:
+		if !contains(ev, "SDKWarmDemotionRateHigh") || !contains(ev, "50%") {
+			t.Errorf("event = %q, want SDKWarmDemotionRateHigh naming the 50%% threshold", ev)
+		}
+	default:
+		t.Fatal("expected an SDKWarmDemotionRateHigh event at the lowered threshold")
+	}
+}
+
 // fakeQuerier is a static PromQLQuerier returning a value per query
 // substring match, for the PrometheusDemotionSource tests.
 type fakeQuerier struct {

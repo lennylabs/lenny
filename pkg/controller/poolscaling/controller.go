@@ -102,6 +102,13 @@ type PoolConfig struct {
 	// acknowledgment that suppresses this pool's SDKWarmDemotionRateHigh
 	// warning event. It does not affect the 90% circuit-breaker trip.
 	AcknowledgeHighDemotionRate bool
+	// DemotionRateThreshold is the §6.1 line 48 deployer-configurable
+	// `sdkWarm.demotionRateThreshold`: the rolling 1-hour SDK-warm
+	// demotion-rate fraction above which the SDKWarmDemotionRateHigh
+	// warning event fires. A nil value (or a non-positive value) inherits
+	// the platform default (demotionRateHighThresholdDefault, 60%). It does
+	// not affect the hardcoded 90% circuit-breaker trip.
+	DemotionRateThreshold *float64
 	// PoolType selects which §4.6.2 formula sizes the pool: a standard
 	// (non-experiment) pool or an A/B experiment variant pool (§10.7).
 	// An empty value is treated as strategy.PoolStandard. A
@@ -728,23 +735,38 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 
 // emitDemotionRateHigh records the §6.1 line 48 SDKWarmDemotionRateHigh
 // warning event on the pool when the rolling 1-hour demotion rate exceeds
-// demotionRateThreshold (60%). The pool's acknowledgeHighDemotionRate flag
-// suppresses it. The event is skipped when no recorder is wired, when no
-// 1-hour sample is available yet, or when the rate is below the threshold.
-// The controller-runtime EventRecorder aggregates repeated emissions into
-// a single Event object with a running count, so emitting on each reconcile
-// while the rate stays high does not spam the API server.
+// the pool's demotionRateThreshold (the deployer-configurable
+// `sdkWarm.demotionRateThreshold`, defaulting to 60%). The pool's
+// acknowledgeHighDemotionRate flag suppresses it. The event is skipped
+// when no recorder is wired, when no 1-hour sample is available yet, or
+// when the rate is below the threshold. The controller-runtime
+// EventRecorder aggregates repeated emissions into a single Event object
+// with a running count, so emitting on each reconcile while the rate
+// stays high does not spam the API server.
 func (r *Reconciler) emitDemotionRateHigh(pool *lennyv1.SandboxWarmPool, cfg PoolConfig, sig DemotionSignal, haveSig bool) {
 	if r.Events == nil || !haveSig || !sig.HourHasSample {
 		return
 	}
-	if sig.HourRate <= demotionRateHighThresholdDefault || cfg.AcknowledgeHighDemotionRate {
+	threshold := demotionRateThresholdFor(cfg)
+	if sig.HourRate <= threshold || cfg.AcknowledgeHighDemotionRate {
 		return
 	}
 	r.Events.Eventf(pool, corev1.EventTypeWarning, "SDKWarmDemotionRateHigh",
 		"SDK-warm demotion rate %.0f%% over the last hour exceeds the %.0f%% demotionRateThreshold for pool %q; "+
 			"narrow sdkWarmBlockingPaths, set capabilities.preConnect=false, or set sdkWarm.acknowledgeHighDemotionRate to suppress",
-		sig.HourRate*100, demotionRateHighThresholdDefault*100, cfg.Name)
+		sig.HourRate*100, threshold*100, cfg.Name)
+}
+
+// demotionRateThresholdFor resolves the §6.1 line 48 demotionRateThreshold
+// the warning-event gate uses for a pool: the deployer-configured
+// `sdkWarm.demotionRateThreshold` when it is set to a positive fraction,
+// otherwise the platform default (demotionRateHighThresholdDefault, 60%).
+// spec: §6.1 line 48.
+func demotionRateThresholdFor(cfg PoolConfig) float64 {
+	if cfg.DemotionRateThreshold != nil && *cfg.DemotionRateThreshold > 0 {
+		return *cfg.DemotionRateThreshold
+	}
+	return demotionRateHighThresholdDefault
 }
 
 // drainAndDeleteWarmPool implements the §10.7 line 1104 conclude

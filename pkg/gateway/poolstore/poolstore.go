@@ -201,6 +201,14 @@ type Pool struct {
 	// 1-hour demotion rate exceeds demotionRateThreshold (60%). It does not
 	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1 line 48.
 	AcknowledgeHighDemotionRate bool
+
+	// DemotionRateThreshold is the §6.1 line 48 `sdkWarm.demotionRateThreshold`:
+	// the rolling 1-hour SDK-warm demotion-rate fraction above which the
+	// PoolScalingController emits the SDKWarmDemotionRateHigh warning event.
+	// A nil value inherits the platform default (0.60); a set value must be
+	// in the open-closed interval (0, 1]. It does not affect the hardcoded
+	// 90% circuit-breaker trip. spec: §6.1 line 48.
+	DemotionRateThreshold *float64
 }
 
 // SDKWarmCircuitBreakerOverride is the §6.1 line 63 closed enum of
@@ -545,11 +553,18 @@ func ValidateElicitationPolicy(p Pool) error {
 
 // ValidateSDKWarmConfig rejects a pool whose §6.1 SDK-warm
 // circuit-breaker override is outside the closed §15.1 line 801
-// vocabulary. The unset value passes (it is the stored default).
-// spec: §6.1 lines 63-65, §15.1 line 801.
+// vocabulary, or whose `sdkWarm.demotionRateThreshold` is outside the
+// open-closed interval (0, 1]. The unset values pass (they are the stored
+// defaults). spec: §6.1 lines 48, 63-65, §15.1 line 801.
 func ValidateSDKWarmConfig(p Pool) error {
 	if !p.SDKWarmCircuitBreakerOverride.IsValid() {
 		return errors.New("poolstore: sdkWarm.circuitBreakerOverride is not a recognised §15.1 value (enabled, disabled, auto)")
+	}
+	if p.DemotionRateThreshold != nil {
+		t := *p.DemotionRateThreshold
+		if t <= 0 || t > 1 {
+			return errors.New("poolstore: sdkWarm.demotionRateThreshold must be in the interval (0, 1]")
+		}
 	}
 	return nil
 }

@@ -71,4 +71,38 @@ func TestEncodeDecodeSDKWarmConfig_spec_6_1(t *testing.T) {
 			t.Errorf("round-trip = %+v, want unset override + acknowledged", out)
 		}
 	})
+
+	// spec: §6.1 line 48 — the deployer-configurable demotionRateThreshold
+	// round-trips and a threshold alone encodes non-NULL.
+	t.Run("demotionRateThreshold round-trips", func(t *testing.T) {
+		threshold := 0.75
+		raw, err := encodeSDKWarmConfig(poolstore.Pool{Name: "p", DemotionRateThreshold: &threshold})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		if raw == nil {
+			t.Fatal("demotionRateThreshold alone should encode non-NULL")
+		}
+		var out poolstore.Pool
+		if err := decodeSDKWarmConfig(raw, &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.DemotionRateThreshold == nil || *out.DemotionRateThreshold != 0.75 {
+			t.Errorf("demotionRateThreshold = %v, want 0.75", out.DemotionRateThreshold)
+		}
+	})
+
+	t.Run("absent demotionRateThreshold decodes nil", func(t *testing.T) {
+		raw, err := encodeSDKWarmConfig(poolstore.Pool{Name: "p", AcknowledgeHighDemotionRate: true})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		var out poolstore.Pool
+		if err := decodeSDKWarmConfig(raw, &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.DemotionRateThreshold != nil {
+			t.Errorf("demotionRateThreshold = %v, want nil (inherit default)", *out.DemotionRateThreshold)
+		}
+	})
 }

@@ -87,8 +87,9 @@ func validatePool(p poolstore.Pool) error {
 // spec yaml so a database operator inspecting the row sees the field
 // names the deployer wrote.
 type sdkWarmConfigJSON struct {
-	CircuitBreakerOverride      string `json:"circuitBreakerOverride,omitempty"`
-	AcknowledgeHighDemotionRate bool   `json:"acknowledgeHighDemotionRate,omitempty"`
+	CircuitBreakerOverride      string   `json:"circuitBreakerOverride,omitempty"`
+	AcknowledgeHighDemotionRate bool     `json:"acknowledgeHighDemotionRate,omitempty"`
+	DemotionRateThreshold       *float64 `json:"demotionRateThreshold,omitempty"`
 }
 
 // encodeSDKWarmConfig returns the JSONB blob to persist or a nil byte
@@ -96,18 +97,20 @@ type sdkWarmConfigJSON struct {
 // override. spec: §6.1 lines 48, 63-65.
 func encodeSDKWarmConfig(p poolstore.Pool) ([]byte, error) {
 	if p.SDKWarmCircuitBreakerOverride == poolstore.SDKWarmOverrideUnset &&
-		!p.AcknowledgeHighDemotionRate {
+		!p.AcknowledgeHighDemotionRate &&
+		p.DemotionRateThreshold == nil {
 		return nil, nil
 	}
 	return json.Marshal(sdkWarmConfigJSON{
 		CircuitBreakerOverride:      string(p.SDKWarmCircuitBreakerOverride),
 		AcknowledgeHighDemotionRate: p.AcknowledgeHighDemotionRate,
+		DemotionRateThreshold:       p.DemotionRateThreshold,
 	})
 }
 
 // decodeSDKWarmConfig is the inverse of encodeSDKWarmConfig: a NULL row
 // leaves the §6.1 fields at their zero value (automatic breaker control,
-// unacknowledged demotion rate).
+// unacknowledged demotion rate, default demotion-rate threshold).
 func decodeSDKWarmConfig(raw []byte, p *poolstore.Pool) error {
 	if len(raw) == 0 {
 		return nil
@@ -118,6 +121,7 @@ func decodeSDKWarmConfig(raw []byte, p *poolstore.Pool) error {
 	}
 	p.SDKWarmCircuitBreakerOverride = poolstore.SDKWarmCircuitBreakerOverride(wire.CircuitBreakerOverride)
 	p.AcknowledgeHighDemotionRate = wire.AcknowledgeHighDemotionRate
+	p.DemotionRateThreshold = wire.DemotionRateThreshold
 	return nil
 }
 

@@ -102,3 +102,47 @@ func TestMemoryRoundTripsSDKWarmConfig_spec_6_1(t *testing.T) {
 		t.Error("acknowledgeHighDemotionRate should be cleared by the update")
 	}
 }
+
+// TestValidateSDKWarmConfigRejectsBadDemotionRateThreshold asserts the
+// store rejects a §6.1 line 48 demotionRateThreshold outside (0, 1] while
+// accepting a valid fraction and a nil (inherit-default) value.
+func TestValidateSDKWarmConfigRejectsBadDemotionRateThreshold_spec_6_1_48(t *testing.T) {
+	mk := func(threshold *float64) poolstore.Pool {
+		return poolstore.Pool{
+			Name:                  "thr-pool",
+			RuntimeRef:            "echo",
+			IsolationProfile:      isolation.ProfileSandboxed,
+			ExecutionMode:         runtimestore.ExecutionModeSession,
+			WarmCount:             1,
+			DemotionRateThreshold: threshold,
+		}
+	}
+	f := func(v float64) *float64 { return &v }
+
+	for _, bad := range []*float64{f(0), f(-0.1), f(1.5)} {
+		s := poolstore.NewMemory()
+		if err := s.Create(context.Background(), mk(bad)); err == nil {
+			t.Errorf("Create should reject demotionRateThreshold=%v (outside (0,1])", *bad)
+		}
+	}
+
+	// A valid fraction and a nil (inherit-default) value both pass and
+	// round-trip through the store.
+	s := poolstore.NewMemory()
+	if err := s.Create(context.Background(), mk(f(0.4))); err != nil {
+		t.Fatalf("Create with threshold 0.4: %v", err)
+	}
+	got, err := s.Get(context.Background(), "thr-pool")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DemotionRateThreshold == nil || *got.DemotionRateThreshold != 0.4 {
+		t.Errorf("threshold = %v, want 0.4", got.DemotionRateThreshold)
+	}
+	if _, err := s.Update(context.Background(), "thr-pool", func(p *poolstore.Pool) error {
+		p.DemotionRateThreshold = nil
+		return nil
+	}); err != nil {
+		t.Fatalf("Update clearing threshold: %v", err)
+	}
+}

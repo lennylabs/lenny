@@ -97,11 +97,13 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		Generation:  p.Generation,
 		ResumeEpoch: p.ReconciliationResumeEpoch,
 		// spec: §6.1 lines 48, 63-65 — carry the operator SDK-warm
-		// circuit-breaker override and the demotion-rate-high
-		// acknowledgment so the controller can apply both in its breaker
-		// decision and its warning-event gate.
+		// circuit-breaker override, the demotion-rate-high acknowledgment,
+		// and the deployer-configurable demotion-rate threshold so the
+		// controller can apply them in its breaker decision and its
+		// warning-event gate.
 		SDKWarmCircuitBreakerOverride: p.SDKWarmCircuitBreakerOverride,
 		AcknowledgeHighDemotionRate:   p.AcknowledgeHighDemotionRate,
+		DemotionRateThreshold:         p.DemotionRateThreshold,
 	}
 	// spec: §17.8.2 — carry the bootstrapMinWarm override so the
 	// controller can pin the pool to it (status.scalingMode: bootstrap)

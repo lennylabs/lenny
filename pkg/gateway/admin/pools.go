@@ -200,11 +200,12 @@ type PoolPayload struct {
 
 // SDKWarmPayload is the §6.1 `sdkWarm` block on the admin wire:
 // `{"circuitBreakerOverride": "enabled"|"disabled"|"auto",
-// "acknowledgeHighDemotionRate": bool}`. spec: §6.1 lines 48, 63-65,
-// §15.1 line 801.
+// "acknowledgeHighDemotionRate": bool, "demotionRateThreshold": 0.6}`.
+// spec: §6.1 lines 48, 63-65, §15.1 line 801.
 type SDKWarmPayload struct {
-	CircuitBreakerOverride      string `json:"circuitBreakerOverride,omitempty"`
-	AcknowledgeHighDemotionRate bool   `json:"acknowledgeHighDemotionRate,omitempty"`
+	CircuitBreakerOverride      string   `json:"circuitBreakerOverride,omitempty"`
+	AcknowledgeHighDemotionRate bool     `json:"acknowledgeHighDemotionRate,omitempty"`
+	DemotionRateThreshold       *float64 `json:"demotionRateThreshold,omitempty"`
 }
 
 // URLModeElicitationPayload is the §9.2 line 86 per-pool
@@ -323,10 +324,11 @@ func fromPool(p poolstore.Pool) PoolPayload {
 			DomainAllowlist: append([]string(nil), p.URLModeElicitation.DomainAllowlist...),
 		}
 	}
-	if p.SDKWarmCircuitBreakerOverride != poolstore.SDKWarmOverrideUnset || p.AcknowledgeHighDemotionRate {
+	if p.SDKWarmCircuitBreakerOverride != poolstore.SDKWarmOverrideUnset || p.AcknowledgeHighDemotionRate || p.DemotionRateThreshold != nil {
 		out.SDKWarm = &SDKWarmPayload{
 			CircuitBreakerOverride:      string(p.SDKWarmCircuitBreakerOverride),
 			AcknowledgeHighDemotionRate: p.AcknowledgeHighDemotionRate,
+			DemotionRateThreshold:       p.DemotionRateThreshold,
 		}
 	}
 	return out
@@ -424,11 +426,13 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 	}
 	pl.UpdatedAt = pl.CreatedAt
 	// spec: §6.1 lines 48, 63-65 — carry the SDK-warm operability block
-	// onto a created pool so a bootstrap seed or POST can set the override
-	// and demotion-rate acknowledgment up front.
+	// onto a created pool so a bootstrap seed or POST can set the override,
+	// the demotion-rate acknowledgment, and the demotion-rate threshold up
+	// front.
 	if body.SDKWarm != nil {
 		pl.SDKWarmCircuitBreakerOverride = poolstore.SDKWarmCircuitBreakerOverride(body.SDKWarm.CircuitBreakerOverride)
 		pl.AcknowledgeHighDemotionRate = body.SDKWarm.AcknowledgeHighDemotionRate
+		pl.DemotionRateThreshold = body.SDKWarm.DemotionRateThreshold
 	}
 	if pl.EgressProfile == "" {
 		// spec: §13.2 — an omitted egress profile resolves to the
@@ -1055,12 +1059,14 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.URLModeElicitation != nil {
 		p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
 	}
-	// spec: §6.1 line 48 — the main PUT honors acknowledgeHighDemotionRate.
-	// The circuitBreakerOverride is left to the dedicated /circuit-breaker
+	// spec: §6.1 line 48 — the main PUT honors acknowledgeHighDemotionRate
+	// and the deployer-configurable demotionRateThreshold. The
+	// circuitBreakerOverride is left to the dedicated /circuit-breaker
 	// endpoint (which enforces the non-SDK-warm 409 and the override audit
 	// event), so it is not merged here.
 	if body.SDKWarm != nil {
 		p.AcknowledgeHighDemotionRate = body.SDKWarm.AcknowledgeHighDemotionRate
+		p.DemotionRateThreshold = body.SDKWarm.DemotionRateThreshold
 	}
 }
 
