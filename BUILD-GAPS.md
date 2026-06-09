@@ -4174,7 +4174,7 @@ Consequence: operators flipping a pool to runc via the explicit opt-in do not se
 
 **Resolution (re-verified, no code change):** Confirmed the finding's own conclusion. The monotonicity helpers are correct and `AtLeastAsRestrictive` fails closed on unknown values, and the call sites guard with `isolation.IsValid` first (`experimentrouter.go:344`, `experiments.go:148/157/197`, `derive.go`, `replay.go`). The "short-circuit caching" is a micro-optimization with no behavioral or correctness implication; there is no spec basis to add it. Closed as a positive confirmation.
 
-### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — OPEN
+### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — DEFERRED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
 
@@ -4192,6 +4192,12 @@ no `SOPeercredDisabled` condition to read and no Sandbox-status field carrying i
 on F-4.7.15 (adapter pod-condition producer); re-attempt in the same cluster-bound batch that
 builds the adapter→pod-status client + RBAC + the controller reconciler that surfaces the
 condition onto the SandboxTemplate.
+
+**Re-verified + heading reconciled OPEN → DEFERRED (this batch):** F-4.7.15 (the adapter
+`SOPeercredDisabled` pod-condition producer) is still DEFERRED. A grep for `SOPeercredDisabled`
+and `SecurityDegradedMode` in `pkg/adapter/` and `pkg/controller/warmpool/` returns nothing —
+no producer exists, so the pool-controller surfacing half would be dead code reading a condition
+that is never set. Blocker unchanged; re-attempt in the cluster-bound batch that builds F-4.7.15.
 
 ### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
 
@@ -9417,7 +9423,7 @@ Evidence:
 
 **Resolution:** `cancelSubtree` now respects each node's `CascadeOnFailure.Resolve()`. The explicit `lenny/cancel_child` target is always cancelled (per §8.5 row); descendants are queued only when the parent's resolved policy is `cancel_all`, so `await_completion` and `detach` siblings stay running. Terminal nodes' own cascades already ran when they settled so the traversal does not descend through them. `TestCancelChildTool` updated to the spec-compliant behavior; `TestCancelChildToolHonoursAwaitCompletion` and `TestCancelChildToolHonoursDetach` exercise the new policy branches.
 
-### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — OPEN
+### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — DEFERRED
 
 **Severity: Medium** (spec MUST: §8.5 / §8.3 line 244 — "Returns `type: agent` runtimes **and external agents** only")
 
@@ -9435,6 +9441,8 @@ Evidence:
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
 
 **Re-deferred (this batch):** Re-verified (rules A, O). `runtimestore.AllRuntimeTypes()` still enumerates exactly `{agent, mcp}` (`pkg/gateway/runtimestore/runtimestore.go:1047-1052`) — there is no `external` runtime type and no separate external-agent registry, so `discover_agents` has no second source to enumerate. Surfacing external agents depends on a separate large workstream that has not begun: the A2A external-agent registry the spec reserves under §8 line 23 ("external registered agent" as an opaque target type) and §8 line 307 (`allowedExternalEndpoints`, "future A2A support"). The omission is a discovery gap, not an authorisation hole — `runtimeAuthorizedForCaller` in `lenny/delegate_task` already rejects unknown targets. Re-attempt once the A2A registry lands as a sibling source to `runtimestore`.
+
+**Re-verified + heading reconciled OPEN → DEFERRED (this batch):** `runtimestore.AllRuntimeTypes()` still returns exactly `{TypeAgent, TypeMCP}`. The new `pkg/gateway/externaladapterstore` is the §15.1 **inbound** external-protocol adapter registry (Lenny-as-server routing MCP / a2a / OpenAI-completions client traffic by path prefix) and `pkg/gateway/agentcard` generates A2A cards for Lenny's own agents — neither is the **outbound** registry of external agents that a delegator can target, which is what `discover_agents` would enumerate as `type: external`. No external-agent-as-delegation-target registry exists, so there is still no second source for `discover_agents` to surface. Blocker unchanged.
 
 ### - [x] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — CLOSED
 
@@ -19347,13 +19355,15 @@ Spec: §12.1 (mandatory erasure on every store interface); §12.8 ("`EventStore`
 
 **Resolution:** `PseudonymizeUser`, `DeleteByUser`, and `DeleteByTenant` lifted onto `billingstore.Store`. The pgstore now implements all three plus `CountUser` (the §12.8 verification helper) for parity with `Memory`: `PseudonymizeUser` rewrites `user_id` and `DeleteByTenant` deletes, each setting `SET LOCAL lenny.erasure_mode = 'true'` so the §11.7 `lenny_billing_immutability` trigger permits the write; `DeleteByUser` is the documented append-only no-op. Migration `0093` grants `DELETE ON billing_events TO lenny_erasure` (the role already held `UPDATE (user_id)` from migration 0002) so the Phase-4 teardown DELETE is authorized once the dedicated erasure-role connection is supplied — wiring that connection into the orchestrator stays F-12.2.16. `failover.Pipeline` delegates the three methods to its primary and additionally pseudonymizes/drops matching Tier-2 buffered events so an erasure that races a primary outage does not later flush stale rows. Tier-1 tests cover Memory (`CountUser`/no-op `DeleteByUser`/`DeleteByTenant`/`Store` satisfaction) and the Pipeline buffer-aware delegation. Closed by commit (this batch).
 
-### - [ ] F-12.2.7 — 07 — `QuotaStore` Postgres durability and erasure adapters absent (High) [Medium] — OPEN
+### - [ ] F-12.2.7 — 07 — `QuotaStore` Postgres durability and erasure adapters absent (High) [Medium] — DEFERRED
 
 Spec: §12.2 ("`QuotaStore` — Redis + Postgres — Rate limit counters, budget tracking"); §12.1 (mandatory erasure); §12.8 step 6 ("`QuotaStore` — delete per-user rate-limit counters and budget tracking (Redis + Postgres)").
 
 `pkg/gateway/quotastore/quotastore.go` is Redis-only (`Counter` struct wrapping `redis.UniversalClient`); there is no Postgres-backed budget-tracking table, no checkpoint, no per-replica fail-open accounting, and no `DeleteByUser` / `DeleteByTenant`. The §10.1 / §12.3 "Quota checkpoint flushes" write source is unimplemented. A user erasure cannot remove the user's rate-limit counters; per-tenant erasure cannot purge them. The §10.1 fail-open Postgres reconciliation path that §12.3 describes is unbacked. (BUILD-PROGRESS.md line 181-184 acknowledges this gap explicitly.)
 
 **Reopened 2026-06-08 — prior deferral — the erasure-adapter half is resolved; the Postgres-durability half is a separate large vertical owned by other findings:** `quotastore.QuotaStore` now exposes `DeleteByUser`/`DeleteByTenant` on its interface (Redis-counter erasure, evidence stale), and the store is compile-asserted against the §12.1 contract by F-12.2.11. The remaining gap — a Postgres-backed budget-tracking table, the §10.1/§12.3 quota-checkpoint flush write source, per-replica fail-open accounting, and the recovery reconciliation — is the multi-finding durability vertical tracked by F-12.4.9 (bounded fail-open / cumulative timer / per-tenant budget), F-12.4.11/F-12.5.14 (storage-quota Postgres rehydration), F-12.4.20 (recovery MAX reconciliation), and F-11.2.4/F-11.2.6 (token-counter checkpoint / per-replica accounting). Deferred to that vertical rather than partially building the Postgres durability half here.
+
+**Re-verified + heading reconciled OPEN → DEFERRED (this batch):** `pkg/gateway/quotastore` still holds only `quotastore.go` + `checkpoint.go` (Redis-backed `Counter` + the checkpoint formula); there is no `pgstore` sub-package and no Postgres budget-tracking table. The durability vertical (F-12.4.9 / F-12.4.11 / F-12.4.20 / F-11.2.4 / F-11.2.6) remains unbuilt, so the blocker is unchanged. The erasure-adapter half stays satisfied (`DeleteByUser`/`DeleteByTenant` on the interface, compile-asserted by F-12.2.11).
 
 ### - [x] F-12.2.8 — 08 — `LeaseStore` Postgres advisory-lock fallback unimplemented; no erasure adapters (High) [Medium] — CLOSED
 
@@ -20703,13 +20713,15 @@ The §12.4 spec calls out four exception prefixes: `lenny:pod:`, `cb:`, `{root_s
 
 - **Resolution:** The rewritten `slotcounter` package doc (F-5.2.4) now documents the `lenny:pod:` prefix as one of §12.4's key-prefix exception classes (pod-scoped, not tenant-scoped) and cross-references the breaker store's `cb:` prefix comment, matching the rationale that file already carries. Commit 8412834a.
 
-### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — OPEN
+### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — DEFERRED
 
 `tests/tier8_chaos/scaffolds_test.go:66-69` records the test as a stub log message. The compose Sentinel topology exists (`compose/default.yml:104-130`) and `pkg/redisconn` carries the Sentinel-aware client construction, but no end-to-end exercise drives a master kill and asserts the gateway transparently follows the new master. The §12.8 / §12.4 Sentinel topology promise (3 sentinels, 1 primary + 1 replica) is therefore not enforced by tier-8.
 
 **Reopened 2026-06-07 — prior deferral:** A real Sentinel failover exercise requires a chaos-tier harness that drives the compose stack, kills the primary, and observes gateway reconnection — work that belongs to the broader tier-8 chaos buildout (see F-7.3 / F-7.5 chaos cluster) rather than a one-shot fix. The stub placeholder is correct as a hook for the future harness; closing this finding ahead of that work would only re-open it.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-07 (accurate blocker re-verified; the "Docker unavailable" framing is wrong — Docker IS available here):** The compose harness (`tests/testinfra/compose`) already exposes `RedisSentinelAddrs()`, `RedisSentinelMasterName()`, and `SkipUnlessAvailable`, and `pkg/redisconn.NewClient` builds a go-redis `FailoverClient` from those. The real blocker is the compose Sentinel topology itself: `compose/default.yml` renders `sentinel monitor lenny-master redis 6379` with `resolve-hostnames yes`, so a sentinel queried from the host returns the Docker-internal address `redis:6379` (and after a promotion, `redis-replica:6379`); a host-side `FailoverClient` cannot resolve those hostnames. Worse, only the master service publishes a host port (`16379:6379`) — `redis-replica` publishes no Redis port — so even with `replica-announce-ip`/`announce-ip` overrides the host cannot reach the promoted master after failover. A faithful exercise therefore needs either an in-Docker-network test client (a sidecar container, the e2e-overlay approach the stub names) or a reworked, host-failover-capable Sentinel topology (publish every node's port plus per-node announce addresses) in the *shared* `compose/default.yml` that every other tier-2 test depends on. That is a focused, regression-risky harness workstream, not a single-batch stub fill; the stub correctly marks the hook for it.
+
+**Re-verified + heading reconciled OPEN → DEFERRED (this batch):** `tests/tier8_chaos/scaffolds_test.go::TestRedisSentinelFailover` is still the `t.Logf` placeholder. The blocker is unchanged: a faithful host-side master-kill exercise needs either an in-Docker-network sidecar client or a reworked, host-failover-capable Sentinel topology in the *shared* `compose/default.yml` (publish every node's port plus per-node announce addresses) that every tier-2 test depends on. Reworking the shared compose file for one Low-severity chaos test is a regression-risky harness change; the stub stays as the hook for the broader tier-8 buildout.
 
 ### - [x] F-12.4.25 — `cb:events` cross-replica pub/sub channel is platform-scoped but not in the §12.4 table [Info] — CLOSED
 
@@ -34087,7 +34099,7 @@ implementation honors it, deviates from it, or omits it entirely.
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body, matching the F-17.4.19 precedent; the §17.4 MUST cluster lives in the sibling F-17.4.2..F-17.4.10 entries.
 
-### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — OPEN
+### - [ ] F-17.4.2 — Source Mode (`make run`) deviates from every stated substitution [High] — DEFERRED
 
 Spec lines 199–202 enumerate the Source Mode substitutions: **Embedded SQLite** for
 session and metadata storage, **in-memory caches** for pub/sub and ephemeral state,
@@ -34118,6 +34130,8 @@ tree — every store interface would need a new implementation), and the in-proc
 **controller-sim** goroutine. Deferred until the SQLite store lands.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (re-verified; embedded SQLite store is a separate large workstream not begun):** `find` confirms no `*sqlite*` source and no `modernc.org/sqlite`/`mattn/go-sqlite` dependency in the tree. The two remaining Source-Mode substitutions (the gateway already gets filesystem artifact storage via `blobstore.FilesystemStore` and the `LENNY_AGENT_BINARY`/`--runtime-bin` override) are the embedded SQLite session/metadata store and the in-process controller-sim goroutine. A SQLite backend is a full new implementation of every store interface (sessionstore, runtimestore, poolstore, credential stores, audit, ...) behind a new driver — a separate large workstream that has not begun (Rule P escape: separate large workstream). The current `make run` in-memory fallback is a working dev path; the SQLite substitution is a durability upgrade, not a correctness gap. Re-attempt as a dedicated SQLite-store-backend batch.
+
+**Re-verified + heading reconciled OPEN → DEFERRED (this batch):** `find pkg cmd -iname '*sqlite*'` returns nothing and neither `modernc.org/sqlite` nor `mattn/go-sqlite` is in `go.mod`. An embedded SQLite backend is a full new implementation of every store interface behind a new driver — a separate large workstream (Rule P escape) that has not begun. Blocker unchanged; the in-memory dev fallback remains a working Source-Mode path.
 
 ### - [x] F-17.4.3 — Compose Mode (`docker compose up`) bundle does not exist [High] — CLOSED
 
