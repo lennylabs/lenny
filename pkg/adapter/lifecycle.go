@@ -58,6 +58,38 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 	}, nil
 }
 
+// SignalDeadline forwards the §11.3 line 240 pre-expiry warning to the
+// running session's runtime as a DEADLINE_APPROACHING frame over the
+// lifecycle channel. The gateway watchdog fires it five minutes before
+// `maxSessionAge` so the agent can checkpoint. A Basic/Standard runtime
+// has no lifecycle channel (§15 line 2141: "no lifecycle channel to
+// deliver DEADLINE_APPROACHING"); the adapter reports delivered=false
+// rather than erroring so the watchdog's best-effort warning never fails.
+// The signal is one-way — unlike Interrupt it does not take the per-session
+// op lock or wait for an acknowledgement.
+func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadlineRequest) (*adapterv1.SignalDeadlineResponse, error) {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "SignalDeadline requires a session id")
+	}
+	if err := s.checkSession(sessionID); err != nil {
+		return nil, err
+	}
+	if s.Lifecycle == nil || !s.Lifecycle.Supports("deadline_signal") {
+		// spec: §15 line 2141 — without the lifecycle channel the runtime
+		// receives only `shutdown` at expiry with no advance notice.
+		return &adapterv1.SignalDeadlineResponse{Delivered: false}, nil
+	}
+	trigger := req.GetTrigger()
+	if trigger == "" {
+		trigger = "session_age"
+	}
+	if err := s.Lifecycle.SignalDeadlineApproaching(req.GetRemainingMs(), trigger); err != nil {
+		return nil, status.Errorf(codes.Internal, "signal deadline: %v", err)
+	}
+	return &adapterv1.SignalDeadlineResponse{Delivered: true}, nil
+}
+
 // interruptViaLifecycle delivers a §4.7 clean interrupt over the
 // lifecycle channel and waits for the runtime's acknowledgement,
 // bounded by the request's deadline. A deadline elapsing with no

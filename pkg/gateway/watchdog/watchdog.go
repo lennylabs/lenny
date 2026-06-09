@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -144,6 +145,12 @@ const (
 	// DefaultTickInterval is the §11.3 line 224 default sweep
 	// cadence: 5s.
 	DefaultTickInterval = 5 * time.Second
+
+	// DefaultExpiryWarningSeconds is the §11.3 line 240 lead time for the
+	// session_expiring_soon warning: the gateway warns the client and pod
+	// 300s (5 minutes) before a session's maxSessionAge deadline so the
+	// agent can checkpoint and the client can extend or wrap up. F-11.3.5.
+	DefaultExpiryWarningSeconds = 300
 )
 
 // Config holds the §11.3 budgets plus the sweep cadence. A zero value
@@ -188,6 +195,11 @@ type Config struct {
 	// through to DefaultMaxRetries.
 	MaxRetries   int
 	TickInterval time.Duration
+	// ExpiryWarningSeconds is the §11.3 line 240 lead time for the
+	// session_expiring_soon warning: a non-terminal session whose effective
+	// maxSessionAge deadline is within this many seconds is warned once. A
+	// zero value falls through to DefaultExpiryWarningSeconds. F-11.3.5.
+	ExpiryWarningSeconds int
 }
 
 // withDefaults returns a copy of c with unset fields filled from the
@@ -225,6 +237,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxRetries <= 0 {
 		c.MaxRetries = DefaultMaxRetries
+	}
+	if c.ExpiryWarningSeconds <= 0 {
+		c.ExpiryWarningSeconds = DefaultExpiryWarningSeconds
 	}
 	// spec: §6.2 line 260; §11.3 line 219. The watchdog enforces the
 	// gateway-side `maxFinalizingTimeoutSeconds` outer bound; the
@@ -319,6 +334,25 @@ type RetryAttemptNotifier interface {
 	OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session)
 }
 
+// ExpiryWarningNotifier is an optional hook on TerminalHook implementations.
+// The watchdog invokes it once per session, when the session's effective
+// maxSessionAge deadline first falls within the ExpiryWarningSeconds window
+// (default 300s), so the gateway emits the §11.3 line 240 session_expiring_soon
+// SSE event to the client and dispatches the DEADLINE_APPROACHING lifecycle-
+// channel signal to the running pod. maxSessionAgeSeconds is the session's
+// resolved deadline (for the SSE payload) and remainingSeconds is the
+// wall-clock left before it.
+//
+// The notification is best-effort and fires at most once per session per
+// gateway process: a watchdog restart inside the window may re-warn, which
+// SSE clients tolerate as an advisory event.
+//
+// spec: §11.3 line 240 (session_expiring_soon + DEADLINE_APPROACHING);
+// §15 line 2141 (Basic/Standard runtimes receive no advance notice). F-11.3.5.
+type ExpiryWarningNotifier interface {
+	OnSessionExpiringSoon(ctx context.Context, sess sessionstore.Session, maxSessionAgeSeconds, remainingSeconds int)
+}
+
 // DLQSweeper runs the §7.2 line 341 dead-letter-queue TTL sweep for one
 // recovering session, emitting a `message_expired` event with `reason:
 // "dlq_ttl_expired"` per expired entry and returning the count removed.
@@ -387,6 +421,13 @@ type Watchdog struct {
 	ageResolver  SessionAgeResolver
 	idleResolver IdleResolver
 	idlePaused   IdlePauseChecker
+
+	// warnedMu guards warned, the §11.3 line 240 expiry-warning dedup set.
+	warnedMu sync.Mutex
+	// warned holds the session ids the expiry-warning sweep has already
+	// signalled, so a session is warned at most once. Entries are pruned
+	// when the sweep observes the session reach a terminal state. F-11.3.5.
+	warned map[string]struct{}
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -514,6 +555,10 @@ type Result struct {
 	// sweep. Each removed entry emits a `message_expired(dlq_ttl_expired)`
 	// event on its sender's stream.
 	DLQExpired int
+	// ExpiryWarnings is the count of sessions newly warned by the §11.3
+	// line 240 session_expiring_soon sweep in this tick (each fires the
+	// SSE event and the DEADLINE_APPROACHING adapter signal once). F-11.3.5.
+	ExpiryWarnings int
 }
 
 // Tick runs a single sweep against every tenant returned by the
@@ -579,6 +624,13 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 			return res, err
 		}
 		if err := w.sweepResumePending(ctx, tenant, now, &res); err != nil {
+			return res, err
+		}
+		// spec: §11.3 line 240 — warn the client and pod 5 minutes before
+		// maxSessionAge. Runs before sweepMaxAge so the warning fires while
+		// the session is still non-terminal (sweepMaxAge expires it on a
+		// later tick once the deadline passes). F-11.3.5.
+		if err := w.sweepExpiryWarning(ctx, tenant, now, &res); err != nil {
 			return res, err
 		}
 		if err := w.sweepMaxAge(ctx, tenant, now, &res); err != nil {
@@ -982,6 +1034,83 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		}
 	}
 	return nil
+}
+
+// sweepExpiryWarning implements the §11.3 line 240 session-expiry warning:
+// the gateway sends a `session_expiring_soon` event to the client and a
+// `DEADLINE_APPROACHING` lifecycle-channel signal to the pod five minutes
+// (ExpiryWarningSeconds) before a session's effective maxSessionAge deadline
+// so the agent can checkpoint and the client can extend or wrap up.
+//
+// The sweep is a no-op unless the wired TerminalHook also implements
+// ExpiryWarningNotifier (the gateway sessionserver, which owns the SSE bus
+// and the per-session adapter binding). Each session is warned at most once:
+// the warned set dedups across ticks and is pruned when a session is observed
+// terminal, so the map stays bounded by the live session count.
+//
+// The warning fires while the session is still non-terminal; the actual
+// expiry is the later sweepMaxAge transition. The deadline is the same
+// most-restrictive-wins effectiveAgeCap the maxSessionAge sweep applies, so a
+// per-runtime / per-session tighter cap warns at the right moment.
+//
+// spec: §11.3 line 240; §15 line 2141 (Basic/Standard runtimes get no advance
+// notice — the adapter reports delivered=false). F-11.3.5.
+func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now time.Time, res *Result) error {
+	notifier, ok := w.terminal.(ExpiryWarningNotifier)
+	if !ok {
+		return nil
+	}
+	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
+	if err != nil {
+		return err
+	}
+	window := time.Duration(w.cfg.ExpiryWarningSeconds) * time.Second
+	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
+	for _, row := range rows {
+		if session.IsTerminal(row.State) {
+			// Prune so the dedup set tracks only live sessions.
+			w.forgetWarned(row.ID)
+			continue
+		}
+		cap := w.effectiveAgeCap(ctx, row, platformCap)
+		remaining := cap - now.Sub(row.CreatedAt)
+		// Only warn inside the [deadline-window, deadline) band. A session
+		// already past its deadline is left for sweepMaxAge; one further than
+		// the window away is not yet eligible.
+		if remaining <= 0 || remaining > window {
+			continue
+		}
+		if !w.markWarned(row.ID) {
+			continue
+		}
+		notifier.OnSessionExpiringSoon(ctx, row, int(cap.Seconds()), int(remaining.Seconds()))
+		res.ExpiryWarnings++
+	}
+	return nil
+}
+
+// markWarned records sessionID in the expiry-warning dedup set and reports
+// true when the session had not been warned before (so the caller fires the
+// warning exactly once). F-11.3.5.
+func (w *Watchdog) markWarned(sessionID string) bool {
+	w.warnedMu.Lock()
+	defer w.warnedMu.Unlock()
+	if w.warned == nil {
+		w.warned = map[string]struct{}{}
+	}
+	if _, seen := w.warned[sessionID]; seen {
+		return false
+	}
+	w.warned[sessionID] = struct{}{}
+	return true
+}
+
+// forgetWarned drops sessionID from the dedup set once the sweep observes the
+// session reach a terminal state, keeping the set bounded by live sessions.
+func (w *Watchdog) forgetWarned(sessionID string) {
+	w.warnedMu.Lock()
+	defer w.warnedMu.Unlock()
+	delete(w.warned, sessionID)
 }
 
 // effectiveAgeCap resolves the §11.3 maxSessionAge deadline for one row,

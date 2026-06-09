@@ -31,9 +31,11 @@ import (
 // real pod.
 type stubAdapterServer struct {
 	adapterv1.UnimplementedAdapterServer
-	status  adapterv1.InterruptResponse_Status
-	called  atomic.Int32
-	lastReq atomic.Pointer[adapterv1.InterruptRequest]
+	status          adapterv1.InterruptResponse_Status
+	called          atomic.Int32
+	lastReq         atomic.Pointer[adapterv1.InterruptRequest]
+	deadlineCalled  atomic.Int32
+	lastDeadlineReq atomic.Pointer[adapterv1.SignalDeadlineRequest]
 }
 
 func (s *stubAdapterServer) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest) (*adapterv1.InterruptResponse, error) {
@@ -43,6 +45,12 @@ func (s *stubAdapterServer) Interrupt(ctx context.Context, req *adapterv1.Interr
 		Acknowledged: s.status == adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED,
 		Status:       s.status,
 	}, nil
+}
+
+func (s *stubAdapterServer) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadlineRequest) (*adapterv1.SignalDeadlineResponse, error) {
+	s.deadlineCalled.Add(1)
+	s.lastDeadlineReq.Store(req)
+	return &adapterv1.SignalDeadlineResponse{Delivered: true}, nil
 }
 
 // dialStubAdapter starts the supplied stub on an in-process listener

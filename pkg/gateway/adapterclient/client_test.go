@@ -538,9 +538,20 @@ func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
 // what reached the wire. Every other RPC stays unimplemented.
 type recordingAdapter struct {
 	adapterv1.UnimplementedAdapterServer
-	gotShutdown *adapterv1.ShutdownRequest
-	gotRotate   *adapterv1.RotateCredentialsRequest
-	rotateErr   error
+	gotShutdown       *adapterv1.ShutdownRequest
+	gotRotate         *adapterv1.RotateCredentialsRequest
+	rotateErr         error
+	gotSignalDeadline *adapterv1.SignalDeadlineRequest
+	signalDelivered   bool
+	signalErr         error
+}
+
+func (r *recordingAdapter) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadlineRequest) (*adapterv1.SignalDeadlineResponse, error) {
+	if r.signalErr != nil {
+		return nil, r.signalErr
+	}
+	r.gotSignalDeadline = req
+	return &adapterv1.SignalDeadlineResponse{Delivered: r.signalDelivered}, nil
 }
 
 func (r *recordingAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
@@ -576,6 +587,58 @@ func dialRecordingAdapter(t *testing.T, rec *recordingAdapter) *adapterclient.Cl
 	}
 	t.Cleanup(func() { _ = cl.Close() })
 	return cl
+}
+
+// spec: §11.3 line 240 — the gateway client forwards remaining_ms and
+// trigger to the adapter and surfaces whether the runtime was reached.
+// F-11.3.5.
+func TestSignalDeadlineForwardsAndReportsDelivery_spec_11_3_240(t *testing.T) {
+	rec := &recordingAdapter{signalDelivered: true}
+	cl := dialRecordingAdapter(t, rec)
+
+	delivered, err := cl.SignalDeadline(context.Background(), "sess-d", 300000, "session_age")
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if !delivered {
+		t.Error("delivered = false, want true")
+	}
+	if rec.gotSignalDeadline == nil {
+		t.Fatal("the adapter received no SignalDeadline request")
+	}
+	if got := rec.gotSignalDeadline.GetSessionId().GetValue(); got != "sess-d" {
+		t.Errorf("session id = %q, want sess-d", got)
+	}
+	if got := rec.gotSignalDeadline.GetRemainingMs(); got != 300000 {
+		t.Errorf("remaining = %d ms, want 300000", got)
+	}
+	if got := rec.gotSignalDeadline.GetTrigger(); got != "session_age" {
+		t.Errorf("trigger = %q, want session_age", got)
+	}
+}
+
+// A runtime without a lifecycle channel returns delivered=false; the wrapper
+// surfaces that without error so the watchdog's best-effort warning continues.
+func TestSignalDeadlineReportsNotDelivered_spec_11_3_240(t *testing.T) {
+	rec := &recordingAdapter{signalDelivered: false}
+	cl := dialRecordingAdapter(t, rec)
+
+	delivered, err := cl.SignalDeadline(context.Background(), "sess-d", 300000, "session_age")
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if delivered {
+		t.Error("delivered = true, want false for a runtime without a lifecycle channel")
+	}
+}
+
+func TestSignalDeadlineSurfacesRPCError_spec_11_3_240(t *testing.T) {
+	rec := &recordingAdapter{signalErr: status.Error(codes.FailedPrecondition, "no session")}
+	cl := dialRecordingAdapter(t, rec)
+
+	if _, err := cl.SignalDeadline(context.Background(), "sess-d", 300000, "session_age"); err == nil {
+		t.Error("SignalDeadline succeeded, want the adapter error surfaced")
+	}
 }
 
 func TestTerminateSendsReasonAndDeadline(t *testing.T) {

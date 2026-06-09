@@ -237,6 +237,99 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 	}
 }
 
+// spec: §11.3 line 240 — DEADLINE_APPROACHING is delivered over the
+// lifecycle channel. F-11.3.5.
+func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		RemainingMs: 300000,
+		Trigger:     "session_age",
+	})
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if !resp.GetDelivered() {
+		t.Error("delivered = false, want true for a Full-level runtime")
+	}
+	frame := lr.recv()
+	if frame["type"] != "deadline_approaching" {
+		t.Fatalf("runtime saw %v, want deadline_approaching", frame["type"])
+	}
+	if frame["trigger"] != "session_age" {
+		t.Errorf("trigger = %v, want session_age", frame["trigger"])
+	}
+	if got := frame["remainingMs"]; got != float64(300000) {
+		t.Errorf("remainingMs = %v, want 300000", got)
+	}
+}
+
+// spec: §15 line 2141 — a Basic/Standard runtime with no lifecycle channel
+// receives no advance notice; the adapter reports delivered=false rather than
+// erroring. F-11.3.5.
+func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		RemainingMs: 300000,
+		Trigger:     "session_age",
+	})
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if resp.GetDelivered() {
+		t.Error("delivered = true, want false for a runtime without a lifecycle channel")
+	}
+}
+
+// spec: §11.3 line 240 — an empty trigger defaults to session_age, the only
+// trigger the maxSessionAge warning uses. F-11.3.5.
+func TestSignalDeadlineDefaultsTriggerToSessionAge_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	if _, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		RemainingMs: 120000,
+	}); err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	frame := lr.recv()
+	if frame["trigger"] != "session_age" {
+		t.Errorf("trigger = %v, want session_age default", frame["trigger"])
+	}
+}
+
+func TestSignalDeadlineRequiresASessionID_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	_, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		RemainingMs: 300000,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+func TestSignalDeadlineRejectsAnUnassignedSession_spec_11_3_240(t *testing.T) {
+	s, _, _ := sessionServer(t) // no StartSession ran.
+
+	_, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-absent"},
+		RemainingMs: 300000,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("error code = %v, want FailedPrecondition for a pod with no session", status.Code(err))
+	}
+}
+
 func TestInterruptCleanTimesOutOnLifecycleChannel(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
 	lc := startLifecycle(t)

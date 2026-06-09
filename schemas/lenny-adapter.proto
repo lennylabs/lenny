@@ -102,6 +102,17 @@ service Adapter {
   // suspend.
   rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {}
 
+  // SignalDeadline warns the running session's runtime that the session is
+  // approaching its §11.3 line 240 deadline so the agent can checkpoint and
+  // the client can wrap up. The gateway watchdog fires it once, five minutes
+  // before `maxSessionAge` expires. The adapter forwards it as a
+  // DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
+  // Basic/Standard runtime with no lifecycle channel cannot receive advance
+  // notice (§15 line 2141) and the call returns delivered=false rather than
+  // erroring so the watchdog's best-effort warning never fails. One-way: the
+  // adapter does not block on a runtime acknowledgement.
+  rpc SignalDeadline(SignalDeadlineRequest) returns (SignalDeadlineResponse) {}
+
   // Resume restores a session's workspace from a checkpoint on a
   // replacement pod (§4.7, §7.1). The adapter claims the session,
   // rebuilds /workspace/current from the named checkpoint, and starts
@@ -884,6 +895,23 @@ message CheckpointRequest {
 message CheckpointResponse {
   string checkpoint_id = 1;
   int64 size_bytes = 2;
+}
+
+message SignalDeadlineRequest {
+  SessionId session_id = 1;
+  // remaining_ms is the wall-clock left before the session's deadline
+  // (~300000 for the §11.3 line 240 five-minute pre-expiry warning).
+  int32 remaining_ms = 2;
+  // trigger names which deadline is approaching: "session_age" (the
+  // §11.3 maxSessionAge cap), "budget", or "idle".
+  string trigger = 3;
+}
+
+message SignalDeadlineResponse {
+  // delivered is true when the warning reached the runtime over the
+  // lifecycle channel; false when the pod's runtime has no lifecycle
+  // channel (Basic/Standard integration level — §15 line 2141).
+  bool delivered = 1;
 }
 
 message ResumeRequest {

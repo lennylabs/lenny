@@ -925,6 +925,9 @@ func main() {
 	maxIdleTimeSeconds := flag.Int("max-idle-time-seconds",
 		envInt("LENNY_MAX_IDLE_TIME_SECONDS", watchdog.DefaultMaxIdleSeconds),
 		"§11.3 line 199 / §6.2 lines 273-300 maxIdleTimeSeconds: the platform-default idle cap on a `running` session — one with no qualifying agent activity (agent_output / tool_use, await_children poll, proxied LLM response) for longer than this is transitioned to `expired` with reason expired:idle. The per-runtime `limits.maxIdleTimeSeconds` and the §27.6 playground idle override tighten this default. Default 600s. Override via LENNY_MAX_IDLE_TIME_SECONDS.")
+	sessionExpiryWarningSeconds := flag.Int("session-expiry-warning-seconds",
+		envInt("LENNY_SESSION_EXPIRY_WARNING_SECONDS", watchdog.DefaultExpiryWarningSeconds),
+		"§11.3 line 240 session-expiry warning lead time: the gateway sends a `session_expiring_soon` SSE event to the client and a `DEADLINE_APPROACHING` lifecycle-channel signal to the pod this many seconds before a session's effective maxSessionAge deadline so the agent can checkpoint and the client can extend or wrap up. Default 300s (5 minutes). Override via LENNY_SESSION_EXPIRY_WARNING_SECONDS.")
 	// spec: §11.3 line 205-206 — grpc.keepaliveTime{,out}Ms on the
 	// adapter client (gateway → pod), operator-tunable. The library
 	// default is no keepalive on the client side, so the §11.3 5s timeout
@@ -6049,6 +6052,7 @@ func main() {
 		MaxResumingSeconds:             *maxResumingSeconds,
 		MaxRetries:                     *retryMaxRetries,
 		MaxIdleSeconds:                 *maxIdleTimeSeconds,
+		ExpiryWarningSeconds:           *sessionExpiryWarningSeconds,
 	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).

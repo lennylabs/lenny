@@ -47,6 +47,7 @@ const (
 	Adapter_RevokeCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/RevokeCredentials"
 	Adapter_Interrupt_FullMethodName                   = "/lenny.adapter.v1.Adapter/Interrupt"
 	Adapter_Checkpoint_FullMethodName                  = "/lenny.adapter.v1.Adapter/Checkpoint"
+	Adapter_SignalDeadline_FullMethodName              = "/lenny.adapter.v1.Adapter/SignalDeadline"
 	Adapter_Resume_FullMethodName                      = "/lenny.adapter.v1.Adapter/Resume"
 	Adapter_CoordinatorFence_FullMethodName            = "/lenny.adapter.v1.Adapter/CoordinatorFence"
 	Adapter_CheckpointBarrier_FullMethodName           = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
@@ -132,6 +133,16 @@ type AdapterClient interface {
 	// state to the artifact store. Used for eviction, drain, and session
 	// suspend.
 	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
+	// SignalDeadline warns the running session's runtime that the session is
+	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// the client can wrap up. The gateway watchdog fires it once, five minutes
+	// before `maxSessionAge` expires. The adapter forwards it as a
+	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
+	// Basic/Standard runtime with no lifecycle channel cannot receive advance
+	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// erroring so the watchdog's best-effort warning never fails. One-way: the
+	// adapter does not block on a runtime acknowledgement.
+	SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
 	// rebuilds /workspace/current from the named checkpoint, and starts
@@ -339,6 +350,16 @@ func (c *adapterClient) Checkpoint(ctx context.Context, in *CheckpointRequest, o
 	return out, nil
 }
 
+func (c *adapterClient) SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignalDeadlineResponse)
+	err := c.cc.Invoke(ctx, Adapter_SignalDeadline_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResumeResponse)
@@ -515,6 +536,16 @@ type AdapterServer interface {
 	// state to the artifact store. Used for eviction, drain, and session
 	// suspend.
 	Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
+	// SignalDeadline warns the running session's runtime that the session is
+	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// the client can wrap up. The gateway watchdog fires it once, five minutes
+	// before `maxSessionAge` expires. The adapter forwards it as a
+	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
+	// Basic/Standard runtime with no lifecycle channel cannot receive advance
+	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// erroring so the watchdog's best-effort warning never fails. One-way: the
+	// adapter does not block on a runtime acknowledgement.
+	SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
 	// rebuilds /workspace/current from the named checkpoint, and starts
@@ -630,6 +661,9 @@ func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) 
 }
 func (UnimplementedAdapterServer) Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Checkpoint not implemented")
+}
+func (UnimplementedAdapterServer) SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignalDeadline not implemented")
 }
 func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
@@ -875,6 +909,24 @@ func _Adapter_Checkpoint_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_SignalDeadline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignalDeadlineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).SignalDeadline(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_SignalDeadline_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).SignalDeadline(ctx, req.(*SignalDeadlineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_Resume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ResumeRequest)
 	if err := dec(in); err != nil {
@@ -1090,6 +1142,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Checkpoint",
 			Handler:    _Adapter_Checkpoint_Handler,
+		},
+		{
+			MethodName: "SignalDeadline",
+			Handler:    _Adapter_SignalDeadline_Handler,
 		},
 		{
 			MethodName: "Resume",
