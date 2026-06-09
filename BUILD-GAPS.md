@@ -2545,7 +2545,7 @@ closed. Closed by F-13.5.5.
   `interceptor.fail_open_restored` to the per-tenant §11.7 chain. The
   zero-value chain keeps plain fail-open semantics. Resolved in commit 19273cb6.
 
-### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — OPEN
+### - [x] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — CLOSED
 
 > **Reopened 2026-06-07 — prior deferral (verified iter17):** The capability depends on F-4.8.9 — there is
 > still no admin/config surface that mutates an external interceptor's
@@ -2607,6 +2607,36 @@ forbids re-deferring for, but here the prerequisite is a named, un-started
 large workstream, which Rule P permits). Defer until the admin interceptor
 registry CRUD surface lands; that task then wires the transition emit, the
 cooldown, and the `delegate_task` / `send_message` rejection together.
+
+**Resolution (commits `5f4c40c5`, `5db8ead0`):** Built the admin interceptor
+registry the SEC-013 cooldown needs. New `pkg/gateway/interceptorstore`
+(memory + pgstore, migration 0161) is the platform-scoped, admin-mutable,
+cross-replica source of truth, carrying the registration fields plus the two
+server-minted, admin-API-immutable transition fields
+(`fail_open_transition_at`, `cooldown_seconds_at_transition`). New
+`POST/GET/PUT/DELETE /v1/admin/interceptors` (platform-admin) drive it: a
+`fail-closed → fail-open` PUT server-mints the `transition_ts`, records the
+cluster `interceptorWeakeningCooldownSeconds` then in force (the §8.3
+meta-cooldown pin), emits `interceptor.fail_policy_weakened` +
+`interceptor.weakening_cooldown_active` with `affected_policy_count` /
+`affected_policy_names`, and arms the cooldown; the reverse emits
+`interceptor.fail_policy_strengthened` and clears it immediately. The handler
+rejects a `transition_ts` / `cooldownSeconds` in the body with
+`INTERCEPTOR_COOLDOWN_IMMUTABLE` (rejected as a whole), a priority ≤ 100 with
+`INVALID_INTERCEPTOR_PRIORITY`, a `PreAuth` phase with
+`INVALID_INTERCEPTOR_PHASE`, and a delete of an interceptor named by any
+active `DelegationPolicy.contentPolicy.interceptorRef` with
+`RESOURCE_HAS_DEPENDENTS` (§8.3 rule 6). The delegation service reads the
+registry per `delegate_task` (inside `Delegate`) and per `lenny/send_message`
+(via the mcptools `CooldownChecker` seam) and rejects with
+`INTERCEPTOR_WEAKENING_COOLDOWN` (TRANSIENT, 503) while the referenced
+interceptor is inside its window — the registry is read per-invocation, never
+snapshotted into a lease (§8.3 rules 1-2), and cross-replica propagation rides
+the shared Postgres store. Dynamically dialing a registry interceptor into the
+live in-process `interceptor.Chain` (so a registered interceptor also scans
+content) remains the separate F-4.8.9 dynamic-registration follow-on; the
+registry today is the config + cooldown source of truth the §4.8 line-1034 /
+§8.3 SEC-013 control requires.
 
 ### - [x] F-4.8.18 — `interceptor.rejected` audit row emitted only for PostAuth (Partial) [Medium] — CLOSED
 
