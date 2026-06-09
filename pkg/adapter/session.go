@@ -95,6 +95,15 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
+	// spec: §6.4 lines 385-405 — a slot-qualified StartSession claims one
+	// of the pod's concurrent-workspace slots (its own per-slot tree and
+	// runtime) rather than the whole pod. Session/task mode (no slot id)
+	// takes the one-session-only base path below unchanged.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		resp, err := s.startSessionSlot(ctx, req, slotID)
+		spanErr = err
+		return resp, err
+	}
 	if s.Runtime == nil {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a runtime"),
@@ -170,6 +179,21 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 	if len(req.GetEnvelopeJson()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "SendMessage requires a message envelope")
 	}
+	// spec: §6.4 lines 401-405 — a slot-qualified message is delivered to
+	// the slot's own runtime so the dispatch lands on the slot's cwd.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		if err := s.checkSlotSession(sessionID, slotID); err != nil {
+			return nil, err
+		}
+		rt := s.runtimeForSlot(slotID)
+		if rt == nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "slot %s has no running runtime", slotID)
+		}
+		if err := rt.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
+			return nil, status.Errorf(codes.Internal, "deliver message to slot runtime: %v", err)
+		}
+		return &adapterv1.SendMessageResponse{}, nil
+	}
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err
 	}
@@ -194,6 +218,12 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Shutdown requires a session id")
+	}
+	// spec: §6.4 lines 401-405 — a slot-qualified Shutdown tears down only
+	// the named slot (its runtime + per-slot tree), leaving sibling slots
+	// on the pod running.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		return s.shutdownSlot(ctx, sessionID, slotID, req.GetDeadlineMs())
 	}
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err

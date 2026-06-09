@@ -613,7 +613,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.WorkspaceRoot, archive.DefaultWorkspaceRoot),
 	}
-	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, "", req.TenantID, req.Plan, allow)
 	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
@@ -880,7 +880,10 @@ func (b *Binder) releaseCredentials(sessionID string) {
 // strip-components-skip warnings the gateway raised during extraction. A
 // plan that carries upload sources but binds through a Binder with no
 // blob store fails rather than materializing an incomplete workspace.
-func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
+// slotID selects the §6.4 concurrent-workspace per-slot staging area
+// (/workspace/slots/{slotId}/staging) when non-empty; session-mode Bind
+// passes "" so uploads stage into the pod-global /workspace/staging.
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, slotID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	uploads := make(map[string][]byte)
 
 	// §7.4 line 448 / §13.4 line 652 — extract uploadArchive and gitClone
@@ -921,7 +924,13 @@ func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, s
 	}
 
 	if len(uploads) > 0 {
-		if _, err := cl.PrepareWorkspace(ctx, sessionID, uploads); err != nil {
+		var err error
+		if slotID != "" {
+			_, err = cl.PrepareWorkspaceSlot(ctx, sessionID, slotID, uploads)
+		} else {
+			_, err = cl.PrepareWorkspace(ctx, sessionID, uploads)
+		}
+		if err != nil {
 			return nil, nil, err
 		}
 	}

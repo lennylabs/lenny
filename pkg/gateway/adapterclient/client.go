@@ -104,6 +104,11 @@ type StartSessionParams struct {
 	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion (empty
 	// when none is specified).
 	MinPlatformVersion string
+	// SlotID, when set, claims a §6.4 concurrent-workspace slot rather than
+	// the whole pod: the adapter starts the slot's runtime against
+	// /workspace/slots/{slotId}/current. Empty in session/task mode.
+	// spec: §6.4 lines 385-405.
+	SlotID string
 }
 
 // StartSession starts the runtime on a pod whose workspace is already
@@ -111,7 +116,7 @@ type StartSessionParams struct {
 // run by RunSetup (§4.7, the final session-assignment RPC). The params
 // populate the §15.4 adapter manifest the runtime reads at startup.
 func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
-	_, err := c.rpc.StartSession(ctx, &adapterv1.StartSessionRequest{
+	req := &adapterv1.StartSessionRequest{
 		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
 		Runtime:            p.Runtime,
 		TaskId:             p.TaskID,
@@ -119,7 +124,11 @@ func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 		TracingContext:     p.TracingContext,
 		AgentInterface:     p.AgentInterface,
 		MinPlatformVersion: p.MinPlatformVersion,
-	})
+	}
+	if p.SlotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: p.SlotID}
+	}
+	_, err := c.rpc.StartSession(ctx, req)
 	return err
 }
 
@@ -160,10 +169,26 @@ func (c *Client) DemoteSDK(ctx context.Context, reason string) error {
 // The request carries credential material; per §4.7 item 6 the call
 // site must keep it out of access logs and telemetry.
 func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease) error {
-	_, err := c.rpc.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+	return c.assignCredentials(ctx, sessionID, "", leases)
+}
+
+// AssignCredentialsSlot is the §6.4 concurrent-workspace counterpart of
+// AssignCredentials: the leases are written to the slot's own per-slot
+// credential file /run/lenny/slots/{slotId}/credentials.json so a sibling
+// slot's file is untouched. spec: §6.1 line 28.
+func (c *Client) AssignCredentialsSlot(ctx context.Context, sessionID, slotID string, leases map[string]*adapterv1.CredentialLease) error {
+	return c.assignCredentials(ctx, sessionID, slotID, leases)
+}
+
+func (c *Client) assignCredentials(ctx context.Context, sessionID, slotID string, leases map[string]*adapterv1.CredentialLease) error {
+	req := &adapterv1.AssignCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Leases:    leases,
-	})
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	_, err := c.rpc.AssignCredentials(ctx, req)
 	return err
 }
 
@@ -207,13 +232,28 @@ const prepareWorkspaceChunkSize = 64 * 1024
 // sent in frames bounded by prepareWorkspaceChunkSize. The response
 // reports the staged byte and file totals the adapter persisted.
 func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
+	return c.prepareWorkspace(ctx, sessionID, "", uploads)
+}
+
+// PrepareWorkspaceSlot is the §6.4 concurrent-workspace counterpart of
+// PrepareWorkspace: the uploads stage into the slot's own
+// /workspace/slots/{slotId}/staging area. spec: §6.4 lines 401-405.
+func (c *Client) PrepareWorkspaceSlot(ctx context.Context, sessionID, slotID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
+	return c.prepareWorkspace(ctx, sessionID, slotID, uploads)
+}
+
+func (c *Client) prepareWorkspace(ctx context.Context, sessionID, slotID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
 	stream, err := c.rpc.PrepareWorkspace(ctx)
 	if err != nil {
 		return nil, err
 	}
 	sid := &adapterv1.SessionId{Value: sessionID}
+	var slot *adapterv1.SlotId
+	if slotID != "" {
+		slot = &adapterv1.SlotId{Value: slotID}
+	}
 	for ref, content := range uploads {
-		if err := sendUpload(stream, sid, ref, content); err != nil {
+		if err := sendUpload(stream, sid, slot, ref, content); err != nil {
 			// io.EOF means the adapter closed the stream early with an
 			// error; CloseAndRecv surfaces the real status. Any other
 			// send error is a transport failure to return directly.
@@ -228,7 +268,7 @@ func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads
 
 // sendUpload streams one upload as PrepareWorkspace frames. It always
 // sends at least one frame so an empty upload still stages a file.
-func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.SessionId, ref string, content []byte) error {
+func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.SessionId, slot *adapterv1.SlotId, ref string, content []byte) error {
 	for off := 0; ; off += prepareWorkspaceChunkSize {
 		end := off + prepareWorkspaceChunkSize
 		if end > len(content) {
@@ -236,6 +276,7 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 		}
 		if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
 			SessionId: sid,
+			SlotId:    slot,
 			UploadRef: ref,
 			Chunk:     content[off:end],
 		}); err != nil {
@@ -267,12 +308,27 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // and signals the runtime once promotion completes, rather than replacing
 // the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
 func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
-	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+	return c.finalizeWorkspace(ctx, sessionID, "", plan, archive, midSession)
+}
+
+// FinalizeWorkspaceSlot is the §6.4 concurrent-workspace counterpart of
+// FinalizeWorkspace: it materializes the plan into the slot's own
+// /workspace/slots/{slotId}/current. spec: §6.4 lines 401-405.
+func (c *Client) FinalizeWorkspaceSlot(ctx context.Context, sessionID, slotID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
+	return c.finalizeWorkspace(ctx, sessionID, slotID, plan, archive, midSession)
+}
+
+func (c *Client) finalizeWorkspace(ctx context.Context, sessionID, slotID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
+	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
 		ArchivePolicy: archive,
 		MidSession:    midSession,
-	})
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	resp, err := c.rpc.FinalizeWorkspace(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -288,11 +344,26 @@ func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *
 // the gRPC status details — the caller can extract them with
 // `status.FromError(err).Details()`. F-7.5.4.
 func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
-	resp, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
+	return c.runSetup(ctx, sessionID, "", setupCommands, setupPolicy)
+}
+
+// RunSetupSlot is the §6.4 concurrent-workspace counterpart of RunSetup:
+// it runs the setup commands against the slot's own
+// /workspace/slots/{slotId}/current cwd. spec: §6.4 line 404.
+func (c *Client) RunSetupSlot(ctx context.Context, sessionID, slotID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
+	return c.runSetup(ctx, sessionID, slotID, setupCommands, setupPolicy)
+}
+
+func (c *Client) runSetup(ctx context.Context, sessionID, slotID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
+	req := &adapterv1.RunSetupRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		SetupCommands: setupCommands,
 		SetupPolicy:   setupPolicy,
-	})
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	resp, err := c.rpc.RunSetup(ctx, req)
 	if err != nil {
 		// Try to recover partial outputs from the gRPC status details.
 		if st, ok := status.FromError(err); ok {
@@ -679,9 +750,24 @@ func (a *AttachStream) CloseSend() error {
 // Shutdown terminates the pod's runtime and releases the session. The
 // returned bool reports whether the runtime exited cleanly.
 func (c *Client) Shutdown(ctx context.Context, sessionID string) (bool, error) {
-	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+	return c.shutdown(ctx, sessionID, "")
+}
+
+// ShutdownSlot is the §6.4 concurrent-workspace counterpart of Shutdown:
+// it tears down only the named slot (its runtime and per-slot tree) while
+// sibling slots on the pod keep running. spec: §6.4 lines 401-405.
+func (c *Client) ShutdownSlot(ctx context.Context, sessionID, slotID string) (bool, error) {
+	return c.shutdown(ctx, sessionID, slotID)
+}
+
+func (c *Client) shutdown(ctx context.Context, sessionID, slotID string) (bool, error) {
+	req := &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
-	})
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	resp, err := c.rpc.Shutdown(ctx, req)
 	if err != nil {
 		return false, err
 	}

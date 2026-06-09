@@ -40,17 +40,11 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		span.End()
 	}()
 
-	if s.StagingDir == "" {
-		spanErr = tracing.CategorizeError(
-			status.Error(codes.FailedPrecondition, "adapter is not configured with a staging directory"),
-			tracing.CategoryPermanent)
-		return status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a staging directory")
-	}
-	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
-		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
-		return status.Errorf(codes.Internal, "create staging directory: %v", err)
-	}
+	// spec: §6.4 lines 401-405 — a slot-qualified upload stages into the
+	// slot's /workspace/slots/{slotId}/staging area. The staging directory
+	// is resolved from the first frame (every frame carries the same slot
+	// id); session/task mode uses the pod-global StagingDir.
+	var stagingDir string
 	open := map[string]*os.File{}
 	closeAll := func() {
 		for _, f := range open {
@@ -78,10 +72,19 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 			return status.Error(codes.InvalidArgument,
 				"PrepareWorkspace frame requires a session id")
 		}
+		if stagingDir == "" {
+			dir, derr := s.resolvePrepareStagingDir(req.GetSlotId().GetValue())
+			if derr != nil {
+				closeAll()
+				spanErr = tracing.CategorizeError(derr, tracing.CategoryPermanent)
+				return derr
+			}
+			stagingDir = dir
+		}
 		ref := req.GetUploadRef()
 		f, ok := open[ref]
 		if !ok {
-			path, err := workspace.StagingPath(s.StagingDir, ref)
+			path, err := workspace.StagingPath(stagingDir, ref)
 			if err != nil {
 				closeAll()
 				spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
@@ -114,6 +117,30 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 	})
 }
 
+// resolvePrepareStagingDir returns the staging directory PrepareWorkspace
+// streams uploads into. For a §6.4 concurrent slot it ensures the slot
+// tree exists and returns the slot's /workspace/slots/{slotId}/staging.
+// For the session/task base path it returns the pod-global StagingDir,
+// returning FailedPrecondition when unconfigured and creating it if
+// absent (mirroring the prior behavior).
+func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
+	if s.useSlot(slotID) {
+		paths, err := s.ensureSlotPaths(slotID)
+		if err != nil {
+			return "", status.Errorf(codes.InvalidArgument, "resolve slot %s staging: %v", slotID, err)
+		}
+		return paths.Staging, nil
+	}
+	if s.StagingDir == "" {
+		return "", status.Error(codes.FailedPrecondition,
+			"adapter is not configured with a staging directory")
+	}
+	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
+		return "", status.Errorf(codes.Internal, "create staging directory: %v", err)
+	}
+	return s.StagingDir, nil
+}
+
 // FinalizeWorkspace materializes the §14 WorkspacePlan into the
 // workspace root. It is the second RPC of the §4.7 session assignment
 // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
@@ -143,7 +170,20 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
-	if s.WorkspaceRoot == "" {
+	// spec: §6.4 lines 401-405 — a slot-qualified finalize materializes
+	// into the slot's per-slot tree (/workspace/slots/{slotId}/staging
+	// promoted to /current) and creates that tree on first reference.
+	// Session/task mode uses the pod-global WorkspaceRoot/StagingDir.
+	workspaceRoot, stagingDir := s.WorkspaceRoot, s.StagingDir
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		paths, perr := s.ensureSlotPaths(slotID)
+		if perr != nil {
+			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
+			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
+		}
+		workspaceRoot, stagingDir = paths.Current, paths.Staging
+	}
+	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
 			tracing.CategoryPermanent)
@@ -184,7 +224,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		WorkspaceRoot: req.GetArchivePolicy().GetWorkspaceRoot(),
 	}
 	if archive.WorkspaceRoot == "" {
-		archive.WorkspaceRoot = s.WorkspaceRoot
+		archive.WorkspaceRoot = workspaceRoot
 	}
 	sources := req.GetWorkspacePlan().GetSources()
 	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
@@ -200,10 +240,10 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		err      error
 	)
 	if midSession {
-		warnings, err = workspace.MaterializeOverlayWithPolicy(s.WorkspaceRoot, s.StagingDir,
+		warnings, err = workspace.MaterializeOverlayWithPolicy(workspaceRoot, stagingDir,
 			sources, archive)
 	} else {
-		warnings, err = workspace.MaterializeWithPolicy(s.WorkspaceRoot, s.StagingDir,
+		warnings, err = workspace.MaterializeWithPolicy(workspaceRoot, stagingDir,
 			sources, archive)
 	}
 	if err != nil {
@@ -287,7 +327,19 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 			tracing.CategoryPermanent)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
-	if s.WorkspaceRoot == "" {
+	// spec: §6.4 line 404 — a slot-qualified setup runs against the slot's
+	// own /workspace/slots/{slotId}/current cwd. Session/task mode uses the
+	// pod-global WorkspaceRoot.
+	workspaceRoot := s.WorkspaceRoot
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		paths, perr := s.ensureSlotPaths(slotID)
+		if perr != nil {
+			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
+			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
+		}
+		workspaceRoot = paths.Current
+	}
+	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
 			tracing.CategoryPermanent)
@@ -295,8 +347,8 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 			"adapter is not configured with a workspace root")
 	}
 	span.SetAttributes(attribute.Int("setup.command_count", len(req.GetSetupCommands())))
-	outputs, err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
-		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot))
+	outputs, err := workspace.RunSetup(ctx, workspaceRoot, req.GetSetupCommands(),
+		setupOptionsFromProto(req.GetSetupPolicy(), workspaceRoot))
 	resp := &adapterv1.RunSetupResponse{Outputs: setupOutputsToProto(outputs)}
 	if err != nil {
 		// spec: §5.1 lines 89-91 — setupPolicy.onTimeout = warn proceeds

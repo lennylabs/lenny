@@ -145,12 +145,12 @@ func (m *heartbeatMonitor) run(ctx context.Context) {
 // (nil when heartbeats are disabled). The monitor goroutine exits when
 // ctx is cancelled — the Attach RPC's stream context — so it is bounded
 // by the session it probes. spec: §15.4.1 lines 1442, 1826.
-func (s *Server) startHeartbeat(ctx context.Context, sessionID string) *heartbeatMonitor {
+func (s *Server) startHeartbeat(ctx context.Context, sessionID string, rt RuntimeProcess) *heartbeatMonitor {
 	if s.HeartbeatInterval <= 0 {
 		return nil
 	}
 	mon := newHeartbeatMonitor(s.HeartbeatInterval, s.HeartbeatAckTimeout, func(frame []byte) error {
-		return s.Runtime.WriteEnvelope(sessionID, frame)
+		return rt.WriteEnvelope(sessionID, frame)
 	})
 	go mon.run(ctx)
 	return mon
@@ -160,9 +160,9 @@ func (s *Server) startHeartbeat(ctx context.Context, sessionID string) *heartbea
 // escalation: it sends SIGTERM (the clean Interrupt) to the hung runtime
 // and logs the escalation. The Attach loop calls it once when the
 // monitor's hung channel closes, then ends the stream.
-func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string) {
+func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string, rt RuntimeProcess) {
 	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; sending SIGTERM (§15.4.1 line 1826)", sessionID)
-	if err := s.Runtime.Interrupt(ctx, sessionID, false); err != nil {
+	if err := rt.Interrupt(ctx, sessionID, false); err != nil {
 		log.Printf("lenny-adapter: SIGTERM of hung runtime for session %s failed: %v", sessionID, err)
 	}
 }

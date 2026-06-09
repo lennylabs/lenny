@@ -68,6 +68,12 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "AssignCredentials requires a session id")
 	}
+	// spec: §6.1 line 28 — a slot-qualified assignment writes the slot's
+	// own /run/lenny/slots/{slotId}/credentials.json so a sibling slot's
+	// credential file is untouched.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		return s.assignCredentialsSlot(sessionID, slotID, req.GetLeases())
+	}
 	if s.CredentialsDir == "" {
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a credentials directory")
@@ -103,6 +109,12 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RotateCredentials requires a session id")
+	}
+	// spec: §6.1 line 28 — a slot-qualified rotation rewrites only the
+	// slot's own credential file, so sibling slots' in-flight requests are
+	// unaffected.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		return s.rotateCredentialsSlot(sessionID, slotID, req.GetLeases())
 	}
 
 	rotated, err := s.applyRotation(sessionID, req.GetLeases())
@@ -288,6 +300,11 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RevokeCredentials requires a session id")
+	}
+	// spec: §6.1 line 28 — a slot-qualified revoke drops providers from
+	// the slot's own credential file only.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		return s.revokeCredentialsSlot(sessionID, slotID, req.GetProviders())
 	}
 
 	s.mu.Lock()

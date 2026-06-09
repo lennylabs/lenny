@@ -547,6 +547,11 @@ message PrepareWorkspaceRequest {
   // name with no path separators.
   string upload_ref = 2;
   bytes chunk = 3;
+  // slot_id, when set, stages this slot's uploads into the §6.4 per-slot
+  // staging area /workspace/slots/{slotId}/staging/ instead of the single
+  // /workspace/staging. Empty in session/task mode (the base layout).
+  // spec: §6.4 lines 385-405.
+  SlotId slot_id = 4;
 }
 
 // PrepareWorkspaceResponse reports the total staged upload set.
@@ -575,6 +580,12 @@ message FinalizeWorkspaceRequest {
   // proto3 default false is the pre-start whole-tree materialization the
   // §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
   bool mid_session = 4;
+  // slot_id, when set, materializes this slot's workspace under the §6.4
+  // per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
+  // current /workspace/slots/{slotId}/current/) instead of the single
+  // /workspace/current. Empty in session/task mode. spec: §6.4 lines
+  // 385-405.
+  SlotId slot_id = 5;
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
@@ -694,6 +705,10 @@ message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
   SetupPolicy setup_policy = 3;
+  // slot_id, when set, runs setup against this slot's materialized cwd
+  // /workspace/slots/{slotId}/current/ instead of /workspace/current.
+  // Empty in session/task mode. spec: §6.4 lines 401-405.
+  SlotId slot_id = 4;
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
@@ -767,6 +782,13 @@ message StartSessionRequest {
   // written into the adapter manifest. Empty when the runtime specifies no
   // minimum.
   string min_platform_version = 10;
+  // slot_id, when set, claims a §6.4 concurrent-workspace slot rather than
+  // the whole pod: the adapter registers the slot (alongside sibling
+  // slots), ensures the per-slot tree exists, and starts the slot's
+  // runtime against /workspace/slots/{slotId}/current/. Empty in
+  // session/task mode (the one-session-only claim). spec: §6.4 lines
+  // 385-405; §5.2 concurrent mode.
+  SlotId slot_id = 11;
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
@@ -829,6 +851,12 @@ message AttachResponse {
 message AssignCredentialsRequest {
   SessionId session_id = 1;
   map<string, CredentialLease> leases = 2; // keyed by provider
+  // slot_id, when set, writes this slot's independent credential lease to
+  // the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
+  // instead of the single global /run/lenny/credentials.json, so a
+  // rotation on one slot does not disrupt sibling slots. Empty in
+  // session/task mode. spec: §6.1 line 28.
+  SlotId slot_id = 3;
 }
 
 message AssignCredentialsResponse {}
@@ -844,6 +872,10 @@ message RotateCredentialsRequest {
   // because the old credential is still valid. Empty is treated as a
   // fault trigger (capped) for fail-closed safety.
   string rotation_trigger = 3;
+  // slot_id, when set, rotates the lease in this slot's §6.1 per-slot
+  // credential file independently of sibling slots. Empty in session/task
+  // mode. spec: §6.1 line 28.
+  SlotId slot_id = 4;
 }
 
 message RotateCredentialsResponse {}
@@ -852,6 +884,10 @@ message RevokeCredentialsRequest {
   SessionId session_id = 1;
   repeated string providers = 2;
   string reason = 3;
+  // slot_id, when set, revokes from this slot's §6.1 per-slot credential
+  // file independently of sibling slots. Empty in session/task mode.
+  // spec: §6.1 line 28.
+  SlotId slot_id = 4;
 }
 
 message RevokeCredentialsResponse {}
@@ -1182,6 +1218,11 @@ message ShutdownRequest {
   SessionId session_id = 1;
   string reason = 2;
   int32 deadline_ms = 3;
+  // slot_id, when set, tears down just this §6.4 concurrent-workspace
+  // slot (its runtime, credential timers, and per-slot directory tree)
+  // while sibling slots on the pod keep running. Empty in session/task
+  // mode (the whole-pod shutdown). spec: §6.4 lines 401-405.
+  SlotId slot_id = 4;
 }
 
 message ShutdownResponse {

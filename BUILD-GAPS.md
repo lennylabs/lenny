@@ -4458,7 +4458,7 @@ Consequence: the `task_cleanup → sdk_connecting` versus `task_cleanup → drai
 
 - **Resolution:** Closed by F-4.6.7. The new `warmpool.PodReconciler` watches Nodes (with a `spec.nodeName` field index for Node→Pod fan-out) and maintains `lenny.dev/host-schedulable` on every managed pod, re-labeling all pods on a node within one reconcile cycle on cordon/uncordon. Resolved in commit 1f2bb711.
 
-### - [ ] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — OPEN
+### - [x] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.4.2 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -4472,6 +4472,8 @@ Spec §6.1 line 28 (Concurrent-mode credential lease lifecycle paragraph): "The 
 Consequence: concurrent-workspace mode (Phase 12c, BUILD-PROGRESS.md line 54) advertises support for `maxConcurrent: N`, but the per-slot credential file, session directory, and artifact directory described in §6.1/§6.4 do not exist. A concurrent-slot lease assignment overwrites the single shared `/run/lenny/credentials.json`. The "concurrent-mode credential lease lifecycle" paragraph in §6.1 cannot be honored.
 
 **Deferred:** Confirmed duplicate of F-6.4.2 (the finding text flags it at high confidence). Same blocker — the adapter single-session → per-slot multiplexing refactor (Phase 12c). Will close together with F-6.4.2; the per-slot credential file is tracked under F-6.4.10.
+
+**Resolution:** Closed by F-6.4.2. The new `pkg/adapter/slotlayout` package materializes the per-slot tree (`/workspace/slots/{slotId}/{current,staging}`, `/sessions/{slotId}`, `/artifacts/{slotId}`, `/run/lenny/slots/{slotId}`) on slot assignment and removes it on slot cleanup; the adapter's workspace and credential RPCs take the per-slot path when the request carries a `slot_id`. Verified by the `slotlayout` tier-1 suite and the adapter per-slot RPC tests.
 
 ### - [x] F-6.1.12 — `executor.Close` retains stale `s.sessionID` on Close path; one-session-only enforced via `credSessionID` only [Medium] — CLOSED
 
@@ -5282,7 +5284,7 @@ Consequence: §6.4's "Session files (e.g., conversation logs, runtime state)" an
 
 - **Resolution:** Closed by `a4fa7a64`. `podVolumes` now declares a memory-backed `sessions` tmpfs (§6.4 line 380) and a disk-backed `artifacts` emptyDir (§6.4 line 414), and every agent container — the sidecar adapter and runtime, and the embedded runtime — mounts them at `/sessions` and `/artifacts`. The §6.4 data-at-rest medium split holds: `/sessions` and `/tmp` are tmpfs (contents gone on pod termination); `/workspace` and `/artifacts` are disk-backed. Regression test `TestBuildMountsSessionsAndArtifacts_spec_6_4`.
 
-### - [ ] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — OPEN
+### - [x] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.11 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -5295,6 +5297,8 @@ Test confirmation: `tests/tier7_load/scaffolds_test.go:289–302` (`TestConcurre
 Consequence: `executionMode: concurrent` + `concurrencyStyle: workspace` cannot actually run more than one session per pod with workspace isolation. Any concurrent slot assignment lands in the same `/workspace/current` and races the §4.7 single-session adapter state, violating §6.4's "MUST NOT assume a global `/workspace/current` path" requirement on the runtime side. Per-slot session files and per-slot artifacts have no destination either (H-1 + per-slot suffix).
 
 **Deferred:** Closing this end-to-end requires the adapter's single-session → per-slot multiplexing refactor, which is the Phase 12c (§18.30) concurrent-execution-modes deliverable rather than a filesystem-layout patch. The adapter is architecturally single-session: `Server.sessionID`/`claimSession`/`checkSession` are scalar, `Runtime` is one `RuntimeProcess` (the `SocketRuntimeProcess` binds exactly one session and rejects a second), and the platform-MCP (`mcpCancel`), credential (`credSessionID`/`credLeases`), and expiry-timer state are all single-slot. Per-slot directory creation/removal, per-slot cwd derivation, and per-slot session/credential state must land together with N concurrent runtime processes per pod, threading the existing `SlotId` proto message through `PrepareWorkspace`/`FinalizeWorkspace`/`RunSetup`/`StartSession`/`AssignCredentials` and the gateway `BindSlot` dispatch (which already drives the full per-slot sequence keyed by `SessionID`). The other half of the §6.4 layout — the `/workspace/shared/` read-only shared-asset volume — is closed by F-6.4.3 (commit ed8d364d). Tracked together with F-6.1.11 (duplicate) and F-6.4.10 (per-slot credentials).
+
+**Resolution:** Built the adapter's §6.4 per-slot multiplexing. New `pkg/adapter/slotlayout` is the single source of truth for the per-slot path derivation (`/workspace/slots/{slotId}/{current,staging}`, `/sessions/{slotId}`, `/artifacts/{slotId}`) plus tree create-on-assignment / remove-on-cleanup, with a slot-id trust-boundary validator that rejects path traversal. The `slot_id` proto field (added to `PrepareWorkspace`/`FinalizeWorkspace`/`RunSetup`/`StartSession`/`AssignCredentials`/`RotateCredentials`/`RevokeCredentials`/`Shutdown`) drives a new per-slot state map on the `Server` (`slots map[string]*slotState`): each active slot holds its own directory tree, runtime process (via `RuntimeFactory`, the "N concurrent runtime processes per pod" topology), and credential lease set, so distinct slots coexist while the single-session base path stays byte-for-byte unchanged when `slot_id` is empty. `StartSession`, `SendMessage`, `Attach`, and `Shutdown` route to the slot's runtime; `FinalizeWorkspace`/`RunSetup`/`PrepareWorkspace` materialize into the slot's cwd/staging. The gateway `BindSlot` now passes the slot id through the slot-aware client methods (`PrepareWorkspaceSlot`/`FinalizeWorkspaceSlot`/`RunSetupSlot`/`AssignCredentialsSlot`/`StartSessionParams.SlotID`/`ShutdownSlot`), and `cmd/lenny-adapter --concurrency-style=workspace` enables the mode with a per-slot runtime factory. The runtime derives its cwd per slot from the slot tree the adapter creates (§6.4 line 404). Closes F-6.1.11 (duplicate). Tier-1 coverage in `slotlayout` and the adapter per-slot RPC suite.
 
 ### - [x] F-6.4.3 — `/workspace/shared/` read-only volume and `sharedAssets` field are not built [High] — CLOSED
 
@@ -5399,7 +5403,7 @@ This is medium severity rather than high because it is a strict prerequisite of 
 
 **Resolution:** Added `workspaceTier` to `RuntimeSpec` (enum `T3`/`T4`, optional, defaults to `T3`) with the matching CRD schema entry in `charts/lenny/crds/lenny.dev_runtimes.yaml`. The runtime controller's `applyCRDFields` mirrors the value onto the gateway-side `runtimestore.WorkspaceTier` so the §5.2 cross-tenant-reuse rejection and the §6.4 dedicated-node injection both observe the deployer's declaration. Regression: `TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9`. Unblocks F-6.4.4.
 
-### - [ ] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — OPEN
+### - [x] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — CLOSED
 
 Spec §6.1 line 28 (cross-referenced by §6.4's per-slot layout): "The adapter writes per-slot credential files at `/run/lenny/slots/{slotId}/credentials.json` (mode `0440`, tmpfs-backed, with the same adapter-owner + `lenny-cred-readers` group-ownership scheme as the single-slot file …) rather than a single global `/run/lenny/credentials.json`."
 
@@ -5409,11 +5413,15 @@ Consequence: combined with H-2, concurrent-mode credential leasing cannot honor 
 
 **Deferred:** Same blocker as F-6.4.2 — per-slot credential files (`/run/lenny/slots/{slotId}/credentials.json`) require a `slot_id` on `AssignCredentialsRequest` and per-slot credential state (`credSessionID`/`credLeases`/`expiryTimers` keyed by slot) in the adapter, both part of the single-session → per-slot multiplexing refactor. The `credfile.Write` primitive already takes a target directory, so the per-slot path derivation is a small addition once the per-slot credential state exists. Will close with the Phase 12c concurrent-execution batch alongside F-6.4.2.
 
-### - [ ] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — OPEN
+**Resolution:** Built with F-6.4.2. `slot_id` was added to `AssignCredentialsRequest`/`RotateCredentialsRequest`/`RevokeCredentialsRequest`; `pkg/adapter/slotcreds.go` keys an independent credential lease set, expiry-timer set, and credential file per slot under `slotlayout.SlotPaths.CredentialsFile` = `/run/lenny/slots/{slotId}/credentials.json` (mode 0440, the per-slot dir 0710 so the `lenny-cred-readers` group traverses but cannot enumerate sibling slots). The slot-qualified `AssignCredentials`/`RotateCredentials`/`RevokeCredentials` write only that slot's file, so a rotation on one slot leaves a sibling's file and in-flight requests untouched — the §6.1 "Other slots' LLM requests are unaffected by a rotation on a sibling slot" guarantee. The gateway `BindSlot` mints the per-slot lease and pushes it via `AssignCredentialsSlot`. Tier-1 coverage asserts per-slot isolation (a slot-a rotation does not change slot-b's file) and that the global `/run/lenny/credentials.json` is never written in slot mode.
+
+### - [x] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — CLOSED
 
 Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the metric itself is the §6.1 contract. This audit notes it as `Info` because it surfaces in the §6.3 audit; carrying it forward here clarifies that the §6.4 layout doesn't depend on demotion behaviour. See `6.3.md` for the detailed gap.
 
 **Deferred:** The §6.4 surface does not depend on the demotion metric (the finding itself says so). The producer-side gap is the §6.1 SDK-warm path, tracked under F-6.1.1 / F-6.1.5; closing those will retire this §6.4 cross-reference without any new work here.
+
+**Resolution (verify-close):** The producer-side blockers this cross-reference named are both CLOSED — F-6.1.1 (SDK-warm path end-to-end) and F-6.1.5 (`lenny_warmpool_sdk_demotions_total` / `lenny_warmpool_sdk_connect_timeout_total` emitters). The §6.1 line 48 enforcement path is built: `pkg/controller/poolscaling` carries `DemotionRateSource`/`DemotionSignal`, the deployer-configurable `DemotionRateThreshold` (`sdkWarm.demotionRateThreshold`, F-6.3.11), the `AcknowledgeHighDemotionRate` suppression, and the `SDKWarmDemotionRateHigh` warning event plus the 90% hard-threshold circuit breaker. As the finding states, the §6.4 per-slot layout (F-6.4.2) does not depend on demotion behavior, so closing the §6.1 producers retires this cross-reference with no §6.4 code owed.
 
 ### - [x] F-6.4.12 — The pod-spec builder hardcodes the per-runtime workspace cwd to `/workspace/current` even in embedded mode [Low] — CLOSED
 
@@ -27086,7 +27094,7 @@ will flag it because there is no spec mapping.
 
 **Resolution:** Verify-closed. §5.1 line 296 normatively defines `POST /v1/admin/runtimes/regenerate-cards` (Request body with `generatorVersionBefore` + `dryRun`; response with `regenerated/skipped/errors`). The §15.1 line 933 CI invariant only requires every admin endpoint to carry the `x-lenny-mcp-tool` / `x-lenny-scope` / `x-lenny-required-role` / `x-lenny-category` extensions; `openapi.json:1021-1026` confirms the endpoint already carries all four. The §5.1-vs-§15.1 cross-listing question is spec-coordination territory (Rule B prevents spec edits); no code action owed.
 
-### - [ ] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — OPEN
+### - [x] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — CLOSED
 Spec lines 691–693 explicitly require both the POST and a GET on
 `/v1/sessions/{id}/messages`, returning "message history including
 delivery receipts and state". Impl wires only the POST
@@ -27095,6 +27103,8 @@ back the inbox / sent messages they submitted, and the spec's
 "delivery receipt" contract from §7.2 is not callable.
 
 **Resolution:** DEFERRED. F-7.2.4 (the inbox/DLQ machinery) has now landed, but it stores *undelivered* messages (a buffer), not the persisted *message history with delivery receipts and state* this GET must page over. That history is produced by the live send-path routing that records each message + its receipt — the **F-7.2.5** deliverable (message-delivery routing, OPEN) — plus a per-session message store. Re-pointed: re-attempt once F-7.2.5 records message history on the send path; landing the REST GET against only the undelivered buffer would still expose a partial view that contradicts the spec contract.
+
+**Resolution (verify-close):** Unblocked and implemented. F-7.2.5 (message-delivery routing) has since landed, and commit `d0603800` (F-15.1.3) built `pkg/gateway/sessionserver/messages_list.go`: `handleMessagesList` serves `GET /v1/sessions/{id}/messages` as the §15.4.1 MessageDAG over the durable `session_messages`/transcript store with the canonical `{items, cursor, hasMore}` envelope, the spec-named `?since=`/`?threadId=` filters, `[1,200]` limit clamping, derived `from` attribution, and `delivered` delivery state. The route is wired at `sessionserver.go:1796` (`GET /v1/sessions/{id}/messages` → `read(s.handleMessagesList)`) and covered by `messages_list_test.go`. Re-verified this batch: the handler, route, and tests are present and green.
 
 ### - [x] F-15.1.23 — The §15.1 cursor envelope for events / SSE reconnect uses `Last-Event-ID` but no canonical `items` shape [Medium] — CLOSED
 Spec line 482 mounts `GET /v1/sessions/{id}/events`; the canonical

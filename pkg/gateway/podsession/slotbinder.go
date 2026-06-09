@@ -130,14 +130,17 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 			WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
 		}
-		stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+		// spec: §6.4 lines 401-405 — the slot's workspace materializes into
+		// its own /workspace/slots/{slotId}/ tree. slotID is the per-slot
+		// identifier the adapter keys the tree on.
+		stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, slotID, req.TenantID, req.Plan, allow)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 				fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 		}
-		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
+		warnings, err := cl.FinalizeWorkspaceSlot(ctx, req.SessionID, slotID, stagedPlan, req.ArchivePolicy, false)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
@@ -145,7 +148,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 				fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 		}
 		finalizeWarnings = append(stageWarnings, warnings...)
-		outs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
+		outs, err := cl.RunSetupSlot(ctx, req.SessionID, slotID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
@@ -157,7 +160,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	// Stateless-concurrent skips the workspace path entirely: §5.2
 	// stateless mode materializes no workspace and runs no setup.
 
-	if err := b.assignSlotCredentials(ctx, cl, req); err != nil {
+	if err := b.assignSlotCredentials(ctx, cl, req, slotID); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
 		return nil, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
@@ -170,6 +173,8 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		TracingContext:     req.TracingContext,
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
+		// spec: §6.4 lines 385-405 — claim the slot rather than the whole pod.
+		SlotID: slotID,
 	}); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
@@ -205,7 +210,7 @@ func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 // rotation on one slot does not disrupt sibling slots. It is a no-op
 // when the binder has no credential service or the request names no
 // pools.
-func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest) error {
+func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, slotID string) error {
 	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
 	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
 	if !hasPool && !hasUser {
@@ -236,7 +241,9 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 			leases[provider] = lease
 		}
 	}
-	return cl.AssignCredentials(ctx, req.SessionID, leases)
+	// spec: §6.1 line 28 — the slot's lease is written to its own per-slot
+	// credential file so a rotation on a sibling slot does not disrupt it.
+	return cl.AssignCredentialsSlot(ctx, req.SessionID, slotID, leases)
 }
 
 // connectSlot reserves a concurrent-mode slot from the pool, resolves
@@ -345,7 +352,9 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 // best-effort.
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	if result.Adapter != nil {
-		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
+		// and per-slot tree); sibling slots on the pod keep running.
+		_, _ = result.Adapter.ShutdownSlot(ctx, result.SessionID, result.SlotID)
 		result.Adapter.Close()
 	}
 	// spec: §7.1 line 52 (step 23) — release the slot session's §4.9

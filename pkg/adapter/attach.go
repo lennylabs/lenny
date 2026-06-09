@@ -34,17 +34,30 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	if sessionID == "" {
 		return status.Error(codes.InvalidArgument, "Attach requires a session id on the first message")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	// spec: §6.4 lines 401-405 — a slot-qualified Attach binds to the
+	// slot's own runtime and cwd; session/task mode (no slot id) uses the
+	// pod-global Runtime and WorkspaceRoot unchanged.
+	slotID := first.GetSlotId().GetValue()
+	if s.useSlot(slotID) {
+		if err := s.checkSlotSession(sessionID, slotID); err != nil {
+			return err
+		}
+	} else if err := s.checkSession(sessionID); err != nil {
 		return err
 	}
+	rt := s.runtimeForSlot(slotID)
+	if rt == nil {
+		return status.Errorf(codes.FailedPrecondition, "slot %s has no running runtime", slotID)
+	}
+	wsRoot := s.workspaceRootForSlot(slotID)
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
-		if err := s.Runtime.WriteEnvelope(sessionID, env); err != nil {
+		if err := rt.WriteEnvelope(sessionID, env); err != nil {
 			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 		}
 	}
 
 	ctx := stream.Context()
-	out, err := s.Runtime.Output(ctx, sessionID)
+	out, err := rt.Output(ctx, sessionID)
 	if err != nil {
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
 	}
@@ -52,7 +65,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// spec: §15.4.1 lines 1442/1826 — the adapter probes runtime liveness
 	// with periodic heartbeats and SIGTERMs a process that misses the ack
 	// deadline. Disabled (hbHung == nil) unless HeartbeatInterval is set.
-	hb := s.startHeartbeat(ctx, sessionID)
+	hb := s.startHeartbeat(ctx, sessionID, rt)
 	var hbHung <-chan struct{}
 	if hb != nil {
 		hbHung = hb.hung
@@ -64,7 +77,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// loop has stopped selecting on it.
 	recvErr := make(chan error, 1)
 	go func() {
-		recvErr <- s.attachRecvLoop(stream, sessionID)
+		recvErr <- s.attachRecvLoop(stream, sessionID, rt)
 	}()
 
 	for {
@@ -97,8 +110,8 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// platform/connector tool_call is traced gateway-side as
 			// mcp.external_tool_call; the adapter-local dispatch below is
 			// the pod-side tool invocation that §16.3 attributes to the Pod.
-			if result, handled := HandleToolCall(line, s.WorkspaceRoot); handled {
-				if err := s.emitLocalToolCall(ctx, sessionID, line, result); err != nil {
+			if result, handled := HandleToolCall(line, wsRoot); handled {
+				if err := s.emitLocalToolCall(ctx, sessionID, line, result, rt); err != nil {
 					return err
 				}
 				continue
@@ -127,7 +140,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// ack deadline. The adapter SIGTERMs the hung process and ends
 			// the stream with DeadlineExceeded so the gateway sees the
 			// unresponsive-agent escalation rather than a clean close.
-			s.onHeartbeatHung(ctx, sessionID)
+			s.onHeartbeatHung(ctx, sessionID, rt)
 			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; sent SIGTERM (§15.4.1 line 1826)")
 		case <-ctx.Done():
 			return ctx.Err()
@@ -143,7 +156,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 // attribute (a tool identifier, never arguments) and records an UPSTREAM
 // error when the local tool reported isError, so a failing read of a
 // missing file or a denied write surfaces on the trace. F-16.3.6.
-func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame, result []byte) error {
+func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame, result []byte, rt RuntimeProcess) error {
 	// spec: §16.3 line 343 — `session.tool_call`, emitted by the Pod, one
 	// span per tool invocation. NewTracer(nil) resolves the process-global
 	// provider cmd/lenny-adapter installs; correlation fields auto-project.
@@ -164,7 +177,7 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame,
 			errors.New("adapter-local tool reported an error result"),
 			tracing.CategoryUpstream))
 	}
-	if err := s.Runtime.WriteEnvelope(sessionID, result); err != nil {
+	if err := rt.WriteEnvelope(sessionID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
 	}
@@ -216,14 +229,14 @@ func stripRuntimeFrom(line []byte) []byte {
 
 // attachRecvLoop forwards each client envelope on the Attach stream to
 // the runtime's stdin until the stream ends.
-func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID string) error {
+func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID string, rt RuntimeProcess) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 		if env := msg.GetEnvelopeJson(); len(env) > 0 {
-			if err := s.Runtime.WriteEnvelope(sessionID, env); err != nil {
+			if err := rt.WriteEnvelope(sessionID, env); err != nil {
 				return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 			}
 		}
