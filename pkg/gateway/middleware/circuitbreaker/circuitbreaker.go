@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 )
@@ -82,6 +83,14 @@ type Options struct {
 	// Snapshot resolves the audit row's request snapshot from the
 	// request. Ignored when Audit is nil.
 	Snapshot SnapshotExtractor
+	// CacheAge reports how long ago the breaker registry's in-process
+	// cache last refreshed from Redis. When set and the age exceeds the
+	// §11.7 5-second staleness budget, every admission decision is
+	// recorded as a §16.7 `admission.circuit_breaker_cache_stale` serve
+	// (sampled) via Audit. Nil (the MemoryRegistry / non-cached path)
+	// disables stale-serve detection. The production wiring passes the
+	// cachingstore's LastRefresh as `time.Since(LastRefresh())`.
+	CacheAge func() time.Duration
 }
 
 // Wrap returns an http.Handler that consults the Registry on every
@@ -107,7 +116,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	if match := circuitbreaker.FirstMatch(breakers, m.opts.Extract(r)); match != nil {
+	match := circuitbreaker.FirstMatch(breakers, m.opts.Extract(r))
+	// spec: §16.7 line 679 — a decision served against a cache that has
+	// not refreshed within the §11.7 5-second budget is recorded (sampled)
+	// before the request is admitted or rejected, so the audit trail shows
+	// which decisions were made blind during a Redis outage.
+	m.reportCacheStale(r, match != nil)
+	if match != nil {
 		// spec: §11.6 line 327 — the gate runs after AuthEvaluator, so
 		// the audit row carries the authenticated caller identity even
 		// though the breaker match criteria do not reference the tenant.
@@ -122,6 +137,29 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.inner.ServeHTTP(w, r)
+}
+
+// reportCacheStale records the §16.7 `admission.circuit_breaker_cache_stale`
+// serve when the breaker cache age exceeds the staleness budget. It is a
+// no-op when stale-serve detection is disabled (no CacheAge source or no
+// Audit reporter) or the cache is fresh.
+func (m *middleware) reportCacheStale(r *http.Request, rejected bool) {
+	if m.opts.Audit == nil || m.opts.CacheAge == nil {
+		return
+	}
+	age := m.opts.CacheAge()
+	if age <= CacheStaleAfter {
+		return
+	}
+	outcome := "admitted"
+	if rejected {
+		outcome = "rejected"
+	}
+	var snap RejectionSnapshot
+	if m.opts.Snapshot != nil {
+		snap = m.opts.Snapshot(r)
+	}
+	m.opts.Audit.ReportCacheStale(r.Context(), outcome, age.Seconds(), snap)
 }
 
 func writeBreakerRejection(w http.ResponseWriter, b circuitbreaker.Breaker) {

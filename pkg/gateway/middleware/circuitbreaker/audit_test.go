@@ -35,14 +35,22 @@ func (f *fakeAppender) Append(_ context.Context, tenantID, eventType string, pay
 	return audit.Row{}, f.err
 }
 
-// fakeMetrics counts the two §11.6 rejection counters.
+// fakeMetrics counts the §11.6 rejection counters and the §16.1
+// cache-stale-serve counter (by outcome).
 type fakeMetrics struct {
-	total      int
-	suppressed int
+	total       int
+	suppressed  int
+	staleServes map[string]int
 }
 
-func (m *fakeMetrics) RecordCircuitBreakerRejection(string, string, string)          { m.total++ }
-func (m *fakeMetrics) RecordCircuitBreakerRejectionSuppressed(string, string, string) { m.suppressed++ }
+func (m *fakeMetrics) RecordCircuitBreakerRejection(string, string, string)            { m.total++ }
+func (m *fakeMetrics) RecordCircuitBreakerRejectionSuppressed(string, string, string)  { m.suppressed++ }
+func (m *fakeMetrics) RecordCircuitBreakerCacheStaleServe(outcome string) {
+	if m.staleServes == nil {
+		m.staleServes = map[string]int{}
+	}
+	m.staleServes[outcome]++
+}
 
 func openBreaker() cb.Breaker {
 	return cb.Breaker{

@@ -19,6 +19,19 @@ import (
 // interceptor, so a breaker REJECT produces this distinct event type.
 const EventAdmissionCircuitBreakerRejected = "admission.circuit_breaker_rejected"
 
+// EventAdmissionCircuitBreakerCacheStale is the §16.7 line 679 audit
+// event written (sampled) when the §11.6 admission gate serves a decision
+// against a breaker cache that has not refreshed within the 5-second poll
+// interval. The security-salient case is outcome="admitted": a breaker
+// whose state the admission path could not verify did not block the
+// request.
+const EventAdmissionCircuitBreakerCacheStale = "admission.circuit_breaker_cache_stale"
+
+// CacheStaleAfter is the §11.7 staleness budget: an admission cache older
+// than this when a decision is served is "stale" for the §16.7
+// cache-stale audit event and the stale-serve counter.
+const CacheStaleAfter = 5 * time.Second
+
 // auditSamplingWindow is the §11.6 line 331 rolling window: the first
 // rejection per (tenant_id, circuit_name, caller_sub) within any
 // 10-second window is written as a full audit row; subsequent
@@ -42,6 +55,10 @@ type RejectionMetrics interface {
 	// RecordCircuitBreakerRejectionSuppressed counts only the
 	// rejections whose audit row was elided by sampling.
 	RecordCircuitBreakerRejectionSuppressed(tenantID, circuitName, limitTier string)
+	// RecordCircuitBreakerCacheStaleServe counts every admission decision
+	// served against a stale breaker cache, labelled by outcome
+	// (rejected | admitted). spec: §16.1 line 218.
+	RecordCircuitBreakerCacheStaleServe(outcome string)
 }
 
 // AuditReporter emits the §16.7 `admission.circuit_breaker_rejected`
@@ -145,6 +162,48 @@ func (a *AuditReporter) Report(ctx context.Context, b circuitbreaker.Breaker, sn
 	// must not change the caller-visible outcome. The hash-chain
 	// integrity check (§11.7) surfaces any persistent write failure.
 	_, _ = a.appender.Append(ctx, tenantID, EventAdmissionCircuitBreakerRejected, payload, a.clock())
+}
+
+// ReportCacheStale emits the §16.7 `admission.circuit_breaker_cache_stale`
+// audit event for one admission decision served against a stale breaker
+// cache. It always increments lenny_circuit_breaker_cache_stale_serves_total
+// (labelled by outcome); it writes a full audit row only for the first
+// stale serve per (replica, outcome) within the 10-second sampling
+// window so a Redis outage's stale-serve storm cannot flood the audit
+// log. A nil appender makes this a metrics-only no-op for the audit
+// write. outcome is "rejected" when an open breaker matched the request
+// and "admitted" otherwise (the security-salient case). ageSeconds is the
+// cache age at decision time.
+func (a *AuditReporter) ReportCacheStale(ctx context.Context, outcome string, ageSeconds float64, snap RejectionSnapshot) {
+	if a.metrics != nil {
+		a.metrics.RecordCircuitBreakerCacheStaleServe(outcome)
+	}
+	if a.appender == nil {
+		return
+	}
+	// Sample per (replica, outcome): the stale window is a property of this
+	// replica's cache, so the dedup key is the replica + outcome rather than
+	// the per-(tenant, circuit, caller) key the rejection path uses.
+	if a.suppressed("\x00cachestale", a.replicaID, outcome) {
+		return
+	}
+	row := map[string]any{
+		"outcome":                     outcome,
+		"cache_age_seconds":           ageSeconds,
+		"replica_service_instance_id": a.replicaID,
+	}
+	if snap.CallerSub != "" {
+		row["caller_sub"] = snap.CallerSub
+	}
+	if snap.CallerTenantID != "" {
+		row["caller_tenant_id"] = snap.CallerTenantID
+	}
+	payload, _ := json.Marshal(row)
+	// The cache-stale event is written under the caller's tenant when
+	// known; a probe with no resolved tenant falls back to the empty
+	// tenant the appender routes to the platform tenant. Best-effort on the
+	// hot path, like the rejection write.
+	_, _ = a.appender.Append(ctx, snap.CallerTenantID, EventAdmissionCircuitBreakerCacheStale, payload, a.clock())
 }
 
 // suppressed reports whether a rejection for the (tenant, circuit,

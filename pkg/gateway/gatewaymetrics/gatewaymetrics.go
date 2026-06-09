@@ -96,6 +96,7 @@ type Metrics struct {
 	cbRejections                   *prometheus.CounterVec
 	cbRejectionsSuppressed         *prometheus.CounterVec
 	cbCacheStale                   prometheus.Gauge
+	cbCacheStaleServes             *prometheus.CounterVec
 	cbCacheInitialized             prometheus.Gauge
 	elicitationDropped             *prometheus.CounterVec
 	elicitationTamperDetected      *prometheus.CounterVec
@@ -1153,6 +1154,18 @@ func New() (*Metrics, error) {
 		Name: "lenny_circuit_breaker_cache_initialized",
 		Help: "1 once the circuit-breaker cache has completed its first refresh.",
 	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 218 — every admission decision served against a
+	// breaker cache that had not refreshed within the 5s poll interval,
+	// labelled by outcome (rejected | admitted). outcome="admitted" is the
+	// security-salient case: a breaker whose state the admission path could
+	// not verify did not block the request.
+	cbCacheStaleServes, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_circuit_breaker_cache_stale_serves_total",
+		Help: "§11.6 admission decisions served against a stale (>5s unrefreshed) breaker cache, labelled by outcome (rejected | admitted).",
+	}, []string{"outcome"})
 	if err != nil {
 		return nil, err
 	}
@@ -2747,7 +2760,7 @@ func New() (*Metrics, error) {
 	timeDriftChild := timeDriftGauge.WithLabelValues()
 	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
-		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
+		rejectionRate, cbCacheStale, cbCacheStaleServes, cbCacheInitialized, gcPauseP99Ms,
 		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections,
 		replayBufferUtilization, pdbBlockedEvictions,
 		billingCorrectionRateThreshold,
@@ -2796,6 +2809,7 @@ func New() (*Metrics, error) {
 		cbRejections:                         cbRejections,
 		cbRejectionsSuppressed:               cbRejectionsSuppressed,
 		cbCacheStale:                         cbStale,
+		cbCacheStaleServes:                   cbCacheStaleServes,
 		cbCacheInitialized:                   cbInit,
 		elicitationDropped:                   elicitationDropped,
 		elicitationTamperDetected:            elicitationTamperDetected,
@@ -4506,6 +4520,16 @@ func (m *Metrics) RecordCircuitBreakerRejection(tenantID, circuitName, limitTier
 // circuit_name, caller_sub) 10-second sampling window.
 func (m *Metrics) RecordCircuitBreakerRejectionSuppressed(tenantID, circuitName, limitTier string) {
 	m.cbRejectionsSuppressed.WithLabelValues(tenantID, circuitName, limitTier).Inc()
+}
+
+// RecordCircuitBreakerCacheStaleServe increments the §16.1 line 218
+// lenny_circuit_breaker_cache_stale_serves_total counter for one
+// admission decision served against a breaker cache that had not
+// refreshed within the 5s poll interval. outcome is "rejected" when an
+// open breaker matched and "admitted" otherwise (the security-salient
+// case).
+func (m *Metrics) RecordCircuitBreakerCacheStaleServe(outcome string) {
+	m.cbCacheStaleServes.WithLabelValues(outcome).Inc()
 }
 
 // SetCircuitBreakerCache updates the §16.1 circuit-breaker cache

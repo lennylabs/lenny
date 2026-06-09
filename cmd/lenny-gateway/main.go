@@ -6021,7 +6021,7 @@ func main() {
 	// which wraps outside this gate), sampled per-(tenant, circuit,
 	// caller) over a 10s window per replica.
 	cbAudit := cbmw.NewAuditReporter(auditAppender, gwMetrics, replica, nil)
-	handler = cbmw.Wrap(handler, breakers, cbmw.Options{
+	cbOpts := cbmw.Options{
 		Audit: cbAudit,
 		Snapshot: func(r *http.Request) cbmw.RejectionSnapshot {
 			snap := cbmw.RejectionSnapshot{}
@@ -6032,7 +6032,18 @@ func main() {
 			}
 			return snap
 		},
-	})
+	}
+	// spec: §16.7 line 679 / §11.6 — when the breaker registry is the
+	// Redis-polling cache, surface its age so the gate emits the sampled
+	// `admission.circuit_breaker_cache_stale` audit event (and the
+	// stale-serve counter) for any decision served against a cache that
+	// has not refreshed within the 5-second budget. The in-memory store
+	// (no Redis) never goes stale, so CacheAge stays nil there.
+	if breakerCache != nil {
+		bc := breakerCache
+		cbOpts.CacheAge = func() time.Duration { return time.Since(bc.LastRefresh()) }
+	}
+	handler = cbmw.Wrap(handler, breakers, cbOpts)
 
 	// spec: §12.4 lines 220-224 — the per-replica fail-open controller. The
 	// per-user fraction is validated config-time (a value outside (0, 1.0]
