@@ -308,6 +308,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
+	"github.com/lennylabs/lenny/pkg/legalholdescrow"
+	legalholdescrowpg "github.com/lennylabs/lenny/pkg/legalholdescrow/pgstore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
@@ -5288,13 +5290,25 @@ func main() {
 		// closed rather than destroying evidence. spec: §12.8 lines 880-889.
 		if auditAppender != nil {
 			escrowCfg := escrowConfigFromFlags(*legalHoldEscrowBucket, *legalHoldEscrowEndpoint)
+			// §12.8 sub-step 4 escrow record store: durable when Postgres is
+			// wired (the records must survive the tenant tombstone so a hold
+			// cleared after Phase 4 still resolves the escrow objects), else
+			// in-memory. The migrator's escrowLedger writes records here and
+			// the admin clear path's Releaser queries them.
+			var escrowRecords legalholdescrow.RecordStore
+			if pgPool != nil {
+				escrowRecords = legalholdescrowpg.New(pgPool)
+			} else {
+				escrowRecords = legalholdescrow.NewMemRecordStore()
+			}
+			escrowLed := escrowLedger{appender: auditAppender, records: escrowRecords, clock: clockinject.Now}
 			deletionReconciler.Escrow = tenantEscrowMigrator{
 				cfg:       escrowCfg,
 				tenants:   tenants,
 				artifacts: artifactCatalog,
 				blobs:     blobs,
 				cipher:    escrowCipherFactory(kmsProvider),
-				ledger:    escrowLedger{appender: auditAppender, clock: clockinject.Now},
+				ledger:    escrowLed,
 				metrics:   gwMetrics,
 				appender:  auditAppender,
 				clock:     clockinject.Now,
@@ -5304,6 +5318,15 @@ func main() {
 				metrics:  gwMetrics,
 				clock:    clockinject.Now,
 			}
+			// §12.8 line 884 escrow-GC release: clearing a hold (hold: false)
+			// deletes the escrow objects it protected and emits
+			// legal_hold.escrow_released.
+			adminRouter = adminRouter.WithEscrowReleaser(&legalholdescrow.Releaser{
+				Records: escrowRecords,
+				Deleter: blobEscrowDeleter{blobs: blobs},
+				Ledger:  escrowLed,
+				Clock:   clockinject.Now,
+			})
 		}
 
 		// The receipt sink is required by the reconciler; without an audit

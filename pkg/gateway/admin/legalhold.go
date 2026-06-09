@@ -50,6 +50,26 @@ func (r *Router) WithSessions(s sessionstore.Store) *Router {
 	return r
 }
 
+// EscrowReleaser releases the §12.8 legal-hold escrow objects a cleared
+// hold protected: it deletes each from the region-scoped escrow bucket and
+// emits legal_hold.escrow_released. *legalholdescrow.Releaser satisfies it.
+// The release is invoked when a hold is cleared via POST /v1/admin/legal-hold
+// (hold: false), which the endpoint accepts on a tombstoned tenant for this
+// purpose (§12.8 line 884).
+type EscrowReleaser interface {
+	ReleaseForSession(ctx context.Context, tenantID, sessionID, clearedBy string) (int, error)
+	ReleaseForArtifact(ctx context.Context, tenantID, artifactURI, clearedBy string) (int, error)
+}
+
+// WithEscrowReleaser wires the §12.8 line 884 escrow-GC release onto the
+// Router. With it set, clearing a legal hold (hold: false) releases the
+// escrow objects the hold protected. A nil releaser leaves the clear path
+// releasing nothing.
+func (r *Router) WithEscrowReleaser(rel EscrowReleaser) *Router {
+	r.escrowReleaser = rel
+	return r
+}
+
 // WithArtifactLegalHold wires the §12.8 artifact-side legal-hold
 // control onto the Router. With it set, POST /v1/admin/legal-hold
 // accepts an `artifactId`, and the GDPR-erasure legal-hold preflight
@@ -149,23 +169,77 @@ func (r *Router) setSessionLegalHold(w http.ResponseWriter, req *http.Request, b
 		})
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
+			// §12.8 line 884: the legal-hold API accepts a clear on a
+			// tombstoned tenant for the express purpose of releasing escrow.
+			// The session row is gone (Phase 4 deleted it) but its escrowed
+			// evidence may still sit in the escrow bucket under a
+			// retain-until-hold-release lock; clearing the hold releases it.
+			if !body.Hold && r.escrowReleaser != nil {
+				if released, ok := r.releaseSessionEscrow(w, req, body); ok && released > 0 {
+					r.writeLegalHoldCleared(w, req, "session", body.SessionID, body, false, released)
+					return
+				} else if !ok {
+					return
+				}
+			}
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	r.emitLegalHold(req, body.Hold, "session", body.SessionID, map[string]any{
-		"tenantId":  body.TenantID,
-		"sessionId": body.SessionID,
-		"note":      body.Note,
+	// On a live clear, release any escrow objects the hold protected (none
+	// for a session that was never force-delete-escrowed; the meaningful
+	// case is the tombstoned-tenant branch above).
+	released := 0
+	if !body.Hold && r.escrowReleaser != nil {
+		var ok bool
+		if released, ok = r.releaseSessionEscrow(w, req, body); !ok {
+			return
+		}
+	}
+	r.writeLegalHoldCleared(w, req, "session", body.SessionID, body, updated.LegalHold, released)
+}
+
+// releaseSessionEscrow runs the §12.8 escrow-GC release for a cleared
+// session hold. It returns the number of escrow objects released and false
+// when it already wrote an error response.
+func (r *Router) releaseSessionEscrow(w http.ResponseWriter, req *http.Request, body LegalHoldRequest) (int, bool) {
+	principal, _ := authmw.FromContext(req.Context())
+	n, err := r.escrowReleaser.ReleaseForSession(req.Context(), body.TenantID, body.SessionID, principal.Subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return 0, false
+	}
+	return n, true
+}
+
+// writeLegalHoldCleared emits the §12.8 ledger event for a hold set/clear
+// and writes the response, including the count of escrow objects released.
+func (r *Router) writeLegalHoldCleared(w http.ResponseWriter, req *http.Request, resourceType, resourceID string, body LegalHoldRequest, legalHold bool, escrowReleased int) {
+	r.emitLegalHold(req, body.Hold, resourceType, resourceID, map[string]any{
+		"tenantId":                body.TenantID,
+		resourceKey(resourceType): resourceID,
+		"note":                    body.Note,
 	})
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"sessionId": body.SessionID,
-		"tenantId":  body.TenantID,
-		"legalHold": updated.LegalHold,
-	})
+	resp := map[string]any{
+		resourceKey(resourceType): resourceID,
+		"tenantId":                body.TenantID,
+		"legalHold":               legalHold,
+	}
+	if escrowReleased > 0 {
+		resp["escrowReleased"] = escrowReleased
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// resourceKey returns the response/event field name for a resource type.
+func resourceKey(resourceType string) string {
+	if resourceType == "artifact" {
+		return "artifactId"
+	}
+	return "sessionId"
 }
 
 // setArtifactLegalHold flips the §12.8 artifact-level legal hold. The
@@ -178,15 +252,44 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 			"artifact-scoped legal holds are not available on this deployment", nil)
 		return
 	}
+	principal, _ := authmw.FromContext(req.Context())
 	rec, err := r.artifactHolds.Get(req.Context(), body.ArtifactID)
 	if err != nil || rec.TenantID != body.TenantID {
+		// §12.8 line 884: a clear on a tombstoned tenant releases the
+		// artifact's escrow even though the catalog row is gone (Phase 4
+		// deleted it).
+		if !body.Hold && r.escrowReleaser != nil {
+			released, rerr := r.escrowReleaser.ReleaseForArtifact(req.Context(), body.TenantID, body.ArtifactID, principal.Subject)
+			if rerr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", rerr.Error(), nil)
+				return
+			}
+			if released > 0 {
+				r.emitLegalHold(req, false, "artifact", body.ArtifactID, map[string]any{
+					"tenantId": body.TenantID, "artifactId": body.ArtifactID, "note": body.Note,
+				})
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"artifactId": body.ArtifactID, "tenantId": body.TenantID,
+					"legalHold": false, "escrowReleased": released,
+				})
+				return
+			}
+		}
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "artifact not found", nil)
 		return
 	}
-	principal, _ := authmw.FromContext(req.Context())
 	if err := r.artifactHolds.SetLegalHold(req.Context(), body.ArtifactID, body.Hold, principal.Subject, r.clock(), body.Note); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	released := 0
+	if !body.Hold && r.escrowReleaser != nil {
+		var rerr error
+		if released, rerr = r.escrowReleaser.ReleaseForArtifact(req.Context(), body.TenantID, body.ArtifactID, principal.Subject); rerr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", rerr.Error(), nil)
+			return
+		}
 	}
 	r.emitLegalHold(req, body.Hold, "artifact", body.ArtifactID, map[string]any{
 		"tenantId":   body.TenantID,
@@ -195,11 +298,15 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 		"note":       body.Note,
 	})
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"artifactId": body.ArtifactID,
 		"tenantId":   body.TenantID,
 		"legalHold":  body.Hold,
-	})
+	}
+	if released > 0 {
+		resp["escrowReleased"] = released
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // legalHoldEntry is one row of the §15.1 line 865

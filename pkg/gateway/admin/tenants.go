@@ -205,6 +205,11 @@ type Router struct {
 	// (§12.8 line 857). Nil leaves the route unregistered. F-12.8.5.
 	saltRotator       ErasureSaltRotator
 	artifactHolds     ArtifactLegalHolder
+	// escrowReleaser runs the §12.8 line 884 escrow-GC release when a legal
+	// hold is cleared (hold: false): it deletes the escrow objects the hold
+	// protected and emits legal_hold.escrow_released. Nil leaves the clear
+	// path releasing nothing (a deployment with no force-delete escrow).
+	escrowReleaser EscrowReleaser
 	billing           billingstore.Store
 	corrections       correctionstore.Store
 	dualControlThresh float64

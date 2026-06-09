@@ -24,6 +24,13 @@ type HeldArtifact struct {
 	// HoldSetAt is the instant the hold was placed, recorded as
 	// original_hold_set_at in the legal_hold.escrowed event.
 	HoldSetAt time.Time
+	// SessionID is the owning session of an escrowed artifact, recorded on
+	// the escrow record so clearing the session hold releases it. Empty for
+	// a non-session-scoped resource.
+	SessionID string
+	// ArtifactURI is the raw artifact URI (BlobURI), recorded on the escrow
+	// record so clearing the artifact's own hold releases exactly it.
+	ArtifactURI string
 }
 
 // SourceReader reads a held resource's plaintext from the live
@@ -85,6 +92,11 @@ type Escrowed struct {
 	EscrowKEKID     string
 	TenantDeleteJob string
 	MigratedAt      time.Time
+	// SessionID / ArtifactURI carry the release-lookup keys onto the escrow
+	// record the Ledger persists, so the §12.8 line 884 escrow-GC release
+	// can resolve the objects a cleared hold protected.
+	SessionID   string
+	ArtifactURI string
 }
 
 // Ledger records the §12.8 sub-step 2/4 ledger events and marks the
@@ -222,6 +234,8 @@ func (m *Migrator) Migrate(ctx context.Context, in Input) (Result, error) {
 			EscrowKEKID:     kekAlias,
 			TenantDeleteJob: in.JobID,
 			MigratedAt:      m.now(),
+			SessionID:       h.SessionID,
+			ArtifactURI:     h.ArtifactURI,
 		}); err != nil {
 			return Result{}, fmt.Errorf("legalholdescrow: record escrowed %s: %w", key, err)
 		}

@@ -108,9 +108,13 @@ func (w blobEscrowWriter) Write(_ context.Context, key string, sealed []byte) er
 
 // escrowLedger records the §12.8 sub-step 2/4 ledger events as audit rows
 // on the platform tenant (retained under audit.gdprRetentionDays so they
-// survive the tenant tombstone).
+// survive the tenant tombstone). When a RecordStore is wired it also
+// persists the durable escrow record the §12.8 line 884 escrow-GC release
+// path queries, and serves as the ReleaseLedger that emits
+// legal_hold.escrow_released.
 type escrowLedger struct {
 	appender policy.AuditAppender
+	records  legalholdescrow.RecordStore
 	clock    func() time.Time
 }
 
@@ -144,8 +148,86 @@ func (l escrowLedger) Escrowed(ctx context.Context, ev legalholdescrow.Escrowed)
 	if err != nil {
 		return err
 	}
-	_, err = l.appender.Append(ctx, ev.TenantID, "legal_hold.escrowed", payload, l.clock())
+	if _, err := l.appender.Append(ctx, ev.TenantID, "legal_hold.escrowed", payload, l.clock()); err != nil {
+		return err
+	}
+	// Persist the durable escrow record the §12.8 line 884 release path
+	// queries. The save shares the migration's logical step (it is the
+	// "mark the record legal_hold_escrow: true" marker), so a save failure
+	// aborts the migration on this row rather than leaving an escrow object
+	// with no release pointer.
+	if l.records != nil {
+		return l.records.Save(ctx, legalholdescrow.Record{
+			TenantID:        ev.TenantID,
+			ResourceType:    ev.ResourceType,
+			ResourceID:      ev.ResourceID,
+			EscrowObjectKey: ev.EscrowObjectKey,
+			EscrowRegion:    ev.EscrowRegion,
+			EscrowKEKID:     ev.EscrowKEKID,
+			TenantDeleteJob: ev.TenantDeleteJob,
+			SessionID:       ev.SessionID,
+			ArtifactURI:     ev.ArtifactURI,
+			OriginalHoldSet: ev.OriginalHoldSet,
+			MigratedAt:      ev.MigratedAt,
+		})
+	}
+	return nil
+}
+
+// EscrowReleased emits the §16.7 line 694 legal_hold.escrow_released audit
+// event on the platform tenant when the escrow-GC deletes a released
+// object. escrowLedger satisfies legalholdescrow.ReleaseLedger.
+func (l escrowLedger) EscrowReleased(ctx context.Context, ev legalholdescrow.Released) error {
+	payload, err := json.Marshal(map[string]any{
+		"tenantId":        ev.TenantID,
+		"resourceType":    ev.ResourceType,
+		"resourceId":      ev.ResourceID,
+		"escrowObjectKey": ev.EscrowObjectKey,
+		"escrowRegion":    ev.EscrowRegion,
+		"clearedAt":       ev.ClearedAt.UTC().Format(time.RFC3339Nano),
+		"clearedBy":       ev.ClearedBy,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = l.appender.Append(ctx, ev.TenantID, "legal_hold.escrow_released", payload, l.clock())
 	return err
+}
+
+// blobEscrowDeleter physically removes a released escrow object from the
+// escrow bucket. The escrow object lives at the same blob URI the
+// blobEscrowWriter wrote (PartID = base64url(escrow object key)); clearing
+// the hold lifts the retain-until-hold-release object lock so the object
+// becomes deletable. spec: §12.8 line 884.
+type blobEscrowDeleter struct {
+	blobs blobstore.Store
+}
+
+func (d blobEscrowDeleter) Delete(_ context.Context, tenantID, _ string, key string) error {
+	// HardDeleteObject lives on the §4.5 Tombstoner sub-interface; the
+	// escrow GC needs a physical single-object delete (the retain-until-
+	// hold-release lock having been lifted by the clear). A backend that
+	// cannot hard-delete cannot GC escrow.
+	tomb, ok := d.blobs.(blobstore.Tombstoner)
+	if !ok {
+		return errors.New("legalholdescrow: blob store does not support escrow object deletion")
+	}
+	u := blobstore.URI{
+		TenantID:   tenantID,
+		ObjectType: blobstore.ObjectType("legal_hold_escrow"),
+		SessionID:  "escrow",
+		PartID:     base64.RawURLEncoding.EncodeToString([]byte(key)),
+		Encoding:   blobstore.Encoding,
+	}
+	if err := tomb.HardDeleteObject(u); err != nil {
+		// An already-absent object is a no-op: a re-cleared hold must not
+		// fail the release.
+		if errors.Is(err, blobstore.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // tenantEscrowMigrator is the gateway-side tenantdeletion.EscrowMigrator.
@@ -238,6 +320,11 @@ func (m tenantEscrowMigrator) resolveHolds(ctx context.Context, req tenantdeleti
 					ResourceID:   base64.RawURLEncoding.EncodeToString([]byte(rec.URI)),
 					BlobURI:      rec.URI,
 					HoldSetAt:    rec.LegalHoldSetAt,
+					// §12.8 line 884 escrow-GC release keys: the owning session
+					// (h.ResourceID) and the raw artifact URI, so clearing either
+					// the session hold or the artifact's own hold releases it.
+					SessionID:   h.ResourceID,
+					ArtifactURI: rec.URI,
 				})
 			}
 			continue
