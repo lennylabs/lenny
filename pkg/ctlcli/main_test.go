@@ -272,6 +272,61 @@ func TestAdminTenantsDelete(t *testing.T) {
 	}
 }
 
+// TestAdminTenantsForceDelete covers `lenny-ctl admin tenants
+// force-delete <id> --acknowledge-hold-override --justification <text>`
+// mapping to POST /v1/admin/tenants/{id}/force-delete with the override
+// body. spec: §24.10 row 4. F-12.8.2, F-24.10.2.
+func TestAdminTenantsForceDelete(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusAccepted, `{"id":"acme","state":"disabling"}`,
+		"admin", "tenants", "force-delete", "acme",
+		"--acknowledge-hold-override", "--justification", "business wind-down")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/tenants/acme/force-delete" {
+		t.Fatalf("request: %s %s, want POST /v1/admin/tenants/acme/force-delete", got.method, got.path)
+	}
+	if got.body["acknowledgeHoldOverride"] != true || got.body["justification"] != "business wind-down" {
+		t.Errorf("body: %+v, want the override + justification", got.body)
+	}
+}
+
+// Without the override, force-delete sends no override body so the gateway
+// applies its TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD preflight.
+func TestAdminTenantsForceDeleteNoOverride(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusAccepted, `{"id":"acme","state":"disabling"}`,
+		"admin", "tenants", "force-delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.path != "/v1/admin/tenants/acme/force-delete" {
+		t.Errorf("path: %q", got.path)
+	}
+	if _, ok := got.body["acknowledgeHoldOverride"]; ok {
+		t.Errorf("body must omit the override when not requested: %+v", got.body)
+	}
+}
+
+// The override requires a justification; the CLI rejects it locally.
+func TestAdminTenantsForceDeleteOverrideRequiresJustification(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", "http://127.0.0.1:0",
+		"admin", "tenants", "force-delete", "acme", "--acknowledge-hold-override"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code: got %d, want 2", code)
+	}
+}
+
+// force-delete requires an <id>.
+func TestAdminTenantsForceDeleteRequiresID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", "http://127.0.0.1:0",
+		"admin", "tenants", "force-delete"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code: got %d, want 2", code)
+	}
+}
+
 // TestAdminTenantsRotateErasureSalt covers `lenny-ctl admin tenants
 // rotate-erasure-salt <id>` mapping to POST
 // /v1/admin/tenants/{id}/rotate-erasure-salt. spec: §12.8 line 857.

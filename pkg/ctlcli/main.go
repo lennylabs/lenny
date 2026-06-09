@@ -11,7 +11,7 @@
 //
 // Resource management lives under the `admin` group:
 //
-//	lenny-ctl admin tenants list|get|create|delete
+//	lenny-ctl admin tenants list|get|create|delete|force-delete|rotate-erasure-salt
 //	lenny-ctl admin runtimes list|get
 //	lenny-ctl admin pools list|get|set-warm-count|...
 //	lenny-ctl admin sessions get|force-terminate
@@ -848,7 +848,7 @@ func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, st
 
 func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete|rotate-erasure-salt)")
+		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete|force-delete|rotate-erasure-salt)")
 		return 2
 	}
 	switch args[0] {
@@ -895,6 +895,15 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			return 1
 		}
 		fmt.Fprintf(stdout, "tenant %q deletion initiated; monitor with: lenny-ctl admin tenants get %s\n", args[1], args[1])
+	case "force-delete":
+		// spec: §24.10 row 4 — POST /v1/admin/tenants/{id}/force-delete
+		// proceeds with the §12.8 deletion lifecycle despite active legal
+		// holds. --acknowledge-hold-override authorizes the Phase 3.5 escrow
+		// segregation (held evidence is re-encrypted into the region-scoped
+		// escrow); --justification <text> is required with the override.
+		// Without --acknowledge-hold-override a held tenant is rejected with
+		// TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD.
+		return cmdTenantsForceDelete(ctx, c, args[1:], stdout, stderr)
 	case "rotate-erasure-salt":
 		// spec: §12.8 line 857 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
 		// rotates a compromised per-tenant billing-pseudonymization salt: the
@@ -913,6 +922,52 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		fmt.Fprintf(stderr, "lenny-ctl: unknown tenants subcommand %q\n", args[0])
 		return 2
 	}
+	return 0
+}
+
+// cmdTenantsForceDelete implements `admin tenants force-delete <id>
+// [--acknowledge-hold-override --justification <text>]` (§24.10 row 4).
+func cmdTenantsForceDelete(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: tenants force-delete requires <id>")
+		return 2
+	}
+	id := args[0]
+	var (
+		ack           bool
+		justification string
+	)
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--acknowledge-hold-override":
+			ack = true
+		case "--justification":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --justification requires a value")
+				return 2
+			}
+			justification, i = args[i+1], i+1
+		default:
+			fmt.Fprintf(stderr, "lenny-ctl: unknown flag %q for tenants force-delete\n", args[i])
+			return 2
+		}
+	}
+	if ack && justification == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: --acknowledge-hold-override requires --justification <text>")
+		return 2
+	}
+	body := map[string]any{}
+	if ack {
+		body["acknowledgeHoldOverride"] = true
+		body["justification"] = justification
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "POST", "/v1/admin/tenants/"+url.PathEscape(id)+"/force-delete", body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	fmt.Fprintf(stdout, "tenant %q force-delete initiated; monitor with: lenny-ctl admin tenants get %s\n", id, id)
 	return 0
 }
 
