@@ -278,6 +278,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/sqlitestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
@@ -378,6 +379,15 @@ func main() {
 		"§17.4 line 262 zero-credential runtime selector. \"echo\" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is \"echo\"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
+	// spec: §17.4 line 199 — Source Mode replaces Postgres with embedded
+	// SQLite for session and metadata storage. When --postgres-dsn is
+	// empty and this is set, the in-memory session/metadata stores are
+	// snapshotted to the named SQLite file so their contents survive a
+	// process restart. `make run` points it at ./lenny-data/lenny.db.
+	// Ignored when --postgres-dsn is set (Postgres is authoritative).
+	// F-17.4.2.
+	sqlitePath := flag.String("sqlite-path", os.Getenv("LENNY_SQLITE_PATH"),
+		"§17.4 line 199 Source-Mode embedded-SQLite path. When set (and --postgres-dsn is empty), session and metadata stores are backed by this SQLite file so they survive a restart. Empty keeps the stores purely in-memory. Override via LENNY_SQLITE_PATH. F-17.4.2.")
 	// spec: §12.3 line 103 — optional dedicated Postgres instance for the
 	// billing-event and audit-log write paths (the Tier-3 instance-
 	// separation step at §12.3 line 130). When set, the §12.3 R-03
@@ -1335,6 +1345,12 @@ func main() {
 		readPool         *pgxpool.Pool
 		billingAuditPool *pgxpool.Pool
 		auditSyncPool    *pgxpool.Pool
+		// sqliteDB is the §17.4 line 199 Source-Mode embedded-SQLite
+		// durability layer. Non-nil only when --sqlite-path is set and
+		// --postgres-dsn is empty; the shutdown path stops the flush loop
+		// (sqliteFlushCancel) and flushes+closes it. F-17.4.2.
+		sqliteDB         *sqlitestore.DB
+		sqliteFlushCancel context.CancelFunc
 	)
 	if *postgresDSN != "" {
 		pool, err := pgxpool.New(context.Background(), *postgresDSN)
@@ -1449,14 +1465,58 @@ func main() {
 		// holds a raw pool. F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.7.1.
 		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
 	} else {
-		sessions = memstore.New()
-		tenants = tenantstore.NewMemory()
-		runtimes = runtimestore.NewMemory()
-		capOverrides = runtimecapoverride.NewMemory()
-		transcripts = transcriptstore.NewMemory()
-		users = userstore.NewMemory()
-		connectors = connectorstore.NewMemory()
-		billing = billingstore.NewMemory()
+		sessMem := memstore.New()
+		tenantMem := tenantstore.NewMemory()
+		runtimeMem := runtimestore.NewMemory()
+		capMem := runtimecapoverride.NewMemory()
+		transcriptMem := transcriptstore.NewMemory()
+		userMem := userstore.NewMemory()
+		connectorMem := connectorstore.NewMemory()
+		billingMem := billingstore.NewMemory()
+		sessions = sessMem
+		tenants = tenantMem
+		runtimes = runtimeMem
+		capOverrides = capMem
+		transcripts = transcriptMem
+		users = userMem
+		connectors = connectorMem
+		billing = billingMem
+		// spec: §17.4 line 199 — Source Mode replaces Postgres with
+		// embedded SQLite for session and metadata storage. With
+		// --sqlite-path set, the in-memory stores above are loaded from
+		// the SQLite file on startup, snapshotted to it every two seconds
+		// while serving, and flushed once more on graceful shutdown, so a
+		// `make run` developer keeps their tenants, runtimes, sessions,
+		// and transcripts across a restart without a Postgres dependency.
+		// The stores' query logic is the same in-memory implementation
+		// the tier-3 contract suites exercise; SQLite is purely the
+		// durable backing. F-17.4.2.
+		if *sqlitePath != "" {
+			db, err := sqlitestore.Open(*sqlitePath)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §17.4 sqlite: %v", err)
+			}
+			sqliteDB = db
+			sqliteDB.Register("sessions", sessMem)
+			sqliteDB.Register("tenants", tenantMem)
+			sqliteDB.Register("runtimes", runtimeMem)
+			sqliteDB.Register("runtime_cap_overrides", capMem)
+			sqliteDB.Register("transcripts", transcriptMem)
+			sqliteDB.Register("users", userMem)
+			sqliteDB.Register("connectors", connectorMem)
+			sqliteDB.Register("billing_events", billingMem)
+			if err := sqliteDB.Restore(context.Background()); err != nil {
+				log.Fatalf("lenny-gateway: §17.4 sqlite restore: %v", err)
+			}
+			var flushCtx context.Context
+			flushCtx, sqliteFlushCancel = context.WithCancel(context.Background())
+			sqliteDB.StartAutoFlush(flushCtx, 2*time.Second, func(err error) {
+				log.Printf("lenny-gateway: §17.4 sqlite flush: %v", err)
+			})
+			log.Printf("lenny-gateway: §17.4 Source Mode embedded SQLite store at %s (sessions, tenants, runtimes, transcripts, users, connectors, billing persist across restart)", *sqlitePath)
+		} else {
+			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
+		}
 	}
 	// §4.4 line 236 partial-manifest store: persists the recovery-aid
 	// row written when an eviction checkpoint exceeds the preStop
@@ -7738,6 +7798,18 @@ func main() {
 	}
 	if pgPool != nil {
 		pgPool.Close()
+	}
+	// spec: §17.4 line 199 — stop the Source-Mode SQLite flush loop and
+	// snapshot the session/metadata stores one final time so a clean
+	// shutdown (the documented Ctrl-C flow) loses no writes, then close
+	// the database. F-17.4.2.
+	if sqliteDB != nil {
+		if sqliteFlushCancel != nil {
+			sqliteFlushCancel()
+		}
+		if err := sqliteDB.Close(ctx); err != nil {
+			log.Printf("lenny-gateway: §17.4 sqlite close: %v", err)
+		}
 	}
 	if redisClient != nil {
 		_ = redisClient.Close()

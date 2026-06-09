@@ -119,16 +119,19 @@ upgrade: ## §10.5 CRD-aware upgrade: preflight, diff/apply CRDs, then helm upgr
 		$(if $(filter true,$(NON_INTERACTIVE)),--non-interactive,)
 
 .PHONY: run
-run: ## §17.4 Source Mode: gateway + in-memory stores + built-in echo runtime. LENNY_AGENT_BINARY=<path> swaps in a custom runtime binary.
-	@mkdir -p bin
+run: ## §17.4 Source Mode: gateway + embedded SQLite + local-filesystem artifacts + built-in echo runtime. LENNY_AGENT_BINARY=<path> swaps in a custom runtime binary.
+	@mkdir -p bin lenny-data/artifacts
 	@echo "  build echo runtime"
 	@go build -o bin/echo ./cmd/runtimes/echo
 	@echo "  build lenny-gateway"
 	@go build -o bin/lenny-gateway ./cmd/lenny-gateway
-	@echo "  starting gateway on :8080 (dev mode, echo runtime, in-memory stores)"
+	@echo "  starting gateway on :8080 (dev mode, echo runtime)"
+	@echo "  §17.4 substitutions: embedded SQLite (lenny-data/lenny.db), local-filesystem artifacts (lenny-data/artifacts/), in-memory caches"
 	@echo "  POST http://localhost:8080/v1/sessions/start to drive a session;"
 	@echo "  GET  http://localhost:8080/healthz for liveness; Ctrl-C to stop."
 	@LENNY_AGENT_BINARY="$(LENNY_AGENT_BINARY)" ./bin/lenny-gateway --addr :8080 --dev-mode \
+		--sqlite-path ./lenny-data/lenny.db \
+		--object-storage-provider filesystem --object-storage-filesystem-root ./lenny-data/artifacts \
 		$(if $(LENNY_AGENT_BINARY),,--agent-runtime echo)
 
 .PHONY: compose
