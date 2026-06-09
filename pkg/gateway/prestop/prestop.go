@@ -45,6 +45,13 @@ import (
 // spec: §17.8.2 — "Tier 1/2: terminationGracePeriodSeconds=240".
 const DefaultTerminationGraceSeconds = 240
 
+// DefaultBarrierAckTimeoutSeconds is the §10.1 line 167 / §11.3 line 210
+// `checkpointBarrierAckTimeoutSeconds`: the single wall-clock deadline the
+// preStop CheckpointBarrier fan-out runs under. The gateway honors it
+// when LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS is unset.
+// spec: §11.3 line 210 — "checkpointBarrierAckTimeoutSeconds (default: 90s)".
+const DefaultBarrierAckTimeoutSeconds = 90
+
 // MinStreamDrainBudgetSeconds is the §10.1 minimum stream-drain
 // budget at Stage 3 — the tiered cap must remain below
 // `terminationGracePeriodSeconds - 30s` so the drain has at least
@@ -186,6 +193,17 @@ type SessionEnumerator interface {
 	Snapshot(ctx context.Context) ([]SessionInfo, error)
 }
 
+// BarrierDispatcher fires the §10.1 lines 163-181 CheckpointBarrier to
+// every session this replica coordinates. The production implementation
+// wraps barrier.Coordinator; the preStop hook bounds the call by
+// checkpointBarrierAckTimeoutSeconds so the fan-out cannot exceed the
+// per-replica ACK budget. A nil dispatcher skips the barrier.
+//
+// spec: §10.1 line 167 / §11.3 line 210.
+type BarrierDispatcher interface {
+	Dispatch(ctx context.Context) error
+}
+
 // CheckpointFn is the per-session eviction-checkpoint surface. The
 // implementation runs the §4.4 eviction-trigger checkpoint
 // synchronously, returning nil on success or an error on failure
@@ -234,6 +252,17 @@ type Hook struct {
 	// environment lookup. Zero falls back to the env / default
 	// path so a production deployment honors the chart-set value.
 	GracePeriod time.Duration
+	// Barrier fires the §10.1 lines 163-181 CheckpointBarrier to every
+	// coordinated session at Stage 1 (when readiness flips), bounded by
+	// BarrierAckTimeout. Nil skips the barrier so the dev-mode / single-
+	// replica deployment runs the eviction-checkpoint drain alone.
+	// spec: §10.1 line 165.
+	Barrier BarrierDispatcher
+	// BarrierAckTimeout bounds the Barrier.Dispatch fan-out — the §10.1
+	// line 167 / §11.3 line 210 single wall-clock
+	// checkpointBarrierAckTimeoutSeconds deadline across all coordinated
+	// pods. Zero selects DefaultBarrierAckTimeoutSeconds.
+	BarrierAckTimeout time.Duration
 	// Tiers overrides the §10.1 StandardTiers table. Empty falls
 	// back to StandardTiers so production deployments honor the
 	// spec-defined tiers.
@@ -277,18 +306,18 @@ func (h *Hook) Draining() bool {
 // Summary is the JSON body the hook returns on success. Kubernetes
 // ignores the body but the summary is useful for log scraping.
 type Summary struct {
-	GracePeriodSeconds int      `json:"grace_period_seconds"`
-	AttemptedSessions  int      `json:"attempted_sessions"`
-	CompletedSessions  int      `json:"completed_sessions"`
-	SkippedSessions    int      `json:"skipped_sessions"`
-	FailedSessions     int      `json:"failed_sessions"`
+	GracePeriodSeconds int `json:"grace_period_seconds"`
+	AttemptedSessions  int `json:"attempted_sessions"`
+	CompletedSessions  int `json:"completed_sessions"`
+	SkippedSessions    int `json:"skipped_sessions"`
+	FailedSessions     int `json:"failed_sessions"`
 	// SigkilledStreams counts sessions whose checkpoint ran out of
 	// budget before the grace deadline; the kubelet SIGKILLs the pod
 	// at the deadline so each is a forcibly terminated stream
 	// (§10.1 line 161 `lenny_gateway_sigkill_streams_total`).
 	SigkilledStreams int      `json:"sigkilled_streams,omitempty"`
 	AlreadyFired     bool     `json:"already_fired,omitempty"`
-	Errors             []string `json:"errors,omitempty"`
+	Errors           []string `json:"errors,omitempty"`
 }
 
 // ServeHTTP implements http.Handler.
@@ -317,6 +346,12 @@ func (h *Hook) run(ctx context.Context) Summary {
 	// lag (1–5s) overlaps the checkpoint wait rather than racing it.
 	h.draining.Store(true)
 	grace := h.gracePeriod()
+	// spec: §10.1 line 165 — the moment readiness flips, send the
+	// CheckpointBarrier to every coordinated session under the single
+	// checkpointBarrierAckTimeoutSeconds wall-clock deadline (§10.1 line
+	// 167 / §11.3 line 210), so in-flight tool calls quiesce and flush a
+	// best-effort checkpoint before the eviction-checkpoint drain runs.
+	h.fireBarrier(ctx)
 	tiers := h.tiers()
 	sessions, err := h.Sessions.Snapshot(ctx)
 	summary := Summary{
@@ -424,6 +459,33 @@ func (h *Hook) emitSigkillStream(pool string) {
 		return
 	}
 	h.Metrics.IncSigkillStreams(pool, h.ServiceInstanceID)
+}
+
+// fireBarrier dispatches the §10.1 CheckpointBarrier to every coordinated
+// session under the per-replica ACK budget. Best-effort: a nil dispatcher
+// is skipped, and a dispatch error (deadline, transport) is logged but
+// does not abort the staged drain — the eviction-checkpoint stage still
+// runs. The bounded context enforces the §10.1 line 167 / §11.3 line 210
+// checkpointBarrierAckTimeoutSeconds single wall-clock deadline across all
+// pods.
+func (h *Hook) fireBarrier(ctx context.Context) {
+	if h.Barrier == nil {
+		return
+	}
+	bctx, cancel := context.WithTimeout(ctx, h.barrierAckTimeout())
+	defer cancel()
+	if err := h.Barrier.Dispatch(bctx); err != nil {
+		h.logf("prestop: checkpoint barrier dispatch: %v", err)
+	}
+}
+
+// barrierAckTimeout returns the configured per-replica barrier ACK budget,
+// defaulting to DefaultBarrierAckTimeoutSeconds.
+func (h *Hook) barrierAckTimeout() time.Duration {
+	if h.BarrierAckTimeout > 0 {
+		return h.BarrierAckTimeout
+	}
+	return time.Duration(DefaultBarrierAckTimeoutSeconds) * time.Second
 }
 
 // gracePeriod returns the per-hook termination grace period. The

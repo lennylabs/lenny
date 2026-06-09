@@ -2307,6 +2307,13 @@ gateway:
   # LENNY_TERMINATION_GRACE_SECONDS so the hook honors the
   # chart-set deadline.
   terminationGracePeriodSeconds: 240
+  # checkpointBarrierAckTimeoutSeconds is the §10.1 line 167 / §11.3 line
+  # 210 single wall-clock deadline the preStop CheckpointBarrier fan-out
+  # runs under across all coordinated pods. The gateway reads it from
+  # LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS. The default 90s is one
+  # of the three terms in the 240s grace-period budget (90s tier cap + 90s
+  # BarrierAck + 30s stream drain). F-11.3.15.
+  checkpointBarrierAckTimeoutSeconds: 90
   # dualStoreUnavailableMaxSeconds is the §10.1 item-4 per-replica
   # countdown: when Postgres and Redis are simultaneously unreachable for
   # longer than this, sessions with no successful store interaction become

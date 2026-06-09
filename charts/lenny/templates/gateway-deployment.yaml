@@ -633,6 +633,12 @@ spec:
             # gateway honors the same deadline Kubernetes enforces.
             - name: LENNY_TERMINATION_GRACE_SECONDS
               value: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 | quote }}
+            # §10.1 line 167 / §11.3 line 210 — checkpointBarrierAckTimeoutSeconds:
+            # the single wall-clock deadline the preStop CheckpointBarrier
+            # fan-out runs under across all coordinated pods. The 90s default
+            # matches the §11.3 line 210 value and fits inside the grace period.
+            - name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
+              value: {{ .Values.gateway.checkpointBarrierAckTimeoutSeconds | default 90 | quote }}
             # §10.1 item 4 — dualStoreUnavailableMaxSeconds: the
             # per-replica window after which sessions with no successful
             # store interaction become eligible for graceful termination

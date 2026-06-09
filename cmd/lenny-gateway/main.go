@@ -107,6 +107,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
+	"github.com/lennylabs/lenny/pkg/gateway/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingsink"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -133,6 +134,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
+	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/coordlease/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	correctionpg "github.com/lennylabs/lenny/pkg/gateway/correctionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
@@ -259,6 +262,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncheckpointmeta"
+	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
@@ -445,6 +450,9 @@ func main() {
 		"§10.3 line 359 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
+	barrierAckTimeoutSeconds := flag.Int("checkpoint-barrier-ack-timeout-seconds",
+		envInt("LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS", prestop.DefaultBarrierAckTimeoutSeconds),
+		"§10.1 line 167 / §11.3 line 210 checkpointBarrierAckTimeoutSeconds: the single wall-clock deadline the preStop CheckpointBarrier fan-out runs under across all coordinated pods. Default 90. Override via LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS. F-11.3.15.")
 	dualStoreMaxSeconds := flag.Int("dual-store-unavailable-max-seconds",
 		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
 		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
@@ -1570,6 +1578,12 @@ func main() {
 		// inside the Redis-available branch below; nil without Redis).
 		erasureLeaseStore leasestore.LeaseStore
 
+		// coordMirror is the §10.1 line 165 coordination_lease barrier-target
+		// mirror the Sweeper writes and the preStop barrier reads. Postgres-
+		// backed when pgPool is wired; nil otherwise, in which case the
+		// barrier falls back to the in-memory lease cache.
+		coordMirror coordlease.Store
+
 		// coordFencer drives the §10.1 / §4.2 CoordinatorFence after a
 		// resume re-bind (announce coordination_generation; §11.3 line 209
 		// retry/relinquish). Built inside the Redis-available branch below
@@ -1659,9 +1673,16 @@ func main() {
 		// §12.8 step 1: expose the lease store to the erasure orchestrator
 		// so a user erasure releases the user's active coordination leases.
 		erasureLeaseStore = leaseStore
+		// §10.1 line 165: mirror held leases into Postgres so the preStop
+		// barrier-target query observes coordinator handoffs that occurred
+		// in the seconds before drain. Without Postgres the mirror is nil
+		// and the barrier falls back to the in-memory lease cache.
+		if pgPool != nil {
+			coordMirror = coordleasepg.New(pgPool, nil)
+		}
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
-			coordination.Options{ReplicaID: replica, Interval: *coordInterval},
+			coordination.Options{ReplicaID: replica, Interval: *coordInterval, Mirror: coordMirror},
 		)
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
 		// lives in Redis so the quota holds across replicas; its reserve
@@ -5743,6 +5764,54 @@ func main() {
 	if checkpointSvc != nil {
 		prestopCheckpointer = checkpointSvc
 	}
+	// §10.1 lines 163-181 — the preStop CheckpointBarrier coordinator. At
+	// Stage 1 it sends the barrier to every session this replica
+	// coordinates (the barrier-target set from the coordination_lease
+	// mirror, falling back to the in-memory registry), quiescing in-flight
+	// tool calls and flushing a best-effort checkpoint under the §11.3
+	// line 210 checkpointBarrierAckTimeoutSeconds budget. The barrier
+	// reaches each pod through the live adapter connection the registry
+	// already holds for a coordinated session. F-10.1.19 / F-11.3.15.
+	var barrierDispatch prestop.BarrierDispatcher
+	if podRegistry != nil {
+		var checkpointMeta sessioncheckpointmeta.Store
+		if pgPool != nil {
+			checkpointMeta = sessioncheckpointmetapg.New(pgPool, nil)
+		} else {
+			checkpointMeta = sessioncheckpointmeta.NewMemoryStore(nil)
+		}
+		barrierLister := &barrier.MirrorTargetLister{
+			ReplicaID: replica,
+			Mirror:    coordMirror,
+			Fallback: func() []barrier.Target {
+				bindings := podRegistry.Snapshot()
+				out := make([]barrier.Target, 0, len(bindings))
+				for _, b := range bindings {
+					gen := int64(0)
+					if row, err := sessions.Get(context.Background(), b.TenantID, b.SessionID); err == nil {
+						gen = row.CoordinationGeneration
+					}
+					out = append(out, barrier.Target{
+						TenantID:               b.TenantID,
+						SessionID:              b.SessionID,
+						CoordinationGeneration: gen,
+					})
+				}
+				return out
+			},
+		}
+		barrierDisp := &barrier.PodDispatcher{
+			Conn: func(sessionID string) (*adapterclient.Client, bool) {
+				b, ok := podRegistry.Get(sessionID)
+				if !ok || b.Adapter == nil {
+					return nil, false
+				}
+				return b.Adapter, true
+			},
+		}
+		coord := barrier.New(barrierLister, barrierDisp, checkpointMeta, nil, gwMetrics)
+		barrierDispatch = barrierCoordinatorDispatch{coord}
+	}
 	prestopHook := &prestop.Hook{
 		Sessions: &prestop.RegistryEnumerator{
 			Registry:    podRegistry,
@@ -5753,6 +5822,8 @@ func main() {
 		Metrics:           gwMetrics,
 		ServiceInstanceID: replica,
 		GracePeriod:       parseTerminationGrace(),
+		Barrier:           barrierDispatch,
+		BarrierAckTimeout: time.Duration(*barrierAckTimeoutSeconds) * time.Second,
 		Logf:              func(format string, args ...any) { log.Printf(format, args...) },
 	}
 	mux.Handle("POST /internal/prestop", prestopHook)
@@ -9558,6 +9629,18 @@ func envInt64(name string, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+// barrierCoordinatorDispatch adapts a *barrier.Coordinator to the
+// prestop.BarrierDispatcher interface: the staged drain only needs the
+// pass to fire under its ACK budget, so the DispatchSummary is discarded
+// and any enumeration error is surfaced for the hook to log.
+// spec: §10.1 lines 163-181.
+type barrierCoordinatorDispatch struct{ c *barrier.Coordinator }
+
+func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) error {
+	_, err := d.c.Dispatch(ctx)
+	return err
 }
 
 // parseTerminationGrace returns the §4.4 line 263 termination grace
