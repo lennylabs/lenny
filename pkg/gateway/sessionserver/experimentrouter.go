@@ -15,11 +15,90 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+// externalEvalResult is one §10.7 external-targeting evaluation outcome,
+// shared by the OFREP transport and the built-in OpenFeature SDK
+// providers so buildExternalEvaluator's closure is provider-agnostic.
+type externalEvalResult struct {
+	Variant string
+	Value   any
+	Key     string
+}
+
+// externalEvalClient is the §10.7 evaluation transport for one tenant:
+// OFREP (pkg/gateway/ofrep) or a built-in OpenFeature SDK provider
+// (pkg/gateway/experimentprovider). Both resolve one experiment flag to
+// a variant/value.
+type externalEvalClient interface {
+	Evaluate(ctx context.Context, flagKey string, evalContext map[string]any) (externalEvalResult, error)
+}
+
+// ExternalProviderResolver returns the cached §10.7 OpenFeature SDK
+// evaluator for a tenant's launchdarkly/statsig/unleash targeting
+// config. The gateway wires *experimentprovider.Cache (adapted to this
+// interface); a nil resolver disables the SDK-provider path and only
+// OFREP-targeted experiments evaluate.
+type ExternalProviderResolver interface {
+	For(ctx context.Context, cfg experiment.TargetingConfig) (externalEvalClient, error)
+}
+
+// NewExternalProviderResolver adapts an *experimentprovider.Cache to the
+// ExternalProviderResolver the session server consumes for §10.7
+// mode:external targeting. The gateway calls this to wire the built-in
+// OpenFeature SDK providers (launchdarkly, statsig, unleash).
+func NewExternalProviderResolver(cache *experimentprovider.Cache) ExternalProviderResolver {
+	return cacheResolver{cache: cache}
+}
+
+type cacheResolver struct{ cache *experimentprovider.Cache }
+
+func (r cacheResolver) For(ctx context.Context, cfg experiment.TargetingConfig) (externalEvalClient, error) {
+	ev, err := r.cache.For(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return evaluatorEvalClient{ev: ev}, nil
+}
+
+// evaluatorEvalClient adapts an *experimentprovider.Evaluator to
+// externalEvalClient.
+type evaluatorEvalClient struct{ ev *experimentprovider.Evaluator }
+
+func (c evaluatorEvalClient) Evaluate(ctx context.Context, flagKey string, evalContext map[string]any) (externalEvalResult, error) {
+	r, err := c.ev.Evaluate(ctx, flagKey, evalContext)
+	if err != nil {
+		return externalEvalResult{}, err
+	}
+	return externalEvalResult{Variant: r.Variant, Value: r.Value, Key: r.Key}, nil
+}
+
+// ofrepEvalClient adapts an *ofrep.Client to externalEvalClient.
+type ofrepEvalClient struct{ c *ofrep.Client }
+
+func (a ofrepEvalClient) Evaluate(ctx context.Context, flagKey string, evalContext map[string]any) (externalEvalResult, error) {
+	r, err := a.c.Evaluate(ctx, flagKey, evalContext)
+	if err != nil {
+		return externalEvalResult{}, err
+	}
+	return externalEvalResult{Variant: r.Variant, Value: r.Value, Key: r.Key}, nil
+}
+
+// constErrEvalClient is an externalEvalClient whose every evaluation
+// fails with a fixed error. The §10.7 SDK-provider path uses it when
+// provider construction itself fails, so the failure surfaces through
+// the normal targeting_failed path (event + error counter + breaker)
+// rather than as a silent skip.
+type constErrEvalClient struct{ err error }
+
+func (c constErrEvalClient) Evaluate(context.Context, string, map[string]any) (externalEvalResult, error) {
+	return externalEvalResult{}, c.err
+}
 
 // ExperimentRouterPriority is the §4.8 built-in priority the
 // ExperimentRouter occupies in the PreRoute phase chain (spec: §4.8
@@ -223,17 +302,13 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		return nil
 	}
 	cfg := tenant.ExperimentTargeting
-	// v1 ships the OFREP transport; the built-in SDK providers
-	// (launchdarkly, statsig, unleash) need their vendor SDKs.
-	if cfg.Provider != experiment.TargetingProviderOFREP || cfg.OFREP == nil {
-		return nil
-	}
-	client, err := ofrep.New(ofrep.Options{
-		BaseURL: cfg.OFREP.Endpoint,
-		Headers: cfg.OFREP.Headers,
-		Timeout: time.Duration(cfg.EffectiveTimeoutMs()) * time.Millisecond,
-	})
-	if err != nil {
+	// spec: §10.7 lines 779-782 — OFREP (pkg/gateway/ofrep) or one of the
+	// built-in OpenFeature SDK providers (launchdarkly, statsig, unleash,
+	// pkg/gateway/experimentprovider). resolveExternalClient returns nil
+	// for a provider this build cannot serve, which skips external-mode
+	// experiments exactly as a tenant with no targeting does.
+	client, providerLabel := s.resolveExternalClient(ctx, cfg)
+	if client == nil {
 		return nil
 	}
 	evalCtx := experiment.BuildEvaluationContext(experiment.EvaluationContextInput{
@@ -242,9 +317,6 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		SessionID: row.ID,
 		Runtime:   row.RuntimeRef,
 	})
-	// spec: §16.1 line 156 — the provider metric label is the OFREP
-	// endpoint hostname for provider:ofrep. Computed once for the closure.
-	providerLabel := targetingProviderLabel(cfg.Provider, cfg.OFREP.Endpoint)
 	knownIDs := knownExperimentIDs(candidates)
 	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
 	// circuit-breaker thresholds resolved from the tenant config.
@@ -299,6 +371,47 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		}
 		return variantID, true
 	}
+}
+
+// resolveExternalClient builds the §10.7 evaluation transport for a
+// tenant targeting config and the §16.1 line 156 provider metric label.
+// OFREP constructs a per-session HTTP client; the launchdarkly, statsig,
+// and unleash SDK providers resolve through the cached
+// ExternalProviderResolver (the vendor OpenFeature clients hold
+// background connections and must not be rebuilt per session). A
+// provider this build cannot serve returns a nil client, which skips
+// external-mode experiments. A construction failure on the SDK-provider
+// path returns a constErrEvalClient so the failure surfaces as
+// targeting_failed rather than a silent skip — the gap F-10.7.3 named,
+// where the gateway never even tried for launchdarkly/statsig/unleash.
+func (s *Server) resolveExternalClient(ctx context.Context, cfg experiment.TargetingConfig) (externalEvalClient, string) {
+	switch cfg.Provider {
+	case experiment.TargetingProviderOFREP:
+		if cfg.OFREP == nil {
+			return nil, ""
+		}
+		client, err := ofrep.New(ofrep.Options{
+			BaseURL: cfg.OFREP.Endpoint,
+			Headers: cfg.OFREP.Headers,
+			Timeout: time.Duration(cfg.EffectiveTimeoutMs()) * time.Millisecond,
+		})
+		if err != nil {
+			return nil, ""
+		}
+		return ofrepEvalClient{c: client}, targetingProviderLabel(cfg.Provider, cfg.OFREP.Endpoint)
+	case experiment.TargetingProviderLaunchDarkly,
+		experiment.TargetingProviderStatsig,
+		experiment.TargetingProviderUnleash:
+		if s.externalProviders == nil {
+			return nil, ""
+		}
+		client, err := s.externalProviders.For(ctx, cfg)
+		if err != nil {
+			return constErrEvalClient{err: err}, string(cfg.Provider)
+		}
+		return client, string(cfg.Provider)
+	}
+	return nil, ""
 }
 
 // stickyWrappedEvaluator returns inner wrapped with the §10.7 sticky-cache
@@ -400,6 +513,17 @@ func classifyTargetingError(err error) string {
 			return ee.Code
 		}
 		return "http_error"
+	}
+	// spec: §16.1 line 157 — an OpenFeature SDK-provider failure carries
+	// the bounded OpenFeature ErrorCode (FLAG_NOT_FOUND, PROVIDER_NOT_READY,
+	// GENERAL, TYPE_MISMATCH, ...); fall back to "provider_error" when the
+	// SDK surfaced no code.
+	var pe *experimentprovider.EvalError
+	if errors.As(err, &pe) {
+		if pe.Code != "" {
+			return pe.Code
+		}
+		return "provider_error"
 	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {

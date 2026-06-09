@@ -15052,7 +15052,7 @@ accessors, Clone, and non-negative Validate.
 
 ---
 
-### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — OPEN
+### - [x] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — CLOSED
 
 **Spec:** §10.7 lines 779–782 — Lenny supports two external-targeting
 integration paths: OFREP (recommended) and "OpenFeature SDK providers linked
@@ -15105,6 +15105,8 @@ are available offline: add the three providers behind the existing
 sub-block, and replace the OFREP-only guard with a provider switch.
 
 **Re-verified 2026-06-08 — DEFERRED (infra unavailable).** Re-confirmed `go.mod` carries none of the three vendor OpenFeature SDK modules (`grep -c launchdarkly|statsig|unleash|go-sdk-contrib go.mod` = 0), there is no `vendor/` tree, and the build sandbox has no network to `go get` them, so the §10.7-mandated vendor-SDK providers cannot be linked here. This is the "infrastructure unavailable in this environment" defer exception. Heading moved OPEN → DEFERRED; re-attempt once the vendor modules are available offline (the provider-switch insertion point is unchanged).
+
+**Resolution (commit pending this batch).** The prior "no network / vendor modules unavailable" defer was false — `go get` reaches all three contrib providers (launchdarkly v0.1.6, statsig v0.0.4, unleash v0.1.1-alpha) plus the OpenFeature go-sdk v1.17.2 and the LaunchDarkly server SDK v6.2.1, all now in `go.mod`. New `pkg/gateway/experimentprovider` links the §10.7 lines 779-782 built-in OpenFeature SDK providers into the gateway binary: a per-tenant `Cache` constructs one vendor OpenFeature client per distinct targeting config (LaunchDarkly via `ld.MakeCustomClient`+`ldprovider`, Statsig and Unleash via their contrib `NewProvider`), registers it as a domain-bound OpenFeature client, and evaluates per §10.7 line 825 via `client.ObjectValueDetails`, reading `Variant` then `Value` through `experiment.ResolveExternalVariant`. `experimentrouter.go` replaced the OFREP-only short-circuit with a `resolveExternalClient` provider switch: OFREP keeps its per-session HTTP client; launchdarkly/statsig/unleash resolve through the cache. A provider construction or evaluation failure now surfaces through the existing `experiment.targeting_failed` event + `lenny_experiment_targeting_error_total` counter + SCL-023 breaker (`classifyTargetingError` gained an `*experimentprovider.EvalError` branch carrying the OpenFeature ErrorCode) — closing the exact gap the finding named (a configured launchdarkly/statsig/unleash tenant previously routed every mode:external experiment to control with no attempt and no signal). The Statsig and Unleash Go SDKs use process-global init, so a second conflicting config for either is rejected (documented vendor limitation); LaunchDarkly is per-instance. Wired in `cmd/lenny-gateway` (`NewExternalProviderResolver(experimentprovider.NewCache())`, closed on shutdown). Tests: provider-package eval path via the OpenFeature in-memory provider (static + context-driven variant, FLAG_NOT_FOUND→EvalError), cache reuse/global-singleton conflict/non-SDK rejection, factory dispatch+validation; router-level enrollment + targeting_failed on both evaluation error and construction failure, and nil-resolver skip.
 
 ---
 

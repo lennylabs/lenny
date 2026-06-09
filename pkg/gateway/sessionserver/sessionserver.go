@@ -284,6 +284,11 @@ type Server struct {
 	pools              poolstore.Store
 	experimentReporter ExperimentRejectionReporter
 	stickyCache        StickyCache
+	// externalProviders resolves the §10.7 built-in OpenFeature SDK
+	// providers (launchdarkly, statsig, unleash) for mode:external
+	// targeting. Nil disables the SDK-provider path; only OFREP-targeted
+	// experiments evaluate. F-10.7.3.
+	externalProviders  ExternalProviderResolver
 	runtimes           runtimestore.Store
 	// capOverrides applies the §5.1 line 49 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
@@ -1019,6 +1024,13 @@ type Options struct {
 	// also the §12.4 Redis-outage fail-open path.
 	StickyCache StickyCache
 
+	// ExternalProviders resolves the §10.7 built-in OpenFeature SDK
+	// providers (launchdarkly, statsig, unleash) for mode:external
+	// targeting. The gateway wires an adapter over *experimentprovider.Cache.
+	// Nil disables the SDK-provider path; only OFREP-targeted experiments
+	// evaluate. F-10.7.3.
+	ExternalProviders ExternalProviderResolver
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -1542,6 +1554,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		pools:                    opts.Pools,
 		experimentReporter:       opts.ExperimentRejections,
 		stickyCache:              opts.StickyCache,
+		externalProviders:        opts.ExternalProviders,
 		events:                   opts.Events,
 		dualStore:                opts.DualStore,
 		messaging:                opts.Messaging,

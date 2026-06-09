@@ -182,6 +182,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
@@ -3686,6 +3687,13 @@ func main() {
 		erasureSticky = stickyCache
 	}
 
+	// §10.7 lines 779-782: the built-in OpenFeature SDK providers
+	// (launchdarkly, statsig, unleash) linked into the gateway binary. The
+	// cache constructs one vendor OpenFeature client per distinct tenant
+	// targeting config and reuses it across sessions; OFREP-targeted
+	// experiments do not touch it. F-10.7.3.
+	experimentProviders := experimentprovider.NewCache()
+
 	// spec: §14 lines 108-150 — the session-completion webhook subsystem.
 	// The SSRF validator enforces the §14 callbackUrl rules at admission;
 	// the seal/open closures KMS-envelope-encrypt the callbackSecret under
@@ -3863,6 +3871,7 @@ func main() {
 			emitter: opsEmitter,
 		},
 		StickyCache:        sessionStickyCache,
+		ExternalProviders:  sessionserver.NewExternalProviderResolver(experimentProviders),
 		Usage:              usage,
 		Users:              users,
 		Billing:            billing,
@@ -7736,6 +7745,8 @@ func main() {
 	// §12.4: close the per-concern split clients (no-op when no split is
 	// configured; the base client closed above is left untouched).
 	_ = concernRedis.Close()
+	// §10.7: release the vendor OpenFeature SDK background connections.
+	experimentProviders.Close()
 }
 
 // breakerRegistry is the breaker-store surface the gateway wires: the
