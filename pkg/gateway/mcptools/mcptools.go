@@ -210,6 +210,28 @@ type DelegationAuditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
+// cooldownToolError maps a delegation.InterceptorWeakeningCooldownError
+// to the canonical INTERCEPTOR_WEAKENING_COOLDOWN MCP envelope (§8.3
+// rule 5 / §15.1; TRANSIENT, HTTP 503) so the lenny/delegate_task and
+// lenny/send_message surfaces report the same (category, retryable) pair
+// and the same details across REST and MCP. The details carry whichever
+// trigger fired: policyName for the scanExportedFiles weakening
+// (F-8.7.12), interceptorRef for the interceptor fail-policy weakening
+// (F-4.8.17). F-8.7.12 / F-4.8.17.
+func cooldownToolError(cdErr *delegation.InterceptorWeakeningCooldownError) *mcp.ToolError {
+	details := map[string]any{
+		"cooldownSeconds":   cdErr.CooldownSeconds,
+		"retryAfterSeconds": cdErr.RetryAfterSeconds,
+	}
+	if cdErr.PolicyName != "" {
+		details["policyName"] = cdErr.PolicyName
+	}
+	if cdErr.InterceptorRef != "" {
+		details["interceptorRef"] = cdErr.InterceptorRef
+	}
+	return mcp.NewToolError("INTERCEPTOR_WEAKENING_COOLDOWN", cdErr.Error(), details)
+}
+
 // ContentPolicyResolver resolves the effective §8.3 contentPolicy for a
 // session: the maxInputSize byte cap and the interceptorRef naming the
 // external content scanner. lenny/delegate_task resolves the parent
@@ -218,6 +240,19 @@ type DelegationAuditor interface {
 // §4.8 lines 1036, 1040; §13.5 mitigations 2-3. F-8.2.9 / F-13.5.2.
 type ContentPolicyResolver interface {
 	ResolveContentPolicy(ctx context.Context, tenantID, sessionID string) (maxInputSize int, interceptorRef string, ok bool)
+}
+
+// InterceptorCooldownChecker reports the §4.8 line 1034 / §8.3 SEC-013
+// fail-policy weakening cooldown for the interceptor named by a policy's
+// `contentPolicy.interceptorRef`. lenny/send_message consults it to
+// reject a delivery whose target session's effective interceptor is
+// inside the `fail-closed → fail-open` weakening window, the same gate
+// the delegation service applies inside Delegate for lenny/delegate_task.
+// A non-nil return is a *delegation.InterceptorWeakeningCooldownError.
+// *delegation.Service implements it. spec: §4.8 line 1034; §8.3 line 218.
+// F-4.8.17.
+type InterceptorCooldownChecker interface {
+	InterceptorFailPolicyCooldown(ctx context.Context, interceptorRef string) error
 }
 
 // TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle
@@ -361,6 +396,15 @@ type Deps struct {
 	// 149-188; §4.8 lines 1036, 1040; §13.5 mitigations 2-3.
 	// F-8.2.9 / F-13.5.2.
 	ContentPolicies ContentPolicyResolver
+
+	// CooldownChecker gates lenny/send_message on the §4.8 line 1034 /
+	// §8.3 SEC-013 interceptor fail-policy weakening cooldown. Optional —
+	// when nil, lenny/send_message applies no interceptor-failPolicy
+	// cooldown (the delegate_task path enforces it inside Delegate). The
+	// in-process minimal gateway and the unit suite register no external
+	// interceptors, so the nil default is a no-op. Production wires
+	// *delegation.Service. spec: §4.8 line 1034; §8.3 line 218. F-4.8.17.
+	CooldownChecker InterceptorCooldownChecker
 
 	// PolicyAudit emits the §16.7 interceptor.rejected audit row when a
 	// chain REJECTs at PreDelegation or PreMessageDelivery. Optional —
@@ -992,6 +1036,22 @@ func Register(srv *mcp.Server, deps Deps) {
 				ref := ""
 				if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, row.ID); ok {
 					ref = r
+					// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013,
+					// F-4.8.17) — reject the delivery when the target
+					// session's effective interceptorRef names an
+					// interceptor inside the `fail-closed → fail-open`
+					// weakening cooldown, mirroring the delegate_task gate
+					// so a stolen admin credential cannot use a brief
+					// fail-open window to push messages past a now-disabled
+					// content scanner.
+					if deps.CooldownChecker != nil && ref != "" {
+						if cdErr := deps.CooldownChecker.InterceptorFailPolicyCooldown(ctx, ref); cdErr != nil {
+							var wc *delegation.InterceptorWeakeningCooldownError
+							if errors.As(cdErr, &wc) {
+								return mcp.ToolResult{}, cooldownToolError(wc)
+							}
+						}
+					}
 					if maxSize > 0 && len(in.Message) > maxSize {
 						return mcp.ToolResult{}, mcp.NewToolError(policy.CodeInputTooLarge,
 							fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(in.Message), maxSize),
@@ -2833,14 +2893,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				// pair across REST and MCP. F-8.7.12 / F-13.5.7.
 				var cdErr *delegation.InterceptorWeakeningCooldownError
 				if errors.As(err, &cdErr) {
-					return mcp.ToolResult{}, mcp.NewToolError(
-						"INTERCEPTOR_WEAKENING_COOLDOWN",
-						err.Error(),
-						map[string]any{
-							"policyName":        cdErr.PolicyName,
-							"cooldownSeconds":   cdErr.CooldownSeconds,
-							"retryAfterSeconds": cdErr.RetryAfterSeconds,
-						})
+					return mcp.ToolResult{}, cooldownToolError(cdErr)
 				}
 				// spec: §8.3 lines 313-317 — the child lease's treeVisibility
 				// widens the parent's effective visibility. Surface the

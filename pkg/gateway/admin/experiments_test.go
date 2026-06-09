@@ -135,6 +135,18 @@ func adminETagGetPath(putPath string) string {
 		// applied to the GET request), so no tenant query is needed.
 		return "/v1/admin/delegation-policies/" + name
 	}
+	if strings.HasPrefix(putPath, "/v1/admin/interceptors/") {
+		name := strings.TrimPrefix(putPath, "/v1/admin/interceptors/")
+		if i := strings.IndexByte(name, '?'); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			return ""
+		}
+		// Interceptors are platform-scoped, so the GET reads off the same
+		// path with no tenant query.
+		return "/v1/admin/interceptors/" + name
+	}
 	// Custom roles live under the tenant-scoped path
 	// /v1/admin/tenants/{id}/roles/{name}; the GET reads off the same path
 	// (the tenant is resolved from the path segment, so no query is needed).

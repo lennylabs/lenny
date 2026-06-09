@@ -290,6 +290,10 @@ type Service struct {
 	// by tests that exercise the rest of the admission path without
 	// the cooldown gate).
 	interceptorWeakeningCooldown time.Duration
+	// interceptorCooldown resolves the §8.3 SEC-013 fail-policy weakening
+	// cooldown for an interceptor named by a policy's interceptorRef. Nil
+	// disables the interceptor-failPolicy cooldown gate. F-4.8.17.
+	interceptorCooldown InterceptorCooldownResolver
 	// exportMat runs the §8.7 file-export materialization when a
 	// delegation declares `fileExport` entries. Nil makes such a
 	// delegation fail with ErrExportNotConfigured. F-8.7.1.
@@ -489,6 +493,30 @@ type Options struct {
 	// its tree instead of failing ErrSessionNotFound. Nil leaves
 	// extension state unregistered. F-15.3.5.
 	LeaseRegistrar LeaseChildRegistrar
+
+	// InterceptorCooldown, when set, resolves the §8.3 SEC-013 fail-policy
+	// weakening cooldown for the interceptor named by a policy's
+	// `contentPolicy.interceptorRef`. Delegate and the
+	// InterceptorFailPolicyCooldown helper consult it to reject a
+	// `delegate_task` / `lenny/send_message` whose effective interceptor
+	// is inside the cluster-scoped weakening window. Nil disables the
+	// interceptor-failPolicy cooldown gate (the in-process minimal gateway
+	// and the unit suite, which register no external interceptors).
+	// F-4.8.17.
+	InterceptorCooldown InterceptorCooldownResolver
+}
+
+// InterceptorCooldownResolver reports the §8.3 SEC-013 active fail-open
+// weakening cooldown for a named external interceptor. It is satisfied
+// by interceptorstore.CooldownResolver in production. The resolver is
+// the single source of truth read per invocation (§8.3 rule 1): the
+// service never snapshots the interceptor configuration into a lease.
+type InterceptorCooldownResolver interface {
+	// FailOpenCooldown returns the server-minted transition timestamp and
+	// the cooldown seconds that were in force at that transition for the
+	// named interceptor. ok is false when the interceptor is unknown or
+	// not currently weakened.
+	FailOpenCooldown(ctx context.Context, name string) (transitionTs time.Time, cooldownSeconds int, ok bool)
 }
 
 // NewService returns a delegation Service.
@@ -530,6 +558,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		platformAllowSelfRec:         opts.PlatformAllowSelfRecursion,
 		defaultMaxDepth:              maxDepth,
 		interceptorWeakeningCooldown: cooldown,
+		interceptorCooldown:          opts.InterceptorCooldown,
 		exportMat:                    opts.ExportMaterializer,
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
@@ -612,8 +641,15 @@ type InterceptorWeakeningCooldownError struct {
 	// PolicyName is the §8.3 affected DelegationPolicy.
 	PolicyName string
 
-	// TransitionTs is the server-minted scanExportedFiles weakening
-	// timestamp recorded on the policy row.
+	// InterceptorRef is the §4.8 interceptor whose `fail-closed →
+	// fail-open` transition opened the window. Empty for the
+	// scanExportedFiles trigger (F-8.7.12); set for the interceptor
+	// failPolicy trigger (F-4.8.17).
+	InterceptorRef string
+
+	// TransitionTs is the server-minted weakening timestamp: the policy
+	// row's scanExportedFiles flip (F-8.7.12) or the interceptor row's
+	// failPolicy flip (F-4.8.17).
 	TransitionTs time.Time
 
 	// CooldownSeconds is the cluster-scoped cooldown duration that
@@ -628,6 +664,12 @@ type InterceptorWeakeningCooldownError struct {
 }
 
 func (e *InterceptorWeakeningCooldownError) Error() string {
+	if e.InterceptorRef != "" {
+		return fmt.Sprintf(
+			"delegation: interceptor %q is inside the §8.3 fail-policy weakening cooldown; retry after %ds",
+			e.InterceptorRef, e.RetryAfterSeconds,
+		)
+	}
 	return fmt.Sprintf(
 		"delegation: policy %q is inside the §8.3 scanExportedFiles weakening cooldown; retry after %ds",
 		e.PolicyName, e.RetryAfterSeconds,
@@ -895,6 +937,17 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 					// it fires regardless of whether this particular
 					// call carries any exported files.
 					if cdErr := s.checkInterceptorWeakeningCooldown(pol); cdErr != nil {
+						return Result{}, cdErr
+					}
+					// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013,
+					// F-4.8.17) — reject every `delegate_task` whose
+					// effective policy names an interceptor inside the
+					// `fail-closed → fail-open` weakening cooldown, the
+					// same protection against a timing-observable
+					// fail-open window applied to the interceptor's own
+					// failPolicy flip rather than the policy's
+					// scanExportedFiles flip.
+					if cdErr := s.InterceptorFailPolicyCooldown(ctx, pol.ContentPolicy.InterceptorRef); cdErr != nil {
 						return Result{}, cdErr
 					}
 					settings.PolicyAllowSelfRec = pol.AllowSelfRecursion
@@ -1663,6 +1716,49 @@ func (s *Service) checkInterceptorWeakeningCooldown(pol delegationpolicystore.De
 		PolicyName:        pol.Name,
 		TransitionTs:      pol.ScanExportedFilesWeakenedAt,
 		CooldownSeconds:   int(s.interceptorWeakeningCooldown / time.Second),
+		RetryAfterSeconds: retryAfter,
+	}
+}
+
+// InterceptorFailPolicyCooldown returns a typed
+// InterceptorWeakeningCooldownError when interceptorRef names an external
+// interceptor still inside the §4.8 line 1034 / §8.3 SEC-013
+// `fail-closed → fail-open` weakening cooldown window. The window length
+// is the cluster-scoped `gateway.interceptorWeakeningCooldownSeconds`
+// value that was in force at the transition (the §8.3 meta-cooldown rule
+// pins a pending cooldown to that recorded value rather than the live
+// config, so cutting the cluster value never shortens an active
+// cooldown). Returns nil when interceptorRef is empty, no resolver is
+// wired, the interceptor never weakened, or the window has expired. The
+// §8.5 `lenny/delegate_task` and `lenny/send_message` MCP handlers map
+// the typed error to `INTERCEPTOR_WEAKENING_COOLDOWN` (TRANSIENT, HTTP
+// 503). F-4.8.17.
+func (s *Service) InterceptorFailPolicyCooldown(ctx context.Context, interceptorRef string) error {
+	if interceptorRef == "" || s.interceptorCooldown == nil {
+		return nil
+	}
+	transitionTs, cooldownSeconds, ok := s.interceptorCooldown.FailOpenCooldown(ctx, interceptorRef)
+	if !ok || transitionTs.IsZero() || cooldownSeconds <= 0 {
+		return nil
+	}
+	window := time.Duration(cooldownSeconds) * time.Second
+	elapsed := s.clock().Sub(transitionTs)
+	if elapsed < 0 {
+		// Clock skew: treat as freshly-armed so the window still applies.
+		elapsed = 0
+	}
+	remaining := window - elapsed
+	if remaining <= 0 {
+		return nil
+	}
+	retryAfter := int((remaining + time.Second - 1) / time.Second)
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	return &InterceptorWeakeningCooldownError{
+		InterceptorRef:    interceptorRef,
+		TransitionTs:      transitionTs,
+		CooldownSeconds:   cooldownSeconds,
 		RetryAfterSeconds: retryAfter,
 	}
 }

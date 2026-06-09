@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -157,11 +158,18 @@ type Router struct {
 	connectorRefresher      ConnectorCapabilityRefresher
 	connectorRefreshLimiter ratelimit.Counter
 	delegationPolicies      delegationpolicystore.Store
-	credentialPools         credentialpoolstore.Store
-	poolCredRevoker         PoolCredentialRevoker
-	poolCredHealth          PoolCredentialHealthReader
-	customRoles             customrolestore.Store
-	tenantAccess            tenantaccessstore.Store
+	// interceptors backs the §4.8 / §15.1 external-interceptor registry
+	// CRUD surface; interceptorCooldownSeconds is the cluster-scoped
+	// `gateway.interceptorWeakeningCooldownSeconds` recorded on a
+	// `fail-closed → fail-open` transition (§8.3 SEC-013). A nil store
+	// leaves the routes unregistered. F-4.8.17.
+	interceptors               interceptorstore.Store
+	interceptorCooldownSeconds int
+	credentialPools            credentialpoolstore.Store
+	poolCredRevoker            PoolCredentialRevoker
+	poolCredHealth             PoolCredentialHealthReader
+	customRoles                customrolestore.Store
+	tenantAccess               tenantaccessstore.Store
 	// capOverrides backs the §5.1 line 49 per-tenant runtime capability
 	// override CRUD surface. Nil leaves the routes unregistered. F-5.1.20.
 	capOverrides runtimecapoverride.Store
@@ -887,6 +895,18 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleGetDelegationPolicy)))
 		mux.Handle("PUT /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
 		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
+	}
+	if r.interceptors != nil {
+		// §4.8 / §15.1 external-interceptor registry. Interceptors are
+		// platform-scoped cluster infrastructure, so the CRUD surface is
+		// gated on the platform-admin role (requireAdmin), the distinct
+		// credential domain §8.3 SEC-013 separates from cluster-config
+		// access. F-4.8.17.
+		mux.Handle("POST /v1/admin/interceptors", r.requireAdmin(http.HandlerFunc(r.handleCreateInterceptor)))
+		mux.Handle("GET /v1/admin/interceptors", r.requireAdmin(http.HandlerFunc(r.handleListInterceptors)))
+		mux.Handle("GET /v1/admin/interceptors/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetInterceptor)))
+		mux.Handle("PUT /v1/admin/interceptors/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateInterceptor)))
+		mux.Handle("DELETE /v1/admin/interceptors/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteInterceptor)))
 	}
 	if r.customRoles != nil {
 		// §10.2: custom roles are stored in the tenant RBAC config, so

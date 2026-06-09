@@ -190,6 +190,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
+	interceptorpg "github.com/lennylabs/lenny/pkg/gateway/interceptorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
@@ -4075,6 +4077,15 @@ func main() {
 	if pgPool != nil {
 		delegationPolicies = delegationpolicypg.New(pgPool)
 	}
+	// §4.8 / §8.3 SEC-013 external-interceptor registry: the admin-mutable
+	// source of truth for the fail-policy weakening cooldown the
+	// delegation service enforces at delegate_task / send_message time.
+	// F-4.8.17.
+	var interceptors interceptorstore.Store = interceptorstore.NewMemory()
+	if pgPool != nil {
+		interceptors = interceptorpg.New(pgPool)
+	}
+	interceptorCooldownResolver := interceptorstore.NewCooldownResolver(interceptors)
 	// §8.7 / §8.2 steps 3, 4: the file-export materializer pulls declared
 	// fileExport sets from the running parent pod (over the pod-session
 	// registry's adapter client), validates + persists them to the §4.5
@@ -4142,6 +4153,10 @@ func main() {
 		// §8.3 line 181 — Helm value gateway.interceptorWeakeningCooldownSeconds.
 		// F-8.7.12 / F-13.5.7.
 		InterceptorWeakeningCooldown: time.Duration(*interceptorWeakeningCooldownSeconds) * time.Second,
+		// §4.8 line 1034 / §8.3 SEC-013 — reject delegate_task whose
+		// effective interceptorRef names an interceptor inside the
+		// fail-closed → fail-open weakening cooldown. F-4.8.17.
+		InterceptorCooldown: interceptorCooldownResolver,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
 		// `lenny_delegation_would_have_blocked_total` through the
@@ -4208,6 +4223,10 @@ func main() {
 		// maxInputSize) rather than every registered external interceptor.
 		// F-8.2.9 / F-13.5.2.
 		ContentPolicies: delegationSvc,
+		// §4.8 line 1034 / §8.3 SEC-013 — gate lenny/send_message on the
+		// interceptor fail-policy weakening cooldown, mirroring the
+		// delegate_task gate inside the delegation Service. F-4.8.17.
+		CooldownChecker: delegationSvc,
 		PolicyAudit:     policyAuditSink,
 		Events:          eventBus,
 		InputWaits:      inputWaits,
@@ -4579,6 +4598,10 @@ func main() {
 		// live test since it also dials the external endpoint.
 		WithConnectorRefresh(connectorInvoker, ratelimit.NewMemory()).
 		WithDelegationPolicies(delegationPolicies).
+		// §4.8 / §15.1 external-interceptor registry CRUD; the cooldown
+		// seconds it records on a weakening transition match the delegation
+		// service's window. F-4.8.17.
+		WithInterceptors(interceptors, *interceptorWeakeningCooldownSeconds).
 		WithCredentialPools(credentialPools).
 		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
