@@ -57,6 +57,8 @@ Invoke the Workflow tool with the script below verbatim and:
 }
 ```
 
+Pass `args` as a JSON object value in the tool call. The script also tolerates a JSON-encoded object string (some harness paths deliver `args` as a string) by parsing it; anything else aborts on the args guard rather than running with `undefined` fields.
+
 To iterate after a failure or interruption, edit the persisted script file from the tool result and relaunch with `{scriptPath, resumeFromRunId}`.
 
 ```js
@@ -76,13 +78,27 @@ export const meta = {
   ],
 };
 
-const repo = args.repoRoot;
-const problem = args.problem;
-const context = args.context || "none provided";
-const date = args.date;
-const num = args.nextNumber;
-const exemplar = args.exemplar;
-const maxRounds = args.maxReviewRounds || 3;
+let input = args;
+if (typeof input === "string") {
+  input = JSON.parse(input);
+}
+if (!input || typeof input !== "object") {
+  throw new Error(
+    "args must be a JSON object or a JSON-encoded object string, received " +
+      typeof args,
+  );
+}
+for (const k of ["problem", "date", "nextNumber", "exemplar", "repoRoot"]) {
+  if (!input[k]) throw new Error("args." + k + " is required and missing");
+}
+
+const repo = input.repoRoot;
+const problem = input.problem;
+const context = input.context || "none provided";
+const date = input.date;
+const num = input.nextNumber;
+const exemplar = input.exemplar;
+const maxRounds = input.maxReviewRounds || 3;
 
 const READ_ONLY =
   "You are a read-only investigator. Do not create, edit, or delete any file. Cite evidence as file:line.";
@@ -459,10 +475,11 @@ const LENSES = [
 const seen = new Set();
 const resolved = [];
 let clean = false;
+let reviewersFailed = false;
 let roundsRun = 0;
 for (let round = 1; round <= maxRounds && !clean; round++) {
   roundsRun = round;
-  const found = (
+  const reviewerResults = (
     await parallel(
       LENSES.map(
         (l) => () =>
@@ -487,9 +504,18 @@ for (let round = 1; round <= maxRounds && !clean; round++) {
           ),
       ),
     )
-  )
-    .filter(Boolean)
-    .flatMap((r) => r.findings);
+  ).filter(Boolean);
+
+  if (reviewerResults.length === 0) {
+    log(
+      "Round " +
+        round +
+        ": every reviewer failed; stopping with the proposal unreviewed this round",
+    );
+    reviewersFailed = true;
+    break;
+  }
+  const found = reviewerResults.flatMap((r) => r.findings);
 
   const fresh = found.filter(
     (f) => !seen.has((f.where + "|" + f.title).toLowerCase()),
@@ -584,9 +610,10 @@ return {
     dropped: dropped.map((d) => d.title),
   },
   review: {
-    rounds: Math.min(resolved.length ? maxRounds : 1, maxRounds),
+    rounds: roundsRun,
     resolved,
-    clean,
+    clean: clean && !reviewersFailed,
+    reviewersFailed,
   },
 };
 ```
