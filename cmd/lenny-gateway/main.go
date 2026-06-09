@@ -155,6 +155,7 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/childtoken"
@@ -195,8 +196,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
@@ -1350,7 +1351,7 @@ func main() {
 		// durability layer. Non-nil only when --sqlite-path is set and
 		// --postgres-dsn is empty; the shutdown path stops the flush loop
 		// (sqliteFlushCancel) and flushes+closes it. F-17.4.2.
-		sqliteDB         *sqlitestore.DB
+		sqliteDB          *sqlitestore.DB
 		sqliteFlushCancel context.CancelFunc
 	)
 	if *postgresDSN != "" {
@@ -5160,6 +5161,51 @@ func main() {
 			erasureRunner = erasureRunner.WithBilling(billingEraser)
 			// §12.8 line 857: platform-admin compromise-response salt rotation.
 			adminRouter = adminRouter.WithErasureSaltRotation(billingEraser)
+		}
+		// spec: §12.8 lines 810-829 — step-14 OCSF dead-letter PII redaction.
+		// When the audit chain is Postgres-backed, scrub raw canonical PII out
+		// of the user's dead-lettered audit_log rows in place under a
+		// KMS-signed RedactionReceipt, then emit gdpr.erasure_deadletter_redacted
+		// (the in-system erasure record) and gdpr.erasure_deadletter_downstream_notified
+		// (the GDPR Art. 17(2) signal to OCSF sinks) per row. The payload
+		// rewrite runs under SET LOCAL lenny.erasure_mode; migration 0165 grants
+		// lenny_erasure UPDATE on the two payload columns, and the erasure-role
+		// connection wiring is shared with the Phase-4 audit DeleteByTenant
+		// under F-12.2.16. The in-memory audit chain has no dead_lettered rows,
+		// so the redaction is wired only on the durable store.
+		if auditOpsStore != nil && auditValidator != nil {
+			receiptSigner, rerr := deadletterredaction.NewKMSReceiptSigner(
+				context.Background(), kmsProvider, "platform:audit-redaction-signing", "boot")
+			if rerr != nil {
+				log.Fatalf("lenny-gateway: §12.8 redaction receipt signer: %v", rerr)
+			}
+			redactionSvc := deadletterredaction.New(deadletterredaction.Config{
+				Store:  auditOpsStore,
+				Emit:   auditValidator,
+				Signer: receiptSigner,
+				// Re-derive the OCSF translation error class the row was
+				// dead-lettered with, so the redacted payload preserves it for
+				// pipeline-failure forensics (§12.8 line 810).
+				Classify: func(row audit.Row) string {
+					_, err := ocsf.Translate(ocsf.Input{
+						ID:                 row.ID,
+						Sequence:           row.Seq,
+						TenantID:           row.TenantID,
+						EventType:          row.EventType,
+						EventSchemaVersion: row.EventSchemaVersion,
+						CreatedAtUnixMs:    row.Timestamp.UTC().UnixMilli(),
+						Payload:            row.Payload,
+						PrevHash:           row.PrevHash,
+						ChainIntegrity:     audit.ChainUnchecked,
+					})
+					var te *ocsf.TranslateError
+					if errors.As(err, &te) {
+						return string(te.Class)
+					}
+					return string(ocsf.ErrClassMappingMissing)
+				},
+			})
+			erasureRunner = erasureRunner.WithDeadLetterRedaction(redactionSvc.RedactForUser)
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
 		// spec: §12.8 line 768 — publish the erasure-SLA gauges

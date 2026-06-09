@@ -282,7 +282,11 @@ func (s *Store) appendOnPool(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 	return audit.Row{}, &AuditUnavailableError{TenantID: tenantID, Attempts: cfg.MaxRetries + 1, Err: lastErr}
 }
 
-// Rows returns the tenant's audit rows in sequence order.
+// Rows returns the tenant's audit rows in sequence order. A row rewritten
+// in place by a §12.8 step-14 dead-letter redaction is flagged Redacted
+// and carries its preserved pre-redaction hash (from the RedactionReceipt)
+// so the chain stays linked and the verifier classifies the break as a
+// lawful redacted_gdpr discontinuity.
 func (s *Store) Rows(ctx context.Context, tenantID string) ([]audit.Row, error) {
 	pool, err := s.readShard(ctx, tenantID)
 	if err != nil {
@@ -309,18 +313,28 @@ func (s *Store) Rows(ctx context.Context, tenantID string) ([]audit.Row, error) 
 	if err != nil {
 		return nil, err
 	}
+	receipts, err := s.Receipts(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	applyReceipts(out, receipts)
 	return out, nil
 }
 
 // Verify walks the tenant's persisted chain and reports its §11.7
 // integrity state, using the same verification as the in-memory
-// pkg/audit chain.
+// pkg/audit chain. The §12.8 RedactionReceipts are loaded so a lawfully
+// redacted row is classified redacted_gdpr rather than broken.
 func (s *Store) Verify(ctx context.Context, tenantID string) (audit.VerifyResult, error) {
 	rows, err := s.Rows(ctx, tenantID)
 	if err != nil {
 		return audit.VerifyResult{}, err
 	}
-	return audit.ChainFromRows(tenantID, rows, nil).Verify(), nil
+	receipts, err := s.Receipts(ctx, tenantID)
+	if err != nil {
+		return audit.VerifyResult{}, err
+	}
+	return audit.ChainFromRows(tenantID, rows, receipts).Verify(), nil
 }
 
 // Get returns the row at seq for the tenant, or ErrNotFound.

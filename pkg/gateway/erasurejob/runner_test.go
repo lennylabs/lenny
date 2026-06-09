@@ -86,6 +86,61 @@ func TestRunnerRunCompletesJob(t *testing.T) {
 	}
 }
 
+// spec: §12.8 lines 810-829 — after store deletion the runner drives the
+// step-14 dead-letter redaction and records the per-row count on the job.
+func TestRunnerRunDeadLetterRedaction_recordsCount(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	var gotTenant, gotUser string
+	r := erasurejob.NewRunner(jobs, orch, nil).
+		WithDeadLetterRedaction(func(_ context.Context, tenantID, userID string) (int, error) {
+			gotTenant, gotUser = tenantID, userID
+			return 3, nil
+		})
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	if job.Phase != erasurejob.PhaseCompleted {
+		t.Errorf("Phase = %q, want completed", job.Phase)
+	}
+	if job.DeadLetterRedacted != 3 {
+		t.Errorf("DeadLetterRedacted = %d, want 3", job.DeadLetterRedacted)
+	}
+	if gotTenant != "acme" || gotUser != "alice" {
+		t.Errorf("redaction hook got (%q,%q), want (acme,alice)", gotTenant, gotUser)
+	}
+}
+
+// spec: §12.8 lines 810-829 — a redaction error aborts the job under the
+// deadletter_redaction failure phase, with store deletion already durable.
+func TestRunnerRunDeadLetterRedaction_failsJob(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	var failurePhase string
+	r := erasurejob.NewRunner(jobs, orch, nil).
+		WithFailureObserver(func(_, phase string) { failurePhase = phase }).
+		WithDeadLetterRedaction(func(context.Context, string, string) (int, error) {
+			return 0, errors.New("permission denied")
+		})
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err == nil {
+		t.Fatal("expected redaction error to surface")
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	if job.Phase != erasurejob.PhaseFailed {
+		t.Errorf("Phase = %q, want failed", job.Phase)
+	}
+	if failurePhase != erasurejob.FailurePhaseDeadLetterRedaction {
+		t.Errorf("failure phase = %q, want %q", failurePhase, erasurejob.FailurePhaseDeadLetterRedaction)
+	}
+	// Store deletion ran before the redaction failure.
+	if job.Total != 1 {
+		t.Errorf("Total = %d, want 1 (store deletion durable before redaction)", job.Total)
+	}
+}
+
 func TestRunnerRunRecordsFailure(t *testing.T) {
 	jobs := erasurejob.NewMemory()
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{

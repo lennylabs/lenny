@@ -86,6 +86,11 @@ type Job struct {
 	// not reached the pseudonymizing phase or no BillingEraser is
 	// wired into the Runner.
 	Billing BillingErasureOutcome
+	// DeadLetterRedacted is the number of dead-lettered audit_log rows the
+	// §12.8 step-14 OCSF dead-letter PII redaction scrubbed for the target
+	// user. Zero when no dead-lettered rows named the user or no redaction
+	// hook is wired into the Runner. spec: §12.8 lines 810-829.
+	DeadLetterRedacted int
 	// PhaseLog records every §12.8 lifecycle transition in order with
 	// its timestamp, so the completion receipt presents the per-phase
 	// timeline a compliance auditor uses to reconstruct the erasure

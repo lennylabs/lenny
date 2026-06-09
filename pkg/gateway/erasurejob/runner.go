@@ -23,15 +23,16 @@ import (
 // erasure is effective. Without a BillingEraser the job completes at
 // store deletion.
 type Runner struct {
-	jobs            Store
-	erase           *erasure.Orchestrator
-	billing         *BillingEraser
-	memoryPreflight func(context.Context) error
-	onFailure       func(tenantID, failurePhase string)
-	onComplete      func(ctx context.Context, tenantID, userID string)
-	lifecycle       LifecycleMetrics
-	deadlineFor     func(ctx context.Context, tenantID string) time.Duration
-	clock           func() time.Time
+	jobs             Store
+	erase            *erasure.Orchestrator
+	billing          *BillingEraser
+	memoryPreflight  func(context.Context) error
+	deadLetterRedact func(ctx context.Context, tenantID, userID string) (int, error)
+	onFailure        func(tenantID, failurePhase string)
+	onComplete       func(ctx context.Context, tenantID, userID string)
+	lifecycle        LifecycleMetrics
+	deadlineFor      func(ctx context.Context, tenantID string) time.Duration
+	clock            func() time.Time
 }
 
 // LifecycleMetrics receives the §12.8 line 768 erasure throughput
@@ -51,6 +52,7 @@ type LifecycleMetrics interface {
 const (
 	FailurePhaseMemoryStorePreflight = "memory_store_preflight"
 	FailurePhaseStoreDelete          = "store_delete"
+	FailurePhaseDeadLetterRedaction  = "deadletter_redaction"
 	FailurePhasePseudonymization     = "pseudonymization"
 	FailurePhaseVerification         = "verification"
 )
@@ -89,6 +91,22 @@ func (r *Runner) WithBilling(b *BillingEraser) *Runner {
 // the Runner for call chaining.
 func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Runner {
 	r.memoryPreflight = preflight
+	return r
+}
+
+// WithDeadLetterRedaction attaches the §12.8 step-14 OCSF dead-letter PII
+// redaction. After the store-deletion phase, the hook scrubs raw canonical
+// PII out of every audit_log row the OCSF translator dead-lettered that
+// names the target user, persisting a signed RedactionReceipt and emitting
+// the gdpr.erasure_deadletter_redacted / _downstream_notified events per
+// row. A nil hook skips step 14 (a deployment with no dead-lettered rows
+// is unaffected either way). The redaction runs as its own phase so a
+// failure aborts the job under FailurePhaseDeadLetterRedaction with the
+// store deletion already durable. Returns the Runner for call chaining.
+//
+// spec: §12.8 lines 810-829.
+func (r *Runner) WithDeadLetterRedaction(hook func(ctx context.Context, tenantID, userID string) (int, error)) *Runner {
+	r.deadLetterRedact = hook
 	return r
 }
 
@@ -272,6 +290,27 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	}
 	if eraseErr != nil {
 		return r.fail(ctx, jobID, FailurePhaseStoreDelete, eraseErr, nil)
+	}
+
+	// §12.8 step-14 OCSF dead-letter PII redaction: scrub raw canonical
+	// PII out of the user's dead-lettered audit_log rows in place (the
+	// rows the §11.7 audit retention carve-out keeps rather than deletes),
+	// recording the per-row count on the job. A redaction error aborts the
+	// job under deadletter_redaction with the store deletion already
+	// durable.
+	if r.deadLetterRedact != nil {
+		n, err := r.deadLetterRedact(ctx, job.TenantID, job.UserID)
+		if err != nil {
+			return r.fail(ctx, jobID, FailurePhaseDeadLetterRedaction, err, nil)
+		}
+		if n > 0 {
+			if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
+				j.DeadLetterRedacted = n
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
 	}
 
 	// §12.8 billing-event pseudonymization, when a BillingEraser is
