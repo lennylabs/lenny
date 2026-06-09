@@ -10514,7 +10514,7 @@ skipped. Closed by a1d8fc1e.
 
 ---
 
-### - [ ] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — OPEN
+### - [ ] F-8.10.3 — 3 — `await_completion` cascade behaves identically to `detach` [High] — DEFERRED
 
 **Severity:** High (cascade behavior conflated with `detach`; spec
 distinguishes them.)
@@ -10560,6 +10560,8 @@ F-8.9.4 per-node collection capture. The lower-risk pieces — cascade
 fallback audit (F-8.10.8) and orphan-cap behavior — are already closed.
 
 **Re-verified 2026-06-08 (rule N — F-8.9.4 blocker cleared; re-DEFERRED on the collection feature itself).** The named data-source blocker is now built: F-8.9.4 (this batch) added `pkg/gateway/taskusage`, so per-node usage and the `treeUsage` subtree rollup are aggregated and baked into each archived `TaskResult`. The result-aggregation *source* this finding waited on therefore exists. The residual is the `await_completion` collection *feature* itself, which is the finding's core rather than a new blocker: a background, `cascadeTimeoutSeconds`-bounded collection process that, after the parent reaches terminal under `await_completion`, waits for the still-running children and synthesizes a parent-collected boundary (aggregating their settled results + the now-available `treeUsage` into the parent's archived TaskResult), distinct from `detach` which terminates them with no collection. That spans `cascadeToChildren`, the orphan sweeper's per-policy handling, and a new archive-synthesis path — a focused High-severity workstream of its own. Re-DEFERRED on that collection-synthesis feature; the data prerequisite is no longer the blocker.
+
+**Re-assessed (this batch) — DEFERRED (Rule B / Rule O: the collected-results artifact is spec-underspecified).** Re-confirmed the data prerequisite is built: `treearchive.Store.Archive` overwrites by `(tenant, root, node)` so a parent's archived `task.Result` can be re-stamped, and `taskusage.TreeUsage` produces the subtree rollup once every descendant settles. The residual blocker is that §8.10 never defines the **observable form** of "then collect results" — the cascade table (lines 1070-1078) names no wire field, no synthetic event, and no archive mutation that would distinguish a collected `await_completion` parent from a `detach` parent on the wire. The natural candidate (re-stamping the parent's `treeUsage`) is not policy-conditioned by the spec: §8.8 (TreeUsage, "null until every descendant settles") implies the rollup populates for **any** settled tree regardless of cascade policy, so using it as the `await_completion`-vs-`detach` discriminator would contradict §8.8 and invent a contract §8.10 does not state. Honestly closing this needs a §8.10 clarification of what artifact "collect results" produces (a parent-collected boundary event? a `collectedChildren` field on the parent's TaskResult? a `treeUsage` that is policy-gated?), which a hook forbids editing. Per Rule O (do not implement a fix the spec does not pin down) and Rule B (a fix requiring a spec change must stop-and-report), this stays DEFERRED on a spec clarification rather than a code build-out. The orphan-cleanup deadline bound (both policies run to `cascadeTimeoutSeconds`) and per-child archival are already correct; only the collection-artifact semantics are undefined. Heading `— OPEN` reconciled to `— DEFERRED`.
 
 ---
 
@@ -14936,7 +14938,7 @@ accessors, Clone, and non-negative Validate.
 
 ---
 
-### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — OPEN
+### - [ ] F-10.7.3 — 03  Built-in OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash) are not implemented [High] — DEFERRED
 
 **Spec:** §10.7 lines 779–782 — Lenny supports two external-targeting
 integration paths: OFREP (recommended) and "OpenFeature SDK providers linked
@@ -16255,7 +16257,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — OPEN
+### - [ ] F-11.2.1 — Billing event stream emission is restricted to 2 of ~16 spec event types [High] — DEFERRED
 
 Spec §11.2.1 enumerates the closed set of event types the platform "emits": `session.created`, `session.completed`, `delegation.spawned`, `delegation.isolation_violation`, `pool.isolation_warning`, `derive.isolation_downgrade`, `interceptor.fail_policy_weakened`, `interceptor.fail_policy_strengthened`, `interceptor.weakening_cooldown_active`, `delegation.export_file_scan_rejected`, `delegation.export_scan_failed_open`, `delegation_policy.export_scan_weakened`, `delegation_policy.export_scan_strengthened`, `token_usage.checkpoint`, `credential.leased`, `credential.revoked`, plus `billing_correction`.
 
@@ -27626,7 +27628,7 @@ session/delegation lifecycle registration hooks land as their own task.
 
 - **Resolution:** Wired the §8.6 lifecycle registration so `ExtendLease` resolves a real tree instead of `ErrSessionNotFound`. The session server registers each newly created **root** session with the budget source via a new `registerLeaseTree` helper (called from `handleCreateAndStart` and `handleCreate`, guarded to skip delegated/derived rows that carry a `ParentSessionID`); the `TreeConfig` is seeded from the §8.6 deployment-level defaults (new `sessionserver.LeaseExtensionDefaults`, fed by new gateway flags `--lease-extension-default-budget` / `--lease-extension-max-budget` / `--lease-extension-default-approval` / `--lease-extension-cooloff-seconds` / `--lease-extension-rejection-cooloff-seconds`, mapping to the Helm `leaseExtension.defaults`/`.max` keys), and the token ceiling resolves through the existing `leaseextension.ResolveEffectiveMax` inside `membudget`. The delegation Service registers each admitted **child** after the row commits via a new `LeaseChildRegistrar` (`AddSession` binds the child to its root's tree; `SetParentLease` caps it at the parent's own granted `DelegationLease` per §8.6 line 648, mapped by `parentLeaseCeiling`). Both registrars are `*leasecontrol.MemoryBudgetSource`, wired in `cmd/lenny-gateway` only when `--grpc-addr` enables the GatewayControl listener (nil otherwise → no-op, preserving the in-process posture). The `Options.Auditing` half was already resolved by a prior batch. The residual durability concern (a coordinator handoff or restart losing in-memory tree state) is the documented Wave-1 Postgres `delegation_tree_budget` swap the `MemoryBudgetSource` is the seam for, explicitly out of this finding's scope. Commit `7b4467b9`.
 
-### - [ ] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — OPEN
+### - [ ] F-15.3.6 — Adapter-side `LeaseExtender` is a seam with no production wiring [Medium] — DEFERRED
 
 `pkg/adapter/leaseextend.go:53–58` (`HandleBudgetExhaustion` docstring)
 acknowledges the SEAM and the absence of any production caller:
@@ -27661,6 +27663,8 @@ budget-rejection detector lands; that work then wires both the detector
 and the `LeaseExtender` together.
 
 **Re-verified 2026-06-08 — DEFERRED (shares the F-8.6.6 blocker).** Same root cause confirmed this session: `cmd/lenny-adapter/main.go` sets no `Server.LeaseExtender` and there is no production `gatewaycontrol.Dial`/`New` caller, because the adapter hosts no §4.9 LLM-proxy client to detect a budget-exhaustion rejection and invoke the trigger. Wiring a `LeaseExtender` without that detector is dead config. Gated on the same adapter §4.9 LLM-proxy workstream as F-8.6.6. Heading moved OPEN → DEFERRED.
+
+**Re-verified again (this batch) — heading marker reconciled; one premise corrected.** The "no production `gatewaycontrol.Dial`/`New` caller" half is now stale: `cmd/lenny-adapter/main.go:286` dials `gatewaycontrol.Dial` and assigns the resulting client to `adapterSrv.PlatformForwarder` / `ConnectorForwarder` for the §9.1/§9.3 platform-tool and connector forwarding. The §8.6 blocker nevertheless holds: `HandleBudgetExhaustion` still has **zero** production callers (`grep` returns only the method, the `ErrLeaseExtenderUnset` seam guard, and doc comments), because the adapter hosts no in-pod §4.9 LLM-proxy budget-rejection detector to invoke it — the proxy lives in the gateway. Assigning `Server.LeaseExtender = gwClient` would therefore still produce dead config (a wired seam nothing fires), the exact Rule-P situation. Stays DEFERRED on the adapter-resident §4.9 LLM-proxy / budget-rejection detector workstream (F-8.6.6); the heading `— OPEN` marker was stale and is now reconciled to `— DEFERRED`.
 
 ### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — OPEN
 
