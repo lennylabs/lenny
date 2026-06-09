@@ -62,6 +62,9 @@ func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
+	// §16.7 platform.config_changed: the actor is the verified principal's
+	// OIDC sub, never read from the request body.
+	req.Actor = callerIdentity(r)
 	res, err := s.platformConfig.Apply(r.Context(), req)
 	if err != nil {
 		s.writeConfigError(w, err)

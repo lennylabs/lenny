@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 )
@@ -183,6 +184,118 @@ func TestApply_LowerMinimumWarning_spec_25_8(t *testing.T) {
 	}
 	if len(res.Warnings) == 0 {
 		t.Fatalf("expected a lower-minimum warning, got none")
+	}
+}
+
+// recordingAuditSink captures the §16.7 platform.config_changed events a
+// Service emits.
+type recordingAuditSink struct{ events []configservice.AuditEvent }
+
+func (s *recordingAuditSink) sink() configservice.AuditSink {
+	return func(ev configservice.AuditEvent) { s.events = append(s.events, ev) }
+}
+
+// TestApply_ConfirmEmitsConfigChanged_spec_16_7 covers F-16.7.1: a
+// confirmed apply the gateway accepts emits platform.config_changed with
+// the actor, the changed paths, and the restart verdict.
+func TestApply_ConfirmEmitsConfigChanged_spec_16_7(t *testing.T) {
+	gw := &fakeGateway{running: map[string]any{"a": "1"}, restart: true}
+	sink := &recordingAuditSink{}
+	svc := configservice.New(configservice.Options{
+		Gateway: gw,
+		Audit:   sink.sink(),
+		Now:     func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	_, err := svc.Apply(context.Background(), configservice.ApplyRequest{
+		Desired: map[string]any{"a": "2"}, Confirm: true, Actor: "alice@acme.com",
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 config_changed event, got %d", len(sink.events))
+	}
+	ev := sink.events[0]
+	if ev.Type != "platform.config_changed" {
+		t.Fatalf("event type = %q, want platform.config_changed", ev.Type)
+	}
+	if ev.Actor != "alice@acme.com" {
+		t.Fatalf("actor = %q, want alice@acme.com", ev.Actor)
+	}
+	if !ev.RestartRequired {
+		t.Fatalf("expected RestartRequired propagated from the gateway verdict")
+	}
+	if len(ev.ChangedPaths) != 1 || ev.ChangedPaths[0] != "a" {
+		t.Fatalf("changedPaths = %v, want [a]", ev.ChangedPaths)
+	}
+	if ev.At.IsZero() {
+		t.Fatalf("event timestamp must be stamped")
+	}
+}
+
+// TestApply_DryRunNoConfigChanged_spec_16_7 covers that a dry-run (no
+// confirm) never emits the audit event — nothing was applied.
+func TestApply_DryRunNoConfigChanged_spec_16_7(t *testing.T) {
+	gw := &fakeGateway{running: map[string]any{"a": "1"}}
+	sink := &recordingAuditSink{}
+	svc := configservice.New(configservice.Options{Gateway: gw, Audit: sink.sink()})
+	if _, err := svc.Apply(context.Background(), configservice.ApplyRequest{Desired: map[string]any{"a": "2"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("dry-run must not emit config_changed, got %d", len(sink.events))
+	}
+}
+
+// TestApply_ValidationFailureNoConfigChanged_spec_16_7 covers that a
+// rejected apply (validation failure) emits no audit event.
+func TestApply_ValidationFailureNoConfigChanged_spec_16_7(t *testing.T) {
+	gw := &fakeGateway{running: map[string]any{}}
+	sink := &recordingAuditSink{}
+	svc := configservice.New(configservice.Options{
+		Gateway:   gw,
+		Audit:     sink.sink(),
+		Validator: fakeValidator{errs: []configservice.ValidationError{{Field: "x", Message: "bad"}}},
+	})
+	if _, err := svc.Apply(context.Background(), configservice.ApplyRequest{Desired: map[string]any{"x": 1}, Confirm: true}); err == nil {
+		t.Fatalf("expected validation failure")
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("rejected apply must not emit config_changed, got %d", len(sink.events))
+	}
+}
+
+// TestApply_GatewayErrorNoConfigChanged_spec_16_7 covers that an apply the
+// gateway rejected emits no audit event — the change did not take effect.
+func TestApply_GatewayErrorNoConfigChanged_spec_16_7(t *testing.T) {
+	gw := &fakeGateway{running: map[string]any{"a": "1"}, applyErr: errors.New("upstream 503")}
+	sink := &recordingAuditSink{}
+	svc := configservice.New(configservice.Options{Gateway: gw, Audit: sink.sink()})
+	if _, err := svc.Apply(context.Background(), configservice.ApplyRequest{Desired: map[string]any{"a": "2"}, Confirm: true}); err == nil {
+		t.Fatalf("expected gateway apply error")
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("failed apply must not emit config_changed, got %d", len(sink.events))
+	}
+}
+
+// TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7 covers that an
+// in-sync confirmed apply still records the operator action with an empty
+// changed-path set.
+func TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7(t *testing.T) {
+	gw := &fakeGateway{running: map[string]any{"a": "1"}}
+	sink := &recordingAuditSink{}
+	svc := configservice.New(configservice.Options{Gateway: gw, Audit: sink.sink()})
+	if _, err := svc.Apply(context.Background(), configservice.ApplyRequest{
+		Desired: map[string]any{"a": "1"}, Confirm: true, Actor: "bob@acme.com",
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("idempotent confirmed apply must still emit, got %d", len(sink.events))
+	}
+	if len(sink.events[0].ChangedPaths) != 0 {
+		t.Fatalf("idempotent apply changedPaths = %v, want empty", sink.events[0].ChangedPaths)
 	}
 }
 

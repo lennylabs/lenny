@@ -1756,6 +1756,20 @@ func registryAuditSink(recorder *opsaudit.Recorder) registryservice.AuditSink {
 	}
 }
 
+// configAuditSink adapts the configservice audit event onto the durable
+// §16.7 audit recorder (platform.config_changed). The changed paths and
+// the restart verdict are carried as structured fields so the SIEM can
+// pivot from a config-apply row to the affected settings.
+func configAuditSink(recorder *opsaudit.Recorder) configservice.AuditSink {
+	return func(ev configservice.AuditEvent) {
+		recorder.Record(ev.Type, map[string]any{
+			"actor":           ev.Actor,
+			"changedPaths":    ev.ChangedPaths,
+			"restartRequired": ev.RestartRequired,
+		}, ev.At)
+	}
+}
+
 // registryBaseConfig assembles the §25.8 chart-base registry config from
 // the platform.registry.* flags. A malformed overrides JSON is logged and
 // dropped (the base url still serves), since a registry override is an
@@ -1981,12 +1995,15 @@ func setCertExpiry(certificate string, seconds float64) {
 // gateway remains the authoritative validator on apply.
 //
 // spec: §25.8 Config Diff and Config Apply (lines 3566-3574).
-func buildPlatformConfigService(gw *gateway.Client) *configservice.Service {
+func buildPlatformConfigService(gw *gateway.Client, recorder *opsaudit.Recorder) *configservice.Service {
 	cfgClient := newGatewayConfigClient(gw)
 	if cfgClient == nil {
 		return nil
 	}
-	return configservice.New(configservice.Options{Gateway: cfgClient})
+	return configservice.New(configservice.Options{
+		Gateway: cfgClient,
+		Audit:   configAuditSink(recorder),
+	})
 }
 
 // platformVersionDrift is the §25.8 lenny_platform_version_drift gauge:

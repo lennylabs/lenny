@@ -20,8 +20,10 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/drift"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // §25.8 config error codes (spec table line 3640-3641).
@@ -73,10 +75,32 @@ type Validator interface {
 	Validate(desired map[string]any) []ValidationError
 }
 
+// AuditEvent is the §16.7 platform.config_changed audit event the Service
+// emits on a confirmed apply that the gateway accepted. A nil AuditSink
+// drops it. spec: §16.7 line 686; §25.8 PUT /v1/admin/platform/config.
+type AuditEvent struct {
+	// Type is always audit.EventPlatformConfigChanged.
+	Type string
+	// Actor is the operator/agent OIDC sub that applied the change.
+	Actor string
+	// ChangedPaths are the dotted config paths the apply altered, sorted.
+	ChangedPaths []string
+	// RestartRequired mirrors the gateway's verdict on whether the change
+	// takes effect only after a gateway restart.
+	RestartRequired bool
+	// At is the apply instant.
+	At time.Time
+}
+
+// AuditSink receives the §16.7 platform.config_changed audit event.
+type AuditSink func(AuditEvent)
+
 // Service is the §25.8 config diff/apply orchestrator.
 type Service struct {
 	gateway   GatewayConfig
 	validator Validator
+	audit     AuditSink
+	now       func() time.Time
 }
 
 // Options configures a Service.
@@ -86,15 +110,24 @@ type Options struct {
 	// Validator checks a proposed config against the schema. A nil
 	// validator accepts any config.
 	Validator Validator
+	// Audit receives the §16.7 platform.config_changed event on a confirmed
+	// apply. A nil sink drops it (the pre-wiring / dev posture).
+	Audit AuditSink
+	// Now supplies the apply timestamp; nil defaults to time.Now UTC.
+	Now func() time.Time
 }
 
 // New returns a Service over opts. It panics when Gateway is nil, a
 // wiring error rather than a runtime condition.
 func New(opts Options) *Service {
+	now := opts.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
 	if opts.Gateway == nil {
 		panic("configservice: Options.Gateway is required")
 	}
-	return &Service{gateway: opts.Gateway, validator: opts.Validator}
+	return &Service{gateway: opts.Gateway, validator: opts.Validator, audit: opts.Audit, now: now}
 }
 
 // Change is one field-level difference between the desired and running
@@ -139,6 +172,10 @@ type ApplyRequest struct {
 	// returning the impact preview; with it the change is proxied to the
 	// gateway (§25.2 canonical dry-run/confirm pattern).
 	Confirm bool `json:"confirm"`
+	// Actor is the operator/agent identity; the handler fills it from the
+	// verified principal. It is stamped onto the platform.config_changed
+	// audit event, never read from the request body.
+	Actor string `json:"-"`
 }
 
 // ApplyResult is the PUT /v1/admin/platform/config response. The dry-run
@@ -205,7 +242,31 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (ApplyResult, err
 	}
 	res.Applied = true
 	res.RestartRequired = restart
+	// §16.7 line 686 platform.config_changed: a confirmed apply the gateway
+	// accepted is an operator-visible config mutation. The in-sync apply
+	// (no diffed paths) still emits — the operator confirmed an apply and
+	// the audit trail records the action even when it was idempotent.
+	s.emitConfigChanged(req.Actor, diff, restart)
 	return res, nil
+}
+
+// emitConfigChanged writes the §16.7 platform.config_changed audit event
+// for a confirmed apply. A nil sink drops it.
+func (s *Service) emitConfigChanged(actor string, diff DiffResult, restart bool) {
+	if s.audit == nil {
+		return
+	}
+	paths := make([]string, 0, len(diff.Changes))
+	for _, c := range diff.Changes {
+		paths = append(paths, c.Path)
+	}
+	s.audit(AuditEvent{
+		Type:            string(audit.EventPlatformConfigChanged),
+		Actor:           actor,
+		ChangedPaths:    paths,
+		RestartRequired: restart,
+		At:              s.now(),
+	})
 }
 
 // toChanges maps pkg/drift Changes onto the §25.8 config diff shape.

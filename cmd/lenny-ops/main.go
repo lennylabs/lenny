@@ -944,7 +944,7 @@ func main() {
 	// §25.8 config diff/apply: the operator surface over the gateway's own
 	// config API. Wired only when a gateway client exists; otherwise the
 	// routes stay unmapped (404).
-	platformConfigSvc := buildPlatformConfigService(gwClient)
+	platformConfigSvc := buildPlatformConfigService(gwClient, auditRecorder)
 	cronJobs := append(backupJobs, upgradeCheckJob(upgradeChecker), versionDriftJob(versionAggregator),
 		upgradeWatchdogJob(upgradeWatchdog), deliveryRetentionJob(delivery.Store))
 
