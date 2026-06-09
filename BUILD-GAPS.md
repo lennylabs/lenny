@@ -6865,7 +6865,7 @@ Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload
 
 ### Findings
 
-### - [ ] F-7.4.1 — Archive extraction runs in the pod adapter, not in the gateway [High] — OPEN
+### - [x] F-7.4.1 — Archive extraction runs in the pod adapter, not in the gateway [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -6896,6 +6896,21 @@ ceilings, non-regular/symlink rejection, atomic staging→promotion, and
 extraction-abort cleanup are all enforced today on the pod-side path
 (F-7.4.2/.3/.4/.12/.13), so the security ceilings hold; only the *location* of
 extraction is wrong.
+
+**Resolution (commit b7721eab):** Moved extraction across the trust boundary.
+New `pkg/upload/archive` decompresses tar/tar.gz/zip in memory, validates every
+entry against the §13.4 ceilings via `pkg/upload`, canonicalizes each path, and
+returns a manifest. `Binder.stageWorkspace` rewrites each `uploadArchive` (and
+`gitClone`) source into the `uploadFile`/`mkdir`/`symlink` sources its extracted
+entries produce, streaming the bytes over the existing PrepareWorkspace channel;
+extraction runs inside the shared §4.1 Upload Handler subsystem gate (limiter +
+breaker). The adapter's `materializeSource` now rejects `uploadArchive`/
+`gitClone` fail-closed, and the pod-side `uploadarchive.go`/`gitclone.go`
+extractors are deleted, so the pod no longer decompresses or canonicalizes
+untrusted input. A new `symlink` WorkspaceSource (proto `link_target`) carries
+gateway-validated symlinks; the §7.4 post-promotion re-validation still runs in
+the adapter. Closes alongside F-13.4.1 (same defect) and F-7.4.11 (the abort
+metric now has a gateway producer).
 
 ### - [x] F-7.4.2 — §13.4 archive ceilings are not enforced at extraction [High] — CLOSED
 
@@ -7007,7 +7022,7 @@ Implementation: `handleUpload` (`pkg/gateway/sessionserver/upload.go`) accepts n
 
 These two layers together discharge both halves of the spec text; F-7.4.10.
 
-### - [ ] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — OPEN
+### - [x] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.3 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -7016,6 +7031,13 @@ Spec: §7.4 line 462 — "Abort causes are labeled and emitted via `lenny_upload
 Implementation: `pkg/observability/metrics/catalog.go:74` declares the metric in the catalog. No production code increments it (`grep -rn "lenny_upload_extraction_aborted_total" pkg/` returns only the catalog and the catalog test). The same is true for `lenny_upload_bytes_total` (line 72) and `lenny_upload_queue_depth` (line 73), and the Upload Handler gauges (lines 161-163). The metrics catalog passes its own coverage test but no run-time counter ever moves.
 
 **Reopened 2026-06-08 — prior deferral:** the metric belongs on the §7.4 extraction abort paths the gateway will own once F-7.4.1 lands (extraction moves from pod adapter to gateway). Wiring the counter in the adapter today emits gateway-side metrics from a pod-side surface, which violates the §16.1 separation. Will retire automatically alongside F-7.4.1.
+
+**Resolution (commit b7721eab):** F-7.4.1 moved extraction into the gateway, so
+the counter now has a correct gateway-side home. `PromUploadMetrics.AddExtractionAbort`
+(new `UploadHandlerMetrics` method) increments `lenny_upload_extraction_aborted_total{error_type}`,
+wired to `Binder.ExtractionAbort`; the binder labels each abort by the typed
+`*upload.ValidationError.Reason` sub-code (max_decompressed_size, non_regular_entry,
+symlink, etc.), falling back to `format_error`. Closed by F-7.4.1.
 
 ### - [x] F-7.4.12 — No atomic staging→current promotion; no per-§7.4 staging directory [Medium] — CLOSED
 
@@ -24654,7 +24676,7 @@ Implementation surveyed:
 - `pkg/blobstore/blobstore.go`
 - `pkg/audit/audit.go`, `pkg/audit/ocsf/`, `pkg/observability/metrics/catalog.go`
 
-### - [ ] F-13.4.1 — Archive extraction runs in the pod adapter, not the gateway Upload Handler [High] — OPEN
+### - [x] F-13.4.1 — Archive extraction runs in the pod adapter, not the gateway Upload Handler [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -24699,6 +24721,13 @@ Handler concurrency cap + breaker this finding also names already exist
 (`uploadSubsystem` limiter/breaker in `pkg/gateway/sessionserver/upload.go`);
 the missing piece is moving the decompression+canonicalization itself into the
 gateway. Will close together with F-7.4.1.
+
+**Resolution (commit b7721eab):** Closed by F-7.4.1 (same trust-boundary
+inversion). Decompression and path canonicalization now run in the gateway's
+`pkg/upload/archive` extractor inside the shared §4.1 `uploadSubsystem` gate
+(`Binder.UploadGate`), and the adapter rejects `uploadArchive`/`gitClone`
+sources fail-closed. The pod binary no longer decompresses archives or
+canonicalizes untrusted paths.
 
 ### - [x] F-13.4.2 — None of the §13.4 normative archive ceilings are enforced on the extraction path [High] — CLOSED
 
@@ -46714,6 +46743,8 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 - Impact: the documented workspace-plan-upload affordance is non-functional. Users who select a tarball get no error and no upload; their session starts without the plan, silently dropping the input.
 
 **Reopened 2026-06-08 — prior deferral:** The §27.4 "drag-drop tarball" affordance depends on the server-side §7.4 archive-upload pipeline, which has unfinished pieces (F-7.4.1 archive extraction in the pod adapter rather than the gateway, F-7.4.6 mid-session upload unreachable — both OPEN). `POST /v1/sessions` accepts a §14 JSON `workspacePlan`, not a tarball; the tarball path is the separate `uploadToken` → upload-endpoint flow. Wiring the SPA to read the file and POST it is premature until that endpoint and its size/schema checks are settled. Re-attempt once the §7.4 upload cluster lands.
+
+**Rule-N re-verify 2026-06-08 (after F-7.4.1):** the §7.4 server-side pieces this note named are now closed (F-7.4.1 archive extraction moved into the gateway under commit b7721eab; F-7.4.6 mid-session upload landed earlier; the `POST /v1/sessions/{id}/upload-archive` endpoint and its gateway-enforced §13.4 ceilings are settled). The residual blocker is the same §15.1/§26.2 upload-binding ordering tension tracked under F-24.17.4 / F-26.2.4: `upload-archive` mints a `lenny-blob://` ref only against an existing session, but the create-time `workspacePlan` is immutable, so there is no client ordering to bind a post-create tarball into the session's plan. That gateway-side binding path (plan-rebind / deferred-upload sentinel) plus the SPA file-read/drag-drop wiring is a distinct vertical, not unblocked by the extraction-location fix. Remains OPEN.
 
 ### - [x] F-27.4.4 — SDK snippet emits Python only; spec requires Go/Python/TS [High] — CLOSED
 
