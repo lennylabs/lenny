@@ -371,9 +371,11 @@ type Server struct {
 	// a sentinel struct{} placeholder. spec: §6.3 line 356.
 	firstTokenObserved sync.Map
 	// userCredChecker reports whether a usable user-scoped credential
-	// exists for (tenant, user, provider). Nil in v1 because user-source
-	// lease delivery (the §4.9 materializedConfig path) is not yet wired;
-	// the §4.9 router resolves user sources only when this reports true.
+	// exists for (tenant, user, provider) and is deliverable. The §4.9
+	// router resolves user sources only when this reports true. Wired by
+	// SetUserCredChecker from the usercreds.Materializer; nil leaves the
+	// router unable to resolve a user source (it falls through to pool).
+	// spec: §4.9 lines 1347-1351, 1368-1372.
 	userCredChecker func(ctx context.Context, tenantID, userID, provider string) bool
 
 	// lifecycleAudit, when set, receives the §7.1 / §16.6 session

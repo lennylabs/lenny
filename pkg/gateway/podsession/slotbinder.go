@@ -69,6 +69,14 @@ type SlotBindRequest struct {
 	// independent per-slot credential lease. Empty when the session
 	// needs no upstream LLM credentials.
 	CredentialPools map[string]string
+	// UserID is the session's owning user, used to resolve the §4.9
+	// user-source credentials named in UserCredentialProviders.
+	UserID string
+	// UserCredentialProviders names the providers the §4.9 pre-claim
+	// resolved to the user source (the Pre-Authorized Credential Flow).
+	// BindSlot materializes a proxy-mode lease for each. Empty when no
+	// provider resolved to a user credential. spec: §4.9 lines 1340-1381.
+	UserCredentialProviders []string
 	// PodSpiffeURI is the issuing pod's SPIFFE identity recorded on each
 	// minted lease. Empty disables proxy-mode SPIFFE binding.
 	PodSpiffeURI string
@@ -198,19 +206,35 @@ func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 // when the binder has no credential service or the request names no
 // pools.
 func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest) error {
-	if b.Credentials == nil || len(req.CredentialPools) == 0 {
+	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
+	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
+	if !hasPool && !hasUser {
 		return nil
 	}
-	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools))
-	for provider, pool := range req.CredentialPools {
-		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
-		if err != nil {
-			// §4.9 line 1220 pre-claim race: surface a typed error so the
-			// caller can release the slot and emit the mismatch metric.
-			return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools)+len(req.UserCredentialProviders))
+	if hasPool {
+		for provider, pool := range req.CredentialPools {
+			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
+			if err != nil {
+				// §4.9 line 1220 pre-claim race: surface a typed error so the
+				// caller can release the slot and emit the mismatch metric.
+				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+			}
+			lease.Provider = provider
+			leases[provider] = lease
 		}
-		lease.Provider = provider
-		leases[provider] = lease
+	}
+	if hasUser {
+		// spec: §4.9 lines 1347-1351 — per-slot user-source leases mirror
+		// the per-slot pool leases: each slot holds its own user lease.
+		for _, provider := range req.UserCredentialProviders {
+			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
+			if err != nil {
+				return &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
+			}
+			lease.Provider = provider
+			leases[provider] = lease
+		}
 	}
 	return cl.AssignCredentials(ctx, req.SessionID, leases)
 }

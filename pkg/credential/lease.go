@@ -90,6 +90,39 @@ func (d ProxyDialect) IsValid() bool {
 	return false
 }
 
+// UserProxyDialect returns the canonical §4.9 LLM-proxy dialect for a
+// user-source credential on provider p. The §4.9 Pre-Authorized
+// Credential Flow fronts a user-registered key through the LLM reverse
+// proxy: the secret stays gateway-side and the agent pod receives only a
+// proxy-mode lease, so the gateway has to choose the dialect the pod's
+// SDK speaks. Unlike a pool credential (which records its proxyDialect
+// explicitly), a user credential carries no pool, so the dialect is
+// derived from the provider's native API.
+//
+// ok is false for a provider whose native API maps to no single built-in
+// dialect — multi-dialect upstreams reached only via translation
+// (aws_bedrock has no native dialect in the enum) and non-LLM providers
+// (github, vault_transit). The user-source path does not deliver those in
+// v1; the §4.9 router falls through to pool per the fallback configuration.
+//
+// spec: §4.9 lines 1340-1381 (Pre-Authorized Credential Flow), 1473-1475
+// (proxy dialects).
+func UserProxyDialect(p Provider) (ProxyDialect, bool) {
+	switch p {
+	case ProviderAnthropicDirect:
+		return ProxyDialectAnthropic, true
+	case ProviderAzureOpenAI:
+		// Azure OpenAI exposes the OpenAI wire format natively.
+		return ProxyDialectOpenAI, true
+	case ProviderVertexAI:
+		return ProxyDialectGoogle, true
+	case ProviderCursorDirect:
+		return ProxyDialectCursor, true
+	default:
+		return "", false
+	}
+}
+
 // Lease is a §4.9 CredentialLease: the credential grant the gateway
 // issues to a session. The Source field discriminates a tagged union —
 // a pool-backed lease (SourcePool) carries PoolID and CredentialID, a

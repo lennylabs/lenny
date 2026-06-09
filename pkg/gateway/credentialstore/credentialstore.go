@@ -99,6 +99,18 @@ type Store interface {
 	// Get returns the credential by ref, scoped to the tenant.
 	Get(ctx context.Context, tenantID, ref string) (Credential, error)
 
+	// Lookup resolves the credential for the §4.3 line 202
+	// (tenant, user, provider, environment) four-tuple. It backs the §4.9
+	// Pre-Authorized Credential Flow's session-creation resolution: the
+	// gateway resolves a user-scoped credential by provider, not by ref.
+	// Returns ErrNotFound when no credential is registered for the
+	// four-tuple. A revoked credential is returned (Status reports it); the
+	// resolution path treats a revoked credential as not-found per §4.9
+	// line 1379.
+	//
+	// spec: §4.9 lines 1347-1351 (resolution at session creation).
+	Lookup(ctx context.Context, tenantID, userID string, provider credential.Provider, environment string) (Credential, error)
+
 	// List returns the user's registered credentials.
 	List(ctx context.Context, tenantID, userID string) ([]Credential, error)
 
@@ -204,6 +216,23 @@ func (m *Memory) Register(_ context.Context, tenantID, userID string, provider c
 func (m *Memory) Get(_ context.Context, tenantID, ref string) (Credential, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	c, ok := m.byRef[refKey(tenantID, ref)]
+	if !ok {
+		return Credential{}, ErrNotFound
+	}
+	return c, nil
+}
+
+// Lookup implements Store. It resolves the (tenant, user, provider,
+// environment) four-tuple through the scope index.
+// spec: §4.9 lines 1347-1351.
+func (m *Memory) Lookup(_ context.Context, tenantID, userID string, provider credential.Provider, environment string) (Credential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ref, ok := m.refByTriple[scopeKey(tenantID, userID, provider, environment)]
+	if !ok {
+		return Credential{}, ErrNotFound
+	}
 	c, ok := m.byRef[refKey(tenantID, ref)]
 	if !ok {
 		return Credential{}, ErrNotFound

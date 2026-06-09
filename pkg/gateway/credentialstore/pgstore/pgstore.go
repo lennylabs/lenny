@@ -219,6 +219,38 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 	return out, nil
 }
 
+// Lookup resolves the credential for the §4.3 line 202
+// (tenant, user, provider, environment) four-tuple, decrypting the
+// secret before return. A miss is ErrNotFound.
+// spec: §4.9 lines 1347-1351.
+func (s *Store) Lookup(ctx context.Context, tenantID, userID string, provider credential.Provider, environment string) (credentialstore.Credential, error) {
+	var out credentialstore.Credential
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM credentials
+			 WHERE tenant_id = $1 AND user_id = $2 AND provider = $3 AND environment = $4`,
+			tenantID, userID, string(provider), environment)
+		c, blob, keyVersion, _, err := scanCredential(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return credentialstore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		secret, err := s.openSecret(ctx, tenantID, blob, keyVersion)
+		if err != nil {
+			return err
+		}
+		c.Secret = secret
+		out = c
+		return nil
+	})
+	if err != nil {
+		return credentialstore.Credential{}, err
+	}
+	return out, nil
+}
+
 // Get returns the credential keyed by (tenantID, ref). A cross-tenant
 // miss is indistinguishable from a missing row.
 func (s *Store) Get(ctx context.Context, tenantID, ref string) (credentialstore.Credential, error) {

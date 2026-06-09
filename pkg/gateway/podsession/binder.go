@@ -91,6 +91,14 @@ type Binder struct {
 	// the deployment configures no credential pools; a BindRequest then
 	// names no pools and Bind assigns nothing.
 	Credentials CredentialAssigner
+	// UserCredentials is the §4.9 Pre-Authorized Credential Flow's
+	// user-source delivery service. When a BindRequest names user-credential
+	// providers, Bind materializes a proxy-mode lease for each from the
+	// user's registered credential and pushes it to the pod alongside the
+	// pool leases. Nil when user-source credentials are not configured; a
+	// BindRequest then names no user providers and Bind delivers none.
+	// spec: §4.9 lines 1340-1381.
+	UserCredentials UserCredentialAssigner
 	// SlotCounter is the §5.2 atomic slot counter. Wired in production
 	// installs that expose --redis-url; the SlotClaimer constructed
 	// per BindSlot call carries it through so the Redis Lua
@@ -265,6 +273,21 @@ type CredentialAssigner interface {
 	ReleaseSession(sessionID string)
 }
 
+// UserCredentialAssigner materializes a session's §4.9 user-source
+// credential leases (the Pre-Authorized Credential Flow). The gateway's
+// usercreds.Materializer satisfies it; binder tests substitute a fake.
+// MintProto resolves the user's registered credential for the provider
+// into a proxy-mode lease, records it in the shared credential-lease
+// store, caches the upstream secret for the §4.9 LLM proxy, and returns
+// the wire-form lease the adapter materializes into the runtime credential
+// file. User leases share the lease store the pool assigner uses, so the
+// pool assigner's ReleaseSession releases them at teardown.
+//
+// spec: §4.9 lines 1340-1381.
+type UserCredentialAssigner interface {
+	MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string) (*adapterv1.CredentialLease, error)
+}
+
 // CredentialAssignmentError reports that a §4.9 credential lease
 // assignment failed during Bind for a specific provider/pool, after the
 // §4.9 pre-claim availability check had already passed. The gateway
@@ -331,6 +354,17 @@ type BindRequest struct {
 	// before StartSession. Empty (or nil) when the session needs no
 	// upstream LLM credentials; Bind then assigns nothing.
 	CredentialPools map[string]string
+	// UserID is the session's owning user, used to resolve the §4.9
+	// user-source credentials named in UserCredentialProviders. Empty when
+	// the session names no user-source providers.
+	UserID string
+	// UserCredentialProviders names the providers whose §4.9 credential the
+	// caller resolved to the user source (the Pre-Authorized Credential
+	// Flow). For each, Bind materializes a proxy-mode lease from the user's
+	// registered credential through UserCredentials and pushes it alongside
+	// the pool leases. Empty when no provider resolved to a user credential.
+	// spec: §4.9 lines 1340-1381.
+	UserCredentialProviders []string
 	// PodSpiffeURI is the issuing pod's SPIFFE identity, recorded on each
 	// minted lease for the §4.9 proxy-mode SPIFFE-binding check. Empty
 	// disables binding, which §4.9 permits only in single-tenant and
@@ -779,26 +813,45 @@ func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
 // The minted leases carry credential material; per §4.7 item 6 the
 // payload is excluded from access logs and telemetry.
 func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest) error {
-	if b.Credentials == nil || len(req.CredentialPools) == 0 {
+	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
+	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
+	if !hasPool && !hasUser {
 		return nil
 	}
-	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools))
-	for provider, pool := range req.CredentialPools {
-		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
-		if err != nil {
-			// The §4.9 pre-claim check (CredentialRouter) passed for this
-			// provider, yet the assignment failed — the race at §4.9 line
-			// 1220. Surface a typed error so the caller can release the pod,
-			// increment lenny_credential_preclaim_mismatch_total, and return
-			// CREDENTIAL_POOL_EXHAUSTED.
-			return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools)+len(req.UserCredentialProviders))
+	if hasPool {
+		for provider, pool := range req.CredentialPools {
+			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
+			if err != nil {
+				// The §4.9 pre-claim check (CredentialRouter) passed for this
+				// provider, yet the assignment failed — the race at §4.9 line
+				// 1220. Surface a typed error so the caller can release the pod,
+				// increment lenny_credential_preclaim_mismatch_total, and return
+				// CREDENTIAL_POOL_EXHAUSTED.
+				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+			}
+			// The §4.7 AssignCredentials leases map is keyed by provider, and
+			// the adapter writes each runtime credential-file entry under the
+			// lease's own Provider field. Stamp it from the resolved provider
+			// so both agree on the provider the binder leased for.
+			lease.Provider = provider
+			leases[provider] = lease
 		}
-		// The §4.7 AssignCredentials leases map is keyed by provider, and
-		// the adapter writes each runtime credential-file entry under the
-		// lease's own Provider field. Stamp it from the resolved provider
-		// so both agree on the provider the binder leased for.
-		lease.Provider = provider
-		leases[provider] = lease
+	}
+	if hasUser {
+		// spec: §4.9 lines 1347-1351 — for each provider the pre-claim
+		// resolved to the user source, materialize a proxy-mode lease from
+		// the user's registered credential. The lease shares the credential-
+		// lease store the pool path uses, so the pod sees a single
+		// AssignCredentials set and teardown releases both alike.
+		for _, provider := range req.UserCredentialProviders {
+			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
+			if err != nil {
+				return &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
+			}
+			lease.Provider = provider
+			leases[provider] = lease
+		}
 	}
 	return cl.AssignCredentials(ctx, req.SessionID, leases)
 }

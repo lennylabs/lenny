@@ -284,6 +284,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
@@ -787,6 +788,8 @@ func main() {
 		"§10.3 line 334 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
+	llmProxyPublicURL := flag.String("llm-proxy-public-url", os.Getenv("LENNY_LLM_PROXY_PUBLIC_URL"),
+		"§4.9 public HTTPS URL agent pods dial to reach the LLM reverse proxy (e.g. https://lenny-proxy.svc:8443). Required for the §4.9 Pre-Authorized Credential Flow's user-source delivery: a user-registered credential is fronted through the proxy in proxy mode, so the gateway writes this URL into the pod's proxy-mode lease. Empty disables user-source credential resolution (sessions fall through to pool per the credentialPolicy fallback).")
 	llmSemanticCache := flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
 		"§4.9 enable the in-process semantic cache on the LLM proxy path. Caching stays disabled by default and is opt-in per pool via the pool's cachePolicy; this flag provisions the in-memory backend the per-pool policy draws on. The Redis-backed backend is wired separately.")
 	credentialFallbackMaxRotations := flag.Int("credential-fallback-max-rotations", envInt("LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS", 3),
@@ -3975,8 +3978,41 @@ func main() {
 		credentials = pgCreds
 		credentialRekeyers = append(credentialRekeyers, pgCreds)
 	}
+	// ----- §4.9 Pre-Authorized Credential Flow (user-source delivery) -----
+	// The user-source materializer resolves a user-registered credential
+	// into a proxy-mode lease at session creation and serves the §4.9 LLM
+	// proxy from it, sharing the lease store (llmLeases) and upstream-
+	// credential cache (credCache) the pool path uses. User credentials are
+	// delivered in proxy mode so the secret never reaches the pod and
+	// rotation/revocation are gateway-local. It is wired only when the
+	// public proxy URL is configured; otherwise Available reports every
+	// provider unavailable and sessions fall through to pool.
+	// spec: §4.9 lines 1340-1381.
+	var userCredMaterializer *usercreds.Materializer
+	if userLeaseStore, ok := llmLeases.(usercreds.LeaseStore); ok {
+		userCredMaterializer = usercreds.New(usercreds.Config{
+			Store:    credentials,
+			Leases:   userLeaseStore,
+			Creds:    credCache,
+			ProxyURL: *llmProxyPublicURL,
+		})
+	}
 	credServer := credentialserver.New(credentials).
 		WithAudit(credentialAuditor{sink: auditSink})
+	if userCredMaterializer != nil {
+		// spec: §4.9 lines 1350-1351 — the PUT (rotate) and revoke endpoints
+		// reach the active user leases through the materializer.
+		credServer = credServer.WithLeasePropagator(userCredMaterializer)
+		// spec: §4.9 lines 1347-1351 — the session-creation router resolves a
+		// user source only when the materializer reports the credential
+		// available and deliverable.
+		sessionSrv.SetUserCredChecker(userCredMaterializer.Available)
+		if podBinder != nil {
+			// spec: §4.9 lines 1246-1262 — the §4.7 binder materializes each
+			// user-source provider into a proxy-mode lease pushed to the pod.
+			podBinder.UserCredentials = userCredMaterializer
+		}
+	}
 
 	// ----- §9.3 connector OAuth 2.1 authorization-code flow -----
 	// The connector-credential store holds the access/refresh tokens a
@@ -4471,6 +4507,14 @@ func main() {
 		// credential-lease revocation also drops this replica's tracked
 		// leases for the credential, not just its deny-list entry.
 		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, securityBus, credDenyPropOpts...)
+	}
+	// spec: §4.9 lines 1640-1652 — wire the user-credential revocation onto
+	// the cross-replica deny-list propagator so a POST /v1/credentials/{ref}
+	// /revoke adds the user-shaped deny-list entry on every replica. Set
+	// after the propagator's final form (it is rebuilt above over the live
+	// renewal worker).
+	if userCredMaterializer != nil {
+		userCredMaterializer.SetRevoker(credRenewalProp)
 	}
 
 	// ----- Admin API -----

@@ -275,3 +275,52 @@ func TestDeleteByUserClearsScopeIndex_spec_12_1(t *testing.T) {
 		t.Errorf("old ref should be gone: %v", err)
 	}
 }
+
+// TestLookupResolvesFourTuple_spec_4_9_1347 covers the §4.9 session-creation
+// resolution Lookup: it finds the active credential by
+// (tenant, user, provider, environment), reports the revoked status (the
+// caller treats it as not-found), and returns ErrNotFound on a miss.
+func TestLookupResolvesFourTuple_spec_4_9_1347(t *testing.T) {
+	store := newStore()
+	ctx := context.Background()
+	reg, err := store.Register(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-ant")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	got, err := store.Lookup(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if got.Ref != reg.Ref || got.Secret != "sk-ant" || got.Status != credentialstore.StatusActive {
+		t.Fatalf("Lookup got %+v, want active ref=%s secret=sk-ant", got, reg.Ref)
+	}
+
+	// Wrong user, wrong provider, and wrong environment all miss.
+	for _, miss := range []struct {
+		tenant, user, env string
+		p                 credential.Provider
+	}{
+		{"acme", "bob", "", credential.ProviderAnthropicDirect},
+		{"acme", "alice", "", credential.ProviderVertexAI},
+		{"acme", "alice", "prod", credential.ProviderAnthropicDirect},
+		{"globex", "alice", "", credential.ProviderAnthropicDirect},
+	} {
+		if _, err := store.Lookup(ctx, miss.tenant, miss.user, miss.p, miss.env); !errors.Is(err, credentialstore.ErrNotFound) {
+			t.Errorf("Lookup(%v) err = %v, want ErrNotFound", miss, err)
+		}
+	}
+
+	// A revoked credential is still returned by Lookup with its status; the
+	// resolution path decides to skip it (§4.9 line 1379).
+	if _, err := store.Revoke(ctx, "acme", reg.Ref); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	rev, err := store.Lookup(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "")
+	if err != nil {
+		t.Fatalf("Lookup after revoke: %v", err)
+	}
+	if rev.Status != credentialstore.StatusRevoked {
+		t.Fatalf("Lookup status = %q, want revoked", rev.Status)
+	}
+}

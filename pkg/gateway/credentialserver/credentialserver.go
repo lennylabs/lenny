@@ -33,10 +33,31 @@ type AuditSink interface {
 	EmitCredentialEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
+// LeasePropagator propagates a user-credential mutation onto the §4.9
+// active leases backed by it. The PUT /v1/credentials/{ref} (rotate) and
+// POST .../revoke handlers call it after mutating the registry record so
+// running sessions pick up the new material (rotate) or lose the
+// credential (revoke). The gateway's usercreds.Materializer satisfies it;
+// a nil propagator leaves the handlers registry-only with a zero affected-
+// lease count.
+//
+// spec: §4.9 line 1350 (PUT rotates active leases), 1351 (revoke
+// invalidates active leases), 1423-1424 (rotation triggers).
+type LeasePropagator interface {
+	// RotateUser re-materializes the active leases backed by
+	// (tenant, credentialRef) with the credential's new secret and returns
+	// the count rotated.
+	RotateUser(ctx context.Context, tenantID, credentialRef string) (int, error)
+	// RevokeUser invalidates the active leases backed by
+	// (tenant, credentialRef) and returns the count terminated.
+	RevokeUser(ctx context.Context, tenantID, credentialRef string) (int, error)
+}
+
 // Server is the §15.1 /v1/credentials HTTP handler.
 type Server struct {
 	store credentialstore.Store
 	audit AuditSink
+	prop  LeasePropagator
 }
 
 // New returns a Server over the supplied credential store.
@@ -48,6 +69,15 @@ func New(store credentialstore.Store) *Server {
 // endpoints still mutate the store; they simply emit no audit event.
 func (s *Server) WithAudit(sink AuditSink) *Server {
 	s.audit = sink
+	return s
+}
+
+// WithLeasePropagator wires the §4.9 user-source lease propagator so the
+// rotate and revoke endpoints reach the active leases backed by the
+// mutated credential. Without it the endpoints mutate the registry record
+// only and report a zero affected-lease count.
+func (s *Server) WithLeasePropagator(p LeasePropagator) *Server {
+	s.prop = p
 	return s
 }
 
@@ -237,16 +267,27 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// spec: §4.9 line 1350 — active leases backed by this credential are
+	// immediately rotated. User leases are proxy-mode (the secret never
+	// reached the pod), so propagation re-caches the new secret gateway-
+	// side and running sessions pick it up on their next upstream request;
+	// the lease token is unchanged so sessions are not interrupted.
+	rotated := 0
+	if s.prop != nil {
+		if n, perr := s.prop.RotateUser(r.Context(), tenant, c.Ref); perr != nil {
+			tracing.RecordError(span, perr)
+		} else {
+			rotated = n
+		}
+	}
 	// spec: §4.9.2 — credential.rotated (tenant_id, user_id, provider,
-	// credential_ref, active_leases_rotated). User-backed lease rotation
-	// is not yet wired (F-4.9.8 rejects it as Unimplemented), so no active
-	// lease is rotated by this path today; the count is reported as 0.
+	// credential_ref, active_leases_rotated).
 	s.emit(r.Context(), pkgcred.AuditCredentialRotated, map[string]any{
 		"tenant_id":             tenant,
 		"user_id":               user,
 		"provider":              string(c.Provider),
 		"credential_ref":        c.Ref,
-		"active_leases_rotated": 0,
+		"active_leases_rotated": rotated,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toPayload(c))
@@ -274,17 +315,24 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// spec: §4.9 line 1351 — the revoke immediately invalidates all active
+	// leases backed by the credential via the user-shaped deny-list entry
+	// {source: user, tenantId, credentialRef}, propagated across replicas.
+	terminated := 0
+	if s.prop != nil {
+		if n, perr := s.prop.RevokeUser(r.Context(), tenant, c.Ref); perr == nil {
+			terminated = n
+		}
+	}
 	// spec: §4.9.2 — credential.user_revoked (tenant_id, user_id,
-	// provider, credential_ref, reason, active_leases_terminated). This
-	// handler revokes the registry record; user-backed lease termination
-	// at the session is not yet wired (F-4.9.15), so the count is 0.
+	// provider, credential_ref, reason, active_leases_terminated).
 	s.emit(r.Context(), pkgcred.AuditCredentialUserRevoked, map[string]any{
 		"tenant_id":                tenant,
 		"user_id":                  user,
 		"provider":                 string(c.Provider),
 		"credential_ref":           c.Ref,
 		"reason":                   req.Reason,
-		"active_leases_terminated": 0,
+		"active_leases_terminated": terminated,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toPayload(c))

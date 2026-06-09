@@ -1010,8 +1010,11 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 }
 
 // resolveCredentialPools runs the §4.9 pre-claim credential
-// availability check for a session and returns the provider→pool map
-// the binder mints leases from. It computes the §4.9 intersection of
+// availability check for a session and returns the provider→pool map the
+// binder mints pool leases from plus the list of providers that resolved
+// to the user source (the §4.9 Pre-Authorized Credential Flow), which the
+// binder materializes into proxy-mode user leases. It computes the §4.9
+// intersection of
 // the session runtime's supportedProviders and the tenant's
 // credentialPolicy.providerPools, builds a pool descriptor per provider
 // from the credential-pool registry, and asks the CredentialRouter to
@@ -1029,31 +1032,31 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 // without credential pools.
 //
 // spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
-func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, error) {
+func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	tenant, err := s.tenants.Get(ctx, row.TenantID)
 	if err != nil {
 		// The §10.2 tenant-claim extractor already gated the request; an
 		// unresolvable tenant row here means no credentialPolicy applies.
-		return nil, nil
+		return nil, nil, nil
 	}
 	policy := tenant.CredentialPolicy
 	if !policy.Configured() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rt, err := runtimestore.Resolve(ctx, s.runtimes, row.RuntimeRef)
 	if err != nil {
 		// Runtime-resolution failure is surfaced by the pool-resolution
 		// path; the §4.9 layer contributes no credentials.
-		return nil, nil
+		return nil, nil, nil
 	}
 	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
 
 	allPools, err := s.credPools.List(ctx, row.TenantID, credentialpoolstore.ListFilter{})
 	if err != nil {
-		return nil, fmt.Errorf("sessionserver: load credential pools for pre-claim: %w", err)
+		return nil, nil, fmt.Errorf("sessionserver: load credential pools for pre-claim: %w", err)
 	}
 	byName := make(map[string]credentialpoolstore.CredentialPool, len(allPools))
 	for _, p := range allPools {
@@ -1093,7 +1096,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 
 	res, err := credrouter.PreClaim(ctx, s.credRouter, in)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// spec: §4.9 line 1476 — the proxy-dialect admission boundary at the
@@ -1112,10 +1115,28 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 			continue
 		}
 		if !rt.CredentialCapabilities.AllowsProxyDialect(p.ProxyDialect) {
-			return nil, &PoolProxyDialectError{Pool: poolName, Dialect: p.ProxyDialect}
+			return nil, nil, &PoolProxyDialectError{Pool: poolName, Dialect: p.ProxyDialect}
 		}
 	}
-	return res.PoolAssignments, nil
+
+	// spec: §4.9 line 1476 — the same runtime↔dialect boundary applies to a
+	// user-source provider. A user credential is delivered in proxy mode
+	// (the secret stays gateway-side), so the agent pod's SDK must speak the
+	// provider's canonical proxy dialect. Reject the session when the
+	// resolved runtime does not declare it, before a pod is claimed.
+	for _, provider := range res.UserProviders {
+		dialect, ok := credential.UserProxyDialect(credential.Provider(provider))
+		if !ok {
+			// The userCredChecker only reports a provider available when it
+			// has a canonical dialect, so this is unreachable; treat a
+			// dialect-less provider defensively as not deliverable.
+			return nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: ""}
+		}
+		if !rt.CredentialCapabilities.AllowsProxyDialect(string(dialect)) {
+			return nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: string(dialect)}
+		}
+	}
+	return res.PoolAssignments, res.UserProviders, nil
 }
 
 // PoolProxyDialectError is the §4.9 line 1476 runtime↔pool proxy-dialect
@@ -1180,7 +1201,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
 	// assignment is rejected without wasting a warm pod.
-	credPools, err := s.resolveCredentialPools(ctx, row)
+	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
 		return nil, err
 	}
@@ -1200,20 +1221,22 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
 		slotReq := podsession.SlotBindRequest{
-			Pool:                match.Pool,
-			SessionID:           row.ID,
-			TenantID:            row.TenantID,
-			Runtime:             row.RuntimeRef,
-			Style:               podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
-			MaxConcurrent:       match.MaxConcurrent,
-			MaxPodUptimeSeconds: match.MaxPodUptimeSeconds,
-			Plan:                podsession.WorkspacePlanToProto(plan),
-			ExperimentContext:   experimentContextToProto(row.ExperimentContext),
-			TracingContext:      row.TracingContext,
-			SetupPolicy:         s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-			CredentialPools:     credPools,
-			AgentInterface:      agentInterface,
-			MinPlatformVersion:  minPlatformVersion,
+			Pool:                    match.Pool,
+			SessionID:               row.ID,
+			TenantID:                row.TenantID,
+			Runtime:                 row.RuntimeRef,
+			Style:                   podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
+			MaxConcurrent:           match.MaxConcurrent,
+			MaxPodUptimeSeconds:     match.MaxPodUptimeSeconds,
+			Plan:                    podsession.WorkspacePlanToProto(plan),
+			ExperimentContext:       experimentContextToProto(row.ExperimentContext),
+			TracingContext:          row.TracingContext,
+			SetupPolicy:             s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+			CredentialPools:         credPools,
+			UserID:                  row.UserID,
+			UserCredentialProviders: userCredProviders,
+			AgentInterface:          agentInterface,
+			MinPlatformVersion:      minPlatformVersion,
 		}
 		return s.bindSlotWithRetry(ctx, slotReq)
 	}
@@ -1229,6 +1252,8 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		TracingContext:           row.TracingContext,
 		SetupPolicy:              s.runtimeSetupPolicy(ctx, row.RuntimeRef),
 		CredentialPools:          credPools,
+		UserID:                   row.UserID,
+		UserCredentialProviders:  userCredProviders,
 		AgentInterface:           agentInterface,
 		MinPlatformVersion:       minPlatformVersion,
 		PreConnect:               preConnect,

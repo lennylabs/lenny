@@ -107,6 +107,19 @@ func (s *Server) SetPlaygroundCaps(caps PlaygroundCapResolver, incSessionCreated
 	s.incPlaygroundSessionCreated = incSessionCreated
 }
 
+// SetUserCredChecker wires the §4.9 Pre-Authorized Credential Flow's
+// availability probe onto a constructed server: a function reporting
+// whether a usable, deliverable user-scoped credential exists for
+// (tenant, user, provider). The §4.9 router resolves a user source only
+// when this reports true; the gateway wires it from the
+// usercreds.Materializer after the session server is built. A nil fn
+// leaves user-source resolution disabled.
+//
+// spec: §4.9 lines 1347-1351, 1368-1372.
+func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userID, provider string) bool) {
+	s.userCredChecker = fn
+}
+
 // applyPlaygroundCaps stamps the §27.6 playground session caps and the §27.3
 // origin=playground label onto a session row being created, when the caller's
 // session bearer carries the origin=playground claim. It is the consumer side

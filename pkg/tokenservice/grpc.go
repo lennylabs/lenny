@@ -144,8 +144,15 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
 	}
 	if old.Source != credential.SourcePool {
-		return nil, status.Errorf(codes.Unimplemented,
-			"user-backed lease rotation is a v2 follow-on (lease source: %q)", old.Source)
+		// User-source leases (§4.9 Pre-Authorized Credential Flow) are
+		// materialized and rotated gateway-side by the usercreds
+		// materializer — the gateway holds the user-credential registry and
+		// its KMS decrypt rights — and are never routed through the Token
+		// Service's pool-credential RotateCredentials path. A user lease
+		// reaching here is an invariant violation, so it is rejected rather
+		// than silently mis-rotated. spec: §4.9 lines 1340-1381.
+		return nil, status.Errorf(codes.InvalidArgument,
+			"user-backed lease rotation is gateway-local, not a Token Service path (lease source: %q)", old.Source)
 	}
 	s.assign.Release(req.LeaseId)
 	// §13.3 line 597: rotation revokes the previous lease's lease
