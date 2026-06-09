@@ -1387,6 +1387,36 @@ func TestLegalHoldCheckpointGapCounter(t *testing.T) {
 	}
 }
 
+// spec: §12.8 lines 883/887 — the Phase 3.5 force-delete override
+// counters. F-12.8.2, F-24.10.5.
+func TestLegalHoldOverrideCounters_spec_12_8(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncLegalHoldEscrowRegionUnresolvable("acme")
+	m.IncLegalHoldEscrowRegionUnresolvable("acme")
+	m.IncLegalHoldOverriddenTenant("globex")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_legal_hold_escrow_region_unresolvable_total{tenant_id="acme"} 2`,
+		`lenny_gdpr_legal_hold_overridden_tenant_total{tenant_id="globex"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+
+	// Nil-safe: a non-gateway caller passing a nil *Metrics is a no-op.
+	var nilM *gatewaymetrics.Metrics
+	nilM.IncLegalHoldEscrowRegionUnresolvable("acme")
+	nilM.IncLegalHoldOverriddenTenant("acme")
+}
+
 // spec: §12.5 line 282 — `lenny_artifact_upload_error_total` counts
 // retry-exhausted PUT failures, labelled by tenant_id and error_type.
 // The same call rolls into

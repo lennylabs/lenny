@@ -96,6 +96,65 @@ type DeletionBlockedSink interface {
 	DeletionBlocked(ctx context.Context, tenantID string, holds []HeldResource)
 }
 
+// EscrowRequest is the §12.8 Phase 3.5 override migration request the
+// controller hands the EscrowMigrator once an operator force-deletes a
+// held tenant.
+type EscrowRequest struct {
+	// TenantID is the tenant being force-deleted.
+	TenantID string
+	// JobID identifies the tenant-delete job for the ledger events.
+	JobID string
+	// Holds are the active tenant-scoped legal holds to segregate.
+	Holds []HeldResource
+}
+
+// EscrowOutcome is the result of a successful §12.8 Phase 3.5 escrow
+// migration, carried onto the job for the
+// gdpr.legal_hold_overridden_tenant event and the receipt.
+type EscrowOutcome struct {
+	// ResolvedRegion is the region the evidence was escrowed to.
+	ResolvedRegion string
+	// EscrowKEKID is the region-scoped escrow KEK identifier.
+	EscrowKEKID string
+	// EscrowObjectKeys are the escrow bucket keys written.
+	EscrowObjectKeys []string
+}
+
+// EscrowMigrator is the §12.8 Phase 3.5 override-path seam: it segregates
+// the tenant's held evidence into the region-scoped legal-hold escrow
+// (re-encrypt under platform:legal_hold_escrow:<region>, migrate to the
+// escrow bucket, record the ledger) before the deletion proceeds. It is
+// optional: a deployment with no escrow configured leaves it nil, in
+// which case an override cannot be honored and Phase 3.5 falls back to
+// the fail-closed standard-path block. EscrowHolds MUST return an error
+// wrapping ErrEscrowRegionUnresolvable when the tenant's region has no
+// escrow configuration, so the controller pauses rather than fails.
+// spec: §12.8 lines 880-889.
+type EscrowMigrator interface {
+	EscrowHolds(ctx context.Context, req EscrowRequest) (EscrowOutcome, error)
+}
+
+// OverrideAppliedEvent is the §12.8 gdpr.legal_hold_overridden_tenant
+// critical audit event the controller emits after the four override
+// sub-steps complete.
+type OverrideAppliedEvent struct {
+	TenantID         string
+	JobID            string
+	OverrideBy       string
+	Justification    string
+	OverrideAt       time.Time
+	OverriddenHolds  []HeldResource
+	EscrowObjectKeys []string
+}
+
+// OverrideSink receives the §12.8 gdpr.legal_hold_overridden_tenant
+// critical audit event and increments the per-tenant override counter
+// once Phase 3.5's override sub-steps complete. Optional.
+type OverrideSink interface {
+	// OverrideApplied records the tenant-scope legal-hold override.
+	OverrideApplied(ctx context.Context, ev OverrideAppliedEvent)
+}
+
 // Reconciler drives the §12.8 tenant-deletion lifecycle. Each call to
 // ReconcileTenant advances one job by one phase; the manager adapter
 // (runnable.go) reconciles every active job on a timer.
@@ -135,6 +194,15 @@ type Reconciler struct {
 	// Blocked receives the §12.8 admin.tenant.deletion_blocked event when
 	// Phase 3.5 pauses on an active hold. Optional.
 	Blocked DeletionBlockedSink
+
+	// Escrow segregates held evidence into the region-scoped escrow on the
+	// §12.8 force-delete override path. Optional: a nil migrator cannot
+	// honor an override, so a held tenant with the override set still
+	// blocks fail-closed. spec: §12.8 lines 880-889.
+	Escrow EscrowMigrator
+	// Override receives the §12.8 gdpr.legal_hold_overridden_tenant event
+	// after the override sub-steps complete. Optional.
+	Override OverrideSink
 
 	// Clock supplies the current time. Nil defaults to time.Now in UTC.
 	Clock func() time.Time
@@ -220,6 +288,13 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		if errors.Is(err, ErrBlockedByLegalHold) {
 			return r.block(ctx, &job)
 		}
+		// §12.8 Phase 3.5 override, sub-step 2 (line 883): an unresolvable
+		// escrow region leaves the tenant paused at Phase 3.5 pending
+		// operator remediation (fix the region config and re-enter), not
+		// failed — the migrator already emitted DataResidencyViolationAttempt.
+		if errors.Is(err, ErrEscrowRegionUnresolvable) {
+			return r.pauseEscrowUnresolvable(ctx, &job)
+		}
 		return r.fail(ctx, tenantID, job.Phase, err)
 	}
 
@@ -239,10 +314,15 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		j.BlockedReason = ""
 		j.BlockedHolds = nil
 		// Carry forward the per-phase results accumulated on the local
-		// copy by runPhase (deleted counts, KMS outcome, receipt).
+		// copy by runPhase (deleted counts, KMS outcome, receipt, and the
+		// Phase 3.5 override escrow outcome).
 		j.DeletedCounts = job.DeletedCounts
 		j.KMSKeyDestroyed = job.KMSKeyDestroyed
 		j.Receipt = job.Receipt
+		j.OverriddenHolds = job.OverriddenHolds
+		j.EscrowRegion = job.EscrowRegion
+		j.EscrowKEKID = job.EscrowKEKID
+		j.EscrowObjectKeys = job.EscrowObjectKeys
 		if next == PhaseCompleted {
 			j.CompletedAt = now
 		}
@@ -273,6 +353,26 @@ func (r *Reconciler) block(ctx context.Context, job *Job) error {
 		r.Blocked.DeletionBlocked(ctx, job.TenantID, holds)
 	}
 	return nil
+}
+
+// pauseEscrowUnresolvable records the §12.8 Phase 3.5 override-path pause
+// when the escrow region is unresolvable (line 883). Unlike block, it
+// does not emit admin.tenant.deletion_blocked — the EscrowMigrator
+// already emitted DataResidencyViolationAttempt and raised the
+// LegalHoldEscrowResidencyViolation alert. The job stays at
+// PhaseLegalHoldSegregation in state deleting so a later pass retries
+// once the operator configures the region. pauseEscrowUnresolvable
+// returns nil so ReconcileAll continues advancing other tenants.
+func (r *Reconciler) pauseEscrowUnresolvable(ctx context.Context, job *Job) error {
+	holds := append([]HeldResource(nil), job.BlockedHolds...)
+	_, err := r.Jobs.Update(ctx, job.TenantID, func(j *Job) error {
+		j.BlockedReason = "escrow region unresolvable (LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE)"
+		j.BlockedHolds = append([]HeldResource(nil), holds...)
+		j.State = TenantDeleting
+		j.UpdatedAt = r.now()
+		return nil
+	})
+	return err
 }
 
 // runPhase executes the action for job.Phase, mutating the in-memory
@@ -306,12 +406,9 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		return nil
 
 	case PhaseLegalHoldSegregation:
-		// §12.8 Phase 3.5 standard path: before any destructive operation,
-		// enumerate active tenant-scoped legal holds. If any are present,
-		// pause here (ErrBlockedByLegalHold) so Phase 4 / 4a never destroy
-		// held evidence — that would be spoliation. The override/escrow
-		// path is POST /v1/admin/tenants/{id}/force-delete. A nil
-		// enumerator advances unconditionally.
+		// §12.8 Phase 3.5: before any destructive operation, enumerate
+		// active tenant-scoped legal holds. A nil enumerator advances
+		// unconditionally.
 		if r.LegalHolds == nil {
 			job.BlockedHolds = nil
 			return nil
@@ -320,9 +417,55 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		if err != nil {
 			return err
 		}
-		if len(holds) > 0 {
+		if len(holds) == 0 {
+			job.BlockedHolds = nil
+			return nil
+		}
+		// Holds present. Standard path: pause (ErrBlockedByLegalHold) so
+		// Phase 4 / 4a never destroy held evidence — that would be
+		// spoliation. Override path (POST .../force-delete with
+		// acknowledgeHoldOverride): segregate the evidence into the
+		// region-scoped escrow, then proceed.
+		if !job.OverrideHoldAck || r.Escrow == nil {
+			// No override, or no escrow migrator wired to honor one — fail
+			// closed by blocking. A force-delete on a deployment with no
+			// escrow config cannot proceed (it would otherwise destroy
+			// evidence with nowhere to segregate it to).
 			job.BlockedHolds = holds
 			return fmt.Errorf("%w: %d hold(s)", ErrBlockedByLegalHold, len(holds))
+		}
+		// §12.8 sub-steps 2-4: re-encrypt + migrate + ledger.
+		outcome, err := r.Escrow.EscrowHolds(ctx, EscrowRequest{
+			TenantID: job.TenantID,
+			JobID:    job.TenantID, // the tenant id is the job key
+			Holds:    holds,
+		})
+		if err != nil {
+			if errors.Is(err, ErrEscrowRegionUnresolvable) {
+				// The migrator emitted DataResidencyViolationAttempt and
+				// raised the alert; pause here pending operator remediation.
+				job.BlockedHolds = holds
+				return ErrEscrowRegionUnresolvable
+			}
+			return err
+		}
+		job.OverriddenHolds = holds
+		job.EscrowRegion = outcome.ResolvedRegion
+		job.EscrowKEKID = outcome.EscrowKEKID
+		job.EscrowObjectKeys = outcome.EscrowObjectKeys
+		// §12.8: after the four sub-steps, emit gdpr.legal_hold_overridden_tenant.
+		// The escrow is idempotent, so a crash-retry re-runs it and re-emits;
+		// a duplicate override event is benign (compliance still sees it).
+		if r.Override != nil {
+			r.Override.OverrideApplied(ctx, OverrideAppliedEvent{
+				TenantID:         job.TenantID,
+				JobID:            job.TenantID,
+				OverrideBy:       job.OverrideBy,
+				Justification:    job.OverrideJustification,
+				OverrideAt:       job.OverrideAt,
+				OverriddenHolds:  holds,
+				EscrowObjectKeys: outcome.EscrowObjectKeys,
+			})
 		}
 		job.BlockedHolds = nil
 		return nil

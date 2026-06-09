@@ -198,6 +198,29 @@ type Job struct {
 	// admin.tenant.deletion_blocked audit event can list the held
 	// resource IDs. Empty when the deletion is not blocked.
 	BlockedHolds []HeldResource
+
+	// OverrideHoldAck records the §12.8 force-delete override: the
+	// operator invoked POST /v1/admin/tenants/{id}/force-delete with
+	// acknowledgeHoldOverride. With it set, Phase 3.5 segregates held
+	// evidence into the region-scoped escrow (the EscrowMigrator seam)
+	// instead of blocking. spec: §12.8 lines 880-889.
+	OverrideHoldAck bool
+	// OverrideBy is the platform-admin subject that authorized the
+	// override, recorded as override_by on gdpr.legal_hold_overridden_tenant.
+	OverrideBy string
+	// OverrideJustification is the required free-text override reason.
+	OverrideJustification string
+	// OverrideAt is the instant the override was authorized.
+	OverrideAt time.Time
+	// OverriddenHolds is the set of holds escrowed by the override path,
+	// pinned into the gdpr.legal_hold_overridden_tenant event and the
+	// receipt's overridden_holds array. Set once Phase 3.5 escrow succeeds.
+	OverriddenHolds []HeldResource
+	// EscrowRegion / EscrowKEKID / EscrowObjectKeys record the §12.8
+	// sub-step 2/3 escrow outcome for the override event and receipt.
+	EscrowRegion     string
+	EscrowKEKID      string
+	EscrowObjectKeys []string
 }
 
 // HeldResource is one §12.8 Phase 3.5 active legal hold scoped to the
@@ -240,6 +263,15 @@ var (
 	// failure; the job stays at PhaseLegalHoldSegregation and a later pass
 	// re-evaluates the ledger once the holds clear.
 	ErrBlockedByLegalHold = errors.New("tenantdeletion: blocked by active legal hold")
+	// ErrEscrowRegionUnresolvable — §12.8 Phase 3.5 override path, sub-step
+	// 2 (line 883): the force-delete override was authorized but the
+	// tenant's escrow region has no storage.regions.<region>.legalHoldEscrow
+	// entry (or the region's escrow KEK / bucket is unreachable). The
+	// EscrowMigrator has already emitted the DataResidencyViolationAttempt
+	// audit event and raised the LegalHoldEscrowResidencyViolation alert;
+	// the controller pauses at PhaseLegalHoldSegregation pending operator
+	// remediation, like a standard-path block, without destroying evidence.
+	ErrEscrowRegionUnresolvable = errors.New("tenantdeletion: escrow region unresolvable")
 )
 
 // Store is the §12.8 tenant-deletion job registry. The controller
@@ -348,6 +380,16 @@ func cloneJob(j Job) Job {
 		bh := make([]HeldResource, len(j.BlockedHolds))
 		copy(bh, j.BlockedHolds)
 		j.BlockedHolds = bh
+	}
+	if j.OverriddenHolds != nil {
+		oh := make([]HeldResource, len(j.OverriddenHolds))
+		copy(oh, j.OverriddenHolds)
+		j.OverriddenHolds = oh
+	}
+	if j.EscrowObjectKeys != nil {
+		ek := make([]string, len(j.EscrowObjectKeys))
+		copy(ek, j.EscrowObjectKeys)
+		j.EscrowObjectKeys = ek
 	}
 	if j.Receipt != nil {
 		r := *j.Receipt

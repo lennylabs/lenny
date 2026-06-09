@@ -160,6 +160,29 @@ type Tenant struct {
 	// `active`. spec: §12.8 line 865.
 	State string
 
+	// ForceDeleteHoldOverride records the §12.8 force-delete legal-hold
+	// override: a platform-admin invoked
+	// POST /v1/admin/tenants/{id}/force-delete with
+	// acknowledgeHoldOverride. The §12.8 tenant-deletion controller reads
+	// it at Phase 3.5 to segregate held evidence into the region-scoped
+	// escrow instead of blocking. It is durable so the override survives a
+	// gateway restart that reconstructs the deletion job from the tenant
+	// row. spec: §12.8 lines 880-889. F-12.8.2, F-24.10.2.
+	ForceDeleteHoldOverride bool
+
+	// ForceDeleteJustification is the required free-text override reason
+	// recorded as override_justification on the
+	// gdpr.legal_hold_overridden_tenant event. Empty when no override.
+	ForceDeleteJustification string
+
+	// ForceDeleteBy is the platform-admin subject that authorized the
+	// override, recorded as override_by. Empty when no override.
+	ForceDeleteBy string
+
+	// ForceDeleteAt is the UTC instant the override was authorized. Zero
+	// when no override. spec: §12.8 line 887.
+	ForceDeleteAt time.Time
+
 	// Suspended marks a tenant suspended by an operator via the §15.1
 	// `POST /v1/admin/tenants/{id}/suspend` action. Suspension is
 	// orthogonal to the §12.8 deletion lifecycle State: a suspended

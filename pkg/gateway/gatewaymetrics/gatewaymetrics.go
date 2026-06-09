@@ -406,6 +406,14 @@ type Metrics struct {
 	// in which the reconciler detected a checkpoint gap. Labelled by
 	// tenant so per-tenant attribution lands in the alert.
 	legalHoldCheckpointGaps *prometheus.CounterVec
+	// legalHoldEscrowRegionUnresolvable counts §12.8 line 883 Phase 3.5
+	// escrow-region resolution failures on the force-delete override
+	// path. The §16.5 LegalHoldEscrowResidencyViolation alert reads it.
+	legalHoldEscrowRegionUnresolvable *prometheus.CounterVec
+	// legalHoldOverriddenTenant counts §12.8 line 887 tenant-scope
+	// legal-hold overrides (force-delete with acknowledgeHoldOverride).
+	// The §16.5 LegalHoldOverrideUsedTenant alert reads it.
+	legalHoldOverriddenTenant *prometheus.CounterVec
 	// artifactUploadError counts §12.5 ll. 282 ArtifactStore PUT
 	// failures after the retry budget. Labels: `tenant_id` (caller
 	// tenant) and `error_type` (`minio_unreachable | auth |
@@ -1947,6 +1955,29 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §12.8 line 883 — `lenny_legal_hold_escrow_region_unresolvable_total`
+	// counts Phase 3.5 force-delete-override escrow-region resolution
+	// failures (the resolved region has no legalHoldEscrow entry, or its
+	// escrow KEK / bucket is unreachable). The §16.5
+	// LegalHoldEscrowResidencyViolation alert reads it.
+	legalHoldEscrowRegionUnresolvable, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_legal_hold_escrow_region_unresolvable_total",
+		Help: "Phase 3.5 escrow-region resolution failures (§12.8 line 883).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// §12.8 line 887 — `lenny_gdpr_legal_hold_overridden_tenant_total`
+	// counts tenant-scope legal-hold overrides (force-delete with
+	// acknowledgeHoldOverride). The §16.5 LegalHoldOverrideUsedTenant
+	// warning alert reads it.
+	legalHoldOverriddenTenant, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gdpr_legal_hold_overridden_tenant_total",
+		Help: "Tenant-scope legal-hold overrides via force-delete (§12.8 line 887).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
 	// §12.5 ll. 282 — `lenny_artifact_upload_error_total` counts
 	// ArtifactStore PUT failures after the retry budget. Labels:
 	// `tenant_id` and `error_type` (bounded to
@@ -2555,6 +2586,7 @@ func New() (*Metrics, error) {
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
+		legalHoldEscrowRegionUnresolvable, legalHoldOverriddenTenant,
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
 		delegationDeadlockDetected, delegationDeadlockResolution, delegationDeadlockDuration,
@@ -2797,6 +2829,8 @@ func New() (*Metrics, error) {
 		gcDuration:                           gcDuration.WithLabelValues(),
 		drainReadinessChecks:                 drainReadinessChecks,
 		legalHoldCheckpointGaps:              legalHoldCheckpointGaps,
+		legalHoldEscrowRegionUnresolvable:    legalHoldEscrowRegionUnresolvable,
+		legalHoldOverriddenTenant:            legalHoldOverriddenTenant,
 		artifactUploadError:                  artifactUploadError,
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
@@ -3435,6 +3469,33 @@ func (m *Metrics) IncLegalHoldCheckpointGap(tenantID string) {
 		return
 	}
 	m.legalHoldCheckpointGaps.WithLabelValues(tenantID).Inc()
+}
+
+// IncLegalHoldEscrowRegionUnresolvable bumps the §12.8 line 883
+// `lenny_legal_hold_escrow_region_unresolvable_total` counter when a
+// Phase 3.5 force-delete override aborts because the tenant's escrow
+// region has no configuration. The §16.5 LegalHoldEscrowResidencyViolation
+// alert reads it.
+//
+// spec: §12.8 line 883.
+func (m *Metrics) IncLegalHoldEscrowRegionUnresolvable(tenantID string) {
+	if m == nil {
+		return
+	}
+	m.legalHoldEscrowRegionUnresolvable.WithLabelValues(tenantID).Inc()
+}
+
+// IncLegalHoldOverriddenTenant bumps the §12.8 line 887
+// `lenny_gdpr_legal_hold_overridden_tenant_total` counter once per
+// tenant-scope force-delete legal-hold override. The §16.5
+// LegalHoldOverrideUsedTenant warning alert reads it.
+//
+// spec: §12.8 line 887.
+func (m *Metrics) IncLegalHoldOverriddenTenant(tenantID string) {
+	if m == nil {
+		return
+	}
+	m.legalHoldOverriddenTenant.WithLabelValues(tenantID).Inc()
 }
 
 // IncArtifactUploadError bumps the §12.5 ll. 282
