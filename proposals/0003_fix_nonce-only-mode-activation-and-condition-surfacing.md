@@ -1,0 +1,332 @@
+# Proposal: Nonce-only mode activation and controller-mediated condition surfacing
+
+- **Status:** Approved for implementation as written (2026-06-09). Revised after six adversarial consistency reviews against the spec and the code (2026-06-09); the findings of all passes are recorded in Section 11. The Section 12 condition-object decision is resolved.
+- **Date:** 2026-06-09.
+- **Scope:** Reconciles the §4.7-vs-§10.3 contradiction that blocks F-4.7.15, and makes nonce-only mode reachable in v1. Adds a per-runtime activation field, moves the `SOPeercredDisabled` and `SecurityDegradedMode` condition writes to the WarmPoolController per the §4.6.3 ownership table, and keeps the §10.3 zero-RBAC posture intact. No adapter Kubernetes client is introduced.
+
+This document stages the proposed spec, CRD, and chart edits. It does not modify any spec file. The proposal is approved; apply the changes in the "Proposed spec and CRD changes" section during implementation, without re-litigating the recorded decisions.
+
+## 1. Problem
+
+§4.7 (`spec/04_system-components.md:885-888`) lists what must happen when the adapter-agent boundary runs in nonce-only mode (`requireSoPeercred: false`, the `SO_PEERCRED` fallback for confirmed gVisor divergence). Two of those requirements cannot be met as written.
+
+**The condition write contradicts the agent-pod security posture.** §4.7 line 887 assigns the adapter the job of setting `SOPeercredDisabled=True` on the pod object, which pool controllers surface as `SecurityDegradedMode=True` on the `SandboxTemplate`. Setting a condition on a pod object is a `PATCH pods/status` call against the kube-apiserver. §10.3 (`spec/10_gateway-internals.md:334`) gives agent pods a ServiceAccount with zero RBAC bindings and no apiserver access, and the code enforces this at `pkg/controller/sandbox/podspec/podspec.go:818` (`AutomountServiceAccountToken: ptr.To(false)`, only the gateway-audience projected token mounted). §13.2 default-deny egress does not admit the apiserver from agent namespaces. §10.1 (`spec/10_gateway-internals.md:50`) states the consequence directly: "agent pods have zero RBAC bindings and no network path to the kube-apiserver under the security model (Sections 10.3, 13.2) — a direct `Sandbox.status.phase = failed` CRD write is not possible." §4.7 line 887 is the single place in the spec that asks the adapter to write Kubernetes object state directly, and it conflicts with the spec's own established mechanism.
+
+**The spec also disagrees with itself about who surfaces the pool condition.** `spec/18_build-sequence.md:182` says the `SecurityDegradedMode=True` condition is "surfaced by the PSC on `SandboxTemplate`". The §4.6.3 CRD field-ownership table (`spec/04_system-components.md:569`) assigns `SandboxTemplate.status.*` ("Pool health conditions, observed generation") to the WarmPoolController, and the §4.6.3 RBAC paragraph gives the PoolScalingController no `patch` grant on the `SandboxTemplate` status subresource. The PSC cannot perform the write §18 line 182 assigns to it. The code matches §4.6.3: the WarmPoolController already writes `SandboxTemplate` status conditions (`PoolWarmingUp` in `pkg/controller/warmpool/controller.go:822`) under its own field manager.
+
+**Nonce-only mode is unreachable in v1.** The state the condition signals cannot be entered. The adapter process flag exists and works (`cmd/lenny-adapter/main.go:140`, default `true`; nonce-only behavior at `:219`, `:224`, `:291`; the HMAC supplement closed under F-4.7.8/F-4.7.9). The operator-facing value `adapter.requireSoPeercred` named in `spec/04_system-components.md:877` is absent from the chart (`charts/lenny/values.yaml:1924` carries only `grpcPort`), and no component renders the flag into the pod (`pkg/controller/sandbox/podspec/podspec.go:502-520` emits a fixed argument list with no field for it). The default of `true` therefore reaches every pod.
+
+**The activation granularity does not match the surfacing granularity.** The spec names a single platform-wide value (`spec/04_system-components.md:888` refers to "the setting" in the singular), but `SO_PEERCRED` availability is a property of the container runtime under the pod, and the condition it drives is per-pool. A single global flag cannot express nonce-only mode for a gVisor pool while keeping full `SO_PEERCRED` enforcement on a runc pool in the same deployment.
+
+Findings: **F-4.7.15** (`BUILD-GAPS.md:1747`, the counter half is done; the condition half and activation are blocked) and **F-5.3.14** (`BUILD-GAPS.md:4191`, the `SecurityDegradedMode` surfacing has no producer and would be dead code).
+
+## 2. Decisions
+
+The following were decided in review and constrain this design.
+
+- The condition writes are controller-mediated (Option A). §10.3's zero-RBAC posture for agent pods stays authoritative. The adapter gains no Kubernetes client.
+- The activation knob is a per-runtime field, because `SO_PEERCRED` availability is a property of the isolation environment the runtime pins through `isolationProfile`. The global `adapter.requireSoPeercred` value named in the current spec is removed rather than kept as a second activation path. No migration shim is added (there are no deployments in the wild).
+- The WarmPoolController is the single writer for both conditions, per the §4.6.3 ownership table (`Sandbox.status.*` and `SandboxTemplate.status.*` are both WarmPoolController-owned). §18 line 182's PSC attribution is corrected as part of this change.
+- The acknowledgment gate is unconditional and does not branch on tenancy mode. It is enforced at two points: the gateway pool admission path rejects pool writes without the acknowledgment, the same home as the `allowStandardIsolation` gate, and the WarmPoolController render path requires the acknowledgment before rendering nonce-only mode, so a Runtime CR applied directly with `kubectl` cannot put unacknowledged pools into nonce-only mode (Section 4.7). The gate is not placed in the CRD admission webhook, which is a pure in-object decision package that cannot resolve a pool's referenced Runtime.
+- The activation field applies to the sidecar deployment model only. The embedded model is a single trusted process with no adapter-agent socket boundary (§4.7 deployment-model table), so the RuntimeReconciler rejects an embedded runtime that sets `requireSoPeercred: false` at mirror time (Section 4.1).
+- v1 ships one implementation. The adapter keeps its single flag-driven code path; this proposal adds the producer (the activation field) and the surfacing (the two condition writes), with no tier-dependent branches.
+- The counter half (`lenny_adapter_sopeercred_disabled_total`) is already built and is unchanged.
+
+## 3. Design overview
+
+The activation decision originates on the Runtime CRD, the declarative registration source the pod-lifecycle controllers already read. The RuntimeReconciler validates the field and mirrors it into the Postgres runtime registry, where the gateway pool admission gate evaluates it. The WarmPoolController's Sandbox reconciler renders the flag into the pod when the pool carries the acknowledgment, and the WarmPoolController writes both conditions. The adapter behaves exactly as it does today and emits its counter.
+
+```
+Runtime CR: requireSoPeercred: false        (1) per-runtime activation (new field)
+        |
+        |---> RuntimeReconciler -> Postgres registry    (2) validation + CRD-to-store
+        |         (gateway pool admission gate               mirror
+        |          evaluates the store)
+        v
+WarmPoolController (Sandbox reconciler, podspec.Build)   (3) renders
+        |                                                     --require-so-peercred=false
+        |                                                     (sidecar model,
+        |                                                      acknowledged pool)
+        |---> Pod adapter container: nonce-only behavior + counter   (already built)
+        |
+        |---> Sandbox.status:        SOPeercredDisabled=True          (4) WPC writes
+        |
+        '---> SandboxTemplate.status: SecurityDegradedMode=True       (5) WPC writes
+```
+
+Both condition writes are performed by the controller that owns the target status subresources per §4.6.3 and already holds the `get`/`patch` RBAC grants for them. No agent-pod apiserver path is opened. This mirrors the §10.1 pattern, where the adapter cannot write a CRD and a component with apiserver access performs the write (`pkg/adapter/controlchannel.go` emits `AdapterTerminating`; `pkg/gateway/orphansession/orphansession.go:9` records that the adapter "can only attempt an AdapterTerminating gRPC message" because a CRD update is impossible from the pod).
+
+## 4. Detailed design
+
+### 4.1 Activation field
+
+Add `requireSoPeercred *bool` to the Runtime definition (`pkg/apis/lenny/v1alpha1/runtime_types.go`, alongside `DeploymentModel` at line 54, and the `runtime.yaml` schema in §5.1). A pointer distinguishes "unset" (the default, `true`) from an explicit `false`. The field sits on the Runtime because the Phase 3.5 `SO_PEERCRED` validation that justifies setting it is a property of the isolation environment, and the Runtime pins its `isolationProfile`.
+
+Two constraints apply. The gateway cannot enforce the first: the deployment model is a CRD-only field with no registry counterpart (`pkg/controller/runtime/controller.go:207-214`, "DeploymentModel is a CRD-only field with no registry counterpart and is intentionally not mirrored") and appears on no gateway surface (no occurrence in `pkg/gateway/runtimestore` or `pkg/gateway/admin/runtimes.go`, and the §5.1 `runtime.yaml` schema carries no such key). The RuntimeReconciler, which already owns permanent registration errors (`Registered=False` with reason `InvalidRuntime`, `controller.go:67-72` and `:156-159`), enforces it at mirror time:
+
+- `requireSoPeercred: false` is valid only on `deploymentModel: sidecar` runtimes. The embedded model is a single trusted process with no adapter-agent socket boundary (§4.7 deployment-model table; the builder renders no `--runtime-uid` for embedded pods today). The RuntimeReconciler treats an embedded runtime that sets `requireSoPeercred: false` as a permanent error: it sets `Registered=False` with reason `InvalidRuntime` and message `requireSoPeercred: false is only valid on deploymentModel: sidecar runtimes`, and does not mirror the runtime into the registry. An embedded runtime with the field unset or explicitly `true` registers normally; an explicit `true` is identical to the default and activates nothing, so rejecting it would add a failure mode with no security effect. The render path is structurally inert for the invalid object regardless, because `buildEmbedded` never renders the flag, and the surfacing predicate carries the same deployment-model qualifier, so the rejected configuration sets no condition (Sections 4.3 and 4.5).
+- On derived runtimes the field is inherited and may not be set, the same classification as `integrationLevel` in the §5.1 inheritance table. A derived runtime that could flip the field independently would silently weaken the authentication boundary of the base image it shares. Derivation is a registry-side concept (`runtimestore.Runtime.BaseRuntime`, `pkg/gateway/runtimestore/runtimestore.go:234-236`; the CRD models no base reference), and the admin registration payload does not model `requireSoPeercred` (Section 4.2), so a derived runtime cannot carry the field. The §5.1 merge (`pkg/gateway/runtimestore/merge.go:55`) classifies the field as Inherited, so a derived runtime resolved against a nonce-only base inherits the base posture.
+
+### 4.2 Registration and mirror flow
+
+The Runtime CRD is the declarative registration source, and the RuntimeReconciler watches Runtime resources and mirrors each one into the Postgres-backed gateway registry (`pkg/controller/runtime/controller.go:3-8`; `mirror` at `:156`, `applyCRDFields` at `:207-214`). The field therefore flows from the Runtime CR to its two consumers along existing paths. The pod-lifecycle controllers read the CR directly: the Sandbox reconciler resolves it for `podspec.Build` (`pkg/controller/sandbox/controller.go:360-363`), and the WarmPoolController reads it during pool reconciliation (`pkg/controller/warmpool/controller.go:722-723`). The CRD-to-store mirror carries the field into the registry through `applyCRDFields`, plus the §5.1 merge rule for derived runtimes, where the gateway pool admission gate evaluates it (Section 4.7).
+
+The admin API is a second writer into the same store (`pkg/gateway/admin/runtimes.go`) and does not model the field. The create handler decodes the payload without `DisallowUnknownFields` (`pkg/gateway/admin/runtimes.go:756`), so a `requireSoPeercred` key in an admin registration payload is ignored rather than rejected. Activation is scoped to CRD-registered runtimes: an admin-API registration produces no Runtime CR, the render path resolves the CR (`controller.go:360-363`), and a store-only runtime therefore cannot back pod creation, so the scoping excludes no reachable activation path. A runtime registered only through the admin API runs with the field unset, which means the default of `true`. The applied spec records this scoping, and the §5.1 registration sentence is itself an edit site. §5.1 line 5 currently reads "All runtimes are registered via the admin API as static configuration" (`spec/05_runtime-registry-and-pool-model.md:5`), which asserts the admin API as the only registration path; left unedited it would contradict the CRD-only setability of the field and would leave the RuntimeReconciler that the proposed §4.7 and §18 texts reference undefined in the spec (no spec file names the component today, and the §4.6.3 ownership table at `spec/04_system-components.md:566-575` has no Runtime row). Section 7.3 replaces line 5 with a sentence naming both registration surfaces and the RuntimeReconciler; the code already anchors the component's definition in §5.1 (`pkg/controller/runtime/controller.go:3`, "the §5.1 RuntimeReconciler"). Editing the CRD type alone is insufficient; the mirror (`applyCRDFields`), the store schema, and the §5.1 merge rules are also touch points (Section 13).
+
+### 4.3 Render path
+
+The WarmPoolController's Sandbox reconciler builds pods through `podspec.Build` (`pkg/controller/sandbox/controller.go:377`) and writes under the WarmPoolController field manager (`controller.go:621`). The reconciler already resolves the referenced Runtime CR (`controller.go:361`). Add `RequireSoPeercred *bool` to `podspec.Inputs` (`pkg/controller/sandbox/podspec/podspec.go:218`) and populate it from the resolved Runtime only when the runtime is a `deploymentModel: sidecar` runtime and the pool acknowledgment is present (Section 4.7): the WarmPoolController resolves the runtime field and the deployment model together with the PSC-mirrored `SandboxTemplate.spec.acknowledgeNonceOnlyAuth` when it creates the Sandbox and carries the resolved decision on `Sandbox.spec.requireSoPeercred`, a new optional field on `Sandbox.spec`, which it owns per §4.6.3 line 573 ("Pod creation and configuration"). The builder renders `--require-so-peercred=false` into the adapter container in `buildSidecar` (the argument block at `:502-520`) when the value is explicitly `false`. A nil or `true` value renders no flag, so the adapter default of `true` governs. `buildEmbedded` is unchanged; the Section 4.1 constraint keeps the field off embedded runtimes.
+
+### 4.4 Pod-level condition
+
+The WarmPoolController sets `SOPeercredDisabled=True` on `Sandbox.status.conditions` (`pkg/apis/lenny/v1alpha1/sandbox_types.go:149`, the standard `[]metav1.Condition` list) for every Sandbox it renders with the flag. `Sandbox.status.*` is WarmPoolController-owned per §4.6.3 line 574, and the controller already holds `get`/`patch` on the `Sandbox` status subresource, so this adds no RBAC. In the opt-in activation model the rendered flag is the authoritative source: the adapter does not silently fall back (a failed self-test with the default `true` crashes the pod at `main.go:219`), so the controller's render decision and the pod's runtime state coincide and no signal from the adapter is required.
+
+This surfaces the condition on the `Sandbox` custom resource rather than on the core Pod object the current §4.7 wording names. The `Sandbox` is the per-pod object Lenny controllers own and watch. A core-Pod condition would additionally require a `pods/status` patch grant that no Lenny controller holds today (§4.6.3 gives the gateway `get`/`patch` on Pods for label mutations only). Review resolved this decision in favor of the `Sandbox` status; Section 12 records the resolution.
+
+### 4.5 Pool-level surfacing
+
+The WarmPoolController sets `SecurityDegradedMode=True` on `SandboxTemplate.status.conditions` for every pool it renders in nonce-only mode: the referenced Runtime is a `deploymentModel: sidecar` runtime carrying `requireSoPeercred: false` and the pool carries the acknowledgment (Section 4.7). A pool whose runtime requests nonce-only mode without the acknowledgment renders no flag, keeps full `SO_PEERCRED` enforcement, and gets no degraded condition. The deployment-model qualifier keeps the surfacing path inert for the rejected embedded configuration: the RuntimeReconciler refuses to mirror an embedded runtime carrying `requireSoPeercred: false` but the rejected CR persists (Section 4.1), the controller reads the Runtime CR directly, and the pool gate does not reject a superfluous acknowledgment (the `allowStandardIsolation` gate is likewise one-directional, `pkg/gateway/poolstore/poolstore.go:769-770`), so an unqualified trigger would mark an acknowledged pool degraded while it runs zero nonce-only pods, contradicting the condition's defined meaning (`spec/13_security-model.md:14`). The write path follows the existing `updateTemplateCondition` precedent (`controller.go:822`, the `PoolWarmingUp` condition). `SandboxTemplate.status.*` is WarmPoolController-owned per §4.6.3 line 569, so this adds no RBAC and resolves the §18 line 182 PSC attribution error described in Section 1. The controller already reads the Runtime during pool reconciliation (`controller.go:722-723`), so no new watch or grant is needed to evaluate the trigger.
+
+**Revert semantics.** The flag is baked into pod arguments, so pods rendered in nonce-only mode keep running in it after an operator reverts the Runtime field, until the normal pool reconciliation replaces them. The pool condition therefore transitions to `False` only when the runtime field is `true` AND no member `Sandbox` still carries `SOPeercredDisabled=True`. This prevents the window where the pool reports a clean posture while nonce-only pods still serve sessions. The explicit `False` write on full recovery mirrors the §5.3 `Degraded` condition behavior (`pkg/controller/warmpool/controller.go:673-674`).
+
+### 4.6 Adapter behavior
+
+Unchanged. The adapter runs the `SO_PEERCRED` self-test, honors `--require-so-peercred`, runs the nonce-only MCP server mode, and emits `lenny_adapter_sopeercred_disabled_total` (`pkg/adapter/metrics.go`, incremented at `main.go:227`). No Kubernetes client, token, or apiserver egress is added to the agent pod.
+
+### 4.7 Acknowledgment gate
+
+Nonce-only mode weakens the adapter-agent authentication boundary, so it is a deployer security opt-in of the same class as `allowStandardIsolation` (§5.3) and `acknowledgeBestEffortScrub` (§5.2). The gate follows the `allowStandardIsolation` pattern exactly:
+
+- The acknowledgment is a pool-level flag, `acknowledgeNonceOnlyAuth: true`, in the Postgres pool definition alongside `allowStandardIsolation` (§5.3). Like `allowStandardIsolation`, it is a pool configuration flag rather than a Runtime definition field, and its gateway gate lives in `pkg/gateway/poolstore` and `pkg/gateway/admin/pools.go` at create and at update (the `allowStandardIsolation` gate sits at `poolstore.go:769-770` and `:864-865`). Unlike `allowStandardIsolation`, it is additionally mirrored onto `SandboxTemplate.spec` by the PoolScalingController, the §4.6.3 channel for Postgres pool configuration to reach the controllers (`SandboxTemplate.spec.*` is PSC-owned and "Reconciled from Postgres pool definitions", `spec/04_system-components.md:568`), because the render gate below needs it. It is not placed in `taskPolicy`, whose keys are execution-mode-specific while nonce-only mode applies to every execution mode.
+- The check is unconditional, matching `acknowledgeBestEffortScrub` (§5.2 line 473 rejects task-mode pools without it in every tenancy mode). A pool referencing a runtime with `requireSoPeercred: false` is rejected by the gateway pool admission path unless the pool carries the acknowledgment. Tying the check to tenancy mode would put it in the `lenny-direct-mode-isolation` webhook, which is rendered only when `features.llmProxy: true` (§17.2), and would add a tenancy branch the v1 single-implementation rule excludes.
+- Enforcement has two points covering the two write paths. The gateway pool admission path rejects a pool write referencing a runtime whose registry definition carries `requireSoPeercred: false` without the acknowledgment; the registry definition is fed by the CRD-to-store mirror (Section 4.2). The WarmPoolController render path is the activation gate: it renders `--require-so-peercred=false` only when the resolved Runtime CR sets the field and the pool's `SandboxTemplate.spec` carries the PSC-mirrored acknowledgment. The render gate exists because the Runtime CRD is itself a registration surface: a Runtime CR applied directly with `kubectl` or Helm (`charts/lenny/templates/reference-runtimes.yaml` applies Runtime CRs) never passes through the gateway, the mirror validates only the name (`pkg/controller/runtime/controller.go:156-159`), and the pod-lifecycle controllers consume the CR directly, so a gateway-only gate would be bypassable by a CR write. The pool CRDs have a `userInfo`-based webhook against manual edits (`spec/04_system-components.md:601`); the Runtime CRD has no equivalent, and the render gate closes the path without adding one. Without the acknowledgment the controller renders no flag, the adapter default of `true` governs, and the pool keeps full `SO_PEERCRED` enforcement.
+- The `lenny-pool-config-validator` CRD webhook is deliberately not extended: it is a pure in-object decision package (§18 line 200, "a thin HTTP shim over its pure-decision package"; §13.2 line 221 describes the webhooks as "purely in-process validators" with DNS-only egress), so it cannot resolve a pool's `runtimeRef` to read `requireSoPeercred`. This matches the existing posture: `allowStandardIsolation` has no webhook backstop either. The alternative of additionally mirroring the resolved runtime flag onto `SandboxTemplate.spec` so the webhook could check the cross-resource invariant in-object remains rejected; the acknowledgment mirror above serves the render gate, and the webhook gains no rule.
+- Flipping an already-referenced Runtime to `requireSoPeercred: false` cannot bypass the gate on either write path. The admin runtime-update path cannot flip the field because the payload does not model it (Section 4.2). A CR-applied flip propagates to the render path, where unacknowledged pools keep full enforcement and render no flag; the pool enters nonce-only mode only after a pool update adds the acknowledgment, and that update passes through the gateway gate.
+
+### 4.8 Why §10.3 stays intact
+
+Neither condition is written from inside an agent pod. The WarmPoolController runs in `lenny-system` with its existing apiserver access and its existing status-write grants. The agent pod keeps `AutomountServiceAccountToken: false`, the gateway-audience-only token, and the default-deny egress. The alternative considered and rejected (relaxing §10.3 to give the agent pod a default-audience token plus `pods/status` RBAC plus an apiserver-egress NetworkPolicy exception) would place an apiserver-reachable, RBAC-bearing token inside the untrusted-agent blast radius for one status write.
+
+## 5. Observability surface
+
+### 5.1 Metrics
+
+`lenny_adapter_sopeercred_disabled_total` is unchanged and already emitted on every nonce-only pod start. The adapter counters live in adapter processes inside agent pods, which no default collection surface reaches: the adapter exposes no metrics listener (`pkg/adapter/metrics.go:12-14` registers the counters so they appear "once a scrape target is wired", and neither `cmd/lenny-adapter` nor `pkg/adapter` starts one), the §16.9 canonical scrape target set is the gateway, controller, token service, and `lenny-ops` (`spec/16_observability.md:722`), and the §13.2 NET-045 monitoring ingress covers only `lenny-system` components (`spec/13_security-model.md:228`; agent namespaces admit gateway ingress only).
+
+One new metric is added so the bundled alert has a collectible series: `lenny_pool_security_degraded`, a gauge labeled by `pool`, published by the WarmPoolController in the same reconcile step that writes the `SecurityDegradedMode` condition. This follows the `lenny_pool_warming_up` precedent, the alert-support gauge the controller publishes in `updateTemplateCondition` so the `WarmPoolBootstrapping` rule has a live series (`pkg/controller/warmpool/warming_meter.go:27`, `controller.go:829-832`).
+
+The §16 metric inventory lists neither adapter counter today, a pre-existing omission; both rows are added while editing, annotated as outside the default scrape set, together with the new gauge row (Section 7.5).
+
+### 5.2 Conditions
+
+| Condition | Object | Writer | Set when |
+|:--|:--|:--|:--|
+| `SOPeercredDisabled` | `Sandbox.status` | WarmPoolController | Pod rendered with `requireSoPeercred=false` |
+| `SecurityDegradedMode` | `SandboxTemplate.status` | WarmPoolController | Pool renders nonce-only pods (the `deploymentModel: sidecar` runtime sets `requireSoPeercred=false` and the pool acknowledgment is present), or a nonce-only pod remains after revert; explicitly `False` on full recovery |
+
+### 5.3 Alerts
+
+§4.7 line 888 requires deployers to alert on `lenny_adapter_sopeercred_disabled_total > 0`, but no bundled rule exists today, and a bundled rule on that counter could never fire: neither evaluation surface the spec defines for bundled rules can observe it. Prometheus has no path to agent pods (Section 5.1: no adapter metrics listener, the §16.9 scrape set and the §13.2 NET-045 monitoring ingress cover only `lenny-system` components), and the gateway's in-process fallback evaluator reads only the gateway's own registry, with "does not fire" as its failure mode for absent series (`pkg/alerting/inproceval/inproceval.go:26-27` and `:53-54`). A catalog rule on the counter would evaluate an empty vector forever.
+
+The bundled rule is therefore defined on the controller-published gauge: `lenny_pool_security_degraded == 1`, warning severity, with a runbook pointer, matching the `WarmPoolBootstrapping` precedent (`pkg/alerting/rules/rules.go:1423`, `lenny_pool_warming_up == 1`). The WarmPoolController is in the §16.9 canonical scrape set, so the rule has a collectible series in every deployment. The §16.5 alert catalog is authored once in `pkg/alerting/rules` and rendered by `make generate` into `charts/lenny/files/alerting-rules.yaml` for the chart's PrometheusRule and ConfigMap outputs (§16.9; see the header of `charts/lenny/templates/prometheusrule.yaml`); the rule is added there, with the corresponding row in the §16.5 enumeration. The §4.7 MUST-alert on the adapter counter remains a deployer-side obligation that applies when a deployer wires an adapter scrape target (Section 7.1). The runbook pointer must resolve to a new page under `docs/runbooks/`: the tier-11 docs gate (`tests/tier11_docs/runbooks_test.go`, `TestAlertCatalogRunbookSlugsResolveToDocs`) fails any new alert whose runbook slug has no matching `docs/runbooks/<slug>.md`, so the runbook file is an edit site alongside the rule (Sections 7.10 and 13). The `SecurityDegradedMode` condition gives an additional pool-level signal for dashboards and `kubectl get sandboxtemplate`.
+
+## 6. CRD and RBAC changes
+
+- **CRD:** new optional spec fields plus the condition-type constants (Section 7.8). The fields are `Runtime.spec.requireSoPeercred` (the activation field, Section 4.1), the PSC-mirrored `SandboxTemplate.spec.acknowledgeNonceOnlyAuth` the render gate reads (Section 4.7), and `Sandbox.spec.requireSoPeercred`, the per-Sandbox carrier the WarmPoolController writes with the resolved render decision (Section 4.3). No new custom resource.
+- **RBAC:** none. The WarmPoolController already holds `get`/`patch` on the `Sandbox` and `SandboxTemplate` status subresources, and the PoolScalingController already owns `SandboxTemplate.spec.*` (§4.6.3). The agent pod's zero-RBAC posture is unchanged.
+
+## 7. Proposed spec and CRD changes
+
+### 7.1 `spec/04_system-components.md` §4.7 (lines 877, 879, 885-888)
+
+Replace the global value reference at line 877 ("configurable via `adapter.requireSoPeercred`, default `true`") and line 879 ("When `adapter.requireSoPeercred` is `false`") with the per-runtime field `Runtime.spec.requireSoPeercred`. Replace the escalation block (lines 885-888) with:
+
+> **Activation.** Nonce-only mode is enabled per runtime through `Runtime.spec.requireSoPeercred: false` (default `true`). `SO_PEERCRED` availability is a property of the isolation environment, so the setting lives on the Runtime definition ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). The RuntimeReconciler mirrors the field into the gateway runtime registry. The field is settable only through Runtime CRD registration: the admin registration payload does not model it, and a runtime registered only through the admin API runs with the default of `true`. When a pool's `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries the acknowledgment ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)), the WarmPoolController renders `--require-so-peercred=false` into the adapter container of every pod in that pool; the condition writes below carry the same deployment-model qualifier. `requireSoPeercred: false` is valid only on `deploymentModel: sidecar` runtimes; the embedded model is a single trusted process with no adapter-agent socket boundary, and the RuntimeReconciler marks an embedded runtime that sets `requireSoPeercred: false` as `Registered=False` with reason `InvalidRuntime` and message `requireSoPeercred: false is only valid on deploymentModel: sidecar runtimes`, without mirroring it into the registry.
+>
+> **Escalation requirement.** Nonce-only mode is an audited security-degradation state. The following surfacing is mandatory:
+> - The adapter emits `lenny_adapter_sopeercred_disabled_total` on every pod start in nonce-only mode.
+> - Agent pods hold no Kubernetes API access ([§10.3](10_gateway-internals.md#103-mtls-pki)), so the adapter writes no Kubernetes object. The WarmPoolController, which renders the flag and owns both status subresources per the [§4.6.3](#463-crd-field-ownership-and-write-boundaries) ownership table, sets `SOPeercredDisabled=True` on the `Sandbox` status and `SecurityDegradedMode=True` on the `SandboxTemplate` status. The pool condition reverts to `False` only when the runtime field has returned to `true` and no member `Sandbox` still carries `SOPeercredDisabled=True`, so a reverted pool reports degraded until its last nonce-only pod is replaced. This follows the gateway-mediated state-write pattern [§10.1](10_gateway-internals.md#101-horizontal-scaling) uses for `AdapterTerminating`, where a component holding apiserver access performs a write the agent pod cannot.
+> - Nonce-only operation MUST be covered by an alert with a human-review SLA. The bundled [§16.5](16_observability.md#165-alerting-rules-and-slos) rules satisfy this by default with `lenny_pool_security_degraded == 1`, a gauge the WarmPoolController publishes in the same reconcile step that writes the pool condition; the controller is in the [§16.9](16_observability.md#169-prometheus-scrape-targets-and-crds) canonical scrape target set, so the bundled rule has a collectible series in every deployment. Deployers who wire a scrape target for adapter metrics MUST additionally alert on `lenny_adapter_sopeercred_disabled_total > 0`; the default scrape set does not reach agent pods. The setting MUST be re-evaluated when the container runtime version changes. The Phase 3.5 `SO_PEERCRED` integration tests are re-run at that point, and `requireSoPeercred` returns to `true` when the behavior is fixed.
+> - A pool referencing a runtime with `requireSoPeercred: false` is rejected by the gateway pool admission path unless the pool sets `acknowledgeNonceOnlyAuth: true` ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)). The PoolScalingController mirrors the acknowledgment onto `SandboxTemplate.spec`, and the WarmPoolController renders nonce-only mode only for acknowledged pools, so a Runtime resource applied directly with `kubectl` cannot activate nonce-only mode on a pool that has not acknowledged it.
+
+### 7.2 `spec/18_build-sequence.md` lines 126, 182, and 250
+
+The activation vertical splits across phases because Phase 3 (§18.9) ships controllers and mTLS with no gateway admin or registration surface; the minimal gateway binary arrives in Phase 4 (§18.11 line 237) and the admin API surface for runtimes and pools arrives in Phase 4.5 (§18.12 lines 250-251). A Phase 3 deliverable cannot depend on Phase 4.5 artifacts.
+
+- Line 126 sits in the Phase 2 deliverables (adapter protocol and `make run`), which predate the Runtime CRD and the registration path, so it cannot reference `Runtime.spec.requireSoPeercred`. Update it to name what Phase 2 ships: the adapter binary's `--require-so-peercred` process flag (default `true`).
+- Line 182 sits in Phase 3 (pool scaling, controllers, mTLS) and currently attributes the `SecurityDegradedMode` surfacing to the PSC, contradicting the §4.6.3 ownership table (the PSC owns `SandboxTemplate.spec` and holds no patch grant on its status subresource). Replace with the controller-side work only: "Nonce-only-mode activation vertical (controller side) per [§4.7](04_system-components.md#47-runtime-adapter): the `Runtime.spec.requireSoPeercred` CRD field with RuntimeReconciler validation (`Registered=False`/`InvalidRuntime` on an embedded runtime setting `requireSoPeercred: false`), the WarmPoolController podspec render of `--require-so-peercred=false` gated on the pool acknowledgment mirrored onto `SandboxTemplate.spec`, and the `SOPeercredDisabled=True` condition on each nonce-only `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, both written by the WarmPoolController per the [§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) ownership table."
+- Add to the Phase 4.5 deliverables list (line 250): "Nonce-only-mode acknowledgment gate (gateway side) per [§4.7](04_system-components.md#47-runtime-adapter): the `acknowledgeNonceOnlyAuth` pool configuration flag ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) with the pool admission rejection at create and at update, plus the runtime registry column and CRD-to-store mirror of `requireSoPeercred` the gate evaluates."
+
+### 7.3 `spec/05_runtime-registry-and-pool-model.md` §5.1 (runtime definition)
+
+The edits:
+
+- Replace the registration sentence at line 5 ("All runtimes are registered via the admin API as static configuration.") with: "A runtime is registered as static configuration either declaratively through a `Runtime` custom resource, which the RuntimeReconciler validates and mirrors into the gateway runtime registry, or through the admin API, which writes the same registry directly." The current sentence asserts the admin API as the only registration path, which the new §4.7 and §5.1 prose contradicts, and the replacement gives the RuntimeReconciler its defining spec anchor: no spec file names the component today, the §4.6.3 ownership table has no Runtime row, and the implementation's package header already cites §5.1 as the component's home (`pkg/controller/runtime/controller.go:3`). The proposed §4.7 and §18 texts that reference the RuntimeReconciler resolve against this definition.
+- Add `requireSoPeercred: true # optional; set false only for confirmed gVisor SO_PEERCRED divergence — sidecar model only; see §4.7` to the standalone `runtime.yaml` example block (lines 55-75), adjacent to `isolationProfile`.
+- Add to the §5.1 prose, alongside the example, that `requireSoPeercred` is settable only through Runtime CRD registration and that a runtime registered only through the admin API runs with the default of `true`. The admin payload does not model the field and the create handler ignores unknown keys (Section 4.2); without this statement the applied §5.1 would present the field as registrable through both of the line-5 registration surfaces when only the CRD path carries it.
+- Add `requireSoPeercred` to the "Never overridable on derived runtime" prose list at line 170.
+- Add the field to the derived-runtime inheritance table (lines 180-190) as **Inherited — derived may not set**, with the rationale that the authentication-boundary posture is a property of the base runtime's image and isolation environment, matching the `integrationLevel` classification. The enforcement is structural rather than a rejection: derivation exists only registry-side (`runtimestore.Runtime.BaseRuntime`; the CRD models no base reference), the admin payload does not model the field (Section 4.2), and the §5.1 merge takes the value from the base, so a derived runtime cannot carry it.
+
+### 7.4 `spec/05_runtime-registry-and-pool-model.md` §5.3 (pool configuration)
+
+Define `acknowledgeNonceOnlyAuth` in §5.3 as a pool configuration flag alongside the `allowStandardIsolation` opt-in (line 648), with the rejection rule: a pool referencing a runtime with `requireSoPeercred: false` is rejected by the gateway pool admission path without `acknowledgeNonceOnlyAuth: true`, in every tenancy mode, with a descriptive error referencing §4.7. §5.3 is the flag's single defining section, and the §4.7 and §18 cross-references point at it (`#53-isolation-profiles`), matching the §5.1 prose that already locates `allowStandardIsolation` in §5.3. State that the PoolScalingController mirrors the flag onto `SandboxTemplate.spec` per the §4.6.3 ownership table and that the WarmPoolController renders nonce-only mode only for acknowledged pools (Section 4.7), so a directly applied Runtime CR cannot activate nonce-only mode on an unacknowledged pool. The `lenny-pool-config-validator` webhook is unchanged because it is a pure in-object validator that cannot resolve the pool's `runtimeRef`.
+
+### 7.5 `spec/16_observability.md` §16.1 and §16.5
+
+- Add `lenny_adapter_sopeercred_disabled_total` and `lenny_adapter_sopeercred_selftest_failed_total` to the metric inventory (both exist in the adapter today and are absent from §16, a pre-existing omission), annotated as emitted inside agent pods and outside the §16.9 default scrape set until a deployer wires an adapter scrape target.
+- Add the `lenny_pool_security_degraded` gauge (per pool, published by the WarmPoolController alongside the `SecurityDegradedMode` condition) to the metric inventory.
+- Add the `lenny_pool_security_degraded == 1` warning rule to the §16.5 enumeration, with a runbook pointer, sourced from `pkg/alerting/rules` per §16.9.
+
+### 7.6 `spec/13_security-model.md` line 14
+
+The row already states that nonce-only mode requires the `SecurityDegradedMode=True` pool condition and alert. No change beyond confirming the cross-reference resolves to the §4.7 text above.
+
+### 7.7 `pkg/apis/lenny/v1alpha1/runtime_types.go`
+
+Add to `RuntimeSpec`:
+
+```go
+// RequireSoPeercred gates the §4.7 SO_PEERCRED adapter-agent boundary
+// self-test. A nil or true value (the default) requires SO_PEERCRED to
+// be functional; a failed self-test crashes the pod. Set false only
+// when gVisor SO_PEERCRED divergence is confirmed (Phase 3.5) and
+// nonce-only mode is explicitly accepted. Sidecar model only: the
+// RuntimeReconciler marks an embedded runtime carrying false
+// Registered=False (InvalidRuntime) and does not mirror it; derived
+// runtimes inherit the base value through the §5.1 merge. The
+// WarmPoolController renders --require-so-peercred=false for pools
+// carrying the §5.3 acknowledgeNonceOnlyAuth acknowledgment and
+// surfaces SOPeercredDisabled / SecurityDegradedMode per §4.6.3.
+// spec: §4.7.
+// +optional
+RequireSoPeercred *bool `json:"requireSoPeercred,omitempty"`
+```
+
+### 7.8 Condition-type constants
+
+Add to the `v1alpha1` package:
+
+```go
+// SandboxConditionSOPeercredDisabled marks a Sandbox running in §4.7
+// nonce-only mode. Set by the WarmPoolController; the adapter has no
+// apiserver access (§10.3).
+const SandboxConditionSOPeercredDisabled = "SOPeercredDisabled"
+
+// SandboxTemplateConditionSecurityDegradedMode marks a pool rendering
+// nonce-only pods (§4.7): its deploymentModel: sidecar runtime sets
+// requireSoPeercred: false and the pool carries the §5.3
+// acknowledgeNonceOnlyAuth acknowledgment. A pool that still runs a
+// nonce-only pod after a revert keeps the condition. Set by the
+// WarmPoolController per the §4.6.3 ownership table.
+const SandboxTemplateConditionSecurityDegradedMode = "SecurityDegradedMode"
+```
+
+### 7.9 `charts/lenny/values.yaml`
+
+No new value. The `adapter.requireSoPeercred` value named by the old spec text is not added; activation is the per-runtime field. The `adapter:` block (line 1924) is unchanged.
+
+### 7.10 Documentation and bundled rules sync
+
+- `docs/operator-guide/security.md:280` currently reads "If `SO_PEERCRED` is unavailable (gVisor divergence), the pool is marked with `SecurityDegradedMode=True` and an alert fires", which describes an automatic reaction. Reword to the opt-in model: the operator sets `Runtime.spec.requireSoPeercred: false` after confirmed divergence, the pool requires `acknowledgeNonceOnlyAuth: true`, and the platform surfaces the conditions and the alert.
+- `pkg/alerting/rules`: add the alert rule (Section 5.3); `make generate` propagates it to `charts/lenny/files/alerting-rules.yaml` and the other rendered copies.
+- `docs/runbooks/<slug>.md`: add the runbook page for the new alert, with the frontmatter `triggers` block naming the alert per the existing runbook convention. The tier-11 docs gate (`tests/tier11_docs/runbooks_test.go`, `TestAlertCatalogRunbookSlugsResolveToDocs`) fails any new alert whose runbook slug has no file under `docs/runbooks/`.
+- `docs/reference/metrics.md`: the hand-maintained docs mirror of the §16.1 inventory and the §16.5 catalog, which claims exhaustive coverage ("Complete reference for all Prometheus metrics emitted by Lenny platform components", line 11) and is outside the `make generate` propagation (the generated copy is `docs/alerting/rules.yaml`, which carries a generated-code header; this page carries none). Add inventory rows for `lenny_pool_security_degraded` and both adapter `sopeercred` counters, the counters annotated as outside the default scrape set mirroring the §16.1 edit, plus a row for the new alert in the "Warning alerts" table (line 483).
+- `docs/operator-guide/observability.md`: add the new alert to the "Warning Alerts" table (line 150).
+- `docs/runbooks/index.md`: add the alert-to-runbook row pointing at the new `docs/runbooks/<slug>.md` page; the map's header states that every alert in the Metrics Reference maps to a listed runbook (line 11).
+
+## 8. Non-goals
+
+- Auto-detection of `SO_PEERCRED` divergence at runtime. Activation stays operator opt-in via the Runtime field, matching the current self-test-then-crash behavior. A future auto-fallback would route an adapter-discovered signal to the gateway over the §10.1 control channel; that is out of scope here.
+- Relaxing the §10.3 agent-pod posture in any form.
+- Extending nonce-only mode to the embedded deployment model. The embedded model has no adapter-agent socket boundary to fall back from.
+- A CRD-webhook backstop for the acknowledgment gate (Section 4.7 records the rejected design of mirroring the resolved runtime flag onto `SandboxTemplate.spec` for in-object webhook checks; the acknowledgment mirror serves the render gate only).
+- A core Pod-object condition (rejected; Section 12 records the rationale).
+
+## 9. Testing
+
+- Builder unit tests: `--require-so-peercred=false` is rendered into the sidecar adapter container when `Inputs.RequireSoPeercred` is `false`, and absent when nil or `true`; `buildEmbedded` output is unchanged in all cases.
+- RuntimeReconciler tests: an embedded runtime carrying `requireSoPeercred: false` gets `Registered=False` with reason `InvalidRuntime` and is not mirrored into the registry; a sidecar runtime carrying the field is mirrored with the field propagated CRD-to-store through `applyCRDFields`; the §5.1 merge inherits the base value on derived runtimes.
+- WarmPoolController tests: a Sandbox rendered for a nonce-only runtime in an acknowledged pool gets `SOPeercredDisabled=True`; a pool whose `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and that carries the acknowledgment gets `SecurityDegradedMode=True` on the `SandboxTemplate`; a pool lacking the acknowledgment renders no flag and gets no condition, including after a CR-applied runtime flip; an acknowledged pool whose embedded runtime CR carries `requireSoPeercred: false` renders no flag, gets no `SOPeercredDisabled` or `SecurityDegradedMode` condition, and publishes gauge `0`; after the runtime field reverts, the pool condition stays `True` while a nonce-only Sandbox remains and transitions to `False` when the last one is replaced; the `lenny_pool_security_degraded` gauge is published with the condition value on every reconcile (the `warming_meter_test.go` pattern).
+- Gateway pool admission tests: a pool referencing a nonce-only runtime is rejected without `acknowledgeNonceOnlyAuth` and admitted with it, in every tenancy mode, at create and at update.
+- Alert rule test: the generated `charts/lenny/files/alerting-rules.yaml` contains the new rule (the existing `make generate` round-trip check covers drift), and the runbook slug resolves to the new `docs/runbooks/` page (`TestAlertCatalogRunbookSlugsResolveToDocs`).
+- The Phase 3.5 gVisor `SO_PEERCRED` integration test remains the operator's trigger for setting the field; no change to that test's intent.
+
+## 10. Findings closed on application
+
+- **F-4.7.15** (`BUILD-GAPS.md:1747`): counter already done; the condition writes are now controller-mediated and consistent with §10.3 and §4.6.3, and nonce-only mode is reachable through the per-runtime field.
+- **F-5.3.14** (`BUILD-GAPS.md:4191`): `SecurityDegradedMode` gains a producer chain (the per-runtime field rendered by the WarmPoolController), so wiring the surfacing is live code with a reachable trigger.
+
+## 11. Resolved in adversarial review
+
+### First pass (2026-06-09)
+
+- The draft named a "Sandbox controller" as the writer of the `SOPeercredDisabled` condition and the WarmPoolController as the writer of `SecurityDegradedMode`. The spec defines no Sandbox controller; §4.6.3 assigns both `Sandbox.status.*` and `SandboxTemplate.status.*` to the WarmPoolController, and the Sandbox reconciler in `pkg/controller/sandbox` writes under the WarmPoolController field manager (`controller.go:621`). The design now has a single writer.
+- The draft did not flag that `spec/18_build-sequence.md:182` attributes the surfacing to the PSC in contradiction of §4.6.3. The line is corrected explicitly (Section 7.2) rather than silently.
+- The draft rendered the flag in `buildEmbedded`. The embedded model has no adapter-agent socket boundary (single process per the §4.7 table; no `--runtime-uid` rendered), so the field is now sidecar-only and rejected at registration on embedded runtimes.
+- The draft treated `pkg/apis/lenny/v1alpha1/runtime_types.go` as the field's only touch point. The store, the mirror reconciler, and the §5.1 `runtime.yaml` schema and derived-runtime inheritance table became edit sites (Sections 4.2 and 7.3). This pass recorded the mirror direction as store-to-CRD; Pass 3 corrects it to CRD-to-store.
+- The draft placed the acknowledgment in `taskPolicy` and gated it on tenancy mode. `taskPolicy` is execution-mode-specific, and the tenancy-gated webhook (`lenny-direct-mode-isolation`) is feature-gated on `features.llmProxy`, so the gate could vanish in non-proxy deployments. The acknowledgment is now a pool-level flag checked unconditionally, with a cross-check on runtime updates the draft lacked.
+- The draft left the §4.7 line 888 deployer alert unshipped, and the stale sentence in `docs/operator-guide/security.md` untouched. Both are now in scope.
+- Two style violations ("is replaced, not retained alongside the field"; "a real producer") were reworded per `doc-style.md`.
+
+### Second pass (2026-06-09)
+
+- The first revision assigned the acknowledgment check to `lenny-pool-config-validator` as a "CRD defense-in-depth layer". The webhook is a pure in-object decision package with DNS-only egress (§18 line 200; §13.2 line 221; `validator.go` holds no API client), so it cannot resolve a pool's `runtimeRef` to read `requireSoPeercred`. Enforcement moved to the gateway pool admission path, the same home as `allowStandardIsolation`, which is likewise absent from both CRD types and has no webhook backstop (Section 4.7).
+- The first revision retargeted §18 line 126 at `Runtime.spec.requireSoPeercred`. Line 126 is a Phase 2 deliverable, and Phase 2 predates the Runtime CRD and the registration path; the line now references the adapter's `--require-so-peercred` process flag, and the activation vertical is added to the Phase 3 bullet at line 182 (Section 7.2).
+- The first revision reverted `SecurityDegradedMode` to `False` as soon as the runtime field returned to `true`, opening a window where a pool reports a clean posture while pods rendered in nonce-only mode still serve. The condition now stays `True` until the last nonce-only `Sandbox` is replaced (Section 4.5).
+- The first revision named `docs/alerting/rules.yaml` as the alert's edit site. The §16.5 catalog is single-sourced in `pkg/alerting/rules` and rendered by `make generate` (header of `charts/lenny/templates/prometheusrule.yaml`); the rule is now added at the source (Sections 5.3 and 7.10).
+- The first revision proposed shipping an alert on a metric the §16 inventory does not list. Both `sopeercred` counters are absent from §16.1 (a pre-existing omission); the metric rows and the §16.5 alert row are now edit sites (Section 7.5).
+- The first revision named only the §5.1 inheritance table for the derived-runtime classification; the "Never overridable on derived runtime" prose list at line 170 is a second edit site (Section 7.3).
+
+### Pass 3 (2026-06-09, automated)
+
+- The second revision reversed the Runtime mirror direction, describing the CRD as a mirror the reconciler maintains from the Postgres store. The implemented reconciler does the opposite: it watches Runtime CRDs and mirrors each one into the Postgres registry (`pkg/controller/runtime/controller.go:3-8`, `mirror` at `:156`), its only CRD writes are the finalizer and the `Registered` status condition, and the admin API writes only the store with no Kubernetes client (`pkg/gateway/admin/runtimes.go`). As written, an admin-API-registered `requireSoPeercred: false` would never have reached the Runtime CR the Sandbox and WarmPool reconcilers resolve (`pkg/controller/sandbox/controller.go:360-363`, `pkg/controller/warmpool/controller.go:722-723`), leaving nonce-only mode unreachable. Sections 3, 4.2, 7.2, 9, and 13 now describe the CRD as the declarative source with a CRD-to-store mirror, and activation is scoped to CRD-registered runtimes (a store-only runtime cannot back pod creation, so the scoping excludes no reachable path).
+- The second revision placed the gateway-side artifacts (registration validation and the `acknowledgeNonceOnlyAuth` pool gate) in the Phase 3 bullet at `spec/18:182`. Phase 3 (§18.9) ships no gateway admin or registration surface; the minimal gateway binary is Phase 4 (§18.11 line 237) and the admin API for runtimes and pools is Phase 4.5 (§18.12 lines 250-251), so the bullet depended on later-phase artifacts, the same ordering rule the revision itself applied to line 126. Section 7.2 now keeps the controller-side work in the Phase 3 bullet and adds the gateway-side pieces to the Phase 4.5 deliverables list at line 250.
+- The second revision assigned the sidecar-only rejection to the gateway, which has no `deploymentModel` input to check: the field is CRD-only with no registry counterpart (`pkg/controller/runtime/controller.go:207-214`), appears nowhere in `pkg/gateway`, and is absent from the §5.1 `runtime.yaml` schema. The constraint moved to the RuntimeReconciler's permanent-error path (`Registered=False`/`InvalidRuntime`, `controller.go:67-72`), where the deployment model is visible; the derived-runtime constraint became structural (derivation is registry-side, the admin payload does not model the field, and the §5.1 merge inherits the base value) (Sections 4.1, 7.1, 7.3, and 9).
+- The second revision made the acknowledgment gate gateway-only, but the Runtime CRD is itself a registration surface: a CR applied with `kubectl` or Helm bypasses the gateway, the mirror validates only the name (`controller.go:156-159`), and the controllers consume the CR directly, so a CR write could have flipped every referencing pool into nonce-only mode with no acknowledgment. The gate gains a second enforcement point on the activation path: the PoolScalingController mirrors `acknowledgeNonceOnlyAuth` onto `SandboxTemplate.spec` (the §4.6.3 Postgres-to-CRD channel for pool configuration, `spec/04:568`), and the WarmPoolController renders nonce-only mode only for acknowledged pools (Sections 4.3, 4.5, and 4.7). The runtime-update cross-check and the "both checks evaluate the same Postgres state" claim were replaced by the render-gate semantics, which cover CR-applied flips.
+- The second revision shipped the §16.5 alert with a runbook pointer and no runbook file. The tier-11 docs gate (`tests/tier11_docs/runbooks_test.go`, `TestAlertCatalogRunbookSlugsResolveToDocs`) fails any new alert whose runbook slug has no file under `docs/runbooks/`. The runbook page is now an edit site (Sections 5.3, 7.10, and 13).
+- The second revision defined `acknowledgeNonceOnlyAuth` in §5.3 (alongside `allowStandardIsolation` at `spec/05:648`) while the proposed §4.7 and §18 texts cross-referenced §5.2. The flag's home stays §5.3, matching the §5.1 prose that already locates `allowStandardIsolation` there, and the §4.7 and §18 replacement texts now cite `#53-isolation-profiles` (Sections 7.1, 7.2, and 7.4).
+
+### Pass 4 (2026-06-09, automated)
+
+- The third revision's Section 6 summary enumerated only the Runtime and SandboxTemplate fields while Sections 4.3 and 13 required a third CRD field, the `Sandbox.spec` carrier the WarmPoolController writes with the resolved render decision and the Sandbox reconciler reads into `podspec.Inputs`. An implementer following the summary would have shipped a §4.3 render flow with no data source for the per-Sandbox decision. The summary now lists every new spec field, and the carrier is named concretely as `Sandbox.spec.requireSoPeercred` (Sections 4.3, 6, and 13).
+- The third revision added `requireSoPeercred` to the §5.1 `runtime.yaml` example while §5.1 frames registration as admin-API ("All runtimes are registered via the admin API as static configuration", `spec/05:5`) and the admin create handler decodes without `DisallowUnknownFields` (`pkg/gateway/admin/runtimes.go:756`), so a §5.1-conformant admin registration carrying the field would be silently dropped and the runtime would run with the default of `true`; the CRD-only scoping decided in Section 4.2 appeared in no proposed spec edit. The proposed §4.7 and §5.1 texts now state that the field is settable only through Runtime CRD registration and that an admin-API-registered runtime runs with the default of `true` (Sections 4.2, 7.1, and 7.3).
+- The third revision defined the bundled §16.5 alert on `lenny_adapter_sopeercred_disabled_total`, which no spec-defined evaluation surface can collect: the adapter exposes no metrics listener (`pkg/adapter/metrics.go:12-14`), the §16.9 canonical scrape set (`spec/16:722`) and the §13.2 NET-045 monitoring ingress (`spec/13:228`) cover only `lenny-system` components, and the gateway's in-process fallback reads only the gateway registry with "does not fire" as its failure mode (`pkg/alerting/inproceval/inproceval.go:26-27`), so the rendered rule would have evaluated an empty vector forever. The bundled rule now fires on a new WarmPoolController gauge, `lenny_pool_security_degraded == 1`, published in the same reconcile step that writes the pool condition per the `lenny_pool_warming_up` precedent (`pkg/controller/warmpool/warming_meter.go:27`, `controller.go:829-832`); the controller is in the canonical scrape set, and the adapter-counter MUST-alert remains a deployer-side obligation that applies when a deployer wires an adapter scrape target (Sections 5.1, 5.3, 7.1, 7.5, 9, and 13).
+
+### Pass 5 (2026-06-09, automated)
+
+- The fourth revision scoped the activation field to CRD registration while leaving §5.1 line 5 unedited ("All runtimes are registered via the admin API as static configuration", `spec/05:5`). The applied §5.1 would have asserted an admin-API-only registration path in the same section that declares the field settable only through CRD registration, and the RuntimeReconciler the proposed §4.7 and §18 texts assign validation and mirror duties to had no defining spec anchor (no spec file names the component, the §4.6.3 ownership table has no Runtime row, and §18 schedules no RuntimeReconciler deliverable). Line 5 is now an edit site whose replacement names both registration surfaces and the RuntimeReconciler, matching the code's own §5.1 attribution (`pkg/controller/runtime/controller.go:3`) (Sections 4.2, 7.3, and 13).
+- The fourth revision added the gauge, the adapter counters, and the bundled warning rule to the spec inventories without touching their docs mirrors. `docs/reference/metrics.md` claims complete coverage of platform metrics (line 11), carries adapter metrics and manual alert tables, and has no generator, so the applied platform would have emitted a metric and shipped a bundled alert the page omits; the alert tables in `docs/operator-guide/observability.md` and the alert-to-runbook map in `docs/runbooks/index.md` (whose header promises a runbook for every alert in the Metrics Reference) had the same gap. All three pages are now edit sites (Sections 7.10 and 13).
+- The fourth revision defined the embedded-runtime rejection with two different predicates: Sections 4.1 and 7.1 rejected any embedded runtime carrying the field, while the Section 7.7 CRD comment and the Section 9 tests rejected only an explicit `false`, so the reachable input of an embedded runtime with explicit `requireSoPeercred: true` (the field is `*bool`) had opposite outcomes in two normative texts. The false-only predicate is now used in all four places, because an explicit `true` is identical to the default and activates nothing, so rejecting it would add a failure mode with no security effect; the rejection message names `requireSoPeercred: false` accordingly (Sections 2, 4.1, 7.1, and 7.2).
+
+### Pass 6 (2026-06-09, automated)
+
+- The fifth revision's Section 7.8 constant comment defined `SecurityDegradedMode` as marking any pool whose runtime sets `requireSoPeercred: false`, dropping the acknowledgment conjunct that every other normative text carries: Section 4.5 gives the unacknowledged pool no condition, the Section 5.2 table and the Section 9 tests state the two-part predicate, and the proposed §4.7 text ties the condition writes to the acknowledgment-gated render. The comment is the only in-code definition of the condition's semantics, so an implementer following it would have marked unacknowledged pools degraded after a CR-applied runtime flip, the exact input the §4.7 render gate keeps at full enforcement, and would have failed the Section 9 test. The comment now states the acknowledged-render predicate used everywhere else (Section 7.8).
+- The fifth revision's surfacing predicate carried no deployment-model qualifier, so the condition path fired for a configuration the proposal declares inert: an acknowledged pool referencing an embedded runtime CR that a `kubectl` edit flips to `requireSoPeercred: false`. The RuntimeReconciler rejects the flipped CR without mirroring it, but the CR persists, the WarmPoolController reads the Runtime CR directly during pool reconciliation (`pkg/controller/warmpool/controller.go:722-723`), and nothing rejects a superfluous acknowledgment (the `allowStandardIsolation` gate is likewise one-directional, `pkg/gateway/poolstore/poolstore.go:769-770`). The unqualified trigger would have set `SecurityDegradedMode=True`, published the gauge, and fired the bundled alert on a pool running zero nonce-only pods (`buildEmbedded` renders no adapter container, `pkg/controller/sandbox/podspec/podspec.go:560`), contradicting the condition's defined meaning (`spec/13_security-model.md:14`), and the Section 4.5 revert rule would have latched the condition while the invalid CR carried `false`. The trigger in Sections 4.5 and 5.2, the Section 4.3 carrier population, the proposed §4.7 activation sentence, and the Section 7.8 comment now require a `deploymentModel: sidecar` runtime, and Section 9 gains the negative test: an acknowledged pool whose embedded runtime CR carries `requireSoPeercred: false` renders no flag, gets no condition, and publishes gauge `0` (Sections 4.1, 4.3, 4.5, 5.2, 7.1, 7.8, 9, and 13).
+
+## 12. Resolved decision
+
+**Condition object for `SOPeercredDisabled`: the `Sandbox` status.** Resolved at sign-off (2026-06-09). The `Sandbox` status is the §4.6.3-owned object the pool surfacing already watches, the write requires no new RBAC, and every existing degraded-state condition (`Degraded`, `PoolWarmingUp`, `ConcurrentWorkspaceCredentialSharing`) lives on a Lenny CRD, so the choice extends the established pattern. The current §4.7 wording says "the pod object"; the Section 7.1 edit replaces it.
+
+The rejected alternative was to additionally write the condition on the core Pod object for `kubectl describe pod` visibility. It would require a `pods/status` patch grant that no Lenny controller holds today and that Kubernetes cannot scope to conditions, it would add a second writer on an object outside the §4.6.3 SSA ownership scheme, and it would introduce a drift mode between the two copies of the same fact, while the pool surfacing and the alert pipeline read the `Sandbox` copy either way. A creation-time pod label was also considered for `kubectl`-level visibility and was left out of scope; the pool condition and the `lenny_pool_security_degraded` gauge cover the operator-facing surfacing.
+
+## 13. Files touched on application
+
+- `spec/04_system-components.md` (§4.7 lines 877, 879, 885-888).
+- `spec/05_runtime-registry-and-pool-model.md` (§5.1 registration sentence at line 5, `runtime.yaml` schema, line 170 prose list, and inheritance table; §5.3 pool acknowledgment).
+- `spec/16_observability.md` (§16.1 metric rows; §16.5 alert row).
+- `spec/18_build-sequence.md` (lines 126 and 182, and the Phase 4.5 deliverables list at line 250).
+- `pkg/apis/lenny/v1alpha1` (the `Runtime.spec.requireSoPeercred` field, the `SandboxTemplate.spec.acknowledgeNonceOnlyAuth` field, the `Sandbox.spec.requireSoPeercred` carrier for the resolved render decision, and the condition-type constants).
+- `pkg/controller/runtime/controller.go` (validate the sidecar-only constraint on the permanent-error path; mirror the field CRD-to-store in `applyCRDFields`).
+- `pkg/gateway/runtimestore` (the `RequireSoPeercred` field, the Postgres schema column, and the Inherited rule in `merge.go`). The admin runtime payload is unchanged; the field is CRD-owned (Section 4.2).
+- `pkg/gateway/poolstore` and `pkg/gateway/admin/pools.go` (acknowledgment flag storage and gate, at create and update).
+- `pkg/controller/poolscaling` (mirror the acknowledgment from the Postgres pool definition onto `SandboxTemplate.spec`).
+- `pkg/controller/sandbox/podspec/podspec.go` (`Inputs` field and render in `buildSidecar`).
+- `pkg/controller/sandbox/controller.go` (populate `Inputs.RequireSoPeercred` from the `Sandbox.spec.requireSoPeercred` carrier; write the `SOPeercredDisabled` condition).
+- `pkg/controller/warmpool/` (resolve the runtime field and the deployment model with the acknowledgment at Sandbox creation; write and revert the `SecurityDegradedMode` condition with the Section 4.5 semantics; publish the `lenny_pool_security_degraded` gauge alongside the condition).
+- `pkg/alerting/rules` plus `make generate` outputs (`charts/lenny/files/alerting-rules.yaml` and rendered copies).
+- `docs/runbooks/<slug>.md` (the runbook page for the new alert, Section 7.10).
+- `docs/reference/metrics.md` (metric inventory rows and the "Warning alerts" row, Section 7.10).
+- `docs/operator-guide/observability.md` (the "Warning Alerts" table row, Section 7.10).
+- `docs/runbooks/index.md` (the alert-to-runbook row, Section 7.10).
+- `docs/operator-guide/security.md` (Section 7.10).
+- CRD manifests regenerated for the new Runtime, SandboxTemplate, and Sandbox fields, plus tests per Section 9.
