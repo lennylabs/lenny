@@ -16513,7 +16513,7 @@ Also missing per §11.2: "On Redis restart, the gateway rehydrates per-tenant st
 
 **Resolution (2599ada3):** The §12.5 cataloging decorator now issues the §11 line 37 storage-quota decrement: on `SoftDeleteSession` (the §7.1 retention-GC path), `DeleteBySession` (the §12.8 erasure path), and single-object `SoftDelete`, it sums the `artifact_size_bytes` of the rows it transitions `live → soft_deleted` and calls `QuotaReleaser.Adjust(ctx, tenant, -bytes)` **after** the catalog rows commit with `deleted_at` set, honoring the spec's double-decrement ordering requirement. The decrement is keyed to the catalog's single-writer `live` guard, so a replayed sweep does not double-release. For Redis-restart recovery, new `storagequota.Counter.Set` (absolute write, clamped at zero) + `storagequota.Rehydrate` reconstruct each tenant's counter from `artifactcatalog.SumLiveBytes` (the `SUM(artifact_size_bytes) WHERE state='live'` total); `lenny-gateway` installs the releaser via `SetQuotaReleaser` and runs the rehydration sweep at startup before the listener accepts traffic. The `QuotaReleaser` seam keeps the blobstore layer free of a gateway import. Tier-1 tests cover GC/erasure/single-object decrements, idempotency, the no-releaser path, `Set` clamping, and per-tenant rehydration with error collection.
 
-### - [ ] F-11.2.10 — Postgres `billing_seq_{tenant_id}` sequence object is not used; provisional renumber-at-flush relies on table-MAX [High] — OPEN
+### - [ ] F-11.2.10 — Postgres `billing_seq_{tenant_id}` sequence object is not used; provisional renumber-at-flush relies on table-MAX [High] — DEFERRED
 
 Spec §11.2.1 "Sequencing authority": "The `sequence_number` is assigned by a Postgres sequence (`billing_seq_{tenant_id}`) — a dedicated per-tenant sequence object. Gateway replicas call `nextval('billing_seq_{tenant_id}')` inside the EventStore INSERT transaction; this guarantees monotonicity across replicas."
 
@@ -16531,6 +16531,8 @@ The implementation derives the next sequence with `MAX(sequence_number) + 1` und
 This is a normative deviation from the cited "sequencing authority" mechanism.
 
 **Deferred (this batch):** Literal per-tenant `billing_seq_{tenant_id}` sequence objects are infeasible across the §10.2 tenant-id space and carry a least-privilege cost that the current mechanism avoids: (1) §10.2 tenant ids match `^[a-zA-Z0-9_-]{1,128}$` (up to 128 bytes), while Postgres silently truncates identifiers to 63 bytes (NAMEDATALEN−1), so `billing_seq_`+tenant_id collides for any two tenant ids sharing a 51-char prefix — a real cross-tenant sequence-corruption hazard; (2) per-tenant sequence creation is runtime DDL by the connecting role, which would require granting `CREATE ON SCHEMA` to the least-privilege `lenny_app` role. The current advisory-lock + `MAX(sequence_number)+1` already delivers the spec's observable contract (cross-replica monotonic per-tenant sequence with gap detection driving replay), and the two cited divergences are theoretical in v1: `billing_events` is append-only with no `TRUNCATE` path and no partition rotation implemented, so the MAX-collision scenario cannot arise. Per rule B, this reports the spec/identifier-limit tension rather than introducing a silently-colliding named primitive; revisiting requires either a §10.2 tenant-id length cap that keeps the literal name ≤ 63 bytes or a spec amendment permitting a safe-derived per-tenant sequence name.
+
+**Heading reconciled (this batch, stale-OPEN → DEFERRED).** Driver reopened the heading; the body's conclusion is unchanged and re-verified: the literal §11.2.1 `billing_seq_{tenant_id}` Postgres sequence object collides under the 63-byte NAMEDATALEN limit for §10.2 tenant ids up to 128 bytes (two ids sharing a 51-char prefix map to the same truncated sequence name — a cross-tenant corruption hazard), and per-tenant runtime DDL would require granting `CREATE ON SCHEMA` to `lenny_app`. The advisory-lock + `MAX(sequence_number)+1` path already delivers the observable contract (cross-replica monotonic per-tenant sequence with gap detection). Required spec change: a §10.2 tenant-id length cap keeping the literal name ≤ 63 bytes, or a §11.2.1 amendment permitting a safe-derived sequence name. Heading flipped to match the body.
 
 ### - [x] F-11.2.11 — Operator-initiated billing-correction approvals persist only in memory [Medium] — CLOSED
 
@@ -16620,7 +16622,7 @@ with a `Retry-After` header. The fixed-vs-sliding-window distinction is the
 platform-wide F-11.2.3 concern; the eval limiter shares the platform's
 counter so it inherits that refinement when it lands.
 
-### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — OPEN
+### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — DEFERRED
 
 Spec §11.2 direct-mode residual-risk control: "Deployers should monitor `lenny_gateway_token_usage_anomaly_total` (counter, labeled by `session_id` and `tenant_id`) — the gateway emits this metric when a session's `ReportUsage` delta is zero or implausibly small relative to LLM call frequency."
 
@@ -16636,6 +16638,8 @@ two-sided "direct-mode usage-pull" vertical named in F-15.3.7 (adapter
 which has not begun. Registering the counter alone with no real emit site would
 be dead config (rule "no dead config"). Deferred on the direct-mode usage-pull
 workstream; the counter and its >3-zero-delta detector land with the poller.
+
+**Heading reconciled + deferral reason corrected (this batch) — DEFERRED on a required spec change (rule P).** The anomaly metric's §11.2-line-42 firing condition counts per-session direct-mode `ReportUsage` deltas (">3 zero-token reports while LLM proxy activity is absent"). That signal exists only when the direct-mode `ReportUsage` surface carries real token counts, which it cannot until §15.4.1 defines a runtime→adapter usage frame — see F-15.3.7's corrected analysis (the agent pod egresses to the provider directly in direct mode per §13.2, and §15.4.1 has no usage outbound message, so the adapter has no spec-grounded token source). This is the same required spec change, not an "unbuilt workstream": the counter and its >3-zero-delta detector land with the spec-defined direct-mode usage source. Heading flipped OPEN → DEFERRED.
 
 ### - [x] F-11.2.21 — Mid-session budget enforcement (gateway terminates over-budget session) is not implemented [Medium] — CLOSED
 
@@ -20454,7 +20458,7 @@ The six specifically required coverage points are all absent:
 
 **Resolution:** `tests/tier4_integration/redis_tenant_isolation_test.go` adds `TestRedisTenantKeyIsolation` (build tag `integration`), one subtest per mandated coverage point against the real stores over a miniredis-backed client with the §12.4 Guard installed: (a) tenant-B `DLQ.DrainAll` of tenant-A's key is rejected with `ErrCrossTenant`; (b) tenant-B `DLQ.SweepExpired` on its own key returns zero of A's messages; (c) tenant-B `RedisInbox.Drain` of A's key is rejected and B's own inbox length is zero; (d) a tenant-B `semanticcache` Get for the identical query misses and a B-scoped Get of A's key is rejected; (e) the delegation-budget ownership gate rejects a B-scoped `{root-A}:dlg:tokens` (budget_reserve target) and `{root-A}:dlg:tree_memory` (budget_return target) and admits the owning scope — full `budget_reserve.lua`/`budget_return.lua` script coverage tracks F-12.4.8, which has not yet shipped the scripts; (f) a tenant-B `EventBus.Publish` on tenant-A's channel is rejected at the `PUBLISH` command. Depends on F-12.4.3 (the Guard wrapper). F-12.4.4.
 
-### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — OPEN
+### - [ ] F-12.4.5 — The §12.4 key-prefix table includes prefixes the gateway does not implement [High] — DEFERRED
 
 The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores must use. The implementation diverges in two directions:
 
@@ -20488,6 +20492,8 @@ The cumulative effect is that the §12.4 table is no longer the authoritative ke
 **Reopened 2026-06-07 — prior deferral:** the implementation half of this finding is now fully resolved — every spec-listed prefix that this finding flagged as missing has a backing implementation: the DLQ and durable inbox (`pkg/gateway/sessioninbox`, F-12.4.6/F-7.2.4), the experiment sticky cache (`pkg/gateway/experimentsticky`, F-12.4.7), the slot-counter `rehydrated`/`rehydrating` sentinels (`pkg/gateway/slotcounter`, F-12.4.19/F-5.2.4), and the `{root_session_id}:dlg:*` budget keys (`pkg/gateway/treebudget`, F-12.4.18). The residual half — implementation prefixes not declared in the §12.4 table (`rl:`, `sq:`, `pg:`, `cb:events`), and the observation that `rl:`/`sq:` do not lead with `t:{tenant_id}:` — splits into (a) a §12.4 spec-table documentation addition, which is outside the editable code surface (the spec is the source of truth; consistent with the verify-close of F-12.4.25's undocumented `cb:events` channel), and (b) a key-naming migration that would need a tenant-isolation review and is not clearly mandated against the current spec table. Deferred pending a spec-table reconciliation; the High-severity missing-implementation concern is no longer present.
 
 **Deferred (rule B — spec edit required).** Re-verified this batch: every prefix the finding flagged as missing implementation now has a backing store (DLQ/inbox `pkg/gateway/sessioninbox`, sticky cache `pkg/gateway/experimentsticky`, slot-counter rehydration sentinels `pkg/gateway/slotcounter`, `dlg:*` budget keys `pkg/gateway/treebudget`), so the High-severity half is fully resolved. The only residual is (a) adding the undeclared implementation prefixes (`rl:`, `sq:`, `pg:`, `cb:events`) to the canonical §12.4 key-prefix table — a `spec/` edit that rule B forbids from the build loop — and (b) an unmandated key-naming migration to make `rl:`/`sq:` lead with `t:{tenant_id}:`, which is not required by the current spec table (the table already lists platform-scoped non-tenant-prefixed keys such as `lenny:pod:{pod_id}:active_slots` and `cb:{name}`, so a non-tenant-leading prefix is not a violation). Both actionable residuals require a spec-side decision; deferred consistent with the F-12.4.25 verify-close of the undocumented `cb:events` channel.
+
+**Heading reconciled (this batch, stale-OPEN → DEFERRED).** Driver reopened the heading; the body's conclusion is unchanged. The High-severity missing-implementation half is fully resolved (re-confirmed every flagged store exists); the lone residual is the §12.4 key-prefix table edit, which rule B forbids. Required spec change: add `rl:`, `sq:`, `pg:`, `cb:events` to the §12.4 canonical key-prefix table. Heading flipped to match.
 
 ### - [x] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — CLOSED
 
@@ -20697,7 +20703,7 @@ The Lua script in `pkg/gateway/slotcounter/slotcounter.go:58-64` reads `KEYS[1]`
 
 - **Resolution:** Closed by F-5.2.4. `reserveScript` now consults the `lenny:pod:{pod}:rehydrated` flag (`REHYDRATE_REQUIRED` sentinel on absence), the `:rehydrating` `SET NX` lock serializes the seed across replicas, `SessionStore.GetActiveSlotsByPod` supplies the count, and `cmd/lenny-gateway` wires the source into the Counter. Both sentinel keys are now load-bearing. Commit 8412834a.
 
-### - [ ] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — OPEN
+### - [x] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — CLOSED
 
 Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers, the gateway reconciles quota counters using a two-source MAX rule: for each active session and tenant counter, the gateway reads (1) the last Postgres checkpoint value and (2) the in-memory counter accumulated during the fail-open window on the recovering replica, then writes `MAX(postgres_checkpoint, in_memory_counter)` as the authoritative Redis value."
 
@@ -20712,6 +20718,8 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (heading reconciled to match the note above; re-verified):** The latest re-verification already concludes DEFERRED but the heading still read `— OPEN`; flipping it to match. Re-confirmed this session: source (1) (the F-11.2.4 `token_usage_checkpoint` table) and the recovery-edge reconciler (`pkg/gateway/quotacheckpoint.Reconciler` running the §12.4 two-source MAX rule on the Redis-recovery edge) are built, and an empty-Redis restart already restores each counter from its checkpoint. The sole residual is source (2): the per-(tenant, user) **token** in-memory accumulation kept during a fail-open window in the proxy-mode usage-recording path — distinct from the `pkg/gateway/failopen` request-rate backstop, which is a request counter, not a token counter. That proxy-mode outage token accumulator is unbuilt; deferred on it per Rule P (the recovery reconciler is a thin wire-up once the accumulator exists).
 
 **Marker reconciled (this batch).** Heading had reverted to `— OPEN` (driver reopen). Re-confirmed source (1) (the F-11.2.4 `token_usage_checkpoint` table) and the recovery-edge `quotacheckpoint.Reconciler` (two-source MAX rule on the Redis-recovery edge) are built and an empty-Redis restart already restores from the checkpoint; the sole residual is source (2), the per-(tenant,user) token in-memory accumulator kept during a fail-open window in the proxy-mode usage-recording path (distinct from the `pkg/gateway/failopen` request-rate backstop), which is unbuilt. Heading flipped OPEN → DEFERRED to match.
+
+**Resolution (commit `ed74bfa0`):** Built source (2). New `pkg/gateway/quotafailopen.Accumulator` is a cumulative per-(tenant, user, period) fixed-window token counter; the proxy usage recorder (`recordQuota`, Redis-counter mode) folds every proxy-extracted token delta into it via `setFailOpenAccumulator`, so a Redis write dropped during a fail-open window is still captured in memory. `quotacheckpoint.Service` gained the `FailOpen *quotafailopen.Accumulator` seam: `restoreRow` seeds the §11.2 line 48 MAX with `MAX(postgres_checkpoint, in_memory_failopen)` so the Restorer writes `MAX(redis_current, postgres_checkpoint, in_memory_failopen)`, and a new fail-open-only pass over `Accumulator.Snapshot(now)` restores windows that opened entirely during the outage (no checkpoint row to drive the row-based pass), deduped against the rows already restored. Wired in `cmd/lenny-gateway` (constructed in the Redis-counter mode, passed to both the recorder and the checkpoint Service, swept on a 1-minute window-roll cadence). The accumulator self-skips the rolling period and resets on window roll. 8 tier-1 accumulator tests + 5 reconcile tests (checkpoint+failopen MAX, fail-open-only window, no-double-restore, per-tenant scope, nil-accumulator no-op) + 2 recorder-feed tests.
 
 ### - [x] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — CLOSED
 
@@ -27770,7 +27778,7 @@ and the `LeaseExtender` together.
 
 **Re-verified again (this batch) — heading marker reconciled; one premise corrected.** The "no production `gatewaycontrol.Dial`/`New` caller" half is now stale: `cmd/lenny-adapter/main.go:286` dials `gatewaycontrol.Dial` and assigns the resulting client to `adapterSrv.PlatformForwarder` / `ConnectorForwarder` for the §9.1/§9.3 platform-tool and connector forwarding. The §8.6 blocker nevertheless holds: `HandleBudgetExhaustion` still has **zero** production callers (`grep` returns only the method, the `ErrLeaseExtenderUnset` seam guard, and doc comments), because the adapter hosts no in-pod §4.9 LLM-proxy budget-rejection detector to invoke it — the proxy lives in the gateway. Assigning `Server.LeaseExtender = gwClient` would therefore still produce dead config (a wired seam nothing fires), the exact Rule-P situation. Stays DEFERRED on the adapter-resident §4.9 LLM-proxy / budget-rejection detector workstream (F-8.6.6); the heading `— OPEN` marker was stale and is now reconciled to `— DEFERRED`.
 
-### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — OPEN
+### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — DEFERRED
 
 §4.7 line 637: "Report LLM token counts extracted from provider responses;
 gateway increments quota counters and persists to Postgres on the next
@@ -27814,6 +27822,8 @@ poll with no lifecycle management. Deferred on the direct-mode usage-pull
 workstream (also blocks F-11.2.20).
 
 **Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** The body's re-verification already concluded DEFERRED; the heading was left OPEN. Flipped now. Re-confirmed this session: the only `ReportUsage` callers are the `adapterclient.Client` wrapper itself (`client.go:599,628`); no `cmd/` or `pkg/gateway` production poller exists, and `cmd/lenny-adapter` sets no `Server.Usage`. Blocker unchanged.
+
+**Re-verified + deferral reason corrected (this batch) — DEFERRED on a required spec change (rule P).** The prior notes deferred on "the adapter direct-mode `UsageMeter` is an unbuilt workstream," which rule P rejects as a defer reason. Re-reading §15.4.1 and §13.2 shows the true blocker is a genuine spec gap: in direct mode the agent pod egresses to the LLM provider directly (the §13.2 `allow-pod-egress-llm-proxy` policy applies **only** to proxy-mode pools; the base policy allows only the gRPC control channel + DNS), so the runtime — not the adapter — is the sole observer of provider responses and their token counts. The §15.4.1 adapter↔binary protocol defines **no** runtime→adapter usage/token outbound frame (the outbound types are `response`, `tool_call`, `heartbeat_ack`, `status`, `set_tracing_context`). There is therefore no spec-defined mechanism by which the adapter could "extract token counts from LLM provider responses" (§4.7 line 637 / §11.2 line 42) in direct mode: a `UsageMeter` built today would have no spec-grounded source to read. The gateway-side poll loop is buildable (the gateway retains the per-session adapter `Client` on `podsession.BindResult.Adapter`, so the F-15.3.7 "the gateway retains no pollable client" premise is stale), but polling a handler that can only return `Unimplemented` for every shipped runtime is dead config. **Required spec change:** add a runtime→adapter usage-report frame to the §15.4.1 outbound message table (or define the direct-mode token-extraction mechanism in §4.7/§11.2). Until §15.4.1 grows that frame, neither the adapter meter nor the gateway poll can carry real data.
 
 ### - [x] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — CLOSED
 
@@ -42097,13 +42107,15 @@ Implementation: `pkg/gateway/admin/eventbuffer.go` lines 74–77 passes `q.Get("
 
 **Resolution (662adf20):** `EventFilter` now exposes `Matches(OperationalEvent)` which splits each field on commas (trimming whitespace, ignoring empty tokens) and matches the §25.2 union per dimension; the two dimensions still intersect. The duplicate `matchFilter` in `pkg/ops/events/service.go` was deleted and delegates to `EventFilter.Matches`, so the gateway buffer and the lenny-ops stream share one matcher. The admin/poll handlers pass the raw CSV query string unchanged. Tier-1 (union, whitespace, all-empty CSV, single-value no-regression, intersection) plus a tier-2 HTTP test for the exact `?severity=critical,warning&eventType=...` scenario.
 
-### - [ ] F-25.3.16 — `/v1/admin/recommendations` does not surface the `degradation` / `dataAvailable` post-restart contract. (Medium) [Medium] — OPEN
+### - [ ] F-25.3.16 — `/v1/admin/recommendations` does not surface the `degradation` / `dataAvailable` post-restart contract. (Medium) [Medium] — DEFERRED
 
 Spec: lines 588–597, 606–608. After a gateway restart, ring buffers are empty and recommendations include `"confidence": 0.0` and `"dataAvailable": false`. "No recommendations are generated for categories with insufficient data."
 
 Implementation: `pkg/gateway/recommendations/service.go` line 94 — `if !e.Triggered { continue }` skips the recommendation entirely when its evaluator returns `Triggered: false`. The post-restart contract per the spec is that the rule emits a recommendation tagged `confidence: 0` / `dataAvailable: false` so an agent can see the rule exists but is starved of data. The implementation's `DataAvailable: false` path returns no recommendation at all (lines 122/132/142/152/162/172 all return zero-value `Evaluation{}` when the metric is missing). Consequence: an agent cannot distinguish "no warm-pool issue" from "warm-pool rule cannot evaluate because Prometheus / ring buffer is empty"; the spec's "I know the rule ran but it had no data" signal is lost.
 
 **Deferred (this batch):** the spec is internally contradictory here and resolving it would require a spec change (which a hook forbids). Line 589 says post-restart empty windows yield recommendations with `confidence: 0.0` and `dataAvailable: false` (the finding's reading — emit a degraded entry). Line 608 says "No recommendations are generated for categories with insufficient data" (no entry), and the committed `TestGetRecommendationsEmptyWhenNoData` already encodes that no-entry reading deliberately. The two cannot both hold for the metric-absent case, so implementing the finding's fix would overturn an existing test on an ambiguous basis. Unblocking this needs a spec clarification of which case ("empty window" vs "insufficient data") governs the metric-absent path; until then the no-entry behaviour stands. The §25.4 `degradation` envelope half is already present (`RecommendationsResponse.Degradation`).
+
+**Heading reconciled (this batch, stale-OPEN → DEFERRED).** Driver reopened the heading; re-confirmed the §25.3 line-589-vs-line-608 contradiction is unchanged and the implementation faithfully encodes the line-608 reading (`service.go` skips a non-`Triggered` evaluator; `TestGetRecommendationsEmptyWhenNoData` pins it). Required spec change: reconcile §25.3 line 589 (emit a degraded entry) with line 608 (emit no entry) for the metric-absent path. Heading flipped to match the body.
 
 ### - [x] F-25.3.17 — Buffer query response uses `gapDetected` at the response root, not under `pagination.gapDetected`. (Medium) [Medium] — CLOSED
 
@@ -45884,7 +45896,7 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 
 ### Findings
 
-### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — OPEN
+### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — DEFERRED
 - §26.1 catalog table (line 22) lists `chat` as **Standard**.
 - §26.7 body lists `chat` as **Full** in three places: prose line 309 ("smallest useful Full-level runtime"), Conformance level line 313 ("Full"), and YAML highlights line 322 (`integrationLevel: full`).
 - Implementation (`pkg/embedded/stack/catalog.go` line 66, `pkg/embedded/stack/catalog_test.go` lines 36–39, `pkg/compliance/reference_catalog.yaml` line 56) all hard-code `standard`, citing §26.1.
@@ -45906,6 +45918,8 @@ already correct against §26.1; no code change closes a spec-internal disagreeme
 Deferred to the spec maintainer to arbitrate §26.1 line 22 against §26.7 lines 309/313/322;
 once one gives, the catalog entry / compliance YAML / test assertion re-align in a
 trivial follow-up.
+
+**Heading reconciled (this batch, stale-OPEN → DEFERRED).** Driver reopened the heading; re-confirmed the implementation is internally consistent on `standard` (catalog.go, reference_catalog.yaml, the catalog test) and §26.7 lines 309/313/322 still say `full`. Required spec change: reconcile §26.1 line 22 (`Standard`) with §26.7 lines 309/313/322 (`Full`). No code change closes a spec-internal disagreement; heading flipped to match the body.
 
 ### - [x] F-26.7.2 — (Info) — Image tag matches §26.7 YAML highlights [Medium] — CLOSED
 `ghcr.io/lennylabs/runtime-chat:1.0.0` in `catalog.go` line 65 matches the spec line 320 image tag exactly. Digest is a placeholder per the §17.4 pattern documented in `catalog.go` lines 19–30; on first session start the gateway will fail the pull until the operator re-registers with the published digest or imports the image locally. Noted as expected behavior, not a defect.
