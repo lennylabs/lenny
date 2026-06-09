@@ -20,6 +20,7 @@
 package quotafailopen
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -211,6 +212,58 @@ func (a *Accumulator) Sweep(now time.Time) int {
 		}
 	}
 	return removed
+}
+
+// DeleteByUser drops every accumulated window for (tenantID, userID). It is
+// the §12.8 step-6 GDPR erasure of the in-memory fail-open budget source:
+// the §11.2 line-48 MAX rule folds this accumulator in (source (2)), so a
+// reconcile that ran after a user's Redis counter and Postgres checkpoint
+// were already erased would otherwise re-seed the erased user's usage back
+// into Postgres — the same post-recovery resurrection the §12.8 step-5
+// billing-buffer purge prevents. The per-tenant rollup window (userID="")
+// is preserved; only the named user's per-user windows are removed. An
+// empty scope is rejected so erasure is never treated as a wildcard
+// (§12.8 line 753). spec: §12.1 line 5; §12.8 step 6.
+func (a *Accumulator) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if a == nil {
+		return 0, nil
+	}
+	if tenantID == "" || userID == "" {
+		return 0, quotastore.ErrEmptyScope
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	removed := 0
+	for k := range a.entries {
+		if tenantOf(k) == tenantID && userOf(k) == userID {
+			delete(a.entries, k)
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// DeleteByTenant drops every accumulated window for tenantID, including the
+// per-tenant rollup. It is the §12.8 Phase-4 tenant-deletion erasure of the
+// in-memory fail-open budget source. An empty tenant id is rejected (never
+// a wildcard). spec: §12.1 line 5; §12.8 Phase 4.
+func (a *Accumulator) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if a == nil {
+		return 0, nil
+	}
+	if tenantID == "" {
+		return 0, quotastore.ErrEmptyScope
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	removed := 0
+	for k := range a.entries {
+		if tenantOf(k) == tenantID {
+			delete(a.entries, k)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 // Len reports the number of live entries. It exists for observability and

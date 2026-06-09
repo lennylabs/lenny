@@ -4925,10 +4925,15 @@ func main() {
 		// phase, so a post-erasure flush cannot re-insert the raw user_id.
 		userScoped = append(userScoped,
 			erasure.Eraser{Name: "billing_buffer", DeleteByUser: billingPipeline.PurgeStagedByUser})
-		if quotaCounter != nil {
-			// step 6: delete the user's rate-limit and budget counters.
+		// step 6: delete the user's rate-limit and budget counters across the
+		// whole §12.2 QuotaStore role — Redis counter, Postgres
+		// token_usage_checkpoint, and the in-memory fail-open accumulator —
+		// so a post-recovery reconcile cannot re-seed the erased user's usage
+		// via the §11.2 line-48 MAX rule. spec: §12.8 step 6 (Redis +
+		// Postgres); §12.2.
+		if quotaEraser := buildQuotaEraser(quotaCounter, pgPool, quotaFailOpenAccum); quotaEraser != nil {
 			userScoped = append(userScoped,
-				erasure.Eraser{Name: "quota", DeleteByUser: quotaCounter.DeleteByUser})
+				erasure.Eraser{Name: "quota", DeleteByUser: quotaEraser.DeleteByUser})
 		}
 		userScoped = append(userScoped,
 			// step 8: §9.4 MemoryStore is a §12.1 pluggable role; FromStore
@@ -5058,8 +5063,11 @@ func main() {
 		if erasureLeaseStore != nil {
 			tenantErasers = append(tenantErasers, namedTenantEraser{"leases", erasureLeaseStore.DeleteByTenant})
 		}
-		if quotaCounter != nil {
-			tenantErasers = append(tenantErasers, namedTenantEraser{"quota", quotaCounter.DeleteByTenant})
+		// §12.8 Phase 4 quota erasure spans the whole §12.2 QuotaStore role:
+		// Redis counter, Postgres token_usage_checkpoint, and the in-memory
+		// fail-open accumulator.
+		if quotaEraser := buildQuotaEraser(quotaCounter, pgPool, quotaFailOpenAccum); quotaEraser != nil {
+			tenantErasers = append(tenantErasers, namedTenantEraser{"quota", quotaEraser.DeleteByTenant})
 		}
 		if memories != nil {
 			mem := memories
