@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -241,6 +242,13 @@ type Router struct {
 	// without re-wiring the Router. A nil function reads as the empty
 	// (no-floor) default.
 	elicitationFloor func() string
+
+	// deploymentConfig backs the §16.7 deployment-transition audit emitter
+	// (POST /v1/admin/deployment/config-change). It holds the last-applied
+	// Helm deployment-scope configuration baseline the endpoint diffs each
+	// render against. A nil store leaves the route unregistered.
+	// F-8.2.5, F-9.2.10, F-17.2.8.
+	deploymentConfig deploymentconfigstore.Store
 
 	// siemConfigured mirrors whether the platform has an
 	// `audit.siem.endpoint` configured. The §11.7 compliance enforcement
@@ -561,6 +569,15 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
 			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
+		if r.deploymentConfig != nil {
+			// §16.7 deployment-transition audit emitter: the post-upgrade
+			// hook reconciles the rendered Helm deployment config against the
+			// persisted baseline and emits the gateway.*/platform.*/deployment.*
+			// transition events under the operator's identity. F-8.2.5,
+			// F-9.2.10, F-17.2.8.
+			mux.Handle("POST /v1/admin/deployment/config-change",
+				r.requireAdmin(http.HandlerFunc(r.handleDeploymentConfigChange)))
+		}
 		// §15.1 lines 818-819: platform-admin tenant suspend/resume. Suspend
 		// rejects new session creation and message injection with
 		// TENANT_SUSPENDED and drains the tenant's active sessions; resume

@@ -17,6 +17,12 @@ func TestEscalatesToOperationalStream_spec_16_7(t *testing.T) {
 		EventAuditOcsfRetranslateRequested,
 		EventAuditPartitionDropForced,
 		EventEventBusRepublishRequested,
+		// spec: §18 line 609 — the Helm deployment-transition events.
+		EventGatewayCycleDetectionModeChanged,
+		EventGatewayAllowSelfRecursionChanged,
+		EventGatewayDefaultMaxDepthChanged,
+		EventPlatformElicitationContentIntegrityFloorChanged,
+		EventTenantElicitationContentIntegrityFloorClamp,
 	}
 	for _, et := range escalating {
 		if !EscalatesToOperationalStream(et) {

@@ -610,8 +610,82 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdErasureJobs(ctx, c, args[1:], stdout, stderr)
 	case "external-adapters":
 		return cmdExternalAdapters(ctx, c, args[1:], stdout, stderr)
+	case "deployment":
+		return cmdDeployment(ctx, c, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown admin resource %q\n", args[0])
+		return 2
+	}
+}
+
+// cmdDeployment implements the §16.7 deployment-transition audit
+// reconciliation group. `sync-config` posts the rendered Helm
+// deployment-scope configuration (from a chart-rendered JSON request file)
+// to POST /v1/admin/deployment/config-change so the gateway emits the
+// gateway.*/platform.*/deployment.* transition audit events under the
+// operator's identity. It is invoked by the chart's post-upgrade hook.
+// spec: §16.7 lines 672, 676, 677, 682. F-8.2.5, F-9.2.10, F-17.2.8.
+func cmdDeployment(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: deployment requires a subcommand (sync-config)")
+		return 2
+	}
+	switch args[0] {
+	case "sync-config":
+		var fromFile string
+		// The post-upgrade hook runs from a distroless image with no shell,
+		// so --wait-timeout polls the gateway health endpoint before posting,
+		// mirroring the bootstrap readiness poll. spec: §17.6 line 421.
+		waitSeconds := 120
+		rest := args[1:]
+		for i := 0; i < len(rest); i++ {
+			switch {
+			case rest[i] == "--from-file" && i+1 < len(rest):
+				fromFile = rest[i+1]
+				i++
+			case rest[i] == "--wait-timeout" && i+1 < len(rest):
+				if n, err := strconv.Atoi(rest[i+1]); err == nil {
+					waitSeconds = n
+				}
+				i++
+			}
+		}
+		if fromFile == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: deployment sync-config requires --from-file <file>")
+			return 2
+		}
+		if waitSeconds > 0 {
+			deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
+			for {
+				if err := c.Do(ctx, "GET", "/healthz", nil, nil); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					fmt.Fprintf(stderr, "lenny-ctl: gateway not ready after %ds\n", waitSeconds)
+					return 1
+				}
+				time.Sleep(3 * time.Second)
+			}
+		}
+		raw, err := os.ReadFile(fromFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: read %s: %v\n", fromFile, err)
+			return 1
+		}
+		var body any
+		if err := yaml.Unmarshal(raw, &body); err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %s is not valid YAML or JSON: %v\n", fromFile, err)
+			return 1
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/deployment/config-change", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown deployment subcommand %q\n", args[0])
 		return 2
 	}
 }

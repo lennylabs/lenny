@@ -522,6 +522,15 @@ var operationalStreamEscalations = map[EventType]bool{
 	EventAuditOcsfRetranslateRequested:              true, // spec: §16.7 line 687
 	EventAuditPartitionDropForced:                   true, // spec: §16.7 line 687
 	EventEventBusRepublishRequested:                 true, // spec: §16.7 line 687
+	// spec: §18 line 609 — the Helm-driven deployment-transition audit
+	// events are also CloudEvent types emitted onto the §25.5 operational
+	// event stream by the responsible subsystem (the deployment-config
+	// reconciliation endpoint, F-8.2.5 / F-9.2.10 / F-17.2.8).
+	EventGatewayCycleDetectionModeChanged:                true, // spec: §16.7 line 672; §18 line 609
+	EventGatewayAllowSelfRecursionChanged:                true, // spec: §16.7 line 672
+	EventGatewayDefaultMaxDepthChanged:                   true, // spec: §16.7 line 672
+	EventPlatformElicitationContentIntegrityFloorChanged: true, // spec: §16.7 line 676; §18 line 609
+	EventTenantElicitationContentIntegrityFloorClamp:     true, // spec: §16.7 line 677; §18 line 609
 }
 
 // EscalatesToOperationalStream reports whether an audit event of type t

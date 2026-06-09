@@ -71,6 +71,9 @@
     "delegation": {
       "type": "object"
     },
+    "deploymentAudit": {
+      "type": "object"
+    },
     "egressCIDRs": {
       "type": "object"
     },

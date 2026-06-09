@@ -159,6 +159,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
+	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
@@ -4132,6 +4134,17 @@ func main() {
 		interceptors = interceptorpg.New(pgPool)
 	}
 	interceptorCooldownResolver := interceptorstore.NewCooldownResolver(interceptors)
+	// §16.7 deployment-transition audit baseline: the durable last-applied
+	// Helm deployment-scope config the post-upgrade reconciliation endpoint
+	// diffs each render against to emit the gateway.*/platform.*/deployment.*
+	// transition audit events. Postgres-backed so the baseline survives a
+	// gateway restart (the in-memory fallback re-emits a first-install event
+	// set after a restart, acceptable for the no-Postgres minimal gateway).
+	// F-8.2.5, F-9.2.10, F-17.2.8.
+	var deploymentConfig deploymentconfigstore.Store = deploymentconfigstore.NewMemory()
+	if pgPool != nil {
+		deploymentConfig = deploymentconfigpg.New(pgPool)
+	}
 	// §8.7 / §8.2 steps 3, 4: the file-export materializer pulls declared
 	// fileExport sets from the running parent pod (over the pod-session
 	// registry's adapter client), validates + persists them to the §4.5
@@ -4724,6 +4737,11 @@ func main() {
 	// floor change without re-wiring. Always wired (even when the startup
 	// flag is empty) because the reconcile may raise the floor at runtime.
 	adminRouter = adminRouter.WithElicitationFloorProvider(elicitationFloorProvider.Floor)
+	// §16.7 deployment-transition audit emitter: the post-upgrade hook
+	// reconciles the rendered Helm deployment config against the persisted
+	// baseline and emits the gateway.*/platform.*/deployment.* transition
+	// events under the operator's identity. F-8.2.5, F-9.2.10, F-17.2.8.
+	adminRouter = adminRouter.WithDeploymentConfig(deploymentConfig)
 	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap

@@ -104,6 +104,7 @@ type Root struct {
 	Ops                        Object     `json:"ops,omitempty"`
 	Security                   Object     `json:"security,omitempty"`
 	AcceptFeatureFlagDowngrade Object     `json:"acceptFeatureFlagDowngrade,omitempty"`
+	DeploymentAudit            Object     `json:"deploymentAudit,omitempty"`
 	CapacityPlanning           Object     `json:"capacityPlanning,omitempty"`
 	ResourceGovernance         Object     `json:"resourceGovernance,omitempty"`
 	Credentials                Object     `json:"credentials,omitempty"`

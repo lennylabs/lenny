@@ -3367,8 +3367,50 @@ security:
 
 # acceptFeatureFlagDowngrade explicitly acknowledges an admission-plane
 # feature-flag downgrade (§17.2). Set acceptFeatureFlagDowngrade.<flag>
-# to true to allow rendering a previously-enabled flag as false.
+# to true to allow rendering a previously-enabled flag as false. To
+# record an operator justification on the resulting
+# deployment.feature_flag_downgrade_acknowledged audit event, set the
+# value to a map instead of true:
+#   acceptFeatureFlagDowngrade:
+#     compliance:
+#       justification: "decommissioning the regulated tenant cohort"
 acceptFeatureFlagDowngrade: {}
+
+# deploymentAudit drives the §16.7 deployment-transition audit emitter.
+# The post-install/post-upgrade lenny-deployment-config-sync Job posts the
+# rendered deployment-scope configuration below to
+# POST /v1/admin/deployment/config-change, where the gateway diffs it
+# against its persisted baseline and writes the §16.7 gateway.* / platform.*
+# / deployment.* transition audit events under the operator's identity
+# (sourced from the same operator token the bootstrap Job authenticates
+# with). spec: §16.7 lines 672, 676, 677, 682; §17.2 line 86.
+deploymentAudit:
+  # enabled gates the reconciliation Job. Disable only when an external
+  # GitOps pipeline drives the endpoint itself.
+  enabled: true
+  # waitTimeoutSeconds is the gateway-readiness poll the Job runs before
+  # posting (the Job is a post-upgrade hook that may race the gateway).
+  waitTimeoutSeconds: 120
+  # cycleDetection mirrors the §8.2 gateway.cycleDetection.mode master
+  # switch (enforce | warn | permissive). justification is required when
+  # transitioning into warn or permissive.
+  cycleDetection:
+    mode: enforce
+    justification: ""
+  # allowSelfRecursion mirrors the §8.2 self-recursion master gate
+  # (yes | no). justification is required for a no→yes raise.
+  allowSelfRecursion:
+    value: "no"
+    justification: ""
+  # defaultMaxDepth mirrors the §8.2 step-5 delegation maxDepth fallback.
+  defaultMaxDepth: 10
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # capacityPlanning selects the §17.8.2 capacity tier. The chart renders
 # the tier-matched ResourceQuota defaults (resourcequota.yaml) for every

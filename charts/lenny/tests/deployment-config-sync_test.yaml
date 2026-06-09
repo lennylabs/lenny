@@ -1,0 +1,97 @@
+suite: §16.7 deployment-config-sync ConfigMap and Job
+templates:
+  - deployment-config-sync-configmap.yaml
+  - deployment-config-sync-job.yaml
+tests:
+  # spec: §16.7 lines 672, 676, 682 — the rendered request carries the
+  # deployment-scope config the gateway diffs to emit the transition events.
+  - it: renders the deployment-config request JSON with the rendered floor and cycle mode
+    template: deployment-config-sync-configmap.yaml
+    set:
+      security.elicitationContentIntegrity.floor: enforce
+      deploymentAudit.cycleDetection.mode: warn
+      deploymentAudit.cycleDetection.justification: diagnostic rollout
+      deploymentAudit.allowSelfRecursion.value: "yes"
+      deploymentAudit.allowSelfRecursion.justification: trusted recursive workflow
+      deploymentAudit.defaultMaxDepth: 12
+    asserts:
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"elicitationFloor":"enforce"'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"mode":"warn"'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"value":"yes"'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"defaultMaxDepth":12'
+
+  # spec: §16.7 line 682 — features.compliance gates two webhooks, so an
+  # acknowledged compliance downgrade expands to two acknowledgedDowngrades
+  # entries (lenny-data-residency-validator and lenny-t4-node-isolation).
+  - it: expands an acknowledged compliance downgrade to both gated webhooks
+    template: deployment-config-sync-configmap.yaml
+    set:
+      acceptFeatureFlagDowngrade:
+        compliance:
+          justification: decommissioning the regulated cohort
+    asserts:
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: 'lenny-data-residency-validator'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: 'lenny-t4-node-isolation'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"flag":"features.compliance"'
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: 'decommissioning the regulated cohort'
+
+  # A bare `true` acknowledgement still expands to the webhook entry; the
+  # justification is empty and the endpoint rejects it (the operator must
+  # supply one), mirroring the §17.2 render-time required-field discipline.
+  - it: expands a bare-true llmProxy acknowledgement to its single webhook
+    template: deployment-config-sync-configmap.yaml
+    set:
+      acceptFeatureFlagDowngrade.llmProxy: true
+    asserts:
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: 'lenny-direct-mode-isolation'
+
+  - it: emits no acknowledgedDowngrades entries by default
+    template: deployment-config-sync-configmap.yaml
+    asserts:
+      - matchRegex:
+          path: data["deployment-config.json"]
+          pattern: '"acknowledgedDowngrades":\[\]'
+
+  # The Job is a post-install/post-upgrade hook after the bootstrap Job so
+  # the gateway is Ready and the seed tenants exist before the floor-clamp
+  # fanout enumerates them.
+  - it: renders the sync Job as a post-upgrade hook after bootstrap
+    template: deployment-config-sync-job.yaml
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "11"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: sync-config
+
+  - it: omits both the Job and the ConfigMap when deploymentAudit is disabled
+    set:
+      deploymentAudit.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
