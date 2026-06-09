@@ -238,6 +238,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
 	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
@@ -3393,6 +3394,13 @@ func main() {
 	var quotaCounter *quotastore.Counter
 	var tenantLimits *policy.TenantStoreLimits
 	var quotaBudgetTracker *quotabudget.Tracker
+	// §12.4 source (2) / §11.2 line 48 in-memory fail-open token accumulator.
+	// Shared by the proxy usage recorder (which folds each proxy-extracted
+	// token delta into it) and the quotacheckpoint reconcile (which restores
+	// dropped usage from it on a Redis-recovery edge). Only meaningful in the
+	// Redis-counter mode; constructed below when quotaCounter is wired.
+	// F-12.4.20.
+	var quotaFailOpenAccum *quotafailopen.Accumulator
 
 	// §12.4 line 224 cached_replica_count, shared by the fail-open ceiling
 	// (buildFailOpenController) and the §12.4 line 268 in-memory budget
@@ -3445,6 +3453,10 @@ func main() {
 		log.Printf("lenny-gateway: §12.4 quotaEnforcementMode=in_memory_reconciled — QuotaEvaluator enforcing per-tenant token budgets from per-replica Postgres budget slices (reconcile cadence %ds); the Redis quota counters are not consulted", quotaSyncSeconds)
 	case redisClient != nil:
 		quotaCounter = quotastore.New(concernRedis.For(storerouter.RedisConcernQuota))
+		// §12.4 source (2): the Redis-counter mode keeps the in-memory
+		// fail-open accumulator so a Redis outage's dropped token writes are
+		// recoverable via the MAX-rule reconcile. F-12.4.20.
+		quotaFailOpenAccum = quotafailopen.New()
 		tenantLimits = policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
 			GlobalTokenQuotaPerWindow: *globalTokenQuota,
 			UserTokenQuotaPerWindow:   *userTokenQuota,
@@ -3485,6 +3497,9 @@ func main() {
 			}),
 			Reader:   quotaCounter,
 			Restorer: quotaCounter,
+			// §12.4 source (2): fold the in-memory fail-open accumulator into
+			// the MAX rule on the Redis-recovery edge. F-12.4.20.
+			FailOpen: quotaFailOpenAccum,
 			Tenants: quotacheckpoint.TenantExistsFunc(func(ctx context.Context, tenantID string) (bool, error) {
 				if _, err := tenants.Get(ctx, tenantID); err != nil {
 					if errors.Is(err, tenantstore.ErrNotFound) {
@@ -6085,6 +6100,10 @@ func main() {
 	// budget slice rather than the Redis counter; route the recorder's
 	// quota write to the tracker.
 	llmProxyUsage.setBudgetTracker(quotaBudgetTracker)
+	// spec: §12.4 source (2) — fold each proxy-extracted token delta into the
+	// in-memory fail-open accumulator so the Redis-recovery reconcile can
+	// restore usage a Redis write dropped during an outage. F-12.4.20.
+	llmProxyUsage.setFailOpenAccumulator(quotaFailOpenAccum)
 	// spec: §6.2 line 277 — each proxied LLM response is direct evidence of
 	// active agent work; reset the session's idle clock so a long-running
 	// streaming generation is not reaped by the §11.3 idle watchdog. F-11.3.7.
@@ -6535,6 +6554,24 @@ func main() {
 		log.Printf("lenny-gateway: §11.2 token-usage checkpoint cadence %s",
 			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second)
 		go quotaCheckpointReconciler.Run(watchdogCtx)
+	}
+
+	// §12.4 source (2): bound the in-memory fail-open accumulator by dropping
+	// entries whose window has rolled. Reads already ignore stale windows;
+	// this reclaims their memory on a low cadence. F-12.4.20.
+	if quotaFailOpenAccum != nil {
+		go func(acc *quotafailopen.Accumulator) {
+			tick := time.NewTicker(1 * time.Minute)
+			defer tick.Stop()
+			for {
+				select {
+				case <-watchdogCtx.Done():
+					return
+				case now := <-tick.C:
+					acc.Sweep(now.UTC())
+				}
+			}
+		}(quotaFailOpenAccum)
 	}
 
 	// spec: §12.4 line 268 — in the in_memory_reconciled mode, drive the

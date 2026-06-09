@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -262,6 +263,67 @@ func TestProxyUsageRecorderAdvancesQuotaCounter_Spec11_2(t *testing.T) {
 	}
 	if alice.Tenant != 150 || alice.Global != 150 {
 		t.Errorf("tenant/global rollups = (%d,%d), want 150 each", alice.Tenant, alice.Global)
+	}
+}
+
+// spec: §12.4 source (2); §11.2 line 48 — F-12.4.20: the recorder folds
+// each proxy-extracted token delta into the in-memory fail-open accumulator
+// (both the per-user window and the per-tenant rollup) so a Redis-recovery
+// reconcile can restore usage a Redis write dropped during an outage.
+func TestProxyUsageRecorderFeedsFailOpenAccumulator_Spec12_4(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_1", TenantID: "acme", UserID: "alice", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	quotaCounter := newTestQuotaCounter(t)
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec.now = func() time.Time { return now }
+	acc := quotafailopen.New()
+	rec.setFailOpenAccumulator(acc)
+
+	rec.RecordUsage(credential.Lease{
+		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
+	}, llmproxy.Usage{InputTokens: 100, OutputTokens: 30})
+
+	if got := acc.UserWindow("acme", "alice", quota.ResetHourly, now); got != 130 {
+		t.Errorf("accumulator user window = %d, want 130", got)
+	}
+	if got := acc.TenantRollup("acme", quota.ResetHourly, now); got != 130 {
+		t.Errorf("accumulator tenant rollup = %d, want 130", got)
+	}
+}
+
+// spec: §12.4 source (2) — the rolling period has no single restorable
+// window, so the recorder does not feed the accumulator for it (the
+// sliding-window counter remains the only recording surface).
+func TestProxyUsageRecorderRollingSkipsFailOpenAccumulator_Spec12_4(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_1", TenantID: "acme", UserID: "alice", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	quotaCounter := newTestQuotaCounter(t)
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
+		fakeQuotaLimits{period: quota.ResetRolling, rollingWindow: time.Hour}, nil)
+	rec.now = func() time.Time { return now }
+	acc := quotafailopen.New()
+	rec.setFailOpenAccumulator(acc)
+
+	rec.RecordUsage(credential.Lease{
+		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
+	}, llmproxy.Usage{InputTokens: 40, OutputTokens: 10})
+
+	if got := acc.Len(); got != 0 {
+		t.Errorf("accumulator entries = %d, want 0 (rolling period skipped)", got)
 	}
 }
 

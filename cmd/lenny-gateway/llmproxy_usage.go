@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
+	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
@@ -52,6 +53,13 @@ type proxyUsageRecorder struct {
 	// budget slice instead of the Redis counter. A nil tracker selects the
 	// default Redis-counter path.
 	budgetTracker *quotabudget.Tracker
+	// failopenAccum is the §12.4 / §11.2 line 48 MAX-rule source (2): a
+	// cumulative in-memory per-(tenant, user) token counter the recorder
+	// folds every proxy-extracted token delta into (in the Redis-counter
+	// mode) so the Redis-recovery reconcile can restore usage that a Redis
+	// write dropped while the shared counter was unreachable. Nil disables
+	// the accumulation (no fail-open recovery source). F-12.4.20.
+	failopenAccum *quotafailopen.Accumulator
 	// limits resolves the tenant's §11.2 reset period and rolling-window
 	// length so the recorder writes the same window QuotaEvaluator reads.
 	limits policy.TenantLimitLookup
@@ -94,6 +102,16 @@ func (r *proxyUsageRecorder) setBudgetTracker(tracker *quotabudget.Tracker) {
 		return
 	}
 	r.budgetTracker = tracker
+}
+
+// setFailOpenAccumulator wires the §12.4 source (2) in-memory fail-open
+// token accumulator. Nil-safe on both the recorder and the accumulator.
+// F-12.4.20.
+func (r *proxyUsageRecorder) setFailOpenAccumulator(a *quotafailopen.Accumulator) {
+	if r == nil {
+		return
+	}
+	r.failopenAccum = a
 }
 
 // setActivityStamper wires the §6.2 idle-timer activity stamper so each
@@ -239,6 +257,13 @@ func (r *proxyUsageRecorder) recordQuota(tenantID, userID string, tokens int64) 
 		r.budgetTracker.Add(ctx, tenantID, period, now, tokens)
 		return
 	}
+	// spec: §12.4 source (2); §11.2 line 48 — fold the proxy-extracted
+	// tokens into the cumulative in-memory accumulator before the Redis
+	// write below. When the write is dropped during a fail-open window the
+	// accumulator still carries the usage, so the Redis-recovery reconcile
+	// restores it via the MAX rule. The accumulator self-skips the rolling
+	// period (no single restorable window). F-12.4.20.
+	r.failopenAccum.Record(tenantID, userID, period, now, tokens)
 	if period == quota.ResetRolling {
 		window := lim.RollingWindow
 		if window <= 0 {

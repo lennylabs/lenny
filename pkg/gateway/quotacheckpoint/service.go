@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
@@ -30,6 +31,15 @@ type Service struct {
 	// Tenants gates a per-tenant reconcile with a 404 for an unknown
 	// tenant. Optional; a nil exister skips the existence check.
 	Tenants TenantExister
+	// FailOpen is the §12.4 / §11.2 line 48 MAX-rule source (2): the
+	// in-memory token counter the recording path accumulated while the
+	// shared Redis counter was unreachable. When set, Reconcile folds each
+	// window's accumulated value into the MAX so usage that a Redis write
+	// dropped during a fail-open window is restored — both for windows that
+	// carry a Postgres checkpoint row and for windows that opened entirely
+	// during the outage (no checkpoint row). Optional; a nil accumulator
+	// reduces the rule to MAX(redis_current, postgres_checkpoint).
+	FailOpen *quotafailopen.Accumulator
 	// Metrics records reconcile outcomes. Optional.
 	Metrics MetricEmitter
 	// Now is the injectable clock. Nil selects time.Now().UTC().
@@ -62,8 +72,14 @@ type CounterResult struct {
 	SubjectID       string
 	Period          string
 	CheckpointValue int64
-	InMemoryValue   int64
-	WrittenValue    int64
+	// InMemoryValue is the live Redis value read before the restore (the
+	// §11.2 line 48 redis_current input).
+	InMemoryValue int64
+	// FailOpenValue is the §12.4 source (2) in-memory fail-open accumulator
+	// value folded into the MAX. Zero when no fail-open reader is wired or
+	// the window accumulated nothing during an outage.
+	FailOpenValue int64
+	WrittenValue  int64
 }
 
 // Checkpoint persists the current §11.2 window totals for every active
@@ -209,6 +225,9 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 	now := s.now()
 	var res ReconcileResult
 	tenants := make(map[string]struct{})
+	// Track the windows the checkpoint-row pass already restored so the
+	// fail-open-only pass below does not restore the same window twice.
+	restored := make(map[string]struct{})
 	for _, row := range rows {
 		period := quota.ResetPeriod(row.Period)
 		curLabel, labelErr := quotastore.WindowLabel(period, now)
@@ -218,7 +237,7 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 			s.inc(OutcomeSkipped)
 			continue
 		}
-		live, written, restoreErr := s.restoreRow(ctx, row, period, now)
+		live, failOpen, written, restoreErr := s.restoreRow(ctx, row, period, now)
 		if restoreErr != nil {
 			s.logf("quotacheckpoint: reconcile: restore %s/%s tenant=%q: %v",
 				row.Scope, row.SubjectID, row.TenantID, restoreErr)
@@ -226,6 +245,7 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 		}
 		res.CountersWritten++
 		tenants[row.TenantID] = struct{}{}
+		restored[windowKey(row.Scope, row.TenantID, row.SubjectID, row.Period)] = struct{}{}
 		res.Counters = append(res.Counters, CounterResult{
 			TenantID:        row.TenantID,
 			Scope:           row.Scope,
@@ -233,36 +253,111 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 			Period:          row.Period,
 			CheckpointValue: row.TokenTotal,
 			InMemoryValue:   live,
+			FailOpenValue:   failOpen,
 			WrittenValue:    written,
 		})
 		s.inc(OutcomeRestored)
 	}
+	// §12.4 source (2) fail-open-only windows: a window that opened entirely
+	// during the outage has no checkpoint row above, so the row pass never
+	// restores its accumulated usage. Restore each such window directly from
+	// the in-memory accumulator (MAX(redis_current, in_memory_failopen)).
+	s.reconcileFailOpenOnly(ctx, scope, now, restored, tenants, &res)
 	res.TenantsReconciled = len(tenants)
 	s.logf("quotacheckpoint: reconciled %d counter(s) across %d tenant(s)", res.CountersWritten, res.TenantsReconciled)
 	return res, nil
 }
 
-// restoreRow reads the live Redis value (the MAX rule's in-memory input)
-// and applies the rule for one row, returning (live, written).
-func (s *Service) restoreRow(ctx context.Context, row Row, period quota.ResetPeriod, now time.Time) (int64, int64, error) {
+// reconcileFailOpenOnly restores every still-current fail-open accumulator
+// window that the checkpoint-row pass did not already handle. A per-tenant
+// reconcile is scoped to its tenant. spec: §12.4 source (2); §11.2 line 48.
+func (s *Service) reconcileFailOpenOnly(ctx context.Context, scope ReconcileScope, now time.Time, restored, tenants map[string]struct{}, res *ReconcileResult) {
+	if s.FailOpen == nil || s.Restorer == nil {
+		return
+	}
+	for _, samp := range s.FailOpen.Snapshot(now) {
+		if !scope.AllTenants && samp.TenantID != scope.TenantID {
+			continue
+		}
+		scopeName := ScopeUser
+		if samp.UserID == "" {
+			scopeName = ScopeTenant
+		}
+		if _, done := restored[windowKey(scopeName, samp.TenantID, samp.UserID, string(samp.Period))]; done {
+			continue
+		}
+		var written int64
+		var err error
+		if scopeName == ScopeUser {
+			written, err = s.Restorer.RestoreUserWindow(ctx, samp.TenantID, samp.UserID, samp.Period, now, samp.Tokens)
+		} else {
+			written, err = s.Restorer.RestoreTenantRollupWindow(ctx, samp.TenantID, samp.Period, now, samp.Tokens)
+		}
+		if err != nil {
+			s.logf("quotacheckpoint: reconcile: fail-open-only restore %s/%s tenant=%q: %v",
+				scopeName, samp.UserID, samp.TenantID, err)
+			continue
+		}
+		res.CountersWritten++
+		tenants[samp.TenantID] = struct{}{}
+		res.Counters = append(res.Counters, CounterResult{
+			TenantID:      samp.TenantID,
+			Scope:         scopeName,
+			SubjectID:     samp.UserID,
+			Period:        string(samp.Period),
+			FailOpenValue: samp.Tokens,
+			WrittenValue:  written,
+		})
+		s.inc(OutcomeRestored)
+	}
+}
+
+// windowKey identifies a single (scope, tenant, subject, period) window for
+// the reconcile's dedup set.
+func windowKey(scope, tenantID, subjectID, period string) string {
+	return scope + "\x00" + tenantID + "\x00" + subjectID + "\x00" + period
+}
+
+// restoreRow reads the live Redis value (the §11.2 line 48 redis_current
+// input) and applies the MAX rule for one row, returning
+// (live, failOpen, written). The §12.4 source (2) in-memory fail-open
+// accumulator is folded into the checkpoint seed so the Restorer writes
+// MAX(redis_current, postgres_checkpoint, in_memory_failopen).
+func (s *Service) restoreRow(ctx context.Context, row Row, period quota.ResetPeriod, now time.Time) (int64, int64, int64, error) {
 	switch row.Scope {
 	case ScopeUser:
 		live, err := s.Reader.Usage(ctx, row.TenantID, row.SubjectID, period, now)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
-		written, err := s.Restorer.RestoreUserWindow(ctx, row.TenantID, row.SubjectID, period, now, row.TokenTotal)
-		return live, written, err
+		failOpen := int64(0)
+		if s.FailOpen != nil {
+			failOpen = s.FailOpen.UserWindow(row.TenantID, row.SubjectID, period, now)
+		}
+		written, err := s.Restorer.RestoreUserWindow(ctx, row.TenantID, row.SubjectID, period, now, maxInt64(row.TokenTotal, failOpen))
+		return live, failOpen, written, err
 	case ScopeTenant:
 		live, err := s.Reader.TenantRollupUsage(ctx, row.TenantID, period, now)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
-		written, err := s.Restorer.RestoreTenantRollupWindow(ctx, row.TenantID, period, now, row.TokenTotal)
-		return live, written, err
+		failOpen := int64(0)
+		if s.FailOpen != nil {
+			failOpen = s.FailOpen.TenantRollup(row.TenantID, period, now)
+		}
+		written, err := s.Restorer.RestoreTenantRollupWindow(ctx, row.TenantID, period, now, maxInt64(row.TokenTotal, failOpen))
+		return live, failOpen, written, err
 	default:
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
+}
+
+// maxInt64 returns the larger of a and b.
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (s *Service) now() time.Time {
