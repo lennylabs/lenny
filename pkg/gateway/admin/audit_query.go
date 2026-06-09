@@ -389,6 +389,33 @@ func (r *Router) auditRows(w http.ResponseWriter, req *http.Request, tenant stri
 	return rows, true
 }
 
+// receiptReader is the optional §12.8 RedactionReceipt surface an AuditLog
+// backend may expose. When present, the per-row chainIntegrity walk loads
+// the receipts so a lawfully redacted row is classified redacted_gdpr
+// rather than broken. The Postgres-backed auditstore.Store satisfies it;
+// the in-memory chainSetAuditLog does not (its redactions are read out of
+// the chain itself).
+type receiptReader interface {
+	Receipts(ctx context.Context, tenantID string) (map[uint64]audit.RedactionReceipt, error)
+}
+
+// auditReceipts loads the tenant's §12.8 RedactionReceipts when the audit
+// backend exposes them, so the chainIntegrity walk can distinguish a lawful
+// GDPR redaction from a tamper. A backend without receipts (or a load
+// error) yields nil, which the verifier treats as "no receipt" — the
+// conservative reading that surfaces an unauthenticated discontinuity.
+func (r *Router) auditReceipts(ctx context.Context, tenant string) map[uint64]audit.RedactionReceipt {
+	rr, ok := r.auditLog.(receiptReader)
+	if !ok {
+		return nil
+	}
+	receipts, err := rr.Receipts(ctx, tenant)
+	if err != nil {
+		return nil
+	}
+	return receipts
+}
+
 // handleListAuditEvents implements GET /v1/admin/audit-events.
 //
 // The query supports the §25.9 line 3659 filter set (since, until,
@@ -453,7 +480,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	// Per-row §11.7 integrity is computed over the full ordered chain so
 	// link and sequence-gap checks see every row; the filtered page reads
 	// each row's verdict out of this map by sequence number.
-	integrities := audit.ChainFromRows(tenant, rows, nil).VerifyRows()
+	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).VerifyRows()
 
 	items := make([]json.RawMessage, 0, limit)
 	report := ChainIntegrityReport{}
@@ -551,7 +578,7 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	integrities := audit.ChainFromRows(tenant, rows, nil).VerifyRows()
+	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).VerifyRows()
 	for _, row := range rows {
 		if row.Seq == seq {
 			integrity := integrities[row.Seq]
