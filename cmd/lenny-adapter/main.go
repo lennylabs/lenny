@@ -101,6 +101,10 @@ func main() {
 		"path to the CA bundle that verifies gateway client certificates")
 	workspaceRoot := flag.String("workspace-root", "/workspace/current",
 		"directory the session workspace is materialized into")
+	sessionsRoot := flag.String("sessions-root", "/sessions",
+		"§6.4 /sessions tmpfs the runtime writes its session file into; "+
+			"bundled into the §4.4 checkpoint and restored on §7.3 resume "+
+			"(step f). Empty disables session-file capture")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+
@@ -237,6 +241,7 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.SessionsRoot = *sessionsRoot
 	adapterSrv.StagingDir = *stagingDir
 	// spec: §10.1 lines 47-52 — the coordinator-loss hold window and the
 	// disk post-mortem path the adapter falls back to when no coordinator

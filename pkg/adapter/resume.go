@@ -89,7 +89,15 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "load checkpoint %s: %v", req.GetCheckpointId(), err)
 	}
-	restored, extractErr := workspace.Extract(s.WorkspaceRoot, rc)
+	// spec: §7.3 line 408 step (e) "Replay latest workspace checkpoint" +
+	// line 409 step (f) "Restore session file to expected path". The
+	// checkpoint bundle carries the workspace under workspace.WorkspacePrefix
+	// and the §6.4 line 380 /sessions session file under
+	// workspace.SessionsPrefix; ExtractTree replays each to its own root so
+	// the runtime's native SDK session state is rehydrated, not lost. A
+	// checkpoint written before the bundle change, or one without a
+	// /sessions tree, restores workspace-only.
+	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), rc)
 	_ = rc.Close()
 	if extractErr != nil {
 		s.releaseSession()

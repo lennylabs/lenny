@@ -297,6 +297,28 @@ func (s *Server) runAbortCleanup(ctx context.Context, sessionID string) {
 	}
 }
 
+// checkpointRoots returns the §4.4 checkpoint bundle: the session
+// workspace under workspace.WorkspacePrefix, plus the §6.4 line 380
+// /sessions session-file tmpfs under workspace.SessionsPrefix when the
+// adapter is configured with a SessionsRoot. The sessions root is
+// skipped (no entries) when unset or absent on disk, so a runtime that
+// keeps no session file checkpoints workspace-only exactly as before.
+//
+// spec: §7.3 line 408 step (e) (replay workspace checkpoint) + line 409
+// step (f) (restore session file to expected path) — both replayed from
+// this one bundle on Resume.
+func (s *Server) checkpointRoots() []workspace.NamedRoot {
+	roots := []workspace.NamedRoot{
+		{Prefix: workspace.WorkspacePrefix, Root: s.WorkspaceRoot},
+	}
+	if s.SessionsRoot != "" {
+		roots = append(roots, workspace.NamedRoot{
+			Prefix: workspace.SessionsPrefix, Root: s.SessionsRoot,
+		})
+	}
+	return roots
+}
+
 // archiveAndStore archives the session workspace and streams it to the
 // checkpoint sink through an in-process pipe, so a large workspace is
 // never buffered in memory. It returns the stored checkpoint id and the
@@ -324,7 +346,9 @@ func (s *Server) archiveAndStore(ctx context.Context, sessionID string) (string,
 				panic(r) // spec: §4.4 line 248 re-panic mandate.
 			}
 		}()
-		n, err := workspace.Archive(s.WorkspaceRoot, pw)
+		// §4.4 / §7.3 step (f): bundle the workspace and the /sessions
+		// session-file tmpfs so a resume can restore both.
+		n, err := workspace.ArchiveTree(s.checkpointRoots(), pw)
 		_ = pw.CloseWithError(err)
 		archived <- archiveResult{n: n, err: err}
 	}()

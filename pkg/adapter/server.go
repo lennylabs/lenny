@@ -63,6 +63,15 @@ type Server struct {
 	// WorkspaceRoot is the directory StartSession materializes the
 	// session workspace into — the pod's /workspace/current.
 	WorkspaceRoot string
+	// SessionsRoot is the §6.4 line 380 /sessions tmpfs the runtime
+	// writes its session file into (conversation logs, native SDK
+	// session state). When set, Checkpoint bundles it into the workspace
+	// archive and Resume restores it to its expected path, satisfying the
+	// §7.3 line 409 step (f) "restore session file to expected path".
+	// Empty (dev mode, an in-process executor with no /sessions mount)
+	// leaves the session file out of the checkpoint and the resume a
+	// workspace-only restore.
+	SessionsRoot string
 	// StagingDir is the directory PrepareWorkspace streams uploaded
 	// files into before FinalizeWorkspace materializes them — the pod's
 	// workspace staging area. Empty leaves PrepareWorkspace returning

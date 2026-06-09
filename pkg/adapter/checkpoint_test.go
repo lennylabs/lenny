@@ -132,8 +132,32 @@ func TestCheckpointArchivesAndStoresTheWorkspace(t *testing.T) {
 	}
 
 	// The stored archive is a valid gzip-tar carrying the workspace.
-	if content := tarEntry(t, sink.received, "notes.txt"); content != "agent state" {
+	if content := tarEntry(t, sink.received, "workspace/notes.txt"); content != "agent state" {
 		t.Errorf("archived notes.txt = %q, want the workspace content", content)
+	}
+}
+
+// spec: §7.3 line 409 step (f) — when the adapter has a SessionsRoot the
+// checkpoint bundle also carries the /sessions session file so a later
+// resume can restore it. F-7.3.14.
+func TestCheckpointBundlesSessionFile_spec_7_3_14(t *testing.T) {
+	s, _ := startedServer(t)
+	sessionsRoot := t.TempDir()
+	s.SessionsRoot = sessionsRoot
+	if err := os.WriteFile(filepath.Join(sessionsRoot, ".session.json"), []byte("sdk state"), 0o644); err != nil {
+		t.Fatalf("seed session file: %v", err)
+	}
+	sink := &fakeCheckpointSink{id: "ckpt-sf"}
+	s.Checkpoints = sink
+
+	if _, err := s.Checkpoint(context.Background(), checkpointReq("sess-1")); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if content := tarEntry(t, sink.received, "workspace/notes.txt"); content != "agent state" {
+		t.Errorf("archived workspace/notes.txt = %q, want the workspace content", content)
+	}
+	if content := tarEntry(t, sink.received, "sessions/.session.json"); content != "sdk state" {
+		t.Errorf("archived sessions/.session.json = %q, want the session-file content", content)
 	}
 }
 
@@ -183,7 +207,7 @@ func TestCheckpointViaLifecycleChannelQuiescesAndResumes(t *testing.T) {
 	if resp.GetCheckpointId() != "ckpt-full" {
 		t.Errorf("checkpoint id = %q, want ckpt-full", resp.GetCheckpointId())
 	}
-	if content := tarEntry(t, sink.received, "notes.txt"); content != "agent state" {
+	if content := tarEntry(t, sink.received, "workspace/notes.txt"); content != "agent state" {
 		t.Errorf("archived notes.txt = %q, want the workspace content", content)
 	}
 }

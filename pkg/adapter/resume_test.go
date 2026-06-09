@@ -34,9 +34,35 @@ func (f fakeCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCl
 	return io.NopCloser(bytes.NewReader(f.archive)), nil
 }
 
-// archiveOf builds a gzip-tar checkpoint archive of a workspace holding
-// the given files.
+// archiveOf builds a §4.4 checkpoint bundle holding the given workspace
+// files under the workspace prefix — the format Checkpoint now produces
+// via workspace.ArchiveTree (F-7.3.14).
 func archiveOf(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	return bundleOf(t, files, nil)
+}
+
+// bundleOf builds a §4.4 checkpoint bundle carrying the given workspace
+// files and, when sessionFiles is non-nil, a /sessions tree under the
+// session prefix. spec: §7.3 line 408-409 (steps e and f).
+func bundleOf(t *testing.T, workspaceFiles, sessionFiles map[string]string) []byte {
+	t.Helper()
+	wsDir := writeTree(t, workspaceFiles)
+	roots := []workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: wsDir}}
+	if sessionFiles != nil {
+		roots = append(roots, workspace.NamedRoot{
+			Prefix: workspace.SessionsPrefix, Root: writeTree(t, sessionFiles),
+		})
+	}
+	var buf bytes.Buffer
+	if _, err := workspace.ArchiveTree(roots, &buf); err != nil {
+		t.Fatalf("ArchiveTree: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// writeTree materializes files into a fresh temp dir and returns it.
+func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, content := range files {
@@ -48,11 +74,7 @@ func archiveOf(t *testing.T, files map[string]string) []byte {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	var buf bytes.Buffer
-	if _, err := workspace.Archive(dir, &buf); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
-	return buf.Bytes()
+	return dir
 }
 
 func resumeReq(sessionID, checkpointID string) *adapterv1.ResumeRequest {
@@ -85,6 +107,66 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	}
 	if string(got) != "from checkpoint" {
 		t.Errorf("restored file = %q, want the checkpoint content", got)
+	}
+}
+
+// spec: §7.3 line 409 step (f) — a resume restores the runtime's
+// session file (native SDK session state, conversation logs) from the
+// /sessions tmpfs, not just the workspace. F-7.3.14.
+func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
+	s, _, root := sessionServer(t)
+	sessionsRoot := t.TempDir()
+	s.SessionsRoot = sessionsRoot
+	s.Restorer = fakeCheckpointSource{archive: bundleOf(t,
+		map[string]string{"work/file.txt": "ws"},
+		map[string]string{".session.json": `{"id":"sess-1","turns":3}`},
+	)}
+
+	resp, err := s.Resume(context.Background(), resumeReq("sess-1", "ckpt-1"))
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	// The workspace tree restored to WorkspaceRoot.
+	if got, err := os.ReadFile(filepath.Join(root, "work/file.txt")); err != nil || string(got) != "ws" {
+		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
+	}
+	// The session file restored to SessionsRoot — the §7.3 step (f) path.
+	got, err := os.ReadFile(filepath.Join(sessionsRoot, ".session.json"))
+	if err != nil {
+		t.Fatalf("the session file was not restored to /sessions: %v", err)
+	}
+	if string(got) != `{"id":"sess-1","turns":3}` {
+		t.Errorf("session file = %q, want the checkpoint content", got)
+	}
+	wantBytes := int64(len("ws") + len(`{"id":"sess-1","turns":3}`))
+	if resp.GetRestoredBytes() != wantBytes {
+		t.Errorf("restored bytes = %d, want %d (workspace + session file)", resp.GetRestoredBytes(), wantBytes)
+	}
+}
+
+// A checkpoint that carried no /sessions tree (a runtime without a
+// session file, or a SessionsRoot-less adapter) restores workspace-only
+// and leaves /sessions untouched. F-7.3.14.
+func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) {
+	s, _, root := sessionServer(t)
+	sessionsRoot := t.TempDir()
+	s.SessionsRoot = sessionsRoot
+	s.Restorer = fakeCheckpointSource{archive: bundleOf(t,
+		map[string]string{"only.txt": "ws"}, nil,
+	)}
+
+	if _, err := s.Resume(context.Background(), resumeReq("sess-1", "ckpt-1")); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "only.txt")); err != nil || string(got) != "ws" {
+		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
+	}
+	entries, err := os.ReadDir(sessionsRoot)
+	if err != nil {
+		t.Fatalf("read /sessions: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("/sessions has %d entries, want 0 (workspace-only bundle)", len(entries))
 	}
 }
 
