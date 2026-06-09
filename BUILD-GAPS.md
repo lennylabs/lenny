@@ -31265,7 +31265,7 @@ Two of three transports are absent entirely; the third (webhook subs) exists as 
 
 ### Findings
 
-### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — OPEN
+### - [x] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — CLOSED
 
 The §16.7 catalog enumerates 91 audit event types that §25 introduces. The implementation defines all 91 as typed constants in `pkg/observability/audit/catalog.go` and pins them with a round-trip completeness test, but the typed constants are documentation only — they are never referenced from any emit site. Direct string-literal search outside the catalog/mapping/test files finds production references for exactly 7 event types, and only 5 of those are reachable from the running gateway:
 
@@ -31374,6 +31374,46 @@ finding is deferred rather than progressed by further sweeping:
 - **`admin.impersonation_started` / `admin.impersonation_ended`** (§13.3 line 585; §16.7 line 680; §11.7 lines 430-433 CMP-058). Built the distinct platform-admin impersonation code path (NOT routed through `/v1/oauth/token`): new `pkg/gateway/impersonation` (`Ticket`, in-memory `Store`, `Service`) + admin handlers `POST/GET/DELETE /v1/admin/impersonation`, wired in `cmd/lenny-gateway` over the KMS-backed `jwtSigner` and the CMP-058-routing `auditscope.Validator` appender, plus a 1-minute expiry sweep. `Issue` writes `admin.impersonation_started` under the platform tenant carrying a top-level `target_tenant_id` (so the §11.7 CMP-058 residency gate routes it) **before** minting the target-user bearer; an unresolvable target region fails the issuance closed with `PLATFORM_AUDIT_REGION_UNRESOLVABLE` (HTTP 422) and mints nothing. `admin.impersonation_ended` (reason=`explicit` on `DELETE`, `expired` on the sweep) carries the matching identifiers. platform-admin only (a tenant-admin is 403).
 
 Residual is now **3** inert events mapping to **two** still-unbuilt features, each a focused follow-on batch (no spec change, no NEEDS-OPERATOR resource): (1) the §12.8 line 884 legal-hold escrow GC/release flow on tombstoned tenants (`legal_hold.escrow_released`); (2) the §12.8 line 810-829 OCSF dead-letter PII-redaction subsystem — in-place `payload` rewrite + hash-chain re-seal + signed `RedactionReceipt` table + OCSF class 5001 downstream-notify (`gdpr.erasure_deadletter_redacted` / `gdpr.erasure_deadletter_downstream_notified`). Heading stays OPEN.
+
+**Resolution (CLOSED, commits `1ad6dc21`, `839f9772`).** The final 3 residual
+events now emit from production code paths; every catalogued §16.7 event
+has an emit site, so the roll-up is resolved (rules A/O re-verified each
+against the spec before building).
+
+- **`gdpr.erasure_deadletter_redacted` / `gdpr.erasure_deadletter_downstream_notified`**
+  (commit `1ad6dc21`) — built the §12.8 step-14 dead-letter PII redaction as
+  a step in the GDPR DeleteByUser runner. New
+  `pkg/gateway/deadletterredaction.Service` finds every `dead_lettered`
+  `audit_log` row that names the target user (payload-matched, per the spec's
+  "equivalently, whose `payload` carries the target user as actor or subject"
+  clause — `audit_log` has no `user_id` column, so the §12.2.5/F-12.8.4
+  schema-contradiction defer does not block step 14), scrubs the
+  PII-bearing payload to the §12.8 line 810 shape, recomputes
+  `payload_canonical_json`, persists a KMS-signed `RedactionReceipt`
+  (the pre-existing migration 0160 table), and emits the paired §16.7
+  events (OCSF class 5001). `auditstore.Rows`/`Verify` now load receipts so a
+  lawfully redacted row classifies `redacted_gdpr` (its preserved
+  pre-redaction hash keeps the chain linked with no cascade) rather than
+  `broken`. Migration 0165 grants `lenny_erasure` UPDATE on the two payload
+  columns. The step-13 mid-chain DELETE half stays under the still-DEFERRED
+  F-12.2.5/F-12.8.4 (a genuine `audit_log` schema spec contradiction); step 14
+  is independent and was always implementable, as F-12.8.4's own note records.
+- **`legal_hold.escrow_released`** (commit `839f9772`) — built the §12.8 line
+  884 escrow-GC release. Clearing a hold via `POST /v1/admin/legal-hold`
+  (`hold: false`), now accepted on a tombstoned tenant for this purpose,
+  deletes the escrow objects the hold protected and emits the event per
+  object. New durable `legalholdescrow.RecordStore` (in-memory + Postgres
+  pgstore, migration 0166, platform-scoped so it survives the tombstone)
+  indexes escrowed resources by owning session / artifact URI; the migrator's
+  `Escrowed` event threads those keys onto the record; `Releaser` +
+  `blobEscrowDeleter` hard-delete and emit via the admin clear path.
+
+Verified: build + vet green; tier-1 suites for the touched packages pass; the
+two new tier-2 component tests (dead-letter redaction over a real Postgres
+audit chain → `redacted_gdpr`; the escrow record pgstore round-trip + release)
+pass against a real Postgres container; migration text tests for 0165/0166
+pass. A per-event sweep across `pkg cmd` confirms 0 catalogued §16.7 events
+without a production emit site.
 
 ### - [x] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — CLOSED
 
