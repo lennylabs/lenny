@@ -4458,7 +4458,7 @@ Consequence: the `task_cleanup → sdk_connecting` versus `task_cleanup → drai
 
 - **Resolution:** Closed by F-4.6.7. The new `warmpool.PodReconciler` watches Nodes (with a `spec.nodeName` field index for Node→Pod fan-out) and maintains `lenny.dev/host-schedulable` on every managed pod, re-labeling all pods on a node within one reconcile cycle on cordon/uncordon. Resolved in commit 1f2bb711.
 
-### - [-] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — DEFERRED
+### - [ ] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — OPEN
 
 **Potential duplicate** (confidence: high) — F-6.4.2 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -5282,7 +5282,7 @@ Consequence: §6.4's "Session files (e.g., conversation logs, runtime state)" an
 
 - **Resolution:** Closed by `a4fa7a64`. `podVolumes` now declares a memory-backed `sessions` tmpfs (§6.4 line 380) and a disk-backed `artifacts` emptyDir (§6.4 line 414), and every agent container — the sidecar adapter and runtime, and the embedded runtime — mounts them at `/sessions` and `/artifacts`. The §6.4 data-at-rest medium split holds: `/sessions` and `/tmp` are tmpfs (contents gone on pod termination); `/workspace` and `/artifacts` are disk-backed. Regression test `TestBuildMountsSessionsAndArtifacts_spec_6_4`.
 
-### - [-] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — DEFERRED
+### - [ ] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — OPEN
 
 **Potential duplicate** (confidence: high) — F-6.1.11 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -5399,7 +5399,7 @@ This is medium severity rather than high because it is a strict prerequisite of 
 
 **Resolution:** Added `workspaceTier` to `RuntimeSpec` (enum `T3`/`T4`, optional, defaults to `T3`) with the matching CRD schema entry in `charts/lenny/crds/lenny.dev_runtimes.yaml`. The runtime controller's `applyCRDFields` mirrors the value onto the gateway-side `runtimestore.WorkspaceTier` so the §5.2 cross-tenant-reuse rejection and the §6.4 dedicated-node injection both observe the deployer's declaration. Regression: `TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9`. Unblocks F-6.4.4.
 
-### - [-] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — DEFERRED
+### - [ ] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — OPEN
 
 Spec §6.1 line 28 (cross-referenced by §6.4's per-slot layout): "The adapter writes per-slot credential files at `/run/lenny/slots/{slotId}/credentials.json` (mode `0440`, tmpfs-backed, with the same adapter-owner + `lenny-cred-readers` group-ownership scheme as the single-slot file …) rather than a single global `/run/lenny/credentials.json`."
 
@@ -5409,7 +5409,7 @@ Consequence: combined with H-2, concurrent-mode credential leasing cannot honor 
 
 **Deferred:** Same blocker as F-6.4.2 — per-slot credential files (`/run/lenny/slots/{slotId}/credentials.json`) require a `slot_id` on `AssignCredentialsRequest` and per-slot credential state (`credSessionID`/`credLeases`/`expiryTimers` keyed by slot) in the adapter, both part of the single-session → per-slot multiplexing refactor. The `credfile.Write` primitive already takes a target directory, so the per-slot path derivation is a small addition once the per-slot credential state exists. Will close with the Phase 12c concurrent-execution batch alongside F-6.4.2.
 
-### - [-] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — DEFERRED
+### - [ ] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — OPEN
 
 Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the metric itself is the §6.1 contract. This audit notes it as `Info` because it surfaces in the §6.3 audit; carrying it forward here clarifies that the §6.4 layout doesn't depend on demotion behaviour. See `6.3.md` for the detailed gap.
 
@@ -27086,7 +27086,7 @@ will flag it because there is no spec mapping.
 
 **Resolution:** Verify-closed. §5.1 line 296 normatively defines `POST /v1/admin/runtimes/regenerate-cards` (Request body with `generatorVersionBefore` + `dryRun`; response with `regenerated/skipped/errors`). The §15.1 line 933 CI invariant only requires every admin endpoint to carry the `x-lenny-mcp-tool` / `x-lenny-scope` / `x-lenny-required-role` / `x-lenny-category` extensions; `openapi.json:1021-1026` confirms the endpoint already carries all four. The §5.1-vs-§15.1 cross-listing question is spec-coordination territory (Rule B prevents spec edits); no code action owed.
 
-### - [-] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — DEFERRED
+### - [ ] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — OPEN
 Spec lines 691–693 explicitly require both the POST and a GET on
 `/v1/sessions/{id}/messages`, returning "message history including
 delivery receipts and state". Impl wires only the POST
@@ -31255,7 +31255,7 @@ Two of three transports are absent entirely; the third (webhook subs) exists as 
 
 ### Findings
 
-### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — DEFERRED
+### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — OPEN
 
 The §16.7 catalog enumerates 91 audit event types that §25 introduces. The implementation defines all 91 as typed constants in `pkg/observability/audit/catalog.go` and pins them with a round-trip completeness test, but the typed constants are documentation only — they are never referenced from any emit site. Direct string-literal search outside the catalog/mapping/test files finds production references for exactly 7 event types, and only 5 of those are reachable from the running gateway:
 
