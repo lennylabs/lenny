@@ -125,6 +125,7 @@ type scriptQuerier struct {
 	erasureSrc   string  // VerifyErasureGuard prosrc
 	tenants      [][]any // auditTenants (tenant_id)
 	chainRows    [][]any // loadRecentChainRows (seq, type, payload, created, prev_hash, id, schema_version)
+	redaction    [][]any // CheckRedactionReceipts (tenant_id, missing count)
 	queryErr     error   // when set, every Query returns it
 }
 
@@ -147,6 +148,8 @@ func (q *scriptQuerier) Query(ctx context.Context, sql string, args ...any) (pgx
 		return &scriptRows{rows: q.tenants}, nil
 	case strings.Contains(sql, "sequence_number, event_type"):
 		return &scriptRows{rows: q.chainRows}, nil
+	case strings.Contains(sql, "audit_redaction_receipts"):
+		return &scriptRows{rows: q.redaction}, nil
 	default:
 		return &scriptRows{}, nil
 	}

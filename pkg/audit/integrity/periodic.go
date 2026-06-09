@@ -89,6 +89,14 @@ type PeriodicCheck struct {
 	// lenny_audit_chain_integrity_total{state}.
 	OnChainState func(state string)
 
+	// OnRedactionReceiptMissing is invoked once per tenant that carries
+	// §12.8-redaction-marked audit rows without a signature-verifying
+	// RedactionReceipt, with the per-tenant count. The gateway adapter
+	// advances lenny_audit_redaction_receipt_missing_total{tenant_id};
+	// the §16.5 AuditRedactionReceiptMissing critical alert pages on any
+	// non-zero value. F-11.7.15.
+	OnRedactionReceiptMissing func(tenantID string, n int)
+
 	// Logf emits the spec-mandated critical alert log line. Defaults to
 	// a no-op when nil.
 	Logf func(format string, args ...any)
@@ -127,6 +135,26 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 			p.logf("CRITICAL: §11.7 audit chain broken for tenant %s at sequence %d: %s",
 				r.TenantID, r.Result.BreakSeq, r.Result.Detail)
 		}
+	}
+	// §12.8 lines 810-827 — detect audit rows rewritten by the in-place
+	// GDPR redaction but lacking a signature-verifying RedactionReceipt.
+	// This is the §16.5 AuditRedactionReceiptMissing compliance signal
+	// (page on-call), distinct from the chain-tamper hard-fail path: an
+	// orphaned redaction does not self-terminate the gateway, it raises a
+	// metric the alert pages on. A scan error (for example the
+	// audit_redaction_receipts relation absent on a partial migration) is
+	// logged and treated as no-drift so a flaky query does not hard-fail.
+	orphans, err := CheckRedactionReceipts(ctx, p.DB)
+	if err != nil {
+		p.logf("WARNING: §11.7 item 2 periodic redaction-receipt scan could not run: %v", err)
+		return drift
+	}
+	for _, o := range orphans {
+		if p.OnRedactionReceiptMissing != nil {
+			p.OnRedactionReceiptMissing(o.TenantID, o.Missing)
+		}
+		p.logf("CRITICAL: §12.8 tenant %s has %d redaction-marked audit row(s) with no signature-verifying RedactionReceipt",
+			o.TenantID, o.Missing)
 	}
 	return drift
 }

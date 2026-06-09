@@ -575,6 +575,16 @@ type Metrics struct {
 	// failure as the background state machine advances the row toward
 	// retry_pending / dead_lettered. F-11.7.1 / F-11.7.15.
 	auditOCSFTranslationFailed *prometheus.CounterVec
+	// auditRedactionReceiptMissing is the §16.1
+	// lenny_audit_redaction_receipt_missing_total counter, labeled by
+	// `tenant_id`. The periodic background integrity check increments it
+	// when it finds an audit_log row carrying the §12.8 in-place GDPR
+	// redaction marker but cannot locate a signature-bearing
+	// RedactionReceipt for the same (tenant_id, sequence_number); the
+	// §16.5 AuditRedactionReceiptMissing critical alert reads
+	// `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0`.
+	// F-11.7.15.
+	auditRedactionReceiptMissing *prometheus.CounterVec
 	// §25.9 audit-query observability surface. auditQueryDuration
 	// observes one query latency per call, labeled by `endpoint`
 	// (list/get/summary/verify) and `shards`. auditChainVerificationBroken
@@ -2223,6 +2233,19 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §16.5 lenny_audit_redaction_receipt_missing_total — the
+	// periodic background integrity check increments it per tenant when a
+	// §12.8-redaction-marked audit_log row has no signature-verifying
+	// RedactionReceipt; the §16.5 AuditRedactionReceiptMissing critical
+	// alert distinguishes an orphaned GDPR redaction from a tamper that
+	// cleared payload without a provenance receipt. F-11.7.15.
+	auditRedactionReceiptMissing, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_redaction_receipt_missing_total",
+		Help: "§16.1 redacted_gdpr rows with no signature-verifying RedactionReceipt, detected by the periodic background integrity check, by tenant_id.",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
 	// §25.9 audit-query observability surface. F-25.9.13.
 	auditQueryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_audit_query_duration_seconds",
@@ -2546,6 +2569,7 @@ func New() (*Metrics, error) {
 		postgresWriteIops, postgresWriteCeilingIops,
 		siemDeliveryLag, siemMaxDeliveryLag,
 		auditChainIntegrity, auditGrantDrift, auditOCSFTranslationFailed,
+		auditRedactionReceiptMissing,
 		auditQueryDuration, auditChainVerificationBroken, auditChainRechainedPostOutage,
 		auditRateLimited, auditScatterGatherShards,
 		minioReplicationResidencyViolation, dataResidencyViolation,
@@ -2800,6 +2824,7 @@ func New() (*Metrics, error) {
 		auditChainIntegrity:                  auditChainIntegrity,
 		auditGrantDrift:                      auditGrantDrift,
 		auditOCSFTranslationFailed:           auditOCSFTranslationFailed,
+		auditRedactionReceiptMissing:         auditRedactionReceiptMissing,
 		auditQueryDuration:                   auditQueryDuration,
 		auditChainVerificationBroken:         auditChainVerificationBroken,
 		auditChainRechainedPostOutage:        auditChainRechainedPostOutage,
@@ -4647,6 +4672,21 @@ func (m *Metrics) IncAuditGrantDrift() {
 		return
 	}
 	m.auditGrantDrift.Inc()
+}
+
+// AddAuditRedactionReceiptMissing advances the §16.1
+// lenny_audit_redaction_receipt_missing_total counter for one tenant by
+// n. The periodic background integrity check calls it once per cycle
+// with the number of §12.8-redaction-marked audit_log rows that lack a
+// signature-verifying RedactionReceipt; the §16.5
+// AuditRedactionReceiptMissing critical alert fires on any non-zero
+// increase. A non-positive n is a no-op so a clean cycle never touches
+// the series. F-11.7.15.
+func (m *Metrics) AddAuditRedactionReceiptMissing(tenantID string, n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.auditRedactionReceiptMissing.WithLabelValues(tenantID).Add(float64(n))
 }
 
 // IncAuditOCSFTranslationFailed advances the §16.1

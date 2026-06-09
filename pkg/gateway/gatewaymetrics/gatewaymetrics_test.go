@@ -209,6 +209,35 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 	}
 }
 
+// spec: §16.1 / §16.5 line 467 — the periodic integrity check advances
+// lenny_audit_redaction_receipt_missing_total{tenant_id} per tenant with
+// orphaned §12.8 redaction-marked rows; the AuditRedactionReceiptMissing
+// critical alert pages on any non-zero value. A non-positive count is a
+// no-op so a clean cycle leaves the series untouched. F-11.7.15.
+func TestAuditRedactionReceiptMissingMetric(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.AddAuditRedactionReceiptMissing("acme", 2)
+	m.AddAuditRedactionReceiptMissing("acme", 1)
+	m.AddAuditRedactionReceiptMissing("globex", 0)  // no-op: clean tenant
+	m.AddAuditRedactionReceiptMissing("globex", -5) // no-op: defensive
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `lenny_audit_redaction_receipt_missing_total{tenant_id="acme"} 3`) {
+		t.Errorf("/metrics missing acme receipt-missing count\n---\n%s", body)
+	}
+	if strings.Contains(body, `tenant_id="globex"`) {
+		t.Errorf("/metrics surfaced a clean tenant on the receipt-missing series\n---\n%s", body)
+	}
+}
+
 func TestMiddlewareRecordsRequests(t *testing.T) {
 	m, _ := gatewaymetrics.New()
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -163,6 +163,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -177,7 +178,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
-	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewayleader"
@@ -7336,9 +7336,10 @@ func main() {
 				HardFailOnDrift: *auditHardFailOnDrift,
 				ChainSampleN:    *auditStartupChainCheckEntries,
 			},
-			OnGrantDrift: gwMetrics.IncAuditGrantDrift,
-			OnChainState: gwMetrics.IncAuditChainIntegrity,
-			Logf:         func(format string, args ...any) { log.Printf("lenny-gateway: "+format, args...) },
+			OnGrantDrift:              gwMetrics.IncAuditGrantDrift,
+			OnChainState:              gwMetrics.IncAuditChainIntegrity,
+			OnRedactionReceiptMissing: gwMetrics.AddAuditRedactionReceiptMissing,
+			Logf:                      func(format string, args ...any) { log.Printf("lenny-gateway: "+format, args...) },
 			Shutdown: func(string) {
 				if proc, perr := os.FindProcess(os.Getpid()); perr == nil {
 					_ = proc.Signal(syscall.SIGTERM)

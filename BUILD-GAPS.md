@@ -3796,7 +3796,7 @@ Consequence: operators cannot detect pool under-sizing via the spec-named teleme
 
 **Resolution (commits c31ae94b, e2f94b89):** Both named metrics now emit. `lenny_slot_assignment_conflict_total{pool}` was registered on `gatewaymetrics.Metrics` and wired through `SlotClaimer.OnSlotConflict` by F-5.2.8 (e2f94b89). This batch adds `lenny_slot_failure_total{error_type,pool,k8s_pod_name}` (registered on `gatewaymetrics.Metrics`, exposed via `IncSlotFailure`, wired onto `podsession.Binder.SlotFailure`): `Binder.BindSlot` records it at each bind stage that fails after a slot is reserved, with `error_type` ∈ {`workspace_prep`, `setup`, `credential_assignment`, `session_start`}. `k8s_pod_name` is sanctioned for this metric by §16.1 and is not on the §16.1.1 forbidden label list. The §5.2 line 515 `lenny_adapter_leaked_slots` remains absent because the adapter has no slot-leak detection/reporting path; that producer lands with the concurrent-mode slot retry/leak policy (F-5.2.12).
 
-### - [ ] F-5.2.14 — Scrub-warning preConnect re-warm transition is undefined [Medium] — OPEN
+### - [ ] F-5.2.14 — Scrub-warning preConnect re-warm transition is undefined [Medium] — DEFERRED
 
 Spec §5.2 line 446: "for pools where the runtime declares `capabilities.preConnect: true`, the pod routes through `sdk_connecting` before returning to `idle` even on a `scrub_warning` outcome". This depends on the task-mode lifecycle (H-1) but is also independently absent: the state-machine transition `task_cleanup → sdk_connecting [scrub_warning]` is declared in `pkg/sandbox/state/state.go:122–125` only by the host-schedulable + preConnect branch comments, not by a driver that distinguishes `scrub_warning` from a clean outcome.
 
@@ -3804,7 +3804,9 @@ Consequence: the §6.1 invariant "all idle pods in a preConnect pool are SDK-war
 
 **Reopened 2026-06-08 — prior deferral:** the state-machine row is declared and the §5.2 task-mode scrub now exists (`pkg/adapter/scrub`, F-5.2.1), producing a `Result` that distinguishes a `scrub_warning` outcome from a clean one. The driver that reads that `Result` and writes the `scrub_warning` annotation onto the pod is the gateway task-execution driver, deferred to F-5.2.30.
 
-### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — OPEN
+**Deferred (re-verified this batch):** Confirmed there is no production task-execution driver / task scheduler / `/v1/tasks` ingestion path (grep). The `task_cleanup → sdk_connecting [scrub_warning]` transition can only be driven by F-5.2.30 (DEFERRED, High), the cluster-bound gateway task-execution driver. Marker reconciled OPEN → DEFERRED per rule J; re-attempt when F-5.2.30 lands.
+
+### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — DEFERRED
 
 Spec §5.2 lines 438–442: cross-tenant microvm pods require a guest VM restart between tenants (`microvmScrubMode: restart`, default) with a 3–8s latency penalty; `in-place` is an opt-in.
 
@@ -3813,6 +3815,8 @@ Implementation: `MicrovmScrubMode` is declared as a runtimestore enum (`pkg/gate
 Consequence: cross-tenant microvm reuse (already gated to require the acknowledgment) carries no scrub at all; a deployer who sets `microvmScrubMode: restart` gets no actual VM restart.
 
 **Reopened 2026-06-08 — prior deferral:** the §5.2 task-mode scrub now exists (`pkg/adapter/scrub`, F-5.2.1) with the step-7 microvm-restart orchestration wired behind a `scrub.VMRestarter` seam. The remaining work is the concrete Kata VM-lifecycle-API client that implements that seam, which lands with the cluster-bound gateway task-execution driver (F-5.2.30).
+
+**Deferred (re-verified this batch):** No driver invokes the `scrub.VMRestarter` seam; cross-tenant microvm reuse rides on F-5.2.30 (DEFERRED, High), which is unbuilt. The concrete Kata VM-lifecycle client is part of that cluster-bound driver. Marker reconciled OPEN → DEFERRED per rule J; re-attempt when F-5.2.30 lands.
 
 ### - [x] F-5.2.16 — Mode-adjusted formula `mode_factor` is not derived from observed reuse [Medium] — CLOSED
 
@@ -3836,7 +3840,7 @@ Consequence: stateless-concurrent pools cannot scale on demand; they fall back t
 
 **Resolution (commit 06478596):** Registered both metrics on `gatewaymetrics.Metrics`: `lenny_stateless_requests_total{pool}` (counter, `IncStatelessRequest`) and `lenny_stateless_concurrent_active{pool}` (gauge, `SetStatelessConcurrentActive`). They are intentionally *not* added to the `pkg/observability/metrics` §16.1 catalog — §16.1 does not list them (only §5.2 line 573 names them) and that catalog is guarded by a §16.1-parity test, matching the F-5.2.13 precedent for `lenny_slot_assignment_conflict_total`. The producer (the tenant-affinity routing layer) lands with F-5.2.3; this batch registers the metric surface so the routing layer's Inc/Set calls compile and operators can scrape the metric as soon as it begins emitting.
 
-### - [ ] F-5.2.18 — `setupCommands` are not run "once per pod at start, not per task" [Medium] — OPEN
+### - [ ] F-5.2.18 — `setupCommands` are not run "once per pod at start, not per task" [Medium] — DEFERRED
 
 Spec §5.2 line 415: "`setupCommands` run once per pod at start, not per task. Per-task setup belongs in the runtime's initialization."
 
@@ -3846,13 +3850,17 @@ Consequence: if task mode is implemented per H-1, the once-per-pod semantics for
 
 **Reopened 2026-06-08 — prior deferral:** the "first-task-on-this-pod" gate makes sense only once task-mode multi-task scheduling exists. The §5.2 in-pod scrub mechanism now exists (`pkg/adapter/scrub`, F-5.2.1); the multi-task scheduling that reuses a pod across tasks is the gateway task-execution driver (F-5.2.30). In session-mode (the only mode v1 ships today), `RunSetup` runs exactly once per session/pod, which is the spec contract.
 
-### - [ ] F-5.2.19 — Stateless-level integration nuance for task mode is undefined [Medium] — OPEN
+**Deferred (re-verified this batch):** v1 ships session-mode only, where `RunSetup` already runs exactly once per pod (spec-correct). The "first-task-on-this-pod" gate is meaningful only under the multi-task reuse loop of F-5.2.30 (DEFERRED, High), which is unbuilt. Marker reconciled OPEN → DEFERRED per rule J; re-attempt when F-5.2.30 lands.
+
+### - [ ] F-5.2.19 — Stateless-level integration nuance for task mode is undefined [Medium] — DEFERRED
 
 Spec §5.2 lines 417–420: Standard/Basic-level runtimes in task mode have no lifecycle channel, so the adapter sends `{type: "shutdown"}` on stdin, the pod is discarded, and `maxTasksPerPod` effectively becomes 1.
 
 Implementation: depends on H-1. Even the lifecycle-channel availability check (which controls whether the adapter falls back to the `shutdown` JSONL message) does not gate any task-mode handling, because task mode is not implemented.
 
 **Reopened 2026-06-08 — prior deferral:** the Standard/Basic integration-level fallback (adapter sends `{"type":"shutdown"}` on stdin instead of `task_complete` over the lifecycle channel) is meaningful only once task-mode scheduling exists. The Full-level lifecycle exchange and the in-pod scrub now exist (F-5.2.1); the per-task scheduling that selects the fallback by integration level is the gateway task-execution driver (F-5.2.30).
+
+**Deferred (re-verified this batch):** The integration-level fallback selection is per-task scheduling logic that only F-5.2.30 (DEFERRED, High) drives; no task-mode scheduler exists in the tree. Marker reconciled OPEN → DEFERRED per rule J; re-attempt when F-5.2.30 lands.
 
 ### - [x] F-5.2.20 — Pool admin Pool struct does not carry TaskPolicy or other §5.2 task-mode fields [Medium] — CLOSED
 
@@ -18583,7 +18591,7 @@ schemas the spec promises.
 
 **Resolution:** `schemas/ocsf-mapping.yaml` now mirrors the §11.7 event-type → OCSF class/activity catalog. A new `ocsf.Catalog()` / `ocsf.MarshalMappingYAML()` pair serializes the exact + prefix mapping rows (with class/category/activity names resolved) to YAML; `cmd/lenny-ocsf-mapping-gen` regenerates the committed file (`go run ./cmd/lenny-ocsf-mapping-gen`) and `TestMappingYAMLInSync` is the CI guard that fails when the Go catalog and the committed mirror drift. `schemas/audit-events/v1.json` is the §11.7 line 365 per-version registry: a JSON-Schema 2020-12 document for the canonical hash-chained audit_log record, with `event_schema_version` pinned to `v1` (the audit_log column default). Both files are now validated in tier-0 (`schemas/README.md` + `tests/tier0_static/schemas_test.go`). The metric-emitter half of §11.7 observability stays under F-11.7.15. (commit 0424f233.)
 
-### - [ ] F-11.7.15 — 15  Most §11.7 metrics are catalog entries with no emitter [Medium] — OPEN
+### - [x] F-11.7.15 — 15  Most §11.7 metrics are catalog entries with no emitter [Medium] — CLOSED
 
 **Spec:** §11.7 names the metric surface explicitly across items 2, 4,
 5, the OCSF translator, and the platform-tenant residency control —
@@ -18615,6 +18623,8 @@ observability on the audit pipeline.
 **Severity:** Medium — observability gap; alerts are silently broken.
 
 **Reopened 2026-06-08 — prior deferral:** The evidence is largely stale. 11 of the 13 named series are now wired by prior batches and prove out under `grep` (`lenny_audit_grant_drift_total` via the §11.7 item-2 periodic integrity check `OnGrantDrift`; `lenny_audit_chain_integrity_total` via `OnChainState`; `lenny_audit_ocsf_translation_failed_total` via the OCSF translator adapter; `lenny_audit_lock_acquire_seconds` / `lenny_audit_concurrency_timeout_total` via `auditstore.LockMetrics`; `lenny_audit_siem_delivery_lag_seconds` via the SIEM outbox; `lenny_pgaudit_grant_events_total` via the lenny-ops pgaudit shipper (F-4.4.20); `lenny_audit_siem_configured` / `lenny_audit_retention_days` / `lenny_env_production` from startup flags; `lenny_data_residency_violation_total` from the replication/audit paths). Only one remains unemitted: `lenny_platform_audit_region_unresolvable_total` is now wired by F-11.7.9 (the CMP-058 platform-tenant audit residency gate bumps it on a fail-closed abort via `gatewaymetrics.IncPlatformAuditRegionUnresolvable`). The last gap is `lenny_audit_redaction_receipt_missing_total`, owned by F-12.8.4 (the in-place §12.8 audit redaction / KMS-signed `RedactionReceipt` path is in-memory `ChainSet`-only; the production Postgres erasure path deletes rows and never verifies receipts, so no production caller can increment it without rule O making it hollow). Re-attempt when F-12.8.4 lands its emitter.
+
+**Resolution (this batch):** Built the final unwired metric, `lenny_audit_redaction_receipt_missing_total`, as an independent §16.5 line 467 detector rather than waiting on F-12.8.4's signing writer. Migration 0160 creates the §12.8 lines 812-827 `audit_redaction_receipts` table (FK to `audit_log.id`, closed `legal_basis` enum, `(tenant_id, sequence_number)` unique, append-only `lenny_erasure` INSERT / `lenny_app` SELECT grants). New `integrity.CheckRedactionReceipts` scans `audit_log` for rows carrying the §12.8 in-place redaction marker (`payload->>'redacted' = 'true'`) left-joined against the receipt table, counting per tenant any row with no receipt or an unsigned receipt — the orphaned-redaction / cleared-payload-tamper case the spec pages on. The §11.7 item-2 `PeriodicCheck` runs the scan each cycle through a new `OnRedactionReceiptMissing` hook (a compliance page, not a chain-tamper hard-fail) wired to `gatewaymetrics.AddAuditRedactionReceiptMissing(tenant_id, n)`. This works as a standing tamper safety-net even before F-12.8.4 ships the signing writer, since a `{"redacted": true}` payload with no receipt is detectable on its own. All thirteen §11.7-named series now have production emit paths.
 
 ### - [x] F-11.7.16 — 16  No SIEM probe contributing to `/healthz` degraded status [Medium] — CLOSED
 
