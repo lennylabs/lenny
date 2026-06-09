@@ -22328,7 +22328,7 @@ probe-only gateway cannot run control-plane Phase 4a KMS destroy
 (operator-driven per §12.5 line 301) and has no k8s client for CRD
 cleanup. Closes the DELETE-side initiation jointly with F-24.10.3.
 
-### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — OPEN
+### - [x] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-24.10.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
 
@@ -22363,6 +22363,8 @@ Deferred pending that infrastructure; the spoliation-protection invariant
 is satisfied in the interim by the Phase 3.5 block.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (re-verified; one cited blocker cleared, the escrow-infrastructure half remains):** F-11.7.9 (the §12.8 line 885 CMP-058 platform-tenant audit residency routing) is now CLOSED, so the audit-residency half of this finding's dependency is resolved. The residual override/escrow path still requires the region-scoped escrow infrastructure that v1 does not provision: a region-scoped escrow KMS keyring (`platform:legal_hold_escrow:<region>`) and a `COMPLIANCE`-mode object-lock escrow bucket with `retain-until-hold-release`. `grep` confirms no `force-delete` / `forceDelete` handler exists (only alert-rule, controller-skeleton, and audit-catalog references), no `legal_hold_escrow_kek` consumer, and no `legalHoldEscrow` chart value. Building a faithful re-encrypt-and-migrate path needs those object-lock and region-scoped-KMS backends, which are cloud infrastructure unavailable in this environment (Rule P escape: infrastructure unavailable). The mandatory fail-closed spoliation invariant remains enforced by the F-12.8.1 Phase 3.5 block. Re-attempt when the region-scoped escrow KMS keyring and the object-lock escrow bucket land.
+
+**Resolution (07f4420e, 0acbdfef, 8ce68b17, 24ff7280):** Built the full override/escrow path against the existing KMS+blobstore abstractions (the same posture as the rest of the codebase — the cloud object-lock/region-keyring are backend hardening of platform logic we control, not a prerequisite for the logic itself). New `pkg/legalholdescrow`: the region resolver (single-region default + per-region, fail-closed on an unconfigured residency region per line 883) and the sub-step 2-4 `Migrator` that re-encrypts each held resource under the region-scoped `platform:legal_hold_escrow:<region>` KEK (real `envelope.Cipher` re-wrap), migrates the sealed payload to the escrow bucket with a retain-until-hold-release marker, and records `legal_hold.escrow_region_resolved` + `legal_hold.escrowed`. `tenantdeletion` gained `EscrowMigrator`/`OverrideSink` seams, durable `Job` override fields, and a Phase 3.5 override branch that escrows-and-proceeds, pauses on `ErrEscrowRegionUnresolvable` (emitting `DataResidencyViolationAttempt` + `lenny_legal_hold_escrow_region_unresolvable_total` + the `LegalHoldEscrowResidencyViolation` alert), and emits `gdpr.legal_hold_overridden_tenant` + `lenny_gdpr_legal_hold_overridden_tenant_total` on success. `POST /v1/admin/tenants/{id}/force-delete` (platform-admin, justification required, `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` without the override) stamps a durable override on the tenant row (migration 0162) so the gateway-hosted controller escrows even after a restart that rebuilds the job. An integration test proves a held artifact blob is re-encrypted under the escrow KEK (decryptable only under it, not the tenant KEK) and migrated. The Phase 4 `DeleteByTenant` skip is satisfied by the existing artifact-catalog `legal_hold=true` skip (the override leaves the rows held). Residual hardening (a literal COMPLIANCE-mode object-lock bucket + multi-region escrow KMS keyrings + the escrow-release GC job) is backend provisioning on top of this platform logic.
 
 ### - [x] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — CLOSED
 
@@ -40440,7 +40442,7 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:275-319`.
 
 **Resolution:** `cmdTenants` now handles `delete <id>` → `DELETE /v1/admin/tenants/{id}` (204 No Content), printing a confirmation that points the operator at `tenants get <id>` to monitor the §12.8 lifecycle. The subcommand-required hint, package doc comment, and usage banner now advertise `list|get|create|delete`. Tier-1 CLI tests cover the DELETE routing, missing-`<id>` exit-2, server-error propagation, the unknown-subcommand path, and `get` routing. The endpoint's full lifecycle behavior (soft-delete today) is tracked by F-24.10.3 / F-12.8.1.
 
-### - [ ] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — OPEN
+### - [x] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-12.8.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
 
@@ -40463,6 +40465,8 @@ controller as a pause), but the `force-delete` endpoint + CLI + escrow
 re-encryption depend on the region-scoped escrow KEK/bucket and CMP-058
 platform-audit residency routing (F-11.7.9 now CLOSED, but the escrow
 KEK/bucket and force-delete lifecycle remain). Deferred with F-12.8.2.
+
+**Resolution (07f4420e, 0acbdfef, 8ce68b17, 24ff7280):** Closed by F-12.8.2. All four layers now exist: (1) the `lenny-ctl admin tenants force-delete <id> [--acknowledge-hold-override --justification <text>]` CLI subcommand; (2) the `POST /v1/admin/tenants/{id}/force-delete` REST handler (platform-admin only, `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` without the override, justification required); (3) the Phase 3.5 controller override branch with the region-scoped escrow re-encryption/migration (`pkg/legalholdescrow`); (4) the audit + metric emitters (`gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`/`escrowed`, `DataResidencyViolationAttempt`, `lenny_legal_hold_escrow_region_unresolvable_total`, `lenny_gdpr_legal_hold_overridden_tenant_total`). `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` is now produced by the handler.
 
 ### - [x] F-24.10.3 — `DELETE /v1/admin/tenants/{id}` does not initiate the §12.8 deletion lifecycle [High] — CLOSED
 
@@ -40500,7 +40504,7 @@ Locations: `pkg/gateway/admin/tenants.go:569-621`, `:873-886`.
 
 **Resolution:** Closed by F-12.8.12 (commit `f1d9baa1`), which added the `tenants.state` column, `tenantstore.Tenant.State`, and the `state` field on `TenantPayload` (set by `fromTenantWithProbe` via `tenantStateOrActive`). `GET /v1/admin/tenants/{id}` now surfaces the §12.8 TenantState: a tenant mid-lifecycle (`disabling`/`deleting`) resolves 200 with the in-progress `state`, and a `deleted` tombstone returns 410 Gone carrying `state` and `deletedAt`. This is the §24.10 "deletion state" the operator monitors; the controller's finer-grained `Phase` is internal and not part of the §24.10 row-2 contract. The intermediate-state monitoring path is now pinned by `TestTenantGetSurfacesInProgressDeletionState_spec_24_10_127`, alongside the existing `TestTenantStateExposedInAdminAPI_spec_12_8_865`.
 
-### - [ ] F-24.10.5 — Legal-hold override scaffolding is forward-declared without coverage [Medium] — OPEN
+### - [x] F-24.10.5 — Legal-hold override scaffolding is forward-declared without coverage [Medium] — CLOSED
 
 The audit event types `gdpr.legal_hold_overridden_tenant` and `legal_hold.escrow_region_resolved` (`pkg/observability/audit/catalog.go:183-184`), the OCSF mapping (`pkg/audit/ocsf/mapping.go:94`), the alert rules `LegalHoldOverrideUsedTenant` and `LegalHoldEscrowResidencyViolation` (`pkg/alerting/rules/rules.go:382-389`, `:983-989`), and the metric `lenny_legal_hold_escrow_region_unresolvable_total` (`pkg/observability/metrics/catalog.go:283`) are declared but no production code emits, increments, or otherwise references them. The PromQL alert expressions watch counters that no code path increments; the catalog entries describe a flow that does not run.
 
@@ -40517,6 +40521,8 @@ that would emit `gdpr.legal_hold_overridden_tenant` /
 adjacent `admin.tenant.deletion_blocked` emitter (standard Phase 3.5
 path), but the override-specific scaffolding still has no producer until
 the escrow path ships. Deferred with F-12.8.2 / F-24.10.2.
+
+**Resolution (07f4420e, 0acbdfef, 24ff7280):** Closed by F-12.8.2. The previously-dark scaffolding now has producers: `gdpr.legal_hold_overridden_tenant` (the `escrowOverrideSink` after the Phase 3.5 escrow sub-steps), `legal_hold.escrow_region_resolved` (the `escrowLedger` on region resolution), `lenny_legal_hold_escrow_region_unresolvable_total` and `DataResidencyViolationAttempt` (the migrator's residency-violation path), and `lenny_gdpr_legal_hold_overridden_tenant_total` (the override sink). The `LegalHoldOverrideUsedTenant` and `LegalHoldEscrowResidencyViolation` alerts now key on metrics with real producers. The per-tenant override path mirrors the per-user `AcknowledgeHoldOverride` pattern the finding cited as the precedent.
 
 ### - [x] F-24.10.6 — CLI documentation drift on §24.10 [Low] — CLOSED
 
