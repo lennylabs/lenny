@@ -541,6 +541,12 @@ func main() {
 			"host-sharing and credential-fsGroup audits cover in addition to the release "+
 			"namespace; empty scopes the host-sharing audit to the release namespace and "+
 			"skips the agent-pod credential audit")
+	// spec: §13.1 line 7 — the operator-tunable lenny-cred-readers GID the
+	// agent-pod fsGroup audit checks against. 0 falls back to the podspec
+	// default (65534); the chart passes security.podUIDs.credReadersGID so
+	// the audit stays in lock-step with the controller/webhook. F-13.1.16.
+	credReadersGID := flag.Int64("cred-readers-gid", 0,
+		"§13.1 lenny-cred-readers GID the agent-pod fsGroup audit checks against; 0 uses the default 65534")
 	llmProxy := flag.Bool("feature-llm-proxy", false, "value of the features.llmProxy chart flag")
 	drainReadiness := flag.Bool("feature-drain-readiness", false,
 		"value of the features.drainReadiness chart flag")
@@ -729,6 +735,7 @@ func main() {
 	report := preflight.Run(context.Background(), cl, preflight.Config{
 		Namespace:        *namespace,
 		AgentNamespaces:  parseCommaList(*agentNamespaces),
+		CredReadersGID:   *credReadersGID,
 		Environment:      *environment,
 		MonitoringFormat: *monitoringFormat,
 		Features: preflight.WebhookFeatureFlags{

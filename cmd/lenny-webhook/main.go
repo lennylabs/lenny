@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -135,7 +136,7 @@ func (s poolConfigCounterSink) IncPoolTerminationBudgetExceeded(pool string) {
 // requireDigest is the §13.1 platform.registry.requireDigest flag the
 // registry-digest route enforces; drainSink and poolBudgetSink receive
 // the §12.5 and §10.1 webhook counters.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, runtimeUpgradeActiveURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, runtimeUpgradeActiveURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, adapterUID int64, agentUID int64, credReadersGID int64, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	// §5.2 line 392 — lenny-tenant-label-immutability is a sibling
@@ -150,7 +151,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// needs no API-server reader.
 	mux.Handle("/pool-config-validator", webhook.Handler(webhook.PoolConfigValidator(poolBudgetSink)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
-		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName,
+		adapterUID, agentUID, credReadersGID, podspec.CredVolumeName,
 	)))
 	mux.Handle("/direct-mode-isolation", webhook.Handler(webhook.DirectModeIsolation(tenancyMode, devMode)))
 	// §12.5 line 291 — every drain-readiness decision increments the
@@ -188,7 +189,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// per-container hardening, and the RuntimeDefault seccomp profile.
 	// rcPolicy applies the §17.2 RuntimeClass-aware split: gVisor pods
 	// skip the seccomp check, Kata pods may allow privilege escalation.
-	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(podspec.CredReadersGID, podspec.CredVolumeName, rcPolicy)))
+	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(credReadersGID, podspec.CredVolumeName, rcPolicy)))
 	// §5.2 cosign-verify: rejects agent pods whose in-scope container
 	// images carry no valid cosign signature. The route is registered
 	// only when the chart enables cosign verification and supplies a
@@ -244,6 +245,22 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envInt64Or returns the int64 value of environment variable key, or def
+// when the variable is unset, empty, or not a valid integer. It backs
+// the §13.1 non-root UID flag defaults so the chart can wire them
+// through env. F-13.1.16.
+func envInt64Or(key string, def int64) int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // buildCosignDecider constructs the §5.2 cosign image-signature
@@ -322,6 +339,18 @@ func main() {
 		"the RuntimeClass name mapped to the sandboxed (gVisor) profile. §17.2: pods with this runtimeClassName skip the pod-security seccomp check. Matches the chart's runtimeClasses.profiles.sandboxed.name.")
 	kataRuntimeClass := flag.String("kata-runtime-class", envOr("LENNY_KATA_RUNTIME_CLASS", isolation.MustRuntimeClassName(isolation.ProfileMicrovm)),
 		"the RuntimeClass name mapped to the microvm (Kata) profile. §17.2: pods with this runtimeClassName may set allowPrivilegeEscalation: true. Matches the chart's runtimeClasses.profiles.microvm.name.")
+	// spec: §13.1 line 7 — the non-root pod UIDs the pod-security and
+	// ephemeral-container-cred-guard webhooks enforce are operator-tunable
+	// (default 65532/65533/65534). They MUST match the lenny-controller
+	// --adapter-uid/--agent-uid/--cred-readers-gid (the chart wires both
+	// from security.podUIDs) or every controller-built pod fails the UID
+	// checks here. F-13.1.16.
+	adapterUID := flag.Int64("adapter-uid", envInt64Or("LENNY_ADAPTER_UID", podspec.AdapterUID),
+		"§13.1 non-root UID for the lenny-adapter container. Must match the lenny-controller --adapter-uid.")
+	agentUID := flag.Int64("agent-uid", envInt64Or("LENNY_AGENT_UID", podspec.AgentUID),
+		"§13.1 non-root UID for the runtime container. Must match the lenny-controller --agent-uid.")
+	credReadersGID := flag.Int64("cred-readers-gid", envInt64Or("LENNY_CRED_READERS_GID", podspec.CredReadersGID),
+		"§13.1 lenny-cred-readers GID the pod fsGroup must equal. Must match the lenny-controller --cred-readers-gid.")
 	flag.Parse()
 
 	rcPolicy := podsecurity.RuntimeClassPolicy{
@@ -351,7 +380,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, *runtimeUpgradeActiveURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metrics.reg, drainCounterSink{vec: metrics.drain}, poolConfigCounterSink{vec: metrics.poolBudget}),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, *runtimeUpgradeActiveURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, *adapterUID, *agentUID, *credReadersGID, metrics.reg, drainCounterSink{vec: metrics.drain}, poolConfigCounterSink{vec: metrics.poolBudget}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

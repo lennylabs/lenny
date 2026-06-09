@@ -84,6 +84,16 @@ type Reconciler struct {
 	// AdapterImage is the lenny-adapter sidecar image stamped into
 	// every agent Pod.
 	AdapterImage string
+	// AdapterUID, AgentUID, and CredReadersGID override the §13.1
+	// non-root identities stamped onto the adapter container, the runtime
+	// container, and the credential-tmpfs fsGroup. A zero value leaves
+	// the podspec package default in force. The lenny-pod-security and
+	// ephemeral-container-cred-guard webhooks MUST be wired with the same
+	// values (from the same Helm source) so a built pod passes their UID
+	// checks. spec: §13.1 line 7. F-13.1.16.
+	AdapterUID     int64
+	AgentUID       int64
+	CredReadersGID int64
 	// GatewayGRPCAddr is the §8.6/§9.1 gateway GatewayControl address
 	// (host:port) stamped onto the adapter container so it forwards a
 	// type:agent runtime's platform tool calls to the gateway. Empty
@@ -423,6 +433,13 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// per-pod cgroup boundary that accounts for the memory-backed tmpfs
 		// volumes charging against the pod memory limit.
 		Resources: r.resolveResources(ctx, sb),
+		// spec: §13.1 line 7 — carry the operator-tunable non-root
+		// identities so the pod the controller stamps matches the UIDs the
+		// lenny-pod-security / ephemeral-container-cred-guard webhooks
+		// enforce (both wired from the same Helm value). F-13.1.16.
+		AdapterUID:     r.AdapterUID,
+		AgentUID:       r.AgentUID,
+		CredReadersGID: r.CredReadersGID,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

@@ -49,6 +49,13 @@ type Config struct {
 	// (fsGroup/supplementalGroups audit on every agent-pod template).
 	// F-13.1.7 / F-13.1.4.
 	AgentNamespaces []string
+	// CredReadersGID is the §13.1 lenny-cred-readers GID the agent-pod
+	// fsGroup audit checks every Lenny-managed agent pod against. A zero
+	// value falls back to the podspec package default; the lenny-preflight
+	// Job passes the chart's security.podUIDs.credReadersGID so the audit
+	// stays in lock-step with the operator-tunable UID the controller and
+	// webhooks use. spec: §13.1 line 7. F-13.1.16.
+	CredReadersGID int64
 	// Features are the incoming chart feature-flag values.
 	Features WebhookFeatureFlags
 	// AcceptDowngrade maps a feature flag to its
@@ -247,6 +254,16 @@ type Config struct {
 	IngressController IngressControllerConfig
 }
 
+// credReadersGID resolves the §13.1 lenny-cred-readers GID the agent-pod
+// fsGroup audit checks against: the operator-tunable Config override when
+// set, else the podspec package default. spec: §13.1 line 7. F-13.1.16.
+func (c Config) credReadersGID() int64 {
+	if c.CredReadersGID != 0 {
+		return c.CredReadersGID
+	}
+	return podspec.CredReadersGID
+}
+
 // IngressControllerConfig carries the §13.2 NET-038 chart values the
 // ingress-controller advisory evaluates against the cluster.
 //
@@ -406,7 +423,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		} else {
 			report = append(report, CheckResult{
 				Name:     "agent-pod-cred-fsgroup",
-				Decision: CheckAgentPodCredFSGroup(agentPods, podspec.CredReadersGID),
+				Decision: CheckAgentPodCredFSGroup(agentPods, cfg.credReadersGID()),
 			})
 		}
 	}

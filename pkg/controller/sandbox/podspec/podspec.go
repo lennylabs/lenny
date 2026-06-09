@@ -44,15 +44,22 @@ import (
 )
 
 const (
-	// AdapterUID and AgentUID are the non-root UIDs the adapter and
-	// runtime containers run as. §13.1 mandates distinct non-root
-	// identities but leaves the specific numbers to the implementation.
+	// AdapterUID and AgentUID are the default non-root UIDs the adapter
+	// and runtime containers run as. §13.1 line 7 mandates distinct
+	// non-root identities but leaves the specific numbers to the
+	// implementation, so these are operator-tunable: a deployer whose
+	// runtime base image bakes a different non-root UID overrides them
+	// through the Inputs fields below (the controller resolves them from
+	// the same Helm value the lenny-pod-security and
+	// ephemeral-container-cred-guard webhooks read, so a built pod always
+	// passes the webhook UID checks). spec: §13.1 line 7. F-13.1.16.
 	AdapterUID int64 = 65532
 	AgentUID   int64 = 65533
-	// CredReadersGID is the lenny-cred-readers group — the §13.1
+	// CredReadersGID is the default lenny-cred-readers group — the §13.1
 	// credential-file read boundary shared by the adapter and runtime
 	// containers. The pod fsGroup is set to it so the kubelet
-	// group-owns the credential tmpfs.
+	// group-owns the credential tmpfs. Operator-tunable via the Inputs
+	// field below, in lock-step with the two UIDs. F-13.1.16.
 	CredReadersGID int64 = 65534
 
 	// CredVolumeName is the name of the pod volume carrying the §4.7
@@ -351,6 +358,47 @@ type Inputs struct {
 	// and runtime). A nil value leaves the containers without explicit
 	// resource requirements (dev / unconfigured), preserving prior behavior.
 	Resources *corev1.ResourceRequirements
+
+	// AdapterUID, AgentUID, and CredReadersGID override the non-root
+	// identities the adapter container, the runtime container, and the
+	// credential-tmpfs fsGroup use. A zero value selects the package
+	// default constant of the same name. §13.1 line 7 fixes only
+	// "non-root and distinct"; the numbers are operator-tunable for a
+	// deployer whose runtime base image bakes a different non-root UID.
+	// The controller and the lenny-pod-security /
+	// ephemeral-container-cred-guard webhooks MUST resolve these from the
+	// same Helm value so a pod the controller builds passes the webhook
+	// UID checks; a partial override on one side rejects every agent pod.
+	// spec: §13.1 line 7. F-13.1.16.
+	AdapterUID     int64
+	AgentUID       int64
+	CredReadersGID int64
+}
+
+// adapterUID, agentUID, and credReadersGID resolve the pod's non-root
+// identities: the per-deployment override when set, else the package
+// default constant. A zero override is treated as unset because UID 0 is
+// root, which §13.1 line 7 forbids, so it can never be a legitimate
+// value. spec: §13.1 line 7. F-13.1.16.
+func (in Inputs) adapterUID() int64 {
+	if in.AdapterUID != 0 {
+		return in.AdapterUID
+	}
+	return AdapterUID
+}
+
+func (in Inputs) agentUID() int64 {
+	if in.AgentUID != 0 {
+		return in.AgentUID
+	}
+	return AgentUID
+}
+
+func (in Inputs) credReadersGID() int64 {
+	if in.CredReadersGID != 0 {
+		return in.CredReadersGID
+	}
+	return CredReadersGID
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -465,14 +513,14 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				"--staging-dir=" + stagingPath,
 				// §4.7/§13: enforce the SO_PEERCRED MCP peer check against
 				// the runtime container's runAsUser.
-				fmt.Sprintf("--runtime-uid=%d", AgentUID),
+				fmt.Sprintf("--runtime-uid=%d", in.agentUID()),
 				// §4.7 sidecar transport: the adapter binds the abstract
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
 			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
-			SecurityContext: containerSecurityContext(AdapterUID),
+			SecurityContext: containerSecurityContext(in.adapterUID()),
 			// spec: §4.6.1 "Disruption protection for agent pods" — the
 			// preStop hook triggers a checkpoint before termination. It
 			// runs the adapter's drain so an in-flight gateway Checkpoint
@@ -490,7 +538,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				{Name: RuntimeSocketEnvVar, Value: RuntimeSocketName},
 			},
 			VolumeMounts:    runtimeMounts,
-			SecurityContext: containerSecurityContext(AgentUID),
+			SecurityContext: containerSecurityContext(in.agentUID()),
 		},
 	}
 	pod.Spec.Volumes = volumes
@@ -551,7 +599,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
-			SecurityContext: containerSecurityContext(AgentUID),
+			SecurityContext: containerSecurityContext(in.agentUID()),
 			// spec: §4.6.1 — the embedded first-party runtime links the
 			// adapter and accepts the same CLI, so its preStop drain runs
 			// the same checkpoint-before-termination path.
@@ -659,7 +707,7 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 			ContainerPort: listenPort,
 		}},
 		VolumeMounts:    []corev1.VolumeMount{captureMount, {Name: dshmVolumeName, MountPath: dshmMount}},
-		SecurityContext: containerSecurityContext(AgentUID),
+		SecurityContext: containerSecurityContext(in.agentUID()),
 	})
 }
 
@@ -770,7 +818,7 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 			AutomountServiceAccountToken: ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr.To(true),
-				FSGroup:      ptr.To(CredReadersGID),
+				FSGroup:      ptr.To(in.credReadersGID()),
 				// spec: §13.1 line 25 — both the adapter UID and the agent
 				// UID are declared in the pod's
 				// spec.securityContext.supplementalGroups list, making
@@ -781,7 +829,7 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 				// cross-UID delivery path requires, rather than relying on
 				// the kubelet's implicit fsGroup-to-supplementary-group
 				// propagation side-effect.
-				SupplementalGroups: []int64{CredReadersGID},
+				SupplementalGroups: []int64{in.credReadersGID()},
 				SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 		},

@@ -3322,6 +3322,25 @@ security:
     # It is the lower bound of every tenant's effective mode and is
     # recorded on the phase-stamp ConfigMap.
     floor: "off"
+  # podUIDs sets the non-root UIDs and GID the agent pod's adapter and
+  # runtime containers run as (§13.1 line 7 fixes only "non-root and
+  # distinct"; the numbers are operator-tunable). The controller (the pod
+  # builder) and the lenny-pod-security / ephemeral-container-cred-guard
+  # webhooks read these SAME values, so a pod the controller stamps
+  # always passes the webhook UID checks. Override only when a custom
+  # runtime base image bakes a different non-root UID; the runtime
+  # image's UID and agent must match agent for the credential-file read
+  # boundary (the fsGroup) to resolve. Changing one of these requires a
+  # matching runtime image.
+  podUIDs:
+    # adapter is the §4.7 lenny-adapter sidecar container UID.
+    adapter: 65532
+    # agent is the runtime container UID; the adapter's SO_PEERCRED peer
+    # check (--runtime-uid) and every runtime container runAsUser use it.
+    agent: 65533
+    # credReadersGID is the lenny-cred-readers group used as the pod
+    # fsGroup so the kubelet group-owns the §4.7 credential tmpfs.
+    credReadersGID: 65534
   # oidc carries the §17 / §25.4 canonical OIDC config consumed by
   # lenny-ops's own authentication (§25.4 lines 1562-1564) and the
   # GatewayClient service-account token lifecycle. F-25.4.20.

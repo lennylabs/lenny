@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
@@ -96,6 +98,22 @@ func splitNamespaces(csv string) []string {
 		}
 	}
 	return out
+}
+
+// envInt64 returns the int64 value of environment variable key, or def
+// when the variable is unset, empty, or not a valid integer. It backs
+// the §13.1 non-root UID flag defaults so the chart can wire them
+// through env without a separate parsing step. F-13.1.16.
+func envInt64(key string, def int64) int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // repeatableFlag accumulates the value of a flag passed multiple times. It
@@ -173,6 +191,9 @@ func main() {
 		runtimeClassSandboxed   string
 		runtimeClassMicrovm     string
 		resourceClassOverrides  repeatableFlag
+		adapterUID              int64
+		agentUID                int64
+		credReadersGID          int64
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -205,6 +226,16 @@ func main() {
 		"override a §5.2 resource class as `name=requests.cpu:250m,requests.memory:512Mi,limits.cpu:1,limits.memory:1Gi` (repeatable; defaults small/medium/large)")
 	flag.StringVar(&runtimeClassMicrovm, "microvm-runtime-class", os.Getenv("LENNY_MICROVM_RUNTIME_CLASS"),
 		"§17.5 RuntimeClass name override for the §5.3 microvm profile. Empty uses the default 'kata'.")
+	// spec: §13.1 line 7 — the non-root pod UIDs are operator-tunable
+	// (default 65532/65533/65534). The lenny-webhook binary MUST be given
+	// the same values (the chart wires both from security.podUIDs) or a
+	// built pod fails the lenny-pod-security UID checks. F-13.1.16.
+	flag.Int64Var(&adapterUID, "adapter-uid", envInt64("LENNY_ADAPTER_UID", podspec.AdapterUID),
+		"§13.1 non-root UID for the lenny-adapter container. Must match the lenny-webhook --adapter-uid and the runtime image's baked UID.")
+	flag.Int64Var(&agentUID, "agent-uid", envInt64("LENNY_AGENT_UID", podspec.AgentUID),
+		"§13.1 non-root UID for the runtime container. Must match the lenny-webhook --agent-uid and the runtime image's baked UID.")
+	flag.Int64Var(&credReadersGID, "cred-readers-gid", envInt64("LENNY_CRED_READERS_GID", podspec.CredReadersGID),
+		"§13.1 lenny-cred-readers GID used as the pod fsGroup for the credential tmpfs. Must match the lenny-webhook --cred-readers-gid.")
 	flag.StringVar(&egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
 		"the §12.9.8 tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 §12.9.8 credential-leakage probes.")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -429,6 +460,9 @@ func main() {
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		AdapterImage:            adapterImage,
+		AdapterUID:              adapterUID,
+		AgentUID:                agentUID,
+		CredReadersGID:          credReadersGID,
 		GatewayGRPCAddr:         gatewayGRPCAddr,
 		EgressCaptureImage:      egressCaptureImage,
 		DevMode:                 devMode,

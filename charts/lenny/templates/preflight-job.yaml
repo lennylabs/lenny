@@ -269,6 +269,10 @@ spec:
             {{- $agentNS := list }}
             {{- range .Values.agentNamespaces }}{{ $agentNS = append $agentNS .name }}{{ end }}
             - --agent-namespaces={{ join "," $agentNS }}
+            {{- /* spec: §13.1 line 7 — keep the agent-pod fsGroup audit in
+                   lock-step with the operator-tunable lenny-cred-readers
+                   GID the controller stamps. F-13.1.16. */}}
+            - --cred-readers-gid={{ ((.Values.security | default dict).podUIDs | default dict).credReadersGID | default 65534 }}
             - --feature-llm-proxy={{ .Values.features.llmProxy }}
             - --feature-drain-readiness={{ .Values.features.drainReadiness }}
             - --feature-compliance={{ .Values.features.compliance }}

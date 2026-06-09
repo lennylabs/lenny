@@ -9574,7 +9574,7 @@ Each is mapped to the implementation below.
 
 **Resolution:** Evidence was partly stale — migration `0115_delegation_tree_budget` already created the table with the `extension_denied`/`cool_off_expiry` columns (no writer). The residual gap, the handoff-safe Postgres `BudgetSource`, is now built. New `leasecontrol.DenialStore` seam: `MemoryBudgetSource.WithDenialStore` makes the §8.6 denial state durable by delegating it to the Postgres-backed `pkg/gateway/leasecontrol/denialpg` store. `Deny` persists the flag and `NOW()`-relative cool-off to `delegation_tree_budget`; `TreeBudget` reads the flag back from Postgres compared against the database clock (§8.6 line 731/733, never `time.Now()`); `ApplyGrant` runs the §8.6 line 732 in-flight atomic re-check as a single `INSERT … ON CONFLICT DO UPDATE … WHERE NOT denied … RETURNING` that locks the tree row, increments the new `ext_*` grant counters, and rolls back to `ErrExtensionDenied` when a rejection landed under the lock; `ClearSubtreeDenial` clears it for the §15.1 line 868 admin endpoint. Migration `0130` adds the seven §8.6 line 643 `ext_*` dimension counters + `updated_at`. Wired in `cmd/lenny-gateway` when `pgPool != nil` (nil-degrades to in-memory for the Embedded/dev path). The per-session extension-delta scoping (F-8.6.12) stays in memory; the denial state is tree-keyed, matching the table PK. Tests: 8 tier-1 (denial-store seam delegation + nil-store invariance) + a real-Postgres tier-2 contract (`tests/tier2_component/leasedenial`: durable round-trip, db-clock cool-off expiry, in-flight gate, counter increment, clear, cross-tenant isolation) + a tier-1 migration static check. Commit 54279ee1.
 
-### - [ ] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — OPEN
+### - [ ] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — DEFERRED
 
 **Spec:** §8.6 (line 629) is normative on the trigger: "When the LLM proxy rejects a call for budget exhaustion, the adapter automatically requests a lease extension from the gateway via the gRPC control channel."
 
@@ -9589,6 +9589,8 @@ Each is mapped to the implementation below.
 **Reopened 2026-06-07 — prior deferral (after d8efc623):** Genuinely blocked on the §4.9 LLM-proxy client path inside the pod adapter, which v1 does not host (re-verified: `pkg/adapter/leaseextend.go:54-59` documents the seam; no production caller of `HandleBudgetExhaustion`). The gateway side of the trigger (the ExtendLease handler with full §8.6 elicitation/auto-mode dispatch) now exists (F-8.6.2/F-8.6.7); what is missing is the adapter-resident LLM-proxy rejection detector that calls it. Closing this requires building the §4.9 adapter LLM-proxy client and wiring its budget-exhaustion rejection to `HandleBudgetExhaustion`. Re-attempt once the adapter hosts the LLM-proxy path.
 
 **Re-verified 2026-06-08 — DEFERRED (separate large workstream unbuilt).** Re-confirmed `pkg/adapter/leaseextend.go` still documents the SEAM and `HandleBudgetExhaustion` has no production caller (only the `if s.LeaseExtender == nil` seam guard; `cmd/lenny-adapter/main.go` constructs no LLM-proxy client and assigns no `LeaseExtender`). The §4.9 LLM proxy lives in the gateway, not the pod adapter, so the in-pod budget-rejection detector that the spec's "automatic" trigger fires from does not exist; constructing a `LeaseExtender` in isolation would produce dead code (no caller). Gated on the adapter-resident §4.9 LLM-proxy client + budget-rejection detector workstream. Heading moved OPEN → DEFERRED.
+
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** The prior note claimed the move but left the heading OPEN; flipped now. Re-verified this session: `grep` finds no `HandleBudgetExhaustion`/`LeaseExtender` caller and no `llmproxy` client construction in `cmd/lenny-adapter`. Blocker (adapter-resident §4.9 LLM-proxy client) unchanged.
 
 ### - [x] F-8.6.7 — Auto-mode rate limit and elicitation fallback are unimplemented [High] — CLOSED
 
@@ -11304,7 +11306,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** The `lenny/request_elicitation` handler now constructs an `elicitation.Provenance` at origination (`origin_pod`=raising session id, `delegation_depth`=origin hop depth from the chain walk, `origin_runtime`=session `RuntimeRef`, `initiator_type`=agent) and stamps `delegationDepth`/`originRuntime` onto the recorded interaction Detail (alongside the existing originPod/initiatorType) AND onto the `elicitation_request` SSE event payload — so the client receives provenance over the live channel and the §16.7 audit row can source delegation_depth/initiator_type from the stored record. The connector-only fields (connector_id, expected_domain, purpose) are correctly empty on the v1 agent-initiated path (F-9.2.19). Tests assert both the recorded Detail and the SSE payload carry the provenance. Commit `ee6f51e4`.
 
-### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — OPEN
+### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — DEFERRED
 
 - **Spec:** Line 87. "**URL domain validation is a hard enforcement boundary.** The gateway rejects any URL-mode elicitation whose URL domain does not match the registered connector's `expected_domain`. This is not a metadata annotation — the elicitation is dropped and an error is returned to the originator."
 - **Evidence:**
@@ -11316,6 +11318,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 **Reopened 2026-06-07 — prior deferral:** The hard boundary applies to a *connector-initiated* url-mode elicitation (the §9.3 gateway-OAuth flow, where step 3 emits a url-mode elicitation through the chain). v1 has no connector-initiated elicitation dispatch path: `lenny/request_elicitation` is the only elicitation entry point and is always agent-initiated (F-9.2.19 removed the self-declarable `InitiatorType` input precisely so an agent cannot assert `connector`). With no connector elicitation surface, there is no `connector_id` / `expected_domain` in scope at any dispatch site to enforce against, and `CheckURLModeProvenance` correctly admits the (nonexistent in v1) connector path. The enforcement site is created by the §9.3 gateway-OAuth elicitation subsystem (gateway acting as MCP client, receiving the auth challenge, emitting the url-mode elicitation bound to the registered connector); that subsystem is unbuilt. Re-attempt once the connector-initiated elicitation path exists — the host-vs-`expected_domain` match itself reuses the existing `hostMatchesAllowlist` exact/`*.suffix` logic.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (re-verified this batch):** Re-confirmed: the dispatch sites (`pkg/gateway/mcptools/elicitation.go`, `mcptools.go`) accept no `connector_id`, and `lenny/request_elicitation` is always agent-initiated (F-9.2.19 removed the self-declarable `InitiatorType`), so there is no connector-initiated url-mode elicitation with a registered `expected_domain` in scope at any dispatch site to enforce against; `CheckURLModeProvenance` correctly admits the (nonexistent in v1) connector path. The enforcement site is created only by the §9.3 gateway-OAuth elicitation subsystem (gateway acting as MCP client, receiving the connector auth challenge, emitting a url-mode elicitation bound to the registered connector definition), which is unbuilt. Deferred per Rule P criterion 3 (separate large workstream — §9.3 connector-OAuth elicitation — not begun). When that path lands, the host-vs-`expected_domain` match reuses the existing exact/`*.suffix` `hostMatchesAllowlist` logic.
+
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** Body already concluded "Deferred per Rule P criterion 3"; heading left OPEN. Flipped now. Re-confirmed this session: `connector_id`/`expected_domain` appear in `pkg/gateway/mcptools` only as a comment naming the unbuilt connector-only fields, with no dispatch site that resolves a connector definition. Blocker (§9.3 connector-OAuth elicitation subsystem) unchanged.
 
 ### - [x] F-9.2.8 — 30s per-hop forwarding timeout is absent [High] — CLOSED
 
@@ -12603,7 +12607,7 @@ Implementation: no `sessionAffinity` is configured on the `lenny-gateway` Servic
 
 **Resolution (positive confirmation, no code change):** Informational finding; the implementation is spec-aligned. `charts/lenny/templates/gateway-deployment.yaml` Service block sets no `sessionAffinity` (the spec's Correctness rule treats sticky routing as optimization), and `pkg/storerouter` carries `SessionShard` for prefix-based routing. The finding's own conclusion ("No action required") stands.
 
-### - [ ] F-10.1.19 — CheckpointBarrier protocol: cmd/lenny-gateway integration wiring. (High) [Medium] — OPEN
+### - [ ] F-10.1.19 — CheckpointBarrier protocol: cmd/lenny-gateway integration wiring. (High) [Medium] — DEFERRED
 
 Carved from F-10.1.7. The §10.1 lines 163-181 CheckpointBarrier protocol logic, persistence (`session_checkpoint_meta` migration 0148 + `pkg/gateway/sessioncheckpointmeta`), gateway client RPC (`adapterclient.Client.CheckpointBarrier`), coordinator (`pkg/gateway/barrier`), adapter side (`pkg/adapter/coordination.go`), and the two previously-missing emitters (`lenny_coordinator_resume_deduplicated_total`, `lenny_prestop_barrier_target_source_total`) are all built and unit-tested. The remaining work is the binary-level integration that connects those pieces to the live drain/resume paths against cluster primitives:
 
@@ -12615,6 +12619,8 @@ Carved from F-10.1.7. The §10.1 lines 163-181 CheckpointBarrier protocol logic,
 DEFERRED because this wiring depends on cluster-resident primitives (per-pod adapter dial targets, the lease-mirror / EndpointSlice surface, and MinIO) that are exercised at tier 4/5 integration rather than tier-1 here.
 
 **Re-verified (this batch) — status DEFERRED:** Re-confirmed the split. `pkg/gateway/barrier` carries the `Coordinator`, the `Dispatcher` / `TargetLister` / `ManifestReader` interfaces, and the unit-tested `Dispatch` / `ResumeDedup` logic, but a grep for `barrier.` across `pkg/gateway/prestop` and `cmd/lenny-gateway/main.go` returns nothing — no production constructs a Dispatcher that dials each coordinated pod by IP, no TargetLister enumerates the held coordination leases, no ManifestReader reads the MinIO checkpoint manifest, and nothing hooks `Coordinator.Dispatch` into the preStop drain. Each of those is a cluster-runtime integration (pod-IP dialing, a `coordination_lease` mirror table or EndpointSlice watch, MinIO) with no tier-1-exercisable surface on this darwin/no-cluster host, which is the Rule-P "infrastructure unavailable in this environment" exception. The protocol, persistence, client RPC, and coordinator are complete; only the binary integration against cluster primitives remains.
+
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** Body already concluded DEFERRED (Rule-P infrastructure-unavailable); heading left OPEN. Flipped now. Re-confirmed this session: `grep` finds no `barrier.` caller in `pkg/gateway/prestop` or `cmd/lenny-gateway` and no production `barrier.Dispatcher`/`TargetLister`/`ManifestReader` binding. Blocker (cluster-resident pod-IP dial + lease-mirror + MinIO) unchanged.
 
 ### Severity summary
 
@@ -16813,7 +16819,7 @@ The metric `lenny_adapter_coordinator_hold` is declared (`pkg/observability/metr
 
 **Resolution:** Closed by F-10.1.4 (commit `6b4dc934`). The §10.1/§11.3-line-207 coordinator-hold state now lives in `pkg/adapter/holdstate.go`: the configurable `coordinatorHoldTimeoutSeconds` (default 120s, `--coordinator-hold-timeout-seconds` / `LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS`) arms a timer on coordinator-connection loss, the `lenny_adapter_coordinator_hold` gauge is set via the new `setCoordinatorHold` emitter, and the hold fails into `AdapterTerminating(coordinator_lost)` + self-termination when no new coordinator fences within the window.
 
-### - [ ] F-11.3.14 — `CoordinatorFence` RPC and its 5s hard-coded timeout are not implemented [Medium] — OPEN
+### - [ ] F-11.3.14 — `CoordinatorFence` RPC and its 5s hard-coded timeout are not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Metrics for it exist (`lenny_coordinator_fence_retry_total`, `lenny_coordinator_fence_relinquished_total` — `pkg/observability/metrics/catalog.go:225-226`), but `grep -rn "CoordinatorFence" --include="*.go" --include="*.proto"` matches only the metric catalogue. No RPC, no client, no enforcement.
 
@@ -16821,7 +16827,9 @@ Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Me
 
 **Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed; this batch added the sibling `adapterclient.Client.CheckpointBarrier` wrapper but not a `CoordinatorFence` client wrapper, and the 5s-timeout retry/relinquish driver still depends on the live handoff wiring. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19 (the carved cmd/lenny-gateway barrier/handoff integration), which is where the `CoordinatorFence` wrapper and its driver land.
 
-### - [ ] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — OPEN
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** Anchored to the still-DEFERRED F-10.1.19. Re-confirmed this session: no `CoordinatorFence` client wrapper exists in `pkg/gateway/adapterclient` and no `barrier.` caller exists in the gateway binary. Blocker unchanged.
+
+### - [ ] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 210. The pool-config validator (`pkg/admission/pool_config_validator/validator.go:18`) defers it as a Postgres-authoritative field, and metric catalog entries exist (`pkg/observability/metrics/catalog.go:93-94`). There is no gateway-side enforcement: `grep -rn "BarrierAck\|barrier_ack" --include="*.go" pkg/` returns only the metric registrations and the validator comment.
 
@@ -16830,6 +16838,8 @@ Spec §11.3 line 210. The pool-config validator (`pkg/admission/pool_config_vali
 **Re-deferred (commit `88cbaeb8`):** F-10.1.7 closed. `barrier.Coordinator.Dispatch` now fans out under the caller-bounded single wall-clock deadline the spec sets to `checkpointBarrierAckTimeoutSeconds` (§10.1 line 167), so the protocol the 90s timer budgets exists. The remaining gap is the live binary wiring that reads the pool's `checkpointBarrierAckTimeoutSeconds`, bounds the Dispatch context with it during the preStop drain, and enforces the per-replica ACK budget. Re-anchored from the now-CLOSED F-10.1.7 to F-10.1.19.
 
 **Re-verified (this batch) — status DEFERRED:** The 90s budget is the per-replica ACK deadline the preStop-drain `Coordinator.Dispatch` enforces, and that drain wiring is exactly the still-DEFERRED F-10.1.19 (no `barrier.` caller exists in `pkg/gateway/prestop` or `cmd/lenny-gateway`). Reading the pool's `checkpointBarrierAckTimeoutSeconds` and bounding the Dispatch context with it cannot be exercised without the cluster-resident Dispatcher/TargetLister/ManifestReader F-10.1.19 supplies, so this remains blocked on that cluster-infra integration rather than being a standalone tier-1 fix.
+
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** Anchored to the still-DEFERRED F-10.1.19 (no `barrier.` caller in `pkg/gateway/prestop`/`cmd/lenny-gateway`). The 90s per-replica ACK budget cannot be wired without that preStop-drain Dispatch caller. Blocker unchanged.
 
 ### - [x] F-11.3.16 — Elicitation per-hop forwarding timeout (30s, hard-coded) is absent [Medium] — CLOSED
 
@@ -23904,7 +23914,7 @@ longer dead code — the validator enforces the explicit-declaration
 invariant the §13.1 line 25 webhook obligation requires. See F-13.1.11
 for the test list.
 
-### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — OPEN
+### - [x] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — CLOSED
 
 `pkg/controller/sandbox/podspec/podspec.go:44-54` pins
 `AdapterUID=65532`, `AgentUID=65533`, `CredReadersGID=65534` as Go
@@ -23931,6 +23941,8 @@ ships a runtime image with conflicting UIDs in their custom base.
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
 
 **Re-deferred (this batch):** Re-verified the coupling (rules A, O). The three values are not a single-site constant: the controller's `podspec.Build` stamps `containerSecurityContext(AdapterUID)` / `(AgentUID)`, the `--runtime-uid=AgentUID` adapter arg (the §4.7 `SO_PEERCRED` peer check), and `FSGroup`/`SupplementalGroups = CredReadersGID`; and the **separate** `lenny-webhook` binary independently validates `fsGroup == credReadersGID` and the adapter/agent run-as-user (`pkg/podsecurity`, `pkg/admission/ephemeral_container_cred_guard`, wired from the same `podspec.*` constants in `cmd/lenny-webhook/main.go:153,181`), with `pkg/preflight` asserting the same GID. A safe override therefore has to thread one shared Helm value into **both** the controller and webhook Deployments (and preflight); a partial application — controller-only or webhook-only — produces the exact UID mismatch the finding warns about (every agent pod rejected by `lenny-pod-security`). The default-preserving plumbing is mechanical, but the multi-Deployment chart wiring that keeps the two binaries in lock-step is not render-verifiable in this environment (no `helm template`/cluster), so landing it blind risks bricking all pod creation for a Low-severity ergonomics gain. Deferred to a focused config batch where the chart render can be validated end-to-end. v1's reference runtime images bake the matching UIDs, so no deployer collision is observed in the interim.
+
+**Resolution (this batch):** The prior deferral's blocker was wrong — `helm template` and `helm unittest` are available here, so the multi-Deployment lock-step is render-verifiable. The three UIDs are now operator-tunable end-to-end, default-preserving. `podspec.Inputs` carries `AdapterUID`/`AgentUID`/`CredReadersGID` (zero = the package default constant, since UID 0 is root and §13.1 forbids it); `podspec.Build` resolves them through `in.adapterUID()`/`in.agentUID()`/`in.credReadersGID()` at every UID-bearing site (adapter + runtime `runAsUser`, the `--runtime-uid` SO_PEERCRED arg, the pod `fsGroup`, and `supplementalGroups`). The `sandbox.Reconciler` threads them from `cmd/lenny-controller` flags (`--adapter-uid`/`--agent-uid`/`--cred-readers-gid`, env `LENNY_ADAPTER_UID`/etc.); the **separate** `lenny-webhook` binary reads the same flags and hands them to `EphemeralContainerCredGuard` / `PodSecurity`; `lenny-preflight` takes `--cred-readers-gid` for the fsGroup audit. The chart sources all of them from one `security.podUIDs.{adapter,agent,credReadersGID}` value, rendered into the controller Deployment, every `_webhook.tpl` Deployment, and the preflight Job, so a partial override is impossible. Verified the lock-step with a tier-2 webhook test (a controller-built pod with overridden UIDs is admitted only by a `PodSecurity` webhook wired with the matching GID; the stale-default GID rejects it) plus tier-1 podspec resolver/Build coverage and helm-unittest assertions on default + overridden renders. Commit ccdc0202.
 
 ### - [x] F-13.1.17 — 1-04 — `lenny-pod-security` webhook registers CREATE only; UPDATE not covered [Low] — CLOSED
 
@@ -27668,7 +27680,7 @@ and the `LeaseExtender` together.
 
 **Re-verified again (this batch) — heading marker reconciled; one premise corrected.** The "no production `gatewaycontrol.Dial`/`New` caller" half is now stale: `cmd/lenny-adapter/main.go:286` dials `gatewaycontrol.Dial` and assigns the resulting client to `adapterSrv.PlatformForwarder` / `ConnectorForwarder` for the §9.1/§9.3 platform-tool and connector forwarding. The §8.6 blocker nevertheless holds: `HandleBudgetExhaustion` still has **zero** production callers (`grep` returns only the method, the `ErrLeaseExtenderUnset` seam guard, and doc comments), because the adapter hosts no in-pod §4.9 LLM-proxy budget-rejection detector to invoke it — the proxy lives in the gateway. Assigning `Server.LeaseExtender = gwClient` would therefore still produce dead config (a wired seam nothing fires), the exact Rule-P situation. Stays DEFERRED on the adapter-resident §4.9 LLM-proxy / budget-rejection detector workstream (F-8.6.6); the heading `— OPEN` marker was stale and is now reconciled to `— DEFERRED`.
 
-### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — OPEN
+### - [ ] F-15.3.7 — `ReportUsage` is implemented but never polled in production [Medium] — DEFERRED
 
 §4.7 line 637: "Report LLM token counts extracted from provider responses;
 gateway increments quota counters and persists to Postgres on the next
@@ -27710,6 +27722,8 @@ per-session direct-mode adapter-client registry + periodic pull. That two-sided
 either call an `Unimplemented` handler or dial a fresh adapter connection per
 poll with no lifecycle management. Deferred on the direct-mode usage-pull
 workstream (also blocks F-11.2.20).
+
+**Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED).** The body's re-verification already concluded DEFERRED; the heading was left OPEN. Flipped now. Re-confirmed this session: the only `ReportUsage` callers are the `adapterclient.Client` wrapper itself (`client.go:599,628`); no `cmd/` or `pkg/gateway` production poller exists, and `cmd/lenny-adapter` sets no `Server.Usage`. Blocker unchanged.
 
 ### - [x] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — CLOSED
 

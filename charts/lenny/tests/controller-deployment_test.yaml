@@ -462,3 +462,41 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
+
+  # spec: §13.1 line 7 — the controller stamps the operator-tunable
+  # non-root pod UIDs (default 65532/65533/65534) onto every agent pod;
+  # the lenny-webhook Deployments are wired from the same security.podUIDs
+  # values so a built pod passes the pod-security UID checks. F-13.1.16.
+  - it: stamps the default non-root pod UIDs by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=65532
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=65533
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=65534
+
+  - it: renders overridden non-root pod UIDs from security.podUIDs
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      security.podUIDs.adapter: 70000
+      security.podUIDs.agent: 70001
+      security.podUIDs.credReadersGID: 70002
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=70000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=70001
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=70002

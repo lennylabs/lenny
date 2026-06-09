@@ -118,6 +118,15 @@ spec:
             {{- with $rcNames.microvm }}
             - --microvm-runtime-class={{ . }}
             {{- end }}
+            {{- /* spec: §13.1 line 7 — the operator-tunable non-root pod
+                   UIDs. The lenny-webhook Deployments are wired from the
+                   SAME security.podUIDs values so a controller-built pod
+                   passes the lenny-pod-security / cred-guard UID checks.
+                   F-13.1.16. */}}
+            {{- $podUIDs := (.Values.security | default dict).podUIDs | default dict }}
+            - --adapter-uid={{ $podUIDs.adapter | default 65532 }}
+            - --agent-uid={{ $podUIDs.agent | default 65533 }}
+            - --cred-readers-gid={{ $podUIDs.credReadersGID | default 65534 }}
             {{- /* spec: §5.2 line 369 / §6.4 line 413 — operator overrides
                    for the small/medium/large resource classes. The binary
                    ships defaults that account for the tmpfs reservation, so

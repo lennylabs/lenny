@@ -71,6 +71,16 @@ spec:
             - --registry-require-digest={{ $.Values.platform.registry.requireDigest }}
             - --gvisor-runtime-class={{ $.Values.runtimeClasses.profiles.sandboxed.name }}
             - --kata-runtime-class={{ $.Values.runtimeClasses.profiles.microvm.name }}
+            {{- /* spec: §13.1 line 7 — the operator-tunable non-root pod
+                   UIDs the pod-security and ephemeral-container-cred-guard
+                   webhooks enforce. Wired from the SAME security.podUIDs
+                   values as the controller's --adapter-uid/--agent-uid/
+                   --cred-readers-gid so a built pod passes these checks.
+                   F-13.1.16. */}}
+            {{- $podUIDs := ($.Values.security | default dict).podUIDs | default dict }}
+            - --adapter-uid={{ $podUIDs.adapter | default 65532 }}
+            - --agent-uid={{ $podUIDs.agent | default 65533 }}
+            - --cred-readers-gid={{ $podUIDs.credReadersGID | default 65534 }}
           ports:
             - name: https
               containerPort: 8443

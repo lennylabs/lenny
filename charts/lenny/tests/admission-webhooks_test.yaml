@@ -69,6 +69,43 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --kata-runtime-class=kata-qemu
 
+  # spec: §13.1 line 7 — the webhook binary enforces the operator-tunable
+  # non-root pod UIDs the controller stamps. The chart wires both from the
+  # same security.podUIDs values so a controller-built pod passes the
+  # pod-security / cred-guard UID checks; an override on one side without
+  # the other rejects every agent pod. F-13.1.16.
+  - it: passes the default non-root pod UIDs to the webhook binary
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=65532
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=65533
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=65534
+
+  - it: tracks an overridden security.podUIDs into the webhook args
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    set:
+      security.podUIDs.adapter: 70000
+      security.podUIDs.agent: 70001
+      security.podUIDs.credReadersGID: 70002
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=70000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=70001
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=70002
+
   - it: protects the label-immutability webhook with a PodDisruptionBudget
     template: admission-policies/label-immutability-webhook.yaml
     documentIndex: 2
