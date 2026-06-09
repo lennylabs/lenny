@@ -1,0 +1,532 @@
+# Proposal: Task-mode gateway driver: ReportTaskCleanup RPC, disposition write ownership, and between-task lifecycle reconciliation
+
+- **Status:** Draft for review. Revised after 2 adversarial review rounds (2026-06-09).
+- **Date:** 2026-06-09.
+- **Scope:** Adds the adapter→gateway `ReportTaskCleanup` RPC, records the gateway's `Sandbox` status write window in §4.6.3, defines the §6.2 task-mode disposition driver and `task_cleanup` watchdog, aligns `task_ready` on dispatch-time semantics across every site that describes it, clarifies task-mode ingestion in §15.1, and removes the stray task envelopes from the JSONL schema. Unblocks F-5.2.30.
+
+This document stages the proposed spec and schema edits. It does not modify any spec file. Apply the changes in the "Proposed spec and schema changes" section after sign-off.
+
+## 1. Problem
+
+F-5.2.30 (`BUILD-GAPS.md:3689`) defers the gateway task-execution driver on two claimed spec gaps, and its recorded unblock condition is "Re-attempt once §15/§4.7 define the gateway-side task-control surface" (`BUILD-GAPS.md:3715`).
+
+The first claimed gap, a missing `/v1/tasks` ingestion route, is a defect in the finding rather than in the spec. No `/v1/tasks` route exists anywhere in `spec/`, `schemas/`, or `charts/`, and none ever existed in spec git history (`git log -S` is empty). The spec's ingestion path for task-mode work is session creation against an `executionMode: task` pool (`spec/05_runtime-registry-and-pool-model.md:475`; `spec/07_session-lifecycle.md:65-75`), and the code already ingests `executionMode: task` through the session path (`pkg/gateway/sessionserver/start.go:1185`). The finding's supporting citations are also stale: `tests/tier7_load_cloud/task_mode_test.go` does not exist, and the tier-12 load scenario submits tasks via `POST /v1/sessions/start`, `POST /v1/sessions/{id}/messages`, and `POST /v1/sessions/{id}/terminate` (`tests/tier12_load_cloud/scenarios/task_throughput/main.js:53,62,67`), never via `/v1/tasks`.
+
+The second gap is genuine: the spec defines no gateway-side task-control surface. The §4.7 Gateway→Adapter RPC table (`spec/04_system-components.md:618-638`) has no task-lifecycle RPC, the adapter→gateway control-event table (`spec/04_system-components.md:652-662`) carries no task or scrub event, and `pkg/adapter/controlchannel.go:86` confirms that no gateway→adapter frame exists on that stream. The between-task loop (`spec/05_runtime-registry-and-pool-model.md:415`) is adapter-executed and adapter-initiated: the runtime's terminal `{type: "response"}` frame (`spec/15_external-api-surface.md:1889-1891`) chains into `task_complete` per `spec/06_warm-pod-model.md:142`. Its tail, however, has unspecified gateway dependencies. The gateway needs the scrub result to resolve the §6.2 disposition (`spec/06_warm-pod-model.md:147-156`), write the pod phase and the `scrub_warning` annotation, feed `taskcleanup.Decide`, and emit the §5.2 metrics; and `task_ready` is gated on gateway-driven next-task materialization (`spec/04_system-components.md:702`) and a per-task `AssignCredentials` lease (`spec/06_warm-pod-model.md:26`).
+
+Secondary spec defects block a coherent driver spec:
+
+- **`task_ready` ordering is contradictory.** `spec/04_system-components.md:702`, `schemas/lifecycle-events.schema.json:202-211`, and `schemas/lenny-adapter-jsonl.schema.json` give it dispatch-time semantics (the frame carries the new task's ID), while `spec/05_runtime-registry-and-pool-model.md:415,419`, `spec/06_warm-pod-model.md:76`, and the timing clause at `spec/15_external-api-surface.md:1461` place it immediately after scrub. The post-scrub reading is unimplementable: no next task is assigned at scrub completion, so there is no task ID, workspace, credential lease, or manifest to be ready for. The adapter code implements the dispatch-time reading (`pkg/adapter/lifecyclechannel.go:520-528`).
+- **The persistent-runtime claim is false.** `spec/04_system-components.md:701` states the runtime "remains alive for the next task", contradicting scrub step 1 (`kill -9 -1` as the sandbox user, `spec/05_runtime-registry-and-pool-model.md:428`), the explicit SDK-process kill at `spec/06_warm-pod-model.md:76`, and the per-task runtime spawn at `spec/06_warm-pod-model.md:26`.
+- **The gateway-resolved disposition has no settled write path.** The §4.6.3 ownership table assigns `Sandbox.status.*` exclusively to the WarmPoolController (`spec/04_system-components.md:574`), and the gateway's enumerated write surface (`spec/04_system-components.md:588`) covers neither the disposition phases nor the `scrub_warning` annotation. Meanwhile the shipped claim path already writes `Sandbox.status.phase` from the gateway under its own field manager with an explicit drain-yield protocol (`pkg/gateway/podclaim/gatewaystatus.go:16-56`), citing a "§4.6.3 gateway carve-out" the spec does not contain, and the shipped chart already grants the gateway `get`/`update`/`patch` on `sandboxes/status` (`charts/lenny/templates/gateway-deployment.yaml:130-132`). The per-pod retirement counters feeding the disposition exist only in gateway process memory (`pkg/gateway/taskdriver/taskdriver.go:101-104`), against the §10.1 statelessness rule (`spec/10_gateway-internals.md:5`).
+
+The adapter-side primitives are built and unit-tested with zero production callers: `pkg/adapter/scrub.Run` (`pkg/adapter/scrub/scrub.go:232`), `RequestTaskComplete` and `SignalTaskReady` (`pkg/adapter/lifecyclechannel.go:500,523`), and `pkg/sandbox/taskcleanup.Decide` (`pkg/sandbox/taskcleanup/taskcleanup.go:173`, called only by the leaf package `pkg/gateway/taskdriver`).
+
+This proposal defines the missing surface, reconciles the contradictions, and corrects the finding's premises. It unblocks F-5.2.30.
+
+## 2. Decisions
+
+The following were decided in drafting and adversarial challenge and constrain this design.
+
+- **No `/v1/tasks` route is added.** The route never existed in spec git history, the F-5.2.30 deliverable's cited §15.1 task-submission path is not defined by §15.1, and the spec consistently models a task-mode task as a session: per-task credential lease (`spec/06_warm-pod-model.md:26`), `TaskRecord.sessionId` (`spec/08_recursive-delegation.md:814`), session surfaced as an MCP or A2A task (`spec/07_session-lifecycle.md:116`), and the post-v1 A2A adapter creating Lenny sessions (`spec/21_planned-post-v1.md:5`). The fix is a §15.1 clarification.
+- **The between-task loop start stays adapter-observed.** `spec/15_external-api-surface.md:1889-1891` defines task completion as the runtime's terminal `{type: "response"}` frame (or process exit), and `spec/05_runtime-registry-and-pool-model.md:415` plus `spec/06_warm-pod-model.md:142` chain that event into the adapter sending `task_complete`. No gateway RPC triggers the loop; the new surface sits at the loop's tail.
+- **The report transport is one unary adapter→gateway RPC** (`ReportTaskCleanup`) on the existing `GatewayControl` service, following the `ExtendLease` precedent (`spec/04_system-components.md:644`). The `GatewayControl` doc comment (`schemas/lenny-adapter.proto:204-208`) states that the service "exists because a few §8 control operations originate at the pod and need a gateway decision"; `ReportTaskCleanup` is a §5.2/§6.2 operation, so Section 9.7.1 stages a one-line widening of the service comment, whose §8 scoping the existing §9.1 `ListPlatformTools` RPC already strains. No new gateway→adapter stream frame, no new service, and no new RPC on the gateway-initiated `Adapter` service.
+- **The disposition decision stays in the gateway**, matching the existing spec attribution (`spec/05_runtime-registry-and-pool-model.md:446,452,455`; the gateway label read at the `task_cleanup` transition, `spec/06_warm-pod-model.md:181`) and the built `pkg/gateway/taskdriver` plus `pkg/sandbox/taskcleanup` split. The `ReportTaskCleanup` response carries the resolved disposition (`reuse`, `rewarm_sdk`, or `retire`) so the adapter knows whether to run the SDK reconnect, reconciling `spec/06_warm-pod-model.md:76` (the adapter executes the re-warm) with `spec/06_warm-pod-model.md:181` (the gateway gates it).
+- **Disposition writes extend the gateway's already-implemented `Sandbox.status.phase` field-manager window** (`pkg/gateway/podclaim/gatewaystatus.go:16-56`: SSA Apply under the gateway field manager with `ForceOwnership` during the claim window, and a non-Apply yield to the WarmPoolController at `draining`). The spec edit records that window in §4.6.3, which currently contradicts both the code and the shipped chart by assigning `Sandbox.status.*` exclusively to the WarmPoolController.
+- **Per-pod retirement counters and the per-task resolution record are externalized.** `tasksCompleted` and `scrubFailureCount` move from gateway memory to `Sandbox.status.taskState`, are read back at each `task_cleanup`, and are mirrored into `agent_pod_state`. The same status object records `lastTaskId`, `lastDisposition`, and `lastScrubWarning`, which answer a retried `ReportTaskCleanup` after the resolution has been written. This satisfies the §10.1 rule (stateless replicas over externalized state) and survives both coordinator handoff and ordinary cross-replica claim turnover. The store choice is surfaced as open decision 1 because the spec offers more than one precedented store.
+- **`task_ready` carries dispatch-time semantics everywhere.** The dispatch-time reading is operative (the frame payload carries the new task's ID; per-task manifest regeneration at `spec/04_system-components.md:711`; the SDK `OnCreate` contract at `spec/15_external-api-surface.md:2568-2573`; `schemas/lifecycle-events.schema.json:202-211`; `pkg/adapter/lifecyclechannel.go:520-528`), and the scrub-time reading is unimplementable because no next task is assigned at scrub completion. §5.2 lines 415 and 419, §6.1 line 76, and the §15.4.1 line 1461 timing clause are aligned to it.
+- **The per-task runtime process model is canon.** `spec/06_warm-pod-model.md:26` rewrites credentials "before the runtime binary is spawned for each task", and scrub step 1 kills the SDK process per `spec/06_warm-pod-model.md:76`. Next-task dispatch reuses the existing claim-path RPCs (`AssignCredentials`, `PrepareWorkspace`/`FinalizeWorkspace`, and `StartSession` or `ConfigureWorkspace`); no `StartTask` RPC is introduced. The "remains alive for the next task" clause at `spec/04_system-components.md:701` is corrected.
+- **The stale BUILD-GAPS claim about the load scenarios is dropped.** `tests/tier12_load_cloud/scenarios/task_throughput/main.js:53,62,67` submits tasks via the `/v1/sessions` routes and never referenced `/v1/tasks` at any commit.
+- **No dual modes or compatibility shims.** The stray adapter↔gateway task envelopes in `schemas/lenny-adapter-jsonl.schema.json` are removed rather than deprecated, since no deployments exist.
+
+## 3. The `ReportTaskCleanup` exchange
+
+The gateway has no specified way to learn the scrub outcome it needs for the §6.2 disposition, the `scrub_warning` annotation, the `taskcleanup.Decide` inputs, and the §5.2 metrics: the §4.7 control-event table (`spec/04_system-components.md:652-662`) is task-free, and `pkg/adapter/controlchannel.go:86` documents that no gateway→adapter frame exists on the stream. Symmetrically, the adapter has no specified way to learn whether to run the §6.1 SDK re-warm, a decision gated on inputs only the gateway reads (`spec/06_warm-pod-model.md:181`).
+
+A single request/response RPC on the existing adapter→gateway `GatewayControl` service covers both directions in one exchange, following the `ExtendLease` precedent (`spec/04_system-components.md:644`). The request carries the scrub outcome (`scrub_result`, `failed_step`, `cleanup_commands_exit`, and the step-7 `vm_restart` result); the response carries the resolved disposition (`reuse`, `rewarm_sdk`, or `retire`) and the `scrub_warning` flag. The RPC is idempotent per `task_id`: a retried report receives the already-resolved disposition without a second write or metric emission. The resolution is recorded in `Sandbox.status.taskState` in the same status Apply that advances the counters (Section 5), so the recall works on any gateway replica and after the pod has left `task_cleanup`. The adapter retries an undeliverable report with backoff (initial 1s, cap 30s) until acknowledged; the pod remains in `task_cleanup`, and the watchdog in Section 6 of this proposal bounds the wait when the report never arrives. The report is sent for every task whose pod enters `task_cleanup`, covering the §6.2 `cancelled → task_cleanup` entry (`spec/06_warm-pod-model.md:146`) as well as ordinary completion; the cancellation path runs the same between-task sequence without the `task_complete` exchange.
+
+The grep-verified RPC name space (`ReportTaskCleanup`, `BeginTaskCleanup`, `StartTask`) is unclaimed; `ReportTaskCleanup` matches the operation's direction and content.
+
+## 4. Between-task lifecycle and `task_ready` ordering
+
+`spec/05_runtime-registry-and-pool-model.md:415` is the normative description of the between-task loop, and its current ordering (scrub → `task_ready` → pod available for next task) is unimplementable independent of this proposal: `task_ready` must carry the new task's ID, and the new task's workspace, credential lease, and manifest exist only after the next dispatch. The loop text also leaves the gateway out entirely, leaving the disposition, annotation, and counter writes unattributed at the loop's tail. The staged §5.2 edit names the `ReportTaskCleanup` report, names `reuse` and `rewarm_sdk` as distinct dispositions matching the RPC's response enum, routes the next task through the standard claim flow, moves `task_ready` to dispatch, and retains the two existing normative clauses of line 415 (the `cleanupCommands` access parenthetical and the per-task-setup sentence). The gateway-action enumeration is deferred by cross-reference to the §6.2 driver paragraph so the spec holds one normative list.
+
+The same dispatch-time semantics are propagated to every other site that describes the loop:
+
+- `spec/04_system-components.md:701` (`task_complete` row): the frame does not terminate the runtime process, scrub step 1 kills it, and the runtime serving the next task is spawned at dispatch or re-established by the preConnect SDK re-warm.
+- `spec/04_system-components.md:702` (`task_ready` row): sent at the dispatch of the next task; the receiver is the runtime process serving the new task.
+- `spec/06_warm-pod-model.md:76` (preConnect task-mode row): the re-warm is triggered by the `rewarm_sdk` disposition in the `ReportTaskCleanup` response, and `task_ready` moves to dispatch. The current row sends `task_ready` before the SDK re-spawn, to a process the scrub already killed.
+- `spec/15_external-api-surface.md:1461`: the timing clause gains the dispatch condition.
+
+The runtime-author-guide mirrors of the loop (`docs/runtime-author-guide/lifecycle.md` and `docs/runtime-author-guide/adapter-contract.md`) are reconciled in the docs follow-up (Section 9.12).
+
+The §5.2 edit (Section 9.2.1) lands only with the `ReportTaskCleanup` RPC (Section 9.1.1) and the §6.2 driver paragraph it cross-references (Section 9.3.3). If either is rejected, the §5.2 edit reduces to the `task_ready` reordering in lines 415 and 419 plus the line-446 attribution fix, which the pre-existing contradiction with `spec/04_system-components.md:702`, both schemas, `spec/15_external-api-surface.md:1461`, and `spec/06_warm-pod-model.md:26` justifies on its own.
+
+## 5. Disposition write ownership and counter persistence
+
+The §4.6.3 ownership table assigns `Sandbox.status.*` exclusively to the WarmPoolController, yet the implemented claim path writes `status.phase` from the gateway across the whole claim window under the `lenny-gateway` field manager with `ForceOwnership`, citing a carve-out the spec does not contain, and the shipped chart already grants the gateway `get`/`update`/`patch` on `sandboxes/status`. The spec therefore contradicts both the code and the chart today, and the task driver's writes (the §6.2 disposition phase plus the `scrub_warning` annotation) cannot be specified against the current table. The staged edit records the window the code implements, with the following accuracy constraints verified against the implementation:
+
+- The gateway SSA-applies all claim-window phases, including the terminal dispositions `completed`, `failed`, and `cancelled`, under its field manager (`failPhase` writes `failed` via SSA Apply with `ForceOwnership`, `pkg/gateway/podsession/binder.go:746-760`). The reclamation step writes `draining`, and only `draining`, with a non-Apply status `Update`, which strips the gateway's field claim on `status.phase` so the WarmPoolController can drive `draining → terminated` (`pkg/gateway/podclaim/gatewaystatus.go:31-41`). Task mode maps `task_cleanup → failed` onto the Apply path and every pool-returning disposition (`task_cleanup → idle`, `task_cleanup → sdk_connecting`, and `task_cleanup → draining`) onto the same non-Apply yield, so the WarmPoolController is the sole phase writer once the pod heads back toward the pool: it drives `draining → terminated`, writes `sdk_connecting → idle` when the between-task re-warm completes, and retains its ordinary drain and failure transitions on pooled pods. If review prefers that the WarmPoolController reclaim failed pods via its own SSA apply instead, that is a code change and is flagged rather than silently specified.
+- The gateway-owned carve-out is `status.phase`, `status.activeSlots`, `status.tenantId`, and the new `status.taskState.*` (`pkg/apis/lenny/v1alpha1/sandbox_types.go:102-114`; `pkg/gateway/podclaim/gatewaystatus.go:27-29`).
+- The RBAC reconciliation covers both `Sandbox` rules in the shipped chart. On the `status` subresource the grant is `get`/`update`/`patch`: `update` is required by the non-Apply phase yields, and the chart already grants exactly this set (`charts/lenny/templates/gateway-deployment.yaml:130-132`). On the `Sandbox` main resource the staged sentence records `get`/`list`/`watch` for claim-path reads of pool inventory and `patch` for the §5.2 slot-claim tenant-pinning label Apply: `pkg/gateway/podclaim/slotclaimer.go:589-600` SSA-applies `lenny.dev/tenant-id` on the main resource, and the chart grants the verb set at lines 122-129 with a comment naming the tenant-pinning patch as the reason. The staged sentence reconciles the spec with both shipped grants. The `Pods` and `SandboxClaim` clauses of the same sentence are recorded at the shipped verb sets for the same reason: `get`/`list`/`watch`/`patch` on Pods (the read verbs resolve the claimed pod's IP for the adapter dial, `charts/lenny/templates/gateway-deployment.yaml:143-148`) and `get`/`list`/`watch`/`create`/`delete` on `SandboxClaim` (`charts/lenny/templates/gateway-deployment.yaml:140-142`), rather than the narrower pre-existing spec wording, which would re-stage the mismatch this bullet reconciles for `Sandbox`.
+- The "never force-conflict" bullet (`spec/04_system-components.md:582`) is scoped to WarmPoolController and PoolScalingController reconciliation code, with the gateway status window named as the sanctioned cross-manager takeover whose return path is the non-Apply phase yields: the session-mode `draining` hand-back and the task-mode disposition writes (`task_cleanup → idle`, `task_cleanup → sdk_connecting`, and the retiring `task_cleanup → draining`), matching the yield set in the status-window paragraph. Without this scoping, §4.6.3 would prohibit in one paragraph what it specifies in the next.
+
+The per-pod retirement counters move to `Sandbox.status.taskState` (`tasksCompleted`, `scrubFailureCount`), written inside the same status Apply the gateway must make per task anyway and read back at each `task_cleanup`. The same Apply records the per-task resolution (`lastTaskId`, `lastDisposition`, `lastScrubWarning`): the §10.1 rule that bars gateway memory for the counters bars it equally for the resolved disposition, which a retried `ReportTaskCleanup` must be answered with on any replica and after the pod has left `task_cleanup`. The in-memory counters at `pkg/gateway/taskdriver/taskdriver.go:101-104` (advanced at lines 158-168) violate the §10.1 statelessness rule because task-mode pods return to `idle` between tasks and the next task claims through the standard flow on any replica. The disposition's pod-uptime input needs no externalization: unlike the counters (and the in-memory `BootTime` the shipped driver holds beside them), it is computed at resolution time from the pod's start time on the API object, which any replica reads. The WarmPoolController mirrors the counters into `agent_pod_state`, preserving the `spec/12_storage-architecture.md:455` contract that the table mirrors `Sandbox` CRD status fields. Alternative stores with spec precedent exist; the choice is open decision 1. The `Sandbox.status.taskState` field additions (`pkg/apis/lenny/v1alpha1/sandbox_types.go` and the regenerated `charts/lenny/crds/lenny.dev_sandboxes.yaml`) accompany the implementation, like the `taskCleanupTimeoutSeconds` CRD field in Section 6; this proposal stages the spec definitions only.
+
+## 6. The disposition driver and the `task_cleanup` watchdog
+
+§6.2 defines the `task_cleanup` branch table (`spec/06_warm-pod-model.md:147-156`), states the gateway's `lenny.dev/host-schedulable` label read at the transition (`spec/06_warm-pod-model.md:181`), and attributes the metrics, the uptime check, and the pool return to the gateway (`spec/05_runtime-registry-and-pool-model.md:446,452,455`), but it never states the trigger, the counter source, or any liveness bound. No existing mechanism bounds a pod stuck in `task_cleanup`: the `sdk_connecting` watchdog (`spec/06_warm-pod-model.md:69`) covers only `sdk_connecting`, and the `ReportTaskCleanup` adapter retry (Section 3) covers gateway unavailability but not adapter death. The only mechanism that incidentally fires is the §4.6.1 orphan-`SandboxClaim` GC (`spec/04_system-components.md:479`), which returns the pod to `idle`; for a dirty mid-scrub pod that is the wrong, security-relevant outcome, because an unscrubbed pod would re-enter the pool.
+
+The staged edits add a driver paragraph, a watchdog paragraph, and a transition-listing line to §6.2, plus a reconciling clause in §4.6.1:
+
+- **Driver paragraph.** The paragraph is declared the single normative site for resolution semantics. It states the trigger (`ReportTaskCleanup` arrival, once per task whose pod enters `task_cleanup`, covering both the completion and the cancellation entries), the counter source (`Sandbox.status.taskState` advanced by this task's outcome, with `tasksCompleted` advancing on cancelled tasks as well), the host-schedulable label read, the `SandboxClaim` release on every disposition, the phase precondition (the gateway resolves and writes only while `Sandbox.status.phase` is still `task_cleanup`), the resolution record (`lastTaskId`, `lastDisposition`, and `lastScrubWarning`, written in the final counter Apply so a retried report is answered from persisted state on any replica and at any later phase), and the late-report rule (after the watchdog has written `failed`, the gateway performs no phase write, responds with `disposition: retire`, releases the `SandboxClaim` if still present, and the failure is accounted once, on the watchdog path). The write-and-metric enumeration lives on the §4.7 `ReportTaskCleanup` row, and the §5.2 lifecycle text cross-references this paragraph, so the spec holds one normative statement of each behavior.
+- **Watchdog paragraph.** The WarmPoolController bounds `task_cleanup` with `taskCleanupTimeoutSeconds` (default: the pool's `taskPolicy.cleanupTimeoutSeconds` plus 120 seconds; per-pool in the `scalingPolicy` block, following the `sdkConnectTimeoutSeconds` placement at `spec/06_warm-pod-model.md:69`). On expiry the WarmPoolController writes `failed` with a non-Apply status update, which strips the gateway's field-manager claim on `status.phase` (a non-Apply write removes other managers' claims only on the fields it writes), so the Section 9.1.5 status-window text and this watchdog compose. `{task_cleanup, failed}` is already a legal edge (`pkg/sandbox/state/state.go` `ValidTransitions`), so the listing addition is a new trigger on an existing edge, consistent with the listing's multi-line-per-edge style. The expiry increments `lenny_warmpool_task_cleanup_timeout_total`, and a `TaskCleanupTimeout` warning alert covers sustained rates (Section 9.6), mirroring the `sdk_connecting` watchdog's counter-and-alert pattern; without the dedicated counter, watchdog-fired replacements would be indistinguishable from `onCleanupFailure: fail` retirements. The watchdog performs no claim write: on the no-report path the per-task `SandboxClaim` is session-less and the §4.6.1 orphan loop collects it, because its claim-deletion half is phase-independent (Section 9.1.8).
+- **Orphan-GC reconciliation.** One clause in §4.6.1 splits the GC's delete-claim-and-return-to-idle path. Claim deletion stays phase-independent, so stale session-less claims referencing pods in `failed`, `task_cleanup`, or terminal phases remain collectable (the pre-attached failure path at `pkg/gateway/podsession/binder.go:750-755` and the watchdog's no-report path both depend on this). The return-to-idle half applies only to pods whose `Sandbox.status.phase` is `claimed` (the gateway-crashed-before-persist scenario it was designed for); a pod in `task_cleanup` is bounded exclusively by `taskCleanupTimeoutSeconds` and is never returned to `idle` by the GC. Without the phase gate, a per-task claim older than `claimOrphanTimeout` referencing a terminal session would target a mid-scrub pod with the return-to-idle write; under the Section 9.1.5 ownership model that write is a non-forcing SSA Apply against the gateway's persisting field-manager claim on `status.phase`, so it conflicts deterministically and `retryOnConflictSSA` abandons it after five attempts (`pkg/controller/warmpool/gc.go`; `pkg/controller/warmpool/controller.go:47-74`). Either outcome (a stuck-conflict loop, or a landed flip when the gateway claim is absent) is wrong for a mid-scrub pod. The same mechanics break the gated path this clause keeps: in the gateway-crashed-before-persist scenario no yield ever runs, so the dead gateway's Apply claim on `status.phase` persists and a WarmPoolController SSA Apply can never land. The staged clause therefore specifies the return-to-idle write as a non-Apply status `Update`, the same phase-only yield-stripping mechanism as the `task_cleanup` watchdog's `failed` write, covered by the WarmPoolController `update` verb staged in Section 9.1.9. The shipped `ClaimGarbageCollector.returnToIdle` (`pkg/controller/warmpool/gc.go`) implements the current unconditional text, flips any phase other than `idle` and `draining` back to `idle`, and writes via non-forcing SSA Apply; the `claimed`-only gate and the conversion to a non-Apply `Update` are therefore code changes that land with the clause, flagged here and in the Files-touched table rather than silently specified.
+
+The `taskCleanupTimeoutSeconds` CRD field accompanies the implementation; this proposal stages the spec definition only.
+
+## 7. Task-mode ingestion
+
+The task-equals-session model is stated outside §15 (`spec/05_runtime-registry-and-pool-model.md:475`; `spec/07_session-lifecycle.md:69-73`), but §15 itself, the API-surface chapter, is silent: the §15.1 route table (`spec/15_external-api-surface.md:593-610`) is sessions-only and no §15 sentence addresses task submission. That silence caused a multi-cycle High-severity deferral loop in which F-5.2.30 cites a "§15.1 task-submission path" that never existed (`BUILD-GAPS.md:3695`). Fixing only the ledger would leave the ambiguity that regenerates the phantom on the next audit.
+
+The staged paragraph states that task-mode work is submitted through the same session endpoints, that pod reuse between tasks is pool-internal and surfaces on the REST API through the `sessionIsolationLevel` fields `podReuse`, `scrubPolicy`, and `residualStateWarning`, that v1 defines no separate task-submission route, and that the tasks-suffixed paths in §21 are post-v1 `ExternalProtocolAdapter` routes. Two claims from earlier drafting are deliberately absent: an unconditional return-to-pool claim (false for Standard- and Basic-level pools per `spec/05_runtime-registry-and-pool-model.md:420` and for every retiring disposition per `spec/06_warm-pod-model.md:147-156`) and a generalization that every §21 adapter "resolves to session creation internally" (explicit only for A2A at `spec/21_planned-post-v1.md:5`).
+
+## 8. Lifecycle envelope cleanup
+
+`schemas/lenny-adapter-jsonl.schema.json:228-262` defines `task_complete` ("Outbound (adapter → gateway)"), `task_complete_acknowledged` ("Inbound (gateway → adapter)"), and `task_ready` ("Outbound (adapter → gateway)") as frames on the adapter↔agent stdin/stdout channel. The directions contradict the §4.7 frame table (all are adapter↔runtime unix-socket frames, `spec/04_system-components.md:701-708`), and the purported "separate adapter→gateway control surface" (`schemas/lifecycle-events.schema.json:5`) has no spec definition and no implementation: zero production code emits or parses the JSONL task envelopes, and the only emitters are `pkg/adapter/lifecyclechannel.go:504,525` on the lifecycle channel. Git history confirms a transplant error: the envelopes were added in `ed8546c3` citing §15.4 line 1461, a line that places the frames on the lifecycle channel, and the spec-conformant definitions arrived later in `schemas/lifecycle-events.schema.json` (`65d359a7`). The trio is a stale duplicate, and the smaller alternative (fixing the direction labels in place) would keep two canonical schemas defining the same frames with the frames in the wrong channel's schema.
+
+The removal carries determinate dependents, all staged:
+
+- `spec/15_external-api-surface.md:1425` states the JSONL schema covers "every lifecycle-channel message", and line 1428 declares any artifact-prose discrepancy a release-blocking bug. The bullet is rescoped to the stdin/stdout messages, `schemas/lifecycle-events.schema.json` is added to the artifact list (matching `spec/18_build-sequence.md:165`), and the artifact-count framing at line 1422 is reworded to a countless form.
+- `schemas/examples/jsonl.task_complete.json`, `schemas/examples/jsonl.task_complete_acknowledged.json`, and `schemas/examples/jsonl.task_ready.json` are deleted, and the corresponding entries in `tests/tier0_static/schemas_test.go:189-191` (`TestAdapterJSONLExamplesValidate`) are removed; tier 0 fails otherwise.
+- The stale taxonomy comment at `schemas/lenny-adapter.proto:1320-1324` ("The lifecycle event taxonomy is defined in lenny-adapter-jsonl.schema.json") is corrected to point at the §4.7 control-event table and `pkg/adapter/controlchannel.go`; `pkg/proto/adapter/v1/*.pb.go` regenerates from the proto.
+- The `schemas/lifecycle-events.schema.json` description drops the "separate adapter→gateway control surface" claim. Only the replacement cross-reference to `ReportTaskCleanup` is conditioned on the RPC's acceptance; the deletions are correct independent of it, and if the RPC is rejected the cross-reference sentence is dropped.
+- Docs-sync follow-up: `docs/runtime-author-guide/adapter-contract.md:659` describes the JSONL schema as including lifecycle frames and is reconciled in the standard docs pass after application (Section 9.12). `docs/runtime-author-guide/publishing.md:335` needs no change on this point: it already scopes the JSONL schema to stdin/stdout frames.
+
+## 9. Proposed spec and schema changes
+
+### 9.1 `spec/04_system-components.md`
+
+**9.1.1 §4.7, *Adapter → Gateway RPCs* table.** Add a row after the `ExtendLease` row (line 644):
+
+```markdown
+| `ReportTaskCleanup` | Task-mode only. Sent once per task whose pod enters `task_cleanup` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)): on task completion after the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) between-task sequence (the `task_complete` exchange, step-0 credential purge, `cleanupCommands`, Lenny scrub, and the step-7 guest restart re-verification when applicable) finishes, and on task cancellation (`cancelled → task_cleanup`) after the same sequence without the `task_complete` exchange. Request: `session_id`, `task_id`, `scrub_result` (`succeeded` \| `failed`), `failed_step` (string, present on failure), `cleanup_commands_exit` (int), `vm_restart` (`skipped` \| `succeeded` \| `failed`). The gateway resolves the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` disposition exactly once per `task_id` (the RPC is idempotent on retry: a retried report is answered from the `Sandbox.status.taskState` resolution record with no second write or metric emission), writes the pod phase, annotation, and task counters, releases the per-task `SandboxClaim`, and emits the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) scrub and retirement metrics and the [Section 16.1](16_observability.md#161-metrics) `lenny_task_reuse_count` observation (per-pod, recorded at resolution from the advanced `Sandbox.status.taskState.tasksCompleted` counter); resolution semantics are defined in [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) "Task-mode disposition driver". Response: `disposition` (`reuse` \| `rewarm_sdk` \| `retire`) and `scrub_warning` (bool). On `rewarm_sdk` the adapter starts the SDK connect sequence ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)); on `retire` the adapter prepares for termination; on `reuse` the pod idles until the next claim. The adapter retries an undeliverable report with backoff (initial 1s, cap 30s) until acknowledged; the pod remains in `task_cleanup` and the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` watchdog bounds the wait. |
+```
+
+**9.1.2 §4.7, lifecycle channel message-schema table, `task_complete` row (line 701).** Replace the Notes cell with:
+
+```markdown
+Between-task signal in task mode ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The current task is finished; the runtime must release task-specific resources (open files, temp state) and reply with `task_complete_acknowledged`. The frame itself does not terminate the runtime process; scrub step 1 ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) kills it along with all other task processes, and the runtime serving the next task is spawned at dispatch ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) task-mode credential lease lifecycle) or re-established by the preConnect SDK re-warm ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)).
+```
+
+**9.1.3 §4.7, lifecycle channel message-schema table, `task_ready` row (line 702).** Replace the Notes cell with:
+
+```markdown
+Sent at the dispatch of the next task, after scrub has completed and the new task's workspace is materialized. Carries the new task's ID. The receiver is the runtime process serving the new task: the re-warmed SDK process in preConnect pools, or the freshly spawned runtime once it connects the lifecycle channel. The runtime re-reads the adapter manifest (regenerated per task) and prepares for the next `{type: "message"}` on stdin.
+```
+
+**9.1.4 §4.6.3 ownership table (line 574).** Replace the single `Sandbox` / `status.*` row with two rows:
+
+```markdown
+| `Sandbox`         | `status.phase`, `status.activeSlots`, `status.tenantId`, `status.taskState.*` (claim-window carve-out) | Gateway (during the claim window) | Written via SSA Apply under the `lenny-gateway` field manager; `status.phase` ownership returns to the WarmPoolController through the non-Apply phase yields (`draining`, and the task-mode pool-return dispositions); see "Gateway status window" below |
+| `Sandbox`         | `status.*` (excluding the claim-window carve-out)  | WarmPoolController         | State machine transitions, health; sole writer outside the claim window |
+```
+
+**9.1.5 §4.6.3, new paragraph.** Insert after the paragraph beginning `**Server-Side Apply (SSA) enforcement:**` (line 577) and before `**SSA conflict retry policy (crash recovery).**`:
+
+```markdown
+**Gateway status window (`Sandbox` claim-window carve-out):** The gateway writes the `Sandbox` status carve-out fields (`status.phase`, `status.activeSlots`, `status.tenantId`, and `status.taskState.*`) during the claim window: from the gateway's claim of an `idle` pod until ownership of `status.phase` returns to the WarmPoolController. Writes use SSA Apply under the `lenny-gateway` field manager with `Force: true`; this window is the sanctioned cross-manager takeover, and the "never force-conflict" rule below does not apply to it. The window covers the session-mode setup and terminal phases (`claimed` through `attached`, and the terminal dispositions `completed`, `failed`, and `cancelled`), the concurrent-mode slot transitions, and the task-mode `attached`/`cancelled` → `task_cleanup` cycle, all on the Apply path. Ownership of `status.phase` returns to the WarmPoolController through a non-Apply status `Update` that writes the new phase, and only the phase: per the Kubernetes SSA model, a non-Apply write removes other managers' claims on exactly the fields it writes, so the gateway's claim on `status.phase` is stripped while its claims on the other carve-out fields are untouched. The session-mode reclamation step writes `draining` this way. In task mode, every disposition write that sends the pod back toward the pool uses the same yield: `task_cleanup → idle` (`reuse`), `task_cleanup → sdk_connecting` (`rewarm_sdk`), and the retiring `task_cleanup → draining` are all non-Apply phase writes. The WarmPoolController is therefore the sole phase writer on pooled pods: it drives `draining → terminated`, writes `sdk_connecting → idle` when the between-task SDK re-warm completes (through the same SDK-warm readiness mechanism and `sdkConnectTimeoutSeconds` watchdog that govern the initial warm, [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)), and retains its ordinary drain and failure transitions on `idle` pods. The gateway does not observe re-warm completion; the next task's claim selects the pod once it is `idle`. `task_cleanup → failed` (`onCleanupFailure: fail`) is written on the Apply path like the other terminal dispositions. Immediately before the yield write, while `status.phase` is still `task_cleanup`, the gateway makes its final SSA Apply of the window to advance `status.taskState`: the per-pod cumulative counters `tasksCompleted` (integer; advanced for every task that enters `task_cleanup`, including cancelled tasks, because the counter measures pod wear against `maxTasksPerPod`) and `scrubFailureCount` (integer) that feed the task-cleanup disposition, plus the resolution record `lastTaskId` (string), `lastDisposition` (string), and `lastScrubWarning` (boolean) that answers `ReportTaskCleanup` retries ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) "Task-mode disposition driver"). The gateway reads `status.taskState` back at each `task_cleanup`, so the counters and the resolution record survive coordinator handoff and cross-replica claim turnover ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)). The gateway's field-manager claim on `status.taskState.*` persists while the pod sits in the pool; the WarmPoolController never writes `status.taskState` (its `agent_pod_state` mirror is a read), so the retained claim conflicts with no WarmPoolController Apply. The `scrub_warning` annotation ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) `onCleanupFailure: warn`) is written on the underlying Pod through the gateway's existing `patch` grant on Pods in agent namespaces.
+```
+
+**9.1.6 §4.6.3, SSA conflict retry policy item 2 (line 582).** Append to the "Never force-conflict" bullet, after "...would defeat the ownership boundary enforced by the SSA mechanism.":
+
+```markdown
+This prohibition is scoped to WarmPoolController and PoolScalingController reconciliation code. The gateway status window above is the sanctioned cross-manager takeover of the `Sandbox` status carve-out fields; its return path is the non-Apply phase yields defined there: the session-mode `draining` hand-back and the task-mode disposition writes (`task_cleanup → idle`, `task_cleanup → sdk_connecting`, and the retiring `task_cleanup → draining`), each of which restores WarmPoolController ownership of `status.phase` without a force-conflict.
+```
+
+**9.1.7 §4.6.3, Gateway ServiceAccount RBAC grants paragraph (line 588).** Replace the sentence beginning "Required grants:" with:
+
+```markdown
+Required grants: `get`/`list`/`watch`/`patch` on `Pods` in agent namespaces (`lenny-agents`, `lenny-agents-kata`), where `patch` serves the tenant-id and state label mutations and the `scrub_warning` annotation and the read verbs serve claim-path resolution of the claimed pod's IP for the adapter dial, `get`/`list`/`watch`/`create`/`delete` on `SandboxClaim` resources for the claim/release lifecycle and claim reads, `get`/`list`/`watch` on `Sandbox` resources for claim-path reads of pool inventory, `patch` on `Sandbox` resources for the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-claim tenant-pinning label Apply (`lenny.dev/tenant-id` is stamped on the main resource, which the `status` subresource grant does not cover), and `get`/`update`/`patch` on the `Sandbox` `status` subresource for the gateway status window above (`get` and `patch` serve the SSA Apply writes to the claim-window carve-out fields; `update` serves the non-Apply phase yields).
+```
+
+**9.1.8 §4.6.1, orphaned `SandboxClaim` detection paragraph (line 479).** Insert after the sentence "If no active session exists, the claim is deleted and the underlying `Sandbox` pod is transitioned back to `idle`, returning it to the warm pool.":
+
+```markdown
+The claim-deletion half of this path is phase-independent: a session-less claim older than `claimOrphanTimeout` is deleted regardless of the referenced `Sandbox.status.phase`, so stale claims referencing pods in `failed`, `task_cleanup`, or terminal phases cannot accumulate (the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` watchdog relies on this for its no-report path). The return-to-idle half applies only when the referenced `Sandbox.status.phase` is `claimed` — the gateway-crashed-before-persist scenario this loop exists for. The return-to-idle write is a non-Apply status `Update` that writes `idle`, and only the phase: a crashed gateway never executes its yield, so its Apply claim on `status.phase` persists in `managedFields`, and a non-Apply write strips that claim on exactly the field it writes (the same phase-only yield mechanism as the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` watchdog's `failed` write, covered by the WarmPoolController's `update` grant on the `Sandbox` `status` subresource). A pod in `task_cleanup` is never returned to `idle` by the orphan loop: a mid-scrub pod can hold residual task state, and its wait is bounded exclusively by the `task_cleanup` watchdog ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)).
+```
+
+On application, two accompanying code changes narrow and convert the shipped `ClaimGarbageCollector.returnToIdle` (`pkg/controller/warmpool/gc.go`): the `claimed`-only gate replaces the current flip of any phase other than `idle` and `draining`, and the write converts from a non-forcing SSA Apply under `retryOnConflictSSA` (`pkg/controller/warmpool/controller.go:47-74`, which conflicts deterministically against a crashed gateway's persisting `status.phase` claim and gives up after five attempts) to the non-Apply status `Update` the staged clause specifies. Both are recorded in the Files-touched table. Claim deletion in `ClaimGarbageCollector.reclaim` is already phase-independent and needs no change.
+
+**9.1.9 §4.6.3, RBAC-enforcement paragraph (line 586).** In the sentence enumerating the WarmPoolController ServiceAccount grants, replace the clause `` `get`/`patch` on `status` subresources of `Sandbox`, `SandboxTemplate`, and `SandboxWarmPool` (SSA status updates require `get` to read the current resource and `patch` to apply the partial object — `update` is insufficient for SSA Apply requests) `` with:
+
+```markdown
+`get`/`patch` on `status` subresources of `Sandbox`, `SandboxTemplate`, and `SandboxWarmPool` (SSA status updates require `get` to read the current resource and `patch` to apply the partial object — `update` is insufficient for SSA Apply requests) plus `update` on the `Sandbox` `status` subresource (required by the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` watchdog's non-Apply `failed` write and the [Section 4.6.1](#461-warm-pool-controller-pod-lifecycle) orphan-GC return-to-idle write, each of which strips the gateway's field-manager claim on `status.phase`; see "Gateway status window" above)
+```
+
+The shipped chart already grants the controller `get`/`update`/`patch` on `sandboxes/status` (`charts/lenny/templates/controller-rbac.yaml:57-59`); the staged clause reconciles the spec with that grant for the same reason Section 9.1.7 reconciles the gateway grant.
+
+### 9.2 `spec/05_runtime-registry-and-pool-model.md`
+
+**9.2.1 Line 415.** Replace the lifecycle sentence with:
+
+```markdown
+Lifecycle: task completes (the runtime emits its terminal `{type: "response"}` frame, [Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)) → adapter sends `task_complete` on the lifecycle channel → runtime replies with `task_complete_acknowledged` → adapter removes `/run/lenny/credentials.json` (credential purge must precede any deployer code; see scrub step 0 below) → deployer-defined `cleanupCommands` execute (have access to task state, but NOT the previous task's credential file) → Lenny scrub runs → adapter reports the scrub outcome to the gateway via `ReportTaskCleanup` ([Section 4.7](04_system-components.md#47-runtime-adapter)) → the gateway resolves and applies the `task_cleanup` disposition ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) "Task-mode disposition driver") → on a `reuse` disposition the pod returns to `idle`; on a `rewarm_sdk` disposition (preConnect pools) the adapter re-establishes SDK-warm state through `sdk_connecting`, and the WarmPoolController returns the pod to `idle` when the re-warm completes ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) gateway status window) → the next task claims the pod through the standard claim flow with a fresh `AssignCredentials` lease, workspace materialization, and a regenerated adapter manifest ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) → at dispatch the adapter sends `task_ready` with the new task's ID. A cancelled task enters the same sequence at the credential-purge step ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `cancelled → task_cleanup`); the `task_complete` exchange occurs only on the completion path. `setupCommands` run once per pod at start rather than per task. Per-task setup belongs in the runtime's initialization.
+```
+
+**9.2.2 Line 419, Full-level bullet.** Replace with:
+
+```markdown
+- **Full-level:** Pod reuse works as described above. The adapter sends `task_complete` on the lifecycle channel, the runtime replies with `task_complete_acknowledged`, scrub runs, the adapter reports the outcome via `ReportTaskCleanup` ([Section 4.7](04_system-components.md#47-runtime-adapter)), the pod returns to the pool under the gateway-resolved disposition, and the adapter sends `task_ready` at the next task's dispatch.
+```
+
+**9.2.3 Line 446, `onCleanupFailure: warn` bullet.** Replace the opening sentence "the pod is returned to the available pool with a `scrub_warning` annotation." with:
+
+```markdown
+the gateway returns the pod to the available pool and writes the `scrub_warning` annotation ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) gateway status window).
+```
+
+The remainder of the bullet (gateway logging, both scrub metrics, the preConnect interaction, and the `maxScrubFailures` retirement) is unchanged.
+
+### 9.3 `spec/06_warm-pod-model.md`
+
+**9.3.1 §6.1, `preConnect` compatibility table, `task` row (line 76).** Two spans change. First, replace the cell's opening through "...along with all other task processes." (the two sentences ending at that phrase) with the text below. Second, delete the standalone sentence "The SDK is re-warmed after the next scrub.", which sits after the `sdkWarmBlockingPaths` sentences; the staged text's `rewarm_sdk` sentence subsumes it. The `sdkWarmBlockingPaths` per-task evaluation sentences and the circuit-breaker sentence are retained verbatim.
+
+```markdown
+SDK process pre-connected once during warm phase (same as session mode). Between tasks: the SDK process is terminated during Lenny scrub step 1 (`kill -9 -1` as sandbox user) along with all other task processes. When the gateway's `ReportTaskCleanup` response carries the `rewarm_sdk` disposition ([Section 4.7](04_system-components.md#47-runtime-adapter)), the adapter re-establishes SDK-warm state by calling the SDK connect sequence again, and the WarmPoolController returns the pod to `idle` when the re-warm completes ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) gateway status window). `task_ready` is sent at the next task's dispatch, after that task's workspace is materialized.
+```
+
+**9.3.2 §6.2 state listing.** Insert after the line `task_cleanup ──→ failed            (onCleanupFailure: fail — pod terminated)` (line 156):
+
+```markdown
+  task_cleanup ──→ failed            (task_cleanup watchdog: taskCleanupTimeoutSeconds elapsed without a ReportTaskCleanup outcome — adapter death or undeliverable report; pod terminated and replaced)
+```
+
+**9.3.3 §6.2, new paragraphs.** Insert between the "Host-node schedulability precondition" paragraph (line 181) and the "preConnect re-warm on scrub_warning" paragraph (line 183):
+
+```markdown
+**Task-mode disposition driver.** The gateway resolves the `task_cleanup` branch above exactly once per `task_id`, when the adapter's `ReportTaskCleanup` RPC arrives ([Section 4.7](04_system-components.md#47-runtime-adapter) Adapter → Gateway RPCs). The report is sent for every task whose pod enters `task_cleanup`, whether from `attached` (task completion) or from `cancelled` (cancellation acknowledged); the cancellation path runs the same between-task sequence without the `task_complete` exchange. The inputs are the reported scrub outcome, the pool's `taskPolicy`, the pod's cumulative counters from `Sandbox.status.taskState` advanced by this task's outcome (`tasksCompleted` advances on cancelled tasks as well; [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) gateway status window), the pod's uptime against `taskPolicy.maxPodUptimeSeconds` (computed at resolution time from the pod's start time on the API object, so it is replica-independent without externalization), and the `lenny.dev/host-schedulable` label read at the moment of the transition (host-node schedulability precondition above). The writes and metric emissions that the resolution produces are enumerated on the `ReportTaskCleanup` row in [Section 4.7](04_system-components.md#47-runtime-adapter); on every disposition the gateway also releases the per-task `SandboxClaim` (the claim enters `released` and is deleted per [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries), so the next task's claim passes the `lenny-sandboxclaim-guard` webhook through the standard claim flow). The gateway resolves and writes the disposition only while `Sandbox.status.phase` is still `task_cleanup`, and records the resolution in `status.taskState` (`lastTaskId`, `lastDisposition`, `lastScrubWarning`) in the same final Apply that advances the counters. Retries are answered from that record: a report whose `task_id` equals `status.taskState.lastTaskId` receives the recorded `lastDisposition` and `lastScrubWarning` with no phase write and no metric emission, on any gateway replica and regardless of the phase the pod has since reached (`idle`, `sdk_connecting`, `draining`, `failed`, or a later phase). If a report with no recorded resolution arrives after the `task_cleanup` watchdog (below) has written `failed`, the gateway performs no phase write, responds with `disposition: retire`, and releases the `SandboxClaim` if it still exists; the pod's failure and replacement are accounted once, on the watchdog path, and the late report emits no scrub or retirement metric.
+
+**`task_cleanup` watchdog.** A pod that hangs in `task_cleanup` (the adapter died mid-scrub, or the cleanup report is permanently undeliverable) would otherwise hold a tenant-pinned pool slot indefinitely. The WarmPoolController applies a per-pod timeout, `taskCleanupTimeoutSeconds` (default: the pool's `taskPolicy.cleanupTimeoutSeconds` plus 120 seconds; configurable per pool in the `scalingPolicy` block, following the `sdkConnectTimeoutSeconds` precedent in [Section 6.1](#61-what-a-pre-warmed-pod-looks-like)). If the pod has not left `task_cleanup` within the timeout, the WarmPoolController transitions it to `failed` with a non-Apply status update, which strips the gateway's field-manager claim on `status.phase` (the same phase-only yield mechanism as the `draining` hand-back in [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), increments `lenny_warmpool_task_cleanup_timeout_total` (counter, labeled by `pool`; [Section 16.1](16_observability.md#161-metrics)), and provisions a replacement from the warm pool. Alert `TaskCleanupTimeout` (Warning) fires on a sustained rate ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)); the counter distinguishes watchdog-fired replacements from `onCleanupFailure: fail` retirements. The watchdog performs no claim write: on the no-report path the per-task `SandboxClaim` is session-less and the orphan loop ([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)) collects it, because the loop's claim-deletion half is phase-independent. A mid-scrub pod is never returned to `idle` by any other mechanism: the orphan loop applies its return-to-idle half only to pods in `claimed`, so the watchdog is the sole bound on `task_cleanup`.
+```
+
+### 9.4 `spec/12_storage-architecture.md`
+
+**9.4.1 `agent_pod_state` table schema (lines 457-469).** Add two columns after `execution_mode`:
+
+```sql
+    tasks_completed     INT     NOT NULL DEFAULT 0,  -- task mode: cumulative completed-task count (mirrors Sandbox.status.taskState.tasksCompleted)
+    scrub_failure_count INT     NOT NULL DEFAULT 0,  -- task mode: cumulative failed-scrub count (mirrors Sandbox.status.taskState.scrubFailureCount)
+```
+
+**9.4.2 Mirror contract.** Append to the paragraph following the table (line 476):
+
+```markdown
+The `tasks_completed` and `scrub_failure_count` columns mirror the gateway-written `Sandbox.status.taskState` counters ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) gateway status window) and are maintained by the WarmPoolController on the same transition mirror as `state`. They are read-optimized mirrors; the CRD status is authoritative for the task-cleanup disposition ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)). The `lastTaskId`, `lastDisposition`, and `lastScrubWarning` fields of `status.taskState` are not mirrored; they serve only `ReportTaskCleanup` retry recall ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) "Task-mode disposition driver").
+```
+
+### 9.5 `spec/15_external-api-surface.md`
+
+**9.5.1 §15.1, new paragraph.** Insert after the session-lifecycle route table (line 610), before the paragraph beginning `**State-mutating endpoint preconditions.**`:
+
+```markdown
+**Task-mode submission.** Work for a task-mode pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) `executionMode: task`) is submitted through the same session endpoints: `POST /v1/sessions` (or `POST /v1/sessions/start`) against a task-mode pool creates one task, and the creation response carries `sessionIsolationLevel.executionMode: task` ([Section 7.1](07_session-lifecycle.md#71-normal-flow)). Pod reuse between tasks is a pool-internal behavior governed by the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) between-task lifecycle and integration-level rules and the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` disposition; the REST surface exposes it through the `sessionIsolationLevel` fields `podReuse`, `scrubPolicy`, and `residualStateWarning` ([Section 7.1](07_session-lifecycle.md#71-normal-flow)). The v1 REST surface defines no separate task-submission route. The tasks-suffixed paths in [Section 21](21_planned-post-v1.md#21-planned--post-v1) (`POST /a2a/{runtime}/tasks`, `GET /a2a/{runtime}/tasks/{id}/stream`, `POST /ap/v1/agent/tasks`) are post-v1 `ExternalProtocolAdapter` routes: the A2A adapter creates a Lenny session per task ([Section 21.1](21_planned-post-v1.md#21-planned--post-v1)), and the Agent Protocol adapter follows the same adapter mechanism ([Section 21.3](21_planned-post-v1.md#21-planned--post-v1)).
+```
+
+**9.5.2 §15.4 artifact list intro (line 1422).** Replace "The runtime adapter contract is published as three machine-readable artifacts committed to the repository" with:
+
+```markdown
+The runtime adapter contract is published as machine-readable artifacts committed to the repository
+```
+
+**9.5.3 §15.4 artifact list, JSONL bullet (line 1425).** Replace the parenthetical message list with:
+
+```markdown
+- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 15.4.1](#1541-adapterbinary-protocol) (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`). Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
+```
+
+**9.5.4 §15.4 artifact list, new bullet.** Insert after the JSONL bullet:
+
+```markdown
+- **`schemas/lifecycle-events.schema.json`** — JSON Schema (Draft 2020-12) for the envelopes carried on the [Section 4.7](04_system-components.md#47-runtime-adapter) adapter↔runtime lifecycle channel, including `lifecycle_capabilities`, `checkpoint_request`, `task_complete`, `task_ready`, `task_complete_acknowledged`, and the other lifecycle messages, delivered in Phase 2.8 ([Section 18.8](18_build-sequence.md#188-phase-28--streaming-echo-runtime)).
+```
+
+The bullet attributes the channel rather than the envelope set to §4.7: the schema also defines a `files_updated` envelope (`schemas/lifecycle-events.schema.json:17`, emitted by `pkg/adapter/lifecyclechannel.go` `SignalFilesUpdated`) that no §4.7 row defines. Adding that row to §4.7 is a separate reconciliation item outside this proposal's scope; the wording above keeps the §15.4 artifact-prose invariant (`spec/15_external-api-surface.md:1428`) intact when the bullet lands.
+
+**9.5.5 §15.4.1, task-mode between-task signaling paragraph (line 1461).** Replace the paragraph with:
+
+```markdown
+**Task mode between-task signaling:** Adapter sends `{type: "task_complete", taskId: "..."}` on the lifecycle channel after a task completes. The runtime releases task-specific resources and replies with `{type: "task_complete_acknowledged", taskId: "..."}`. After deployer-defined `cleanupCommands` and Lenny scrub complete and the gateway dispatches the next task (workspace materialized, manifest regenerated), the adapter sends `{type: "task_ready", taskId: "..."}` with the new task's ID. The runtime re-reads the adapter manifest (regenerated per task) and the next `{type: "message"}` on stdin is the start of the new task. This is distinct from `terminate`, which always means process exit.
+```
+
+### 9.6 `spec/16_observability.md`
+
+**9.6.1 §16.1 metric catalog.** Insert after the "SDK-warm connect timeouts" row (line 262):
+
+```markdown
+| **Task-Cleanup Watchdog**                                                                                                                                                                                              |                 |
+| Task-cleanup watchdog expiries (`lenny_warmpool_task_cleanup_timeout_total`, counter labeled by `pool` — increments when a task-mode pod leaves `task_cleanup` via the `task_cleanup` watchdog (`taskCleanupTimeoutSeconds` elapsed without a `ReportTaskCleanup` outcome); distinguishes watchdog-fired pod replacements from `onCleanupFailure: fail` retirements; sustained rate triggers the `TaskCleanupTimeout` warning alert ([Section 16.5](#165-alerting-rules-and-slos)); see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine))   | Counter         |
+```
+
+**9.6.2 §16.5 alert table.** Insert after the `SDKConnectTimeout` row (line 491):
+
+```markdown
+| `TaskCleanupTimeout`             | `lenny_warmpool_task_cleanup_timeout_total` rate > 0.1/min for > 5 min on a given pool; adapters are systematically failing to deliver `ReportTaskCleanup` (adapter deaths mid-scrub or undeliverable reports) and the `task_cleanup` watchdog is replacing the pods. See [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `task_cleanup` watchdog.            | Warning  |
+```
+
+### 9.7 `schemas/lenny-adapter.proto`
+
+**9.7.1 `service GatewayControl` (line 209).** In the service doc comment, replace the sentence "The service exists because a few §8 control operations originate at the pod and need a gateway decision." with:
+
+```proto
+// The service exists because a few control operations (§8 budget
+// extension, §9.1 platform-tool listing, §5.2/§6.2 task-cleanup
+// reporting) originate at the pod and need a gateway decision.
+```
+
+Add after the `ExtendLease` RPC (line 216):
+
+```proto
+  // ReportTaskCleanup is the adapter's once-per-task report of the §5.2
+  // between-task cleanup outcome (step-0 credential purge,
+  // cleanupCommands, Lenny scrub, and the step-7 guest restart
+  // re-verification when applicable; the task_complete exchange precedes
+  // the sequence on the completion path and is absent on the §6.2
+  // cancellation path). The gateway resolves the §6.2 task_cleanup
+  // disposition exactly once per task_id (the RPC is idempotent on
+  // retry), writes the pod phase, annotation, and task counters,
+  // releases the per-task SandboxClaim, and emits the §5.2 scrub and
+  // retirement metrics. The response tells the adapter whether to
+  // re-warm the SDK, prepare for termination, or idle until the next
+  // claim. The adapter retries an undeliverable report with backoff
+  // (initial 1s, cap 30s).
+  // spec: §4.7 Adapter → Gateway RPCs; §5.2; §6.2.
+  rpc ReportTaskCleanup(ReportTaskCleanupRequest) returns (ReportTaskCleanupResponse) {}
+```
+
+**9.7.2 Messages and enums.** Add after `ExtendLeaseResponse` (line 1168):
+
+```proto
+// ReportTaskCleanupRequest carries the adapter's §5.2 between-task
+// cleanup outcome for one finished task (completed or cancelled).
+message ReportTaskCleanupRequest {
+  string session_id = 1;
+  string task_id = 2;
+  ScrubResult scrub_result = 3;
+  // failed_step names the scrub step that failed (for example "step_2"
+  // or "verification"). Empty when scrub_result is SCRUB_RESULT_SUCCEEDED.
+  string failed_step = 4;
+  // cleanup_commands_exit is the exit code of the deployer-defined
+  // cleanupCommands run (§5.2). Zero on success.
+  int32 cleanup_commands_exit = 5;
+  // vm_restart reports the §5.2 step-7 guest VM restart outcome.
+  // VM_RESTART_RESULT_SKIPPED when the pool does not run the restart.
+  VmRestartResult vm_restart = 6;
+}
+
+enum ScrubResult {
+  SCRUB_RESULT_UNSPECIFIED = 0;
+  SCRUB_RESULT_SUCCEEDED = 1;
+  SCRUB_RESULT_FAILED = 2;
+}
+
+enum VmRestartResult {
+  VM_RESTART_RESULT_UNSPECIFIED = 0;
+  VM_RESTART_RESULT_SKIPPED = 1;
+  VM_RESTART_RESULT_SUCCEEDED = 2;
+  VM_RESTART_RESULT_FAILED = 3;
+}
+
+// ReportTaskCleanupResponse carries the gateway-resolved §6.2
+// task_cleanup disposition.
+message ReportTaskCleanupResponse {
+  TaskDisposition disposition = 1;
+  // scrub_warning is true when the pod carries the §5.2 scrub_warning
+  // annotation after this task (onCleanupFailure: warn with a failed
+  // scrub below maxScrubFailures).
+  bool scrub_warning = 2;
+}
+
+enum TaskDisposition {
+  TASK_DISPOSITION_UNSPECIFIED = 0;
+  // TASK_DISPOSITION_REUSE: the pod returns to idle and awaits the next
+  // claim (non-preConnect pools).
+  TASK_DISPOSITION_REUSE = 1;
+  // TASK_DISPOSITION_REWARM_SDK: the adapter re-establishes SDK-warm
+  // state through sdk_connecting before the pod returns to idle
+  // (preConnect pools, §6.1).
+  TASK_DISPOSITION_REWARM_SDK = 2;
+  // TASK_DISPOSITION_RETIRE: the pod is retired; the adapter prepares
+  // for termination.
+  TASK_DISPOSITION_RETIRE = 3;
+}
+```
+
+**9.7.3 Stale taxonomy comment (lines 1320-1324).** Replace the comment above `LifecycleChannelRequest` with:
+
+```proto
+// Opaque lifecycle event envelope. The control-event taxonomy carried on
+// this stream is the §4.7 adapter→gateway control-event table
+// (RATE_LIMITED, AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+// CheckpointBarrierAck, AdapterTerminating, FINAL_USAGE_REPORT); the
+// wire definitions live in pkg/adapter/controlchannel.go. Kept opaque
+// here so the proto schema does not need to evolve every time a control
+// event is added. Request and response carry the same payload but are
+// typed separately per proto-RPC convention.
+```
+
+On application, regenerate `pkg/proto/adapter/v1/*.pb.go` via `buf generate`.
+
+### 9.8 `schemas/lenny-adapter-jsonl.schema.json`
+
+Remove the `task_complete`, `task_complete_acknowledged`, and `task_ready` entries from the top-level `oneOf` (lines 19-21) and delete the corresponding `$defs` (lines 228-262). Replace the top-level `description` (line 5) with:
+
+```json
+"description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. The adapter↔runtime lifecycle channel (checkpoint, interrupt, credentials_rotated, task_complete, task_ready, and the other lifecycle messages) is a separate Unix-socket stream defined in schemas/lifecycle-events.schema.json, and the gateway↔adapter control surface is the gRPC API in lenny-adapter.proto. See spec/15_external-api-surface.md §15.4."
+```
+
+### 9.9 `schemas/lifecycle-events.schema.json`
+
+Replace the top-level `description` (line 5) with:
+
+```json
+"description": "JSON envelopes exchanged on the §4.7 adapter↔runtime lifecycle channel, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). The task_complete, task_ready, and task_complete_acknowledged envelopes here are the only wire definition of the task-lifecycle signals; the adapter→gateway task-cleanup report is the ReportTaskCleanup RPC in schemas/lenny-adapter.proto. See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4."
+```
+
+If the `ReportTaskCleanup` RPC (Section 9.7.1) is rejected in review, drop the sentence beginning "the adapter→gateway task-cleanup report"; the rest of the description and the deletions in Section 9.8 stand independently.
+
+Replace the `task_ready` `$defs` entry's `description` (line 204), which reproduces the pre-edit §4.7 row wording that Section 9.1.3 replaces, with:
+
+```json
+"description": "Adapter → runtime, task-mode lifecycle signal. Sent at the dispatch of the next task, after scrub has completed and the new task's workspace is materialized. Carries the new task's ID. The runtime re-reads the adapter manifest (regenerated per task) and prepares for the next message."
+```
+
+Section 9.5.4 places this schema on the §15.4 artifact list under the artifact-prose reconciliation invariant (`spec/15_external-api-surface.md:1428`); without the def edit the schema would be the only surviving site with the post-scrub timing, contradicting the rewritten §15.4.1 paragraph (Section 9.5.5).
+
+### 9.10 `schemas/examples/`
+
+Delete `schemas/examples/jsonl.task_complete.json`, `schemas/examples/jsonl.task_complete_acknowledged.json`, and `schemas/examples/jsonl.task_ready.json`. The lifecycle-channel examples (`schemas/examples/lifecycle.task_complete.json` and peers) are unchanged.
+
+### 9.11 `tests/tier0_static/schemas_test.go`
+
+Remove the `schemas/examples/jsonl.task_complete.json`, `schemas/examples/jsonl.task_complete_acknowledged.json`, and `schemas/examples/jsonl.task_ready.json` entries from the example list in `TestAdapterJSONLExamplesValidate` (lines 189-191).
+
+### 9.12 Docs follow-up (not staged here)
+
+The runtime-author-guide sites below go stale on application and are reconciled in the standard docs-sync pass:
+
+- `docs/runtime-author-guide/adapter-contract.md:659` describes the JSONL schema as including lifecycle frames; the Section 9.8 rescope removes them.
+- `docs/runtime-author-guide/adapter-contract.md:543` mirrors the pre-edit §4.7 `task_ready` row ("Scrub complete, new workspace materialized"); Section 9.1.3 moves the frame to dispatch time.
+- `docs/runtime-author-guide/lifecycle.md:369-374` and `lifecycle.md:396-402` give the between-task sequence as scrub followed directly by `task_ready`, with no dispatch step, no `ReportTaskCleanup`, and no disposition; both numbered sequences gain the corrected ordering.
+
+The task-mode-reuse diagram and its ASCII fallback (`docs/runtime-author-guide/lifecycle.md:357-365`) show only the pod phases of the reuse path and remain valid. `docs/runtime-author-guide/publishing.md:335` needs no reconciliation: it already scopes the JSONL schema to stdin/stdout frames, and the word lifecycle does not occur in that file.
+
+## 10. Non-goals
+
+- Adding a `/v1/tasks` REST route or any new client-facing ingestion endpoint. Task ingestion stays on the session API.
+- Adding gateway→adapter frames to the `LifecycleChannel` control stream, or any RPC that triggers the between-task loop. The loop start remains adapter-observed per `spec/15_external-api-surface.md:1889-1891` and `spec/06_warm-pod-model.md:142`.
+- Re-specifying the scrub steps, the adapter↔runtime unix-socket frame exchange, or the §6.2 branch-table semantics. `pkg/adapter/scrub`, `pkg/adapter/lifecyclechannel`, and `pkg/sandbox/taskcleanup` are built and unit-tested and are the integration contract the driver consumes.
+- Changing the Standard- and Basic-level task-mode path (no reuse, shutdown per task, `spec/05_runtime-registry-and-pool-model.md:420`). It is unaffected by the new surface.
+- A2A or Agent Protocol task routes (`spec/21_planned-post-v1.md`) are post-v1 by definition.
+- New metric names beyond the `task_cleanup` watchdog counter. §5.2 and §16.1 already define `lenny_task_scrub_failure_total`, `lenny_task_pod_scrub_failure_count`, and `lenny_task_pod_retirement_total` with gateway-attributed emission, and §16.1 defines the `lenny_task_reuse_count` histogram observed per-pod at task completion; the staged §4.7 `ReportTaskCleanup` row (Section 9.1.1) enumerates the emission of all of these at resolution. The watchdog adds `lenny_warmpool_task_cleanup_timeout_total` and the `TaskCleanupTimeout` alert (Section 9.6) because no existing §16.1 metric distinguishes a watchdog-fired replacement from an `onCleanupFailure: fail` retirement; the `sdk_connecting` watchdog's counter-and-alert pattern is the precedent.
+- `maxTaskRetries` spec changes. The §6.2 crash-retry policy (`spec/06_warm-pod-model.md:185-192`) is complete; the driver implements it as written.
+- Changes to the tier-12 load scenarios. They already submit through the `/v1/sessions` routes; only the BUILD-GAPS ledger citation is stale.
+
+## 11. Testing
+
+- **Static (tier 0):** the updated `TestAdapterJSONLExamplesValidate` list passes; a negative assertion confirms the JSONL schema rejects a `{"type": "task_complete"}` frame (the envelope now lives only in `lifecycle-events.schema.json`); `buf` breaking-change rules pass on `lenny-adapter.proto` (the RPC, messages, and enums are additive); the §16.1 catalog parity test gains `lenny_warmpool_task_cleanup_timeout_total`.
+- **Unit:** `ReportTaskCleanup` handler idempotency per `task_id` (a second report returns the disposition recorded in `Sandbox.status.taskState` with no second phase write or metric emission, including after the pod has left `task_cleanup` and when the retry lands on a different replica); a cancelled task's report resolves through the same path and advances `tasksCompleted`; the late-report path (phase `failed` with no recorded resolution) returns `retire` with no phase write; disposition mapping for `reuse`, `rewarm_sdk`, and `retire` against the §6.2 branch table via `taskcleanup.Decide`; counter advance reads and writes `Sandbox.status.taskState` rather than process memory.
+- **envtest (tier 2):** the gateway SSA Apply of `status.taskState` under the `lenny-gateway` field manager preserves `phase`, `activeSlots`, and `tenantId`; each non-Apply phase yield (`draining`, `idle`, and `sdk_connecting`) strips the gateway claim on `status.phase` only, and the WarmPoolController drives `draining → terminated` and `sdk_connecting → idle`; the watchdog's `task_cleanup → failed` non-Apply update succeeds while the gateway holds the carve-out claim.
+- **Integration:** the between-task loop end-to-end against a fake adapter: task completes, report delivered, the `rewarm_sdk` path re-warms through `sdk_connecting` and the WarmPoolController returns the pod to `idle`, the `reuse` path returns to `idle`, and the `retire` path drains; the per-task `SandboxClaim` is released on every disposition and the next task claims through the standard flow; adapter report retry while the gateway is unavailable; watchdog fires on adapter death, increments `lenny_warmpool_task_cleanup_timeout_total`, and the pod is replaced without returning to `idle`, with the stale claim collected by the orphan loop.
+- **Chart:** assert the gateway role grants `get`/`update`/`patch` on `sandboxes/status`, `get`/`list`/`watch`/`patch` on `sandboxes`, `get`/`list`/`watch`/`patch` on `pods`, and `get`/`list`/`watch`/`create`/`delete` on `sandboxclaims`, and the controller role grants `get`/`update`/`patch` on `sandboxes/status` (all already rendered; the assertions pin the spec-recorded grants); the orphan-GC phase gate has WPC test coverage for a `task_cleanup` pod with a stale claim (claim deleted, phase untouched) and for a `claimed` pod whose `status.phase` carries a foreign `lenny-gateway` Apply claim (the non-Apply return-to-idle `Update` lands and strips the claim).
+- **Mirror:** the WarmPoolController mirror writes `tasks_completed` and `scrub_failure_count` to `agent_pod_state` on the `task_cleanup` transitions.
+
+## 12. Findings closed on application
+
+F-5.2.30 is unblocked rather than closed. The recorded rule-B blocker ("Re-attempt once §15/§4.7 define the gateway-side task-control surface", `BUILD-GAPS.md:3715`) is satisfied by Sections 9.1.1, 9.3.3, and 9.5.1. On application, amend the finding's deliverable list: drop the `/v1/tasks` ingestion deliverable (the route is a phantom; §15.1 now states the session-endpoint submission path), and correct the stale citation of `tests/tier7_load_cloud/task_mode_test.go` to the tier-12 scenarios, which already submit through the `/v1/sessions` routes.
+
+## 13. Resolved in adversarial review
+
+Adversarial review rounds populate this section. The drafting-stage challenge revisions are already folded into the staged text above: the disposition-enum alignment in the §5.2 lifecycle sentence, the retention of the two normative §5.2 clauses, the Apply-path correction for `failed` in the gateway status window, the completion of the carve-out field set, the `update` verb in the gateway RBAC grant, the "never force-conflict" scoping, the late-report and orphan-GC rules around the watchdog, the single-normative-site slimming of the §6.2 driver paragraph, the §15.1 pod-reuse hedge and the Agent Protocol hedge, and the determinate dependents of the JSONL envelope removal (examples, tier-0 test, proto comment, and §15.4 artifact bullets; Section 8).
+
+### Round 1 (2026-06-09)
+
+One entry per confirmed finding; each states the defect and the revision.
+
+1. **Non-retiring dispositions had no `SandboxClaim` release or ownership-return path (High).** The staged driver released the claim only on retiring dispositions, the status window defined the non-Apply yield only for `draining`, and no text named the writer of `sdk_connecting → idle` after the between-task re-warm. Sections 9.1.4, 9.1.5, 9.1.7, and 9.3.3 now release the claim on every disposition, route `task_cleanup → idle` and `task_cleanup → sdk_connecting` through the same phase-only non-Apply yield as `draining`, and name the WarmPoolController as the `sdk_connecting → idle` writer.
+2. **Cancelled tasks fell outside the `ReportTaskCleanup` trigger (Medium).** §6.2 routes `cancelled → task_cleanup` through the normal cleanup rules, but the staged trigger covered only completed tasks. Sections 3, 9.1.1, 9.1.5, 9.2.1, 9.3.3, and the proto comments (9.7.1 and 9.7.2) now cover every `task_cleanup` entry, and the staged text states that `tasksCompleted` advances on cancelled tasks.
+3. **The orphan-GC phase gate made stale `SandboxClaim`s for non-`claimed` pods uncollectable (Medium).** Gating the whole delete-and-return-to-idle path on phase `claimed` disabled claim deletion for `failed` and terminal phases, which `pkg/gateway/podsession/binder.go:750-755` depends on, and leaked the claim permanently on the watchdog's no-report path. Section 9.1.8 now keeps claim deletion phase-independent and gates only the return-to-idle half; Section 9.3.3 names the orphan loop as the claim collector on the no-report path.
+4. **The proposal claimed `publishing.md:335` describes the JSONL schema as including lifecycle frames (Low).** The line already scopes the schema to stdin/stdout frames, and the word lifecycle does not occur in the file. Sections 8 and 9.12 and the Files-touched table now drop `publishing.md` and state why it needs no reconciliation.
+5. **The decision bullet paraphrased the `GatewayControl` doc comment without its §8 scoping (Low).** The comment scopes the service to §8 control operations, and `ReportTaskCleanup` is a §5.2/§6.2 operation. The Section 2 bullet now quotes the comment verbatim, and Section 9.7.1 stages a one-line widening of the service comment.
+6. **The staged RBAC sentence recorded a `Sandbox` main-resource grant narrower than the shipped chart (Low).** The sentence recorded `get`/`list` while the chart grants `get`/`list`/`watch`/`patch`. Section 9.1.7 now records `watch` for claim-path reads and `patch` for the §5.2 tenant-pinning label Apply.
+7. **The staged §15.1 paragraph said pod reuse surfaces only through `podReuse` and `scrubPolicy` (Low).** §7.1 also defines `residualStateWarning`, a REST surfacing of between-task reuse. Sections 7 and 9.5.1 now enumerate all three `sessionIsolationLevel` fields.
+8. **The watchdog paragraph said the non-Apply `failed` write strips the gateway's claim on all carve-out fields (Low).** A non-Apply write removes other managers' claims only on the fields it writes. Sections 6 and 9.3.3 now scope the strip to `status.phase`.
+9. **Three citations were off by one or internally inconsistent (Low).** `spec/08_recursive-delegation.md:813` is corrected to `:814` for `TaskRecord.sessionId`, the chart `sandboxes/status` citation `129-131` is corrected to `130-132` in both occurrences, and the Section 8 JSONL `$defs` range `228-263` is corrected to `228-262`, matching Section 9.8.
+10. **The staged RBAC sentence omitted the `patch` verb the built slot-claim path requires (Medium; same surface as entry 6).** `pkg/gateway/podclaim/slotclaimer.go:589-600` SSA-applies the tenant-pinning label on the `Sandbox` main resource and the chart grants the verb. The Section 9.1.7 sentence and the Section 5 bullet now record the verb and its purpose.
+11. **The §4.6.1 phase gate changed the shipped `ClaimGarbageCollector` without flagging the code delta (Medium).** Sections 6 and 9.1.8 now name `pkg/controller/warmpool/gc.go` (`ClaimGarbageCollector.returnToIdle`) as the shipped unconditional implementation and flag the `claimed`-only gate as a code change; the Files-touched table gains the row.
+12. **Duplicate of entry 4 (Low).** Independently reported; resolved by the same edits.
+13. **Duplicate of entry 7 (Low).** Independently reported; resolved by the same edits.
+14. **Duplicate of entry 9, chart and `TaskRecord` items (Low).** Independently reported; resolved by the same corrections.
+15. **The watchdog's non-Apply `failed` write contradicted the unedited WPC RBAC paragraph (Medium).** `spec/04_system-components.md:586` grants the WPC only `get`/`patch` on the `Sandbox` status subresource, while the shipped chart already grants `update`. New Section 9.1.9 stages the `update` clause with the watchdog rationale, and the Section 11 chart assertion now covers the controller role.
+16. **No mechanism deleted the per-task `SandboxClaim` on the watchdog path, and the GC gate was broader than its target (Medium; same surface as entry 3).** Resolved by the Section 9.1.8 split and the Section 9.3.3 sentence naming the orphan loop as the no-report claim collector.
+17. **The idempotent-retry promise had no recall mechanism on the success path (Medium).** A retried report after a successful resolution can arrive on another replica with the phase no longer `task_cleanup`, and nothing recorded the resolved disposition. Sections 3, 5, 9.1.1, 9.1.5, and 9.3.3 now persist `lastTaskId`, `lastDisposition`, and `lastScrubWarning` in `Sandbox.status.taskState` in the final counter Apply and define the retry response for every post-resolution phase.
+18. **The §6.1 edit instruction would have deleted the `sdkWarmBlockingPaths` sentences it claimed to retain (Medium).** The literal replacement span engulfed the per-task demotion text. Section 9.3.1 now uses two spans: replace the cell opening through "...along with all other task processes." and separately delete the standalone "The SDK is re-warmed after the next scrub." sentence.
+19. **The watchdog had no observable signal, and the cited accounting path named no existing metric (Low).** New Section 9.6 stages `lenny_warmpool_task_cleanup_timeout_total` and the `TaskCleanupTimeout` warning alert, mirroring the `sdk_connecting` watchdog precedent; Sections 6, 9.3.3, 10, and 11 are updated accordingly.
+20. **The docs follow-up missed runtime-author-guide sites carrying the corrected between-task ordering (Low).** Section 9.12 and the Files-touched table now list `lifecycle.md:369-374`, `lifecycle.md:396-402`, and `adapter-contract.md:543` alongside the JSONL rescope, and note that the task-mode-reuse diagram remains valid.
+21. **C-change labels were used without a defining enumeration (Low).** All C-labels are replaced with direct section references.
+22. **The `Sandbox.status.taskState` CRD and Go-type dependents were unflagged (Low).** Section 5 now carries an accompanying-implementation note parallel to the `taskCleanupTimeoutSeconds` note, and the Files-touched table lists `pkg/apis/lenny/v1alpha1/sandbox_types.go` and `charts/lenny/crds/lenny.dev_sandboxes.yaml`.
+23. **The staged §15.4 bullet attributed every lifecycle envelope to §4.7 over a schema containing `files_updated` (Low).** Section 9.5.4 now attributes the channel rather than the envelope set to §4.7 and flags the missing `files_updated` row as a separate reconciliation item.
+24. **The Scope bullet did not name the blocked finding (Low).** The Scope bullet now ends with "Unblocks F-5.2.30."
+25. **A Section 6 bullet opened with a sentence fragment (Low).** "Declared the single normative site for resolution semantics." is now a complete sentence.
+26. **The staged watchdog name omitted backticks on the state name (Low).** All staged and prose occurrences now read `` `task_cleanup` watchdog ``, matching the `sdk_connecting` watchdog convention at `spec/06_warm-pod-model.md:69`.
+
+### Round 2 (2026-06-09)
+
+One entry per confirmed finding; each states the defect and the revision.
+
+1. **The "never force-conflict" scoping named only the draining yield as the gateway window's return path (Medium).** Round-1 entry 1 corrected Sections 9.1.4, 9.1.5, 9.1.7, and 9.3.3 to the plural non-Apply phase yields but missed the Section 9.1.6 staged sentence and the Section 5 scoping bullet, which still named the `draining` yield as the sole return path, leaving the `idle` and `sdk_connecting` yields outside the sanctioned scoping under a strict reading of §4.6.3. Both sites now enumerate the session-mode `draining` hand-back and the task-mode disposition writes (`task_cleanup → idle`, `task_cleanup → sdk_connecting`, and the retiring `task_cleanup → draining`).
+2. **The §4.6.1 return-to-idle path had no write mechanism that composes with the gateway's field-manager claim (Medium).** In the gateway-crashed-before-persist scenario no yield runs, so the dead gateway's SSA Apply claim on `status.phase` persists, and the shipped `returnToIdle` non-forcing Apply under `retryOnConflictSSA` would conflict on every attempt and give up. Section 9.1.8 now specifies the return-to-idle write as a non-Apply status `Update` (the watchdog's phase-only yield-stripping mechanism, covered by the Section 9.1.9 `update` verb), the application note records the second code change, and the Files-touched `gc.go` row gains the Apply-to-`Update` conversion.
+3. **All BUILD-GAPS.md line citations were stale by six lines (Low).** Commit 022ab3c8 (the proposal-0003 staging commit) shifted the ledger after the citations were taken. The citations are refreshed: `:3683` to `:3689`, `:3689` to `:3695`, and `:3709` to `:3715` in both occurrences.
+4. **The single-normative write-and-metric enumeration omitted `lenny_task_reuse_count` (Low).** §16.1 defines the histogram as observed per-pod at task completion, which is the `ReportTaskCleanup` resolution point, but the staged §4.7 row enumerated only the §5.2 scrub and retirement metrics, leaving the histogram's emission site unattributed, and the Non-goals inventory omitted it. The Section 9.1.1 row now includes the per-pod observation from the advanced `tasksCompleted` counter, and the Non-goals bullet names the histogram.
+5. **The Section 6 orphan-GC justification misdescribed the built SSA behavior (Medium; same surface as entry 2).** The bullet said an ungated GC "would flip a mid-scrub pod to idle, racing the watchdog with a conflicting outcome", but against a gateway-held `status.phase` claim the shipped non-forcing Apply conflicts deterministically and fails after five attempts. The bullet now describes the stuck-conflict behavior, the crash-scenario composition failure, and the staged non-Apply `Update`; resolved together with entry 2.
+6. **Duplicate of entry 3 (Low).** Independently reported; resolved by the same renumbering.
+7. **The Files-touched table omitted flagged implementation dependents (Low).** Rows are added for `pkg/apis/lenny/v1alpha1/sandboxwarmpool_types.go` plus the regenerated `charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml` (`taskCleanupTimeoutSeconds`), for a new numbered `migrations/` pair carrying the `agent_pod_state` columns, and for `pkg/observability/metrics/catalog.go`, `pkg/observability/metrics/catalog_test.go`, and `pkg/alerting/rules/rules.go` carrying the §16.1 counter entry, the parity-test transcription, and the §16.5 alert rule.
+8. **The lifecycle-events `task_ready` `$defs` description kept the pre-edit post-scrub timing (Low).** Section 9.9 staged only the top-level description while Section 9.5.4 placed the schema under the §15.4 artifact-prose invariant, so application would have created a new artifact-prose discrepancy. Section 9.9 now restages the def description with dispatch-time wording, and the Files-touched row covers the def edit.
+9. **Duplicate of entry 3 (Low).** Independently reported; resolved by the same renumbering.
+10. **The staged gateway RBAC sentence re-recorded the Pods and SandboxClaim grants narrower than the shipped chart (Low).** The replaced sentence carried `get`/`patch` on Pods and `create`/`get`/`delete` on `SandboxClaim` while the chart grants `get`/`list`/`watch`/`patch` and `get`/`list`/`watch`/`create`/`delete`, the same defect class round-1 entries 6 and 10 fixed on the `Sandbox` clauses. Section 9.1.7 now records the shipped verb sets (naming claim-path pod-IP resolution for the adapter dial), the Section 5 bullet states the reconciliation, and the Section 11 chart assertions pin the Pods and SandboxClaim grants.
+11. **The driver paragraph's input enumeration omitted pod uptime (Low).** The §6.2 branch table conditions on `maxPodUptimeSeconds` and the shipped driver holds `BootTime` in gateway memory beside the externalized counters, but the single normative input list named neither uptime nor its post-externalization source. Section 9.3.3 now lists the uptime input computed at resolution time from the pod's start time on the API object, and Section 5 states why it needs no externalization.
+12. **The Status bullet used a state outside the prescribed lifecycle (Low).** "Revised after 1 adversarial review round" replaced the machinery-written "Draft for review." state mid-loop, obscuring whether the review converged. The bullet now leads with "Draft for review." and carries the revision note as a trailing clause, matching the proposal-0003 precedent of a leading lifecycle state with trailing history.
+13. **Headings 3 and 4 left `ReportTaskCleanup` and `task_ready` unbackticked (Low).** Both headings now backtick the identifiers, matching heading 6 and the body prose.
+14. **The Section 6 intro announced two paragraphs and one listing line over a three-bullet list whose third item is a §4.6.1 edit (Low).** The intro is reworded without the count and now covers the §4.6.1 clause.
+15. **Section 9.12 counted "three runtime-author-guide sites" over four listed locations (Low).** The count is dropped per the doc-style rule on explicit counts.
+16. **A Non-goals bullet ended with the fragment "Post-v1 by definition." (Low).** The justification is folded into a complete sentence.
+
+## 14. Open decisions for review
+
+1. **Counter persistence store.** The draft puts `tasksCompleted`, `scrubFailureCount`, and the retry-recall resolution record (`lastTaskId`, `lastDisposition`, `lastScrubWarning`) on `Sandbox.status.taskState` (gateway-written inside the Section 9.1.5 status window, with the counters WPC-mirrored to `agent_pod_state`), because §6.2 makes `Sandbox.status` the authoritative pod state store (`spec/06_warm-pod-model.md:305`) and the gateway already reads the `Sandbox` at claim time. Two alternatives have equal spec precedent: a pod annotation (the `scrub_warning` precedent, `spec/05_runtime-registry-and-pool-model.md:446`) or a pod-scoped Redis key with blocking Postgres rehydration (the `active_slots` precedent, `spec/12_storage-architecture.md:189-191`). Sign-off or redirection requested.
+2. **Scope of the §4.6.3 retro-documentation.** Section 9.1.5 records the gateway `status.phase` field-manager window that `pkg/gateway/podclaim` already implements for the session and slot paths, because the task disposition writes cannot be specified against the current WPC-exclusive table. If review prefers, that retro-documentation can split into its own reconciliation proposal, with this proposal reduced to the task-mode additions that depend on it.
+3. **`ReportTaskCleanup` failure posture.** The draft has the adapter retry indefinitely with backoff while the WPC `task_cleanup` watchdog bounds the pod's wait by failing and replacing it. An alternative is a bounded adapter retry budget after which the adapter self-reports `AdapterTerminating`; the draft avoids it because the watchdog already covers adapter death and a second bound adds a config knob without removing the watchdog's necessity.
+
+## 15. Files touched on application
+
+| File | Change |
+|------|--------|
+| `spec/04_system-components.md` | §4.7 `ReportTaskCleanup` row; §4.7 `task_complete` and `task_ready` row notes; §4.6.3 ownership-table carve-out rows, gateway status window paragraph, "never force-conflict" scoping, gateway RBAC grant sentence, and WarmPoolController RBAC `update` clause; §4.6.1 orphan-GC phase gate |
+| `spec/05_runtime-registry-and-pool-model.md` | Line 415 between-task lifecycle; line 419 Full-level bullet; line 446 `warn` attribution |
+| `spec/06_warm-pod-model.md` | §6.1 preConnect task-mode row; §6.2 watchdog transition line, task-mode disposition driver paragraph, and `task_cleanup` watchdog paragraph |
+| `spec/12_storage-architecture.md` | `agent_pod_state` task counter columns and mirror-contract sentences |
+| `spec/15_external-api-surface.md` | §15.1 task-mode submission paragraph; §15.4 artifact list intro, JSONL bullet rescope, and lifecycle-events bullet; §15.4.1 between-task signaling timing |
+| `spec/16_observability.md` | §16.1 `lenny_warmpool_task_cleanup_timeout_total` counter row; §16.5 `TaskCleanupTimeout` alert row |
+| `schemas/lenny-adapter.proto` | `ReportTaskCleanup` RPC, request/response messages, `ScrubResult`/`VmRestartResult`/`TaskDisposition` enums; widened `GatewayControl` service comment; corrected `LifecycleChannelRequest` taxonomy comment |
+| `schemas/lenny-adapter-jsonl.schema.json` | Removed `task_complete`, `task_complete_acknowledged`, and `task_ready` defs and `oneOf` entries; rewritten description |
+| `schemas/lifecycle-events.schema.json` | Rewritten top-level description (sole wire definition of the task envelopes); `task_ready` `$defs` description moved to dispatch-time wording |
+| `schemas/examples/jsonl.task_complete.json`, `schemas/examples/jsonl.task_complete_acknowledged.json`, `schemas/examples/jsonl.task_ready.json` | Deleted |
+| `tests/tier0_static/schemas_test.go` | Removed the deleted example entries from `TestAdapterJSONLExamplesValidate` |
+| `pkg/proto/adapter/v1/*.pb.go` | Regenerated from the proto |
+| `pkg/controller/warmpool/gc.go` | `claimed`-only gate on `ClaimGarbageCollector.returnToIdle`, and conversion of its write from a non-forcing SSA Apply to a non-Apply status `Update` that strips a crashed gateway's `status.phase` claim (code changes accompanying the §4.6.1 clause; claim deletion in `reclaim` stays phase-independent) |
+| `pkg/apis/lenny/v1alpha1/sandbox_types.go`, `charts/lenny/crds/lenny.dev_sandboxes.yaml` | `Sandbox.status.taskState` typed fields (accompany the implementation; Section 5) |
+| `pkg/apis/lenny/v1alpha1/sandboxwarmpool_types.go`, `charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml` | `taskCleanupTimeoutSeconds` field in `ScalePolicy`, following the `sdkConnectTimeoutSeconds` placement, plus the regenerated CRD schema (accompany the implementation; Section 6) |
+| `migrations/` (new numbered pair) | `agent_pod_state` `tasks_completed` and `scrub_failure_count` columns (accompany the implementation; Section 9.4.1) |
+| `pkg/observability/metrics/catalog.go`, `pkg/observability/metrics/catalog_test.go`, `pkg/alerting/rules/rules.go` | `lenny_warmpool_task_cleanup_timeout_total` catalog entry and §16.1 parity-test transcription; `TaskCleanupTimeout` alert rule, following the `SDKConnectTimeout` precedent (accompany the implementation; Sections 9.6 and 11) |
+| `docs/runtime-author-guide/adapter-contract.md`, `docs/runtime-author-guide/lifecycle.md` | Docs-sync follow-up (Section 9.12): JSONL-schema description rescope, `task_ready` row at dispatch time, and corrected between-task sequences |
+| `BUILD-GAPS.md` | F-5.2.30 unblocked; deliverable list amended; stale citations corrected |
