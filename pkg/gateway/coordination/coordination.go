@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
@@ -41,6 +42,14 @@ type Options struct {
 	TTL time.Duration
 	// Interval is the sweep cadence.
 	Interval time.Duration
+	// Mirror is the §10.1 line 165 coordination_lease barrier-target
+	// mirror. When set, the sweep upserts a mirror row for every lease
+	// this replica holds (so a cross-replica handoff overwrites
+	// coordinator_replica with the new holder) and marks a terminal
+	// session's row released. Nil disables mirroring; the preStop barrier
+	// then falls back entirely to the in-memory lease cache. spec: §10.1
+	// line 165.
+	Mirror coordlease.Store
 }
 
 // Sweeper renews the coordination leases for a gateway replica.
@@ -48,6 +57,7 @@ type Sweeper struct {
 	tenants   TenantLister
 	sessions  sessionstore.Store
 	leases    leasestore.LeaseStore
+	mirror    coordlease.Store
 	replicaID string
 	ttl       time.Duration
 	interval  time.Duration
@@ -68,6 +78,7 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leases
 		tenants:   tenants,
 		sessions:  sessions,
 		leases:    leases,
+		mirror:    opts.Mirror,
 		replicaID: opts.ReplicaID,
 		ttl:       ttl,
 		interval:  interval,
@@ -101,6 +112,10 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 		}
 		for _, row := range rows {
 			if session.IsTerminal(row.State) {
+				// §10.1 line 165 — a terminal session is no longer
+				// coordinated by anyone; mark its mirror row released so the
+				// barrier-target query stops returning it. Best-effort.
+				s.releaseMirror(ctx, tenantID, row.ID)
 				continue
 			}
 			// Inspect the current holder before Acquire so a successful
@@ -129,6 +144,10 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			if priorHolder != "" && priorHolder != s.replicaID {
 				s.RecordHandoff(ctx, tenantID, row.ID)
 			}
+			// §10.1 line 165 — mirror the held lease into Postgres so the
+			// preStop barrier-target query observes it. A cross-replica
+			// handoff overwrites coordinator_replica with this replica.
+			s.upsertMirror(ctx, tenantID, row.ID, row.CoordinationGeneration)
 			held++
 		}
 	}
@@ -153,6 +172,36 @@ func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string)
 	})
 	if err != nil {
 		log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
+	}
+}
+
+// upsertMirror records the §10.1 line 165 barrier-target row for a lease
+// this replica holds. Best-effort: a transient mirror error is logged but
+// does not fail the sweep — the next sweep cycle re-upserts, and the
+// barrier coordinator falls back to the in-memory lease cache when the
+// Postgres read fails anyway.
+func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, generation int64) {
+	if s.mirror == nil {
+		return
+	}
+	if err := s.mirror.Upsert(ctx, coordlease.Lease{
+		TenantID:               tenantID,
+		SessionID:              sessionID,
+		CoordinatorReplica:     s.replicaID,
+		CoordinationGeneration: generation,
+	}); err != nil {
+		log.Printf("coordination: mirror upsert for session %s: %v", sessionID, err)
+	}
+}
+
+// releaseMirror marks a terminal session's §10.1 line 165 barrier-target
+// row released. Best-effort.
+func (s *Sweeper) releaseMirror(ctx context.Context, tenantID, sessionID string) {
+	if s.mirror == nil {
+		return
+	}
+	if err := s.mirror.Release(ctx, tenantID, sessionID); err != nil {
+		log.Printf("coordination: mirror release for session %s: %v", sessionID, err)
 	}
 }
 
