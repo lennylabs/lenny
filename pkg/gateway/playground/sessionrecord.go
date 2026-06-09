@@ -40,6 +40,14 @@ type SessionRecord struct {
 	// IssuedAt is the gateway clock instant the record was created.
 	IssuedAt time.Time `json:"issued_at"`
 
+	// LastActivityAt is the gateway clock instant of the record's most
+	// recent activity, refreshed on every bearer mint (the playground's
+	// per-session heartbeat). The §27.6 idle-timeout sweep reclaims a
+	// record whose LastActivityAt predates the idle reclamation window. A
+	// zero value (a legacy record written before this field existed)
+	// falls back to IssuedAt. spec: §27.6 line 201.
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+
 	// CSRFToken is the §27.3.1 anti-forgery token bound to the record.
 	CSRFToken string `json:"csrf_token"`
 
@@ -77,6 +85,25 @@ const (
 // errSessionNotFound is returned by SessionStore.Get when no record
 // exists for the supplied id (cookie expired or never issued).
 var errSessionNotFound = errors.New("playground: session record not found")
+
+// SessionRef identifies one playground session record by its tenant and
+// opaque session id. The §27.6 idle-timeout sweep enumerates idle records
+// as SessionRefs and revokes each through Handler.RevokeSession.
+type SessionRef struct {
+	Tenant string
+	ID     string
+}
+
+// recordActivityBefore reports whether rec's last activity predates
+// cutoff. It anchors on LastActivityAt, falling back to IssuedAt for a
+// legacy record written before LastActivityAt existed.
+func recordActivityBefore(rec SessionRecord, cutoff time.Time) bool {
+	anchor := rec.LastActivityAt
+	if anchor.IsZero() {
+		anchor = rec.IssuedAt
+	}
+	return anchor.Before(cutoff)
+}
 
 // SessionStore is the §27.3.1 backing store for the playground
 // session record and the per-bearer revocation marker. It is keyed by
@@ -131,6 +158,15 @@ type SessionStore interface {
 	// (a session already revoked or expired) is harmless. spec: §27.3.1
 	// line 148, §11.4.
 	SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error)
+
+	// IdleSessions returns a reference to every playground session record
+	// whose last activity predates cutoff — the §27.6 idle-timeout sweep's
+	// reclamation candidates. A record with no recorded LastActivityAt
+	// falls back to its IssuedAt. An already-invalidated record is skipped
+	// (the §11.4 path revoked it). The scan is best-effort: a record that
+	// expires or is revoked between the scan and the sweep's RevokeSession
+	// is harmless because revocation is idempotent. spec: §27.6 line 201.
+	IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error)
 
 	// TenantForSession resolves the tenant that owns an opaque session
 	// id through the §27.3.1 fan-in index, so the
@@ -390,6 +426,29 @@ func (m *MemorySessionStore) SessionsForUser(_ context.Context, tenant, userID s
 	return ids, nil
 }
 
+// IdleSessions implements SessionStore. It scans the in-process session
+// map for live, non-invalidated records whose last activity predates
+// cutoff.
+func (m *MemorySessionStore) IdleSessions(_ context.Context, cutoff time.Time) ([]SessionRef, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	var refs []SessionRef
+	for key, s := range m.sessions {
+		if now.After(s.expiresAt) || s.rec.Invalidated {
+			continue
+		}
+		if !recordActivityBefore(s.rec, cutoff) {
+			continue
+		}
+		// The record carries its own tenant; the id is the key suffix
+		// after the t:{tenant}:pg:sess: prefix.
+		id := strings.TrimPrefix(key, sessionKey(s.rec.TenantID, ""))
+		refs = append(refs, SessionRef{Tenant: s.rec.TenantID, ID: id})
+	}
+	return refs, nil
+}
+
 // RedisSessionStore is the §27.3.1 Redis-backed SessionStore. It
 // holds the session record and the revocation markers under the
 // §12.4 per-tenant key prefix, fans revocations out on the
@@ -585,6 +644,57 @@ func (s *RedisSessionStore) IsBearerRevoked(ctx context.Context, tenant, jti str
 // playground session yields no ids.
 func (s *RedisSessionStore) SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error) {
 	return s.client.SMembers(ctx, userIndexKey(tenant, userID)).Result()
+}
+
+// idleSessionScanPattern matches every tenant's playground session-record
+// key (t:{tenant}:pg:sess:{id}). It deliberately excludes the global
+// pg:sess-tenant:{id} fan-in index (no t: prefix) and the per-user
+// pg:user:* index (pg:user:, not pg:sess:), so a single SCAN over it
+// enumerates session records and nothing else.
+const idleSessionScanPattern = "t:*:pg:sess:*"
+
+// IdleSessions implements SessionStore. It SCANs every tenant's session
+// record (the §12.4 hash-tagged keys), unmarshals each, and returns a
+// reference to those that are idle past cutoff and not invalidated. A
+// record whose JSON cannot be parsed is skipped rather than failing the
+// whole sweep, so one corrupt entry does not strand the rest. The SCAN is
+// O(records) and runs on the sweep cadence (minutes), well outside the
+// per-request hot path. spec: §27.6 line 201.
+func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error) {
+	const scanBatch = 256
+	var (
+		cursor uint64
+		refs   []SessionRef
+	)
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, idleSessionScanPattern, scanBatch).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			raw, err := s.client.Get(ctx, key).Bytes()
+			if errors.Is(err, redis.Nil) {
+				continue // expired between SCAN and GET
+			}
+			if err != nil {
+				return nil, err
+			}
+			var rec SessionRecord
+			if json.Unmarshal(raw, &rec) != nil {
+				continue
+			}
+			if rec.Invalidated || !recordActivityBefore(rec, cutoff) {
+				continue
+			}
+			id := strings.TrimPrefix(key, sessionKey(rec.TenantID, ""))
+			refs = append(refs, SessionRef{Tenant: rec.TenantID, ID: id})
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return refs, nil
 }
 
 // SubscribeAllRevocations runs the §27.3.1 pub/sub consume loop over a

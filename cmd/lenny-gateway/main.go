@@ -5478,6 +5478,15 @@ func main() {
 		mux.Handle("/playground", pg.PlaygroundRoutes())
 		mux.Handle("/playground/", pg.PlaygroundRoutes())
 		mux.Handle("/v1/playground/token", pg.TokenRoutes())
+		// spec: §27.3.1 line 94 / §27.6 line 201/204 — drive the
+		// playground-auth-record idle-timeout sweep so an abandoned OIDC
+		// cookie-to-bearer session is reclaimed through the same revocation
+		// primitive (DEL record + SET pg:revoked + PUBLISH) as logout and
+		// user.invalidation, with reason idle_timeout. This is the missing
+		// caller for the RevokeIdleTimeout reason; the agent-session idle
+		// reaper (§6.2 watchdog) operates over a different store and does not
+		// reclaim these records. F-27.3.7.
+		go pg.RunIdleSweeper(context.Background(), 0)
 		log.Printf("lenny-gateway: §27 web playground served at /playground (authMode=%s)", pgCfg.AuthMode)
 	}
 

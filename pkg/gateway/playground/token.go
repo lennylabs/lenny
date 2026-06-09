@@ -283,6 +283,10 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		updated := ref.rec
 		updated.BearerJTIs = appendBoundedJTI(updated.BearerJTIs, jti, h.maxTrackedJTIs())
 		updated.CurrentExp = exp.Unix()
+		// §27.6 line 201: a bearer mint is the playground session's
+		// activity heartbeat; refresh the idle clock so the sweep does not
+		// reclaim a session the user is actively re-minting against.
+		updated.LastActivityAt = h.now()
 		ttl := time.Unix(updated.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0).Sub(h.now())
 		if ttl < 0 {
 			ttl = 0

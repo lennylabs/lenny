@@ -4,6 +4,7 @@ package playground
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -189,7 +190,11 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 		Origin:     PlaygroundOrigin,
 		Labels:     h.cfg.EffectiveLabels(),
 		IssuedAt:   h.now(),
-		CSRFToken:  csrf,
+		// §27.6 line 201: seed the idle clock at creation so a record that
+		// never mints a bearer is still reclaimable once the idle window
+		// elapses.
+		LastActivityAt: h.now(),
+		CSRFToken:      csrf,
 	}
 	if err := h.sessions.PutSession(ctx, subject.TenantID, sessionID, rec, h.cfg.OIDCSessionTTL); err != nil {
 		return err
@@ -289,6 +294,89 @@ func (h *Handler) RevokeSession(ctx context.Context, tenant, id string, reason R
 		return nil
 	}
 	return h.revokeSessionRecord(ctx, tenant, id, rec, reason)
+}
+
+// defaultIdleSweepInterval is the cadence of the §27.6 playground
+// idle-timeout sweep when no interval is supplied. It is well below the
+// idle reclamation window so an abandoned session is reclaimed promptly
+// after it crosses the window.
+const defaultIdleSweepInterval = 60 * time.Second
+
+// idleReclaimWindow is the §27.6 line 201 idle window after which an
+// abandoned playground session record is reclaimed. A bearer mint is the
+// session's activity heartbeat, so the window allows one full bearer
+// lifetime (the longest an actively-minting user goes between heartbeats)
+// plus the playground.maxIdleTimeSeconds idle grace. This guarantees the
+// sweep never reclaims a session a user is actively re-minting against,
+// while still bounding the reclamation of a session whose browser closed
+// without delivering the best-effort cancel (§27.6 line 202).
+func (h *Handler) idleReclaimWindow() time.Duration {
+	grace := time.Duration(h.cfg.MaxIdleTimeSeconds) * time.Second
+	if grace <= 0 {
+		grace = 300 * time.Second
+	}
+	return h.cfg.BearerTTL + grace
+}
+
+// SweepIdleSessions runs one §27.6 idle-timeout pass: it enumerates every
+// playground session record idle past the reclamation window and revokes
+// each through the shared §27.3.1 revocation primitive with reason
+// RevokeIdleTimeout (DEL the record, SET pg:revoked for every minted
+// bearer, PUBLISH the fan-out, emit the §27.8 metric). It returns the
+// number revoked. The pass is best-effort across records: a per-record
+// store error is collected and the remaining records are still attempted,
+// so one failure does not strand the sweep. spec: §27.3.1 line 94, §27.6
+// line 201/204.
+func (h *Handler) SweepIdleSessions(ctx context.Context) (int, error) {
+	if h.sessions == nil {
+		return 0, nil
+	}
+	cutoff := h.now().Add(-h.idleReclaimWindow())
+	refs, err := h.sessions.IdleSessions(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var (
+		revoked  int
+		firstErr error
+	)
+	for _, ref := range refs {
+		if err := h.RevokeSession(ctx, ref.Tenant, ref.ID, RevokeIdleTimeout); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		revoked++
+	}
+	return revoked, firstErr
+}
+
+// RunIdleSweeper drives SweepIdleSessions on interval until ctx is
+// cancelled. The gateway runs it in a goroutine when the playground is
+// enabled so the §27.6 idle-timeout and admin-revocation reasons are both
+// wired end to end. A non-positive interval selects defaultIdleSweepInterval.
+// A sweep error is logged and the loop continues; the store stays
+// authoritative, so a transient failure only delays reclamation.
+func (h *Handler) RunIdleSweeper(ctx context.Context, interval time.Duration) {
+	if h.sessions == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = defaultIdleSweepInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if _, err := h.SweepIdleSessions(ctx); err != nil {
+				slog.WarnContext(ctx, "playground: idle-timeout sweep failed", "error", err)
+			}
+		}
+	}
 }
 
 // RevokeSessionsForUser is the §11.4 user-invalidation entry point into
