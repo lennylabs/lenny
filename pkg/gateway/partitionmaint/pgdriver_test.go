@@ -29,6 +29,25 @@ func TestDropPartitionSQL(t *testing.T) {
 	}
 }
 
+// spec: §16.4 line 378 — the catch-all occupancy probe counts the
+// <parent>_default partition migration 0149 attaches to each EventStore
+// parent, so a write that escaped its dated partition is observable.
+func TestDefaultPartitionCountSQL_spec_16_4_378(t *testing.T) {
+	if got := defaultPartitionName("session_logs"); got != "session_logs_default" {
+		t.Errorf("defaultPartitionName = %q, want session_logs_default", got)
+	}
+	if got := defaultPartitionCountSQL("session_logs_default"); got != "SELECT count(*) FROM session_logs_default" {
+		t.Errorf("count SQL = %q", got)
+	}
+}
+
+func TestDefaultPartitionRows_RejectsUnsafeParent(t *testing.T) {
+	d := &PGDriver{} // pool nil: the ident check must fire before any query.
+	if _, err := d.DefaultPartitionRows(nil, "bad name"); err == nil {
+		t.Error("DefaultPartitionRows admitted an unsafe parent")
+	}
+}
+
 // checkIdent is the only defense against identifier injection in the
 // partition DDL, since identifiers cannot be bound parameters.
 func TestCheckIdent(t *testing.T) {

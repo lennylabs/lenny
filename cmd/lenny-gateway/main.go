@@ -6620,6 +6620,15 @@ func main() {
 							log.Printf("lenny-gateway: §16.4 partition maintenance %s: created %d, dropped %d, held %d",
 								r.Table, len(r.Created), len(r.Dropped), len(r.Held))
 						}
+						// Rows in the never-dropped DEFAULT partition escape the
+						// §16.4 retention DROP. A positive count means a write
+						// landed before its dated partition existed (maintainer
+						// lagging the write path); surface it so the operator can
+						// re-provision before the catch-all grows unbounded.
+						if r.DefaultRows > 0 {
+							log.Printf("lenny-gateway: §16.4 partition maintenance %s: WARNING %d row(s) in the DEFAULT partition escape retention DROP (maintainer may be lagging the write path)",
+								r.Table, r.DefaultRows)
+						}
 					}
 				})
 			})

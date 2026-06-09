@@ -105,3 +105,31 @@ func (d *PGDriver) DropPartition(ctx context.Context, child string) error {
 	_, err := d.pool.Exec(ctx, dropPartitionSQL(child))
 	return err
 }
+
+// defaultPartitionName is the catch-all partition migration 0149 attaches
+// to every EventStore parent (<parent>_default).
+func defaultPartitionName(parent string) string { return parent + "_default" }
+
+// defaultPartitionCountSQL counts the rows in a table's DEFAULT partition.
+// child is the validated catch-all relation name; the count over a
+// should-be-empty partition is cheap, and a non-zero result is exactly the
+// retention-escape anomaly the maintainer surfaces.
+func defaultPartitionCountSQL(child string) string {
+	return "SELECT count(*) FROM " + child
+}
+
+// DefaultPartitionRows returns the row count in parent's DEFAULT partition.
+func (d *PGDriver) DefaultPartitionRows(ctx context.Context, parent string) (int64, error) {
+	if err := checkIdent(parent); err != nil {
+		return 0, err
+	}
+	child := defaultPartitionName(parent)
+	if err := checkIdent(child); err != nil {
+		return 0, err
+	}
+	var n int64
+	if err := d.pool.QueryRow(ctx, defaultPartitionCountSQL(child)).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}

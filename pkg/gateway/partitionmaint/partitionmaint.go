@@ -206,6 +206,13 @@ type Driver interface {
 	CreatePartition(ctx context.Context, parent, child string, lower, upper time.Time) error
 	// DropPartition removes a child partition and its rows.
 	DropPartition(ctx context.Context, child string) error
+	// DefaultPartitionRows returns the number of rows currently held in
+	// the parent's DEFAULT (catch-all) partition. The maintainer samples
+	// this to detect writes that landed before their dated partition
+	// existed: such rows sit in the catch-all that Plan never drops, so
+	// they escape the §16.4 retention DROP and would otherwise accumulate
+	// silently.
+	DefaultPartitionRows(ctx context.Context, parent string) (int64, error)
 }
 
 // DropGuard can veto a partition drop. The §16.4 SIEM delivery guard for
@@ -224,6 +231,13 @@ type Result struct {
 	Created []string
 	Dropped []string
 	Held    []string
+	// DefaultRows is the row count in the table's DEFAULT (catch-all)
+	// partition after this pass. A positive value means writes escaped
+	// their dated partition into the catch-all that is never dropped,
+	// defeating the §16.4 retention DROP; the caller surfaces it as an
+	// operator warning. A negative value means the occupancy probe failed
+	// this pass (best-effort: a probe failure never aborts maintenance).
+	DefaultRows int64
 }
 
 // Maintainer runs the §16.4 partition lifecycle across a set of specs.
@@ -318,6 +332,15 @@ func (m *Maintainer) Tick(ctx context.Context, now time.Time) ([]Result, error) 
 				return append(results, res), fmt.Errorf("partitionmaint: drop %s: %w", child, err)
 			}
 			res.Dropped = append(res.Dropped, child)
+		}
+		// Sample the catch-all partition occupancy. This is best-effort
+		// observability, not maintenance: a probe failure must never abort
+		// the create/drop work for this spec or the remaining specs, so the
+		// error is recorded as a negative sentinel rather than returned.
+		if n, err := m.driver.DefaultPartitionRows(ctx, spec.Table); err != nil {
+			res.DefaultRows = -1
+		} else {
+			res.DefaultRows = n
 		}
 		results = append(results, res)
 	}

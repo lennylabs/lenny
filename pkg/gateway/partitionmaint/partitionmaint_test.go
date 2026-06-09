@@ -178,15 +178,19 @@ func TestParseChild_RejectsForeign(t *testing.T) {
 // --- fake driver ---------------------------------------------------------
 
 type fakeDriver struct {
-	mu        sync.Mutex
-	parts     map[string][]string
-	calls     []string
-	listErr   error
-	createErr error
-	dropErr   error
+	mu          sync.Mutex
+	parts       map[string][]string
+	calls       []string
+	listErr     error
+	createErr   error
+	dropErr     error
+	defaultRows map[string]int64
+	defaultErr  error
 }
 
-func newFakeDriver() *fakeDriver { return &fakeDriver{parts: map[string][]string{}} }
+func newFakeDriver() *fakeDriver {
+	return &fakeDriver{parts: map[string][]string{}, defaultRows: map[string]int64{}}
+}
 
 func (f *fakeDriver) ListPartitions(_ context.Context, parent string) ([]string, error) {
 	f.mu.Lock()
@@ -225,6 +229,15 @@ func (f *fakeDriver) DropPartition(_ context.Context, child string) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeDriver) DefaultPartitionRows(_ context.Context, parent string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.defaultErr != nil {
+		return 0, f.defaultErr
+	}
+	return f.defaultRows[parent], nil
 }
 
 type holdGuard struct {
@@ -313,6 +326,51 @@ func TestMaintainerTick_DropGuardErrorHoldsConservatively(t *testing.T) {
 	}
 	if !contains(res[0].Held, expired) || contains(res[0].Dropped, expired) {
 		t.Errorf("a guard error must hold, not drop: %+v", res[0])
+	}
+}
+
+// spec: §16.4 line 378 — rows in the never-dropped DEFAULT partition
+// escape the retention DROP; the maintainer surfaces the catch-all
+// occupancy so an operator notices a write path lagging partition
+// creation before the catch-all grows unbounded.
+func TestMaintainerTick_ReportsDefaultPartitionOccupancy_spec_16_4_378(t *testing.T) {
+	d := newFakeDriver()
+	d.parts["session_logs"] = []string{"session_logs_default"}
+	d.defaultRows["session_logs"] = 7
+	m := New(d, []Spec{{Table: "session_logs", Granularity: Daily, Retention: SessionLogRetention}}, Options{})
+	res, err := m.Tick(context.Background(), mustTime(t, "2026-06-07T12:00:00Z"))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res[0].DefaultRows != 7 {
+		t.Errorf("DefaultRows = %d, want 7", res[0].DefaultRows)
+	}
+}
+
+// A catch-all occupancy probe failure is best-effort: it must record the
+// negative sentinel without aborting the create/drop work for this spec
+// or the remaining specs.
+func TestMaintainerTick_DefaultProbeErrorIsNonFatal(t *testing.T) {
+	d := newFakeDriver()
+	d.defaultErr = errors.New("relation does not exist")
+	m := New(d, []Spec{
+		{Table: "session_logs", Granularity: Daily, Retention: SessionLogRetention, Ahead: 1},
+		{Table: "stream_cursors", Granularity: Daily, Retention: StreamCursorRetention, Ahead: 1},
+	}, Options{})
+	res, err := m.Tick(context.Background(), mustTime(t, "2026-06-07T12:00:00Z"))
+	if err != nil {
+		t.Fatalf("probe failure must not abort the Tick: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("want both specs processed despite the probe failure, got %d", len(res))
+	}
+	for _, r := range res {
+		if r.DefaultRows != -1 {
+			t.Errorf("%s: DefaultRows = %d, want -1 sentinel on probe failure", r.Table, r.DefaultRows)
+		}
+		if len(r.Created) == 0 {
+			t.Errorf("%s: maintenance was skipped — creates should still run", r.Table)
+		}
 	}
 }
 
