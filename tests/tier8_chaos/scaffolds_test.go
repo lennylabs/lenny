@@ -53,20 +53,12 @@ func TestPostgresFailover(t *testing.T) {
 	t.Logf("§12.8: covered by TestPostgresUnavailable; HA topology + automatic promotion on the ops backlog.")
 }
 
-// §12.8 Redis Sentinel failover — covered by:
-//   - pkg/redisconn (the Sentinel-aware client; unit tests for
-//     master-promotion handling).
-//   - compose/default.yml Sentinel topology (master + replica + 3
-//     sentinels) plus tests/tier2_component/rls/pgbouncer_test.go
-//     pattern shows the same compose stack pattern.
-//   - tests/tier8_chaos/store_failure_test.go::TestRedisClusterDegraded.
-//
-// spec: 12.8
-// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
-func TestRedisSentinelFailover(t *testing.T) {
-	t.Logf("§12.8: pkg/redisconn Sentinel-aware client + TestRedisClusterDegraded chaos coverage. " +
-		"Live master-kill + e2e overlay --redis-sentinel-addrs is on the ops backlog.")
-}
+// §12.8 Redis Sentinel failover — implemented as a live master-kill
+// exercise in tests/tier8_chaos/redis_sentinel_failover_test.go
+// (TestRedisSentinelFailover): it drives a real master kill against the
+// compose Sentinel topology, asserts automatic replica promotion, and
+// verifies a Sentinel-resolving client reaches the promoted master with
+// the pre-failover data intact.
 
 // §12.8 MinIO replication lag — covered by:
 //   - pkg/blobstore/replication (replication primitives + unit tests).
