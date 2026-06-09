@@ -16,6 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
@@ -1890,6 +1892,12 @@ func isTransientPodClaimError(err error) bool {
 		return true
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
 		return true
+	case errors.Is(err, coordfence.ErrRelinquished):
+		// spec: §11.3 line 209 — the coordinator relinquished the session
+		// after its fence retries; another replica owns it. Hold the row
+		// in awaiting_client_action so the client's `POST /resume` retry
+		// routes to the rightful coordinator rather than failing the row.
+		return true
 	}
 	return false
 }
@@ -2089,6 +2097,9 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 			return "", err
 		}
 		s.registerBinding(ctx, result)
+		if ferr := s.fenceResumedPod(ctx, result.Adapter, row.TenantID, row.ID); ferr != nil {
+			return "", ferr
+		}
 		return "", nil
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
@@ -2135,7 +2146,38 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	// so a fresh replica picks up the recovered binding without
 	// re-running resume.
 	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.Result.SandboxName)
+	// spec: §10.1 lines 33-37 / §4.2 line 158 — announce the session's
+	// coordination_generation to the (re-)bound pod so it rejects any
+	// straggler RPC from a prior coordinator. A relinquish aborts the
+	// resume; a best-effort failure is logged and swallowed.
+	if ferr := s.fenceResumedPod(ctx, result.Result.Adapter, row.TenantID, row.ID); ferr != nil {
+		return "", ferr
+	}
 	return result.Mode, nil
+}
+
+// fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a
+// resume just (re-)bound, announcing the session's current
+// coordination_generation so the pod rejects straggler RPCs from a prior
+// coordinator. A relinquish (the coordinator gave up the session after
+// exhausting its §11.3 fence retries, releasing the lease) is returned so
+// the caller aborts the resume; a best-effort fence failure (the
+// generation could not be read) is logged and swallowed because the
+// coordination lease still guards exclusive ownership.
+//
+// spec: §10.1 lines 33-37, §4.2 line 158, §11.3 line 209.
+func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) error {
+	if s.fencer == nil || adapter == nil {
+		return nil
+	}
+	relinquished, err := s.fencer.Fence(ctx, adapter, tenantID, sessionID)
+	if relinquished {
+		return err
+	}
+	if err != nil {
+		log.Printf("sessionserver: coordinator fence for session %s best-effort failed: %v", sessionID, err)
+	}
+	return nil
 }
 
 // classifyResume picks the §4.4 / §7.2 ResumeMode for a resume of the

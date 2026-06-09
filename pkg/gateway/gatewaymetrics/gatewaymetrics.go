@@ -374,6 +374,19 @@ type Metrics struct {
 	// checkpoint did not finish in budget. Labels: `pool`,
 	// `service_instance_id`.
 	sigkillStreams *prometheus.CounterVec
+	// coordinatorHandoffStale counts the §10.1 line 61 generation-stale
+	// coordinator-handoff rejections: a CoordinatorFence the gateway
+	// issued was rejected because the pod had already been fenced to an
+	// equal-or-higher generation by another coordinator.
+	coordinatorHandoffStale prometheus.Counter
+	// coordinatorFenceRetry counts the §11.3 line 209 CoordinatorFence
+	// retries after a rejection or a transient transport fault, before
+	// the coordinator relinquishes.
+	coordinatorFenceRetry prometheus.Counter
+	// coordinatorFenceRelinquished counts the §11.3 line 209 cases where
+	// the coordinator gave up leadership of a session after exhausting
+	// its fence retries, releasing the coordination lease.
+	coordinatorFenceRelinquished prometheus.Counter
 	// gcTombstonesPruned counts the §12.5 ll. 341 hard-prune
 	// removals: rows whose tombstone deadline has elapsed and were
 	// physically removed once the retention window passed. The `table`
@@ -1888,6 +1901,37 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §10.1 line 61 — `lenny_coordinator_handoff_stale_total` counts the
+	// generation-stale coordinator-handoff rejections: a CoordinatorFence
+	// the gateway issued was refused because the pod had already been
+	// fenced to an equal-or-higher generation by another coordinator.
+	coordinatorHandoffStale, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_coordinator_handoff_stale_total",
+		Help: "Generation-stale coordinator handoff rejections (§10.1 line 61).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §11.3 line 209 — `lenny_coordinator_fence_retry_total` counts the
+	// CoordinatorFence retries after a stale rejection or a transient
+	// transport fault, before the coordinator relinquishes leadership.
+	coordinatorFenceRetry, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_coordinator_fence_retry_total",
+		Help: "Coordinator retries after a fencing rejection (§11.3 line 209).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §11.3 line 209 — `lenny_coordinator_fence_relinquished_total` counts
+	// the cases where the coordinator gave up leadership of a session
+	// after exhausting its fence retries, releasing the coordination lease.
+	coordinatorFenceRelinquished, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_coordinator_fence_relinquished_total",
+		Help: "Coordinator leadership relinquished after fence retries (§11.3 line 209).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	// §12.5 ll. 341 — `lenny_gc_tombstones_pruned_total` counts the
 	// soft-deleted rows physically removed by the hard-prune sweep once
 	// the tombstone retention window has elapsed. The `table` label
@@ -2583,6 +2627,7 @@ func New() (*Metrics, error) {
 		slotRehydration, slotPodReplacement, adapterLeakedSlots,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		resumeDeduplicated, barrierTargetSource,
+		coordinatorHandoffStale, coordinatorFenceRetry, coordinatorFenceRelinquished,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
@@ -2822,6 +2867,9 @@ func New() (*Metrics, error) {
 		resumeDeduplicated:                   resumeDeduplicated,
 		barrierTargetSource:                  barrierTargetSource,
 		sigkillStreams:                       sigkillStreams,
+		coordinatorHandoffStale:              coordinatorHandoffStale.WithLabelValues(),
+		coordinatorFenceRetry:                coordinatorFenceRetry.WithLabelValues(),
+		coordinatorFenceRelinquished:         coordinatorFenceRelinquished.WithLabelValues(),
 		gcTombstonesPruned:                   gcTombstonesPruned,
 		gcRuns:                               gcRuns,
 		gcArtifactsDeleted:                   gcArtifactsDeleted,
@@ -3962,6 +4010,42 @@ func (m *Metrics) IncPreStopBarrierTargetSource(source string) {
 		return
 	}
 	m.barrierTargetSource.WithLabelValues(source).Inc()
+}
+
+// IncCoordinatorHandoffStale increments the §10.1 line 61
+// `lenny_coordinator_handoff_stale_total` counter for one generation-stale
+// coordinator-handoff rejection: a CoordinatorFence the gateway issued was
+// refused (FailedPrecondition) because the pod had already been fenced to
+// an equal-or-higher generation by another coordinator.
+// spec: §10.1 line 61.
+func (m *Metrics) IncCoordinatorHandoffStale() {
+	if m == nil {
+		return
+	}
+	m.coordinatorHandoffStale.Inc()
+}
+
+// IncCoordinatorFenceRetry increments the §11.3 line 209
+// `lenny_coordinator_fence_retry_total` counter for one CoordinatorFence
+// retry after a stale rejection or a transient transport fault.
+// spec: §11.3 line 209.
+func (m *Metrics) IncCoordinatorFenceRetry() {
+	if m == nil {
+		return
+	}
+	m.coordinatorFenceRetry.Inc()
+}
+
+// IncCoordinatorFenceRelinquished increments the §11.3 line 209
+// `lenny_coordinator_fence_relinquished_total` counter when the coordinator
+// gives up leadership of a session after exhausting its fence retries and
+// releases the coordination lease.
+// spec: §11.3 line 209.
+func (m *Metrics) IncCoordinatorFenceRelinquished() {
+	if m == nil {
+		return
+	}
+	m.coordinatorFenceRelinquished.Inc()
 }
 
 // IncSigkillStreams increments the §10.1 line 161

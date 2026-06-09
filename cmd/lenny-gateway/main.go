@@ -131,6 +131,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
+	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	correctionpg "github.com/lennylabs/lenny/pkg/gateway/correctionstore/pgstore"
@@ -1568,6 +1569,13 @@ func main() {
 		// inside the Redis-available branch below; nil without Redis).
 		erasureLeaseStore leasestore.LeaseStore
 
+		// coordFencer drives the §10.1 / §4.2 CoordinatorFence after a
+		// resume re-bind (announce coordination_generation; §11.3 line 209
+		// retry/relinquish). Built inside the Redis-available branch below
+		// (it needs the lease store for the relinquish path); nil interface
+		// without Redis, which leaves the resume path unfenced.
+		coordFencer sessionserver.CoordinationFencer
+
 		// storageRecoveryReconciler drives the §12.4 line 210 write-back of
 		// storage-quota counters to Redis on a Redis-recovery edge. Set only
 		// when both Redis and the Postgres artifact catalog are wired.
@@ -2578,6 +2586,22 @@ func main() {
 	gwMetrics, err := gatewaymetrics.New()
 	if err != nil {
 		log.Fatalf("lenny-gateway: metrics: %v", err)
+	}
+	// spec: §10.1 lines 33-37 / §11.3 line 209 — the gateway-side
+	// CoordinatorFence driver. On a resume re-bind the sessionserver
+	// announces the session's coordination_generation to the pod; a
+	// generation-stale rejection drives the retry/relinquish policy,
+	// releasing the coordination lease when the coordinator gives up.
+	// Wired only when the lease store exists (it needs Release for the
+	// relinquish path); the metrics are now built so the counters move.
+	if erasureLeaseStore != nil {
+		coordFencer = coordfence.New(
+			sessionGenerationReader{store: sessions},
+			erasureLeaseStore,
+			replica,
+			gwMetrics,
+			coordfence.Options{Logf: log.Printf},
+		)
 	}
 	// spec: §10.2 line 225 — back-fill the JWTSigner breaker observer
 	// with the freshly-built metrics so signing failures and circuit
@@ -3791,15 +3815,16 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		StickyCache:    sessionStickyCache,
-		Usage:          usage,
-		Users:          users,
-		Billing:        billing,
-		Tenants:        tenants,
-		StorageQuota:   storageCounter,
-		PodBinder:      podBinder,
-		PodRegistry:    podRegistry,
-		AgentNamespace: *agentNamespace,
+		StickyCache:        sessionStickyCache,
+		Usage:              usage,
+		Users:              users,
+		Billing:            billing,
+		Tenants:            tenants,
+		StorageQuota:       storageCounter,
+		PodBinder:          podBinder,
+		PodRegistry:        podRegistry,
+		CoordinationFencer: coordFencer,
+		AgentNamespace:     *agentNamespace,
 		// spec: §11.1 line 7 — per-runtime and per-pool admission rate
 		// limits, enforced at session creation where the runtime/pool are
 		// known. Shares the same per-minute counter the §11.1 HTTP
@@ -7585,6 +7610,20 @@ func (l sessionUserLookup) UserID(ctx context.Context, tenantID, sessionID strin
 		return "", false
 	}
 	return sess.UserID, true
+}
+
+// sessionGenerationReader adapts the session store to
+// coordfence.GenerationReader so the §10.1 CoordinatorFence driver reads
+// (and re-reads, after a stale rejection) the session's authoritative
+// §4.2 coordination_generation.
+type sessionGenerationReader struct{ store sessionstore.Store }
+
+func (r sessionGenerationReader) CoordinationGeneration(ctx context.Context, tenantID, sessionID string) (int64, error) {
+	row, err := r.store.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return row.CoordinationGeneration, nil
 }
 
 // lastSeqStore adapts the §4.2 session store to the §7.3 line 397

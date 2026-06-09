@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
@@ -174,6 +175,7 @@ type Server struct {
 	multiTenant    bool
 	podBinder      *podsession.Binder
 	podRegistry    *podsession.Registry
+	fencer         CoordinationFencer
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
 	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
@@ -777,6 +779,19 @@ type QuotaFinalCheckpointer interface {
 	CheckpointSubject(ctx context.Context, tenantID, userID string) error
 }
 
+// CoordinationFencer issues the §10.1 / §4.2 CoordinatorFence to a
+// resumed session's pod, announcing the session's current
+// coordination_generation so the pod rejects any straggler RPC from a
+// prior coordinator. relinquished is true when the coordinator gave up
+// leadership after exhausting its §11.3 fence retries (the lease was
+// released); the resume must then be aborted so another replica takes
+// over. *coordfence.Fencer satisfies it.
+//
+// spec: §10.1 lines 33-37, §11.3 line 209.
+type CoordinationFencer interface {
+	Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error)
+}
+
 // Options configures the Server at construction.
 type Options struct {
 	// Clock overrides time.Now. Tests inject a fixed clock; production
@@ -1065,6 +1080,14 @@ type Options struct {
 	// PodRegistry holds the per-session pod bindings the message and
 	// teardown paths read. Required when PodBinder is set.
 	PodRegistry *podsession.Registry
+
+	// CoordinationFencer, when set, issues the §10.1 / §4.2
+	// CoordinatorFence to a resumed session's pod after the resume
+	// re-bind, announcing the session's current coordination_generation
+	// so the pod rejects any straggler RPC from a prior coordinator. Nil
+	// disables fencing (dev / in-memory mode). spec: §10.1 lines 33-37,
+	// §11.3 line 209.
+	CoordinationFencer CoordinationFencer
 
 	// AgentNamespace is the namespace the warm pools and Sandboxes live
 	// in. Required when PodBinder is set.
@@ -1533,6 +1556,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		multiTenant:              opts.MultiTenant,
 		podBinder:                opts.PodBinder,
 		podRegistry:              opts.PodRegistry,
+		fencer:                   opts.CoordinationFencer,
 		agentNamespace:           opts.AgentNamespace,
 		admissionRL:              opts.AdmissionRateLimitCounter,
 		perRuntimePerMin:         opts.PerRuntimePerMinute,
