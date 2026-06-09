@@ -6256,6 +6256,19 @@ func main() {
 	}
 	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
 	defer watchdogCancel()
+
+	// spec: §5.2 line 500 — wire the concurrent-stateless ingress. When a
+	// cluster client and agent namespace are present the gateway routes
+	// /v1/stateless/{pool}/... to a tenant-pinned pod IP discovered from
+	// the pool's pods, bypassing the Service LB. Each pool's
+	// EndpointPoller runs under watchdogCtx. Without a cluster the route
+	// is absent (no stateless pods exist to route to). F-5.2.29.
+	if clusterClient != nil && *agentNamespace != "" {
+		statelessMgr := buildStatelessRouting(watchdogCtx, clusterClient, *agentNamespace, pools, gwMetrics)
+		mux.Handle("/v1/stateless/", statelessMgr)
+		log.Printf("lenny-gateway: §5.2 concurrent-stateless ingress mounted at /v1/stateless/ (agent namespace %s)", *agentNamespace)
+	}
+
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {
 		if err != nil {
 			log.Printf("lenny-gateway: watchdog sweep error: %v", err)
