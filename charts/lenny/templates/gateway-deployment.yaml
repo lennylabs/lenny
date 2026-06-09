@@ -1573,3 +1573,41 @@ subjects:
   - kind: ServiceAccount
     name: lenny-gateway
     namespace: {{ .Release.Namespace }}
+---
+# §17.2 line 86: the gateway reads the
+# security.elicitationContentIntegrity.floor key from the
+# lenny-deployment-phase-stamp ConfigMap at startup and on change events
+# so a `helm upgrade` floor change takes effect without a restart. The
+# grant is read-only (`get` only — the reconciler polls, it does not
+# watch/list) and scoped by resourceName to the single phase-stamp
+# ConfigMap, mirroring the spec's read-only RBAC intent for the floor key
+# (no update/patch/delete to any Lenny component). Appended last so the
+# document order (and the documentIndex-based tests) is unchanged.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-gateway-phase-stamp-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["lenny-deployment-phase-stamp"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-gateway-phase-stamp-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-gateway-phase-stamp-reader
+subjects:
+  - kind: ServiceAccount
+    name: lenny-gateway
+    namespace: {{ .Release.Namespace }}

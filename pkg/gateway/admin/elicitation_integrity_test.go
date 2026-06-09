@@ -361,3 +361,68 @@ func TestPutElicitationIntegrityRejectsBelowPlatformFloor(t *testing.T) {
 		t.Errorf("error code = %q, want ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR", errResp.Error.Code)
 	}
 }
+
+// spec: §17.2 line 86 / §9.2 line 64 — F-17.2.9. The platform floor is
+// sourced through a dynamic provider so a `helm upgrade` floor change
+// (sourced from the phase-stamp ConfigMap reconcile) is observed by the
+// admin GET effective-mode resolution and the PUT below-floor guard
+// without re-wiring the Router. This test mutates the provider's backing
+// value between requests and asserts both surfaces follow it live.
+func TestElicitationFloorProviderObservedLive_spec_17_2_9(t *testing.T) {
+	store := tenantstore.NewMemory()
+	floor := "off"
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithElicitationFloorProvider(func() string { return floor })
+	seedAdminTenant(t, store, "acme")
+
+	// Stored mode off, floor off: effective resolves to off and a PUT to
+	// off is admitted (no floor to violate).
+	body, _ := json.Marshal(map[string]string{"mode": "off", "justification": "staging"})
+	putReq := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), putReq)
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, putReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initial PUT status %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	// Simulate the §17.2 reconcile raising the platform floor to enforce.
+	// The same Router instance must now clamp the effective mode upward.
+	floor = "enforce"
+	rr = httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", nil)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		StoredMode    string `json:"storedMode"`
+		EffectiveMode string `json:"effectiveMode"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.StoredMode != "off" || resp.EffectiveMode != "enforce" {
+		t.Fatalf("after floor raise storedMode/effectiveMode = %q/%q, want off/enforce",
+			resp.StoredMode, resp.EffectiveMode)
+	}
+
+	// With the raised floor in force, a PUT back down to off is now
+	// rejected below the platform floor — the dynamic floor gates writes.
+	body, _ = json.Marshal(map[string]string{"mode": "off", "justification": "retry"})
+	rejReq := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body)))
+	injectAdminIfMatch(t, router.Handler(), rejReq)
+	rr = httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, rejReq)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT-below-raised-floor status %d, want 400; body %s", rr.Code, rr.Body.String())
+	}
+	var errResp struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &errResp)
+	if errResp.Error.Code != "ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR" {
+		t.Fatalf("error code = %q, want ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR", errResp.Error.Code)
+	}
+}

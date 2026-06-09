@@ -324,10 +324,10 @@ tests:
       - notExists:
           path: metadata.annotations["lenny.dev/sa-token-audience"]
 
-  - it: renders the service account, cluster role, binding, deployment, services, the §4.1 PodDisruptionBudget, the §17.6 admin-token Role/RoleBinding, and the §12.5 leader-election Role/RoleBinding by default
+  - it: renders the service account, cluster role, binding, deployment, services, the §4.1 PodDisruptionBudget, the §17.6 admin-token Role/RoleBinding, the §12.5 leader-election Role/RoleBinding, and the §17.2 phase-stamp-reader Role/RoleBinding by default
     asserts:
       - hasDocuments:
-          count: 11
+          count: 13
 
   - it: renders the §4.1 PodDisruptionBudget with maxUnavailable 1 and the gateway selector
     documentSelector:
@@ -355,11 +355,12 @@ tests:
       gateway.podDisruptionBudget.enabled: false
     asserts:
       - hasDocuments:
-          count: 10
-      # The default render is eleven documents (SA, ClusterRole,
+          count: 12
+      # The default render is thirteen documents (SA, ClusterRole,
       # ClusterRoleBinding, Deployment, Service, headless Service, PDB, the
-      # §17.6 admin-token Role + RoleBinding, and the §12.5 leader-election
-      # Role + RoleBinding). With the PDB opt-out set the count drops to ten,
+      # §17.6 admin-token Role + RoleBinding, the §12.5 leader-election
+      # Role + RoleBinding, and the §17.2 phase-stamp-reader Role +
+      # RoleBinding). With the PDB opt-out set the count drops to twelve,
       # so no PodDisruptionBudget is rendered.
 
   - it: renders a Deployment named lenny-gateway
@@ -2896,7 +2897,7 @@ tests:
       gateway.adminToken.enabled: false
     asserts:
       - hasDocuments:
-          count: 9
+          count: 11
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -2906,7 +2907,47 @@ tests:
           path: kind
           value: Deployment
 
-
+  # spec: §17.2 line 86 / F-17.2.9 — the gateway reads the phase-stamp
+  # ConfigMap's elicitation-content-integrity floor key at runtime, so the
+  # chart grants the gateway SA a read-only, resourceName-scoped Role on the
+  # single lenny-deployment-phase-stamp ConfigMap.
+  - it: renders the §17.2 phase-stamp-reader Role scoped to a get on the phase-stamp ConfigMap
+    # Selected by the configmaps rule so the §17.6 admin-token Role
+    # (secrets) and the §12.5 leader-election Role (leases) do not collide.
+    documentSelector:
+      path: rules[0].resources[0]
+      value: configmaps
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-phase-stamp-reader
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: ""
+      - equal:
+          path: rules[0].resourceNames[0]
+          value: lenny-deployment-phase-stamp
+      - equal:
+          path: rules[0].verbs[0]
+          value: get
+      - lengthEqual:
+          path: rules[0].verbs
+          count: 1
+  - it: binds the §17.2 phase-stamp-reader Role to the gateway service account
+    documentSelector:
+      path: roleRef.name
+      value: lenny-gateway-phase-stamp-reader
+    asserts:
+      - isKind:
+          of: RoleBinding
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-phase-stamp-reader
+      - equal:
+          path: subjects[0].name
+          value: lenny-gateway
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

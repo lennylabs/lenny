@@ -177,6 +177,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
+	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewayleader"
@@ -757,7 +758,11 @@ func main() {
 	tokenServiceTenant := flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
 		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
 	elicitationFloor := flag.String("elicitation-content-integrity-floor", os.Getenv("LENNY_ELICITATION_CONTENT_INTEGRITY_FLOOR"),
-		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor).")
+		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor). This value seeds the floor at startup; the §17.2 phase-stamp ConfigMap reconcile then keeps it live.")
+	elicitationFloorConfigMap := flag.String("elicitation-floor-configmap-name", envOr("LENNY_ELICITATION_FLOOR_CONFIGMAP", elicitationfloor.DefaultConfigMapName),
+		"§17.2 line 86 ConfigMap (in --gateway-namespace) whose security.elicitationContentIntegrity.floor key the gateway re-reads to keep the platform floor live without a restart. Requires a cluster client; ignored on a Postgres-only deployment.")
+	elicitationFloorReconcileSeconds := flag.Int("elicitation-floor-reconcile-interval-seconds", int(elicitationfloor.DefaultReconcileInterval/time.Second),
+		"§17.2 line 86 cadence the gateway re-reads the phase-stamp ConfigMap floor key. The change is observed by polling because the gateway client is non-cached; the value bounds floor-change staleness.")
 	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	leaseAutoMaxPerMin := flag.Int("lease-extension-auto-max-per-min", 0,
@@ -1126,6 +1131,16 @@ func main() {
 	if err := kmsFinalize(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+
+	// spec: §17.2 line 86 / §9.2 line 64 — the platform-wide elicitation
+	// content-integrity floor is seeded from the
+	// --elicitation-content-integrity-floor flag and then kept live by the
+	// phase-stamp ConfigMap reconcile started below (when a cluster client
+	// exists). Every floor read (the per-request effective-mode resolver,
+	// the admin below-floor guard, and the §16.5 weakened-mode gauge) goes
+	// through this provider so a `helm upgrade` floor change takes effect
+	// without a gateway restart. F-17.2.9.
+	elicitationFloorProvider := elicitationfloor.NewProvider(*elicitationFloor)
 
 	// spec: §17.4 line 268 — dev-mode hard startup assertion. The
 	// gateway's own listener is plain HTTP; production terminates TLS at
@@ -4226,7 +4241,7 @@ func main() {
 			if t, err := tenants.Get(ctx, tenantID); err == nil {
 				stored = t.ElicitationContentIntegrity
 			}
-			return elicitation.ResolveEffectiveWithDefaults(*elicitationFloor, stored)
+			return elicitation.ResolveEffectiveWithDefaults(elicitationFloorProvider.Floor(), stored)
 		},
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
@@ -4624,9 +4639,11 @@ func main() {
 		// the sync-status handler reports the Postgres-only generation.
 		adminRouter = adminRouter.WithCRDGenerationReader(lookup)
 	}
-	if *elicitationFloor != "" {
-		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)
-	}
+	// spec: §17.2 line 86 — wire the dynamic floor provider so the admin
+	// effective-mode resolution and below-floor guard observe a ConfigMap
+	// floor change without re-wiring. Always wired (even when the startup
+	// flag is empty) because the reconcile may raise the floor at runtime.
+	adminRouter = adminRouter.WithElicitationFloorProvider(elicitationFloorProvider.Floor)
 	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
@@ -7015,7 +7032,7 @@ func main() {
 		// alert reads a gauge that must reflect the live tenant posture, so
 		// refresh it on the same 30s cadence as the other gauge exporters.
 		// F-9.2.5.
-		exportElicitationIntegrityWeakened(ctx, tenants, *elicitationFloor, gwMetrics)
+		exportElicitationIntegrityWeakened(ctx, tenants, elicitationFloorProvider.Floor(), gwMetrics)
 	}
 	exportGaugeMetrics(context.Background())
 	go func() {
@@ -7176,6 +7193,28 @@ func main() {
 		}).Run(watchdogCtx)
 		log.Printf("lenny-gateway: §12.4 fail-open replica-count poller watching endpoints %s/%s",
 			*gatewayNamespace, *gatewayServiceName)
+
+		// spec: §17.2 line 86 — keep the §9.2 platform elicitation
+		// content-integrity floor live by re-reading the phase-stamp
+		// ConfigMap's security.elicitationContentIntegrity.floor key. A
+		// `helm upgrade` that raises or lowers the floor takes effect
+		// without a gateway restart; a read error or absent key retains
+		// the last-known floor. The audit events for the transition
+		// (platform.elicitation_content_integrity_floor_changed) carry the
+		// operator OIDC sub and are emitted by the chart render path, not
+		// here (F-17.2.8 / F-9.2.10). F-17.2.9.
+		go (&elicitationfloor.Reconciler{
+			Reader: phaseStampFloorReader{
+				client:    clusterClient,
+				namespace: *gatewayNamespace,
+				name:      *elicitationFloorConfigMap,
+			},
+			Provider: elicitationFloorProvider,
+			Interval: time.Duration(*elicitationFloorReconcileSeconds) * time.Second,
+			Logf:     func(format string, args ...any) { log.Printf(format, args...) },
+		}).Run(watchdogCtx)
+		log.Printf("lenny-gateway: §17.2 elicitation-floor reconciler watching configmap %s/%s",
+			*gatewayNamespace, *elicitationFloorConfigMap)
 	}
 
 	// §4.1 per-subsystem state publisher. Periodically reads the

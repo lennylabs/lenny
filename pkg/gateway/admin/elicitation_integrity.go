@@ -84,7 +84,7 @@ func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.
 // defaults so this surface and the §16.5 weakened-mode gauge agree on
 // the effective mode. spec: §9.2 lines 60, 64. F-9.2.5.
 func (r *Router) resolveElicitationEffective(stored string) string {
-	return string(elicitation.ResolveEffectiveWithDefaults(r.elicitationFloor, stored))
+	return string(elicitation.ResolveEffectiveWithDefaults(r.elicitationFloorValue(), stored))
 }
 
 // handlePutElicitationIntegrity serves
@@ -124,7 +124,7 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 	// the platform operator sets it via the Helm value
 	// security.elicitationContentIntegrity.floor (rendered onto the
 	// gateway via --elicitation-content-integrity-floor).
-	if floor := elicitation.EnforcementMode(r.elicitationFloor); floor.IsValid() && floor != elicitation.ModeOff {
+	if floor := elicitation.EnforcementMode(r.elicitationFloorValue()); floor.IsValid() && floor != elicitation.ModeOff {
 		if floor.Rank() > mode.Rank() {
 			writeError(w, http.StatusBadRequest, "ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR",
 				"the requested mode is below the platform-wide §9.2 floor",
@@ -185,7 +185,7 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 	// value rendered at the time of the write so audit analysis can
 	// reconstruct the effective mode without re-resolving the floor
 	// post-hoc. Empty string when the floor is unset.
-	platformFloor := r.elicitationFloor
+	platformFloor := r.elicitationFloorValue()
 	// `previous_stored_mode` is null on the first write (no prior
 	// stored value); JSON-encodes as `null` rather than `""`. The
 	// `justification` field is included unconditionally so a row from

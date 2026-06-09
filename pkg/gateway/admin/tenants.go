@@ -164,10 +164,10 @@ type Router struct {
 	tenantAccess            tenantaccessstore.Store
 	// capOverrides backs the §5.1 line 49 per-tenant runtime capability
 	// override CRUD surface. Nil leaves the routes unregistered. F-5.1.20.
-	capOverrides    runtimecapoverride.Store
-	auditLog        AuditLog
-	auditPruner     AuditPartitionDropper
-	auditMetrics    AuditQueryMetrics
+	capOverrides runtimecapoverride.Store
+	auditLog     AuditLog
+	auditPruner  AuditPartitionDropper
+	auditMetrics AuditQueryMetrics
 	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9
 	// line 3668/3709 platform-admin cross-tenant audit scatter-gather and
 	// its Redis result cache. A nil auditScatter leaves the platform-admin
@@ -176,8 +176,8 @@ type Router struct {
 	auditScatter        auditScatterReader
 	scatterCache        ScatterGatherCache
 	scatterCacheEnabled bool
-	tokenRevoker    IssuedTokenRevoker
-	revocationCache RevocationCache
+	tokenRevoker        IssuedTokenRevoker
+	revocationCache     RevocationCache
 	// adminToken provisions/rotates the §17.6 initial admin credential
 	// (lenny-admin + lenny-admin-token Secret). Nil leaves the bootstrap
 	// admin-token step and the rotate-token route inactive. F-17.6.3.
@@ -225,8 +225,14 @@ type Router struct {
 	eventEmitter        events.EventEmitter
 	operationsInventory OperationsInventory
 
-	kmsProbe         KMSProbe
-	elicitationFloor string
+	kmsProbe KMSProbe
+	// elicitationFloor returns the current §9.2 / §17.2 platform-wide
+	// elicitation content-integrity floor. It is a function rather than a
+	// static string so a floor change sourced from the phase-stamp
+	// ConfigMap at runtime (§17.2 line 86) is observed by every read
+	// without re-wiring the Router. A nil function reads as the empty
+	// (no-floor) default.
+	elicitationFloor func() string
 
 	// siemConfigured mirrors whether the platform has an
 	// `audit.siem.endpoint` configured. The §11.7 compliance enforcement
@@ -417,8 +423,29 @@ func (r *Router) WithMaxFinalizingTimeoutSeconds(seconds int) *Router {
 // floor every floor is treated as `off` and the resolver is the
 // identity function, matching the §9.2 default.
 func (r *Router) WithElicitationFloor(mode string) *Router {
-	r.elicitationFloor = mode
+	r.elicitationFloor = func() string { return mode }
 	return r
+}
+
+// WithElicitationFloorProvider wires a dynamic §9.2 / §17.2 floor source
+// onto the Router. The provider is read on every floor-dependent request
+// (the GET effective-mode resolution, the PUT below-floor guard, and the
+// audit `platform_floor_at_change` field) so a floor change sourced from
+// the phase-stamp ConfigMap at runtime (§17.2 line 86) takes effect
+// without a gateway restart. A nil provider reads as the empty (no-floor)
+// default.
+func (r *Router) WithElicitationFloorProvider(fn func() string) *Router {
+	r.elicitationFloor = fn
+	return r
+}
+
+// elicitationFloorValue reads the current platform floor, defaulting to
+// the empty (no-floor) string when no provider is wired.
+func (r *Router) elicitationFloorValue() string {
+	if r.elicitationFloor == nil {
+		return ""
+	}
+	return r.elicitationFloor()
 }
 
 // WithSIEMConfigured records whether the platform has an
