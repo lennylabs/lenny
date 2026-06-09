@@ -12,7 +12,10 @@ import (
 func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 	got := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
 	want := map[string]bool{
-		"lenny-label-immutability":             true,
+		"lenny-label-immutability": true,
+		// spec: §17.2 item 5 / §13.2 NET-003 — the lenny.dev/tenant-id
+		// transition rules render as a separate webhook (F-17.2.15).
+		"lenny-tenant-label-immutability":      true,
 		"lenny-sandboxclaim-guard":             true,
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
@@ -44,6 +47,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 	})
 	want := map[string]bool{
 		"lenny-label-immutability":             true,
+		"lenny-tenant-label-immutability":      true,
 		"lenny-sandboxclaim-guard":             true,
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,

@@ -22,8 +22,17 @@ import "fmt"
 // proxy/spiffe rules (multi-tenant mode) — which is independent of the
 // LLM-proxy feature flag, so it is part of the baseline set rather than
 // feature-gated.
+//
+// lenny-tenant-label-immutability renders unconditionally alongside
+// lenny-label-immutability: the §17.2 item-5 catalogue folds the
+// lenny.dev/tenant-id transition rules (§13.2 NET-003) into
+// lenny-label-immutability, but the chart realises them as a separate
+// ValidatingWebhookConfiguration. It is therefore a baseline control the
+// inventory must track and an implementation-only divergence from the
+// §17.2 catalogue naming. F-17.2.15.
 var baselineValidatingWebhooks = []string{
 	"lenny-label-immutability",
+	"lenny-tenant-label-immutability",
 	"lenny-sandboxclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
@@ -122,11 +131,17 @@ var Spec17_2ValidatingWebhooks = []string{
 //     admission-policies catalogue does not enumerate it (F-10.5.14).
 //
 // spec: §17.2 line 40. F-17.2.12.
+//   - lenny-tenant-label-immutability realizes the §17.2 item-5
+//     lenny.dev/tenant-id transition rules (§13.2 NET-003) as a separate
+//     ValidatingAdmissionWebhook rather than folded into
+//     lenny-label-immutability as the §17.2 catalogue names it. It
+//     renders unconditionally and is part of the baseline set.
 var implementationOnlyValidatingWebhooks = []string{
 	"lenny-pod-security",
 	"lenny-cosign-verify",
 	"lenny-registry-digest",
 	"lenny-sandboxtemplate-deletion-guard",
+	"lenny-tenant-label-immutability",
 }
 
 // CatalogueCoverage cross-checks the preflight inventory against the
