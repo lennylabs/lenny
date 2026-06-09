@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -196,6 +197,30 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "CONNECTOR_OAUTH_INCOMPLETE", err.Error(), nil)
+		return
+	}
+
+	// spec: §9.2 line 87 — URL domain validation is a hard enforcement
+	// boundary. The authorization URL is the connector's url-mode
+	// elicitation; if its host does not match the registered
+	// expected_domain the flow is dropped and an error is returned to
+	// the originator rather than admitting a URL that could phish the
+	// user (a connector mutated post-registration, a MITM, or a
+	// misconfiguration). An empty expected_domain registers no boundary
+	// and admits the URL. F-9.2.7.
+	if derr := elicitation.CheckConnectorURLDomain(authURL, conn.Auth.ExpectedDomain); derr != nil {
+		var rej *elicitation.URLModeRejection
+		if errors.As(derr, &rej) {
+			writeError(w, http.StatusBadRequest, "URL_DOMAIN_NOT_ALLOWED",
+				"authorization URL domain does not match the connector's expected_domain", map[string]any{
+					"connectorId":    conn.ID,
+					"host":           rej.Host,
+					"expectedDomain": conn.Auth.ExpectedDomain,
+					"reason":         string(rej.Reason),
+				})
+			return
+		}
+		writeError(w, http.StatusBadRequest, "URL_DOMAIN_NOT_ALLOWED", derr.Error(), nil)
 		return
 	}
 

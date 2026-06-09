@@ -352,7 +352,7 @@ func TestURLModeAllowlistValidate(t *testing.T) {
 
 func TestCheckURLModeProvenanceAllowedDomain(t *testing.T) {
 	allow := URLModeAllowlist{Enabled: true, DomainAllowlist: []string{"accounts.example.com"}}
-	err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com/oauth/authorize", allow)
+	err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com/oauth/authorize", "", allow)
 	if err != nil {
 		t.Errorf("an allowlisted domain must pass: %v", err)
 	}
@@ -360,11 +360,11 @@ func TestCheckURLModeProvenanceAllowedDomain(t *testing.T) {
 
 func TestCheckURLModeProvenanceWildcardDomain(t *testing.T) {
 	allow := URLModeAllowlist{Enabled: true, DomainAllowlist: []string{"*.example.com"}}
-	if err := CheckURLModeProvenance(InitiatorAgent, "https://login.example.com/start", allow); err != nil {
+	if err := CheckURLModeProvenance(InitiatorAgent, "https://login.example.com/start", "", allow); err != nil {
 		t.Errorf("a wildcard-matching subdomain must pass: %v", err)
 	}
 	// The bare suffix does not match a `*.suffix` wildcard.
-	err := CheckURLModeProvenance(InitiatorAgent, "https://example.com/start", allow)
+	err := CheckURLModeProvenance(InitiatorAgent, "https://example.com/start", "", allow)
 	var rej *URLModeRejection
 	if !errors.As(err, &rej) {
 		t.Errorf("the bare suffix must not match a wildcard, got %v", err)
@@ -373,7 +373,7 @@ func TestCheckURLModeProvenanceWildcardDomain(t *testing.T) {
 
 func TestCheckURLModeProvenanceDisallowedDomain(t *testing.T) {
 	allow := URLModeAllowlist{Enabled: true, DomainAllowlist: []string{"accounts.example.com"}}
-	err := CheckURLModeProvenance(InitiatorAgent, "https://phish.evil.test/login", allow)
+	err := CheckURLModeProvenance(InitiatorAgent, "https://phish.evil.test/login", "", allow)
 	var rej *URLModeRejection
 	if !errors.As(err, &rej) {
 		t.Fatalf("a disallowed domain must be rejected, got %v", err)
@@ -392,7 +392,7 @@ func TestCheckURLModeProvenanceDisallowedDomain(t *testing.T) {
 func TestCheckURLModeProvenanceAgentBlockedByDefault(t *testing.T) {
 	// §9.2 control 1: agent-initiated url-mode is blocked when the
 	// pool does not allowlist it at all.
-	err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com/oauth", URLModeAllowlist{})
+	err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com/oauth", "", URLModeAllowlist{})
 	var rej *URLModeRejection
 	if !errors.As(err, &rej) {
 		t.Fatalf("agent url-mode must be blocked by default, got %v", err)
@@ -405,17 +405,90 @@ func TestCheckURLModeProvenanceAgentBlockedByDefault(t *testing.T) {
 func TestCheckURLModeProvenanceConnectorAllowed(t *testing.T) {
 	// A connector-initiated url-mode elicitation is admitted even
 	// against an empty pool allowlist — §9.2 reserves url-mode for
-	// gateway-registered connectors.
-	err := CheckURLModeProvenance(InitiatorConnector, "https://github.com/login/oauth/authorize", URLModeAllowlist{})
+	// gateway-registered connectors. With no registered expected_domain
+	// the §9.2 line 87 boundary has nothing to match against.
+	err := CheckURLModeProvenance(InitiatorConnector, "https://github.com/login/oauth/authorize", "", URLModeAllowlist{})
 	if err != nil {
 		t.Errorf("a connector url-mode elicitation must be admitted: %v", err)
+	}
+}
+
+// spec: §9.2 line 87 — a connector-initiated url-mode elicitation whose
+// host matches the registered expected_domain is admitted; a mismatch is
+// the hard-boundary drop. F-9.2.7.
+func TestCheckURLModeProvenanceConnectorExpectedDomain_spec_9_2_87(t *testing.T) {
+	// Matching the expected_domain (exact host) is admitted.
+	if err := CheckURLModeProvenance(InitiatorConnector, "https://github.com/login/oauth/authorize", "github.com", URLModeAllowlist{}); err != nil {
+		t.Errorf("a connector url-mode URL matching expected_domain must be admitted: %v", err)
+	}
+	// A `*.suffix` expected_domain matches a proper subdomain.
+	if err := CheckURLModeProvenance(InitiatorConnector, "https://login.github.com/oauth", "*.github.com", URLModeAllowlist{}); err != nil {
+		t.Errorf("a subdomain matching the wildcard expected_domain must be admitted: %v", err)
+	}
+	// A host that does not match the expected_domain is the hard-boundary drop.
+	err := CheckURLModeProvenance(InitiatorConnector, "https://evil.test/login/oauth/authorize", "github.com", URLModeAllowlist{})
+	var rej *URLModeRejection
+	if !errors.As(err, &rej) {
+		t.Fatalf("a connector url-mode host outside expected_domain must be rejected, got %v", err)
+	}
+	if rej.Reason != URLModeRejectConnectorDomainMismatch {
+		t.Errorf("reason = %q, want connector_domain_mismatch", rej.Reason)
+	}
+	if rej.Host != "evil.test" {
+		t.Errorf("rejection host = %q, want evil.test", rej.Host)
+	}
+}
+
+// spec: §9.2 line 87 — CheckConnectorURLDomain is the reusable hard
+// boundary the connector OAuth surface and the chain check share.
+// F-9.2.7.
+func TestCheckConnectorURLDomain_spec_9_2_87(t *testing.T) {
+	cases := []struct {
+		name     string
+		rawURL   string
+		expected string
+		wantErr  bool
+		wantReas URLModeRejectReason
+		wantHost string
+	}{
+		{name: "empty expected admits", rawURL: "https://anything.test/x", expected: "", wantErr: false},
+		{name: "non-url admits", rawURL: "", expected: "github.com", wantErr: false},
+		{name: "exact match", rawURL: "https://github.com/oauth", expected: "github.com", wantErr: false},
+		{name: "exact match case-insensitive", rawURL: "https://GitHub.com/oauth", expected: "github.com", wantErr: false},
+		{name: "wildcard subdomain", rawURL: "https://login.github.com/oauth", expected: "*.github.com", wantErr: false},
+		{name: "wildcard bare suffix rejected", rawURL: "https://github.com/oauth", expected: "*.github.com", wantErr: true, wantReas: URLModeRejectConnectorDomainMismatch, wantHost: "github.com"},
+		{name: "host:port stripped", rawURL: "https://github.com:8443/oauth", expected: "github.com", wantErr: false},
+		{name: "mismatch", rawURL: "https://evil.test/oauth", expected: "github.com", wantErr: true, wantReas: URLModeRejectConnectorDomainMismatch, wantHost: "evil.test"},
+		{name: "malformed url", rawURL: "not-a-url", expected: "github.com", wantErr: true, wantReas: URLModeRejectMalformedURL},
+		{name: "non-https scheme rejected", rawURL: "ftp://github.com/x", expected: "github.com", wantErr: true, wantReas: URLModeRejectMalformedURL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckConnectorURLDomain(tc.rawURL, tc.expected)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("CheckConnectorURLDomain(%q,%q) = %v, want nil", tc.rawURL, tc.expected, err)
+				}
+				return
+			}
+			var rej *URLModeRejection
+			if !errors.As(err, &rej) {
+				t.Fatalf("CheckConnectorURLDomain(%q,%q) = %v, want *URLModeRejection", tc.rawURL, tc.expected, err)
+			}
+			if rej.Reason != tc.wantReas {
+				t.Errorf("reason = %q, want %q", rej.Reason, tc.wantReas)
+			}
+			if tc.wantHost != "" && rej.Host != tc.wantHost {
+				t.Errorf("host = %q, want %q", rej.Host, tc.wantHost)
+			}
+		})
 	}
 }
 
 func TestCheckURLModeProvenanceNonURLModeAdmitted(t *testing.T) {
 	// An elicitation that carries no URL is not url-mode; the §9.2
 	// url-mode controls do not apply.
-	if err := CheckURLModeProvenance(InitiatorAgent, "", URLModeAllowlist{}); err != nil {
+	if err := CheckURLModeProvenance(InitiatorAgent, "", "", URLModeAllowlist{}); err != nil {
 		t.Errorf("a non-url-mode elicitation must be admitted: %v", err)
 	}
 }
@@ -423,7 +496,7 @@ func TestCheckURLModeProvenanceNonURLModeAdmitted(t *testing.T) {
 func TestCheckURLModeProvenanceMalformedURL(t *testing.T) {
 	allow := URLModeAllowlist{Enabled: true, DomainAllowlist: []string{"accounts.example.com"}}
 	for _, bad := range []string{"not-a-url", "ftp://accounts.example.com", "https://"} {
-		err := CheckURLModeProvenance(InitiatorAgent, bad, allow)
+		err := CheckURLModeProvenance(InitiatorAgent, bad, "", allow)
 		var rej *URLModeRejection
 		if !errors.As(err, &rej) || rej.Reason != URLModeRejectMalformedURL {
 			t.Errorf("CheckURLModeProvenance(%q) = %v, want a malformed-url rejection", bad, err)
@@ -434,7 +507,7 @@ func TestCheckURLModeProvenanceMalformedURL(t *testing.T) {
 func TestCheckURLModeProvenanceHostPortStripped(t *testing.T) {
 	// A host with an explicit port matches the allowlist by host only.
 	allow := URLModeAllowlist{Enabled: true, DomainAllowlist: []string{"accounts.example.com"}}
-	if err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com:8443/oauth", allow); err != nil {
+	if err := CheckURLModeProvenance(InitiatorAgent, "https://accounts.example.com:8443/oauth", "", allow); err != nil {
 		t.Errorf("a host:port URL must match the host-only allowlist: %v", err)
 	}
 }

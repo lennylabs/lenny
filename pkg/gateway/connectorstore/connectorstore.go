@@ -113,6 +113,16 @@ type ConnectorAuth struct {
 	ClientID              string   `json:"clientId,omitempty"`
 	ClientSecretRef       string   `json:"clientSecretRef,omitempty"`
 	Scopes                []string `json:"scopes,omitempty"`
+
+	// ExpectedDomain is the §9.2/§9.3 expected OAuth endpoint domain for
+	// the connector's url-mode elicitations. It is either an exact host
+	// (`accounts.example.com`) or a `*.suffix` wildcard
+	// (`*.example.com`). §9.2 line 87 makes it a hard enforcement
+	// boundary: the gateway rejects any url-mode elicitation (and the
+	// connector's own authorization URL) whose host does not match it.
+	// Optional; when set on an oauth2 connector the authorization and
+	// token endpoints MUST fall within it (enforced at registration).
+	ExpectedDomain string `json:"expectedDomain,omitempty"`
 }
 
 // Store is the §9.3 connector registry contract. Every method takes
@@ -244,6 +254,34 @@ func (c Connector) Validate() error {
 		if c.Auth.ClientSecretRef != "" && !strings.Contains(c.Auth.ClientSecretRef, "/") {
 			return errors.New("connectorstore: auth.clientSecretRef must be a namespace/name reference")
 		}
+		// spec: §9.2 line 87 — expected_domain is the connector's
+		// url-mode hard enforcement boundary, enforced at emit time when
+		// the §9.3 OAuth flow produces a url-mode URL (the gateway drops
+		// any URL whose host does not match it). Registration validates
+		// only that a declared expected_domain is a well-formed host or
+		// `*.suffix` pattern so a malformed boundary (a path, a scheme, a
+		// bare wildcard that matches everything) cannot be stored.
+		// F-9.2.7.
+		if ed := strings.TrimSpace(c.Auth.ExpectedDomain); ed != "" {
+			if err := validateExpectedDomain(ed); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateExpectedDomain checks that an expected_domain is a
+// syntactically valid host or `*.suffix` wildcard. It rejects an empty
+// pattern, a scheme/path, and a bare `*` so the §9.2 line 87 boundary
+// cannot be registered as a wildcard that matches everything.
+func validateExpectedDomain(ed string) error {
+	pat := strings.ToLower(strings.TrimSpace(ed))
+	if rest, ok := strings.CutPrefix(pat, "*."); ok {
+		pat = rest
+	}
+	if pat == "" || strings.ContainsAny(pat, "/:* ") {
+		return errors.New("connectorstore: auth.expectedDomain must be a host or *.suffix pattern")
 	}
 	return nil
 }

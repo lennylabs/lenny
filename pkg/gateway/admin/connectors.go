@@ -48,6 +48,8 @@ type ConnectorAuthPayload struct {
 	ClientID              string   `json:"clientId,omitempty"`
 	ClientSecretRef       string   `json:"clientSecretRef,omitempty"`
 	Scopes                []string `json:"scopes,omitempty"`
+	// ExpectedDomain is the §9.2 line 87 url-mode hard-boundary domain.
+	ExpectedDomain string `json:"expectedDomain,omitempty"`
 }
 
 func fromConnector(c connectorstore.Connector) ConnectorPayload {
@@ -74,6 +76,7 @@ func fromConnector(c connectorstore.Connector) ConnectorPayload {
 			ClientID:              c.Auth.ClientID,
 			ClientSecretRef:       c.Auth.ClientSecretRef,
 			Scopes:                c.Auth.Scopes,
+			ExpectedDomain:        c.Auth.ExpectedDomain,
 		}
 	}
 	return out
@@ -90,6 +93,7 @@ func toConnectorAuth(p *ConnectorAuthPayload) *connectorstore.ConnectorAuth {
 		ClientID:              p.ClientID,
 		ClientSecretRef:       p.ClientSecretRef,
 		Scopes:                p.Scopes,
+		ExpectedDomain:        p.ExpectedDomain,
 	}
 }
 

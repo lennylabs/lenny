@@ -170,7 +170,13 @@ func (d *elicitationDispatcher) dispatch(
 	// The §16.7 audit catalog is closed and does not list
 	// `elicitation.url_mode_domain_rejected`, so the rejection does
 	// not write an audit row. F-9.2.11.
-	if err := elicitation.CheckURLModeProvenance(initiator, rawURL, d.urlModeAllowlist); err != nil {
+	// The agent-facing dispatch path is always agent-initiated (F-9.2.19
+	// removed the self-declarable initiator), so no connector
+	// expected_domain is in scope here; the §9.2 line 87 connector
+	// hard boundary is enforced at the connector OAuth surface
+	// (handleAuthorizeConnector) and threaded through CheckURLModeProvenance
+	// for any future connector-initiated dispatch.
+	if err := elicitation.CheckURLModeProvenance(initiator, rawURL, "", d.urlModeAllowlist); err != nil {
 		var rej *elicitation.URLModeRejection
 		if errors.As(err, &rej) {
 			if d.dropMetrics != nil {

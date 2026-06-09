@@ -382,6 +382,8 @@ func (e *URLModeRejection) Error() string {
 	switch e.Reason {
 	case URLModeRejectNotAllowlisted:
 		return fmt.Sprintf("elicitation: url-mode host %q is not on the connector-domain allowlist (§9.2 DOMAIN_NOT_ALLOWLISTED)", e.Host)
+	case URLModeRejectConnectorDomainMismatch:
+		return fmt.Sprintf("elicitation: url-mode host %q does not match the registered connector expected_domain (§9.2 URL_DOMAIN_NOT_ALLOWED)", e.Host)
 	case URLModeRejectDisabled:
 		return "elicitation: agent-initiated url-mode elicitation is disabled for this pool (§9.2)"
 	case URLModeRejectMalformedURL:
@@ -401,6 +403,12 @@ const (
 	// URLModeRejectNotAllowlisted: the URL's host is not on the pool's
 	// domainAllowlist.
 	URLModeRejectNotAllowlisted URLModeRejectReason = "domain_not_allowlisted"
+	// URLModeRejectConnectorDomainMismatch: a connector-initiated url-mode
+	// elicitation carries a URL whose host does not match the registered
+	// connector's expected_domain. §9.2 line 87 makes this a hard
+	// enforcement boundary — the elicitation is dropped and an error is
+	// returned to the originator.
+	URLModeRejectConnectorDomainMismatch URLModeRejectReason = "connector_domain_mismatch"
 	// URLModeRejectMalformedURL: the elicitation's URL does not parse.
 	URLModeRejectMalformedURL URLModeRejectReason = "malformed_url"
 )
@@ -408,11 +416,14 @@ const (
 // CheckURLModeProvenance applies the §9.2 url-mode security controls
 // to one elicitation.
 //
-//   - A connector-initiated elicitation is admitted: §9.2 control 1
-//     scopes the agent-initiated block to agent binaries, and
-//     gateway-registered connectors own url-mode by design. The
-//     connector's own registered expected_domain is the boundary for
-//     a connector elicitation (enforced at connector registration).
+//   - A connector-initiated elicitation passes §9.2 control 1 (url-mode
+//     is reserved for gateway-registered connectors) but is still
+//     subject to §9.2 control 2: its URL host must match the registered
+//     connector's expected_domain. connectorExpectedDomain carries that
+//     value (exact host or `*.suffix`); an empty value means the
+//     connector registered no expected_domain and the host check is
+//     skipped, while a non-empty value that the host fails to match
+//     drops the elicitation with URLModeRejectConnectorDomainMismatch.
 //   - An agent-initiated elicitation is admitted only when the pool
 //     allowlist has Enabled true and the URL's effective host matches
 //     a domainAllowlist entry (exact host or `*.suffix` wildcard).
@@ -421,7 +432,9 @@ const (
 // elicitation passes an empty rawURL and is always admitted — the
 // check applies only to elicitations that carry a URL. Returns
 // *URLModeRejection when the elicitation must be dropped.
-func CheckURLModeProvenance(initiator InitiatorType, rawURL string, allow URLModeAllowlist) error {
+//
+// spec: §9.2 lines 87, line 1 (url-mode security controls 1-2).
+func CheckURLModeProvenance(initiator InitiatorType, rawURL, connectorExpectedDomain string, allow URLModeAllowlist) error {
 	if rawURL == "" {
 		// Not a url-mode elicitation; §9.2 url-mode controls do not apply.
 		return nil
@@ -432,10 +445,10 @@ func CheckURLModeProvenance(initiator InitiatorType, rawURL string, allow URLMod
 	}
 	if initiator == InitiatorConnector {
 		// §9.2 control 1: url-mode is reserved for gateway-registered
-		// connectors; a connector elicitation is admitted here. The
-		// connector's expected_domain match is a separate hard boundary
-		// applied against the registered connector definition.
-		return nil
+		// connectors. §9.2 control 2 line 87: the connector's
+		// expected_domain is a hard enforcement boundary — the host must
+		// match it (when one is registered) or the elicitation is dropped.
+		return CheckConnectorURLDomain(rawURL, connectorExpectedDomain)
 	}
 	// §9.2 control 1: agent-initiated url-mode is blocked unless the
 	// pool explicitly allowlists it.
@@ -453,6 +466,46 @@ func CheckURLModeProvenance(initiator InitiatorType, rawURL string, allow URLMod
 			Reason:    URLModeRejectNotAllowlisted,
 			Host:      host,
 			Allowlist: entries,
+		}
+	}
+	return nil
+}
+
+// CheckConnectorURLDomain enforces the §9.2 line 87 hard boundary on a
+// connector-bound url-mode URL: the URL's effective host must match the
+// registered connector's expected_domain. expectedDomain is either an
+// exact host (`accounts.example.com`) or a `*.suffix` wildcard
+// (`*.example.com`, matching any proper subdomain). An empty
+// expectedDomain means the connector registered no expected_domain, so
+// no boundary applies and the URL is admitted. A non-empty
+// expectedDomain that the host fails to match returns
+// *URLModeRejection{Reason: URLModeRejectConnectorDomainMismatch} — the
+// caller drops the elicitation and returns URL_DOMAIN_NOT_ALLOWED to the
+// originator. A non-url-mode URL (empty rawURL) is admitted; a malformed
+// URL is rejected so a non-URL string cannot bypass the boundary.
+//
+// spec: §9.2 line 87 — "URL domain validation is a hard enforcement
+// boundary. The gateway rejects any URL-mode elicitation whose URL
+// domain does not match the registered connector's expected_domain."
+func CheckConnectorURLDomain(rawURL, expectedDomain string) error {
+	if rawURL == "" {
+		return nil
+	}
+	host, err := effectiveHost(rawURL)
+	if err != nil {
+		return &URLModeRejection{Reason: URLModeRejectMalformedURL}
+	}
+	expected := strings.ToLower(strings.TrimSpace(expectedDomain))
+	if expected == "" {
+		// No registered expected_domain: §9.2 control 2 has nothing to
+		// match against, so the URL is admitted on this boundary.
+		return nil
+	}
+	if !hostMatchesAllowlist(host, []string{expected}) {
+		return &URLModeRejection{
+			Reason:    URLModeRejectConnectorDomainMismatch,
+			Host:      host,
+			Allowlist: []string{expected},
 		}
 	}
 	return nil

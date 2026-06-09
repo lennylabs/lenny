@@ -142,6 +142,61 @@ func TestCreateAcceptsRefClientSecret(t *testing.T) {
 	}
 }
 
+// spec: §9.2 line 87 — a declared expected_domain must be a well-formed
+// host or `*.suffix` pattern. The host-match boundary itself is enforced
+// at emit time (the §9.3 OAuth authorize handler), not at registration,
+// so an oauth2 connector whose endpoints differ from its expected_domain
+// still registers; it is the emitted url-mode URL that the gateway drops.
+// F-9.2.7.
+func TestCreateConnectorExpectedDomain_spec_9_2_87(t *testing.T) {
+	ctx := context.Background()
+	t.Run("matching exact domain accepted", func(t *testing.T) {
+		s := connectorstore.NewMemory()
+		c := validConnector()
+		c.Auth = validOAuth2()
+		c.Auth.ExpectedDomain = "github.com"
+		if err := s.Create(ctx, c); err != nil {
+			t.Errorf("matching expected_domain should be accepted: %v", err)
+		}
+	})
+	t.Run("wildcard domain accepted", func(t *testing.T) {
+		s := connectorstore.NewMemory()
+		c := validConnector()
+		c.Auth = validOAuth2()
+		c.Auth.ExpectedDomain = "*.github.com"
+		if err := s.Create(ctx, c); err != nil {
+			t.Errorf("a wildcard expected_domain should be accepted: %v", err)
+		}
+	})
+	t.Run("malformed expected_domain rejected", func(t *testing.T) {
+		s := connectorstore.NewMemory()
+		c := validConnector()
+		c.Auth = validOAuth2()
+		c.Auth.ExpectedDomain = "https://github.com/path"
+		if err := s.Create(ctx, c); err == nil {
+			t.Error("a non-host expected_domain pattern should be rejected")
+		}
+	})
+	t.Run("bare wildcard rejected", func(t *testing.T) {
+		s := connectorstore.NewMemory()
+		c := validConnector()
+		c.Auth = validOAuth2()
+		c.Auth.ExpectedDomain = "*."
+		if err := s.Create(ctx, c); err == nil {
+			t.Error("a bare wildcard expected_domain should be rejected")
+		}
+	})
+	t.Run("empty expected_domain accepted (optional)", func(t *testing.T) {
+		s := connectorstore.NewMemory()
+		c := validConnector()
+		c.Auth = validOAuth2()
+		c.Auth.ExpectedDomain = ""
+		if err := s.Create(ctx, c); err != nil {
+			t.Errorf("an omitted expected_domain should be accepted: %v", err)
+		}
+	})
+}
+
 // spec: §9.3 line 116-130 — the oauth2 example block declares
 // authorizationEndpoint, tokenEndpoint, and clientId as mandatory.
 // F-9.3.6 — every field is required at registration time.

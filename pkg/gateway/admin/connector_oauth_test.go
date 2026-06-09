@@ -174,6 +174,80 @@ func TestAuthorizeConnectorHappyPath(t *testing.T) {
 	}
 }
 
+// spec: §9.2 line 87 — URL domain validation is a hard enforcement
+// boundary. When a connector declares an expected_domain that its
+// authorization URL host satisfies, the §9.3 flow proceeds; when the
+// host falls outside the expected_domain the gateway drops the flow with
+// URL_DOMAIN_NOT_ALLOWED rather than emitting a url-mode URL that could
+// phish the user. F-9.2.7.
+func TestAuthorizeConnectorExpectedDomainEnforced_spec_9_2_87(t *testing.T) {
+	t.Run("authorization URL within expected_domain proceeds", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		if err := f.connectors.Create(context.Background(), connectorstore.Connector{
+			TenantID:     "acme",
+			ID:           "github",
+			MCPServerURL: "https://mcp.github.com",
+			Transport:    "streamable_http",
+			Auth: &connectorstore.ConnectorAuth{
+				Type:                  "oauth2",
+				AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+				TokenEndpoint:         f.tokenServer.URL,
+				ClientID:              "client-123",
+				ExpectedDomain:        "github.com",
+			},
+		}); err != nil {
+			t.Fatalf("connector Create: %v", err)
+		}
+		resp := f.initiate(t) // initiate asserts a 200
+		u, err := url.Parse(resp.AuthorizationURL)
+		if err != nil || u.Host != "github.com" {
+			t.Fatalf("authorization URL host = %v (err %v), want github.com", u, err)
+		}
+	})
+
+	t.Run("authorization URL outside expected_domain is dropped", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		// authorizationEndpoint host (github.com) does not match the
+		// declared expected_domain (accounts.example.com): a
+		// misconfiguration or a mutated connector. The connector
+		// registers (the boundary is an emit-time control), but the
+		// authorize flow drops the url-mode URL.
+		if err := f.connectors.Create(context.Background(), connectorstore.Connector{
+			TenantID:     "acme",
+			ID:           "github",
+			MCPServerURL: "https://mcp.github.com",
+			Transport:    "streamable_http",
+			Auth: &connectorstore.ConnectorAuth{
+				Type:                  "oauth2",
+				AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+				TokenEndpoint:         f.tokenServer.URL,
+				ClientID:              "client-123",
+				ExpectedDomain:        "accounts.example.com",
+			},
+		}); err != nil {
+			t.Fatalf("connector Create: %v", err)
+		}
+		req := withUser(httptest.NewRequest(http.MethodPost,
+			"/v1/admin/connectors/github/oauth/authorize", nil))
+		rr := httptest.NewRecorder()
+		f.router.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), "URL_DOMAIN_NOT_ALLOWED") {
+			t.Errorf("body = %s, want URL_DOMAIN_NOT_ALLOWED", rr.Body.String())
+		}
+		// The drop happens before the flow records state or emits the
+		// authorization_initiated audit event, so a dropped URL leaves no
+		// audit trail of a flow that never started.
+		for _, e := range f.audit.snapshot() {
+			if e.Type == "connector.oauth.authorization_initiated" {
+				t.Errorf("a dropped flow must not emit authorization_initiated")
+			}
+		}
+	})
+}
+
 func TestAuthorizeConnectorRequiresAuthentication(t *testing.T) {
 	f := newOAuthFixture(t)
 	f.registerOAuthConnector(t, false)
