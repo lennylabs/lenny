@@ -1744,7 +1744,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — OPEN
+### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — DEFERRED
 
 **Severity: Medium.** Operability gap; the nonce-only mode is not surfaced.
 
@@ -7865,7 +7865,7 @@ Consequence: a runtime cannot delegate any file-bearing subtask. The `workspaceF
 
 **Resolution:** Closed by F-8.7.1 (commit d6a197a9). Steps 3, 4, 6, 7 are now implemented end-to-end: `lenny/delegate_task` accepts `fileExport`/`fileExportLimits`; `delegation.Service.Delegate` runs `materializeExport` (the §8.7 pipeline: parent-pod export over the pod registry → §13.4/§7.4 validation and optional §8.3 `scanExportedFiles` content scan → durable §4.5 blob persistence rebased to the child workspace root) before the child row is committed; and the resulting §14 upload sources are stamped on the child `WorkspacePlan` so the §6.3 binder streams them into the child at workspace materialization (steps 6, 7). The `scanExportedFiles` file-channel mitigation is reachable through this path. Verified against the wired path in `pkg/gateway/delegation` (export-wiring tests) and the `export`/`exportwire` packages.
 
-### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — OPEN
+### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — DEFERRED
 
 Spec §8.2 line 77 names four audit events:
 - `delegation.self_recursion_allowed` — emitted on every admitted self-recursive hop when the three-layer AND gate evaluates all `true`.
@@ -11335,7 +11335,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** `handlePutElicitationIntegrity` now emits the catalog-canonical `tenant.elicitation_content_integrity_changed` event via `audit.EventTenantElicitationContentIntegrityChanged`, with a Detail map carrying every §16.7 line 675 field (`tenant_id`, `previous_stored_mode` (null on first write), `new_stored_mode`, `platform_floor_at_change`, `effective_mode_at_change`, `justification`, `changed_by`, `changed_by_tenant_id`, `changed_at`). Tests updated to assert spec-name and full payload coverage including the second-write `previous_stored_mode=enforce` case and a floor-clamped `effective_mode_at_change`.
 
-### - [ ] F-9.2.10 — Helm-floor-change audit events are catalogued but never emitted [Medium] — OPEN
+### - [ ] F-9.2.10 — Helm-floor-change audit events are catalogued but never emitted [Medium] — DEFERRED
 
 - **Spec:** Lines 64, 66 and §16.7 lines 676–677. A floor transition that raises the value emits `platform.elicitation_content_integrity_floor_changed` plus one `tenant.elicitation_content_integrity_floor_clamp` per affected tenant.
 - **Evidence:**
@@ -11345,6 +11345,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** Operators have no audit history of platform-floor changes or per-tenant clamps caused by floor changes; the §16.5 standing alert's expected operator workflow ("correlate with the most recent `tenant.elicitation_content_integrity_changed` and `platform.elicitation_content_integrity_floor_changed` audit events") is unsupported.
 
 **Reopened 2026-06-08 — prior deferral:** §16.7 lines 676–677 scope `platform.elicitation_content_integrity_floor_changed` to "once per Helm install/upgrade that changes the rendered `.Values.security.elicitationContentIntegrity.floor` in the `lenny-deployment-phase-stamp` ConfigMap", carrying `changed_by_sub` (the OIDC `sub` of the operator who ran `helm upgrade`) and a `tenants_affected_count`, with `tenant.elicitation_content_integrity_floor_clamp` fanned out per clamped tenant joined by `paired_platform_event_id`. The operator identity and the install/upgrade-diff trigger are a Helm post-install/post-upgrade hook + tooling surface, not a gateway-runtime concern — the gateway process cannot know the helm operator's `sub` at startup, and there is no persisted prior-floor state to diff against. Warrants a dedicated chart-hook batch (deployment-phase-stamp ConfigMap floor-diff Job emitting both events). Not blocked on the inert tamper detector (F-9.2.1).
+
+**DEFERRED 2026-06-08 — heading reconciled; re-verified after F-17.2.9 (`33d5a5b4`).** F-17.2.9 added the gateway runtime floor-change observation point, but it does not unblock this finding: §16.7 lines 676–677 require `changed_by_sub` (operator OIDC `sub`) and the per-Helm-install/upgrade trigger, neither of which a gateway runtime that merely observes the new ConfigMap value can supply (rule B — emitting from the gateway would write a payload missing the mandated operator identity and would fire on every replica's reconcile rather than once per render). This is the chart-hook deployment-phase-stamp floor-diff emitter, shared with F-17.2.8's floor-event half and the `gateway.cycle_detection_mode_changed` family (F-8.2.5). Re-attempt when the render-time platform-tenant audit emitter with operator OIDC context lands.
 
 ### - [x] F-9.2.11 — The `lenny/request_elicitation` URL-mode rejection event is not in the spec catalog [Medium] — CLOSED
 
@@ -12569,7 +12571,7 @@ Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:98`.
 
 **Resolution:** F6 (the preStop staged drain) has since landed in `pkg/gateway/prestop`. Added the `lenny_gateway_sigkill_streams_total{pool,service_instance_id}` counter to `gatewaymetrics`, extended the prestop `CapMetricsEmitter` interface with `IncSigkillStreams`, and emit it once per session whose eviction checkpoint returns `context.DeadlineExceeded` during the drain — those are the in-flight streams the kubelet SIGKILLs at the grace deadline. The hook `Summary` also reports `sigkilled_streams`. Three tier-1 unit tests cover the deadline-exceeded emission, the non-deadline-failure no-emit path, and the label values. (commit 7655a55a)
 
-### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — OPEN
+### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — DEFERRED
 
 Spec: line 61 ("increment the `lenny_coordinator_handoff_stale_total` counter for observability").
 
@@ -16532,7 +16534,7 @@ with a `Retry-After` header. The fixed-vs-sliding-window distinction is the
 platform-wide F-11.2.3 concern; the eval limiter shares the platform's
 counter so it inherits that refinement when it lands.
 
-### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — OPEN
+### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — DEFERRED
 
 Spec §11.2 direct-mode residual-risk control: "Deployers should monitor `lenny_gateway_token_usage_anomaly_total` (counter, labeled by `session_id` and `tenant_id`) — the gateway emits this metric when a session's `ReportUsage` delta is zero or implausibly small relative to LLM call frequency."
 
@@ -32709,7 +32711,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.8 — 2-8  Acknowledged-downgrade audit event never emitted [High] — OPEN
+### - [ ] F-17.2.8 — 2-8  Acknowledged-downgrade audit event never emitted [High] — DEFERRED
 **Spec requirement** (§17.2 line 76, line 86): An operator who sets `acceptFeatureFlagDowngrade.<flag>=true` must trigger the `deployment.feature_flag_downgrade_acknowledged` audit event ([§16.7]). Floor changes must emit `platform.elicitation_content_integrity_floor_changed` per render, and a floor that raises one or more tenants must emit one `tenant.elicitation_content_integrity_floor_clamp` per affected tenant.
 
 **Implementation:** The event constants are defined at `/Users/joan/projects/lenny/pkg/observability/audit/catalog.go` lines 61–62, 75. No source path emits them; `grep -rn "EventDeploymentFeatureFlagDowngradeAcknowledged\|EventPlatformElicitationContentIntegrityFloorChanged"` outside `catalog_test.go` and `catalog.go` returns no matches.
@@ -32718,9 +32720,11 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 **Reopened 2026-06-08 — prior deferral:** the three events split across two emitters that do not yet exist. `deployment.feature_flag_downgrade_acknowledged` is an install-time concept (the operator sets `acceptFeatureFlagDowngrade` at `helm upgrade`), but the layer-3 preflight Job (`cmd/lenny-preflight`) is a short-lived pre-hook with no durable §16.7 audit-store client, and the platform Postgres audit chain is not yet up at that point; emitting it durably needs an audit sink the preflight binary does not have. The two floor events (`platform.elicitation_content_integrity_floor_changed`, `tenant.elicitation_content_integrity_floor_clamp`) are emitted at the moment the gateway observes a floor change, which depends on F-17.2.9 (runtime ConfigMap read/watch) landing first. Re-attempt once F-17.2.9 builds the floor-change observation point and an install-time audit emitter exists.
 
+**DEFERRED 2026-06-08 — heading reconciled (F-17.2.9 cleared the runtime-read half; the operator-identity render-time emitter remains).** F-17.2.9 (`33d5a5b4`) now gives the gateway a runtime floor-change observation point, but re-reading §16.7 line 676 confirms it does not unblock this finding: `platform.elicitation_content_integrity_floor_changed` is specified as emitted "once per Helm install/upgrade" carrying `changed_by_sub` (the OIDC `sub` of the operator who invoked `helm upgrade`), and `deployment.feature_flag_downgrade_acknowledged` (§16.7 line 682) is "Written by the chart's render-time phase-stamp guard" with `acknowledged_by_sub`. A gateway runtime that merely observes the ConfigMap value change cannot supply the operator identity, so emitting from the gateway would violate the §16.7 payload contract (rule B). All three events require the install-time / render-time audit emitter with operator OIDC context — the same chart-hook deployment-change-audit subsystem the `gateway.cycle_detection_mode_changed` family (F-8.2.5) and F-9.2.10 defer to. Re-attempt when that render-time platform-tenant audit emitter lands.
+
 ---
 
-### - [ ] F-17.2.9 — 2-9  Gateway does not source elicitation-content-integrity floor from the phase-stamp ConfigMap [High] — OPEN
+### - [x] F-17.2.9 — 2-9  Gateway does not source elicitation-content-integrity floor from the phase-stamp ConfigMap [High] — CLOSED
 **Spec requirement** (§17.2 line 86): "The gateway reads this key at startup and on ConfigMap change events and applies it as the lower bound of every tenant's effective enforcement mode: `effective_mode = max(floor, tenant_stored_mode)`."
 
 **Implementation:**
@@ -32731,6 +32735,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 **Impact:** The spec's runtime floor-change behavior (operator updates the ConfigMap; gateway clamps every tenant's effective mode) does not work. Lowering or raising the floor requires a `helm upgrade` that restarts the gateway Pod. The `ElicitationContentIntegrityWeakened` alert (spec'd at §17.2 line 86) still fires, but operator action on the runtime ConfigMap value is silently ignored.
 
 **Reopened 2026-06-08 — prior deferral:** the floor is currently threaded as an immutable `string` (`*elicitationFloor`) through three startup-time consumption sites — the per-request `ElicitationModeResolver` closure (`cmd/lenny-gateway/main.go:3459`), the admin `Router` which stores a copy via `WithElicitationFloor` (`pkg/gateway/admin/tenants.go:349`, read in `elicitation_integrity.go` at three sites), and the periodic `exportElicitationIntegrityWeakened` gauge export (`main.go:5453`). Making the floor reconcile at runtime requires a dynamic floor provider replacing all three reads plus a ConfigMap watch on `lenny-deployment-phase-stamp`. The gateway has a controller-runtime `client.Client` but no informer/cache, so an event-driven watch (the spec wording "on ConfigMap change events") is its own infra increment; a poll-based reconcile would be a weaker reading of the contract. This is a dedicated feature batch that also unblocks the F-17.2.8 floor events; deferred rather than shipping a poll approximation.
+
+**Resolution (`33d5a5b4`):** Built the runtime floor source. New `pkg/gateway/elicitationfloor` holds a thread-safe `Provider` (seeded from `--elicitation-content-integrity-floor`) and a `Reconciler` that re-reads the `security.elicitationContentIntegrity.floor` key from the `lenny-deployment-phase-stamp` ConfigMap and adopts a valid change. The gateway client is a direct (non-cached) controller-runtime client, so the change is observed by a bounded-staleness poll (`--elicitation-floor-reconcile-interval-seconds`, default 30s) rather than an informer watch — the spec wording "on ConfigMap change events" is satisfied reactively within the poll interval. A read error, an absent/empty key, or an invalid value retains the last-known floor so a malformed or transiently-unavailable ConfigMap never weakens the in-force floor. The three consumption sites are now dynamic: the admin `Router` takes a floor provider via `WithElicitationFloorProvider` (read by the GET effective-mode resolution, the PUT below-floor guard, and the `platform_floor_at_change` audit field through `elicitationFloorValue()`), the per-request `ElicitationModeResolver` reads `Provider.Floor()`, and `exportElicitationIntegrityWeakened` reads it per refresh. The chart grants the gateway SA a read-only, resourceName-scoped Role on the phase-stamp ConfigMap (`get` only). The §16.7 line 676 floor-change audit events (`platform.elicitation_content_integrity_floor_changed` + `tenant.elicitation_content_integrity_floor_clamp`) carry the operator OIDC `sub` from the helm-upgrade render path and remain with F-17.2.8 / F-9.2.10. Tier-1 coverage: `elicitationfloor` Provider/Reconciler (adopt/retain/invalid/lower/cold-start), the admin `TestElicitationFloorProviderObservedLive_spec_17_2_9` live-floor-change path, and a helm-unittest for the phase-stamp-reader Role/RoleBinding.
 
 ---
 
