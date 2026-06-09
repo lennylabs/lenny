@@ -121,3 +121,12 @@ textarea { min-height: 70px; }
 
 .notice { color: var(--sub); font-size: 13px; }
 .err { color: var(--coral-line); font-size: 13px; }
+
+.dropzone {
+  border: 1.6px dashed var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 4px 0;
+}
+.dropzone.dragover { border-color: var(--orange); background: var(--mustard); }
+.dropzone .notice { margin: 0 0 6px; }

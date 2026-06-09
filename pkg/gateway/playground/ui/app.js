@@ -275,7 +275,40 @@
       type: "text",
       placeholder: "key=value,key2=value2",
     });
-    var planField = el("input", { type: "file", accept: ".tar,.tar.gz,.tgz" });
+    // §27.4 item 2: workspace plan upload. The selected (or dropped)
+    // tarball is held until create, then staged via
+    // POST /v1/sessions/{id}/upload-archive and bound into the §14 plan
+    // at finalize (createSessionWithWorkspace). The bare file input alone
+    // dropped the file silently; the spec calls for a drag-drop tarball.
+    var selectedPlanFile = null;
+    var planField = el("input", { type: "file", accept: ".tar,.tar.gz,.tgz,.zip" });
+    var planFileLabel = el("span", { class: "notice", text: "no tarball selected" });
+    function setPlanFile(f) {
+      selectedPlanFile = f || null;
+      planFileLabel.textContent = f ? ("selected: " + f.name) : "no tarball selected";
+    }
+    planField.addEventListener("change", function () {
+      setPlanFile(planField.files && planField.files[0]);
+    });
+    var dropZone = el("div", { class: "dropzone" }, [
+      el("p", { class: "notice", text: "Drag a workspace tarball here, or pick one below." }),
+      planField,
+      planFileLabel,
+    ]);
+    dropZone.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", function () {
+      dropZone.classList.remove("dragover");
+    });
+    dropZone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        setPlanFile(e.dataTransfer.files[0]);
+      }
+    });
     var delegationField = el("input", { type: "text", placeholder: "delegation policy id (optional)" });
     var errLine = el("p", { class: "err" }, []);
 
@@ -286,7 +319,7 @@
         : "This runtime declares no runtimeOptionsSchema. Enter JSON; the gateway validates it at session create." }),
       optionsEditor.node,
       el("label", { text: "Workspace plan tarball (optional)" }),
-      planField,
+      dropZone,
       el("label", { text: "Delegation policy (optional, requires scope)" }),
       delegationField,
       el("label", { text: "Session labels" }),
@@ -305,12 +338,17 @@
               errLine.textContent = e.message;
               return;
             }
-            createSession({
+            var payload = {
               runtimeRef: state.runtime.id || state.runtime.name,
               runtimeOptions: options,
               labels: parseLabels(labelsField.value),
               delegationPolicyId: delegationField.value.trim() || undefined,
-            }, errLine);
+            };
+            if (selectedPlanFile) {
+              createSessionWithWorkspace(payload, selectedPlanFile, errLine);
+            } else {
+              createSession(payload, errLine);
+            }
           },
         }),
       ]),
@@ -459,6 +497,138 @@
             throw new Error((body.error && body.error.message) || ("POST /v1/sessions returned " + r.status));
           }
           state.sessionId = body.id || body.sessionId;
+          renderChat();
+        });
+      })
+      .catch(function (e) {
+        errLine.textContent = e.message;
+      });
+  }
+
+  // readFileBytes reads a File into an ArrayBuffer. §27.4 item 2 names a
+  // drag-drop tarball; the gateway upload endpoint takes the raw bytes,
+  // so the SPA reads the File client-side before POSTing it.
+  function readFileBytes(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(new Error("could not read " + file.name)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // archiveFormat maps a tarball filename to the §14 uploadArchive
+  // `format` value and the upload Content-Type. tar.gz is the default
+  // (the §26.2 CLI produces tar.gz).
+  function archiveFormat(name) {
+    var n = (name || "").toLowerCase();
+    if (n.indexOf(".tar.gz", n.length - 7) !== -1 || n.indexOf(".tgz", n.length - 4) !== -1) {
+      return { format: "tar.gz", contentType: "application/gzip" };
+    }
+    if (n.indexOf(".zip", n.length - 4) !== -1) {
+      return { format: "zip", contentType: "application/zip" };
+    }
+    if (n.indexOf(".tar", n.length - 4) !== -1) {
+      return { format: "tar", contentType: "application/x-tar" };
+    }
+    return { format: "tar.gz", contentType: "application/gzip" };
+  }
+
+  // createSessionWithWorkspace drives the §7.1 decomposed lifecycle for a
+  // session that carries a workspace-plan tarball: create (which mints the
+  // §7.1 uploadToken) -> POST /v1/sessions/{id}/upload-archive (stages the
+  // tarball, returns a lenny-blob:// uploadRef) -> finalize with a §14
+  // plan that references the uploadRef -> start. Without this the selected
+  // tarball was read by no code and silently dropped (§27.4 item 2).
+  //
+  // The no-tarball path stays on createSession; this path adds the upload
+  // and the explicit finalize/start the bound plan requires.
+  function createSessionWithWorkspace(payload, file, errLine) {
+    var bearer = null;
+    var sessionId = null;
+    var uploadToken = null;
+    var fmt = archiveFormat(file.name);
+    mintBearer()
+      .then(function (b) {
+        bearer = b;
+        return fetch("/v1/sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + bearer,
+          },
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        });
+      })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) {
+            throw new Error((body.error && body.error.message) || ("POST /v1/sessions returned " + r.status));
+          }
+          sessionId = body.id || body.sessionId;
+          uploadToken = body.uploadToken;
+          if (!uploadToken) {
+            throw new Error("create response carried no uploadToken; cannot stage the workspace tarball");
+          }
+          return readFileBytes(file);
+        });
+      })
+      .then(function (bytes) {
+        return fetch("/v1/sessions/" + encodeURIComponent(sessionId) + "/upload-archive", {
+          method: "POST",
+          headers: {
+            "Content-Type": fmt.contentType,
+            "X-Lenny-Upload-Token": uploadToken,
+            Authorization: "Bearer " + bearer,
+          },
+          credentials: "same-origin",
+          body: bytes,
+        });
+      })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) {
+            throw new Error((body.error && body.error.message) || ("upload-archive returned " + r.status));
+          }
+          var plan = {
+            schemaVersion: 1,
+            sources: [{
+              type: "uploadArchive",
+              pathPrefix: ".",
+              uploadRef: body.uploadRef,
+              format: fmt.format,
+            }],
+          };
+          return fetch("/v1/sessions/" + encodeURIComponent(sessionId) + "/finalize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + bearer,
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ workspacePlan: plan }),
+          });
+        });
+      })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) {
+            throw new Error((body.error && body.error.message) || ("finalize returned " + r.status));
+          }
+          return fetch("/v1/sessions/" + encodeURIComponent(sessionId) + "/start", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + bearer },
+            credentials: "same-origin",
+          });
+        });
+      })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) {
+            throw new Error((body.error && body.error.message) || ("start returned " + r.status));
+          }
+          state.sessionId = sessionId;
           renderChat();
         });
       })

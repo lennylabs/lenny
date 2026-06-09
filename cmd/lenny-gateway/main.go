@@ -5970,7 +5970,17 @@ func main() {
 	// connectorinvoke surface, which dials the external endpoint with the
 	// gateway-held credential. F-9.1.2.
 	connectorToolBridge := connectortools.New(sessions, connectors, connectorAuthorizer, connectorInvoker)
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
+	// §8.6 line 643 — bridge a GRANTED token-budget extension onto the §8.2
+	// per-tree delegation budget counter so the next delegate_task admission
+	// is gated against the raised pool (F-8.6.3). Only the concrete
+	// *treebudget.Reserver satisfies the granter; pass a nil interface (not a
+	// typed-nil pointer) on the Postgres-only/no-Redis path so the Service's
+	// nil-granter branch is taken.
+	var leaseTreeGranter leasecontrol.TreeBudgetGranter
+	if treeBudgetConcrete != nil {
+		leaseTreeGranter = treeBudgetConcrete
+	}
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -7589,7 +7599,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -7620,6 +7630,10 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		// per-connector tool calls (against @lenny-connector-<id> sockets)
 		// to the gateway connector-invocation surface. F-9.1.2.
 		ConnectorTools: connectorTools,
+		// §8.6 line 643 — propagate a granted token-budget extension onto
+		// the §8.2 per-tree delegation budget counter so admission observes
+		// the raised pool. F-8.6.3.
+		TreeBudget: treeGranter,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)

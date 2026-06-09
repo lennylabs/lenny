@@ -156,8 +156,14 @@ local cur = {}
 for i = 1, 5 do
   cur[i] = tonumber(redis.call('GET', KEYS[i]) or '0')
 end
+-- §8.6 line 643: the cumulative per-tree token-cap extension grant raises
+-- the tokens-axis ceiling so a granted lease extension admits subsequent
+-- delegations. KEYS[7] holds the granted token delta. A zero base token
+-- cap means "unlimited" and the grant never narrows it to a finite cap.
+local token_grant = tonumber(redis.call('GET', KEYS[7]) or '0')
 for i = 1, 5 do
   local cap = tonumber(ARGV[(i-1)*2 + 1])
+  if i == 5 and cap > 0 then cap = cap + token_grant end
   local delta = tonumber(ARGV[(i-1)*2 + 2])
   if cap > 0 and delta > 0 and (cur[i] + delta) > cap then
     return {0, i, cur[i], cap}
@@ -230,12 +236,22 @@ func hwmKey(rootSessionID string) string {
 	return "{" + rootSessionID + "}:dlg:parallel_children_hwm"
 }
 
+// tokenGrantKey returns the §8.6 line 643 cumulative token-cap extension
+// grant key for the tree. A lease extension that raises the token budget
+// increments it; the reserve script (KEYS[7]) adds it to the tokens-axis
+// ceiling so post-grant admissions observe the expanded pool. It shares
+// the `{root_session_id}` hash tag so it co-locates on the same Redis
+// Cluster slot as the counters.
+func tokenGrantKey(rootSessionID string) string {
+	return "{" + rootSessionID + "}:dlg:token_grant"
+}
+
 // reserveKeys returns the five counter keys followed by the
-// high-watermark key (KEYS[6]) the reserve script updates. Return does
-// not touch the high-watermark, so returnScript keeps the five-key
-// form.
+// high-watermark key (KEYS[6]) and the token-cap grant key (KEYS[7]) the
+// reserve script reads. Return does not touch either, so returnScript
+// keeps the five-key form.
 func (r Reservation) reserveKeys() []string {
-	return append(r.keys(), hwmKey(r.RootSessionID))
+	return append(r.keys(), hwmKey(r.RootSessionID), tokenGrantKey(r.RootSessionID))
 }
 
 // Reserve atomically admits one delegation against the tree budget. On
@@ -409,6 +425,38 @@ func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID strin
 		return 0, false, fmt.Errorf("treebudget: read high-watermark: %w", err)
 	}
 	return v, true, nil
+}
+
+// GrantTokenBudget raises the tree's tokens-axis ceiling by delta,
+// recording a §8.6 line 643 lease-extension grant so every subsequent
+// `lenny/delegate_task` admission in the tree is gated against the
+// expanded token pool rather than the parent lease's pre-extension
+// MaxTokenBudget. Without this bridge an ExtendLease GRANTED response
+// raises only the in-memory leasecontrol view and the next admission
+// still sees the old cap (F-8.6.3). The grant is cumulative (INCRBY) and
+// shares the tree's `{root_session_id}` hash tag and GC TTL with the
+// counters. A non-positive delta is a no-op. A zero base token cap
+// (unlimited) is unaffected: the reserve script only folds the grant into
+// a finite cap.
+//
+// spec: §8.6 line 643; §8.2 line 57.
+func (s *Reserver) GrantTokenBudget(ctx context.Context, rootSessionID string, delta int64) error {
+	if rootSessionID == "" {
+		return fmt.Errorf("treebudget: empty root session id")
+	}
+	if delta <= 0 {
+		return nil
+	}
+	key := tokenGrantKey(rootSessionID)
+	if err := s.client.IncrBy(ctx, key, delta).Err(); err != nil {
+		return fmt.Errorf("treebudget: grant token budget: %w", err)
+	}
+	// Refresh the GC TTL so the grant key lives as long as the counters
+	// it raises the ceiling for.
+	if err := s.client.Expire(ctx, key, s.ttl).Err(); err != nil {
+		return fmt.Errorf("treebudget: refresh token-grant ttl: %w", err)
+	}
+	return nil
 }
 
 // PurgeRoot deletes every delegation tree-budget key for rootSessionID:

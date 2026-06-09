@@ -1515,3 +1515,125 @@ type recordingMetrics struct {
 func (r *recordingMetrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 	r.entries = append(r.entries, metricEntry{tenantID: tenantID, outcome: outcome})
 }
+
+// recordingTreeGranter records every GrantTokenBudget bridge call so the
+// F-8.6.3 budget-side-effect test can assert the granted token delta
+// reaches the §8.2 per-tree budget counter.
+type recordingTreeGranter struct {
+	roots  []string
+	deltas []int64
+	err    error
+}
+
+func (g *recordingTreeGranter) GrantTokenBudget(_ context.Context, rootSessionID string, delta int64) error {
+	g.roots = append(g.roots, rootSessionID)
+	g.deltas = append(g.deltas, delta)
+	return g.err
+}
+
+// TestExtendLeaseBridgesTokenGrantToTreeBudget: a GRANTED token-budget
+// extension propagates the granted delta onto the §8.2 per-tree
+// delegation budget counter via the TreeBudgetGranter seam, closing the
+// F-8.6.3 gap where the grant raised only the leasecontrol view.
+// spec: §8.6 line 643.
+func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-9", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	granter := &recordingTreeGranter{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:    budgets,
+		Tenants:    budgets,
+		Elicitor:   autoApproveElicitor{},
+		TreeBudget: granter,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-9", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+		t.Fatalf("status = %v, want GRANTED", resp.Status)
+	}
+	if len(granter.deltas) != 1 || granter.deltas[0] != 200_000 {
+		t.Fatalf("bridge deltas = %v, want one 200000 grant", granter.deltas)
+	}
+	// The bridge keys the grant by the tree root, not the requesting
+	// session id.
+	if len(granter.roots) != 1 || granter.roots[0] != "root-9" {
+		t.Fatalf("bridge roots = %v, want [root-9]", granter.roots)
+	}
+}
+
+// TestExtendLeaseNoTokenGrantNoBridge: an extension that grants zero
+// tokens (a non-token dimension, or a ceiling-reached request) must not
+// drive the token-budget bridge. spec: §8.6 line 643.
+func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	// A tree already at its token ceiling: a token request is CEILING_REACHED
+	// and grants nothing.
+	budgets.RegisterTree("root-10", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 500_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      500_000,
+	})
+	granter := &recordingTreeGranter{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:    budgets,
+		Tenants:    budgets,
+		Elicitor:   autoApproveElicitor{},
+		TreeBudget: granter,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-10", 100_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_CEILING_REACHED {
+		t.Fatalf("status = %v, want CEILING_REACHED", resp.Status)
+	}
+	if len(granter.deltas) != 0 {
+		t.Fatalf("bridge called %d time(s) for a zero-token grant, want 0", len(granter.deltas))
+	}
+}
+
+// TestExtendLeaseTreeGranterFailureDoesNotFailGrant: the control-plane
+// grant has already committed when the bridge runs, so a transient
+// treebudget fault must not turn a GRANTED response into an error.
+// spec: §8.6 line 643.
+func TestExtendLeaseTreeGranterFailureDoesNotFailGrant_spec_8_6_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-11", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	granter := &recordingTreeGranter{err: errors.New("redis down")}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:    budgets,
+		Tenants:    budgets,
+		Elicitor:   autoApproveElicitor{},
+		TreeBudget: granter,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-11", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease should not surface the bridge fault: %v", err)
+	}
+	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+		t.Fatalf("status = %v, want GRANTED despite the bridge fault", resp.Status)
+	}
+}

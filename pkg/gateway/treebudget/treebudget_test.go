@@ -327,3 +327,92 @@ func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
 		t.Fatalf("high-watermark = %d, want 2 (no regression)", value)
 	}
 }
+
+// spec: §8.6 line 643 — a granted lease extension raises the tree's
+// tokens-axis ceiling so a delegation that would breach the parent's
+// pre-extension MaxTokenBudget is admitted after the grant. Without the
+// bridge the second reserve below would exhaust against the old cap.
+// F-8.6.3.
+func TestGrantTokenBudgetRaisesTokenCeiling_spec_8_6_643(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	res := treebudget.Reservation{
+		RootSessionID: "rootG", ParentSessionID: "rootG",
+		TokenCap: 100, TokenDelta: 80,
+	}
+	// First reservation consumes 80 of the 100-token cap.
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("first reserve: %v", err)
+	}
+	// A second 80-token reservation would breach the 100 cap pre-grant.
+	if _, err := r.Reserve(ctx, res); !errors.As(err, new(*treebudget.BudgetExhaustedError)) {
+		t.Fatalf("pre-grant second reserve err = %v, want token exhaustion", err)
+	}
+	// Grant 100 more tokens: the effective ceiling becomes 200, so 80+80
+	// now fits.
+	if err := r.GrantTokenBudget(ctx, "rootG", 100); err != nil {
+		t.Fatalf("GrantTokenBudget: %v", err)
+	}
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("post-grant reserve: %v", err)
+	}
+}
+
+// spec: §8.6 line 643 — the grant is cumulative; repeated grants stack so
+// a tree that is extended twice observes the sum. F-8.6.3.
+func TestGrantTokenBudgetIsCumulative_spec_8_6_643(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	if err := r.GrantTokenBudget(ctx, "rootC", 30); err != nil {
+		t.Fatalf("grant 1: %v", err)
+	}
+	if err := r.GrantTokenBudget(ctx, "rootC", 40); err != nil {
+		t.Fatalf("grant 2: %v", err)
+	}
+	// Base cap 10 + cumulative grant 70 = 80; an 80-token reservation fits
+	// exactly, one more token does not.
+	if _, err := r.Reserve(ctx, treebudget.Reservation{
+		RootSessionID: "rootC", ParentSessionID: "rootC",
+		TokenCap: 10, TokenDelta: 80,
+	}); err != nil {
+		t.Fatalf("reserve at the cumulative ceiling: %v", err)
+	}
+	if _, err := r.Reserve(ctx, treebudget.Reservation{
+		RootSessionID: "rootC", ParentSessionID: "rootC",
+		TokenCap: 10, TokenDelta: 1,
+	}); !errors.As(err, new(*treebudget.BudgetExhaustedError)) {
+		t.Fatalf("reserve past the cumulative ceiling should exhaust")
+	}
+}
+
+// spec: §8.6 line 643 — a zero base token cap means "unlimited"; a grant
+// must not narrow it to a finite ceiling. A non-positive grant and an
+// empty root are no-ops / errors respectively. F-8.6.3.
+func TestGrantTokenBudgetEdges_spec_8_6_643(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	// A grant against an unlimited (zero-cap) tree leaves it unlimited.
+	if err := r.GrantTokenBudget(ctx, "rootU", 50); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if _, err := r.Reserve(ctx, treebudget.Reservation{
+		RootSessionID: "rootU", ParentSessionID: "rootU",
+		TokenCap: 0, TokenDelta: 1 << 30,
+	}); err != nil {
+		t.Fatalf("zero-cap tree must stay unlimited after a grant: %v", err)
+	}
+	// Non-positive deltas are no-ops.
+	if err := r.GrantTokenBudget(ctx, "rootU", 0); err != nil {
+		t.Fatalf("zero grant should be a no-op: %v", err)
+	}
+	if err := r.GrantTokenBudget(ctx, "rootU", -5); err != nil {
+		t.Fatalf("negative grant should be a no-op: %v", err)
+	}
+	// An empty root id is rejected.
+	if err := r.GrantTokenBudget(ctx, "", 10); err == nil {
+		t.Fatalf("empty root id should error")
+	}
+}

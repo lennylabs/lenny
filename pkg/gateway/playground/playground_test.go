@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -511,6 +512,57 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 	}
 	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("app.js Cache-Control = %q, want the immutable header", got)
+	}
+}
+
+// TestAppJSWorkspaceUploadWiring asserts the §27.4 item 2 workspace-plan
+// tarball is actually staged and bound, not silently dropped. The SPA
+// bundle must read the file, POST it to the upload-archive endpoint with
+// the §7.1 uploadToken, bind it into a §14 uploadArchive plan at finalize,
+// and start the session. There is no JS test runner, so this checks the
+// served bundle carries the functional surface the finding requires.
+// spec: §27.4 item 2 (workspace plan upload / drag-drop tarball).
+func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
+		Signer:  devSigner(),
+		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/app.js")
+	if err != nil {
+		t.Fatalf("GET app.js: %v", err)
+	}
+	defer resp.Body.Close()
+	buf := new(strings.Builder)
+	if _, err := io.Copy(buf, resp.Body); err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	js := buf.String()
+
+	// The selected/dropped tarball must reach the upload endpoint with the
+	// uploadToken, and the plan it produces must be finalized and started.
+	for _, want := range []string{
+		"createSessionWithWorkspace",      // the decomposed-lifecycle driver
+		"/upload-archive",                 // staging POST
+		"X-Lenny-Upload-Token",            // §7.1 uploadToken header
+		"uploadArchive",                   // §14 plan source type
+		"/finalize",                       // plan binding
+		"/start",                          // run the bound session
+		"readFileBytes",                   // the file is actually read
+		"FileReader",                      // client-side read of the tarball
+		"dragover",                        // §27.4 drag-drop affordance
+		"workspacePlan",                   // finalize body field
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("app.js missing workspace-upload wiring substring %q", want)
+		}
+	}
+	// The drop must not be a no-op: the bare-input-only state the finding
+	// flagged is gone once a drop handler sets the selected file.
+	if !strings.Contains(js, "e.dataTransfer") {
+		t.Errorf("app.js drag-drop handler does not read dropped files")
 	}
 }
 

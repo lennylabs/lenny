@@ -27,6 +27,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -424,6 +425,27 @@ type Service struct {
 	// surface. Nil leaves ListSessionConnectors, ListConnectorTools, and
 	// CallConnectorTool returning codes.Unimplemented. F-9.1.2.
 	connectorTools ConnectorToolService
+
+	// treeGranter bridges a §8.6 GRANTED token-budget extension onto the
+	// §8.2 per-tree delegation budget counter so the next
+	// `lenny/delegate_task` admission is gated against the expanded token
+	// pool, not the parent lease's pre-extension MaxTokenBudget. Nil leaves
+	// the extension affecting only the leasecontrol view (the Postgres-only
+	// dev posture with no Redis treebudget); a wired granter closes the
+	// F-8.6.3 budget-side-effect gap. spec: §8.6 line 643.
+	treeGranter TreeBudgetGranter
+}
+
+// TreeBudgetGranter raises the §8.2 per-tree delegation token-budget
+// ceiling when a §8.6 lease extension grants additional tokens.
+// *treebudget.Reserver satisfies it. The seam keeps leasecontrol free of
+// a direct treebudget dependency and lets the Postgres-only dev path run
+// without a Redis budget counter. spec: §8.6 line 643; §8.2 line 57.
+type TreeBudgetGranter interface {
+	// GrantTokenBudget raises the tree rooted at rootSessionID by delta
+	// tokens. Implementations record it cumulatively so repeated grants
+	// stack. A non-positive delta is a no-op.
+	GrantTokenBudget(ctx context.Context, rootSessionID string, delta int64) error
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
@@ -667,6 +689,14 @@ type Options struct {
 	// socket reaches the gateway connector-invocation surface through it.
 	// Nil leaves the three RPCs returning codes.Unimplemented. F-9.1.2.
 	ConnectorTools ConnectorToolService
+
+	// TreeBudget bridges a §8.6 GRANTED token-budget extension onto the
+	// §8.2 per-tree delegation budget counter (*treebudget.Reserver) so a
+	// post-grant `lenny/delegate_task` admission observes the raised token
+	// pool. Nil leaves the extension affecting only the leasecontrol view —
+	// the Postgres-only dev posture that runs no Redis budget counter.
+	// F-8.6.3. spec: §8.6 line 643.
+	TreeBudget TreeBudgetGranter
 }
 
 // NewService returns a §8.6 ExtendLease Service.
@@ -706,6 +736,7 @@ func NewService(opts Options) (*Service, error) {
 	svc.defaultAutoMaxPerMinute = opts.DefaultAutoMaxPerMinute
 	svc.platformTools = opts.PlatformTools
 	svc.connectorTools = opts.ConnectorTools
+	svc.treeGranter = opts.TreeBudget
 	return svc, nil
 }
 
@@ -811,6 +842,27 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 			return nil, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
 		}
 		newLimits = applied
+
+		// §8.6 line 643: a granted token-budget extension must also raise
+		// the §8.2 per-tree delegation budget counter so the next
+		// `lenny/delegate_task` admission is gated against the expanded
+		// token pool rather than the parent lease's pre-extension cap. The
+		// leasecontrol ApplyGrant above only moves the in-memory/Postgres
+		// extension view; without this bridge the budget side effect §8.6
+		// promises never reaches admission (F-8.6.3). Best-effort: the
+		// control-plane grant already committed, so a transient treebudget
+		// fault is logged on the span by the reserver rather than failing
+		// the GRANTED response (the next admission falls back to the
+		// pre-extension cap, fail-safe). A nil granter is the Postgres-only
+		// dev posture with no Redis counter.
+		if s.treeGranter != nil && granted.Tokens > 0 {
+			if gerr := s.treeGranter.GrantTokenBudget(ctx, budget.RootSessionID, granted.Tokens); gerr != nil {
+				slog.WarnContext(ctx, "leasecontrol: tree token-budget grant bridge failed",
+					"root_session_id", budget.RootSessionID,
+					"granted_tokens", granted.Tokens,
+					"error", gerr)
+			}
+		}
 	}
 
 	combined := combineOutcomes(outcomes)
