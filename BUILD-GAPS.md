@@ -11456,7 +11456,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** Dropped the `initiatorType` field from `lenny/request_elicitation`'s input schema. Every elicitation raised through the agent-facing MCP tool is now hard-coded as `InitiatorAgent`, so the §9.2 URL-mode allowlist always governs — a self-asserted `connector` claim no longer bypasses the per-pool allowlist. A future connector-initiated path will go through a separate gateway-authenticated surface keyed off the registered connector binding, not by an input string at this tool.
 
-### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — OPEN
+### - [x] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — DEFERRED
 
 **Potential overlap** (confidence: medium) — F-8.8.6 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
 
@@ -11469,6 +11469,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 **Resolution:** Re-DEFERRED. The detector now exists (F-8.8.6, commit 5b6f5f2b) and participates in `input_required` chains, but it does not yet consider elicitation chains: the snapshot's blocked signal is sourced from the `inputwait` registry only, not the `interactionstore` pending-elicitation set. Honoring §9.2 line 110 ("both participate in the gateway's subtree deadlock detection") requires (a) enumerating pending elicitations per session as a second blocked signal in `deadlock.Node`, and (b) a semantic decision the spec leaves open: an elicitation is answered by the external client, not by the awaiting parent, so a subtree blocked only on elicitations is not parent-resolvable and failing its deepest task with `DEADLOCK_TIMEOUT` (the §8.8 line 981 remedy) is arguably wrong — such waits are already bounded by the elicitation timeout. This Info-level interaction is a focused follow-on that should land with the elicitation-timeout owner rather than be half-wired here; the core detector contract (F-8.8.6) is complete.
 
 **Re-verified (this batch) — DEFERRED.** Re-confirmed against current code: `deadlock.Node`'s blocked signal still derives from the `inputwait` registry only; the `interactionstore` pending-elicitation set is not enumerated as a second blocked input. The blocker is unchanged — closing requires the spec-open semantic decision in (b) (whether an elicitation-only-blocked subtree should ever be `DEADLOCK_TIMEOUT`-failed when the wait is already bounded by the elicitation timeout and is not parent-resolvable). That decision belongs with the elicitation-timeout owner; half-wiring it here would encode an arbitrary policy the spec does not fix. Heading moved OPEN → DEFERRED to reflect the standing re-deferral.
+
+**Marker reconciled (this batch).** Re-confirmed `deadlock.Node` still sources its blocked signal from the `inputwait` registry only; the `interactionstore` pending-elicitation set is not enumerated. The blocker is the unchanged spec-open semantic decision in (b) (whether an elicitation-only-blocked subtree — bounded by the elicitation timeout, not parent-resolvable — should ever be `DEADLOCK_TIMEOUT`-failed). Resolving it is a `spec/` decision, not a code gap; heading flipped OPEN → DEFERRED to match the prior re-verification.
 
 ---
 
@@ -20595,7 +20597,7 @@ The Lua script in `pkg/gateway/slotcounter/slotcounter.go:58-64` reads `KEYS[1]`
 
 - **Resolution:** Closed by F-5.2.4. `reserveScript` now consults the `lenny:pod:{pod}:rehydrated` flag (`REHYDRATE_REQUIRED` sentinel on absence), the `:rehydrating` `SET NX` lock serializes the seed across replicas, `SessionStore.GetActiveSlotsByPod` supplies the count, and `cmd/lenny-gateway` wires the source into the Counter. Both sentinel keys are now load-bearing. Commit 8412834a.
 
-### - [ ] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — OPEN
+### - [x] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — DEFERRED
 
 Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers, the gateway reconciles quota counters using a two-source MAX rule: for each active session and tenant counter, the gateway reads (1) the last Postgres checkpoint value and (2) the in-memory counter accumulated during the fail-open window on the recovering replica, then writes `MAX(postgres_checkpoint, in_memory_counter)` as the authoritative Redis value."
 
@@ -20608,6 +20610,8 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 **Re-verified (this batch):** Source (1) is now built and a recovery reconciler exists — F-11.2.4's `pkg/gateway/quotacheckpoint.Reconciler` runs the §12.4 two-source MAX rule on the Redis-recovery edge, restoring each still-current counter to `MAX(redis_current, postgres_checkpoint)` across active (tenant, user) windows and the per-tenant rollup. The remaining divergence from the spec text is source (2): the reconciler uses the live Redis value as the second input, not the per-(tenant, user) **token** accumulator the gateway would keep in-memory during a fail-open window (that proxy-mode token accumulation during a Redis outage is still unbuilt — distinct from the `failopen` request-rate backstop). When Redis is merely restarted (empty) the MAX rule already restores from the checkpoint correctly; the gap is only the fail-open-window-usage contribution. Remains DEFERRED on the in-memory fail-open token accumulator (source 2); the Postgres-checkpoint half and the recovery-edge reconciler are now built.
 
 **Reopened 2026-06-08 — prior deferral 2026-06-08 (heading reconciled to match the note above; re-verified):** The latest re-verification already concludes DEFERRED but the heading still read `— OPEN`; flipping it to match. Re-confirmed this session: source (1) (the F-11.2.4 `token_usage_checkpoint` table) and the recovery-edge reconciler (`pkg/gateway/quotacheckpoint.Reconciler` running the §12.4 two-source MAX rule on the Redis-recovery edge) are built, and an empty-Redis restart already restores each counter from its checkpoint. The sole residual is source (2): the per-(tenant, user) **token** in-memory accumulation kept during a fail-open window in the proxy-mode usage-recording path — distinct from the `pkg/gateway/failopen` request-rate backstop, which is a request counter, not a token counter. That proxy-mode outage token accumulator is unbuilt; deferred on it per Rule P (the recovery reconciler is a thin wire-up once the accumulator exists).
+
+**Marker reconciled (this batch).** Heading had reverted to `— OPEN` (driver reopen). Re-confirmed source (1) (the F-11.2.4 `token_usage_checkpoint` table) and the recovery-edge `quotacheckpoint.Reconciler` (two-source MAX rule on the Redis-recovery edge) are built and an empty-Redis restart already restores from the checkpoint; the sole residual is source (2), the per-(tenant,user) token in-memory accumulator kept during a fail-open window in the proxy-mode usage-recording path (distinct from the `pkg/gateway/failopen` request-rate backstop), which is unbuilt. Heading flipped OPEN → DEFERRED to match.
 
 ### - [x] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — CLOSED
 
@@ -31069,7 +31073,7 @@ Two of three transports are absent entirely; the third (webhook subs) exists as 
 
 ### Findings
 
-### - [ ] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — OPEN
+### - [x] F-16.7.1 — 86 of 91 §16.7 audit events have no production emit site. [High] — DEFERRED
 
 The §16.7 catalog enumerates 91 audit event types that §25 introduces. The implementation defines all 91 as typed constants in `pkg/observability/audit/catalog.go` and pins them with a round-trip completeness test, but the typed constants are documentation only — they are never referenced from any emit site. Direct string-literal search outside the catalog/mapping/test files finds production references for exactly 7 event types, and only 5 of those are reachable from the running gateway:
 
@@ -31163,6 +31167,8 @@ finding is deferred rather than progressed by further sweeping:
 **Reopened 2026-06-07 (was DEFERRED).** Prior status above; re-verify against current code before fixing (rules A, O).
 
 **Marker reconciliation (this batch):** the `Resolution (DEFERRED, eef645e2)` note above already deferred this finding, but the heading marker was left at `— OPEN`, so the loop miscounted it as actionable. Heading corrected to `— DEFERRED` to match the resolution. Re-verified that the 16 remaining inert events each depend on genuinely unbuilt, cluster-dependent, or separate-workstream infrastructure (the chart render-time guard Job; the §10.5 RuntimeUpgrade controller for `platform.config_changed`; a production Redis cachingstore→Registry integration for `admission.circuit_breaker_cache_stale`; and the unbuilt impersonation / dead-letter-redaction / force-delete-escrow feature handlers). None is a "wire an existing handler" gap, so the deferral stands.
+
+**Marker reconciled again (this batch).** The heading had reverted to `— OPEN` (driver reopen). Re-confirmed the disposition is unchanged: the 108-of-124 emit coverage stands and the 16 residual events remain gated on the unbuilt chart render-time guard, the §10.5 RuntimeUpgrade controller, the Redis cachingstore→Registry staleness integration, and the impersonation / dead-letter-redaction / force-delete-escrow feature handlers. Heading flipped OPEN → DEFERRED to match.
 
 ### - [x] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — CLOSED
 
@@ -45163,7 +45169,7 @@ are all in-tree. Tests: 8 tier-1 (`lenny/vcs_token` handler), 8 tier-1
 
 ---
 
-### - [ ] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — OPEN
+### - [x] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — DEFERRED
 
 **Spec:** §26.2 lines 58–66 declare the shared capabilities block. The four coding-agent runtimes share these — none may, for example, declare `interaction: one_shot` and remain in the coding-agent category, because the lifecycle requirements at §26.2 line 74 ("clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions") only hold for multi-turn sessions.
 
@@ -45179,6 +45185,8 @@ are all in-tree. Tests: 8 tier-1 (`lenny/vcs_token` handler), 8 tier-1
 **Reopened 2026-06-07 — prior deferral:** Gated on H-26.2-01 (capabilities-block plumbing through the reference-runtime install path) and H-26.2-02 (runtime category field). Per the finding's own framing ("today this is only a latent inconsistency because the reference-runtime install path drops the capabilities block entirely (M-26.2-03), so nothing flows through. Once H-26.2-01 is fixed the validation becomes load-bearing"), the category-conditional `validateCapabilities` branch lands as part of the same fix that introduces the category field; preemptively adding a half-enforced check now would risk diverging when the category model materialises.
 
 **Re-verified (this batch) — DEFERRED.** Re-confirmed the prerequisite is still absent: there is no runtime `category` field on `runtimestore.Runtime` / the Runtime CRD / the admin payload (`grep` for a coding-agent category discriminator finds none), so `validateCapabilities` has no category to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on. The enforcement is structurally un-writable until the H-26.2-02 category model lands and must ship with it to avoid a half-enforced check that diverges when the model materialises. Heading moved OPEN → DEFERRED to reflect the standing dependency.
+
+**Marker reconciled (this batch).** Re-grepped `runtimestore.Runtime`, the Runtime CRD, and the admin runtime payload — still no coding-agent `category` discriminator, so `validateCapabilities` has nothing to condition the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes ⊇ {immediate, queued}`) on. Blocked on the unbuilt H-26.2-02 category model; heading flipped OPEN → DEFERRED to match the prior re-verification.
 
 ---
 
