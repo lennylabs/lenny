@@ -11,8 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/backup/runner"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // depsInput is the resolved flag set the lenny-backup run needs to
@@ -26,6 +28,8 @@ type depsInput struct {
 	kmsKeyID       string
 	dataKeyFile    string
 	reportDSN      string
+	redisURL       string
+	redisPassword  string
 }
 
 // deps holds the §25.11 backup-run dependencies: the MinIO uploader,
@@ -37,6 +41,7 @@ type deps struct {
 	uploader     *runner.MinIOUploader
 	reporter     *pgReporter
 	audit        backup.AuditSink
+	opsEmitter   events.EventEmitter
 	dataKey      []byte
 	minioClient  *minio.Client
 	bucket       string
@@ -94,10 +99,39 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 		return nil, fmt.Errorf("connect to the lenny-ops Postgres: %w", err)
 	}
 
+	// §25.5: when --redis-url is set, the run's §16.6 backup_completed /
+	// backup_failed events stream to the platform-scoped
+	// ops:events:stream that lenny-ops consumes, mirroring the
+	// lenny-controller pool_state_changed emitter. The Job exits after
+	// one run, so the StreamEmitter's local ring buffer tee is discarded;
+	// only the Redis XADD matters here. An unconfigured Redis leaves the
+	// emitter nil and the run emits no operational event (the durable
+	// audit row and ops_backups status update still land).
+	closeFn := pool.Close
+	var opsEmitter events.EventEmitter
+	if in.redisURL != "" {
+		redisClient, err := redisconn.NewClient(redisconn.Config{URL: in.redisURL, Password: in.redisPassword})
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("build Redis client for the §25.5 event stream: %w", err)
+		}
+		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+			Client:    redisClient,
+			Buffer:    events.NewEventBuffer(0),
+			Source:    "//lenny.dev/ops/backup",
+			ReplicaID: "lenny-backup",
+		})
+		closeFn = func() {
+			_ = redisClient.Close()
+			pool.Close()
+		}
+	}
+
 	return &deps{
 		uploader:    uploader,
 		reporter:    &pgReporter{pool: pool},
 		audit:       buildBackupAuditSink(pool),
+		opsEmitter:  opsEmitter,
 		dataKey:     dataKey,
 		minioClient: client,
 		bucket:      in.minioBucket,
@@ -107,6 +141,6 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 		// correct behavior for a Postgres-only-reachable Job.
 		configExport: nil,
 		crdExport:    nil,
-		closeFn:      pool.Close,
+		closeFn:      closeFn,
 	}, nil
 }

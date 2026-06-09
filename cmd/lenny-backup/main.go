@@ -108,6 +108,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			"empty disables client-side encryption and relies on SSE")
 	reportDSN := fs.String("report-dsn", os.Getenv("LENNY_OPS_POSTGRES_DSN"),
 		"the lenny-ops Postgres DSN for the §25.11 step-8 ops_backups update")
+	redisURL := fs.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis connection URL for the §25.5 operational event stream. When set, the run's "+
+			"§16.6 backup_completed / backup_failed events land on ops:events:stream alongside "+
+			"the gateway-emitted events; when empty, the run emits no operational event.")
+	redisPassword := fs.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password for the §25.5 operational event stream.")
 	pgDumpPath := fs.String("pg-dump-path", "pg_dump", "the pg_dump executable")
 	pgRestorePath := fs.String("pg-restore-path", "pg_restore",
 		"the pg_restore executable used by the verify and restore-test modes")
@@ -164,6 +170,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		kmsKeyID:       *kmsKeyID,
 		dataKeyFile:    *dataKeyFile,
 		reportDSN:      *reportDSN,
+		redisURL:       *redisURL,
+		redisPassword:  *redisPassword,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny-backup: %v\n", err)
@@ -257,6 +265,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Pruner:               deps.uploader,
 		Reporter:             deps.reporter,
 		Audit:                deps.audit,
+		OpsEmitter:           deps.opsEmitter,
 		RetentionStore:       deps.reporter,
 		PreRestoreRetainDays: *preRestoreRetainDays,
 	})

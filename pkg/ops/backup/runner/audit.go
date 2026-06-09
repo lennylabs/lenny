@@ -45,4 +45,9 @@ func recordBackupFailed(ctx context.Context, cfg Config, reason string) {
 		Outcome:  "failed",
 		Detail:   reason,
 	})
+	// spec: §25.3 line 694 / §16.6 backup_failed — the operational event
+	// paired with the §16.7 backup.failed audit row, so an ops agent
+	// subscribed to the buffer observes the failure without polling the
+	// admin API.
+	emitBackupFailed(ctx, cfg.OpsEmitter, string(cfg.Mode), cfg.BackupID, reason)
 }

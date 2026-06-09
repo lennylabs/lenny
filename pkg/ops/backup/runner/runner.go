@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/backup/retention"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
@@ -153,6 +154,17 @@ type Config struct {
 	// events (dev / no-durable-store mode); the status update still
 	// lands. spec: §25.11 line 4343.
 	Audit backup.AuditSink
+	// OpsEmitter publishes the §25.3 / §16.6 backup_completed and
+	// backup_failed operational events to the platform ops:events:stream
+	// at the run's terminal transition, the §25.3 line 692-694 "backup
+	// job finished / failed" producers in the operational-event
+	// catalogue. The backup runs in its own Job pod, so the lenny-backup
+	// binary wires a §25.5 Redis StreamEmitter here (mirroring the
+	// lenny-controller pool_state_changed emitter) when --redis-url is
+	// set; an unconfigured Redis leaves this nil and the run emits no
+	// operational event (the durable audit row still lands). spec: §25.3
+	// lines 670-694; §16.6 backup_completed / backup_failed.
+	OpsEmitter events.EventEmitter
 	// RetentionStore supplies the existing backups and the retention
 	// policy for the §25.11 post-backup retention enforcement. A nil
 	// store skips retention enforcement (the daily-cron Job supplies
@@ -293,6 +305,10 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			"components":  len(result.Components),
 		},
 	})
+	// spec: §25.3 line 692 / §16.6 backup_completed — the operational
+	// event an ops agent subscribes to, emitted at the same terminal
+	// transition as the audit row.
+	emitBackupCompleted(ctx, cfg.OpsEmitter, result)
 
 	// §25.11: after a successful backup, lenny-ops evaluates the
 	// retention policy and deletes expired backups. The daily-cron Job
