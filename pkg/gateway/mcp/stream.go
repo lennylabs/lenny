@@ -230,12 +230,12 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 
 // writeMCPSessionEvent projects one SessionEvent onto the §15.2 Streamable
 // HTTP wire. The SSE `id:` line carries the SeqNum (so resumeFromSeq and
-// Last-Event-ID replay the frame verbatim); the `data:` line carries a
-// `notifications/lenny/sessionEvent` JSON-RPC notification under the
-// §15.2 line 1370 `notifications/lenny/*` extension namespace, which
-// conforming clients ignore if unrecognized. The per-kind method
-// projection (notifications/tasks/statusUpdate, etc.) is F-15.2.13.
-// spec: §15.2 lines 1331, 1370.
+// Last-Event-ID replay the frame verbatim); the `data:` line carries the
+// §15.2.1 per-kind JSON-RPC frame (notifications/tasks/statusUpdate,
+// elicitation/create, notifications/lenny/toolCall, notifications/lenny/
+// error, or the MCP Tasks final-state frame), falling back to the generic
+// notifications/lenny/sessionEvent frame for bus event types outside the
+// closed SessionEventKind enum. spec: §15.2 lines 1331, 1356-1374.
 func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
 	b := marshalMCPSessionEvent(ev)
 	if b == nil {
@@ -245,33 +245,15 @@ func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
 	fmt.Fprintf(w, "data: %s\n\n", b)
 }
 
-// marshalMCPSessionEvent renders one SessionEvent as the
-// `notifications/lenny/sessionEvent` JSON-RPC notification bytes shared by
-// the §15.2 Streamable HTTP SSE channel (writeMCPSessionEvent) and the §4.1
-// WebSocket push (startWSAttach): both legs put the §15.1 wire type in
-// `params.type` and the payload in `params.data` so a client classifies an
-// event the same way regardless of transport. A marshal failure returns nil
-// and the caller drops the frame. spec: §15.2 lines 1331, 1370.
+// marshalMCPSessionEvent renders one SessionEvent as the §15.2.1 per-kind
+// MCP wire frame, shared by the §15.2 Streamable HTTP SSE channel
+// (writeMCPSessionEvent) and the §4.1 WebSocket push (startWSAttach) so a
+// client classifies an event the same way regardless of transport. The
+// per-kind projection itself lives in projection.go. A marshal failure
+// returns nil and the caller drops the frame. spec: §15.2 lines 1331,
+// 1356-1374. F-15.2.13, F-15.2.14.
 func marshalMCPSessionEvent(ev sessionevents.Event) []byte {
-	data := json.RawMessage(ev.Data)
-	if len(data) == 0 {
-		data = json.RawMessage("{}")
-	}
-	b, err := json.Marshal(jsonRPCNotification{
-		JSONRPC: "2.0",
-		Method:  "notifications/lenny/sessionEvent",
-		Params: map[string]any{
-			"seq":       ev.Seq,
-			"sessionId": ev.SessionID,
-			"type":      ev.Type,
-			"data":      data,
-			"timestamp": ev.Timestamp.UTC().Format(time.RFC3339Nano),
-		},
-	})
-	if err != nil {
-		return nil
-	}
-	return b
+	return projectMCPSessionEvent(ev)
 }
 
 // writeMCPGapDetected writes the §15.2 line 1331 gap_detected

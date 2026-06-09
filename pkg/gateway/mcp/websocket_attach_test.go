@@ -68,8 +68,13 @@ func sessionEventParams(t *testing.T, ctx context.Context, conn *websocket.Conn)
 // same socket. This is the stream the playground chat consumes.
 func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) {
 	bus := sessionevents.NewBus(256)
-	bus.PublishForTenant("acme", "sess-1", "status_change", `{"state":"running"}`, attachTS())
-	bus.PublishForTenant("acme", "sess-1", "response", `{"type":"text","text":"hi"}`, attachTS())
+	// message_delivered events project to the generic
+	// notifications/lenny/sessionEvent frame (they are outside the §15.0
+	// closed SessionEventKind enum), so this transport test exercises the
+	// ack / backlog / live ordering independent of the §15.2.1 per-kind
+	// projection (covered in projection_test.go). F-15.2.13.
+	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"a"}`, attachTS())
+	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"b"}`, attachTS())
 
 	ctx, conn, _, teardown := dialTestServer(t, attachWiredServer(bus, nil))
 	defer teardown()
@@ -83,25 +88,25 @@ func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) 
 		t.Fatalf("attach ack = %v, want result.attached=true", ack)
 	}
 
-	// Backlog: status_change (seq 1) then response (seq 2).
+	// Backlog: seq 1 then seq 2.
 	p1 := sessionEventParams(t, ctx, conn)
-	if p1["type"] != "status_change" {
-		t.Fatalf("backlog frame 1 type = %v, want status_change", p1["type"])
+	if p1["seq"].(float64) != 1 {
+		t.Fatalf("backlog frame 1 seq = %v, want 1", p1["seq"])
 	}
 	p2 := sessionEventParams(t, ctx, conn)
-	if p2["type"] != "response" {
-		t.Fatalf("backlog frame 2 type = %v, want response", p2["type"])
+	if p2["seq"].(float64) != 2 {
+		t.Fatalf("backlog frame 2 seq = %v, want 2", p2["seq"])
 	}
 
 	// Live: publish after the subscription is active (ack already read).
-	bus.PublishForTenant("acme", "sess-1", "response", `{"type":"text","text":"world"}`, attachTS())
+	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"world"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
-	if live["type"] != "response" {
-		t.Fatalf("live frame type = %v, want response", live["type"])
+	if live["seq"].(float64) != 3 {
+		t.Fatalf("live frame seq = %v, want 3", live["seq"])
 	}
 	data, _ := live["data"].(map[string]any)
-	if data["text"] != "world" {
-		t.Fatalf("live frame text = %v, want world", data["text"])
+	if data["content"] != "world" {
+		t.Fatalf("live frame content = %v, want world", data["content"])
 	}
 }
 
@@ -111,7 +116,9 @@ func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) 
 func TestWebSocketAttachGapDetected_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(2) // retains the last 2 events
 	for i := 0; i < 4; i++ {
-		bus.PublishForTenant("acme", "sess-1", "response", `{}`, attachTS())
+		// generic-projection event so the post-gap frame is a
+		// notifications/lenny/sessionEvent the helper can read. F-15.2.13.
+		bus.PublishForTenant("acme", "sess-1", "message_delivered", `{}`, attachTS())
 	}
 	// history now holds seq 3,4; oldest retained = 3.
 
@@ -187,9 +194,9 @@ func TestWebSocketAttachInterleavesWithRequestResponse(t *testing.T) {
 	}
 
 	// A live session event then pushes over the same socket.
-	bus.PublishForTenant("acme", "sess-1", "response", `{"type":"text","text":"streamed"}`, attachTS())
+	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"content":"streamed"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
-	if live["data"].(map[string]any)["text"] != "streamed" {
+	if live["data"].(map[string]any)["content"] != "streamed" {
 		t.Fatalf("live frame = %v", live)
 	}
 }
@@ -246,13 +253,13 @@ func TestWebSocketAttachRedactsPlaygroundEgress_spec_27_9_251(t *testing.T) {
 		t.Fatal("expected attach ack")
 	}
 
-	bus.PublishForTenant("acme", "sess-1", "response", `{"text":"ok","access_token":"sk-secret"}`, attachTS())
+	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"content":"ok","access_token":"sk-secret"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
 	data := live["data"].(map[string]any)
 	if data["access_token"] != "[REDACTED]" {
 		t.Fatalf("playground egress did not redact access_token: %v", data)
 	}
-	if data["text"] != "ok" {
+	if data["content"] != "ok" {
 		t.Fatalf("redaction corrupted benign field: %v", data)
 	}
 }

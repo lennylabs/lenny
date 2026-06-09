@@ -2125,16 +2125,24 @@ func Register(srv *mcp.Server, deps Deps) {
 				// alongside the prompt. Without these the UI cannot honour
 				// the "users can distinguish platform OAuth flows from
 				// agent-initiated prompts" trust requirement. F-9.2.6.
+				// spec: §15.2 line 1362 — carry the {message, schema} pair so
+				// the MCPAdapter projects the native MCP `elicitation/create`
+				// request with `requestedSchema` populated. The schema is the
+				// gateway-recorded original (the content-integrity reference),
+				// so the wire frame and the §9.2 origin binding agree.
+				// F-15.2.13.
 				data, _ := json.Marshal(struct {
-					ElicitationID   string `json:"elicitationId"`
-					Message         string `json:"message"`
-					OriginPod       string `json:"originPod"`
-					InitiatorType   string `json:"initiatorType"`
-					DelegationDepth int    `json:"delegationDepth"`
-					OriginRuntime   string `json:"originRuntime,omitempty"`
+					ElicitationID   string          `json:"elicitationId"`
+					Message         string          `json:"message"`
+					Schema          json.RawMessage `json:"schema,omitempty"`
+					OriginPod       string          `json:"originPod"`
+					InitiatorType   string          `json:"initiatorType"`
+					DelegationDepth int             `json:"delegationDepth"`
+					OriginRuntime   string          `json:"originRuntime,omitempty"`
 				}{
 					ElicitationID:   elicitationID,
 					Message:         in.Message,
+					Schema:          json.RawMessage(in.Schema),
 					OriginPod:       prov.OriginPod,
 					InitiatorType:   string(prov.InitiatorType),
 					DelegationDepth: prov.DelegationDepth,

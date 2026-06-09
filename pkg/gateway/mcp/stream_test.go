@@ -109,6 +109,58 @@ func startAttachStream(t *testing.T, serverURL, sessionID string, resumeFromSeq 
 
 // TestAttachStreamsBacklogThenLive verifies the §15.2 line 1331 transport:
 // retained backlog replays first (each frame carrying its SeqNum on the
+// TestAttachProjectsElicitationCreateAndToolApproval verifies the
+// §15.2.1 per-kind projection over the real SSE attach transport: an
+// elicitation_request bus event reaches the client as a native MCP
+// elicitation/create request (so an MCP-only client can surface and
+// resolve the §9.2 elicitation natively), and an approval-required
+// tool_use_requested event likewise projects to elicitation/create —
+// the §15.2.1 carve-out that makes the REST-only tool-use approval
+// endpoints correct by design rather than by accident. spec: §15.2
+// lines 1362-1363, 1404. F-15.2.13, F-15.2.14.
+func TestAttachProjectsElicitationCreateAndToolApproval_spec_15_2_1362(t *testing.T) {
+	bus := sessionevents.NewBus(256)
+	bus.PublishForTenant("acme", "sess-1", "elicitation_request",
+		`{"elicitationId":"el-7","message":"Confirm?","schema":{"type":"string"},"originPod":"pod-1","initiatorType":"agent","delegationDepth":1}`, streamTS())
+	bus.PublishForTenant("acme", "sess-1", "tool_use_requested",
+		`{"tool_call_id":"tc-9","tool":"shell","args":{"cmd":"ls"}}`, streamTS())
+
+	srv := NewServer()
+	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	frames, stop, _ := startAttachStream(t, ts.URL, "sess-1", 0)
+	defer stop()
+
+	f1 := nextFrame(t, frames)
+	var elicit map[string]any
+	if err := json.Unmarshal([]byte(f1.data), &elicit); err != nil {
+		t.Fatalf("elicitation frame not JSON: %v", err)
+	}
+	if elicit["method"] != "elicitation/create" {
+		t.Fatalf("elicitation frame method = %v, want elicitation/create", elicit["method"])
+	}
+	if elicit["id"] != "elicit:el-7" {
+		t.Fatalf("elicitation frame id = %v, want elicit:el-7", elicit["id"])
+	}
+	if elicit["params"].(map[string]any)["requestedSchema"] == nil {
+		t.Fatalf("elicitation/create missing requestedSchema: %v", elicit["params"])
+	}
+
+	f2 := nextFrame(t, frames)
+	var approve map[string]any
+	if err := json.Unmarshal([]byte(f2.data), &approve); err != nil {
+		t.Fatalf("tool-approval frame not JSON: %v", err)
+	}
+	if approve["method"] != "elicitation/create" {
+		t.Fatalf("approval-required tool_use frame method = %v, want elicitation/create", approve["method"])
+	}
+	if approve["id"] != "toolapprove:tc-9" {
+		t.Fatalf("tool-approval frame id = %v, want toolapprove:tc-9", approve["id"])
+	}
+}
+
 // SSE id: line), then live events tail the stream.
 func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
@@ -135,7 +187,9 @@ func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 	if f1.id != "1" {
 		t.Fatalf("backlog frame 1 id = %q, want 1", f1.id)
 	}
-	if !strings.Contains(f1.data, "notifications/lenny/sessionEvent") || !strings.Contains(f1.data, "status_change") {
+	// §15.2.1 per-kind projection: a status_change is an MCP task status
+	// notification. F-15.2.13.
+	if !strings.Contains(f1.data, "notifications/tasks/statusUpdate") {
 		t.Fatalf("backlog frame 1 data = %q", f1.data)
 	}
 	f2 := nextFrame(t, frames)
@@ -382,7 +436,10 @@ func TestWriteMCPSessionEventCarriesSeqOnIDLine(t *testing.T) {
 	if !strings.Contains(out, "id: 7\n") {
 		t.Fatalf("frame missing id line: %q", out)
 	}
-	if !strings.Contains(out, "notifications/lenny/sessionEvent") {
+	// §15.2.1 per-kind projection: a response is an MCP streaming task
+	// content frame. The SSE id: line still carries the SeqNum verbatim.
+	// F-15.2.13.
+	if !strings.Contains(out, "notifications/tasks/statusUpdate") {
 		t.Fatalf("frame missing notification method: %q", out)
 	}
 }
