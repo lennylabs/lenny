@@ -108,9 +108,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/billingcheckpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingsink"
-	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
@@ -574,6 +575,9 @@ func main() {
 	quotaSyncIntervalSeconds := flag.Int("quota-sync-interval-seconds",
 		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
 		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
+	billingTokenCheckpointIntervalSeconds := flag.Int("billing-token-checkpoint-interval-seconds",
+		envInt("LENNY_BILLING_TOKEN_CHECKPOINT_INTERVAL_SECONDS", 300),
+		"§11.2.1 token_usage.checkpoint cadence (seconds): the interval at which the gateway snapshots each active session's proxy-recorded token delta into the per-tenant billing stream, so in-flight cost attribution is visible before session end. A value <= 0 disables the periodic checkpoint. Default 300s. Override via LENNY_BILLING_TOKEN_CHECKPOINT_INTERVAL_SECONDS.")
 	quotaEnforcementMode := flag.String("quota-enforcement-mode",
 		envOr("LENNY_QUOTA_ENFORCEMENT_MODE", string(quota.DefaultEnforcementMode)),
 		"§12.4 line 268 quotaEnforcementMode: `redis` (default) reads the Redis token counters on the admission path; `in_memory_reconciled` draws a per-replica budget slice from Postgres, decrements it locally, and reconciles every quotaSyncIntervalSeconds (or at 80% slice consumption), tolerating full Redis unavailability for quota enforcement with bounded overshoot. The in-memory mode requires Postgres. Override via LENNY_QUOTA_ENFORCEMENT_MODE.")
@@ -6661,6 +6665,21 @@ func main() {
 		go quotaCheckpointReconciler.Run(watchdogCtx)
 	}
 
+	// spec: §11.2.1 token_usage.checkpoint — periodically snapshot each
+	// active session's proxy-recorded token delta into the per-tenant
+	// billing stream so in-flight cost attribution is visible before
+	// session end. Runs only when billing, the session store, and the
+	// per-session usage accumulator are all wired. F-11.2.1.
+	if billingTokenCP := billingcheckpoint.New(
+		billingEmitter,
+		billingSessionLister{sessions: sessions, tenants: (tenantsLister{tenants}).ListTenants},
+		sessionUsage,
+	); billingTokenCP != nil && *billingTokenCheckpointIntervalSeconds > 0 {
+		interval := time.Duration(*billingTokenCheckpointIntervalSeconds) * time.Second
+		log.Printf("lenny-gateway: §11.2.1 token_usage.checkpoint cadence %s", interval)
+		go billingTokenCP.Run(watchdogCtx, interval)
+	}
+
 	// §12.4 source (2): bound the in-memory fail-open accumulator by dropping
 	// entries whose window has rolled. Reads already ignore stale windows;
 	// this reclaims their memory on a low cadence. F-12.4.20.
@@ -9058,6 +9077,38 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 	out = append(out, "default")
 	for _, row := range rows {
 		out = append(out, row.ID)
+	}
+	return out, nil
+}
+
+// billingSessionLister enumerates the active (non-terminal) sessions the
+// §11.2.1 token_usage.checkpoint producer snapshots, walking every
+// registered tenant's session rows. It mirrors
+// quotacheckpoint.SessionSubjectLister but returns the per-session tuple
+// (a billing checkpoint is per session, not per (tenant, user) subject).
+// F-11.2.1.
+type billingSessionLister struct {
+	sessions sessionstore.Store
+	tenants  func(ctx context.Context) ([]string, error)
+}
+
+func (l billingSessionLister) ListActiveSessions(ctx context.Context) ([]billingcheckpoint.Session, error) {
+	ids, err := l.tenants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []billingcheckpoint.Session
+	for _, tenantID := range ids {
+		rows, err := l.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range rows {
+			if session.IsTerminal(s.State) {
+				continue
+			}
+			out = append(out, billingcheckpoint.Session{TenantID: tenantID, SessionID: s.ID, UserID: s.UserID})
+		}
 	}
 	return out, nil
 }
