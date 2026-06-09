@@ -28,9 +28,12 @@ import (
 	"time"
 )
 
-// EventType is a §11.2.1 billing event type. The constants cover the
-// event types the gateway currently emits; the spec enumerates more,
-// added as the emitting code paths are built.
+// EventType is a §11.2.1 billing event type. The constants below cover
+// the closed set the spec enumerates in the §11.2.1 event-type table;
+// each is emitted into the per-tenant billing stream so cost-attribution
+// and compliance consumers observe them in one ordered,
+// sequence-numbered record alongside the audit chain. spec: §11.2.1 —
+// Event types.
 type EventType string
 
 const (
@@ -40,6 +43,74 @@ const (
 	// EventSessionCompleted is emitted when a session reaches a
 	// terminal state (completed, failed, cancelled, or expired).
 	EventSessionCompleted EventType = "session.completed"
+
+	// EventDelegationSpawned is emitted when a child session is created
+	// via recursive delegation (§11.2.1; §8.2).
+	EventDelegationSpawned EventType = "delegation.spawned"
+
+	// EventDelegationIsolationViolation is emitted when a delegation is
+	// rejected because the target pool's isolation profile is weaker than
+	// the parent's minIsolationProfile (§11.2.1; §8.3).
+	EventDelegationIsolationViolation EventType = "delegation.isolation_violation"
+
+	// EventPoolIsolationWarning is emitted when a pool registered or
+	// updated via the admin API would cause an isolation monotonicity
+	// violation for an active DelegationPolicy rule (§11.2.1; §8.3 line
+	// 350 proactive pool-registration enforcement).
+	EventPoolIsolationWarning EventType = "pool.isolation_warning"
+
+	// EventDeriveIsolationDowngrade is emitted when a derive/replay call
+	// bypassed the isolation monotonicity check via the platform-admin
+	// allowIsolationDowngrade flag (§11.2.1; §7.1 derive rule 5).
+	EventDeriveIsolationDowngrade EventType = "derive.isolation_downgrade"
+
+	// EventInterceptorFailPolicyWeakened is emitted when an interceptor's
+	// failPolicy changes from fail-closed to fail-open (§11.2.1; §4.8).
+	EventInterceptorFailPolicyWeakened EventType = "interceptor.fail_policy_weakened"
+
+	// EventInterceptorFailPolicyStrengthened is emitted when an
+	// interceptor's failPolicy changes from fail-open to fail-closed
+	// (§11.2.1; §4.8).
+	EventInterceptorFailPolicyStrengthened EventType = "interceptor.fail_policy_strengthened"
+
+	// EventInterceptorWeakeningCooldownActive is emitted once per
+	// weakening transition that enters the §8.3 weakening cooldown window
+	// (§11.2.1; §8.3 rule 5).
+	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
+
+	// EventDelegationExportFileScanRejected is emitted when an exported
+	// file is rejected by the PreExportMaterialization interceptor
+	// (§11.2.1; §8.3, §4.8).
+	EventDelegationExportFileScanRejected EventType = "delegation.export_file_scan_rejected"
+
+	// EventDelegationExportScanFailedOpen is emitted when an export scan
+	// timed out or errored under failPolicy fail-open and the file was
+	// admitted without inspection (§11.2.1; §8.3, §4.8).
+	EventDelegationExportScanFailedOpen EventType = "delegation.export_scan_failed_open"
+
+	// EventDelegationPolicyExportScanWeakened is emitted when a
+	// DelegationPolicy's contentPolicy.scanExportedFiles changes from
+	// true to false (§11.2.1; §8.3).
+	EventDelegationPolicyExportScanWeakened EventType = "delegation_policy.export_scan_weakened"
+
+	// EventDelegationPolicyExportScanStrengthened is emitted when a
+	// DelegationPolicy's contentPolicy.scanExportedFiles changes from
+	// false to true (§11.2.1; §8.3).
+	EventDelegationPolicyExportScanStrengthened EventType = "delegation_policy.export_scan_strengthened"
+
+	// EventTokenUsageCheckpoint is a periodic per-session token-usage
+	// snapshot emitted at configurable intervals, not only at session end
+	// (§11.2.1).
+	EventTokenUsageCheckpoint EventType = "token_usage.checkpoint"
+
+	// EventCredentialLeased is emitted when a credential is leased from a
+	// credential pool to a session (§11.2.1; §4.9).
+	EventCredentialLeased EventType = "credential.leased"
+
+	// EventCredentialRevoked is emitted when a credential is
+	// emergency-revoked and its active leases are terminated (§11.2.1;
+	// §4.9 Emergency Credential Revocation).
+	EventCredentialRevoked EventType = "credential.revoked"
 
 	// EventBillingCorrection corrects a previously emitted billing
 	// event. A correction carries its own SequenceNumber and references

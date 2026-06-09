@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
@@ -159,9 +161,17 @@ func (r *Router) emitScanExportedFilesTransition(ctx context.Context, p authmw.P
 	if oldScan && !newScan {
 		detail["cooldown_seconds"] = interceptorWeakeningCooldownSeconds
 		r.emit(ctx, p, "delegation_policy.export_scan_weakened", name, detail)
+		// spec: §11.2.1 — the scanExportedFiles weakening is a billing-stream
+		// cost-attribution / compliance event under the operator's tenant.
+		r.appendBilling(ctx, billingfanout.DelegationPolicyExportScan(
+			billingstore.EventDelegationPolicyExportScanWeakened, p.TenantID, name,
+			oldScan, newScan, transitionTs, uint32(interceptorWeakeningCooldownSeconds)))
 		return
 	}
 	r.emit(ctx, p, "delegation_policy.export_scan_strengthened", name, detail)
+	r.appendBilling(ctx, billingfanout.DelegationPolicyExportScan(
+		billingstore.EventDelegationPolicyExportScanStrengthened, p.TenantID, name,
+		oldScan, newScan, transitionTs, 0))
 }
 
 // writeDelegationPolicyStoreError maps a delegationpolicystore error to

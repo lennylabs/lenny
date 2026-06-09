@@ -11,6 +11,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
@@ -354,21 +356,34 @@ func (r *Router) emitInterceptorFailPolicyTransition(ctx context.Context, p auth
 		"affected_policy_names": names,
 	}
 	if oldFailPolicy == interceptor.FailClosed && updated.FailPolicy == interceptor.FailOpen {
-		detail["transition_ts"] = rfc3339Nano(updated.FailOpenTransitionAt)
-		detail["cooldown_seconds"] = updated.CooldownSecondsAtTransition
+		transitionTs := rfc3339Nano(updated.FailOpenTransitionAt)
+		cooldown := updated.CooldownSecondsAtTransition
+		detail["transition_ts"] = transitionTs
+		detail["cooldown_seconds"] = cooldown
 		r.emit(ctx, p, string(audit.EventInterceptorFailPolicyWeakened), name, detail)
+		// spec: §11.2.1 — the failPolicy transition is also a billing-stream
+		// cost-attribution / compliance event under the operator's tenant.
+		r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
+			billingstore.EventInterceptorFailPolicyWeakened, p.TenantID, name,
+			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown)))
 		// spec: §8.3 line 218 — one weakening_cooldown_active per window
 		// entry (not per rejected request).
 		r.emit(ctx, p, string(audit.EventInterceptorWeakeningCooldownActive), name, map[string]any{
 			"interceptor_ref":       name,
-			"transition_ts":         rfc3339Nano(updated.FailOpenTransitionAt),
-			"cooldown_seconds":      updated.CooldownSecondsAtTransition,
+			"transition_ts":         transitionTs,
+			"cooldown_seconds":      cooldown,
 			"affected_policy_count": count,
 			"affected_policy_names": names,
 		})
+		r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
+			billingstore.EventInterceptorWeakeningCooldownActive, p.TenantID, name,
+			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown)))
 		return
 	}
 	r.emit(ctx, p, string(audit.EventInterceptorFailPolicyStrengthened), name, detail)
+	r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
+		billingstore.EventInterceptorFailPolicyStrengthened, p.TenantID, name,
+		string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, "", 0))
 }
 
 // interceptorAffectedPolicies counts the active DelegationPolicy

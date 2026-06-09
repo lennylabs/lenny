@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
@@ -1097,6 +1098,10 @@ func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request
 		"reason":                   body.Reason,
 		"active_leases_terminated": terminated,
 	})
+	// spec: §11.2.1 — emergency credential revocation is a billing-stream
+	// cost-attribution / compliance event under the credential pool's tenant.
+	r.appendBilling(req.Context(), billingfanout.CredentialRevoked(
+		tenant, name, credID, principal.Subject, body.Reason, uint32(terminated)))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"revokedCredential": credID,

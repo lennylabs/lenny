@@ -546,6 +546,24 @@ func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resour
 	})
 }
 
+// appendBilling tees a §11.2.1 billing event into the per-tenant billing
+// ledger. The §11.2.1 closed event set places the interceptor failPolicy,
+// export-scan, credential-revocation, and pool-isolation config-change
+// events in the cost-attribution stream alongside the §11.7 audit chain;
+// the admin Router is their producer, so it dual-emits. The write is
+// best-effort: a nil ledger (the no-billing minimal gateway) or a
+// transient store fault never fails the admin mutation, which is already
+// committed by the time emit/appendBilling runs. spec: §11.2.1. F-11.2.1.
+func (r *Router) appendBilling(ctx context.Context, ev billingstore.Event) {
+	if r.billing == nil || ev.TenantID == "" {
+		return
+	}
+	if ev.CreatedAt.IsZero() {
+		ev.CreatedAt = r.clock()
+	}
+	_, _ = r.billing.Append(ctx, ev)
+}
+
 // Handler returns an http.Handler routing the wired admin endpoints.
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()

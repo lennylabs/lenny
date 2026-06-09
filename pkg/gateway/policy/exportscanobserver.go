@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 )
 
@@ -39,6 +41,12 @@ type ExportScanObserver struct {
 	appender AuditAppender
 	metrics  ExportScanMetrics
 	clock    func() time.Time
+	// billing tees the §11.2.1 delegation.export_file_scan_rejected /
+	// export_scan_failed_open events into the per-tenant billing stream
+	// alongside the §11.7 audit append, so cost-attribution / compliance
+	// consumers see them in the ordered billing record. Nil disables the
+	// tee. spec: §11.2.1. F-11.2.1.
+	billing *billingfanout.Emitter
 }
 
 // NewExportScanObserver returns an observer backed by appender and
@@ -49,6 +57,13 @@ func NewExportScanObserver(appender AuditAppender, metrics ExportScanMetrics, cl
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &ExportScanObserver{appender: appender, metrics: metrics, clock: clock}
+}
+
+// WithBilling wires the §11.2.1 billing tee for the export-scan events.
+// Nil-safe: passing a nil emitter leaves the tee disabled.
+func (o *ExportScanObserver) WithBilling(billing *billingfanout.Emitter) *ExportScanObserver {
+	o.billing = billing
+	return o
 }
 
 // ExportFileScanned records the §16.1 metrics for every scanned file and
@@ -64,14 +79,21 @@ func (o *ExportScanObserver) ExportFileScanned(ctx context.Context, ev intercept
 	}
 
 	var eventType string
+	var billingType billingstore.EventType
 	switch ev.Outcome {
 	case interceptor.OutcomeRejected:
 		eventType = EventTypeDelegationExportFileScanRejected
+		billingType = billingstore.EventDelegationExportFileScanRejected
 	case interceptor.OutcomeFailedOpen:
 		eventType = EventTypeDelegationExportScanFailedOpen
+		billingType = billingstore.EventDelegationExportScanFailedOpen
 	default:
 		return
 	}
+	// spec: §11.2.1 — tee the export-scan outcome into the per-tenant
+	// billing stream alongside the §11.7 audit append.
+	o.billing.Emit(ctx, billingfanout.ExportFileScan(billingType, ev.TenantID,
+		ev.PolicyName, ev.InterceptorRef, ev.FilePath, ev.FileSize, ev.Reason))
 	if o.appender == nil {
 		return
 	}

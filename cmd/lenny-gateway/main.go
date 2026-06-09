@@ -110,6 +110,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingsink"
+	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
@@ -1899,6 +1900,12 @@ func main() {
 	// store directly.
 	billingLedger := billing
 	billing = billingPipeline
+
+	// spec: §11.2.1 — billingEmitter tees the cost-attribution / compliance
+	// event subset (delegation, credential, export-scan) into the per-tenant
+	// billing stream from producers whose primary sink is the §11.7 audit
+	// chain. Nil-safe: a no-billing minimal gateway drops every tee. F-11.2.1.
+	billingEmitter := billingfanout.NewEmitter(billing)
 
 	// spec: §11.2.1 line 151 / §12.8 line 839 — reject a retention window
 	// below the compliance floor of any tenant's regulated
@@ -3937,6 +3944,12 @@ func main() {
 		// derivelock.Memory backs the minimal-gateway and single-replica
 		// posture. F-7.1.12.
 		DeriveLock: defaultDeriveLock(concernRedis.For(storerouter.RedisConcernCoordination)),
+		// spec: §7.1 derive rule 5 / §11.2.1 — a platform-admin
+		// allowIsolationDowngrade override records derive.isolation_downgrade.
+		// §16.7 does not list this event type, so it is emitted to the
+		// §11.2.1 per-tenant billing stream (an append-only,
+		// audit-grade record) rather than the §11.7 audit chain. F-11.2.1.
+		DeriveAuditSink: deriveDowngradeBillingAuditor{billing: billingEmitter},
 		// §7.1 derive rule 2 — opt-in derive_failure audit-row persistence
 		// (default off). When on, a copy-stage derive failure persists a
 		// CAS-fenced terminal failed row reachable per §15.1. F-15.1.14.
@@ -4217,7 +4230,7 @@ func main() {
 		exportMaterializer = export.NewMaterializer(
 			exportwire.NewPodExporter(podRegistry),
 			exportwire.NewBlobSink(blobs, 0),
-			mcpDelegationAuditor{sink: auditSink},
+			mcpDelegationAuditor{sink: auditSink, billing: billingEmitter},
 		)
 	}
 	// §8.3 lines 160-181 / §13.5 mitigation 4: the per-file export-scan
@@ -4233,7 +4246,7 @@ func main() {
 	// with EXPORT_FILE_SCAN_UNAVAILABLE. F-13.5.5.
 	exportScanResolver := delegation.NewChainExportScanResolver(
 		policyChain,
-		policy.NewExportScanObserver(auditAppender, gwMetrics, nil),
+		policy.NewExportScanObserver(auditAppender, gwMetrics, nil).WithBilling(billingEmitter),
 	)
 	// §13.3 revocation cache: the auth middleware rejects a token whose
 	// jti is in this set, and the §8.2 line 61 child-token exchange reads
@@ -4286,7 +4299,7 @@ func main() {
 		// the service emits `delegation.spawned`,
 		// `delegation.self_recursion_allowed`, and `delegation.cycle_warning`.
 		// F-8.5.8 / F-8.5.9.
-		Auditor: mcpDelegationAuditor{sink: auditSink},
+		Auditor: mcpDelegationAuditor{sink: auditSink, billing: billingEmitter},
 		// spec: §8.2 line 90 / §10.7 — `independent` propagation
 		// routes the child afresh through the same ExperimentRouter
 		// the top-level session-creation path uses. Wired as a
@@ -4333,7 +4346,7 @@ func main() {
 		Environments:               environments,
 		Tenants:                    tenants,
 		Pools:                      pools,
-		Audit:                      mcpDelegationAuditor{sink: auditSink},
+		Audit:                      mcpDelegationAuditor{sink: auditSink, billing: billingEmitter},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               policyChain,
 		// spec: §8.3 lines 157-188 / §4.8 lines 1036, 1040 / §13.5
@@ -4426,7 +4439,7 @@ func main() {
 		// §4.9.2 credential.leased audit row binds each minted token to
 		// the originating session id. F-26.2.5.
 		VCSCreds:        vcsCreds,
-		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender},
+		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender, billing: billingEmitter},
 	})
 
 	// spec: §15.2 lines 1331-1333 — wire the Streamable HTTP SSE channel
@@ -8713,21 +8726,39 @@ func (e experimentRejectionReporter) RecordTargetingError(_ context.Context, pro
 
 // mcpDelegationAuditor adapts the gateway audit sink to the
 // mcptools.DelegationAuditor interface, drawing the §11.7 actor fields
-// from the request principal on the context.
+// from the request principal on the context. It also tees the §11.2.1
+// billing-stream events (delegation.spawned, delegation.isolation_violation)
+// into the per-tenant billing ledger so cost-attribution consumers see
+// them alongside the audit chain. spec: §11.2.1. F-11.2.1.
 type mcpDelegationAuditor struct {
-	sink admin.AuditSink
+	sink    admin.AuditSink
+	billing *billingfanout.Emitter
 }
 
 func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any) {
-	if a.sink == nil {
-		return
-	}
-	ev := admin.AuditEvent{Type: eventType, Detail: detail, At: clockinject.Now().UTC()}
+	tenantID, subject := "", ""
 	if p, ok := authmw.FromContext(ctx); ok {
-		ev.ActorSubject = p.Subject
-		ev.ActorTenantID = p.TenantID
+		tenantID, subject = p.TenantID, p.Subject
 	}
-	a.sink.EmitAdminEvent(ctx, ev)
+	if a.sink != nil {
+		ev := admin.AuditEvent{Type: eventType, Detail: detail, At: clockinject.Now().UTC()}
+		ev.ActorSubject = subject
+		ev.ActorTenantID = tenantID
+		a.sink.EmitAdminEvent(ctx, ev)
+	}
+	// spec: §11.2.1 — tee the cost-attribution / compliance subset into the
+	// billing stream. The tenant is the delegating caller's (the parent
+	// session's) tenant; the user is the parent session owner.
+	switch billingstore.EventType(eventType) {
+	case billingstore.EventDelegationSpawned:
+		if ev, ok := billingfanout.DelegationSpawned(tenantID, subject, detail); ok {
+			a.billing.Emit(ctx, ev)
+		}
+	case billingstore.EventDelegationIsolationViolation:
+		if ev, ok := billingfanout.DelegationIsolationViolation(tenantID, subject, detail); ok {
+			a.billing.Emit(ctx, ev)
+		}
+	}
 }
 
 // mcpVCSLeaseAuditor writes the §4.9.2 `credential.leased` audit row each
@@ -8739,9 +8770,19 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 // The token is never recorded. spec: §26.2 line 119; §4.9.2. F-26.2.5.
 type mcpVCSLeaseAuditor struct {
 	appender policy.AuditAppender
+	// billing tees the §11.2.1 credential.leased event into the per-tenant
+	// billing stream alongside the §4.9.2 audit row. Nil disables the tee.
+	// F-11.2.1.
+	billing *billingfanout.Emitter
 }
 
 func (a mcpVCSLeaseAuditor) RecordVCSLease(ctx context.Context, lease mcptools.VCSLeaseRecord) {
+	// spec: §11.2.1 — the credential lease is a billing-stream
+	// cost-attribution event bound to the leasing session. A VCS token mint
+	// is not pool-backed, so credential_pool_id is empty; the provider is
+	// the credential attribution and the access mode is the delivery mode.
+	a.billing.Emit(ctx, billingfanout.CredentialLeased(
+		lease.TenantID, lease.SessionID, "", lease.Provider, lease.Mode))
 	if a.appender == nil {
 		return
 	}
@@ -8757,6 +8798,24 @@ func (a mcpVCSLeaseAuditor) RecordVCSLease(ctx context.Context, lease mcptools.V
 	}
 	_, _ = a.appender.Append(ctx, lease.TenantID, string(credential.AuditCredentialLeased),
 		json.RawMessage(payload), clockinject.Now().UTC())
+}
+
+// deriveDowngradeBillingAuditor implements
+// sessionserver.DeriveAuditSink. The §7.1 derive rule 5
+// derive.isolation_downgrade event is enumerated in the §11.2.1 billing
+// event set but not in the §16.7 audit catalog, so it is emitted to the
+// per-tenant billing stream (an append-only record matching the audit
+// log integrity model) rather than the §11.7 hash chain — the same
+// closed-catalog discipline as F-9.2.11. spec: §11.2.1; §7.1 rule 5.
+// F-11.2.1.
+type deriveDowngradeBillingAuditor struct {
+	billing *billingfanout.Emitter
+}
+
+func (a deriveDowngradeBillingAuditor) EmitDeriveIsolationDowngrade(ctx context.Context, ev sessionserver.DeriveIsolationDowngradeEvent) {
+	a.billing.Emit(ctx, billingfanout.DeriveIsolationDowngrade(
+		ev.TenantID, ev.SourceSessionID, string(ev.SourceIsolationProfile),
+		ev.TargetPool, string(ev.TargetIsolationProfile), ev.AuthorizingUserSubject, ev.TicketID))
 }
 
 // sessionLifecycleAuditor adapts the gateway audit appender to the
