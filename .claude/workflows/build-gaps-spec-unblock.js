@@ -1,7 +1,7 @@
 export const meta = {
   name: "build-gaps-spec-unblock",
   description:
-    "Loop: run close-build-gaps.sh to implement OPEN BUILD-GAPS.md findings that reference an approved spec proposal (spec via spec-apply + full code blast radius + tests), commit and push, until none remain",
+    "Loop: run close-build-gaps.sh to implement OPEN BUILD-GAPS.md findings that reference an approved spec proposal (spec applied via the implement-proposal skill + full code blast radius + tests), commit and push, until none remain",
   whenToUse:
     "Drain OPEN BUILD-GAPS.md findings backed by an approved spec proposal — apply each proposal's spec edits and full code blast radius, run its tests to green, close the finding, commit and push, repeat",
 };
@@ -16,11 +16,11 @@ export const meta = {
 //   }})
 //
 // Proposals are generated, reviewed, and approved OUTSIDE this workflow (the
-// spec-proposal and spec-apply skills, signed off by a human). This workflow
+// spec-proposal skill plus human sign-off). This workflow
 // neither writes nor approves proposals, and never opens, re-opens, or creates
 // a finding — it only CLOSES findings that already reference an approved
 // proposal. The per-finding work lives in close-build-gaps.sh, the single
-// engine: it applies the proposal's spec edits with the spec-apply skill,
+// engine: it applies the proposal's spec edits with the implement-proposal skill (apply-only),
 // implements the entire spec change's blast radius across the codebase, writes
 // and runs tests to green, and marks the finding CLOSED. close-build-gaps.sh
 // loops internally across batches until no qualifying finding remains and then
@@ -80,7 +80,7 @@ function runPrompt(iter) {
     repo +
     "/close-build-gaps.sh" +
     flag +
-    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the spec-apply skill, implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
+    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the implement-proposal skill (apply-only), implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
     "     cd " +
     repo +
     " && nohup setsid ./close-build-gaps.sh" +

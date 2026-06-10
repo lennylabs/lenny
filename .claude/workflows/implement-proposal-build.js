@@ -1,24 +1,26 @@
-// Implementation subworkflow for spec-implement. Given an applied spec
+// Implementation subworkflow for implement-proposal. Given an applied spec
 // proposal, it identifies the blast radius, plans an ordered build
 // sequence, implements the sequence one step at a time (creating and
-// running tests along the way), and runs a final verification pass.
+// running tests along the way, retrying a step until its tests pass), and
+// runs a final verification loop that fixes and re-runs until the reached
+// tiers are green.
 // It does NOT verify the spec is applied or close findings — the
-// spec-implement parent does that around this call.
+// implement-proposal parent does that around this call.
 //
-// Invoked as a sub-step: workflow("spec-implement-build", { proposalPath,
+// Invoked as a sub-step: workflow("implement-proposal-build", { proposalPath,
 // date, repoRoot, maxTier }). Runs only agents (no nested workflow()).
 //
-// MAINTENANCE: the spec-implement skill (.claude/skills/spec-implement)
+// MAINTENANCE: the implement-proposal skill (.claude/skills/implement-proposal)
 // documents this subworkflow; keep its description in sync.
 
 export const meta = {
-  name: "spec-implement-build",
+  name: "implement-proposal-build",
   description:
     "Plan the blast radius and build sequence of an applied spec proposal, then implement it one step at a time with tests, then verify",
   phases: [
     { title: "Plan", detail: "blast radius + ordered build sequence, completeness-checked" },
-    { title: "Build", detail: "implement each step in order, with tests run to green" },
-    { title: "Verify", detail: "run the reached tiers across the whole change" },
+    { title: "Build", detail: "implement each step in order, retrying until its tests pass" },
+    { title: "Verify", detail: "run the reached tiers across the whole change, fixing and re-running until green" },
   ],
 };
 
@@ -33,6 +35,8 @@ const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
 const maxPlanRounds = input.maxPlanRounds || 2;
+const maxStepAttempts = input.maxStepAttempts || 3;
+const maxVerifyRounds = input.maxVerifyRounds || 6;
 
 const RULES =
   "Follow the project rules in " +
@@ -179,7 +183,25 @@ const stepResults = [];
 let priorContext = "";
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
-  const res = await agent(
+  const stepHeader =
+    "Step " +
+    step.id +
+    " (" +
+    (i + 1) +
+    " of " +
+    plan.steps.length +
+    "): " +
+    step.title +
+    "\nWork: " +
+    step.work +
+    "\nTargets: " +
+    (step.targets || []).join(", ") +
+    "\nTest tiers to create and run: " +
+    (step.tiers || []).join(", ") +
+    "\nSpec sections: " +
+    (step.specRefs || []).join(", ");
+
+  let res = await agent(
     "Implement one step of a build sequence for an applied spec proposal.\n\n" +
       "HARD CONSTRAINT: implement only this step. Do not start later steps. Work in " +
       repo +
@@ -187,31 +209,46 @@ for (let i = 0; i < plan.steps.length; i++) {
       "Proposal (authoritative for the change): " +
       proposal +
       ". Its spec edits are already in spec/; read the relevant sections.\n\n" +
-      "Step " +
-      step.id +
-      " (" +
-      (i + 1) +
-      " of " +
-      plan.steps.length +
-      "): " +
-      step.title +
-      "\nWork: " +
-      step.work +
-      "\nTargets: " +
-      (step.targets || []).join(", ") +
-      "\nTest tiers to create and run: " +
-      (step.tiers || []).join(", ") +
-      "\nSpec sections: " +
-      (step.specRefs || []).join(", ") +
+      stepHeader +
       priorContext +
       "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
       RULES +
-      "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and run the rest.",
+      "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run.",
     { schema: STEP, label: "build:" + step.id, phase: "Build" },
   );
-  stepResults.push({ step: step.id, title: step.title, ...(res || { implemented: false, testsPassed: false, tiersRun: [], notes: "agent failed" }) });
+
+  // Retry the step until its runnable tiers pass, bounded by maxStepAttempts,
+  // so a red step does not compound into the steps that depend on it.
+  let attempt = 1;
+  while (res && !res.testsPassed && attempt < maxStepAttempts) {
+    attempt++;
+    log("Step " + step.id + " tests not green; fix attempt " + attempt + "/" + maxStepAttempts);
+    res = await agent(
+      "Finish a build step whose tests are not yet green.\n\n" +
+        "HARD CONSTRAINT: work only on this step. Do not start later steps. Work in " +
+        repo +
+        ".\n\n" +
+        "Proposal (authoritative): " +
+        proposal +
+        " (spec edits already in spec/).\n\n" +
+        stepHeader +
+        "\n\nThe prior attempt left this step's tests not passing. Notes from it: " +
+        ((res && res.notes) || "(none)") +
+        "\n\nDiagnose the failures and fix the code until tier 0, tier 1, and the listed tiers pass (skip only a tier that genuinely needs a cloud-only resource, noting it). Add any missing tests for this step's tiers, run them, then commit on the current branch. " +
+        RULES +
+        "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
+      { schema: STEP, label: "build:" + step.id + ":fix" + attempt, phase: "Build" },
+    );
+  }
+
+  stepResults.push({
+    step: step.id,
+    title: step.title,
+    attempts: attempt,
+    ...(res || { implemented: false, testsPassed: false, tiersRun: [], notes: "agent failed" }),
+  });
   const tail = res
-    ? "Step " + step.id + " done (commit " + (res.commit || "?") + ", tests " + (res.testsPassed ? "green" : "RED") + ")."
+    ? "Step " + step.id + " done in " + attempt + " attempt(s) (commit " + (res.commit || "?") + ", tests " + (res.testsPassed ? "green" : "RED") + ")."
     : "Step " + step.id + " agent failed.";
   log(tail);
   // Carry a short tail of prior-step outcomes so each implementer knows
@@ -241,27 +278,46 @@ let verify = await agent(
   { schema: VERIFY, label: "verify", phase: "Verify" },
 );
 
-if (verify && !verify.green && verify.failures && verify.failures.length > 0) {
-  log("Verification found failures; one fix pass");
+// Iterate fix-and-re-run until every reached tier is green, bounded by
+// maxVerifyRounds. The loop stops early when a round reports green, or when
+// a non-green result lists no actionable failures (nothing to fix).
+let vround = 0;
+while (
+  verify &&
+  !verify.green &&
+  verify.failures &&
+  verify.failures.length > 0 &&
+  vround < maxVerifyRounds
+) {
+  vround++;
+  log("Verify round " + vround + "/" + maxVerifyRounds + ": fixing " + verify.failures.length + " failure(s)");
   await agent(
-    "Fix the test failures from the final verification of an applied spec proposal's implementation.\n\n" +
+    "Fix the test failures from the verification of an applied spec proposal's implementation.\n\n" +
       "Work in " +
       repo +
       ". Proposal: " +
       proposal +
       ". Failures:\n" +
       verify.failures.map((f) => "- " + f).join("\n") +
-      "\n\nFix the code (not the spec) until every reached tier is green, commit the fixes, and keep the change minimal. " +
+      "\n\nFix the code (not the spec) so every reached tier passes; add or correct tests where the failure is a missing or wrong test. Commit the fixes and keep the change minimal. " +
       RULES,
-    { label: "verify-fix", phase: "Verify" },
+    { label: "verify-fix:r" + vround, phase: "Verify" },
   );
   verify = await agent(
     "Re-run the reached tiers for the implementation in " +
       repo +
       " and report whether everything is now green. Tiers: " +
       (tierSet.join(", ") || "from the diff") +
-      ". Use `lenny-test --changed --max-tier <tier>`. Report green, the tiers run, the changed-line coverage, and any remaining failures.",
-    { schema: VERIFY, label: "verify-rerun", phase: "Verify" },
+      ". Use `lenny-test --changed --max-tier <tier>`, bringing infrastructure up as needed. Report green, the tiers run, the changed-line coverage, and any remaining failures precisely.",
+    { schema: VERIFY, label: "verify-rerun:r" + vround, phase: "Verify" },
+  );
+}
+
+if (verify && !verify.green) {
+  log(
+    vround >= maxVerifyRounds
+      ? "Verify cap (" + maxVerifyRounds + " rounds) reached; still not green"
+      : "Verify not green with no actionable failures listed; stopping",
   );
 }
 
@@ -271,6 +327,7 @@ return {
   steps: stepResults,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
   green: !!(verify && verify.green),
+  verifyRounds: vround,
   changedLineCoverage: verify ? verify.changedLineCoverage : undefined,
   failures: verify ? verify.failures || [] : ["final verification did not run"],
 };
