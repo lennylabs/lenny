@@ -41,7 +41,7 @@ The four coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cl
 
 - `/workspace/current/` is the **repo root** (`pwd` inside the shell defaults here).
 - `.git/` is materialized by the gateway when the client's `WorkspacePlan` includes a `sources[].type: gitClone` entry; otherwise the workspace is a plain directory.
-- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is used only for `concurrent` pools; coding-agent runtimes default to `executionMode: session` and do not use it.
+- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is used only on pools with `sessionPolicy.maxConcurrentSessions > 1`; coding-agent runtimes default to `executionMode: session` with one session per pod and do not use it.
 - `/workspace/output/` is provided for agents to write artifacts that should survive session teardown and be recoverable via `GET /v1/sessions/{id}/artifacts` ([§15.1](15_external-api-surface.md#151-rest-api)). Agents MUST write intended outputs here; the rest of `/workspace/current/` is ephemeral.
 
 **Pre-installed tools.** The reference image for every coding-agent runtime includes: `bash`, `sh`, `git`, `curl`, `jq`, `ripgrep`, `fd`, `python3`, `node` (current LTS), `go` (current stable), `rustc`/`cargo`, `make`. Language toolchains for less-common ecosystems (Ruby, Java, Swift) are not pre-installed; `setupCommands` or user-supplied `sources[]` install them per-session. The pre-installed set is chosen to cover the top languages without bloating the image beyond ~1.5 GB.
