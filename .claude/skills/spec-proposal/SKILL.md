@@ -44,7 +44,8 @@ These design points come from convergence runs on prior proposals in this reposi
 - **Two skeptics per finding, both must confirm.** One re-derives the evidence from the files; one judges materiality assuming the evidence is true, with instructions to default to refuted. The split kills plausible-but-wrong findings and nitpicks separately.
 - **Refuted findings are remembered and injected into later rounds.** Without the memory, a refuted finding resurfaces in a later round, wastes verification, and can block convergence.
 - **Dedup before verification.** Independent lenses converge on the same root error under different phrasings; verifying duplicates multiplies cost for nothing.
-- **A rotating extra lens.** The fixed lenses develop shared blind spots over rounds because they re-read the same document. The rotating lens (security regression, operational consistency, fresh holistic read) has found confirmed errors in rounds the fixed lenses passed.
+- **Security, Kubernetes, and performance are always-on fixed lenses.** Every round runs the four structural lenses (citations, feasibility, edit-sites, mechanism) plus three non-functional lenses that must be present every round: `security` (control regression AND the trust boundary / durability of any security-bounding value), `kubernetes` (controller-runtime and API-convention soundness), and `performance` (top-tier write rates, bottlenecks, and failure-mode reliability under store outage and coordinator handoff). These were promoted to always-on after dedicated security and reliability passes caught a showstopper (a residual-state security bound sourced from an untrusted pod self-report with no durable fallback) that the rotating-lens loop had converged past. Do not demote them to rotating.
+- **A rotating extra lens, on top of the fixed set.** The fixed lenses develop shared blind spots over rounds because they re-read the same document. One extra lens rotates per round (operational consistency, then fresh holistic read) and has found confirmed errors in rounds the fixed lenses passed.
 
 ## Error classes with a record of surviving verification
 
@@ -71,7 +72,7 @@ The lens prompts in the script enumerate these. They are the classes that have p
    - `date`: today's date as `YYYY-MM-DD` (workflow scripts cannot call Date).
    - `repoRoot`: the absolute repository root.
    - `exemplar`: the path of the highest-numbered existing proposal (in review mode, excluding the proposal under review).
-   - `maxReviewRounds`: default 8.
+   - `maxReviewRounds`: default 12.
 3. New mode only:
    - Read the spec sections and code paths the problem names so the dossier carries concrete citations rather than paraphrase.
    - `problem`: a problem dossier of one to three paragraphs stating the problem.
@@ -94,7 +95,7 @@ The workflow script lives at `.claude/workflows/spec-proposal.js` and is invoked
   "nextNumber": "<NNNN>",
   "exemplar": "proposals/<highest-numbered proposal>.md",
   "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 8
+  "maxReviewRounds": 12
 }
 ```
 
@@ -106,7 +107,7 @@ The workflow script lives at `.claude/workflows/spec-proposal.js` and is invoked
   "date": "<YYYY-MM-DD>",
   "exemplar": "proposals/<highest-numbered other proposal>.md",
   "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 8
+  "maxReviewRounds": 12
 }
 ```
 

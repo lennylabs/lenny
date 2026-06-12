@@ -36,7 +36,7 @@ const repo = input.repoRoot;
 const date = input.date;
 const exemplar = input.exemplar;
 const context = input.context || "none provided";
-const maxRounds = input.maxReviewRounds || 8;
+const maxRounds = input.maxReviewRounds || 12;
 const CLEAN_TARGET = 2;
 
 const READ_ONLY =
@@ -358,7 +358,11 @@ if (mode === "new") {
               "\n" +
               "Answer each question with evidence: (1) Does an existing spec surface, RPC, frame, field, or code path already cover this? (2) Is every factual premise under the change true in both the spec and the code, including process-lifetime and ownership assumptions? (3) Does the change contradict any other spec section? (4) Does it violate the project principles? (5) Is there a strictly smaller change that resolves the same problem? " +
               "Return drop when the change is unnecessary or rests on a false premise, revise with a concrete revision when the need is real but the change is wrong or oversized, and keep only when it survives all five questions.",
-            { schema: CHALLENGE, label: "challenge:" + c.id, phase: "Challenge" },
+            {
+              schema: CHALLENGE,
+              label: "challenge:" + c.id,
+              phase: "Challenge",
+            },
           ).then((v) => ({ change: c, ...v })),
       ),
     )
@@ -390,7 +394,12 @@ if (mode === "new") {
       " dropped",
   );
   if (kept.length === 0) {
-    return { mode, status: "no-change-needed", dropped: droppedChanges, verdicts };
+    return {
+      mode,
+      status: "no-change-needed",
+      dropped: droppedChanges,
+      verdicts,
+    };
   }
 
   phase("Write");
@@ -495,13 +504,21 @@ const LENSES = [
     key: "mechanism",
     text: "Lens: end-to-end mechanism. Trace each flow the proposal describes from origin to final effect and hunt for: states where declared config and running pods diverge (revert and rollout races), mandatory gates that one write path bypasses (fields settable through a surface the gate never inspects, such as a directly applied custom resource), triggers that can never fire, defaults that contradict stated behavior, checks at layers that cannot see the data they need, granularity mismatches between a setting and what it controls, and predicate drift (the same trigger condition stated with different conjuncts in different sections, summary tables, constant comments, proposed spec text, and tests). Also verify the proposal's quoted replacement spec text is itself consistent with the rest of the spec it will be embedded in.",
   },
+  {
+    key: "security",
+    text: "Lens: security. Always run. Two checks. (1) Regression of an established control — the section 10.3 zero-RBAC and no-apiserver agent-pod posture, section 13.2 default-deny networking, section 13.1 pod security, fail-closed admission, two-ServiceAccount label-immutability splits, tenant pinning, one-session-only pod reuse, mandatory acknowledgment gates, and audit/alert surfacing of degraded states; a change that silently removes, bypasses, or feature-gates a mandatory control is a finding. (2) Trust boundary and durability of a security bound — for every value that bounds a security property (residual-state limits such as maxTasksPerPod/maxScrubFailures, quota/budget ceilings, isolation or reuse counters), verify the AUTHORITATIVE source is a trusted component, not an in-pod or otherwise attacker-influenceable self-report: the spec's proxy-mode posture (the gateway measures independently and ignores the pod's self-report in multi-tenant deployments) is the bar, and a bound sourced from a pod self-report, or one that can silently RESET or relax on a store outage because it lacks the durable fallback section 12.4 requires of every Redis-backed role, is a finding. Merely less strict than it could be is NOT a finding.",
+  },
+  {
+    key: "kubernetes",
+    text: "Lens: Kubernetes-idiom soundness. Always run. Judge the design against controller-runtime and API conventions: single-writer field-manager ownership of any status subresource (no ForceOwnership or two managers racing one field); status is controller-observed state, never a gateway-to-controller command channel (a non-owning component writing another component's status, or a status field used as an RPC inbox, is an anti-pattern) while spec is owner-written desired state; finalizer correctness (no stuck-finalizer footgun where a wedged controller makes objects undeletable); CRD-as-coordination versus source-of-truth (etcd is not a message bus or a per-request database); admission-webhook coherence (the webhook must have a real object to admit and remain the correctness gate, not a status field); level-triggered reconciliation off owned watches; and controller-on-the-hot-path (a synchronous request path must not block on a controller reconcile, a work-queue, or leader election). A design that fights one of these idioms is a finding; name the idiom and the concrete consequence.",
+  },
+  {
+    key: "performance",
+    text: "Lens: performance, scalability, and failure-mode reliability at the top capacity tier. Always run. Quantify the control-plane and data-plane write rates the proposal creates at the largest documented tier (per-task, per-request, or per-session writes multiplied by that tier's object and request counts) against the budgets the spec states (the etcd status-write dedup ceiling, the Postgres and Redis tier sizing, connection-pool limits). Hunt for per-unit-of-work write amplification onto etcd, single-leader or single-key serialization bottlenecks, hot keys, informer-cache memory for net-new watches, and reconcile or work-queue pressure; state the math. Then test failure-mode reliability: trace what survives and what stalls during a Postgres failover, a Redis reset, and a gateway coordinator handoff, and confirm the binding, occupancy, running work, and any security-bounding counter survive or degrade no worse than the shipped design and that every store-backed value the design relies on has a durable fallback (section 12.4). A new bottleneck at the top tier, or a failure mode less reliable than the shipped behavior, is a finding.",
+  },
 ];
 
 const EXTRAS = [
-  {
-    key: "security",
-    text: "Lens: security-posture regression. For each proposed change, check whether it weakens any control the spec establishes: the section 10.3 zero-RBAC and no-apiserver agent-pod posture, section 13.2 default-deny networking, section 13.1 pod security, fail-closed admission, mandatory acknowledgment gates, and audit/alert surfacing of degraded states. A change that silently removes, bypasses, or feature-gates a mandatory control is a finding. A change that is merely less strict than it could be is NOT a finding.",
-  },
   {
     key: "operational",
     text: "Lens: operational consistency. Check that conditions, metrics, alerts, and operator documentation the proposal touches stay mutually consistent after application: every alert references an emitted metric that a spec-defined evaluation surface can collect, every condition has exactly one writer consistent with section 4.6.3, condition semantics match what operators are told in docs/, and the spec's observability inventories agree with what the proposal says exists. An inconsistency that would mislead an operator about the system's actual state is a finding.",
@@ -523,7 +540,9 @@ function reviewPrompt(lens, round, fixedTitles, rejected) {
   if (rejected.length > 0) {
     history +=
       "\n\nAlready examined and refuted in earlier rounds (do not re-report these or close variants):\n" +
-      rejected.map((r) => "- " + r.title + ": refuted because " + r.reason).join("\n");
+      rejected
+        .map((r) => "- " + r.title + ": refuted because " + r.reason)
+        .join("\n");
   }
   return (
     "You are an adversarial reviewer in round " +
@@ -660,7 +679,13 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
     });
     if (d && d.findings.length > 0) deduped = d.findings;
   }
-  log("Round " + round + ": " + deduped.length + " findings after dedup; verifying");
+  log(
+    "Round " +
+      round +
+      ": " +
+      deduped.length +
+      " findings after dedup; verifying",
+  );
 
   const verdicts = await parallel(
     deduped.map(
@@ -699,7 +724,13 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
       });
     });
   log(
-    "Round " + round + ": " + confirmed.length + "/" + deduped.length + " findings confirmed",
+    "Round " +
+      round +
+      ": " +
+      confirmed.length +
+      "/" +
+      deduped.length +
+      " findings confirmed",
   );
   history.push({
     round,
