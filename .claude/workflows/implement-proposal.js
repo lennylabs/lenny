@@ -10,7 +10,6 @@
 //     repoRoot: "/abs/path",                 // optional; defaults to this project
 //     implementCode: true,                   // optional, default true; false = land + verify spec only
 //     maxApplyRounds: 5,                      // optional; spec apply-verify-fix rounds
-//     maxTier: "e2e"                          // optional; cap forwarded to the build subworkflow
 //   }})
 //
 // Spec always comes first: the staged spec edits are applied and verified
@@ -434,7 +433,6 @@ try {
     proposalPath: input.proposalPath,
     date,
     repoRoot: repo,
-    maxTier: input.maxTier,
   });
 } catch (e) {
   return {
@@ -444,15 +442,23 @@ try {
     findingsReferencing: plan.findingIds,
   };
 }
-log("Implementation done: " + (build.steps ? build.steps.length : 0) + " steps, green=" + !!build.green);
+log(
+  "Implementation done: " +
+    (build.steps ? build.steps.length : 0) +
+    " steps, green=" +
+    !!build.green +
+    ", reviewClean=" +
+    !!build.reviewClean +
+    (build.status === "step-stuck" ? ", stuck at step " + build.stuckStep : ""),
+);
 
 // ---- Close the findings that reference the proposal ----
 
 phase("Close findings");
 let close = { closed: [], committed: false };
 if (plan.findingIds.length > 0) {
-  if (!build.green) {
-    log("Implementation is not green; leaving findings OPEN for review");
+  if (!build.green || !build.reviewClean) {
+    log("Implementation is not green or the design-conformance review is not clean; leaving findings OPEN for review");
   } else {
     close = await agent(
       "Close the BUILD-GAPS.md findings whose implementation just landed, then commit.\n\n" +
@@ -472,15 +478,24 @@ if (plan.findingIds.length > 0) {
 }
 
 return {
-  status: build.green ? "implemented" : "implemented-not-green",
+  status:
+    build.status === "step-stuck"
+      ? "build-step-stuck"
+      : build.green && build.reviewClean
+        ? "implemented"
+        : "implemented-not-green",
   proposal: relProposal,
   specStatus,
   blastRadius: build.blastRadius,
   steps: build.steps,
   commits: build.commits,
   green: !!build.green,
+  reviewClean: !!build.reviewClean,
+  reviewFindings: build.reviewFindings || [],
+  stuckStep: build.stuckStep,
   changedLineCoverage: build.changedLineCoverage,
   failures: build.failures || [],
+  resumeNote: build.resumeNote,
   findingsReferencing: plan.findingIds,
   findingsClosed: close.closed || [],
 };

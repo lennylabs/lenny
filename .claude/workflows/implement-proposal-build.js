@@ -1,14 +1,25 @@
 // Implementation subworkflow for implement-proposal. Given an applied spec
 // proposal, it identifies the blast radius, plans an ordered build
-// sequence, implements the sequence one step at a time (creating and
-// running tests along the way, retrying a step until its tests pass), and
-// runs a final verification loop that fixes and re-runs until the reached
-// tiers are green.
+// sequence, then implements the sequence one step at a time. Each step is
+// gated before the sequence advances: an implementer writes the code and
+// tests, an independent agent verifies the step's tiers are green, and an
+// adversarial review checks the step's diff conforms to the proposal's
+// design. A step that does not reach green-and-conformant within
+// maxStepAttempts aborts the sequence so a divergent or red step does not
+// compound into its dependents. Periodically (every replanEvery steps, or
+// after a step that struggled) a read-only critic checks whether the
+// remaining plan still matches what landed and, on evidenced drift,
+// re-plans the remaining steps forward-only (completed steps immutable).
+// After the build, a final verification loop
+// fixes and re-runs until the reached tiers are green and changed-line
+// coverage meets the 80% floor, and a final cross-step design-conformance
+// review of the cumulative diff catches anything the per-step reviews could
+// not see, fixing any divergence before returning.
 // It does NOT verify the spec is applied or close findings — the
 // implement-proposal parent does that around this call.
 //
 // Invoked as a sub-step: workflow("implement-proposal-build", { proposalPath,
-// date, repoRoot, maxTier }). Runs only agents (no nested workflow()).
+// date, repoRoot }). Runs only agents (no nested workflow()).
 //
 // MAINTENANCE: the implement-proposal skill (.claude/skills/implement-proposal)
 // documents this subworkflow; keep its description in sync.
@@ -19,31 +30,60 @@ export const meta = {
     "Plan the blast radius and build sequence of an applied spec proposal, then implement it one step at a time with tests, then verify",
   phases: [
     { title: "Plan", detail: "blast radius + ordered build sequence, completeness-checked" },
-    { title: "Build", detail: "implement each step in order, retrying until its tests pass" },
-    { title: "Verify", detail: "run the reached tiers across the whole change, fixing and re-running until green" },
+    { title: "Build", detail: "implement each step in order; verify its tiers and adversarially review its diff before advancing; periodically re-plan the remaining steps on drift; abort if a step stays red or divergent" },
+    { title: "Verify", detail: "run the reached tiers across the whole change, fixing until green and coverage meets the floor" },
+    { title: "Review", detail: "final cross-step design-conformance review of the cumulative diff against the proposal, fix divergences" },
   ],
 };
 
 let input = args;
 if (typeof input === "string") input = JSON.parse(input);
-if (!input || !input.proposalPath || !input.date) {
-  throw new Error("args.proposalPath and args.date are required");
+if (!input || !input.proposalPath) {
+  throw new Error("args.proposalPath is required");
 }
 const repo = input.repoRoot || "/Users/joan/projects/lenny";
-const date = input.date;
 const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
 const maxPlanRounds = input.maxPlanRounds || 2;
-const maxStepAttempts = input.maxStepAttempts || 3;
-const maxVerifyRounds = input.maxVerifyRounds || 6;
+const maxStepAttempts = input.maxStepAttempts || 50;
+const maxVerifyRounds = input.maxVerifyRounds || 25;
+const maxReviewRounds = input.maxReviewRounds || 50;
+const coverageFloor = input.coverageFloor || 80;
+// Periodic plan-drift re-check during Build: every replanEvery completed
+// steps (and after any step that took at least replanStruggleAttempts
+// attempts), a read-only critic checks whether the remaining plan still
+// matches reality; on evidenced drift, the remaining steps are re-planned
+// (forward-only, completed steps immutable), bounded by maxReplans.
+const replanEvery = input.replanEvery || 4;
+const maxReplans = input.maxReplans || 6;
+const replanStruggleAttempts = input.replanStruggleAttempts || 4;
 
 const RULES =
   "Follow the project rules in " +
   repo +
   "/.claude/rules/code-best-practices.md (small single-purpose functions, reuse over duplication, wrapped errors, injected dependencies, context propagation, fail-closed security, `// spec:` citations, no backward-compat shims) and " +
   repo +
-  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes.";
+  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes.";
+
+// One build step, shared by the initial plan and the tail re-plan.
+const STEP_ITEM = {
+  type: "object",
+  required: ["id", "title", "work", "targets", "tiers"],
+  properties: {
+    id: { type: "string", description: "stable short id, e.g. S1" },
+    title: { type: "string" },
+    work: { type: "string", description: "what to implement in this step" },
+    targets: { type: "array", items: { type: "string" }, description: "files or packages" },
+    dependsOn: { type: "array", items: { type: "string" } },
+    tiers: {
+      type: "array",
+      items: { type: "string" },
+      description: "test tiers this step must create and run (e.g. unit, component, integration)",
+    },
+    specRefs: { type: "array", items: { type: "string" } },
+  },
+};
 
 const PLAN = {
   type: "object",
@@ -58,25 +98,43 @@ const PLAN = {
     steps: {
       type: "array",
       description: "ordered build sequence; earlier steps are prerequisites of later ones",
-      items: {
-        type: "object",
-        required: ["id", "title", "work", "targets", "tiers"],
-        properties: {
-          id: { type: "string", description: "stable short id, e.g. S1" },
-          title: { type: "string" },
-          work: { type: "string", description: "what to implement in this step" },
-          targets: { type: "array", items: { type: "string" }, description: "files or packages" },
-          dependsOn: { type: "array", items: { type: "string" } },
-          tiers: {
-            type: "array",
-            items: { type: "string" },
-            description: "test tiers this step must create and run (e.g. unit, component, integration)",
-          },
-          specRefs: { type: "array", items: { type: "string" } },
-        },
-      },
+      items: STEP_ITEM,
     },
     risks: { type: "array", items: { type: "string" } },
+  },
+};
+
+// Plan-drift critic verdict: does the REMAINING plan still match reality?
+const DRIFT = {
+  type: "object",
+  required: ["drift"],
+  properties: {
+    drift: { type: "boolean" },
+    reasons: {
+      type: "array",
+      description:
+        "concrete, evidenced ways the remaining plan no longer matches reality (a touched-but-unplanned surface, an orphaned removal, a now-redundant step, a backwards dependency)",
+      items: { type: "string" },
+    },
+  },
+};
+
+// Forward-only re-plan of the remaining steps; completed steps are immutable.
+const TAIL = {
+  type: "object",
+  required: ["steps"],
+  properties: {
+    steps: {
+      type: "array",
+      description: "the revised ordered sequence for the REMAINING work only (steps not yet built)",
+      items: STEP_ITEM,
+    },
+    blastRadiusAdditions: {
+      type: "array",
+      description: "surfaces discovered during the build that the original blast radius missed",
+      items: { type: "string" },
+    },
+    notes: { type: "string" },
   },
 };
 
@@ -119,6 +177,32 @@ const VERIFY = {
   },
 };
 
+const REVIEW = {
+  type: "object",
+  required: ["findings"],
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "where", "divergence", "fix"],
+        properties: {
+          title: { type: "string" },
+          where: { type: "string", description: "file:line and the proposal section it diverges from" },
+          divergence: { type: "string", description: "how the landed code diverges from the proposal's design" },
+          fix: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const SHA = {
+  type: "object",
+  required: ["sha"],
+  properties: { sha: { type: "string" } },
+};
+
 // ---- Plan: blast radius + ordered build sequence, completeness-checked ----
 
 phase("Plan");
@@ -132,6 +216,7 @@ let plan = await agent(
     proposal +
     ". The proposal's spec edits are ALREADY applied to spec/. Read the proposal in full — every section, especially Detailed design, CRD and RBAC changes, Observability, Proposed spec changes (now landed in spec/), Testing, and Files touched. The finding(s) that reference this proposal are entry points; the proposal defines the complete change.\n\n" +
     "Then map the full blast radius: grep spec/, pkg/, cmd/, charts/, schemas/, and migrations/ for every existing surface the change touches (call sites, builders, stores, controllers, reconcilers, CRD types, proto/JSONL schemas, chart templates, alert rules) and every new surface it adds. " +
+    "The blast radius and the build sequence MUST include the surfaces the proposal REMOVES, not only those it adds or changes: for every mode, field, RPC, frame, metric, enum value, function, or whole file the proposal eliminates, include an explicit removal step that deletes it plus the code paths, tests, fixtures, schema entries, and chart templates orphaned by its removal, sequenced so the removal lands without breaking the build (remove consumers before the surface, or in the same step). A surface the proposal eliminates that has no removal step is a planning gap. " +
     "Produce blastRadius (one entry per surface) and an ORDERED build sequence of steps where each step is independently implementable once its dependencies are done. For each step give the work, the target files or packages, dependsOn (earlier step ids), the test tiers it must create and run (per " +
     repo +
     "/.claude/rules/test-coverage.md), and the spec sections it implements. Sequence so foundational changes (CRD fields, schemas, shared types) come before the code that consumes them, and tests for each step land within that step.",
@@ -147,7 +232,7 @@ for (let round = 1; round < maxPlanRounds; round++) {
       proposal +
       " (read every section). Plan under review:\n" +
       JSON.stringify(plan, null, 2) +
-      "\n\nReport complete=false with specific gaps when the plan omits any part of the proposal's blast radius (a field, RPC, condition, metric, gate, schema, chart template, or call site the proposal specifies), sequences a consumer before its prerequisite, or omits a test tier the change reaches per " +
+      "\n\nReport complete=false with specific gaps when the plan omits any part of the proposal's blast radius (a field, RPC, condition, metric, gate, schema, chart template, or call site the proposal specifies), omits a removal step for a surface the proposal eliminates (a removed mode, field, RPC, frame, metric, enum value, function, or file left in the tree, or code, tests, and fixtures orphaned by a removal), sequences a consumer before its prerequisite, or omits a test tier the change reaches per " +
       repo +
       "/.claude/rules/test-coverage.md. Report complete=true with an empty gaps array when the plan fully implements the proposal. Do not invent scope the proposal does not contain.",
     { schema: CRITIQUE, label: "plan-critique:r" + round, phase: "Plan" },
@@ -174,13 +259,53 @@ for (let round = 1; round < maxPlanRounds; round++) {
 
 log("Build sequence: " + plan.steps.length + " steps");
 
-// ---- Build: implement each step in order, with tests run to green ----
+// ---- Build: implement each step in order, gated by per-step verify + review ----
 // Sequential: later steps depend on earlier ones and share the working
-// tree, so steps must not run concurrently.
+// tree, so steps must not run concurrently. Each step runs an inner loop —
+// implement/fix, then an INDEPENDENT verify of the step's tiers, then an
+// adversarial design-conformance review of the step's own diff — and only
+// advances once the step is both green and review-clean. Catching a
+// divergence at the step that introduced it is cheaper than catching it in
+// the final whole-change review, and stops a wrong foundation from
+// propagating into its dependents.
+
+// Per-step review lenses, scoped to the single step's diff. Whole-change
+// completeness is left to the final Review; here a surface this step adds
+// for a later step to consume is explicitly out of scope.
+const STEP_REVIEW_LENSES = [
+  {
+    key: "conformance",
+    text: "Lens: design conformance. Check that what this step builds matches the proposal's design for the sections it implements — the right component owning each write, the gates and predicates the design names, field placement on the correct object, the ordering the design requires, and defaults that agree with it. Passing tests do not excuse a divergence.",
+  },
+  {
+    key: "invariants",
+    text: "Lens: invariants and edge cases. Check that this step enforces the invariants, ordering rules, and failure-mode handling the proposal names for its sections (a precondition-fenced write, a fail-closed gate, a one-writer rule, a crash-recovery path), and that each spec-named edge case for this step has a corresponding code path. Report any the code omits or implements incorrectly.",
+  },
+];
 
 phase("Build");
+// Capture the pre-implementation HEAD so Verify (coverage diff) and Review
+// (design-conformance diff) measure exactly this run's changes. This SHA is
+// embedded literally in every `git diff <baseRef>..HEAD` below, so it must be
+// a real ref — fall back to a prose string and every diff is malformed. Retry
+// a couple of times, then fail fast rather than proceed with broken diffs.
+let baseRef = null;
+for (let b = 0; b < 3 && !baseRef; b++) {
+  const baseline = await agent(
+    "Print the current git HEAD commit SHA in " +
+      repo +
+      " (run `git rev-parse HEAD`). Do not edit anything. Return it as {sha}.",
+    { schema: SHA, label: b === 0 ? "baseline" : "baseline:retry" + b, phase: "Build" },
+  );
+  if (baseline && baseline.sha) baseRef = baseline.sha.trim();
+}
+if (!baseRef) {
+  throw new Error("could not capture the pre-build HEAD SHA; aborting so coverage and review diffs are not run against a malformed ref");
+}
+
 const stepResults = [];
 let priorContext = "";
+let replanCount = 0;
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
   const stepHeader =
@@ -201,63 +326,328 @@ for (let i = 0; i < plan.steps.length; i++) {
     "\nSpec sections: " +
     (step.specRefs || []).join(", ");
 
-  let res = await agent(
-    "Implement one step of a build sequence for an applied spec proposal.\n\n" +
-      "HARD CONSTRAINT: implement only this step. Do not start later steps. Work in " +
+  // HEAD at the start of this step, so the per-step verify and review see
+  // only this step's commits and not the prior steps'.
+  const stepStart = await agent(
+    "Print the current git HEAD commit SHA in " +
       repo +
-      ".\n\n" +
-      "Proposal (authoritative for the change): " +
-      proposal +
-      ". Its spec edits are already in spec/; read the relevant sections.\n\n" +
-      stepHeader +
-      priorContext +
-      "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
-      RULES +
-      "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run.",
-    { schema: STEP, label: "build:" + step.id, phase: "Build" },
+      " (`git rev-parse HEAD`). Do not edit anything. Return {sha}.",
+    { schema: SHA, label: "build:" + step.id + ":base", phase: "Build" },
   );
+  const stepRef = (stepStart && stepStart.sha) || baseRef;
 
-  // Retry the step until its runnable tiers pass, bounded by maxStepAttempts,
-  // so a red step does not compound into the steps that depend on it.
-  let attempt = 1;
-  while (res && !res.testsPassed && attempt < maxStepAttempts) {
+  let res = null; // last implement/fix STEP result
+  let stepGreen = false;
+  let stepReviewClean = false;
+  let stepFindings = [];
+  let issues = ""; // carried failures or divergences for the next attempt
+  let attempt = 0;
+  // Inner loop: implement/fix → verify → review, until green-and-conformant
+  // or the attempt cap. Each iteration is one fix attempt.
+  while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
     attempt++;
-    log("Step " + step.id + " tests not green; fix attempt " + attempt + "/" + maxStepAttempts);
     res = await agent(
-      "Finish a build step whose tests are not yet green.\n\n" +
-        "HARD CONSTRAINT: work only on this step. Do not start later steps. Work in " +
-        repo +
-        ".\n\n" +
-        "Proposal (authoritative): " +
-        proposal +
-        " (spec edits already in spec/).\n\n" +
-        stepHeader +
-        "\n\nThe prior attempt left this step's tests not passing. Notes from it: " +
-        ((res && res.notes) || "(none)") +
-        "\n\nDiagnose the failures and fix the code until tier 0, tier 1, and the listed tiers pass (skip only a tier that genuinely needs a cloud-only resource, noting it). Add any missing tests for this step's tiers, run them, then commit on the current branch. " +
-        RULES +
-        "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
-      { schema: STEP, label: "build:" + step.id + ":fix" + attempt, phase: "Build" },
+      attempt === 1
+        ? "Implement one step of a build sequence for an applied spec proposal.\n\n" +
+            "HARD CONSTRAINT: implement only this step. Do not start later steps. Do not edit spec/. Work in " +
+            repo +
+            ".\n\n" +
+            "Proposal (authoritative for the change): " +
+            proposal +
+            ". Its spec edits are already in spec/; read the relevant sections.\n\n" +
+            stepHeader +
+            priorContext +
+            "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
+            RULES +
+            "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run."
+        : "Continue one build step of an applied spec proposal that is not yet green-and-conformant.\n\n" +
+            "HARD CONSTRAINT: work only on this step. Do not start later steps. Do not edit spec/. Work in " +
+            repo +
+            ".\n\n" +
+            "Proposal (authoritative): " +
+            proposal +
+            " (spec edits already in spec/).\n\n" +
+            stepHeader +
+            "\n\nThe prior attempt left this step not done. Address this:\n" +
+            issues +
+            "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code to match the proposal's design where the issue is a divergence), run tier 0, tier 1, and this step's listed tiers to green (skip only a tier that genuinely needs a cloud-only resource, noting it), then commit on the current branch. " +
+            RULES +
+            "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
+      { schema: STEP, label: "build:" + step.id + (attempt > 1 ? ":fix" + attempt : ""), phase: "Build" },
     );
+
+    // A skipped or dead implementer (agent() === null) committed nothing. An
+    // empty diff would otherwise pass the independent verify (`--changed`
+    // selects nothing) and the review (no diff to find fault with) and
+    // masquerade as a done step — then the success log would deref res.commit
+    // on null. Treat it as a failed attempt and retry; if it persists, the
+    // step aborts cleanly below.
+    if (!res) {
+      stepGreen = false;
+      stepReviewClean = false;
+      stepFindings = [];
+      issues =
+        "The implementer agent returned no result (it was skipped or errored). Re-implement this step from the proposal and its tests across the listed tiers, run them to green, then commit.";
+      log("Step " + step.id + " attempt " + attempt + "/" + maxStepAttempts + ": implementer returned no result");
+      continue;
+    }
+
+    // Independent verify: a different agent re-runs the step's tiers and
+    // gates green. The implementer's self-report is advisory.
+    const sv = await agent(
+      "Independently verify ONE just-implemented build step of an applied spec proposal. You did not write this code.\n\n" +
+        "Work in " +
+        repo +
+        ". Do not edit code; only run tests and report. Proposal: " +
+        proposal +
+        ".\n\n" +
+        stepHeader +
+        "\n\nThis step's changes are everything since " +
+        stepRef +
+        " (`git diff " +
+        stepRef +
+        "..HEAD`). Run tier 0 (`go build ./...`, `go vet`, lint) and tier 1 for the changed packages, plus each tier this step must run: " +
+        ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+        ". Use `lenny-test --changed --max-tier <tier>` and bring infrastructure up with `lenny-test infra up` when a tier needs it. Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it). List any failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here.",
+      { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
+    );
+    stepGreen = !!(sv && sv.green);
+    if (!stepGreen) {
+      stepReviewClean = false;
+      stepFindings = [];
+      issues =
+        "This step's tests are not green. Failures:\n" +
+        (((sv && sv.failures) || []).map((f) => "- " + f).join("\n") || "- (verify reported not green without listing failures)") +
+        ((sv && sv.notes) ? "\nVerifier notes: " + sv.notes : "");
+      log("Step " + step.id + " attempt " + attempt + "/" + maxStepAttempts + ": tests not green");
+      continue;
+    }
+
+    // Adversarial design-conformance review of THIS step's diff only.
+    const reviewResults = await parallel(
+      STEP_REVIEW_LENSES.map((l) => () =>
+        agent(
+          "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
+            "Read the proposal at " +
+            proposal +
+            " (its spec edits are applied), focusing on the sections this step implements (" +
+            ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
+            "), and read ONLY this step's diff: `git diff " +
+            stepRef +
+            "..HEAD` in " +
+            repo +
+            ". You are read-only; report findings only.\n\n" +
+            "Scope: judge only what THIS step is responsible for (its work: " +
+            step.work +
+            "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
+            l.text,
+          {
+            schema: REVIEW,
+            label: "review:" + step.id + ":" + l.key + ":r" + attempt,
+            phase: "Build",
+          },
+        ),
+      ),
+    );
+    // Fail closed: a reviewer that died (null) is not evidence of conformance.
+    // Only declare the step review-clean when every reviewer ran and none
+    // found a divergence.
+    const liveReviews = reviewResults.filter(Boolean);
+    const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
+    stepFindings = liveReviews.flatMap((r) => r.findings);
+    stepReviewClean = stepFindings.length === 0 && allReviewersRan;
+    log(
+      "Step " +
+        step.id +
+        " attempt " +
+        attempt +
+        ": green, " +
+        stepFindings.length +
+        " design-conformance finding(s)" +
+        (allReviewersRan ? "" : " (a reviewer did not return; not treated as clean)"),
+    );
+    if (!stepReviewClean) {
+      issues =
+        stepFindings.length > 0
+          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/), keeping the tests green:\n" +
+            JSON.stringify(stepFindings, null, 2)
+          : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
+    }
   }
 
   stepResults.push({
     step: step.id,
     title: step.title,
     attempts: attempt,
+    stepGreen,
+    reviewClean: stepReviewClean,
+    findings: stepReviewClean ? [] : stepFindings,
     ...(res || { implemented: false, testsPassed: false, tiersRun: [], notes: "agent failed" }),
   });
-  const tail = res
-    ? "Step " + step.id + " done in " + attempt + " attempt(s) (commit " + (res.commit || "?") + ", tests " + (res.testsPassed ? "green" : "RED") + ")."
-    : "Step " + step.id + " agent failed.";
-  log(tail);
+  // Abort the sequence if the step did not reach green-and-conformant within
+  // maxStepAttempts: its dependents would build on a broken or divergent
+  // foundation. Stop here; the spec and the completed steps are already
+  // committed for inspection and resume.
+  if (!(stepGreen && stepReviewClean)) {
+    const remaining = plan.steps.length - i - 1;
+    const reason = !stepGreen ? "tests not green" : "design-conformance divergences outstanding";
+    log(
+      "Step " +
+        step.id +
+        " stuck (" +
+        reason +
+        ") after " +
+        attempt +
+        " attempt(s); aborting the build sequence (" +
+        remaining +
+        " dependent step(s) not attempted)",
+    );
+    return {
+      status: "step-stuck",
+      stuckStep: step.id,
+      blastRadius: plan.blastRadius,
+      steps: stepResults,
+      commits: stepResults.map((s) => s.commit).filter(Boolean),
+      green: false,
+      reviewClean: false,
+      reviewFindings: stepReviewClean ? [] : stepFindings,
+      failures: [
+        "build aborted at step " +
+          step.id +
+          " (" +
+          step.title +
+          ") after " +
+          attempt +
+          " attempts: " +
+          reason +
+          "; " +
+          remaining +
+          " dependent step(s) not attempted",
+      ],
+      resumeNote:
+        "The spec is applied and committed; build steps before " +
+        step.id +
+        " are committed green and review-clean. " +
+        (!stepGreen
+          ? "Step " + step.id + "'s tests did not reach green. "
+          : "Step " + step.id + " is green but diverges from the proposal's design (see reviewFindings). ") +
+        "Fix step " +
+        step.id +
+        " by hand or re-run implement-proposal, which re-plans against the current tree.",
+    };
+  }
+  log(
+    "Step " +
+      step.id +
+      " done in " +
+      attempt +
+      " attempt(s) (commit " +
+      ((res && res.commit) || "?") +
+      "), green + review-clean.",
+  );
   // Carry a short tail of prior-step outcomes so each implementer knows
   // what already landed without re-deriving it.
   priorContext =
     "\n\nAlready completed in this sequence:\n" +
     stepResults
-      .map((s) => "- " + s.step + ": " + s.title + (s.commit ? " (" + s.commit + ")" : "") + (s.testsPassed ? "" : " [tests not green]"))
+      .map((s) => "- " + s.step + ": " + s.title + (s.commit ? " (" + s.commit + ")" : ""))
       .join("\n");
+
+  // Periodic plan-drift check, forward-only. The plan was a prediction made
+  // before any code existed; as steps land, reality drifts (an unplanned
+  // surface gets touched, a removal orphans more than foreseen, a later step
+  // becomes redundant or mis-sequenced). The per-step review judges completed
+  // work, not the remaining plan — so here, every replanEvery completed steps
+  // (and after a step that struggled), a read-only critic checks whether the
+  // remaining plan still holds against what actually landed. On evidenced
+  // drift, the remaining steps are re-planned. Completed steps are immutable:
+  // only indices after i ever change.
+  const completed = i + 1;
+  const hasRemaining = i < plan.steps.length - 1;
+  const triggerReplan = (completed % replanEvery === 0) || attempt >= replanStruggleAttempts;
+  if (hasRemaining && replanCount < maxReplans && triggerReplan) {
+    const remainingSteps = plan.steps.slice(i + 1);
+    const drift = await agent(
+      "Check whether the REMAINING build plan still matches reality after part of a build sequence has landed.\n\n" +
+        "You are a read-only critic; do not edit any file. Work in " +
+        repo +
+        ".\n\nProposal (authoritative, spec edits already applied): " +
+        proposal +
+        ". Read the sections still to be built.\n\nCompleted so far (immutable, already committed):\n" +
+        stepResults.map((s) => "- " + s.step + ": " + s.title).join("\n") +
+        "\n\nWhat actually landed: `git diff " +
+        baseRef +
+        "..HEAD` in the repo.\n\nRemaining planned steps (not yet built):\n" +
+        JSON.stringify(remainingSteps, null, 2) +
+        "\n\nReport drift=true ONLY with concrete, evidenced reasons that the remaining plan no longer correctly or completely implements the rest of the proposal given what landed: a surface the proposal requires that the completed work touched but no remaining step covers; a removal the completed work began that orphaned code no remaining step deletes; a remaining step now redundant because an earlier step already satisfied it; a remaining step whose prerequisites changed so it must be re-sequenced; or a file the completed work changed that forces a different approach in a remaining step. Be conservative: default to drift=false. Do NOT report design-conformance nits (handled per step), style, or scope the proposal does not contain. Return drift=false with an empty reasons array when the remaining plan still holds.",
+      { schema: DRIFT, label: "replan-check:after-" + step.id, phase: "Build" },
+    );
+    if (drift && drift.drift && (drift.reasons || []).length > 0) {
+      log(
+        "Plan drift after step " +
+          step.id +
+          " (" +
+          drift.reasons.length +
+          " reason(s)); re-planning the remaining " +
+          remainingSteps.length +
+          " step(s) [re-plan " +
+          (replanCount + 1) +
+          "/" +
+          maxReplans +
+          "]",
+      );
+      const tail = await agent(
+        "Re-plan the REMAINING steps of a build sequence for an applied spec proposal, given what has already landed.\n\n" +
+          "You are a read-only planner; do not edit any file. Work in " +
+          repo +
+          ".\n\nProposal (authoritative, spec edits applied): " +
+          proposal +
+          ".\n\nCompleted steps are IMMUTABLE — already committed; do not include them, re-order them, or plan to redo them:\n" +
+          stepResults
+            .map((s) => "- " + s.step + ": " + s.title + (s.commit ? " (" + s.commit + ")" : ""))
+            .join("\n") +
+          "\n\nWhat actually landed: `git diff " +
+          baseRef +
+          "..HEAD`.\n\nCurrent remaining plan:\n" +
+          JSON.stringify(remainingSteps, null, 2) +
+          "\n\nDrift the critic found:\n" +
+          drift.reasons.map((r) => "- " + r).join("\n") +
+          "\n\nReturn the revised ORDERED sequence for the REMAINING work only. Preserve the id, title, and content of any remaining step that is still valid and unchanged so the logs stay coherent; add steps for newly discovered work, drop steps already satisfied by the completed work, and re-sequence where a prerequisite emerged. Each step keeps the same fields (id, title, work, targets, dependsOn, tiers, specRefs); give new steps fresh ids that do not collide with completed or surviving ids. Cover the rest of the proposal completely, including any removal the completed work left orphaned. In blastRadiusAdditions, list any surface the original plan missed that you discovered. Do not re-plan or duplicate completed work.",
+        { schema: TAIL, label: "replan:after-" + step.id, phase: "Build" },
+      );
+      // Count the re-plan attempt regardless of its outcome: a re-plan that
+      // keeps returning empty must still be bounded by maxReplans, otherwise
+      // the drift+replan agent pair re-runs on every cadence hit unbounded.
+      replanCount++;
+      if (tail && tail.steps && tail.steps.length > 0) {
+        // Reassign any new-tail id that collides with a completed step id, so
+        // stepResults and the drift/replan prompts do not key two different
+        // steps under the same id. dependsOn is informational here (steps run
+        // in array order), but remap it too for coherence.
+        const completedIds = new Set(stepResults.map((s) => s.step));
+        const idRemap = {};
+        for (const s of tail.steps) {
+          if (completedIds.has(s.id)) {
+            idRemap[s.id] = s.id + "-r" + replanCount;
+            s.id = idRemap[s.id];
+          }
+        }
+        for (const s of tail.steps) {
+          if (Array.isArray(s.dependsOn)) s.dependsOn = s.dependsOn.map((d) => idRemap[d] || d);
+        }
+        // Splice the new tail in place of the old remaining steps. Only
+        // indices after i change; the for-loop picks up the new steps as
+        // plan.steps.length updates.
+        plan.steps.splice(i + 1, plan.steps.length - (i + 1), ...tail.steps);
+        if (tail.blastRadiusAdditions && tail.blastRadiusAdditions.length > 0) {
+          plan.blastRadius = plan.blastRadius.concat(tail.blastRadiusAdditions);
+        }
+        log("Re-planned tail: " + tail.steps.length + " remaining step(s) now queued");
+      } else {
+        log("Re-plan returned no steps; keeping the existing tail");
+      }
+    }
+  }
 }
 
 // ---- Verify: run the reached tiers across the whole change ----
@@ -274,7 +664,13 @@ let verify = await agent(
     stepResults.map((s) => s.commit).filter(Boolean).join(", ") +
     ".\n\nRun tier 0 and tier 1 for the changed packages, plus each higher tier the change reached: " +
     (tierSet.join(", ") || "as determined from the diff") +
-    ". Use `lenny-test --changed --max-tier <tier>` and bring infrastructure up as needed. Report green=true only when every reached tier passes. Also run `lenny-test coverage --diff` against the pre-implementation commit and report the changed-line coverage. List any failures precisely.",
+    ". Use `lenny-test --changed --max-tier <tier>` and bring infrastructure up as needed. Run `lenny-test coverage --diff " +
+    baseRef +
+    "` and report the changed-line coverage. COVERAGE GATE: green=true requires BOTH that every reached tier passes AND that changed-line coverage is at least " +
+    coverageFloor +
+    "%; if coverage is below " +
+    coverageFloor +
+    "%, set green=false and add a failure entry naming the under-covered new or changed files and lines so the fix loop adds tests for them (per the test-coverage rule, the floor is on new code; a pure behavior-preserving refactor is exempt — note it instead of failing). Run a DEAD-CODE SWEEP: grep the whole tree for every identifier, mode value, field, RPC, frame, metric name, and enum value the proposal removes, and confirm none survives as a live reference; the tier-0 `unused` linter catches unused package-level symbols, but also check for orphaned exported symbols, whole unreferenced files, stale test fixtures, and dangling schema or chart entries. Treat a surviving removed surface or an orphaned caller as a failure (list it precisely so the fix loop deletes it). List any failures precisely.",
   { schema: VERIFY, label: "verify", phase: "Verify" },
 );
 
@@ -308,12 +704,17 @@ while (
       repo +
       " and report whether everything is now green. Tiers: " +
       (tierSet.join(", ") || "from the diff") +
-      ". Use `lenny-test --changed --max-tier <tier>`, bringing infrastructure up as needed. Report green, the tiers run, the changed-line coverage, and any remaining failures precisely.",
+      ". Use `lenny-test --changed --max-tier <tier>`, bringing infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
+      baseRef +
+      "`) at least " +
+      coverageFloor +
+      "%, with a behavior-preserving refactor exempt. Report green, the tiers run, the changed-line coverage, and any remaining failures precisely.",
     { schema: VERIFY, label: "verify-rerun:r" + vround, phase: "Verify" },
   );
 }
 
-if (verify && !verify.green) {
+const green = !!(verify && verify.green);
+if (!green) {
   log(
     vround >= maxVerifyRounds
       ? "Verify cap (" + maxVerifyRounds + " rounds) reached; still not green"
@@ -321,13 +722,143 @@ if (verify && !verify.green) {
   );
 }
 
+// ---- Review: final cross-step design-conformance review of the cumulative diff ----
+// Each step was already reviewed against its own diff during Build. This
+// final pass reads the WHOLE change against baseRef to catch what a
+// step-scoped review cannot: cross-step interactions, a surface one step
+// added and another was meant to consume but does not, and whole-change
+// completeness. Three lenses report divergences; a fix round applies them
+// and the loop re-reviews until clean (or the cap). Skipped when the build
+// is not green (no point reviewing a red tree). Findings here are design
+// conformance, not new scope.
+
+const REVIEW_LENSES = [
+  {
+    key: "conformance",
+    text: "Lens: design conformance. Read the proposal's Decisions, Detailed design, and CRD/RBAC/Observability sections, then read the cumulative diff. Report where the landed code does something other than what the design specifies: a different component owning a write, a missing or wrong gate, a predicate that does not match the design, a field on the wrong object, an ordering that violates the design, or a default that contradicts it. Passing tests do not excuse a divergence.",
+  },
+  {
+    key: "invariants",
+    text: "Lens: named invariants and edge cases. List the invariants, races, ordering rules, and failure-mode handling the proposal explicitly calls out (for example a precondition-fenced write, a fail-closed gate, a crash-recovery path, a one-writer rule), and verify the code implements each. Report any invariant the code does not enforce or enforces incorrectly, and any spec-named edge case with no corresponding code path.",
+  },
+  {
+    key: "completeness",
+    text: "Lens: blast-radius completeness. Cross-check the proposal's Files-touched and CRD/schema/chart sections against the diff: every code, schema, chart, migration, and metric change the proposal specifies is present, and every surface it removes is gone (no orphaned caller or compiling-but-dead path). Report any specified change missing from the diff or any removal left incomplete.",
+  },
+];
+
+const REVIEW_RULES =
+  "Read the proposal at " +
+  proposal +
+  " (its spec edits are applied) and the cumulative implementation diff (`git diff " +
+  baseRef +
+  "..HEAD`) in " +
+  repo +
+  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a test gap (coverage is handled separately). Cite file:line and the proposal section. Report an empty array when the code conforms.";
+
+let reviewClean = false;
+let reviewRound = 0;
+let lastReviewFindings = [];
+let reviewFixApplied = false;
+if (green) {
+  phase("Review");
+  while (reviewRound < maxReviewRounds && !reviewClean) {
+    reviewRound++;
+    const reviewResults = await parallel(
+      REVIEW_LENSES.map((l) => () =>
+        agent(REVIEW_RULES + "\n\n" + l.text, {
+          schema: REVIEW,
+          label: "review:" + l.key + ":r" + reviewRound,
+          phase: "Review",
+        }),
+      ),
+    );
+    // Fail closed: a reviewer that died (null) is not evidence of conformance.
+    // Only declare clean when every lens ran and none found a divergence.
+    const liveReviews = reviewResults.filter(Boolean);
+    const allReviewersRan = liveReviews.length === REVIEW_LENSES.length;
+    const findings = liveReviews.flatMap((r) => r.findings);
+    lastReviewFindings = findings;
+    log(
+      "Review round " +
+        reviewRound +
+        ": " +
+        findings.length +
+        " design-conformance finding(s)" +
+        (allReviewersRan ? "" : " (a reviewer did not return; not treated as clean)"),
+    );
+    if (findings.length === 0) {
+      if (allReviewersRan) {
+        reviewClean = true;
+        break;
+      }
+      // No findings, but a reviewer did not run — re-review rather than
+      // concluding clean. Nothing to fix, so skip the fix agent.
+      continue;
+    }
+    reviewFixApplied = true;
+    await agent(
+      "Fix design-conformance divergences between the landed implementation and the proposal at " +
+        proposal +
+        ".\n\nWork in " +
+        repo +
+        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design, add or correct tests for the corrected behavior, run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit. " +
+        RULES +
+        "\n\nFindings to fix:\n" +
+        JSON.stringify(findings, null, 2),
+      { label: "review-fix:r" + reviewRound, phase: "Review" },
+    );
+  }
+  if (!reviewClean) {
+    log(
+      reviewRound >= maxReviewRounds
+        ? "Review cap (" + maxReviewRounds + " rounds) reached with divergences outstanding"
+        : "Review stopped with divergences outstanding",
+    );
+  }
+} else {
+  log("Build not green; skipping design-conformance review");
+}
+
+// A review fix can perturb tests; re-confirm green once whenever the review
+// applied any fix, so the returned green reflects the post-fix tree. Gating on
+// reviewFixApplied (not on outstanding findings) is the point: a review that
+// found and fixed a divergence then converged clean still changed the tree.
+let finalGreen = green;
+if (green && reviewFixApplied) {
+  const recheck = await agent(
+    "Re-run the reached tiers for the implementation in " +
+      repo +
+      " after the design-conformance fixes and report whether everything is still green. Tiers: " +
+      (tierSet.join(", ") || "from the diff") +
+      ". Use `lenny-test --changed --max-tier <tier>`. Apply the coverage gate (changed-line coverage at least " +
+      coverageFloor +
+      "% via `lenny-test coverage --diff " +
+      baseRef +
+      "`, refactors exempt). Report green, the tiers run, the coverage, and any remaining failures.",
+    { schema: VERIFY, label: "verify-postreview", phase: "Review" },
+  );
+  finalGreen = !!(recheck && recheck.green);
+  if (recheck) verify = recheck;
+}
+
 return {
-  status: "implemented",
+  status: finalGreen && reviewClean ? "implemented" : "implemented-not-green",
   blastRadius: plan.blastRadius,
   steps: stepResults,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
-  green: !!(verify && verify.green),
+  green: finalGreen,
+  reviewClean,
+  reviewRounds: reviewRound,
+  reviewFindings: reviewClean ? [] : lastReviewFindings,
   verifyRounds: vround,
   changedLineCoverage: verify ? verify.changedLineCoverage : undefined,
   failures: verify ? verify.failures || [] : ["final verification did not run"],
+  resumeNote:
+    finalGreen && reviewClean
+      ? undefined
+      : "Spec and code commits are on the branch. " +
+        (!finalGreen ? "Tests/coverage are not green. " : "") +
+        (!reviewClean ? "Design-conformance review found unresolved divergences (see reviewFindings). " : "") +
+        "Re-run implement-proposal to continue, or resolve by hand.",
 };
