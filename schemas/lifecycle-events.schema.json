@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lenny.dev/schemas/lifecycle-events.json",
   "title": "Lenny runtime lifecycle events",
-  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime lifecycle channel, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). The task_complete, task_ready, and task_complete_acknowledged envelopes here are the intra-pod task-lifecycle signals; the same-named envelopes in the JSONL schema are the separate adapter→gateway control surface. See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
+  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime lifecycle channel, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
   "oneOf": [
     { "$ref": "#/$defs/lifecycle_capabilities" },
     { "$ref": "#/$defs/lifecycle_support" },
@@ -16,16 +16,13 @@
     { "$ref": "#/$defs/deadline_approaching" },
     { "$ref": "#/$defs/files_updated" },
     { "$ref": "#/$defs/terminate" },
-    { "$ref": "#/$defs/task_complete" },
-    { "$ref": "#/$defs/task_ready" },
-    { "$ref": "#/$defs/task_complete_acknowledged" },
     { "$ref": "#/$defs/llm_request_started" },
     { "$ref": "#/$defs/llm_request_completed" }
   ],
   "$defs": {
     "lifecycle_capabilities": {
       "title": "lifecycle_capabilities",
-      "description": "Adapter → runtime, first message after the lifecycle channel opens. Advertises the lifecycle capabilities the adapter supports for this session. The runtime replies with lifecycle_support. task_lifecycle is offered only on task-mode pods.",
+      "description": "Adapter → runtime, first message after the lifecycle channel opens. Advertises the lifecycle capabilities the adapter supports for this session. The runtime replies with lifecycle_support.",
       "type": "object",
       "properties": {
         "type": { "const": "lifecycle_capabilities" },
@@ -37,8 +34,7 @@
               "checkpoint",
               "interrupt",
               "credential_rotation",
-              "deadline_signal",
-              "task_lifecycle"
+              "deadline_signal"
             ]
           },
           "uniqueItems": true
@@ -60,8 +56,7 @@
               "checkpoint",
               "interrupt",
               "credential_rotation",
-              "deadline_signal",
-              "task_lifecycle"
+              "deadline_signal"
             ]
           },
           "uniqueItems": true
@@ -186,39 +181,6 @@
         "reason": { "enum": ["session_complete", "budget_exhausted", "eviction", "operator"] }
       },
       "required": ["type", "deadlineMs", "reason"],
-      "additionalProperties": false
-    },
-    "task_complete": {
-      "title": "task_complete",
-      "description": "Adapter → runtime, task-mode lifecycle signal. The current task is finished; the runtime releases task-specific resources and replies with task_complete_acknowledged. The runtime does not exit.",
-      "type": "object",
-      "properties": {
-        "type": { "const": "task_complete" },
-        "taskId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["type", "taskId"],
-      "additionalProperties": false
-    },
-    "task_ready": {
-      "title": "task_ready",
-      "description": "Adapter → runtime, task-mode lifecycle signal. Sent after scrub completes and the new workspace is materialized. The runtime re-reads the adapter manifest and prepares for the next message.",
-      "type": "object",
-      "properties": {
-        "type": { "const": "task_ready" },
-        "taskId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["type", "taskId"],
-      "additionalProperties": false
-    },
-    "task_complete_acknowledged": {
-      "title": "task_complete_acknowledged",
-      "description": "Runtime → adapter, reply to task_complete. The runtime has released task-specific resources and is ready for scrub.",
-      "type": "object",
-      "properties": {
-        "type": { "const": "task_complete_acknowledged" },
-        "taskId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["type", "taskId"],
       "additionalProperties": false
     },
     "llm_request_started": {
