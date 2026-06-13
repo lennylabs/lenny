@@ -32,9 +32,11 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:Required
 	IntegrationLevel string `json:"integrationLevel"`
 
-	// ExecutionMode is the §5.2 pod-reuse mode. Empty defaults to
-	// `session` at registration time.
-	// +kubebuilder:validation:Enum=session;task;concurrent
+	// ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+	// parameterized by the pool's sessionPolicy) or `service` (a claimless,
+	// request-routed pod). Empty defaults to `session` at registration
+	// time.
+	// +kubebuilder:validation:Enum=session;service
 	// +optional
 	ExecutionMode string `json:"executionMode,omitempty"`
 

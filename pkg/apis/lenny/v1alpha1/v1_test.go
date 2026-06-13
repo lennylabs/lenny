@@ -4,7 +4,9 @@ package v1alpha1_test
 
 import (
 	"testing"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -50,46 +52,74 @@ func TestSandboxDeepCopyIsolatesTheCopy(t *testing.T) {
 	}
 }
 
+// TestSandboxClaimDeepCopyIsolatesTheCopy exercises the per-pod-occupancy
+// SandboxClaim, including the pointer-valued binding-state timestamps the
+// gateway stamps at the reserved hold and the recycle re-warm.
+// spec: §4.6.3 (CRD field ownership and binding state), §6.2 (pod state
+// machine).
 func TestSandboxClaimDeepCopyIsolatesTheCopy(t *testing.T) {
+	holdExpires := metav1.NewTime(time.Unix(1700000010, 0))
+	rewarmStarted := metav1.NewTime(time.Unix(1700000000, 0))
+	transition := metav1.NewTime(time.Unix(1700000005, 0))
 	orig := &lennyv1.SandboxClaim{
-		Spec:   lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", SessionID: "sess-1"},
-		Status: lennyv1.SandboxClaimStatus{Phase: "bound"},
+		Spec: lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+		Status: lennyv1.SandboxClaimStatus{
+			Phase:                      "reserved",
+			HoldExpiresAt:              &holdExpires,
+			RewarmStartedAt:            &rewarmStarted,
+			BindingStateTransitionTime: &transition,
+		},
 	}
 	cp := orig.DeepCopy()
 	cp.Spec.SandboxRef = "sbx-2"
+	cp.Spec.TenantID = "globex"
 	cp.Status.Phase = "released"
-	if orig.Spec.SandboxRef != "sbx-1" || orig.Status.Phase != "bound" {
+	cp.Status.HoldExpiresAt.Time = time.Unix(0, 0)
+	cp.Status.RewarmStartedAt.Time = time.Unix(0, 0)
+	cp.Status.BindingStateTransitionTime.Time = time.Unix(0, 0)
+	if orig.Spec.SandboxRef != "sbx-1" || orig.Spec.TenantID != "acme" || orig.Status.Phase != "reserved" {
 		t.Errorf("DeepCopy did not isolate the copy; the original was mutated: %+v", orig)
+	}
+	if !orig.Status.HoldExpiresAt.Equal(&holdExpires) {
+		t.Errorf("DeepCopy shared the HoldExpiresAt pointer; original was mutated: %v", orig.Status.HoldExpiresAt)
+	}
+	if !orig.Status.RewarmStartedAt.Equal(&rewarmStarted) {
+		t.Errorf("DeepCopy shared the RewarmStartedAt pointer; original was mutated: %v", orig.Status.RewarmStartedAt)
+	}
+	if !orig.Status.BindingStateTransitionTime.Equal(&transition) {
+		t.Errorf("DeepCopy shared the BindingStateTransitionTime pointer; original was mutated: %v", orig.Status.BindingStateTransitionTime)
 	}
 }
 
 // TestSandboxTemplateDeepCopyIsolatesNestedPolicy exercises the
-// pointer-valued TaskPolicy so a regression in the generated DeepCopy
-// (a shallow pointer copy) is caught.
+// pointer-valued SessionPolicy and its nested RecyclePolicy so a
+// regression in the generated DeepCopy (a shallow pointer copy) is caught.
+// spec: §5.2 (sessionPolicy and recycle block).
 func TestSandboxTemplateDeepCopyIsolatesNestedPolicy(t *testing.T) {
 	orig := &lennyv1.SandboxTemplate{
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:    "claude-code",
-			ExecutionMode: "task",
-			TaskPolicy: &lennyv1.TaskPolicy{
-				AcknowledgeBestEffortScrub: true,
-				MaxTasksPerPod:             50,
-				CleanupCommands:            []string{"rm -rf /tmp/sandbox-*"},
+			ExecutionMode: "session",
+			SessionPolicy: &lennyv1.SessionPolicy{
+				Recycle: &lennyv1.RecyclePolicy{
+					ScrubProfile:                    "in-place",
+					AcknowledgeMicrovmResidualState: true,
+				},
 			},
 		},
 	}
 	cp := orig.DeepCopy()
 	cp.Spec.RuntimeRef = "mutated"
-	cp.Spec.TaskPolicy.MaxTasksPerPod = 1
-	cp.Spec.TaskPolicy.CleanupCommands[0] = "mutated"
+	cp.Spec.SessionPolicy.Recycle.ScrubProfile = "standard"
+	cp.Spec.SessionPolicy.Recycle.AcknowledgeMicrovmResidualState = false
 	if orig.Spec.RuntimeRef != "claude-code" {
 		t.Errorf("DeepCopy did not isolate spec scalar: %+v", orig.Spec)
 	}
-	if orig.Spec.TaskPolicy.MaxTasksPerPod != 50 {
-		t.Errorf("DeepCopy shared the TaskPolicy pointer; original was mutated: %+v", orig.Spec.TaskPolicy)
+	if orig.Spec.SessionPolicy.Recycle.ScrubProfile != "in-place" {
+		t.Errorf("DeepCopy shared the RecyclePolicy pointer; original was mutated: %+v", orig.Spec.SessionPolicy.Recycle)
 	}
-	if orig.Spec.TaskPolicy.CleanupCommands[0] != "rm -rf /tmp/sandbox-*" {
-		t.Errorf("DeepCopy shared the CleanupCommands slice; original was mutated: %+v", orig.Spec.TaskPolicy)
+	if !orig.Spec.SessionPolicy.Recycle.AcknowledgeMicrovmResidualState {
+		t.Errorf("DeepCopy shared the RecyclePolicy pointer; original was mutated: %+v", orig.Spec.SessionPolicy.Recycle)
 	}
 }
 
