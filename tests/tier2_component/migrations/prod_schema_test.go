@@ -127,6 +127,64 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 }
 
+// spec: 5.2, 12.6
+// diagnosis: migration 0167 did not retire sandbox_warm_pools.concurrency_style
+// (the §5.2 mode collapse), or its .down.sql did not restore the column to
+// its 0040 definition (TEXT NOT NULL DEFAULT ”), or the up's mode-enum
+// comment re-key left object-comment residue the down failed to clear. A
+// failure means the §5.2 concurrent sub-variant column survives at HEAD, the
+// down does not round-trip, or an up->down cycle leaves object comments that
+// did not exist in the pre-0167 baseline.
+func TestProdSchemaMigrationConcurrencyStyleDrop(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// At HEAD the column is gone: 0167 dropped it.
+	if columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
+		t.Error("sandbox_warm_pools.concurrency_style must be dropped by migration 0167 (§5.2 mode collapse)")
+	}
+	// max_concurrent survives as the per-pod bound.
+	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "max_concurrent") {
+		t.Error("sandbox_warm_pools.max_concurrent must survive migration 0167")
+	}
+
+	// The up re-keyed the stale mode-enum documentation by ADDING object
+	// comments (the pre-0167 baseline carried none). The down clears them,
+	// so after rolling 0167 back the object comments are absent again.
+	pg.MigrateTo(t, dir, 166)
+
+	// The down restored the column with its 0040 definition.
+	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
+		t.Fatal("migration 0167 down must restore sandbox_warm_pools.concurrency_style")
+	}
+	if got := columnType(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "text" {
+		t.Errorf("restored concurrency_style type: got %q, want text", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "''::text" {
+		t.Errorf("restored concurrency_style default: got %q, want ''::text", got)
+	}
+	if columnNullable(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
+		t.Error("restored concurrency_style must be NOT NULL (the 0040 definition)")
+	}
+
+	// The down cleared the object comments the up added, returning the
+	// columns to their commentless pre-0167 baseline. A residual comment
+	// would mean the up->down cycle did not return the schema to its prior
+	// state (the harness contract in prod_columns_test.go).
+	for _, c := range []struct{ table, column string }{
+		{"sandbox_warm_pools", "execution_mode"},
+		{"sessions", "execution_mode"},
+		{"sessions", "scrub_policy"},
+	} {
+		if cm := columnComment(t, ctx, pg, c.table, c.column); cm != "" {
+			t.Errorf("after 0167 down, %s.%s carries object comment %q; the pre-0167 baseline had none",
+				c.table, c.column, cm)
+		}
+	}
+}
+
 // spec: §12.8 lines 743-758
 // diagnosis: migration 0096 must seed the reserved __preflight__ tenant
 // so the §12.8 MemoryStore erasure preflight's synthetic agent_memory

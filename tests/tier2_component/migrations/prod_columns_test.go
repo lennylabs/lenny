@@ -52,9 +52,13 @@ var prodMigrationSchema = []struct {
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry.
+	// sandbox_warm_pools registry. concurrency_style is not listed here:
+	// migration 0167 retires it (the §5.2 mode collapse), so it does not
+	// survive the full chain. The forward test asserts only columns that
+	// exist at HEAD; 0167's down restores concurrency_style so the per-step
+	// 0040 rollback still ends with the column absent.
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
-		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
+		"max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
 	}},
 	// 0042 creates the §12.8 GDPR erasure-job registry. The
@@ -216,13 +220,16 @@ var prodMigrationSchema = []struct {
 	// the users and environments admin resources.
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
-	// 0167 re-keys the §5.2 execution-mode enum to (session, service) and
+	// 0167 re-keys the §5.2 execution-mode enum to (session, service),
+	// retires the concurrency_style column on sandbox_warm_pools (the §5.2
+	// mode collapse; pgstore stops persisting it in the same change), and
 	// adds the §12.6 gateway-written per-pod recycle counters to
 	// agent_pod_state. Both counters are nullable until the gateway first
-	// writes them. The concurrency_style column survives this migration;
-	// its drop lands with the gateway ConcurrencyStyle field removal in the
-	// poolstore mode-collapse change (pgstore still reads and writes the
-	// column at HEAD). spec: §5.2, §12.6.
+	// writes them. The dropped concurrency_style column is not listed: the
+	// per-step rollback model records only added columns (it asserts they
+	// are absent after rollback). The concurrency_style drop and its down
+	// restoration are covered by TestProdSchemaMigrationConcurrencyStyleDrop
+	// and the 0167 migration test in migrations/. spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},
@@ -313,6 +320,58 @@ func columnType(t *testing.T, ctx context.Context, pg *containers.Postgres, tabl
 		t.Fatalf("read type of %s.%s: %v", table, col, err)
 	}
 	return dataType
+}
+
+// columnDefault returns the column's default expression as Postgres
+// records it in information_schema (for example ”::text), or the empty
+// string when the column carries no default.
+func columnDefault(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var def *string
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT column_default FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&def)
+	if err != nil {
+		t.Fatalf("read default of %s.%s: %v", table, col, err)
+	}
+	if def == nil {
+		return ""
+	}
+	return *def
+}
+
+// columnNullable reports whether the column is nullable.
+func columnNullable(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) bool {
+	t.Helper()
+	var isNullable string
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&isNullable)
+	if err != nil {
+		t.Fatalf("read nullability of %s.%s: %v", table, col, err)
+	}
+	return isNullable == "YES"
+}
+
+// columnComment returns the Postgres object comment on the column, or the
+// empty string when none is set. The migration 0167 down clears the object
+// comments the up added, so the round-trip test asserts these are empty
+// again after rollback.
+func columnComment(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var comment string
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT COALESCE(col_description(a.attrelid, a.attnum), '')
+		  FROM pg_catalog.pg_attribute a
+		  JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+		 WHERE c.relname = $1 AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped`,
+		table, col).Scan(&comment)
+	if err != nil {
+		t.Fatalf("read comment of %s.%s: %v", table, col, err)
+	}
+	return comment
 }
 
 func mustHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {

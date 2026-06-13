@@ -21,32 +21,52 @@ ALTER TABLE runtime_definitions
     ADD CONSTRAINT runtime_definitions_execution_mode_check
         CHECK (execution_mode IN ('session', 'service'));
 
--- Re-key the stale unconstrained-column mode comments to the
--- (session, service) set. These columns carry no CHECK constraint; only
--- the comment named the old mode enum.
---   - sandbox_warm_pools.execution_mode: the 0033:15 source comment.
---   - sessions.execution_mode: the 0084:10-11 source comment.
---   - sessions.scrub_policy: the 0084:15-19 source comment, whose gating
---     clause at 0084:18 named the removed pod-reuse mode set. In the
+-- Re-key the stale mode-enum documentation on the unconstrained columns to
+-- the (session, service) set by attaching a Postgres object comment. These
+-- columns carry no CHECK constraint; the old mode enum was named only in
+-- the immutable '--' source comments of 0033 and 0084, which no migration
+-- ever issued as COMMENT ON statements, so the pre-0167 baseline carries no
+-- object comment on these columns. This is not a re-key of a pre-existing
+-- object comment: the up adds the object comment carrying the corrected
+-- documentation forward, and the down removes it (sets it to NULL) so an
+-- up->down cycle returns the columns to their commentless baseline.
+--   - sandbox_warm_pools.execution_mode: corrects the 0033:15 source comment.
+--   - sessions.execution_mode: corrects the 0084:10-11 source comment.
+--   - sessions.scrub_policy: corrects the 0084:15-19 source comment, whose
+--     gating clause at 0084:18 named the removed pod-reuse mode set. In the
 --     (session, service) model the scrub policy applies to service-mode
 --     pod reuse, so the gating clause re-keys to service mode.
 COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS 'the §5.2 mode (session, service)';
 COMMENT ON COLUMN sessions.execution_mode IS 'the §5.2 mode (session, service)';
 COMMENT ON COLUMN sessions.scrub_policy IS 'the §7.1 scrub-policy string; set only when execution_mode is service (the pod-reuse mode)';
 
--- The §5.2 mode collapse retires the concurrency_style column on the pool
--- table together with the gateway ConcurrencyStyle field: the column drop
--- is conditioned on the field's removal ("retired ... once concurrencyStyle
--- is removed"). The pool INSERT, UPDATE, and SELECT in
--- pkg/gateway/poolstore/pgstore still read and write concurrency_style and
--- the typed Pool.ConcurrencyStyle field at HEAD, so the column drop cannot
--- precede that field removal without blanking every re-read pool's
--- ConcurrencyStyle. The column retirement therefore lands in the same
--- change that removes the field (with a down that restores the column),
--- which is the poolstore mode-collapse change rather than this
--- constraint-and-counter migration. max_concurrent already
--- survives as the per-pod bound consumed by service mode and the
--- session-mode concurrency path (sessionPolicy.maxConcurrentSessions).
+-- Retire the concurrency_style column on the pool table. The §5.2 mode
+-- collapse removes the concurrent sub-variant the column carried; this
+-- migration drops the column and the pgstore pool SELECT/INSERT/UPDATE/scan
+-- stop persisting it in the same change, leaving max_concurrent as the
+-- surviving per-pod bound consumed by service mode and the session-mode
+-- concurrency path (sessionPolicy.maxConcurrentSessions).
+--
+-- The §10.5 Phase 3 preflight gate aborts the drop when any pool still
+-- carries a non-empty concurrency_style: such a pool is an un-migrated
+-- concurrent-mode pool whose sub-variant would be silently lost by the
+-- drop. The platform is pre-deployment, so no pool carries the value in
+-- practice; the gate is the §10.5 line 417 safety contract that the
+-- column has no live dependents before it is removed.
+-- gate-index: idx_sandbox_warm_pools_concurrency_style (none required;
+-- the gate scans the column directly, not a covering index).
+DO $$
+DECLARE remaining bigint;
+BEGIN
+    SELECT COUNT(*) INTO remaining
+      FROM sandbox_warm_pools
+     WHERE concurrency_style <> '';
+    IF remaining > 0 THEN
+        RAISE EXCEPTION 'Phase 3 gate failed: % sandbox_warm_pools rows still carry a non-empty concurrency_style; migrate concurrent-mode pools before dropping the column', remaining;
+    END IF;
+END $$;
+ALTER TABLE sandbox_warm_pools
+    DROP COLUMN IF EXISTS concurrency_style;
 
 -- Add the nullable gateway-written per-pod recycle counters to
 -- agent_pod_state. sessions_served is incremented at each session
