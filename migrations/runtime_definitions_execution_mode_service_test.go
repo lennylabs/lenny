@@ -44,6 +44,12 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"-- gate-index:",
 		"ADD COLUMN sessions_served",
 		"scrub_failure_count INTEGER",
+		// The stale mode-enum comments are re-keyed by their database
+		// object. The 0084:18 anchor names sessions.scrub_policy (the
+		// only column whose comment gated on 'task' or 'concurrent'), so
+		// the up must COMMENT ON that column, not only execution_mode.
+		"COMMENT ON COLUMN sandbox_warm_pools.execution_mode",
+		"COMMENT ON COLUMN sessions.scrub_policy",
 	} {
 		if !strings.Contains(ups, want) {
 			t.Errorf("0167 up missing %q", want)
@@ -52,6 +58,10 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 	// max_concurrent survives the retirement: the up must not drop it.
 	if strings.Contains(ups, "DROP COLUMN max_concurrent") {
 		t.Error("0167 up must not drop max_concurrent")
+	}
+	// The re-keyed comments must not name the removed pod-reuse modes.
+	if strings.Contains(ups, "'task' or 'concurrent'") {
+		t.Error("0167 up must not retain the removed 'task' or 'concurrent' mode names in re-keyed comments")
 	}
 
 	down, err := migrations.FS.ReadFile("0167_runtime_definitions_execution_mode_service.down.sql")
@@ -156,6 +166,16 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		t.Error("max_concurrent column must survive 0167")
 	}
 
+	// The 0084:18 stale comment lives on sessions.scrub_policy. The up
+	// re-keys that column's comment off the removed pod-reuse mode names.
+	scrubComment := columnComment(t, ctx, pool, "sessions", "scrub_policy")
+	if scrubComment == "" {
+		t.Error("0167 up must set a comment on sessions.scrub_policy (the 0084:18 anchor column)")
+	}
+	if strings.Contains(scrubComment, "task") || strings.Contains(scrubComment, "concurrent") {
+		t.Errorf("sessions.scrub_policy comment must not name the removed modes; got %q", scrubComment)
+	}
+
 	// The agent_pod_state recycle counters exist and are nullable.
 	for _, col := range []string{"sessions_served", "scrub_failure_count"} {
 		if !columnExists(t, ctx, pool, "agent_pod_state", col) {
@@ -189,6 +209,18 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		}
 	} else {
 		t.Error("after down, the restored CHECK must reject execution_mode 'service'")
+	}
+
+	// The down restores scrub_policy's original gating comment, which is
+	// keyed to the old pod-reuse modes, and does not copy that gating text
+	// onto the execution_mode column.
+	downScrub := columnComment(t, ctx, pool, "sessions", "scrub_policy")
+	if !strings.Contains(downScrub, "task") || !strings.Contains(downScrub, "concurrent") {
+		t.Errorf("down must restore scrub_policy's 'task'/'concurrent' gating comment; got %q", downScrub)
+	}
+	downMode := columnComment(t, ctx, pool, "sessions", "execution_mode")
+	if strings.Contains(downMode, "set only when") {
+		t.Errorf("down must not copy scrub_policy's gating clause onto execution_mode; got %q", downMode)
 	}
 
 	// concurrency_style is restored and the recycle counters are dropped.
@@ -228,6 +260,22 @@ func columnExists(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, 
 		t.Fatalf("query column %s.%s: %v", table, column, err)
 	}
 	return exists
+}
+
+// columnComment returns the database object comment on the given column,
+// or the empty string when no comment is set.
+func columnComment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, column string) string {
+	t.Helper()
+	var comment string
+	err := pool.QueryRow(ctx,
+		`SELECT COALESCE(col_description(a.attrelid, a.attnum), '')
+		   FROM pg_catalog.pg_attribute a
+		   JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+		  WHERE c.relname = $1 AND a.attname = $2`, table, column).Scan(&comment)
+	if err != nil {
+		t.Fatalf("query comment %s.%s: %v", table, column, err)
+	}
+	return comment
 }
 
 // columnNullable reports whether the given column is nullable. The

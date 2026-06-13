@@ -22,10 +22,17 @@ ALTER TABLE runtime_definitions
         CHECK (execution_mode IN ('session', 'service'));
 
 -- Re-key the stale unconstrained-column mode comments to the
--- (session, service) set. The execution_mode columns on these tables
--- carry no CHECK constraint; only the comment named the old enum.
+-- (session, service) set. These columns carry no CHECK constraint; only
+-- the comment named the old mode enum.
+--   - sandbox_warm_pools.execution_mode: the 0033:15 source comment.
+--   - sessions.execution_mode: the 0084:10-11 source comment.
+--   - sessions.scrub_policy: the 0084:15-19 source comment, whose gating
+--     clause at 0084:18 named the removed pod-reuse mode set. In the
+--     (session, service) model the scrub policy applies to service-mode
+--     pod reuse, so the gating clause re-keys to service mode.
 COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS 'the §5.2 mode (session, service)';
 COMMENT ON COLUMN sessions.execution_mode IS 'the §5.2 mode (session, service)';
+COMMENT ON COLUMN sessions.scrub_policy IS 'the §7.1 scrub-policy string; set only when execution_mode is service (the pod-reuse mode)';
 
 -- Retire the concurrency_style column from the pool table. The
 -- (session, service) model has no concurrent sub-variant; max_concurrent
