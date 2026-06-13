@@ -95,9 +95,15 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 }
 
 // TestStaleModeCommentsReKeyed_spec_5_2_12_6 asserts the §5.2 mode collapse
-// re-keys the stale mode-enum '--' source comments in place: 0033:15 and
-// 0084 no longer name the removed 'task' and 'concurrent' modes, and both
-// name the surviving (session, service) set. The golang-migrate runner
+// re-keys the stale mode-enum '--' source comments in place. 0033:15 no
+// longer names the removed 'task' and 'concurrent' modes and names the
+// surviving (session, service) set. 0084's scrub_policy comment is re-keyed
+// to the new model rather than swapped token-for-token: under the §5.2 mode
+// collapse the non-'none' scrub policies (sequential recycling and
+// concurrent slots) are session-mode presets, so the comment keys them to
+// session mode per spec/07 §7.1 line 72 rather than to service mode, and it
+// must not assert the column is set 'only when execution_mode is service'
+// (the inverted claim the first landing carried). The golang-migrate runner
 // tracks the version integer and never re-reads an applied migration body
 // (pkg/schemamigrate), so editing these schema-neutral source comments
 // alters no live schema and is the natural target of the proposal's
@@ -119,10 +125,17 @@ func TestStaleModeCommentsReKeyed_spec_5_2_12_6(t *testing.T) {
 		},
 		{
 			file:     "0084_sessions_isolation_level.up.sql",
-			mustHave: "execution_mode is 'service'",
+			mustHave: "session-mode sequential recycling",
 			mustNotHave: []string{
 				"'task', or 'concurrent'",
 				"'task' or 'concurrent'",
+				// The non-'none' scrub policies belong to session mode under the
+				// §5.2 mode collapse (sequential recycling and concurrent slots are
+				// session-mode presets). A comment claiming the column is set 'only
+				// when execution_mode is service' inverts the §7.1 line 72 keying:
+				// service mode carries 'none', and the recycling and concurrent
+				// scrub policies sit under session mode.
+				"only when execution_mode is 'service'",
 			},
 		},
 	} {

@@ -14,9 +14,16 @@
 --
 -- scrub_policy is the §7.1 line 72 scrub-policy string — '',
 -- 'best-effort', 'vm-restart', 'best-effort-in-place',
--- 'best-effort-per-slot', or 'none'. Empty for session-mode rows; set
--- only when execution_mode is 'service' (the §7.1 line 72 pod-reuse
--- mode).
+-- 'best-effort-per-slot', or 'none'. It is empty for a non-reuse pool
+-- (a session-mode pool with maxConcurrentSessions == 1 and recycle
+-- disabled) and set whenever the assigned pool reuses pods: for
+-- session-mode sequential recycling 'best-effort', 'vm-restart', or
+-- 'best-effort-in-place'; for session-mode concurrent slots
+-- (maxConcurrentSessions > 1) 'best-effort-per-slot'; for service mode
+-- 'none'. Under the §5.2 mode collapse the non-'none' scrub policies
+-- belong to session mode (sequential recycling and concurrent slots are
+-- session-mode presets), so a recycling or concurrent session row
+-- carries execution_mode = 'session' with a non-empty scrub_policy.
 ALTER TABLE sessions
     ADD COLUMN execution_mode TEXT NOT NULL DEFAULT '',
     ADD COLUMN scrub_policy TEXT NOT NULL DEFAULT '';
