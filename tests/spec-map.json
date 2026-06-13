@@ -386,7 +386,7 @@
         "pkg/gateway/podclaim/slotclaimer_test.go",
         "pkg/gateway/podsession/slotbinder_test.go",
         "pkg/gateway/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
-        "pkg/sandbox/state/state_test.go::TestSlotActivePhaseAndTransitions",
+        "pkg/sandbox/state/state_test.go::TestConcurrentOccupancyCollapsesToClaimed_spec_6_2",
         "tests/tier2_component/stores/poolstore_test.go",
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2",
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2",

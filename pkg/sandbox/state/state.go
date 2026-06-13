@@ -49,21 +49,36 @@ const (
 // CoarseState maps a §6.2 phase to its coarse lenny.dev/state pod-label
 // value (spec §6.2 line 309: idle, active, or draining) and reports
 // whether the phase has a coarse operational value at all. A pod is idle
-// when warm and claimable, active once it is claimed and serving a
-// session/slot/task, and draining when retiring. The pre-ready phases
-// (warming, sdk_connecting) and the terminal phases (completed, failed,
-// cancelled, expired, terminated) have no coarse value — the pod is
-// either not yet claimable or gone — so the second return is false and
-// the reconciler removes the label rather than emitting a fourth value
-// the spec does not define. spec: §6.2 lines 305-313.
+// when warm and claimable, active once it is claimed and serving one or
+// more sessions, and draining when retiring. The reserved hold window also
+// maps to active: a recycled pod held for its pinned tenant is excluded
+// from idle inventory, so the §4.6.1 PDB idle selector must not match it
+// (spec §6.2 "reserved hold semantics" and the concurrent pod lifecycle
+// note: claimed and reserved both map to active, so the label stays active
+// across the occupancy-zero recycle boundary and the hold and never
+// oscillates as same-tenant sessions turn over). With one session mode the
+// coarse phase enum carries no separate concurrent-occupancy value: a pod
+// serving any number of concurrent sessions projects claimed, so concurrent
+// occupancy collapses into the claimed → active mapping and is observable
+// through the Redis slot counter and metrics rather than the pod label
+// (spec §6.2 "concurrent occupancy" / concurrent pod lifecycle). The
+// pre-ready phases (warming, sdk_connecting) and the terminal phases
+// (completed, failed, cancelled, expired, terminated) have no coarse value
+// — the pod is either not yet claimable or gone — so the second return is
+// false and the reconciler removes the label rather than emitting a fourth
+// value the spec does not define. sdk_connecting is unmapped on both the
+// warm-fill leg and the recycle SDK re-warm leg: the phase is shared
+// between unclaimed pre-idle inventory and an occupied recycling pod, so
+// the phase alone cannot distinguish them and the reconciler removes the
+// label in both windows (spec §6.2 lines 290-291). spec: §6.2 lines 305-313.
 func CoarseState(s State) (string, bool) {
 	switch s {
 	case Idle:
 		return CoarseIdle, true
 	case Draining:
 		return CoarseDraining, true
-	case Claimed, ReceivingUploads, FinalizingWorkspace, RunningSetup,
-		StartingSession, Attached, TaskCleanup, SlotActive, Resuming,
+	case Claimed, Reserved, ReceivingUploads, FinalizingWorkspace, RunningSetup,
+		StartingSession, Attached, TaskCleanup, Resuming,
 		Suspended, ResumePending, AwaitingClientAction:
 		return CoarseActive, true
 	default:
@@ -72,11 +87,19 @@ func CoarseState(s State) (string, bool) {
 }
 
 const (
-	Warming              State = "warming"
-	SDKConnecting        State = "sdk_connecting"
-	Idle                 State = "idle"
+	Warming       State = "warming"
+	SDKConnecting State = "sdk_connecting"
+	Idle          State = "idle"
+	// Reserved is the §6.2 coarse occupancy phase a recycled pod projects
+	// while its claim is held for the pinned tenant through the
+	// gateway.claimHoldTTLSeconds hold window (claim binding state
+	// `reserved`). A pod that reaches reserved is always scrubbed and, on
+	// a preConnect pool, SDK-warm; it is excluded from idle inventory and
+	// rebinds to bound when a same-tenant session arrives within the hold,
+	// or returns to idle when the hold TTL expires. spec: §6.2 (reserved
+	// hold semantics).
+	Reserved             State = "reserved"
 	Claimed              State = "claimed"
-	SlotActive           State = "slot_active"
 	ReceivingUploads     State = "receiving_uploads"
 	FinalizingWorkspace  State = "finalizing_workspace"
 	RunningSetup         State = "running_setup"
@@ -97,7 +120,7 @@ const (
 
 func All() []State {
 	return []State{
-		Warming, SDKConnecting, Idle, Claimed, SlotActive, ReceivingUploads,
+		Warming, SDKConnecting, Idle, Reserved, Claimed, ReceivingUploads,
 		FinalizingWorkspace, RunningSetup, StartingSession, Attached, TaskCleanup,
 		Resuming, Suspended, ResumePending, AwaitingClientAction,
 		Completed, Failed, Cancelled, Expired, Draining, Terminated,
@@ -145,8 +168,10 @@ type Transition struct {
 
 // ValidTransitions per spec §6.2. The list captures the pod-warm path,
 // the SDK-warm path, the claim/setup chain, the attached/session edges,
-// the suspension/recovery loop, the task-cleanup edges, and the
-// concurrent-mode slot edges. The host-schedulable gate
+// the suspension/recovery loop, and the task-cleanup edges. With one
+// session mode the coarse phase carries no separate concurrent-occupancy
+// value: a pod serving concurrent sessions projects claimed, so there is
+// no distinct slot-active phase or its edges. The host-schedulable gate
 // (lenny.dev/host-schedulable: "true") chooses between
 // task_cleanup → sdk_connecting/idle (schedulable) and
 // task_cleanup → draining (not schedulable); both edges appear here.
@@ -222,16 +247,6 @@ func ValidTransitions() []Transition {
 		{TaskCleanup, Idle},          // host-schedulable, non-preConnect reuse
 		{TaskCleanup, Draining},      // not host-schedulable, or a retirement limit reached
 		{TaskCleanup, Failed},        // onCleanupFailure: fail
-		// Concurrent-mode slot edges (§5.2 / §6.2). A concurrent-mode pod
-		// hosts up to maxConcurrent slots simultaneously: idle → slot_active
-		// on the first slot, slot_active → slot_active for each further
-		// slot assignment and for a slot completing while siblings remain,
-		// slot_active → idle when the last slot drains.
-		{Idle, SlotActive},
-		{SlotActive, SlotActive},
-		{SlotActive, Idle},
-		{SlotActive, Draining}, // unhealthy slot threshold or maxPodUptimeSeconds
-		{SlotActive, Failed},
 		// Drain and terminate. claimed → draining is the claim-time abort
 		// path: a pod claimed but torn down before workspace start (gateway
 		// crash between the SSA claim and the setup chain) drains and

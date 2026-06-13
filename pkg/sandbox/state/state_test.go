@@ -13,7 +13,14 @@ import (
 // mapping: the lenny.dev/state pod label carries only idle/active/draining.
 // idle maps to idle, draining to draining, every claimed/serving phase to
 // active, and the pre-ready (warming, sdk_connecting) and terminal phases
-// have no coarse value (so the reconciler omits the label).
+// have no coarse value (so the reconciler omits the label). reserved maps
+// to active: a recycled pod held for its pinned tenant is excluded from
+// idle inventory, so claimed and reserved both project active and the
+// label never leaves active across the recycle and hold window (spec §6.2
+// "reserved hold semantics" / concurrent pod lifecycle). sdk_connecting
+// stays unmapped on the recycle SDK re-warm leg exactly as it is on the
+// warm-fill leg, because the phase cannot distinguish an occupied
+// recycling pod from unclaimed pre-idle inventory (spec §6.2 lines 290-291).
 func TestCoarseState_spec_6_2(t *testing.T) {
 	cases := []struct {
 		phase state.State
@@ -22,6 +29,9 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 	}{
 		{state.Idle, "idle", true},
 		{state.Draining, "draining", true},
+		// reserved: recycled pod held for its pinned tenant, excluded from
+		// idle inventory, so the PDB idle selector must not match it.
+		{state.Reserved, "active", true},
 		{state.Claimed, "active", true},
 		{state.ReceivingUploads, "active", true},
 		{state.FinalizingWorkspace, "active", true},
@@ -29,13 +39,15 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 		{state.StartingSession, "active", true},
 		{state.Attached, "active", true},
 		{state.TaskCleanup, "active", true},
-		{state.SlotActive, "active", true},
 		{state.Resuming, "active", true},
 		{state.Suspended, "active", true},
 		{state.ResumePending, "active", true},
 		{state.AwaitingClientAction, "active", true},
 		// Pre-ready: not yet claimable, no coarse operational value.
 		{state.Warming, "", false},
+		// sdk_connecting is unmapped on both the warm-fill leg and the
+		// recycle SDK re-warm leg, so the reconciler removes the label in
+		// both windows. spec §6.2 lines 290-291.
 		{state.SDKConnecting, "", false},
 		// Terminal: the pod is gone, no coarse value.
 		{state.Completed, "", false},
@@ -53,6 +65,60 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 		if ok && got != state.CoarseIdle && got != state.CoarseActive && got != state.CoarseDraining {
 			t.Errorf("CoarseState(%q) = %q, which is outside the §6.2 line 309 value set", tc.phase, got)
 		}
+	}
+}
+
+// TestCoarseStateReservedAndSDKConnecting_spec_6_2 pins the two §6.2
+// recycle-window mappings this proposal turns on. reserved projects active
+// exactly as claimed does, so the §4.6.1 PDB idle selector never matches a
+// held recycled pod and the label does not oscillate as same-tenant
+// sessions rebind within the hold; sdk_connecting stays unmapped on the
+// recycle SDK re-warm leg exactly as on the warm-fill leg, so the
+// reconciler removes the label in that window because the phase cannot
+// distinguish an occupied recycling pod from unclaimed pre-idle inventory.
+func TestCoarseStateReservedAndSDKConnecting_spec_6_2(t *testing.T) {
+	t.Parallel()
+	reserved, reservedOK := state.CoarseState(state.Reserved)
+	claimed, claimedOK := state.CoarseState(state.Claimed)
+	if !reservedOK || reserved != state.CoarseActive {
+		t.Errorf("CoarseState(reserved) = (%q, %v), want (%q, true)", reserved, reservedOK, state.CoarseActive)
+	}
+	if reserved != claimed || reservedOK != claimedOK {
+		t.Errorf("CoarseState(reserved) = (%q, %v), want parity with CoarseState(claimed) = (%q, %v)",
+			reserved, reservedOK, claimed, claimedOK)
+	}
+	if got, ok := state.CoarseState(state.SDKConnecting); ok || got != "" {
+		t.Errorf("CoarseState(sdk_connecting) = (%q, %v), want (\"\", false) — unmapped on warm-fill and re-warm legs", got, ok)
+	}
+}
+
+// TestConcurrentOccupancyCollapsesToClaimed_spec_6_2 pins the removal of the
+// former slot_active phase. With one session mode the coarse phase enum carries
+// no separate concurrent-occupancy value: a pod serving any number of concurrent
+// sessions projects claimed, which maps to active, so concurrency is observable
+// through the Redis slot counter and metrics rather than a distinct phase or
+// pod-label value. The phase string "slot_active" must therefore not appear in
+// All(), must carry no coarse mapping, and must have no valid transitions.
+func TestConcurrentOccupancyCollapsesToClaimed_spec_6_2(t *testing.T) {
+	t.Parallel()
+	const slotActive state.State = "slot_active"
+	for _, s := range state.All() {
+		if s == slotActive {
+			t.Fatal("state.All() still contains slot_active — concurrent occupancy must collapse to claimed")
+		}
+	}
+	if got, ok := state.CoarseState(slotActive); ok || got != "" {
+		t.Errorf("CoarseState(slot_active) = (%q, %v), want (\"\", false) — the phase no longer exists", got, ok)
+	}
+	// No transition may name slot_active as a source or target.
+	for _, tr := range state.ValidTransitions() {
+		if tr.From == slotActive || tr.To == slotActive {
+			t.Errorf("ValidTransitions() still contains a slot_active edge %q → %q", tr.From, tr.To)
+		}
+	}
+	// Concurrent occupancy projects the claimed coarse phase, which maps to active.
+	if got, ok := state.CoarseState(state.Claimed); !ok || got != state.CoarseActive {
+		t.Errorf("CoarseState(claimed) = (%q, %v), want (%q, true) — concurrent occupancy collapses to claimed→active", got, ok, state.CoarseActive)
 	}
 }
 
@@ -94,41 +160,6 @@ func TestAllStatesIncludePhase1Additions(t *testing.T) {
 		if !got[s] {
 			t.Errorf("state.All() is missing %q (added/required in Phase 1)", s)
 		}
-	}
-}
-
-// spec: 5.2
-// diagnosis: the concurrent-mode (§5.2) slot_active phase or one of its
-// §6.2 transitions is missing from the Sandbox state machine. Phase 12c
-// adds slot_active: a concurrent-mode pod hosts up to maxConcurrent
-// slots, entering slot_active on the first slot and returning to idle
-// when the last slot drains.
-func TestSlotActivePhaseAndTransitions(t *testing.T) {
-	t.Parallel()
-	found := false
-	for _, s := range state.All() {
-		if s == state.SlotActive {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("state.All() is missing slot_active (added in Phase 12c)")
-	}
-	// §6.2 concurrent-mode slot edges.
-	required := []state.Transition{
-		{From: state.Idle, To: state.SlotActive},       // first slot
-		{From: state.SlotActive, To: state.SlotActive}, // further slot / sibling drains
-		{From: state.SlotActive, To: state.Idle},       // last slot drains
-		{From: state.SlotActive, To: state.Draining},   // unhealthy threshold / uptime
-	}
-	for _, tr := range required {
-		if err := state.IsValid(tr.From, tr.To); err != nil {
-			t.Errorf("IsValid(%q, %q) = %v, want nil — concurrent-mode edge", tr.From, tr.To, err)
-		}
-	}
-	// slot_active is not a terminal phase.
-	if state.IsTerminal(state.SlotActive) {
-		t.Error("slot_active must not be a terminal phase")
 	}
 }
 
