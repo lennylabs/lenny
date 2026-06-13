@@ -52,13 +52,12 @@ var prodMigrationSchema = []struct {
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry. concurrency_style is not listed here:
-	// migration 0167 retires it (the §5.2 mode collapse), so it does not
-	// survive the full chain. The forward test asserts only columns that
-	// exist at HEAD; 0167's down restores concurrency_style so the per-step
-	// 0040 rollback still ends with the column absent.
+	// sandbox_warm_pools registry. concurrency_style survives the full
+	// chain at this step: migration 0167 defers its retirement to the
+	// later poolstore step that removes the gateway ConcurrencyStyle field,
+	// so the column is still present at HEAD.
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
-		"max_concurrent", "acknowledge_process_level_isolation",
+		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
 	}},
 	// 0042 creates the §12.8 GDPR erasure-job registry. The

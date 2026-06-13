@@ -128,42 +128,37 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 }
 
 // spec: 5.2, 12.6
-// diagnosis: migration 0167 did not retire sandbox_warm_pools.concurrency_style
-// (the §5.2 mode collapse), or its .down.sql did not restore the column to
-// its 0040 definition (TEXT NOT NULL DEFAULT ”). A failure means the §5.2
-// concurrent sub-variant column survives at HEAD, or the down does not
-// round-trip to the 0040 definition.
-func TestProdSchemaMigrationConcurrencyStyleDrop(t *testing.T) {
+// diagnosis: migration 0167 dropped sandbox_warm_pools.concurrency_style
+// ahead of the gateway ConcurrencyStyle field removal the proposal
+// conditions it on ("retired ... once concurrencyStyle is removed"). The
+// column must survive the full migration chain at this step, with its
+// 0040 definition intact, because pgstore still reads and writes it; the
+// drop belongs to the later poolstore step. A failure means the §5.2
+// mode-collapse migration ran ahead of its Go-side precondition and blanks
+// every re-read pool's ConcurrencyStyle.
+func TestProdSchemaMigrationConcurrencyStyleSurvives(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
 	ctx := context.Background()
 
-	// At HEAD the column is gone: 0167 dropped it.
-	if columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("sandbox_warm_pools.concurrency_style must be dropped by migration 0167 (§5.2 mode collapse)")
+	// At HEAD the column survives with its 0040 definition: 0167 defers the
+	// drop to the later poolstore step.
+	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
+		t.Fatal("sandbox_warm_pools.concurrency_style must survive migration 0167 (drop deferred to the poolstore step)")
+	}
+	if got := columnType(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "text" {
+		t.Errorf("concurrency_style type: got %q, want text", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "''::text" {
+		t.Errorf("concurrency_style default: got %q, want ''::text", got)
+	}
+	if columnNullable(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
+		t.Error("concurrency_style must be NOT NULL (the 0040 definition)")
 	}
 	// max_concurrent survives as the per-pod bound.
 	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "max_concurrent") {
 		t.Error("sandbox_warm_pools.max_concurrent must survive migration 0167")
-	}
-
-	// Roll 0167 back to assert the down round-trips the dropped column to
-	// its 0040 definition.
-	pg.MigrateTo(t, dir, 166)
-
-	// The down restored the column with its 0040 definition.
-	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Fatal("migration 0167 down must restore sandbox_warm_pools.concurrency_style")
-	}
-	if got := columnType(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "text" {
-		t.Errorf("restored concurrency_style type: got %q, want text", got)
-	}
-	if got := columnDefault(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "''::text" {
-		t.Errorf("restored concurrency_style default: got %q, want ''::text", got)
-	}
-	if columnNullable(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("restored concurrency_style must be NOT NULL (the 0040 definition)")
 	}
 }
 

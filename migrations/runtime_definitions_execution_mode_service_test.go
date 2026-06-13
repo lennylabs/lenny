@@ -22,15 +22,16 @@ const pgCheckViolation = "23514"
 
 // TestExecutionModeServiceMigrationSQL_spec_5_2_12_6 asserts the static
 // SQL surface of migration 0167: the up re-keys the runtime_definitions
-// execution_mode CHECK to the (session, service) set, retires the
-// sandbox_warm_pools.concurrency_style column behind a §10.5 Phase 3
-// preflight gate, and adds the agent_pod_state recycle counters; the down
-// reverses each. The §5.2 mode collapse retires concurrency_style
-// ("retired ... once concurrencyStyle is removed"); the pgstore pool
-// SELECT/INSERT/UPDATE/scan stop persisting the column in the same change.
-// The migration issues no COMMENT ON statements: the stale mode-enum
-// documentation lives in the '--' source comments of 0033 and 0084, which
-// are re-keyed in place (TestStaleModeCommentsReKeyed_spec_5_2_12_6).
+// execution_mode CHECK to the (session, service) set and adds the
+// agent_pod_state recycle counters; the down reverses each. The proposal
+// conditions the concurrency_style retirement on the gateway
+// ConcurrencyStyle field being removed first ("retired ... once
+// concurrencyStyle is removed"), so the column drop belongs to the later
+// poolstore step; this migration must not touch concurrency_style while
+// pgstore still reads and writes it. The migration issues no COMMENT ON
+// statements: the stale mode-enum documentation lives in the '--' source
+// comments of 0033 and 0084, which are re-keyed in place
+// (TestStaleModeCommentsReKeyed_spec_5_2_12_6).
 //
 // spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
 func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
@@ -44,15 +45,16 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"CHECK (execution_mode IN ('session', 'service'))",
 		"ADD COLUMN sessions_served",
 		"scrub_failure_count INTEGER",
-		// The §5.2 mode collapse retires concurrency_style. The drop is
-		// idempotent (§10.5 line 430) and fronted by a DO $$ preflight gate
-		// (§10.5 line 417) so the column has no live dependents.
-		"DROP COLUMN IF EXISTS concurrency_style",
-		"DO $$",
 	} {
 		if !strings.Contains(ups, want) {
 			t.Errorf("0167 up missing %q", want)
 		}
+	}
+	// concurrency_style is retired in the later poolstore step, once the
+	// gateway ConcurrencyStyle field is removed; this migration must not
+	// drop the column while pgstore still reads and writes it.
+	if strings.Contains(ups, "DROP COLUMN") && strings.Contains(ups, "concurrency_style") {
+		t.Error("0167 up must not drop concurrency_style; the column is retired in the later poolstore step")
 	}
 	// max_concurrent survives as the per-pod bound: the up must not drop it.
 	if strings.Contains(ups, "DROP COLUMN max_concurrent") ||
@@ -75,12 +77,15 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"DROP COLUMN IF EXISTS sessions_served",
 		"DROP COLUMN IF EXISTS scrub_failure_count",
 		"CHECK (execution_mode IN ('session', 'task', 'concurrent'))",
-		// The down restores the dropped column with its 0040 definition.
-		"ADD COLUMN IF NOT EXISTS concurrency_style TEXT NOT NULL DEFAULT ''",
 	} {
 		if !strings.Contains(downs, want) {
 			t.Errorf("0167 down missing %q", want)
 		}
+	}
+	// The down does not reference concurrency_style because the up never
+	// dropped it.
+	if strings.Contains(downs, "concurrency_style") {
+		t.Error("0167 down must not reference concurrency_style; the up does not drop it")
 	}
 	// The down reverses only schema surfaces; it issues no COMMENT ON
 	// statement because the up issued none.
@@ -140,17 +145,20 @@ func TestStaleModeCommentsReKeyed_spec_5_2_12_6(t *testing.T) {
 // TestExecutionModeServiceMigrationDB_spec_5_2_12_6 applies the migration
 // chain through 0167 against a real Postgres and verifies the re-keyed
 // runtime_definitions CHECK accepts a service-mode row, rejects the
-// removed task and concurrent values, the concurrency_style column is
-// dropped (the §5.2 mode collapse) while max_concurrent remains, and the
-// nullable agent_pod_state recycle counters exist. The down restores
-// concurrency_style with its 0040 definition.
+// removed task and concurrent values, both concurrency_style and
+// max_concurrent survive (the column drop is deferred to the later
+// poolstore step, once the gateway ConcurrencyStyle field is removed),
+// and the nullable agent_pod_state recycle counters exist. The down
+// reverses the constraint re-key and the recycle counters.
 //
 // diagnosis: a failure means migration 0167 did not re-key the
-// runtime_definitions execution_mode enum to (session, service), did not
-// retire concurrency_style, or did not add the agent_pod_state recycle
-// counters; the database would reject a service-mode runtime definition,
-// still permit the removed task and concurrent values, or leave the §5.2
-// concurrent sub-variant column in place.
+// runtime_definitions execution_mode enum to (session, service) or did
+// not add the agent_pod_state recycle counters; the database would reject
+// a service-mode runtime definition, still permit the removed task and
+// concurrent values, or be missing the recycle counters. A failure on the
+// concurrency_style assertion means the drop ran ahead of the gateway
+// ConcurrencyStyle field removal the proposal conditions it on, which
+// would blank every re-read pool's ConcurrencyStyle.
 //
 // spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
 func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
@@ -217,11 +225,13 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 	// session mode still inserts: the surviving value is unaffected.
 	insertRuntimeDef(t, ctx, pool, "sess-runtime", "session")
 
-	// concurrency_style is retired by 0167 (the §5.2 mode collapse); the
-	// pgstore pool SQL stops persisting it in the same change. max_concurrent
-	// survives as the per-pod bound.
-	if columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("concurrency_style column must be dropped by 0167 (§5.2 mode collapse)")
+	// concurrency_style and max_concurrent both survive 0167. The column
+	// drop moves to the later poolstore step, once the gateway
+	// ConcurrencyStyle field is removed; pgstore still reads and writes
+	// concurrency_style at this step, so dropping it here would blank
+	// every re-read pool's ConcurrencyStyle.
+	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
+		t.Error("concurrency_style column must survive 0167 (retired in the later poolstore step)")
 	}
 	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "max_concurrent") {
 		t.Error("max_concurrent column must survive 0167")
@@ -262,12 +272,11 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		t.Error("after down, the restored CHECK must reject execution_mode 'service'")
 	}
 
-	// The down restores concurrency_style with its 0040 definition
-	// (NOT NULL); the recycle counters are dropped.
+	// concurrency_style is untouched by both up and down (the up never
+	// dropped it, so the down leaves it in place); the recycle counters
+	// are dropped.
 	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("down must restore concurrency_style (the up dropped it)")
-	} else if columnNullable(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("restored concurrency_style must be NOT NULL (the 0040 definition)")
+		t.Error("down must leave concurrency_style in place (the up never dropped it)")
 	}
 	for _, col := range []string{"sessions_served", "scrub_failure_count"} {
 		if columnExists(t, ctx, pool, "agent_pod_state", col) {
