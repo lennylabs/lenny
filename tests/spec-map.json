@@ -387,6 +387,11 @@
         "pkg/gateway/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
         "pkg/sandbox/state/state_test.go::TestSlotActivePhaseAndTransitions",
         "tests/tier2_component/stores/poolstore_test.go",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestExecutionModeEnumRejectsRemovedModes_spec_5_2",
+        "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier4_integration/concurrent_stateless_test.go"
       ],
@@ -2269,6 +2274,9 @@
         "pkg/preflight/run_test.go",
         "pkg/preflight/hostsharing_test.go",
         "tests/tier1_unit/helm/helm_test.go",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2",
+        "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516",
+        "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier8_chaos/pod_disruption_test.go"
       ],
       "packages": [
