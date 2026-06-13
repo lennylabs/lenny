@@ -261,6 +261,33 @@ service GatewayControl {
   // tool-level failure is an is_error result rather than a gRPC error.
   // spec: §9.3 lines 142-164.
   rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
+
+  // ReportSessionScrub reports the outcome of the per-slot cleanup the
+  // adapter runs at a session release on a recycling pod (§5.2). The
+  // outcome is RELEASED when the slot's runtime, credential timers, and
+  // per-slot directory tree were torn down cleanly, or LEAKED when a
+  // resource could not be reclaimed. The gateway resolves the pod from
+  // pod_id, increments sessionsServed on its agent_pod_state row, and
+  // feeds a LEAKED outcome into the unhealthy-threshold ledger behind the
+  // lenny.dev/drain-request annotation (§4.6.3). The adapter initiates
+  // this RPC; a transport failure is a gRPC status error.
+  // spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
+  rpc ReportSessionScrub(ReportSessionScrubRequest) returns (ReportSessionScrubResponse) {}
+
+  // ReportPodScrub reports the binary outcome of the whole-pod scrub the
+  // adapter runs when occupancy reaches zero on a recycling pod and the
+  // gateway has patched the pod's SandboxClaim to recycling (§5.2). The
+  // outcome is SUCCEEDED when the §5.2 scrub sequence completed, or
+  // FAILED otherwise. The gateway resolves the pod from pod_id; on FAILED
+  // it increments scrubFailureCount on the agent_pod_state row and
+  // computes the recycle disposition against sessionPolicy (§4.6.3), and
+  // on SUCCEEDED it records the rewarmStartedAt stamp and coordinates the
+  // SDK re-warm on a preConnect pool, or patches the claim directly to
+  // reserved otherwise. A missing report is bounded by a gateway-side
+  // timeout (cleanupTimeoutSeconds plus a grace period). The adapter
+  // initiates this RPC; a transport failure is a gRPC status error.
+  // spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+  rpc ReportPodScrub(ReportPodScrubRequest) returns (ReportPodScrubResponse) {}
 }
 
 // ListPlatformToolsRequest asks the gateway for the §9.1 platform tool
@@ -362,6 +389,75 @@ message CallConnectorToolResponse {
   bool is_error = 2;
 }
 
+// SessionScrubOutcome is the result of the §5.2 per-slot cleanup the
+// adapter runs at a session release on a recycling pod.
+enum SessionScrubOutcome {
+  SESSION_SCRUB_OUTCOME_UNSPECIFIED = 0;
+  // SESSION_SCRUB_OUTCOME_RELEASED — the slot's runtime, credential
+  // timers, and per-slot directory tree were torn down cleanly and the
+  // slot was released. spec: §5.2 (slot_cleanup → released).
+  SESSION_SCRUB_OUTCOME_RELEASED = 1;
+  // SESSION_SCRUB_OUTCOME_LEAKED — a resource could not be reclaimed at
+  // the session release. The gateway feeds the outcome into the
+  // unhealthy-threshold ledger behind the lenny.dev/drain-request
+  // annotation. spec: §5.2 (leaked slot semantics); §4.6.3.
+  SESSION_SCRUB_OUTCOME_LEAKED = 2;
+}
+
+// ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
+// adapter reports at a session release on a recycling pod. pod_id is the
+// agent_pod_state row key the gateway increments sessionsServed on;
+// session_id names the released session; slot_id is set only when the pod
+// runs concurrent sessions (`maxConcurrentSessions > 1`) and identifies
+// the released slot. spec: §4.7; §5.2.
+message ReportSessionScrubRequest {
+  string pod_id = 1;
+  SessionId session_id = 2;
+  SlotId slot_id = 3;
+  SessionScrubOutcome outcome = 4;
+}
+
+// ReportSessionScrubResponse acknowledges the §5.2 per-slot cleanup
+// report. It carries no body; the gateway's bookkeeping side effects
+// (sessionsServed increment, drain-request ledger) are gateway-side. A
+// gateway-side failure is a gRPC status error rather than a populated
+// response.
+message ReportSessionScrubResponse {}
+
+// PodScrubOutcome is the binary result of the §5.2 whole-pod scrub the
+// adapter runs at the occupancy-zero recycle boundary.
+enum PodScrubOutcome {
+  POD_SCRUB_OUTCOME_UNSPECIFIED = 0;
+  // POD_SCRUB_OUTCOME_SUCCEEDED — the §5.2 whole-pod scrub sequence
+  // completed. The gateway records rewarmStartedAt and coordinates the
+  // SDK re-warm on a preConnect pool, or patches the claim directly to
+  // reserved otherwise. spec: §3.4 recycle disposition.
+  POD_SCRUB_OUTCOME_SUCCEEDED = 1;
+  // POD_SCRUB_OUTCOME_FAILED — the §5.2 whole-pod scrub did not complete.
+  // The gateway increments scrubFailureCount and computes the disposition
+  // against sessionPolicy (retire under onScrubFailure: fail or
+  // maxScrubFailures). spec: §3.4 recycle disposition; §4.6.3.
+  POD_SCRUB_OUTCOME_FAILED = 2;
+}
+
+// ReportPodScrubRequest carries the §5.2 whole-pod scrub outcome the
+// adapter reports when occupancy reaches zero on a recycling pod and the
+// gateway has patched the pod's SandboxClaim to recycling. pod_id is the
+// agent_pod_state row key the gateway resolves the claim and disposition
+// from; there is no session_id because occupancy is zero at the recycle
+// boundary. detail carries an optional adapter-side failure description
+// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §3.4.
+message ReportPodScrubRequest {
+  string pod_id = 1;
+  PodScrubOutcome outcome = 2;
+  string detail = 3;
+}
+
+// ReportPodScrubResponse acknowledges the §5.2 whole-pod scrub report. It
+// carries no body; the gateway's disposition computation and claim patch
+// are gateway-side. A gateway-side failure is a gRPC status error.
+message ReportPodScrubResponse {}
+
 // =====================================================================
 // gRPC Health Checking Protocol binding
 // =====================================================================
@@ -452,8 +548,9 @@ message SessionId {
   string value = 1;
 }
 
-// SlotId identifies a slot in a concurrent-workspace pod. Empty in
-// session-mode pods.
+// SlotId identifies a slot on a pod that runs concurrent sessions
+// (`sessionPolicy.maxConcurrentSessions > 1`). Empty when
+// `maxConcurrentSessions: 1`, where a session claims the whole pod.
 message SlotId {
   string value = 1;
 }
@@ -478,9 +575,9 @@ message SlotId {
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
 // RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
-// start (task-mode pods reuse the materialized workspace across tasks
-// and skip the second RunSetup; the first-task gate is owned by the
-// task-mode lifecycle, F-5.2.18). See also F-5.2.24.
+// start (a recycled pod skips the second RunSetup on its subsequent
+// session assignments; the gateway owns the once-per-pod gate). See
+// also F-5.2.24.
 message WorkspacePlan {
   int32 schema_version = 1;
   repeated WorkspaceSource sources = 2;
@@ -549,8 +646,8 @@ message PrepareWorkspaceRequest {
   bytes chunk = 3;
   // slot_id, when set, stages this slot's uploads into the §6.4 per-slot
   // staging area /workspace/slots/{slotId}/staging/ instead of the single
-  // /workspace/staging. Empty in session/task mode (the base layout).
-  // spec: §6.4 lines 385-405.
+  // /workspace/staging. Empty when `maxConcurrentSessions: 1` (the base
+  // layout). spec: §6.4 lines 385-405.
   SlotId slot_id = 4;
 }
 
@@ -583,8 +680,8 @@ message FinalizeWorkspaceRequest {
   // slot_id, when set, materializes this slot's workspace under the §6.4
   // per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
   // current /workspace/slots/{slotId}/current/) instead of the single
-  // /workspace/current. Empty in session/task mode. spec: §6.4 lines
-  // 385-405.
+  // /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4
+  // lines 385-405.
   SlotId slot_id = 5;
 }
 
@@ -694,20 +791,19 @@ message WorkspacePlanWarning {
 // authoritative execution payload — see WorkspacePlan.setup_commands
 // for why the same commands also ride on the plan document.
 //
-// Per §5.2 line 415 setup commands run once per pod at start, not per
-// task. The gateway issues RunSetup once on first session/task assignment;
-// on subsequent task-mode assignments the gateway skips the RunSetup RPC
-// entirely so the adapter's pod-level setup-completion state is
-// implicit (no second RunSetup means no second execution). The
-// task-mode lifecycle owner of this gate is the first-task pod
-// transition (F-5.2.18).
+// Per §5.2 setup commands run once per pod at start. The gateway issues
+// RunSetup once on first pod assignment; on a recycled pod's subsequent
+// session assignments the gateway skips the RunSetup RPC entirely so the
+// adapter's pod-level setup-completion state is implicit (no second
+// RunSetup means no second execution). Per-session setup belongs in the
+// runtime's initialization rather than in setupCommands.
 message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
   SetupPolicy setup_policy = 3;
   // slot_id, when set, runs setup against this slot's materialized cwd
   // /workspace/slots/{slotId}/current/ instead of /workspace/current.
-  // Empty in session/task mode. spec: §6.4 lines 401-405.
+  // Empty when `maxConcurrentSessions: 1`. spec: §6.4 lines 401-405.
   SlotId slot_id = 4;
 }
 
@@ -769,9 +865,13 @@ message StartSessionRequest {
   // runtime receives in the adapter manifest to stitch its native
   // traces into the parent's trace tree. Empty when none is set.
   map<string, string> tracing_context = 6;
-  // task_id is the §4.7 current task identifier written into the adapter
-  // manifest. Empty in session mode, where the adapter defaults the
-  // manifest taskId to the session id (the session is its single task).
+  // task_id is the §4.7 task identifier written into the adapter
+  // manifest. A session has exactly one execution, so task_id is frozen
+  // equal to the session's root task identifier ("Task" is the external
+  // protocol name for the session: an MCP or A2A Task, or a
+  // lenny/delegate_task child). Empty when the gateway sets no explicit
+  // task identifier, where the adapter defaults the manifest taskId to
+  // the session id. spec: §3.5 session and task.
   string task_id = 8;
   // agent_interface is the runtime's §5.1 agentInterface descriptor,
   // JSON-encoded, written verbatim into the adapter manifest's
@@ -782,12 +882,13 @@ message StartSessionRequest {
   // written into the adapter manifest. Empty when the runtime specifies no
   // minimum.
   string min_platform_version = 10;
-  // slot_id, when set, claims a §6.4 concurrent-workspace slot rather than
-  // the whole pod: the adapter registers the slot (alongside sibling
-  // slots), ensures the per-slot tree exists, and starts the slot's
-  // runtime against /workspace/slots/{slotId}/current/. Empty in
-  // session/task mode (the one-session-only claim). spec: §6.4 lines
-  // 385-405; §5.2 concurrent mode.
+  // slot_id, when set, claims a §6.4 per-slot workspace rather than the
+  // whole pod: the adapter registers the slot (alongside sibling slots),
+  // ensures the per-slot tree exists, and starts the slot's runtime
+  // against /workspace/slots/{slotId}/current/. Set only when the pod
+  // runs concurrent sessions (`maxConcurrentSessions > 1`); empty when
+  // `maxConcurrentSessions: 1` (the one-session-per-pod claim). spec:
+  // §6.4 lines 385-405; §5.2.
   SlotId slot_id = 11;
 }
 
@@ -854,8 +955,8 @@ message AssignCredentialsRequest {
   // slot_id, when set, writes this slot's independent credential lease to
   // the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
   // instead of the single global /run/lenny/credentials.json, so a
-  // rotation on one slot does not disrupt sibling slots. Empty in
-  // session/task mode. spec: §6.1 line 28.
+  // rotation on one slot does not disrupt sibling slots. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
   SlotId slot_id = 3;
 }
 
@@ -873,8 +974,8 @@ message RotateCredentialsRequest {
   // fault trigger (capped) for fail-closed safety.
   string rotation_trigger = 3;
   // slot_id, when set, rotates the lease in this slot's §6.1 per-slot
-  // credential file independently of sibling slots. Empty in session/task
-  // mode. spec: §6.1 line 28.
+  // credential file independently of sibling slots. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
   SlotId slot_id = 4;
 }
 
@@ -885,8 +986,8 @@ message RevokeCredentialsRequest {
   repeated string providers = 2;
   string reason = 3;
   // slot_id, when set, revokes from this slot's §6.1 per-slot credential
-  // file independently of sibling slots. Empty in session/task mode.
-  // spec: §6.1 line 28.
+  // file independently of sibling slots. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
   SlotId slot_id = 4;
 }
 
@@ -1218,10 +1319,11 @@ message ShutdownRequest {
   SessionId session_id = 1;
   string reason = 2;
   int32 deadline_ms = 3;
-  // slot_id, when set, tears down just this §6.4 concurrent-workspace
-  // slot (its runtime, credential timers, and per-slot directory tree)
-  // while sibling slots on the pod keep running. Empty in session/task
-  // mode (the whole-pod shutdown). spec: §6.4 lines 401-405.
+  // slot_id, when set, tears down just this §6.4 per-slot session (its
+  // runtime, credential timers, and per-slot directory tree) while
+  // sibling slots on the pod keep running. Empty when
+  // `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4 lines
+  // 401-405.
   SlotId slot_id = 4;
 }
 
