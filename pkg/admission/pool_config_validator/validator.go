@@ -21,9 +21,8 @@
 // `spec.terminationGracePeriodSeconds`, and `spec.maxTerminationGracePeriodSeconds`
 // — see decideTerminationBudget. Per §10.1 line 116 the budget rule
 // applies to EVERY SandboxTemplate write regardless of execution mode;
-// only a concurrent-workspace pool fans the per-slot checkpoint cap
-// across `maxConcurrent` slots, so session, task, and stateless-concurrent
-// pools use a multiplier of 1.
+// only a service-mode pool fans the per-slot checkpoint cap across
+// `maxConcurrent` slots, so a session-mode pool uses a multiplier of 1.
 //
 // The decision logic is split from the webhook HTTP/JSON-AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -358,60 +357,58 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 	return allow()
 }
 
+// §13.1 CAP_NET_RAW gate (not enforced here): §5.2 names a
+// "SandboxWarmPool CRD validation webhook" rejection for a pool whose
+// `maxConcurrentSessions > 1` while the pod template grants CAP_NET_RAW,
+// mitigating cross-slot raw-socket sniffing on the shared network
+// namespace. This webhook decodes only the SandboxTemplate /
+// SandboxWarmPool object. Neither SandboxTemplateSpec nor
+// SandboxWarmPoolSpec models a pod-template securityContext, and the CRD
+// carries no maxConcurrentSessions field at all (it lives on the
+// gateway-side sessionPolicy mirror), so the admission object the
+// validator receives carries no CAP_NET_RAW signal to gate on. The gate
+// is therefore enforced where the pod template is materialized: the
+// WarmPoolController pod-builder (pkg/controller/sandbox/podspec) drops
+// ALL capabilities and adds none on every container, so no agent pod can
+// hold CAP_NET_RAW regardless of maxConcurrentSessions (see
+// TestBuildDropsNetRawOnEveryContainer in that package). Because the
+// builder is the sole author of the pod template (it is not
+// deployer-supplied), the §13.1 invariant holds without a webhook gate.
+// spec: §13.1 (pod security), §5.2 (concurrent-session acknowledgment).
+
 // DecideTemplate validates a SandboxTemplate against the §5.2
-// execution-mode acknowledgment and budget invariants. The empty
-// execution mode is treated as `session`, which carries no
-// pool-config invariant beyond the CRD OpenAPI schema.
+// execution-mode acknowledgment and budget invariants visible at the
+// CRD layer. The empty execution mode is treated as `session`, which
+// carries no pool-config invariant beyond the CRD OpenAPI schema.
 //
-// The invariants, each with its spec citation:
+// The SandboxTemplate models only the cross-tenant scrub-profile
+// residual-state gate of the §5.2 sessionPolicy.recycle block; the
+// remaining sessionPolicy acknowledgment derivations
+// (acknowledgeBestEffortScrub when recycling, acknowledgeProcessLevelIsolation
+// when maxConcurrentSessions > 1, the microvm cross-tenant gate, the T4
+// cross-tenant prohibition, and the maxConcurrentSessions > 1 categorical
+// cross-tenant rejection) key off the gateway-side sessionPolicy mirror,
+// which the gateway poolstore enforces at admin admission. The CRD type
+// carries no maxConcurrentSessions and no pod-template securityContext, so
+// those derivations and the §13.1 CAP_NET_RAW gate are not reachable from
+// the SandboxTemplate object this webhook decodes.
 //
-//   - A task-mode pool must carry taskPolicy with
-//     acknowledgeBestEffortScrub set true. The between-task workspace
-//     scrub is best-effort and is not a tenant isolation boundary
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 473: "If
-//     acknowledgeBestEffortScrub is absent or false, the pool
-//     controller rejects the pool definition at validation time").
+// The invariants enforced here, each with its spec citation:
 //
-//   - A task-mode pool's taskPolicy must set maxTasksPerPod, which is
-//     required with no default and must be at least 1
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 473 and
-//     line 451: "maxTasksPerPod is required with no default — the
-//     deployer must make an explicit choice").
+//   - sessionPolicy.recycle.scrubProfile `in-place` requires
+//     sessionPolicy.recycle.acknowledgeMicrovmResidualState set true:
+//     in-place scrub reuses the running guest and leaves guest-kernel
+//     residual state (DNS cache, TCP TIME_WAIT, page cache,
+//     inotify/fanotify registrations) across tenants, so it requires the
+//     explicit acknowledgment. See decideRecycleScrubProfile.
+//     spec: §5.2 (Kata/microvm scrub variant).
 //
-//   - taskPolicy.allowCrossTenantReuse is permitted only when
-//     isolationProfile is microvm
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 387: "The
-//     pool controller rejects allowCrossTenantReuse: true on any pool
-//     whose isolationProfile is not microvm at validation time").
-//
-//   - taskPolicy.microvmScrubMode `in-place` requires
-//     taskPolicy.acknowledgeMicrovmResidualState set true
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 442: "The
-//     pool controller rejects microvmScrubMode: in-place without this
-//     acknowledgment").
-//
-//   - A concurrent-workspace pool (executionMode concurrent,
-//     concurrencyStyle workspace) must carry concurrentWorkspacePolicy
-//     with acknowledgeProcessLevelIsolation set true
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 496: "If
-//     acknowledgeProcessLevelIsolation is absent or false, the pool
-//     controller rejects the pool definition at validation time").
-//
-//   - A concurrent-workspace pool must not set allowCrossTenantReuse on
-//     the SandboxTemplate; cross-tenant slot sharing has no isolation
-//     boundary in concurrent-workspace mode
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 498: "The
-//     pool controller explicitly rejects any concurrent-workspace pool
-//     definition where allowCrossTenantReuse: true is set").
-//
-//   - A concurrent-workspace pool's
-//     concurrentWorkspacePolicy.cleanupTimeoutSeconds must be at least
-//     maxConcurrent x 5, so the per-slot cleanup budget
-//     cleanupTimeoutSeconds / maxConcurrent stays above the 5s minimum
-//     (spec/05_runtime-registry-and-pool-model.md §5.2 line 515: "The
-//     SandboxWarmPool admission webhook rejects any pool configuration
-//     where cleanupTimeoutSeconds / maxConcurrent < 5 ... 422
-//     INVALID_POOL_CONFIGURATION").
+//   - The §10.1 / §5.2 per-pod terminationGracePeriodSeconds floor
+//     (`maxConcurrent × max_tiered_checkpoint_cap +
+//     checkpointBarrierAckTimeoutSeconds + 30`) is satisfied for every
+//     mode. A service-mode pool fans the per-slot checkpoint cap across
+//     `maxConcurrent` slots; every other mode uses a multiplier of 1. See
+//     decideTerminationBudget. spec: §5.2, §10.1.
 func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	spec := tpl.Spec
 
@@ -439,12 +436,12 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 
 	// spec: §10.1 line 116 — the tiered-cap + BarrierAck termination
 	// budget rule applies to EVERY admission request that mutates a
-	// SandboxTemplate.spec, not only concurrent-workspace pools. A
-	// session-mode pool that allows a 512 MB workspace but declares a
+	// SandboxTemplate.spec, not only service-mode pools. A session-mode
+	// pool that allows a 512 MB workspace but declares a
 	// terminationGracePeriodSeconds below the 90s + 90s + 30s floor would
-	// be SIGKILL'd mid-checkpoint on drain exactly as a concurrent pool
-	// would; the rule is not subject to the executionMode the deployer
-	// happened to pick.
+	// be SIGKILL'd mid-checkpoint on drain exactly as a service-mode pool
+	// that fans the cap across its slots would; the rule is not subject to
+	// the executionMode the deployer happened to pick.
 	return decideTerminationBudget(spec, effectiveMaxConcurrent(spec))
 }
 
@@ -589,8 +586,9 @@ const nodeDrainWarnSeconds = 600
 // per-pod `terminationGracePeriodSeconds` floor. It runs for every
 // SandboxTemplate execution mode (DecideTemplate calls it after the
 // mode-specific acknowledgment checks); maxConcurrent is the slot
-// multiplier, which effectiveMaxConcurrent collapses to 1 for every mode
-// except concurrent-workspace. The webhook computes
+// multiplier, which effectiveMaxConcurrent collapses to 1 for a
+// session-mode pool and resolves to spec.maxConcurrent for service mode.
+// The webhook computes
 //
 //	floor = maxConcurrent * max_tiered_checkpoint_cap
 //	      + checkpointBarrierAckTimeoutSeconds
