@@ -175,13 +175,14 @@
               "uploadToken": { "type": "string" },
               "sessionIsolationLevel": {
                 "type": "object",
-                "required": ["executionMode", "isolationProfile", "podReuse", "residualStateWarning"],
+                "required": ["executionMode", "isolationProfile", "podReuse", "residualStateWarning", "conversationContinuity"],
                 "properties": {
-                  "executionMode":        { "type": "string", "enum": ["session","task","concurrent"] },
-                  "isolationProfile":     { "type": "string", "enum": ["standard","sandboxed","microvm"] },
-                  "podReuse":             { "type": "boolean" },
-                  "scrubPolicy":          { "type": "string" },
-                  "residualStateWarning": { "type": "boolean" }
+                  "executionMode":          { "type": "string", "enum": ["session","service"] },
+                  "isolationProfile":       { "type": "string", "enum": ["standard","sandboxed","microvm"] },
+                  "podReuse":               { "type": "boolean" },
+                  "scrubPolicy":            { "type": "string" },
+                  "residualStateWarning":   { "type": "boolean" },
+                  "conversationContinuity": { "type": "string", "enum": ["platform","none"], "description": "§7.1 — `platform` for session mode (the platform preserves conversation context across messages for the session's lifetime); `none` for service mode (each message routes to any ready replica and clients re-inject context)." }
                 }
               }
             }
@@ -267,7 +268,7 @@
           "name":             { "type": "string" },
           "type":             { "type": "string", "enum": ["agent","mcp"] },
           "image":            { "type": "string" },
-          "executionMode":    { "type": "string", "enum": ["session","task","concurrent"] },
+          "executionMode":    { "type": "string", "enum": ["session","service"] },
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
           "integrationLevel": { "type": "string", "enum": ["basic","standard","full"] },
           "workspaceTier":    { "type": "string", "enum": ["T3","T4"] },
@@ -377,20 +378,35 @@
             }
           },
           "baseRuntime": { "type": "string" },
-          "taskPolicy": {
+          "sessionPolicy": {
             "type": "object",
+            "description": "§5.2 session-mode pod-reuse, concurrency, and workspace-cleanup policy. The former task and concurrent modes are presets of this block: recycle.enabled is sequential pod reuse and maxConcurrentSessions > 1 is the concurrent-slot configuration.",
             "properties": {
-              "acknowledgeBestEffortScrub":      { "type": "boolean" },
-              "allowCrossTenantReuse":           { "type": "boolean" },
-              "microvmScrubMode":                { "type": "string", "enum": ["restart","in-place"] },
-              "acknowledgeMicrovmResidualState": { "type": "boolean" },
-              "cleanupCommands":                 { "type": "array", "items": { "type": "string" } },
-              "cleanupTimeoutSeconds":           { "type": "integer" },
-              "onCleanupFailure":                { "type": "string", "enum": ["warn","fail"] },
-              "maxScrubFailures":                { "type": "integer" },
-              "maxTasksPerPod":                  { "type": "integer" },
-              "maxPodUptimeSeconds":             { "type": "integer" },
-              "maxTaskRetries":                  { "type": "integer" }
+              "maxConcurrentSessions":            { "type": "integer", "description": "§5.2 simultaneous-session bound per pod. > 1 requires acknowledgeProcessLevelIsolation." },
+              "acknowledgeProcessLevelIsolation": { "type": "boolean", "description": "§5.2 deployer acknowledgment of shared process namespace, /tmp, cgroup memory, network stack, and credential group-read across concurrent slots. Required when maxConcurrentSessions > 1." },
+              "recycle": {
+                "type": "object",
+                "description": "§5.2 sequential pod-reuse and whole-pod scrub policy.",
+                "properties": {
+                  "enabled":                         { "type": "boolean" },
+                  "acknowledgeBestEffortScrub":      { "type": "boolean", "description": "§5.2 acknowledgment that the workspace scrub is best-effort. Required when enabled." },
+                  "allowCrossTenantReuse":           { "type": "boolean", "description": "§5.2 cross-tenant sequential reuse. Only valid with isolationProfile: microvm and maxConcurrentSessions: 1." },
+                  "scrubProfile":                    { "type": "string", "enum": ["standard","vm-restart","in-place"], "description": "§5.2 cross-tenant scrub variant for microvm pods." },
+                  "acknowledgeMicrovmResidualState": { "type": "boolean", "description": "§5.2 acknowledgment of guest-kernel residual state. Required when scrubProfile: in-place." },
+                  "onScrubFailure":                  { "type": "string", "enum": ["warn","fail"], "description": "§5.2 disposition when the whole-pod scrub fails." },
+                  "maxScrubFailures":                { "type": "integer", "description": "§5.2 cumulative scrub-failure retirement bound (default 3)." },
+                  "maxSessionsPerPod":               { "type": "integer", "description": "§5.2 per-pod served-session retirement bound. Required when enabled." },
+                  "maxPodUptimeSeconds":             { "type": "integer", "description": "§5.2 optional uptime retirement bound." }
+                }
+              },
+              "cleanupCommands":                  { "type": "array", "items": { "type": "string" }, "description": "§5.2 deployer cleanup executed before the whole-pod scrub." },
+              "cleanupTimeoutSeconds":            { "type": "integer" },
+              "maxSessionRetries":                { "type": "integer", "description": "§5.2 / §6.6 crash re-dispatch budget (default 1; 0 disables retries)." },
+              "maxSessionAgeSeconds":             { "type": "integer", "description": "§5.2 wall-clock session-age cap." },
+              "maxClientIdleSeconds":             { "type": "integer", "description": "§5.2 / §6.2 client-inactivity bound; defaults to the effective maxSessionAgeSeconds." },
+              "slotRetries":                      { "type": "integer", "description": "§5.2 per-slot retry budget when maxConcurrentSessions > 1 (default 1)." },
+              "onPoolExhausted":                  { "type": "string", "enum": ["reject","queue"], "description": "§5.2 pool-exhaustion disposition (default reject)." },
+              "maxQueueWaitSeconds":              { "type": "integer", "description": "§5.2 queue-wait bound when onPoolExhausted: queue." }
             }
           },
           "createdAt":        { "type": "string", "format": "date-time" },
@@ -537,8 +553,7 @@
                         "properties": {
                           "name":             { "type": "string" },
                           "runtimeRef":       { "type": "string" },
-                          "executionMode":    { "type": "string", "enum": ["session","task","concurrent"] },
-                          "concurrencyStyle": { "type": "string", "enum": ["workspace","stateless"] },
+                          "executionMode":    { "type": "string", "enum": ["session","service"] },
                           "resourceClass":    { "type": "string" },
                           "warmCount":        { "type": "integer" },
                           "maxConcurrent":    { "type": "integer" },
