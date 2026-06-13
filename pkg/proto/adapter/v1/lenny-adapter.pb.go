@@ -38,7 +38,7 @@ const (
 )
 
 // SessionScrubOutcome is the result of the §5.2 per-slot cleanup the
-// adapter runs at a session release on a recycling pod.
+// adapter runs on every session release.
 type SessionScrubOutcome int32
 
 const (
@@ -1150,11 +1150,11 @@ func (x *CallConnectorToolResponse) GetIsError() bool {
 }
 
 // ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
-// adapter reports at a session release on a recycling pod. pod_id is the
-// agent_pod_state row key the gateway increments sessionsServed on;
-// session_id names the released session; slot_id is set only when the pod
-// runs concurrent sessions (`maxConcurrentSessions > 1`) and identifies
-// the released slot. spec: §4.7; §5.2.
+// adapter reports on every session release. pod_id is the agent_pod_state
+// row key the gateway increments sessionsServed on; session_id names the
+// released session; slot_id is set only when the pod runs concurrent
+// sessions (`maxConcurrentSessions > 1`) and identifies the released slot.
+// spec: §4.7; §5.2.
 type ReportSessionScrubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PodId         string                 `protobuf:"bytes,1,opt,name=pod_id,json=podId,proto3" json:"pod_id,omitempty"`
@@ -5490,8 +5490,8 @@ type NegotiateVersionResponse struct {
 	// The protocol version both sides agreed on.
 	SelectedProtocolVersion string `protobuf:"bytes,1,opt,name=selected_protocol_version,json=selectedProtocolVersion,proto3" json:"selected_protocol_version,omitempty"`
 	// Adapter capabilities. The platform-known set includes (but is not
-	// limited to): preConnect, multiTurn, fullLifecycle, taskMode,
-	// concurrentWorkspace, immediateInjection, queuedInjection.
+	// limited to): preConnect, multiTurn, fullLifecycle, immediateInjection,
+	// queuedInjection.
 	Capabilities []string `protobuf:"bytes,2,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// The adapter's own version string, surfaced for observability.
 	AdapterVersion string `protobuf:"bytes,3,opt,name=adapter_version,json=adapterVersion,proto3" json:"adapter_version,omitempty"`

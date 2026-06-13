@@ -10,9 +10,9 @@ import (
 )
 
 // SessionScrubOutcome is the §5.2 result of the per-slot cleanup the
-// adapter runs at a session release on a recycling pod, lifted from the
-// proto enum so the adapter reports a typed value rather than passing a
-// proto constant. spec: §5.2 scrub model.
+// adapter runs on every session release, lifted from the proto enum so the
+// adapter reports a typed value rather than passing a proto constant.
+// spec: §5.2 scrub model.
 type SessionScrubOutcome int
 
 const (
@@ -69,13 +69,14 @@ func (o PodScrubOutcome) proto() adapterv1.PodScrubOutcome {
 }
 
 // ReportSessionScrub reports the §5.2 per-slot cleanup outcome to the
-// gateway at a session release on a recycling pod. podID is the
-// agent_pod_state row key, sessionID the released session, and slotID the
-// released slot when the pod runs concurrent sessions
-// (`maxConcurrentSessions > 1`); slotID is empty otherwise. The gateway
-// increments sessionsServed on the pod's row and feeds a leaked outcome
-// into the unhealthy-threshold ledger. A transport or gateway failure is
-// returned as a wrapped error. spec: §4.7 (Adapter → Gateway RPCs); §5.2.
+// gateway on every session release (the `maxConcurrentSessions > 1` and
+// recycling cases alike). podID is the agent_pod_state row key, sessionID
+// the released session, and slotID the released slot when the pod runs
+// concurrent sessions (`maxConcurrentSessions > 1`); slotID is empty
+// otherwise. The gateway increments sessionsServed on the pod's row and
+// feeds a leaked outcome into the unhealthy-threshold ledger. A transport
+// or gateway failure is returned as a wrapped error.
+// spec: §4.7 (Adapter → Gateway RPCs); §5.2.
 func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID, slotID string, outcome SessionScrubOutcome) error {
 	req := &adapterv1.ReportSessionScrubRequest{
 		PodId:     podID,

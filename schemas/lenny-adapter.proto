@@ -263,14 +263,15 @@ service GatewayControl {
   rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
 
   // ReportSessionScrub reports the outcome of the per-slot cleanup the
-  // adapter runs at a session release on a recycling pod (§5.2). The
-  // outcome is RELEASED when the slot's runtime, credential timers, and
-  // per-slot directory tree were torn down cleanly, or LEAKED when a
-  // resource could not be reclaimed. The gateway resolves the pod from
-  // pod_id, increments sessionsServed on its agent_pod_state row, and
-  // feeds a LEAKED outcome into the unhealthy-threshold ledger behind the
-  // lenny.dev/drain-request annotation (§4.6.3). The adapter initiates
-  // this RPC; a transport failure is a gRPC status error.
+  // adapter runs on every session release (§5.2), across the
+  // `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
+  // RELEASED when the slot's runtime, credential timers, and per-slot
+  // directory tree were torn down cleanly, or LEAKED when a resource could
+  // not be reclaimed. The gateway resolves the pod from pod_id, increments
+  // sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
+  // into the unhealthy-threshold ledger behind the lenny.dev/drain-request
+  // annotation (§4.6.3). The adapter initiates this RPC; a transport
+  // failure is a gRPC status error.
   // spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
   rpc ReportSessionScrub(ReportSessionScrubRequest) returns (ReportSessionScrubResponse) {}
 
@@ -390,7 +391,7 @@ message CallConnectorToolResponse {
 }
 
 // SessionScrubOutcome is the result of the §5.2 per-slot cleanup the
-// adapter runs at a session release on a recycling pod.
+// adapter runs on every session release.
 enum SessionScrubOutcome {
   SESSION_SCRUB_OUTCOME_UNSPECIFIED = 0;
   // SESSION_SCRUB_OUTCOME_RELEASED — the slot's runtime, credential
@@ -405,11 +406,11 @@ enum SessionScrubOutcome {
 }
 
 // ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
-// adapter reports at a session release on a recycling pod. pod_id is the
-// agent_pod_state row key the gateway increments sessionsServed on;
-// session_id names the released session; slot_id is set only when the pod
-// runs concurrent sessions (`maxConcurrentSessions > 1`) and identifies
-// the released slot. spec: §4.7; §5.2.
+// adapter reports on every session release. pod_id is the agent_pod_state
+// row key the gateway increments sessionsServed on; session_id names the
+// released session; slot_id is set only when the pod runs concurrent
+// sessions (`maxConcurrentSessions > 1`) and identifies the released slot.
+// spec: §4.7; §5.2.
 message ReportSessionScrubRequest {
   string pod_id = 1;
   SessionId session_id = 2;
@@ -1382,8 +1383,8 @@ message NegotiateVersionResponse {
   // The protocol version both sides agreed on.
   string selected_protocol_version = 1;
   // Adapter capabilities. The platform-known set includes (but is not
-  // limited to): preConnect, multiTurn, fullLifecycle, taskMode,
-  // concurrentWorkspace, immediateInjection, queuedInjection.
+  // limited to): preConnect, multiTurn, fullLifecycle, immediateInjection,
+  // queuedInjection.
   repeated string capabilities = 2;
   // The adapter's own version string, surfaced for observability.
   string adapter_version = 3;

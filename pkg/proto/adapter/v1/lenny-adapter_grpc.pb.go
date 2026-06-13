@@ -1283,14 +1283,15 @@ type GatewayControlClient interface {
 	// spec: §9.3 lines 142-164.
 	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
 	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs at a session release on a recycling pod (§5.2). The
-	// outcome is RELEASED when the slot's runtime, credential timers, and
-	// per-slot directory tree were torn down cleanly, or LEAKED when a
-	// resource could not be reclaimed. The gateway resolves the pod from
-	// pod_id, increments sessionsServed on its agent_pod_state row, and
-	// feeds a LEAKED outcome into the unhealthy-threshold ledger behind the
-	// lenny.dev/drain-request annotation (§4.6.3). The adapter initiates
-	// this RPC; a transport failure is a gRPC status error.
+	// adapter runs on every session release (§5.2), across the
+	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
+	// RELEASED when the slot's runtime, credential timers, and per-slot
+	// directory tree were torn down cleanly, or LEAKED when a resource could
+	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
+	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
+	// annotation (§4.6.3). The adapter initiates this RPC; a transport
+	// failure is a gRPC status error.
 	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
 	ReportSessionScrub(ctx context.Context, in *ReportSessionScrubRequest, opts ...grpc.CallOption) (*ReportSessionScrubResponse, error)
 	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
@@ -1463,14 +1464,15 @@ type GatewayControlServer interface {
 	// spec: §9.3 lines 142-164.
 	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
 	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs at a session release on a recycling pod (§5.2). The
-	// outcome is RELEASED when the slot's runtime, credential timers, and
-	// per-slot directory tree were torn down cleanly, or LEAKED when a
-	// resource could not be reclaimed. The gateway resolves the pod from
-	// pod_id, increments sessionsServed on its agent_pod_state row, and
-	// feeds a LEAKED outcome into the unhealthy-threshold ledger behind the
-	// lenny.dev/drain-request annotation (§4.6.3). The adapter initiates
-	// this RPC; a transport failure is a gRPC status error.
+	// adapter runs on every session release (§5.2), across the
+	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
+	// RELEASED when the slot's runtime, credential timers, and per-slot
+	// directory tree were torn down cleanly, or LEAKED when a resource could
+	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
+	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
+	// annotation (§4.6.3). The adapter initiates this RPC; a transport
+	// failure is a gRPC status error.
 	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
 	ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error)
 	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
