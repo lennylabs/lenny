@@ -219,16 +219,16 @@ var prodMigrationSchema = []struct {
 	// the users and environments admin resources.
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
-	// 0167 re-keys the §5.2 execution-mode enum to (session, service),
-	// retires the concurrency_style column on sandbox_warm_pools (the §5.2
-	// mode collapse; pgstore stops persisting it in the same change), and
-	// adds the §12.6 gateway-written per-pod recycle counters to
-	// agent_pod_state. Both counters are nullable until the gateway first
-	// writes them. The dropped concurrency_style column is not listed: the
-	// per-step rollback model records only added columns (it asserts they
-	// are absent after rollback). The concurrency_style drop and its down
-	// restoration are covered by TestProdSchemaMigrationConcurrencyStyleDrop
-	// and the 0167 migration test in migrations/. spec: §5.2, §12.6.
+	// 0167 re-keys the §5.2 execution-mode CHECK on runtime_definitions to
+	// (session, service) and adds the §12.6 gateway-written per-pod recycle
+	// counters to agent_pod_state. Both counters are nullable until the
+	// gateway first writes them. concurrency_style on sandbox_warm_pools is
+	// intentionally NOT dropped at this step: its retirement is deferred to
+	// the later poolstore step that removes the gateway ConcurrencyStyle
+	// field ("retired ... once concurrencyStyle is removed"), and pgstore
+	// still persists and scans the column. Its survival across the full
+	// migration chain is asserted by
+	// TestProdSchemaMigrationConcurrencyStyleSurvives. spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},
