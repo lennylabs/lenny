@@ -54,8 +54,13 @@ func TestConcurrentMaxPodUptimeRoundTrip_spec_6_2(t *testing.T) {
 		t.Fatalf("ConcurrentMaxPodUptimeSeconds = %d, want 3600 (migration 0157 column did not round-trip)", got.ConcurrentMaxPodUptimeSeconds)
 	}
 
-	// Update the cap through the pgstore UPDATE path.
+	// Update the cap through the pgstore UPDATE path. concurrency_style no
+	// longer round-trips (migration 0167 retired the column), so the
+	// re-read row carries an empty ConcurrencyStyle that ValidateConcurrentConfig
+	// would reject on re-validation; the mutate re-establishes it for the
+	// concurrent-mode pool. spec: §5.2 (execution modes), §12.6.
 	if _, err := store.Update(ctx, name, func(p *poolstore.Pool) error {
+		p.ConcurrencyStyle = poolstore.ConcurrencyStyleWorkspace
 		p.ConcurrentMaxPodUptimeSeconds = 7200
 		return nil
 	}); err != nil {
