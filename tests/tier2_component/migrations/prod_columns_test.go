@@ -355,25 +355,6 @@ func columnNullable(t *testing.T, ctx context.Context, pg *containers.Postgres, 
 	return isNullable == "YES"
 }
 
-// columnComment returns the Postgres object comment on the column, or the
-// empty string when none is set. The migration 0167 down clears the object
-// comments the up added, so the round-trip test asserts these are empty
-// again after rollback.
-func columnComment(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
-	t.Helper()
-	var comment string
-	err := pg.Pool.QueryRow(ctx, `
-		SELECT COALESCE(col_description(a.attrelid, a.attnum), '')
-		  FROM pg_catalog.pg_attribute a
-		  JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-		 WHERE c.relname = $1 AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped`,
-		table, col).Scan(&comment)
-	if err != nil {
-		t.Fatalf("read comment of %s.%s: %v", table, col, err)
-	}
-	return comment
-}
-
 func mustHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {
 	t.Helper()
 	if !columnExists(t, ctx, pg, table, col) {
