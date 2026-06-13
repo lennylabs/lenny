@@ -58,17 +58,16 @@ const (
 		"0000000000000000000000000000000000000000000000000000000000000000"
 )
 
-// spec: 5.2, 17.2
 // diagnosis: a §5.2 session/service derived-property gate did not fail
 // closed at pool admission. The test seeds two runtimes, then drives four
 // adversarial pool definitions through the live POST /v1/admin/pools
-// admission path — the microvm cross-tenant gate, the T4 cross-tenant
-// prohibition, the maxConcurrentSessions > 1 categorical cross-tenant
-// rejection, and the maxConcurrentSessions > 1 process-level-isolation
-// acknowledgment requirement — and asserts each is rejected with 400
-// VALIDATION_ERROR while the corrected control pool is admitted. An
-// admitted adversarial pool means a tenant-isolation or
-// credential-handling boundary is bypassable at admission.
+// admission path (microvm cross-tenant gate, T4 cross-tenant prohibition,
+// maxConcurrentSessions > 1 categorical cross-tenant rejection, and the
+// maxConcurrentSessions > 1 process-level-isolation acknowledgment) and
+// asserts each is rejected with 400 VALIDATION_ERROR while the corrected
+// control pool is admitted. An admitted adversarial pool means a
+// tenant-isolation or credential-handling boundary is bypassable.
+// spec: 5.2, 17.2
 func TestPoolAdmissionDerivedPropertyGates_spec_5_2(t *testing.T) {
 	c := kind.InstallLenny(t)
 	if !deploymentReadyT9(t, c, gatewayDeploymentName) {
