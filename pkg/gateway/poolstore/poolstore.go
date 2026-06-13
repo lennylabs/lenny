@@ -26,7 +26,7 @@ import (
 )
 
 // Pool captures the §5.2 SandboxWarmPool CRD shape. v1 models the
-// essential fields; extension fields (taskPolicy, credentialPolicy,
+// essential fields; extension fields (sessionPolicy, credentialPolicy,
 // env, image overrides) attach to the row but are not strictly
 // validated by this store — the admin handler owns the cross-field
 // validation per §5.2.
@@ -40,48 +40,22 @@ type Pool struct {
 	// IsolationProfile overrides the runtime's default §5.3 profile.
 	IsolationProfile isolation.Profile
 
-	// ExecutionMode is the §5.2 mode (session, task, concurrent).
+	// ExecutionMode is the §5.2 mode (session, service).
 	ExecutionMode runtimestore.ExecutionMode
 
-	// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant
-	// (`workspace`, `stateless`). It is meaningful only when
-	// ExecutionMode is `concurrent`, where ValidateConcurrentConfig
-	// requires it.
-	ConcurrencyStyle ConcurrencyStyle
-
-	// MaxConcurrent is the §5.2 per-pod slot bound for concurrent mode.
-	// A concurrent-mode pod hosts at most this many slots
-	// simultaneously. It must be >= 1 on a concurrent-mode pool.
+	// MaxConcurrent is the §5.2 service-mode per-pod request capacity. A
+	// service-mode pod's readiness probe reports false at this slot count
+	// and the PoolScalingController watches active_slots / (pod_count ×
+	// MaxConcurrent). It is meaningful only when ExecutionMode is
+	// `service`; the session-mode concurrency bound lives on
+	// SessionPolicy.MaxConcurrentSessions. spec: §5.2 (service mode).
 	MaxConcurrent int
 
-	// AcknowledgeProcessLevelIsolation records the §5.2 deployer
-	// acknowledgment that concurrent-workspace slots share the pod
-	// process namespace, /tmp, cgroup memory, network stack, and
-	// credential group-read access. A concurrent-workspace pool is
-	// rejected without it.
-	AcknowledgeProcessLevelIsolation bool
-
-	// CleanupTimeoutSeconds bounds per-slot cleanup on a
-	// concurrent-workspace pool. The §5.2 rule requires
-	// CleanupTimeoutSeconds >= MaxConcurrent * 5 so each slot's cleanup
-	// budget clears the 5-second floor.
-	CleanupTimeoutSeconds int
-
-	// ConcurrentMaxPodUptimeSeconds retires a concurrent-workspace pod
-	// once its wall-clock uptime since first boot exceeds this value. The
-	// gateway slot-claim path drains an over-uptime pod (slot_active →
-	// draining, no new slots accepted; idle → draining before the next
-	// assignment) and skips it as a slot candidate. Zero leaves uptime
-	// retirement off (only the unhealthy-slot threshold retires the pod).
-	// It is the concurrent-mode counterpart of TaskPolicy.MaxPodUptimeSeconds.
-	// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
-	ConcurrentMaxPodUptimeSeconds int
-
-	// AllowCrossTenantReuse mirrors the §5.2 task-mode field. Concurrent
-	// modes have no cross-tenant isolation boundary, so
-	// ValidateConcurrentConfig rejects a concurrent-mode pool that sets
-	// it.
-	AllowCrossTenantReuse bool
+	// SessionPolicy is the §5.2 session-mode policy block: the pod-reuse,
+	// concurrency, and workspace-cleanup configuration. It is meaningful
+	// only when ExecutionMode is `session`. It is nil for the default
+	// one-session-per-pod configuration. spec: §5.2 (sessionPolicy block).
+	SessionPolicy *runtimestore.SessionPolicy
 
 	// ResourceClass is the §5.2 size bucket (`small`, `medium`,
 	// `large`); free-form per pool admin.
@@ -148,16 +122,6 @@ type Pool struct {
 	// and session creation that would select the pool is rejected with
 	// 503 POOL_DRAINING. spec: §15.1 line 797.
 	DrainingSince time.Time
-
-	// TaskPolicy is the §5.2 task-mode policy block (lines 398-413). It
-	// is required when ExecutionMode is `task` and must be absent on
-	// session or concurrent pools — `ValidateTaskPolicy` enforces both
-	// directions. AllowCrossTenantReuse is intentionally not on this
-	// struct: it lives on Pool as the legacy top-level field and the
-	// CRD-side TaskPolicy.AllowCrossTenantReuse is populated from there
-	// when PoolStoreSource maps the pool to its SandboxTemplate. spec:
-	// §5.2 lines 398-475.
-	TaskPolicy *TaskPolicy
 
 	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool
 	// `elicitationDepthPolicy` that governs whether agent-initiated
@@ -260,78 +224,6 @@ func (o SDKWarmCircuitBreakerOverride) IsValid() bool {
 	return false
 }
 
-// TaskPolicy mirrors the §5.2 taskPolicy block declared on
-// SandboxTemplate.spec (`pkg/apis/lenny/v1/sandboxtemplate_types.go`)
-// minus AllowCrossTenantReuse, which lives at the pool top level. Field
-// semantics match the CRD verbatim so the admin REST surface, store
-// row, and CRD all share interpretation. spec: §5.2 lines 398-475.
-type TaskPolicy struct {
-	// AcknowledgeBestEffortScrub records the §5.2 line 461 deployer
-	// acknowledgment that workspace scrub is best-effort. A task-mode
-	// pool is rejected without it (line 473).
-	AcknowledgeBestEffortScrub bool
-
-	// MicrovmScrubMode is the §5.2 line 442 cross-tenant scrub variant
-	// for microvm pods: `restart` (default) boots a fresh guest between
-	// tenants, `in-place` reuses the running guest with documented
-	// guest-kernel residual state. Meaningful only when the pool's
-	// AllowCrossTenantReuse is true and IsolationProfile is microvm.
-	MicrovmScrubMode runtimestore.MicrovmScrubMode
-
-	// AcknowledgeMicrovmResidualState records the §5.2 line 442
-	// acknowledgment that guest-kernel residual state persists when
-	// MicrovmScrubMode is `in-place`. Required in that mode.
-	AcknowledgeMicrovmResidualState bool
-
-	// CleanupCommands are the §5.2 line 404 deployer-defined commands
-	// the adapter runs between tasks (after the credential purge in
-	// step 0, before the §5.2 scrub steps 1-6).
-	CleanupCommands []string
-
-	// CleanupTimeoutSeconds bounds the cleanupCommands phase (§5.2 line
-	// 407). 30s in the spec yaml example.
-	CleanupTimeoutSeconds int
-
-	// OnCleanupFailure is the §5.2 line 444 disposition for a cleanup
-	// failure: `warn` returns the pod to the pool with a scrub_warning
-	// annotation; `fail` retires the pod.
-	OnCleanupFailure runtimestore.CleanupFailureDisposition
-
-	// MaxScrubFailures is the §5.2 line 446 cumulative scrub-failure
-	// retirement threshold. The spec default is 3.
-	MaxScrubFailures int
-
-	// MaxTasksPerPod is the §5.2 line 410 task-count retirement
-	// threshold. Required (>= 1) on task-mode pools.
-	MaxTasksPerPod int
-
-	// MaxPodUptimeSeconds is the §5.2 line 411 uptime retirement
-	// threshold; zero leaves retirement governed by MaxTasksPerPod and
-	// MaxScrubFailures alone.
-	MaxPodUptimeSeconds int
-
-	// MaxTaskRetries is the §5.2 line 412 / §6.6 per-task crash retry
-	// budget. A nil value takes the §6.6 default of 1; an explicit 0
-	// disables retries.
-	MaxTaskRetries *int
-}
-
-// Clone returns a deep copy so the store never shares the
-// cleanup-command slice or retry pointer with a caller. A nil receiver
-// clones to nil.
-func (p *TaskPolicy) Clone() *TaskPolicy {
-	if p == nil {
-		return nil
-	}
-	cp := *p
-	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
-	if p.MaxTaskRetries != nil {
-		n := *p.MaxTaskRetries
-		cp.MaxTaskRetries = &n
-	}
-	return &cp
-}
-
 // IsActive reports whether the pool has not been soft-deleted.
 func (p Pool) IsActive() bool { return p.DeletedAt.IsZero() }
 
@@ -376,37 +268,6 @@ const (
 	PhaseDraining = "draining"
 )
 
-// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
-type ConcurrencyStyle string
-
-const (
-	// ConcurrencyStyleWorkspace is `concurrencyStyle: workspace` —
-	// workspace-concurrent. Each slot gets its own per-slot workspace
-	// tree and the pod's /workspace/shared/ is shared read-only across
-	// the pod's slots (§6.4).
-	ConcurrencyStyleWorkspace ConcurrencyStyle = "workspace"
-
-	// ConcurrencyStyleStateless is `concurrencyStyle: stateless` —
-	// stateless-concurrent. No workspace is materialized and the pod
-	// holds no Lenny-managed per-slot session state (§5.2).
-	ConcurrencyStyleStateless ConcurrencyStyle = "stateless"
-)
-
-// AllConcurrencyStyles returns the closed §5.2 enum.
-func AllConcurrencyStyles() []ConcurrencyStyle {
-	return []ConcurrencyStyle{ConcurrencyStyleWorkspace, ConcurrencyStyleStateless}
-}
-
-// IsValid reports whether s is a known concurrency style.
-func (s ConcurrencyStyle) IsValid() bool {
-	for _, v := range AllConcurrencyStyles() {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
 // ValidateEgressIsolation enforces the §13.2 cross-control that pairs a
 // pool's egress profile with its isolation profile. An empty egress
 // profile is treated as the §13.2 default (`restricted`), which is
@@ -444,76 +305,40 @@ func ValidateEgressIsolation(p Pool) error {
 	return nil
 }
 
-// ValidateConcurrentConfig enforces the §5.2 / §13.1 admission rules for
-// a pool's concurrent-mode configuration. It is the pool-side half of
-// the Phase 12c pod-level isolation enforcement: a `concurrent`-mode
-// pool cannot be created without the §5.2 deployer acknowledgment, and
-// it cannot weaken the cross-tenant boundary that §5.2 reserves to
-// task-mode microvm pools.
+// ValidateServiceConfig enforces the §5.2 service-mode pool admission
+// rules. Service mode is the claimless replicated-service mode: the
+// pool-level MaxConcurrent is the per-pod request capacity, and a
+// session-mode SessionPolicy block is structurally meaningless on it.
 //
 // The rules:
 //
-//   - A non-concurrent pool must not set concurrent-only fields
-//     (concurrencyStyle, maxConcurrent), so a stray field on a
-//     session-mode or task-mode pool is rejected rather than silently
-//     ignored.
-//   - A concurrent pool must name a valid concurrencyStyle (`workspace`
-//     or `stateless`).
-//   - A concurrent pool must set maxConcurrent >= 1 — the §5.2 per-pod
-//     slot bound.
-//   - A concurrent pool must never set allowCrossTenantReuse: §5.2
-//     gives simultaneous process-level co-tenancy no isolation boundary,
-//     so cross-tenant slot sharing is categorically rejected (unlike
-//     task mode's microvm option).
-//   - A concurrent-workspace pool must set
-//     acknowledgeProcessLevelIsolation: §5.2 requires the deployer to
-//     accept the shared process namespace, /tmp, cgroup memory, network
-//     stack, and credential group-read access between simultaneous
-//     slots before the mode is enabled.
-//   - A concurrent-workspace pool that sets cleanupTimeoutSeconds must
-//     satisfy cleanupTimeoutSeconds >= maxConcurrent * 5 so each slot's
-//     per-slot cleanup budget clears the §5.2 5-second floor.
+//   - A service-mode pool must set MaxConcurrent >= 1 — the §5.2 per-pod
+//     request capacity the readiness probe and the PoolScalingController
+//     watch.
+//   - A service-mode pool must not carry a SessionPolicy block:
+//     sessionPolicy parameterizes session mode alone (§5.2 "the
+//     pool-level `maxConcurrent` field is the service-mode per-pod
+//     request capacity (`sessionPolicy` ... apply only to session
+//     mode)").
+//   - A non-service pool must not set MaxConcurrent: the session-mode
+//     concurrency bound lives on SessionPolicy.MaxConcurrentSessions, so
+//     a stray MaxConcurrent is rejected rather than silently ignored.
 //
-// It returns nil for a session-mode or task-mode pool. Callers invoke
-// it at the admin-API boundary and surface the error as a §15.1
-// VALIDATION_ERROR.
-func ValidateConcurrentConfig(p Pool) error {
-	if p.ExecutionMode != runtimestore.ExecutionModeConcurrent {
-		if p.ConcurrencyStyle != "" {
-			return errors.New("poolstore: concurrencyStyle is valid only when executionMode is concurrent (§5.2)")
-		}
+// Callers invoke it at the admin-API boundary and surface the error as a
+// §15.1 VALIDATION_ERROR. spec: §5.2 (service mode).
+func ValidateServiceConfig(p Pool) error {
+	if p.ExecutionMode != runtimestore.ExecutionModeService {
 		if p.MaxConcurrent != 0 {
-			return errors.New("poolstore: maxConcurrent is valid only when executionMode is concurrent (§5.2)")
-		}
-		if p.ConcurrentMaxPodUptimeSeconds != 0 {
-			return errors.New("poolstore: concurrentMaxPodUptimeSeconds is valid only when executionMode is concurrent (§6.2)")
+			return errors.New("poolstore: maxConcurrent is valid only when executionMode is service (§5.2)")
 		}
 		return nil
 	}
-	if p.ConcurrentMaxPodUptimeSeconds < 0 {
-		return errors.New("poolstore: concurrentMaxPodUptimeSeconds must be >= 0 (§6.2)")
-	}
-
-	if !p.ConcurrencyStyle.IsValid() {
-		return errors.New("poolstore: concurrent-mode pool requires concurrencyStyle to be workspace or stateless (§5.2)")
-	}
 	if p.MaxConcurrent < 1 {
-		return errors.New("poolstore: concurrent-mode pool requires maxConcurrent >= 1 (§5.2)")
+		return errors.New("poolstore: service-mode pool requires maxConcurrent >= 1 (§5.2)")
 	}
-	if p.AllowCrossTenantReuse {
-		return errors.New("poolstore: allowCrossTenantReuse is not permitted for concurrent-mode pools; " +
-			"cross-tenant slot sharing has no isolation boundary in concurrent mode (§5.2)")
-	}
-	if p.ConcurrencyStyle == ConcurrencyStyleWorkspace {
-		if !p.AcknowledgeProcessLevelIsolation {
-			return errors.New("poolstore: concurrent-workspace pool requires acknowledgeProcessLevelIsolation=true; " +
-				"concurrent slots share the pod process namespace, /tmp, cgroup memory, network stack, " +
-				"and credential group-read access (§5.2)")
-		}
-		if p.CleanupTimeoutSeconds != 0 && p.CleanupTimeoutSeconds < p.MaxConcurrent*5 {
-			return errors.New("poolstore: cleanupTimeoutSeconds / maxConcurrent would produce a per-slot " +
-				"cleanup timeout below the 5s minimum; set cleanupTimeoutSeconds >= maxConcurrent * 5 (§5.2)")
-		}
+	if p.SessionPolicy != nil {
+		return errors.New("poolstore: sessionPolicy is valid only when executionMode is session; " +
+			"a service-mode pool's per-pod capacity is maxConcurrent (§5.2)")
 	}
 	return nil
 }
@@ -569,81 +394,125 @@ func ValidateSDKWarmConfig(p Pool) error {
 	return nil
 }
 
-// ValidateTaskPolicy enforces the §5.2 task-mode taskPolicy invariants
-// at admin admission time. The same invariants are re-checked at the CRD
-// layer by `lenny-pool-config-validator`; running them here makes a
-// misconfigured pool fail at the admin API rather than after the CRD
-// write, and it covers the Postgres-only dev posture where the
+// ValidateSessionPolicy enforces the §5.2 session-mode sessionPolicy
+// invariants at admin admission time. The same invariants are re-checked
+// at the CRD layer by `lenny-pool-config-validator`; running them here
+// makes a misconfigured pool fail at the admin API rather than after the
+// CRD write, and it covers the Postgres-only dev posture where the
 // admission webhook is not deployed.
 //
-// The rules (verbatim from §5.2 lines 398-475):
+// The former task mode collapses to recycle.enabled (sequential reuse) and
+// the former concurrent mode to maxConcurrentSessions > 1, so the task-mode
+// microvm cross-tenant gate and the concurrent-slot cross-tenant
+// prohibition both survive on the renamed fields.
 //
-//   - A non-task pool must not carry a TaskPolicy (a stray policy on a
-//     session-mode or concurrent pool is rejected rather than silently
-//     ignored).
+// The rules:
 //
-//   - A task pool must carry a TaskPolicy with
-//     AcknowledgeBestEffortScrub: true (§5.2 line 473 "the pool
-//     controller rejects the pool definition at validation time").
+//   - A service-mode pool must not carry a SessionPolicy (enforced by
+//     ValidateServiceConfig; a SessionPolicy is admitted only in session
+//     mode).
 //
-//   - A task pool's TaskPolicy must set MaxTasksPerPod >= 1 (§5.2 line
-//     473 "maxTasksPerPod is required with no default — the deployer
-//     must make an explicit choice").
+//   - maxConcurrentSessions > 1 requires acknowledgeProcessLevelIsolation:
+//     concurrent slots share the pod process namespace, /tmp, cgroup
+//     memory, network stack, and credential group-read access (§5.2).
 //
-//   - A task pool's AllowCrossTenantReuse is permitted only when
-//     IsolationProfile is microvm (§5.2 line 387). The further §5.2
-//     line 396 T4 prohibition is enforced by `ValidateCrossTenantReuseTier`.
+//   - maxConcurrentSessions > 1 categorically prohibits
+//     recycle.allowCrossTenantReuse: simultaneous process-level cotenancy
+//     has no isolation boundary (§5.2 cross-tenant prohibition).
 //
-//   - A task pool's MicrovmScrubMode `in-place` requires
-//     AcknowledgeMicrovmResidualState: true (§5.2 line 442).
+//   - recycle.enabled requires acknowledgeBestEffortScrub: true and
+//     maxSessionsPerPod >= 1 (§5.2 deployer acknowledgment).
 //
-//   - A task pool's MicrovmScrubMode and OnCleanupFailure values, if
-//     set, must be on the §5.2 closed enums.
+//   - recycle.allowCrossTenantReuse is permitted only with microvm
+//     isolation and only on the sequential-reuse path
+//     (maxConcurrentSessions == 1) (§5.2). The further §5.2 T4 prohibition
+//     is enforced by ValidateCrossTenantReuseTier.
 //
-// spec: §5.2 lines 398-475.
-func ValidateTaskPolicy(p Pool) error {
-	if p.ExecutionMode != runtimestore.ExecutionModeTask {
-		if p.TaskPolicy != nil {
-			return errors.New("poolstore: taskPolicy is valid only when executionMode is task (§5.2)")
-		}
+//   - recycle.scrubProfile `in-place` requires
+//     acknowledgeMicrovmResidualState: true (§5.2 Kata scrub variant).
+//
+//   - The scrubProfile, onScrubFailure, and onPoolExhausted enums, if set,
+//     must be on the §5.2 closed enums, and numeric fields are
+//     non-negative. When maxConcurrentSessions > 1 a set cleanupTimeoutSeconds
+//     must satisfy cleanupTimeoutSeconds >= maxConcurrentSessions * 5.
+//
+// spec: §5.2 (sessionPolicy block, recycle lifecycle, cross-tenant
+// prohibition).
+func ValidateSessionPolicy(p Pool) error {
+	sp := p.SessionPolicy
+	if sp == nil {
 		return nil
 	}
-	tp := p.TaskPolicy
-	if tp == nil {
-		return errors.New("poolstore: task-mode pool requires taskPolicy with acknowledgeBestEffortScrub: true and maxTasksPerPod set (§5.2 line 473)")
+	if sp.MaxConcurrentSessions < 0 {
+		return errors.New("poolstore: sessionPolicy.maxConcurrentSessions must be >= 0 (§5.2)")
 	}
-	if !tp.AcknowledgeBestEffortScrub {
-		return errors.New("poolstore: task-mode pool requires taskPolicy.acknowledgeBestEffortScrub: true; " +
-			"the between-task workspace scrub is best-effort and is not a tenant isolation boundary (§5.2 line 473)")
+	if sp.CleanupTimeoutSeconds < 0 || sp.MaxSessionAgeSeconds < 0 ||
+		sp.MaxClientIdleSeconds < 0 || sp.MaxQueueWaitSeconds < 0 {
+		return errors.New("poolstore: sessionPolicy numeric fields must be >= 0 (§5.2)")
 	}
-	if tp.MaxTasksPerPod < 1 {
-		return errors.New("poolstore: task-mode pool requires taskPolicy.maxTasksPerPod >= 1; " +
-			"it is required with no default so the deployer makes an explicit reuse-limit choice (§5.2 line 473)")
+	if sp.OnPoolExhausted != "" && !sp.OnPoolExhausted.IsValid() {
+		return errors.New("poolstore: sessionPolicy.onPoolExhausted is not a recognised §5.2 disposition (reject, queue)")
 	}
-	if p.AllowCrossTenantReuse && p.IsolationProfile != isolation.ProfileMicrovm {
-		return errors.New("poolstore: allowCrossTenantReuse is permitted only when isolationProfile is microvm (§5.2 line 387)")
+	if sp.MaxConcurrentSessions > 1 {
+		if !sp.AcknowledgeProcessLevelIsolation {
+			return errors.New("poolstore: sessionPolicy.maxConcurrentSessions > 1 requires acknowledgeProcessLevelIsolation=true; " +
+				"concurrent slots share the pod process namespace, /tmp, cgroup memory, network stack, " +
+				"and credential group-read access (§5.2)")
+		}
+		if sp.CleanupTimeoutSeconds != 0 && sp.CleanupTimeoutSeconds < sp.MaxConcurrentSessions*5 {
+			return errors.New("poolstore: cleanupTimeoutSeconds / maxConcurrentSessions would produce a per-slot " +
+				"cleanup timeout below the 5s minimum; set cleanupTimeoutSeconds >= maxConcurrentSessions * 5 (§5.2)")
+		}
+		if sp.Recycle != nil && sp.Recycle.AllowCrossTenantReuse {
+			return errors.New("poolstore: recycle.allowCrossTenantReuse is not permitted when maxConcurrentSessions > 1; " +
+				"cross-tenant slot sharing has no isolation boundary (§5.2)")
+		}
 	}
-	if tp.MicrovmScrubMode != "" && !tp.MicrovmScrubMode.IsValid() {
-		return errors.New("poolstore: taskPolicy.microvmScrubMode is not a recognised §5.2 mode (restart, in-place)")
+	if r := sp.Recycle; r != nil {
+		if err := validateRecyclePolicy(p, r); err != nil {
+			return err
+		}
 	}
-	if tp.MicrovmScrubMode == runtimestore.MicrovmScrubInPlace && !tp.AcknowledgeMicrovmResidualState {
-		return errors.New("poolstore: taskPolicy.microvmScrubMode \"in-place\" requires taskPolicy.acknowledgeMicrovmResidualState: true; " +
-			"in-place scrub leaves guest-kernel residual state across tenants (§5.2 line 442)")
+	return nil
+}
+
+// validateRecyclePolicy enforces the §5.2 recycle-block invariants for a
+// session-mode pool, the sequential-reuse successor of task mode: the
+// best-effort-scrub acknowledgment, the required session-count limit, the
+// microvm-only cross-tenant gate, and the in-place residual-state
+// acknowledgment. spec: §5.2 (recycle lifecycle, Kata scrub variant).
+func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
+	if r.Enabled {
+		if !r.AcknowledgeBestEffortScrub {
+			return errors.New("poolstore: recycle.enabled requires recycle.acknowledgeBestEffortScrub: true; " +
+				"the whole-pod workspace scrub is best-effort and is not a tenant isolation boundary (§5.2)")
+		}
+		if r.MaxSessionsPerPod < 1 {
+			return errors.New("poolstore: recycle.enabled requires recycle.maxSessionsPerPod >= 1; " +
+				"it is required with no default so the deployer makes an explicit reuse-limit choice (§5.2)")
+		}
 	}
-	if tp.OnCleanupFailure != "" && !tp.OnCleanupFailure.IsValid() {
-		return errors.New("poolstore: taskPolicy.onCleanupFailure is not a recognised §5.2 disposition (warn, fail)")
+	if r.AllowCrossTenantReuse {
+		// §5.2: cross-tenant reuse is permitted only on the sequential-reuse
+		// path (maxConcurrentSessions == 1) with microvm isolation. The
+		// concurrent-slot prohibition (maxConcurrentSessions > 1) is checked
+		// by the caller.
+		if p.IsolationProfile != isolation.ProfileMicrovm {
+			return errors.New("poolstore: recycle.allowCrossTenantReuse is permitted only when isolationProfile is microvm (§5.2)")
+		}
 	}
-	if tp.MaxScrubFailures < 0 {
-		return errors.New("poolstore: taskPolicy.maxScrubFailures must be >= 0 (§5.2)")
+	if r.ScrubProfile != "" && !r.ScrubProfile.IsValid() {
+		return errors.New("poolstore: recycle.scrubProfile is not a recognised §5.2 mode (restart, in-place)")
 	}
-	if tp.MaxPodUptimeSeconds < 0 {
-		return errors.New("poolstore: taskPolicy.maxPodUptimeSeconds must be >= 0 (§5.2)")
+	if r.ScrubProfile == runtimestore.MicrovmScrubInPlace && !r.AcknowledgeMicrovmResidualState {
+		return errors.New("poolstore: recycle.scrubProfile \"in-place\" requires recycle.acknowledgeMicrovmResidualState: true; " +
+			"in-place scrub leaves guest-kernel residual state across tenants (§5.2)")
 	}
-	if tp.MaxTaskRetries != nil && *tp.MaxTaskRetries < 0 {
-		return errors.New("poolstore: taskPolicy.maxTaskRetries must be >= 0 (§5.2 line 412)")
+	if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
+		return errors.New("poolstore: recycle.onScrubFailure is not a recognised §5.2 disposition (warn, fail)")
 	}
-	if tp.CleanupTimeoutSeconds < 0 {
-		return errors.New("poolstore: taskPolicy.cleanupTimeoutSeconds must be >= 0 (§5.2)")
+	if r.MaxScrubFailures < 0 || r.MaxPodUptimeSeconds < 0 {
+		return errors.New("poolstore: recycle numeric fields must be >= 0 (§5.2)")
 	}
 	return nil
 }
@@ -665,34 +534,47 @@ func ValidateTaskPolicy(p Pool) error {
 // allowCrossTenantReuse: true on any pool whose associated Runtime is
 // configured with workspaceTier: T4".
 func ValidateCrossTenantReuseTier(p Pool, runtimeTier runtimestore.WorkspaceTier) error {
-	if p.AllowCrossTenantReuse && runtimeTier.IsT4() {
+	if p.RequestsCrossTenantReuse() && runtimeTier.IsT4() {
 		return errors.New("allowCrossTenantReuse: true is not permitted for T4-tier pools " +
 			"(workspaceTier: T4); T4 workloads require dedicated node pools (Section 6.4)")
 	}
 	return nil
 }
 
-// ValidatePreConnectExecutionMode enforces the §6.1 lines 77-78
+// RequestsCrossTenantReuse reports whether the pool's §5.2
+// sessionPolicy.recycle requests cross-tenant pod reuse. The flag relocated
+// from the former top-level Pool field onto recycle in the mode collapse.
+func (p Pool) RequestsCrossTenantReuse() bool {
+	return p.SessionPolicy != nil &&
+		p.SessionPolicy.Recycle != nil &&
+		p.SessionPolicy.Recycle.AllowCrossTenantReuse
+}
+
+// ValidatePreConnectExecutionMode enforces the §5.2 / §6.1
 // preConnect/execution-mode compatibility matrix. A runtime that declares
 // capabilities.preConnect: true pre-connects a single agent SDK process
-// waiting for a single first prompt; concurrent-workspace mode multiplexes
-// independent per-slot workspaces onto one pod and concurrent-stateless mode
+// waiting for a single first prompt. §5.2 admits preConnect only when
+// maxConcurrentSessions is 1, and service-mode pools reject it: concurrent
+// slots multiplex independent per-slot agents onto one pod and service mode
 // has no Lenny-managed agent lifecycle, so neither can host an SDK-warm
 // runtime. The check runs at pool admission with the effective post-update
-// executionMode and concurrencyStyle; preConnect reports the referenced
-// runtime's resolved capabilities.preConnect. An empty concurrencyStyle on a
-// concurrent pool resolves to the §5.2 default (workspace).
-// spec: §6.1 lines 77-78.
-func ValidatePreConnectExecutionMode(preConnect bool, mode runtimestore.ExecutionMode, style ConcurrencyStyle) error {
-	if !preConnect || mode != runtimestore.ExecutionModeConcurrent {
+// executionMode and sessionPolicy; preConnect reports the referenced
+// runtime's resolved capabilities.preConnect. A nil sessionPolicy resolves
+// to the §5.2 default maxConcurrentSessions of 1. spec: §5.2 line 430,
+// §6.1 lines 77-78.
+func ValidatePreConnectExecutionMode(preConnect bool, mode runtimestore.ExecutionMode, sp *runtimestore.SessionPolicy) error {
+	if !preConnect {
 		return nil
 	}
-	if style == ConcurrencyStyleStateless {
-		return errors.New("preConnect: true is not supported with executionMode: concurrent, " +
-			"concurrencyStyle: stateless; stateless mode has no Lenny-managed agent lifecycle")
+	if mode == runtimestore.ExecutionModeService {
+		return errors.New("preConnect: true is not supported with executionMode: service; " +
+			"service mode has no Lenny-managed agent lifecycle")
 	}
-	return errors.New("preConnect: true is not supported with executionMode: concurrent, " +
-		"concurrencyStyle: workspace; concurrent-workspace mode requires independent per-slot agent initialization")
+	if sp != nil && sp.MaxConcurrentSessions > 1 {
+		return errors.New("preConnect: true is not supported with sessionPolicy.maxConcurrentSessions > 1; " +
+			"concurrent sessions require independent per-slot agent initialization")
+	}
+	return nil
 }
 
 // RuntimePreConnect reports whether rt declares the §5.1 / §6.1
@@ -772,10 +654,10 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if err := ValidateEgressIsolation(p); err != nil {
 		return err
 	}
-	if err := ValidateConcurrentConfig(p); err != nil {
+	if err := ValidateServiceConfig(p); err != nil {
 		return err
 	}
-	if err := ValidateTaskPolicy(p); err != nil {
+	if err := ValidateSessionPolicy(p); err != nil {
 		return err
 	}
 	if err := ValidateElicitationPolicy(p); err != nil {
@@ -799,7 +681,7 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.Generation == 0 {
 		p.Generation = 1
 	}
-	p.TaskPolicy = p.TaskPolicy.Clone()
+	p.SessionPolicy = p.SessionPolicy.Clone()
 	p.URLModeElicitation.DomainAllowlist = cloneAllowlist(p.URLModeElicitation.DomainAllowlist)
 	p.BootstrapMinWarm = cloneIntPtr(p.BootstrapMinWarm)
 	m.pools[p.Name] = p
@@ -835,7 +717,7 @@ func (m *Memory) Get(_ context.Context, name string) (Pool, error) {
 		return Pool{}, ErrNotFound
 	}
 	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
-	row.TaskPolicy = row.TaskPolicy.Clone()
+	row.SessionPolicy = row.SessionPolicy.Clone()
 	row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	return row, nil
 }
@@ -867,10 +749,10 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	if err := ValidateEgressIsolation(row); err != nil {
 		return Pool{}, err
 	}
-	if err := ValidateConcurrentConfig(row); err != nil {
+	if err := ValidateServiceConfig(row); err != nil {
 		return Pool{}, err
 	}
-	if err := ValidateTaskPolicy(row); err != nil {
+	if err := ValidateSessionPolicy(row); err != nil {
 		return Pool{}, err
 	}
 	if err := ValidateElicitationPolicy(row); err != nil {
@@ -885,12 +767,12 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	}
 	row.UpdatedAt = now
 	row.Generation++
-	row.TaskPolicy = row.TaskPolicy.Clone()
+	row.SessionPolicy = row.SessionPolicy.Clone()
 	row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	m.pools[name] = row
 	out := row
-	out.TaskPolicy = row.TaskPolicy.Clone()
+	out.SessionPolicy = row.SessionPolicy.Clone()
 	out.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 	out.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 	return out, nil
@@ -908,7 +790,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Pool, error) {
 		if filter.RuntimeRef != "" && row.RuntimeRef != filter.RuntimeRef {
 			continue
 		}
-		row.TaskPolicy = row.TaskPolicy.Clone()
+		row.SessionPolicy = row.SessionPolicy.Clone()
 		row.URLModeElicitation.DomainAllowlist = cloneAllowlist(row.URLModeElicitation.DomainAllowlist)
 		row.BootstrapMinWarm = cloneIntPtr(row.BootstrapMinWarm)
 		out = append(out, row)

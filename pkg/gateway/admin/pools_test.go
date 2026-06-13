@@ -700,10 +700,17 @@ func TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T)
 	})
 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                  "t4-pool",
-		RuntimeRef:            "phi-agent",
-		ExecutionMode:         "task",
-		AllowCrossTenantReuse: true,
+		Name:          "t4-pool",
+		RuntimeRef:    "phi-agent",
+		ExecutionMode: "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          10,
+				AllowCrossTenantReuse:      true,
+			},
+		},
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
@@ -728,14 +735,17 @@ func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) 
 	})
 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                  "reuse-pool",
-		RuntimeRef:            "general-agent",
-		IsolationProfile:      "microvm",
-		ExecutionMode:         "task",
-		AllowCrossTenantReuse: true,
-		TaskPolicy: &admin.TaskPolicyPayload{
-			AcknowledgeBestEffortScrub: true,
-			MaxTasksPerPod:             10,
+		Name:             "reuse-pool",
+		RuntimeRef:       "general-agent",
+		IsolationProfile: "microvm",
+		ExecutionMode:    "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          10,
+				AllowCrossTenantReuse:      true,
+			},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -757,19 +767,31 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 		Name: "phi-agent", WorkspaceTier: runtimestore.WorkspaceTierT4,
 	})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name: "t4-pool", RuntimeRef: "phi-agent", ExecutionMode: "task",
-		TaskPolicy: &admin.TaskPolicyPayload{
-			AcknowledgeBestEffortScrub: true,
-			MaxTasksPerPod:             5,
+		Name: "t4-pool", RuntimeRef: "phi-agent", ExecutionMode: "session",
+		IsolationProfile: "microvm",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          5,
+			},
 		},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: got %d, body=%s", rr.Code, rr.Body.String())
 	}
 
-	enable := true
+	// PUT newly enables cross-tenant reuse on the recycle block, which the
+	// T4 prohibition rejects on the effective post-update policy.
 	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/t4-pool",
-		admin.UpdatePoolRequest{AllowCrossTenantReuse: &enable})
+		admin.UpdatePoolRequest{SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          5,
+				AllowCrossTenantReuse:      true,
+			},
+		}})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("update status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
@@ -896,48 +918,49 @@ func TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559(t *testing.T) {
 	}
 }
 
-// TestCreatePoolRoundTripsTaskPolicy_spec_5_2 verifies the §5.2
-// task-mode taskPolicy block flows from PoolPayload → store → GET
+// TestCreatePoolRoundTripsSessionPolicy_spec_5_2 verifies the §5.2
+// session-mode sessionPolicy block flows from PoolPayload → store → GET
 // response with every field preserved.
-func TestCreatePoolRoundTripsTaskPolicy_spec_5_2(t *testing.T) {
+func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
 	mt := 2
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                  "task-pool",
-		RuntimeRef:            "claude-code",
-		IsolationProfile:      "microvm",
-		ExecutionMode:         "task",
-		AllowCrossTenantReuse: true,
-		TaskPolicy: &admin.TaskPolicyPayload{
-			AcknowledgeBestEffortScrub:      true,
-			MicrovmScrubMode:                "in-place",
-			AcknowledgeMicrovmResidualState: true,
-			CleanupCommands:                 []string{"pkill -f jupyter_kernel", "rm -rf /tmp/sandbox-*"},
-			CleanupTimeoutSeconds:           30,
-			OnCleanupFailure:                "warn",
-			MaxScrubFailures:                3,
-			MaxTasksPerPod:                  50,
-			MaxPodUptimeSeconds:             86400,
-			MaxTaskRetries:                  &mt,
+		Name:             "recycle-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: "microvm",
+		ExecutionMode:    "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxSessionRetries: &mt,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                         true,
+				AcknowledgeBestEffortScrub:      true,
+				AllowCrossTenantReuse:           true,
+				ScrubProfile:                    "in-place",
+				AcknowledgeMicrovmResidualState: true,
+				OnScrubFailure:                  "warn",
+				MaxScrubFailures:                3,
+				MaxSessionsPerPod:               50,
+				MaxPodUptimeSeconds:             86400,
+			},
 		},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
 	}
-	row, err := store.Get(context.Background(), "task-pool")
+	row, err := store.Get(context.Background(), "recycle-pool")
 	if err != nil {
 		t.Fatalf("store get: %v", err)
 	}
-	if row.TaskPolicy == nil {
-		t.Fatal("task policy not persisted")
+	if row.SessionPolicy == nil || row.SessionPolicy.Recycle == nil {
+		t.Fatal("session policy not persisted")
 	}
-	if row.TaskPolicy.MaxTasksPerPod != 50 || !row.TaskPolicy.AcknowledgeBestEffortScrub {
-		t.Errorf("task policy fields not round-tripped: %+v", row.TaskPolicy)
+	if row.SessionPolicy.Recycle.MaxSessionsPerPod != 50 || !row.SessionPolicy.Recycle.AcknowledgeBestEffortScrub {
+		t.Errorf("session policy fields not round-tripped: %+v", row.SessionPolicy.Recycle)
 	}
 
-	// GET surfaces the task policy back to the client.
-	rr = poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/task-pool", nil)
+	// GET surfaces the session policy back to the client.
+	rr = poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/recycle-pool", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("get: %d %s", rr.Code, rr.Body.String())
 	}
@@ -945,95 +968,94 @@ func TestCreatePoolRoundTripsTaskPolicy_spec_5_2(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.TaskPolicy == nil {
-		t.Fatal("GET response missing taskPolicy")
+	if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil {
+		t.Fatal("GET response missing sessionPolicy")
 	}
-	if got.TaskPolicy.MicrovmScrubMode != "in-place" {
-		t.Errorf("MicrovmScrubMode = %q", got.TaskPolicy.MicrovmScrubMode)
+	if got.SessionPolicy.Recycle.ScrubProfile != "in-place" {
+		t.Errorf("ScrubProfile = %q", got.SessionPolicy.Recycle.ScrubProfile)
 	}
-	if got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 2 {
-		t.Errorf("MaxTaskRetries = %#v", got.TaskPolicy.MaxTaskRetries)
+	if got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 2 {
+		t.Errorf("MaxSessionRetries = %#v", got.SessionPolicy.MaxSessionRetries)
 	}
-	if got.AllowCrossTenantReuse != true {
-		t.Error("AllowCrossTenantReuse top-level field not preserved")
+	if !got.SessionPolicy.Recycle.AllowCrossTenantReuse {
+		t.Error("recycle.allowCrossTenantReuse not preserved")
 	}
 }
 
-// TestCreatePoolRejectsTaskModeWithoutPolicy_spec_5_2_473 confirms a
-// task-mode pool POST without a taskPolicy block is rejected with the
-// §5.2 line 473 message.
-func TestCreatePoolRejectsTaskModeWithoutPolicy_spec_5_2_473(t *testing.T) {
+// TestCreatePoolRejectsRecycleWithoutSessionLimit_spec_5_2 confirms a
+// recycle-enabled pool POST without maxSessionsPerPod is rejected with the
+// §5.2 message.
+func TestCreatePoolRejectsRecycleWithoutSessionLimit_spec_5_2(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name: "tp", RuntimeRef: "claude-code", ExecutionMode: "task",
+		Name: "tp", RuntimeRef: "claude-code", ExecutionMode: "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true},
+		},
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d", rr.Code)
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte("task-mode pool requires taskPolicy")) {
+	if !bytes.Contains(rr.Body.Bytes(), []byte("recycle.maxSessionsPerPod")) {
 		t.Errorf("body: %s", rr.Body.String())
 	}
 }
 
-// TestCreatePoolRejectsTaskPolicyOnSessionPool_spec_5_2 confirms a
-// session-mode pool that carries a TaskPolicy is rejected — the policy
-// is task-mode-only.
-func TestCreatePoolRejectsTaskPolicyOnSessionPool_spec_5_2(t *testing.T) {
+// TestCreatePoolRejectsSessionPolicyOnServicePool_spec_5_2 confirms a
+// service-mode pool that carries a sessionPolicy is rejected — sessionPolicy
+// is session-mode-only.
+func TestCreatePoolRejectsSessionPolicyOnServicePool_spec_5_2(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name: "wrong", RuntimeRef: "claude-code", ExecutionMode: "session",
-		TaskPolicy: &admin.TaskPolicyPayload{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5},
+		Name: "wrong", RuntimeRef: "claude-code", ExecutionMode: "service", MaxConcurrent: 4,
+		SessionPolicy: &runtimestore.SessionPolicy{MaxConcurrentSessions: 1},
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d", rr.Code)
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte("taskPolicy is valid only when executionMode is task")) {
+	if !bytes.Contains(rr.Body.Bytes(), []byte("sessionPolicy is valid only when executionMode is session")) {
 		t.Errorf("body: %s", rr.Body.String())
 	}
 }
 
-// TestUpdatePoolClearsTaskPolicy_spec_5_2 confirms ClearTaskPolicy on a
-// PUT removes the persisted policy block while leaving everything else
+// TestUpdatePoolClearsSessionPolicy_spec_5_2 confirms ClearSessionPolicy on
+// a PUT removes the persisted policy block while leaving everything else
 // intact.
-func TestUpdatePoolClearsTaskPolicy_spec_5_2(t *testing.T) {
+func TestUpdatePoolClearsSessionPolicy_spec_5_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "task",
-		TaskPolicy: &admin.TaskPolicyPayload{
-			AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5,
+		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
 		},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
 	}
 
-	// Switching the pool out of task mode and clearing TaskPolicy in one
-	// PUT should succeed (mode mismatch + stray policy would otherwise
-	// reject; the clear flag handles it explicitly).
-	mode := "session"
 	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p1",
-		admin.UpdatePoolRequest{ExecutionMode: &mode, ClearTaskPolicy: true})
+		admin.UpdatePoolRequest{ClearSessionPolicy: true})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("put: %d %s", rr.Code, rr.Body.String())
 	}
 	row, _ := store.Get(context.Background(), "p1")
-	if row.TaskPolicy != nil {
-		t.Errorf("TaskPolicy not cleared: %+v", row.TaskPolicy)
+	if row.SessionPolicy != nil {
+		t.Errorf("SessionPolicy not cleared: %+v", row.SessionPolicy)
 	}
 }
 
-// TestUpdatePoolMutexClearAndSetTaskPolicy_spec_5_2 confirms a PUT that
-// sets both ClearTaskPolicy and TaskPolicy is rejected.
-func TestUpdatePoolMutexClearAndSetTaskPolicy_spec_5_2(t *testing.T) {
+// TestUpdatePoolMutexClearAndSetSessionPolicy_spec_5_2 confirms a PUT that
+// sets both ClearSessionPolicy and SessionPolicy is rejected.
+func TestUpdatePoolMutexClearAndSetSessionPolicy_spec_5_2(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "task",
-		TaskPolicy: &admin.TaskPolicyPayload{
-			AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5,
+		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -1041,8 +1063,10 @@ func TestUpdatePoolMutexClearAndSetTaskPolicy_spec_5_2(t *testing.T) {
 	}
 	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p1",
 		admin.UpdatePoolRequest{
-			ClearTaskPolicy: true,
-			TaskPolicy:      &admin.TaskPolicyPayload{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 6},
+			ClearSessionPolicy: true,
+			SessionPolicy: &runtimestore.SessionPolicy{
+				Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 6},
+			},
 		})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d", rr.Code)
@@ -1068,65 +1092,74 @@ func TestPoolUpdateBumpsGeneration_Spec4_6_2_558(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 166-167 — the concurrent-workspace pod-uptime
-// retirement cap is accepted on the admin POST and round-trips into the
-// pool store so the PoolScalingController renders it onto the
-// SandboxTemplate and the slot-claim path drains an over-uptime pod.
-func TestCreateConcurrentPoolPersistsMaxPodUptime_spec_6_2(t *testing.T) {
+// spec: §5.2 — the recycle pod-uptime retirement cap is accepted on the
+// admin POST and round-trips into the pool store so the PoolScalingController
+// renders it and the claim path drains an over-uptime pod. A PUT updates it.
+func TestCreateSessionPoolPersistsRecycleMaxPodUptime_spec_5_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                             "cw-pool",
-		RuntimeRef:                       "echo",
-		IsolationProfile:                 "sandboxed",
-		ExecutionMode:                    "concurrent",
-		ConcurrencyStyle:                 "workspace",
-		MaxConcurrent:                    4,
-		AcknowledgeProcessLevelIsolation: true,
-		CleanupTimeoutSeconds:            20,
-		ConcurrentMaxPodUptimeSeconds:    3600,
-		ResourceClass:                    "small",
-		WarmCount:                        1,
+		Name:             "recycle-pool",
+		RuntimeRef:       "echo",
+		IsolationProfile: "sandboxed",
+		ExecutionMode:    "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          50,
+				MaxPodUptimeSeconds:        3600,
+			},
+		},
+		ResourceClass: "small",
+		WarmCount:     1,
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	row, _ := store.Get(context.Background(), "cw-pool")
-	if row.ConcurrentMaxPodUptimeSeconds != 3600 {
-		t.Fatalf("stored ConcurrentMaxPodUptimeSeconds = %d, want 3600", row.ConcurrentMaxPodUptimeSeconds)
+	row, _ := store.Get(context.Background(), "recycle-pool")
+	if row.SessionPolicy == nil || row.SessionPolicy.Recycle == nil ||
+		row.SessionPolicy.Recycle.MaxPodUptimeSeconds != 3600 {
+		t.Fatalf("stored recycle.maxPodUptimeSeconds not 3600: %+v", row.SessionPolicy)
 	}
 
 	// A PUT updates the cap (If-Match the created pool's version 1).
-	uptime := 7200
-	put := putPoolRaw(t, router.Handler(), "cw-pool", `"1"`, admin.UpdatePoolRequest{
-		ConcurrentMaxPodUptimeSeconds: &uptime,
+	put := putPoolRaw(t, router.Handler(), "recycle-pool", `"1"`, admin.UpdatePoolRequest{
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          50,
+				MaxPodUptimeSeconds:        7200,
+			},
+		},
 	})
 	if put.Code != http.StatusOK {
 		t.Fatalf("update status: %d, body=%s", put.Code, put.Body.String())
 	}
-	row, _ = store.Get(context.Background(), "cw-pool")
-	if row.ConcurrentMaxPodUptimeSeconds != 7200 {
-		t.Errorf("after PUT ConcurrentMaxPodUptimeSeconds = %d, want 7200", row.ConcurrentMaxPodUptimeSeconds)
+	row, _ = store.Get(context.Background(), "recycle-pool")
+	if row.SessionPolicy.Recycle.MaxPodUptimeSeconds != 7200 {
+		t.Errorf("after PUT recycle.maxPodUptimeSeconds = %d, want 7200", row.SessionPolicy.Recycle.MaxPodUptimeSeconds)
 	}
 }
 
-// spec: §6.2 lines 166-167 — the cap is concurrent-only; a session-mode
-// pool that sets it is rejected by ValidateConcurrentConfig at admission.
-func TestCreateSessionPoolRejectsMaxPodUptime_spec_6_2(t *testing.T) {
+// spec: §5.2 — maxConcurrent is service-mode-only; a session-mode pool that
+// sets it is rejected by ValidateServiceConfig at admission.
+func TestCreateSessionPoolRejectsMaxConcurrent_spec_5_2(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                          "bad-pool",
-		RuntimeRef:                    "echo",
-		IsolationProfile:              "sandboxed",
-		ExecutionMode:                 "session",
-		ConcurrentMaxPodUptimeSeconds: 3600,
-		ResourceClass:                 "small",
-		WarmCount:                     1,
+		Name:             "bad-pool",
+		RuntimeRef:       "echo",
+		IsolationProfile: "sandboxed",
+		ExecutionMode:    "session",
+		MaxConcurrent:    4,
+		ResourceClass:    "small",
+		WarmCount:        1,
 	})
 	if rr.Code == http.StatusCreated {
-		t.Fatalf("a session-mode pool with concurrentMaxPodUptimeSeconds must be rejected; got %d", rr.Code)
+		t.Fatalf("a session-mode pool with maxConcurrent must be rejected; got %d", rr.Code)
 	}
 }

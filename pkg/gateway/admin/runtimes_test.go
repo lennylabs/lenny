@@ -941,19 +941,23 @@ func TestCreateRuntimeRejectsMalformedMinPlatformVersion(t *testing.T) {
 	}
 }
 
-func TestRuntimeTaskPolicyRoundTrip(t *testing.T) {
-	// §5.1: the admin runtime API round-trips the taskPolicy block.
+// spec: 5.1 (sessionPolicy block), 5.2 (recycle lifecycle)
+func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the sessionPolicy block.
 	router, _, _ := newRuntimeAdmin(t)
 	retries := 2
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
 		Name:  "rt",
 		Image: "lenny/rt@sha256:abc",
-		TaskPolicy: &runtimestore.TaskPolicy{
-			AcknowledgeBestEffortScrub: true,
-			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
-			OnCleanupFailure:           runtimestore.CleanupFailureWarn,
-			MaxTasksPerPod:             50,
-			MaxTaskRetries:             &retries,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxSessionRetries: &retries,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				ScrubProfile:               runtimestore.MicrovmScrubRestart,
+				OnScrubFailure:             runtimestore.CleanupFailureWarn,
+				MaxSessionsPerPod:          50,
+			},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -961,37 +965,43 @@ func TestRuntimeTaskPolicyRoundTrip(t *testing.T) {
 	}
 	var created admin.RuntimePayload
 	_ = json.Unmarshal(rr.Body.Bytes(), &created)
-	if created.TaskPolicy == nil || created.TaskPolicy.MaxTasksPerPod != 50 ||
-		created.TaskPolicy.MaxTaskRetries == nil || *created.TaskPolicy.MaxTaskRetries != 2 {
-		t.Errorf("create response taskPolicy: %+v", created.TaskPolicy)
+	if created.SessionPolicy == nil || created.SessionPolicy.Recycle == nil ||
+		created.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
+		created.SessionPolicy.MaxSessionRetries == nil || *created.SessionPolicy.MaxSessionRetries != 2 {
+		t.Errorf("create response sessionPolicy: %+v", created.SessionPolicy)
 	}
 
-	replacement := &runtimestore.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 99}
+	replacement := &runtimestore.SessionPolicy{
+		Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 99},
+	}
 	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
-		admin.UpdateRuntimeRequest{TaskPolicy: replacement})
+		admin.UpdateRuntimeRequest{SessionPolicy: replacement})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var updated admin.RuntimePayload
 	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
-	if updated.TaskPolicy == nil || updated.TaskPolicy.MaxTasksPerPod != 99 {
-		t.Errorf("update did not replace taskPolicy: %+v", updated.TaskPolicy)
+	if updated.SessionPolicy == nil || updated.SessionPolicy.Recycle == nil ||
+		updated.SessionPolicy.Recycle.MaxSessionsPerPod != 99 {
+		t.Errorf("update did not replace sessionPolicy: %+v", updated.SessionPolicy)
 	}
 }
 
-func TestCreateRuntimeRejectsInvalidTaskPolicy(t *testing.T) {
-	// §5.1: taskPolicy enums and numeric fields are validated.
+// spec: 5.1 (sessionPolicy block)
+func TestCreateRuntimeRejectsInvalidSessionPolicy(t *testing.T) {
+	// §5.1: sessionPolicy enums and numeric fields are validated.
 	router, _, _ := newRuntimeAdmin(t)
-	cases := []*runtimestore.TaskPolicy{
-		{MicrovmScrubMode: "wipe"},
-		{OnCleanupFailure: "retry"},
-		{MaxTasksPerPod: -1},
+	cases := []*runtimestore.SessionPolicy{
+		{Recycle: &runtimestore.RecyclePolicy{ScrubProfile: "wipe"}},
+		{Recycle: &runtimestore.RecyclePolicy{OnScrubFailure: "retry"}},
+		{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: -1}},
+		{OnPoolExhausted: "drop"},
 	}
 	for i, p := range cases {
 		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
-			Name:       "bad",
-			Image:      "lenny/bad@sha256:abc",
-			TaskPolicy: p,
+			Name:          "bad",
+			Image:         "lenny/bad@sha256:abc",
+			SessionPolicy: p,
 		})
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("case %d: status %d, want 400 (body=%s)", i, rr.Code, rr.Body.String())
@@ -1228,9 +1238,11 @@ func TestCreateDerivedRuntimeRestrictsClassesProvidersRecursion(t *testing.T) {
 		payload admin.RuntimePayload
 	}{
 		{"allowedResourceClasses prohibited", admin.RuntimePayload{
-			Name: "d-classes", BaseRuntime: "base-rt", AllowedResourceClasses: []string{"small"}}},
+			Name: "d-classes", BaseRuntime: "base-rt", AllowedResourceClasses: []string{"small"},
+		}},
 		{"supportedProviders expand", admin.RuntimePayload{
-			Name: "d-prov", BaseRuntime: "base-rt", SupportedProviders: []string{"anthropic_direct", "vault_transit"}}},
+			Name: "d-prov", BaseRuntime: "base-rt", SupportedProviders: []string{"anthropic_direct", "vault_transit"},
+		}},
 	}
 	for _, tc := range cases {
 		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", tc.payload)

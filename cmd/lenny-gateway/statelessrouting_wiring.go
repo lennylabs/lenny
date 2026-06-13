@@ -132,8 +132,11 @@ func buildStatelessRouting(
 				}
 				return statelessrouting.PoolInfo{}, false, err
 			}
-			stateless := p.ExecutionMode == runtimestore.ExecutionModeConcurrent &&
-				p.ConcurrencyStyle == poolstore.ConcurrencyStyleStateless
+			// spec: §5.2 — service mode is the claimless replicated-service
+			// path the stateless router fronts (the former
+			// concurrencyStyle: stateless). MaxConcurrent is the service-mode
+			// per-pod request capacity.
+			stateless := p.ExecutionMode == runtimestore.ExecutionModeService
 			return statelessrouting.PoolInfo{
 				Stateless:     stateless,
 				MaxConcurrent: p.MaxConcurrent,

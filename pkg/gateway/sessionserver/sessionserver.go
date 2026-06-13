@@ -55,7 +55,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -288,8 +287,8 @@ type Server struct {
 	// providers (launchdarkly, statsig, unleash) for mode:external
 	// targeting. Nil disables the SDK-provider path; only OFREP-targeted
 	// experiments evaluate. F-10.7.3.
-	externalProviders  ExternalProviderResolver
-	runtimes           runtimestore.Store
+	externalProviders ExternalProviderResolver
+	runtimes          runtimestore.Store
 	// capOverrides applies the §5.1 line 49 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
@@ -2497,8 +2496,12 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 		ExecutionMode:    mode,
 		IsolationProfile: string(row.IsolationProfile),
 	}
-	switch mode {
-	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+	// spec: §5.2 / §7.1 — a service-mode pod serves successive requests with
+	// no scrub, and a session-mode pod that recorded a non-empty scrubPolicy
+	// at create time (recycle.enabled or maxConcurrentSessions > 1) reuses a
+	// pod across more than one session. Both report podReuse and the
+	// residual-state warning; the one-session-per-pod default does neither.
+	if mode == string(runtimestore.ExecutionModeService) || row.ScrubPolicy != "" {
 		level.PodReuse = true
 		level.ResidualStateWarning = true
 		level.ScrubPolicy = row.ScrubPolicy
@@ -2507,10 +2510,10 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 }
 
 // isolationLevelForPool maps a resolved §5.2 pool to the §7.1
-// sessionIsolationLevel fields. spec: §7.1 lines 69-73 — task and
-// concurrent pools reuse a pod (podReuse true) and may expose residual
-// state from prior tasks or sibling slots (residualStateWarning true);
-// session pools do neither.
+// sessionIsolationLevel fields. spec: §5.2 / §7.1 lines 69-73 — a
+// service-mode pool and a session-mode pool that reuses a pod
+// (recycle.enabled or maxConcurrentSessions > 1) report podReuse and the
+// residual-state warning; the one-session-per-pod default does neither.
 func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profile) SessionIsolationLevel {
 	profile := match.IsolationProfile
 	if profile == "" {
@@ -2521,26 +2524,36 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 		mode = string(runtimestore.ExecutionModeSession)
 	}
 	level := SessionIsolationLevel{ExecutionMode: mode, IsolationProfile: profile}
-	switch mode {
-	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+	scrub := scrubPolicyForPool(match)
+	if mode == string(runtimestore.ExecutionModeService) || scrub != "" {
 		level.PodReuse = true
 		level.ResidualStateWarning = true
-		level.ScrubPolicy = scrubPolicyForPool(match)
+		level.ScrubPolicy = scrub
 	}
 	return level
 }
 
 // scrubPolicyForPool returns the §7.1 line 72 scrubPolicy string for a
-// reuse pool. It is meaningful only when podReuse is true; a session
-// pool returns the empty string (the field is omitted on the wire).
+// reuse pool. spec: §5.2 — a service-mode pod serves successive requests
+// with no scrub (`none`); a session-mode pod that recycles a pod across
+// sessions scrubs best-effort, with the cross-tenant microvm variants
+// selecting the VM-level scrub, and concurrent slots scrub per slot. A
+// one-session-per-pod session pool returns the empty string (the field is
+// omitted on the wire). The PoolMatch recycle/concurrency signals are
+// derived from the §5.2 sessionPolicy mirror by ResolvePool.
 func scrubPolicyForPool(match podsession.PoolMatch) string {
-	switch match.ExecutionMode {
-	case string(runtimestore.ExecutionModeTask):
-		// Cross-tenant microvm task reuse selects a VM-level scrub
-		// variant; same-tenant and non-microvm task reuse uses the
-		// standard best-effort scrub. microvmScrubMode defaults to
-		// `restart` (§5.2), so an empty value with cross-tenant reuse maps
-		// to `vm-restart`.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return "none"
+	}
+	if match.MaxConcurrentSessions > 1 {
+		// Concurrent sessions scrub per slot on completion or failure.
+		return "best-effort-per-slot"
+	}
+	if match.Recycle {
+		// Cross-tenant microvm sequential reuse selects a VM-level scrub
+		// variant; same-tenant and non-microvm reuse uses the standard
+		// best-effort scrub. scrubProfile defaults to `restart` (§5.2), so an
+		// empty value with cross-tenant reuse maps to `vm-restart`.
 		if match.IsolationProfile == string(isolation.ProfileMicrovm) && match.AllowCrossTenantReuse {
 			if match.MicrovmScrubMode == string(runtimestore.MicrovmScrubInPlace) {
 				return "best-effort-in-place"
@@ -2548,16 +2561,8 @@ func scrubPolicyForPool(match podsession.PoolMatch) string {
 			return "vm-restart"
 		}
 		return "best-effort"
-	case string(runtimestore.ExecutionModeConcurrent):
-		// Concurrent-stateless performs no per-request scrub; concurrent-
-		// workspace scrubs per slot on completion or failure.
-		if match.ConcurrencyStyle == string(podclaim.StyleStateless) {
-			return "none"
-		}
-		return "best-effort-per-slot"
-	default:
-		return ""
 	}
+	return ""
 }
 
 // writeWorkspacePlanError translates a workspaceplan.ValidationError

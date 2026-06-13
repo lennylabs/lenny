@@ -401,39 +401,49 @@ func TestRuntimeMinPlatformVersionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRuntimeTaskPolicyRoundTripAndIsolation(t *testing.T) {
-	// §5.1: a runtime carries an optional taskPolicy. The store must
-	// deep-copy the cleanup-command slice and the retry pointer.
+// spec: 5.1 (sessionPolicy block), 5.2 (recycle lifecycle)
+func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries an optional sessionPolicy. The store must
+	// deep-copy the cleanup-command slice, the recycle pointer, and the
+	// retry pointer so a caller's later mutation cannot reach the stored
+	// row.
 	s := runtimestore.NewMemory()
 	retries := 3
-	policy := &runtimestore.TaskPolicy{
-		AcknowledgeBestEffortScrub: true,
-		MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
-		CleanupCommands:            []string{"rm -rf /tmp/x"},
-		CleanupTimeoutSeconds:      30,
-		OnCleanupFailure:           runtimestore.CleanupFailureWarn,
-		MaxScrubFailures:           3,
-		MaxTasksPerPod:             50,
-		MaxTaskRetries:             &retries,
+	policy := &runtimestore.SessionPolicy{
+		MaxConcurrentSessions: 1,
+		CleanupCommands:       []string{"rm -rf /tmp/x"},
+		CleanupTimeoutSeconds: 30,
+		MaxSessionRetries:     &retries,
+		Recycle: &runtimestore.RecyclePolicy{
+			Enabled:                    true,
+			AcknowledgeBestEffortScrub: true,
+			ScrubProfile:               runtimestore.MicrovmScrubRestart,
+			OnScrubFailure:             runtimestore.CleanupFailureWarn,
+			MaxScrubFailures:           3,
+			MaxSessionsPerPod:          50,
+		},
 	}
 	if err := s.Create(context.Background(), runtimestore.Runtime{
-		Name: "rt", Type: runtimestore.TypeAgent, TaskPolicy: policy,
+		Name: "rt", Type: runtimestore.TypeAgent, SessionPolicy: policy,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	policy.CleanupCommands[0] = "tampered" // mutate caller's slice
-	*policy.MaxTaskRetries = 99            // mutate caller's pointee
+	policy.CleanupCommands[0] = "tampered"  // mutate caller's slice
+	*policy.MaxSessionRetries = 99          // mutate caller's pointee
+	policy.Recycle.MaxSessionsPerPod = 1234 // mutate caller's recycle pointee
 
 	got, err := s.Get(context.Background(), "rt")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.TaskPolicy == nil || !got.TaskPolicy.AcknowledgeBestEffortScrub ||
-		got.TaskPolicy.MaxTasksPerPod != 50 || got.TaskPolicy.CleanupCommands[0] != "rm -rf /tmp/x" {
-		t.Errorf("taskPolicy not stored or not isolated: %+v", got.TaskPolicy)
+	if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil ||
+		!got.SessionPolicy.Recycle.AcknowledgeBestEffortScrub ||
+		got.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
+		got.SessionPolicy.CleanupCommands[0] != "rm -rf /tmp/x" {
+		t.Errorf("sessionPolicy not stored or not isolated: %+v", got.SessionPolicy)
 	}
-	if got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 3 {
-		t.Errorf("maxTaskRetries not isolated from caller mutation: %+v", got.TaskPolicy.MaxTaskRetries)
+	if got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 3 {
+		t.Errorf("maxSessionRetries not isolated from caller mutation: %+v", got.SessionPolicy.MaxSessionRetries)
 	}
 }
 
@@ -574,8 +584,11 @@ func TestEnumsAreClosed(t *testing.T) {
 	if runtimestore.RuntimeType("foo").IsValid() {
 		t.Error("unknown type should be invalid")
 	}
-	if !runtimestore.ExecutionModeSession.IsValid() || !runtimestore.ExecutionModeTask.IsValid() || !runtimestore.ExecutionModeConcurrent.IsValid() {
+	if !runtimestore.ExecutionModeSession.IsValid() || !runtimestore.ExecutionModeService.IsValid() {
 		t.Error("known execution modes should be valid")
+	}
+	if runtimestore.ExecutionMode("task").IsValid() || runtimestore.ExecutionMode("concurrent").IsValid() {
+		t.Error("the removed task and concurrent modes must be invalid")
 	}
 	if runtimestore.ExecutionMode("foo").IsValid() {
 		t.Error("unknown mode should be invalid")
@@ -585,6 +598,57 @@ func TestEnumsAreClosed(t *testing.T) {
 	}
 	if runtimestore.IntegrationLevel("foo").IsValid() {
 		t.Error("unknown integration level should be invalid")
+	}
+	// spec: §5.2 sessionPolicy.onPoolExhausted closed enum.
+	for _, d := range runtimestore.AllPoolExhaustedDispositions() {
+		if !d.IsValid() {
+			t.Errorf("pool-exhausted disposition %q from the closed enum reports invalid", d)
+		}
+	}
+	if !runtimestore.PoolExhaustedReject.IsValid() || !runtimestore.PoolExhaustedQueue.IsValid() {
+		t.Error("known pool-exhausted dispositions should be valid")
+	}
+	if runtimestore.PoolExhaustedDisposition("drop").IsValid() {
+		t.Error("unknown pool-exhausted disposition should be invalid")
+	}
+}
+
+// spec: 5.2 (recycle lifecycle)
+// TestSessionPolicyCloneDeepCopies verifies SessionPolicy.Clone and
+// RecyclePolicy.Clone deep-copy the slice and pointer fields so the store
+// never shares mutable state with a caller, and that nil receivers clone to
+// nil.
+func TestSessionPolicyCloneDeepCopies(t *testing.T) {
+	if (*runtimestore.SessionPolicy)(nil).Clone() != nil {
+		t.Error("nil SessionPolicy must clone to nil")
+	}
+	if (*runtimestore.RecyclePolicy)(nil).Clone() != nil {
+		t.Error("nil RecyclePolicy must clone to nil")
+	}
+	retries := 3
+	slot := 2
+	sp := &runtimestore.SessionPolicy{
+		CleanupCommands:   []string{"a"},
+		MaxSessionRetries: &retries,
+		SlotRetries:       &slot,
+		Recycle:           &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5},
+	}
+	cp := sp.Clone()
+	sp.CleanupCommands[0] = "tampered"
+	*sp.MaxSessionRetries = 99
+	*sp.SlotRetries = 99
+	sp.Recycle.MaxSessionsPerPod = 99
+	if cp.CleanupCommands[0] != "a" {
+		t.Error("Clone shared the cleanup-command slice")
+	}
+	if cp.MaxSessionRetries == nil || *cp.MaxSessionRetries != 3 {
+		t.Error("Clone shared the maxSessionRetries pointee")
+	}
+	if cp.SlotRetries == nil || *cp.SlotRetries != 2 {
+		t.Error("Clone shared the slotRetries pointee")
+	}
+	if cp.Recycle == nil || cp.Recycle.MaxSessionsPerPod != 5 {
+		t.Error("Clone shared the recycle pointee")
 	}
 }
 

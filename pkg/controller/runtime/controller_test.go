@@ -22,7 +22,7 @@ func TestApplyCRDFields_spec_5_1(t *testing.T) {
 			Type:                   "agent",
 			Image:                  "registry.example.com/langgraph@sha256:" + hex64,
 			IntegrationLevel:       "full",
-			ExecutionMode:          "task",
+			ExecutionMode:          "service",
 			IsolationProfile:       "microvm",
 			DeploymentModel:        "embedded",
 			AllowedResourceClasses: []string{"small", "medium"},
@@ -51,8 +51,8 @@ func TestApplyCRDFields_spec_5_1(t *testing.T) {
 	if dst.IntegrationLevel != runtimestore.IntegrationLevelFull {
 		t.Errorf("integrationLevel = %q, want full", dst.IntegrationLevel)
 	}
-	if dst.ExecutionMode != runtimestore.ExecutionModeTask {
-		t.Errorf("executionMode = %q, want task", dst.ExecutionMode)
+	if dst.ExecutionMode != runtimestore.ExecutionModeService {
+		t.Errorf("executionMode = %q, want service", dst.ExecutionMode)
 	}
 	if dst.IsolationProfile != isolation.ProfileMicrovm {
 		t.Errorf("isolationProfile = %q, want microvm", dst.IsolationProfile)

@@ -73,7 +73,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		MaxConcurrent:        int32(p.MaxConcurrent),
 		MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
 	}
-	if sp := sessionPolicyToCRD(p.TaskPolicy); sp != nil {
+	if sp := sessionPolicyToCRD(p.SessionPolicy); sp != nil {
 		spec.SessionPolicy = sp
 	}
 	cfg := PoolConfig{
@@ -104,25 +104,29 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	return cfg
 }
 
-// sessionPolicyToCRD renders the store recycle policy into the CRD
-// SessionPolicy block. The CRD carries only the cross-tenant microvm
+// sessionPolicyToCRD renders the store sessionPolicy recycle block into the
+// CRD SessionPolicy block. The CRD carries only the cross-tenant microvm
 // scrub controls the API server enforces as a fail-closed admission gate
 // (§4.6.3 ownership): the scrub profile and the in-place residual-state
 // acknowledgment. The store's `MicrovmScrubMode` enum (`restart`,
-// `in-place`) maps onto the CRD `scrubProfile` enum (`vm-restart`,
-// `in-place`); the remaining recycle and concurrency knobs reach the
-// gateway directly through the poolstore. A store row with no recycle
-// scrub control returns nil, leaving the CRD on its default
-// one-session-per-pod configuration. spec: §5.2 (recycle lifecycle,
-// Kata scrub variant).
-func sessionPolicyToCRD(tp *poolstore.TaskPolicy) *lennyv1.SessionPolicy {
-	if tp == nil || (tp.MicrovmScrubMode == "" && !tp.AcknowledgeMicrovmResidualState) {
+// `in-place`) carried on `recycle.scrubProfile` maps onto the CRD
+// `scrubProfile` enum (`vm-restart`, `in-place`); the remaining recycle and
+// concurrency knobs reach the gateway directly through the poolstore. A
+// store row with no recycle scrub control returns nil, leaving the CRD on
+// its default one-session-per-pod configuration. spec: §5.2 (recycle
+// lifecycle, Kata scrub variant).
+func sessionPolicyToCRD(sp *runtimestore.SessionPolicy) *lennyv1.SessionPolicy {
+	if sp == nil || sp.Recycle == nil {
+		return nil
+	}
+	r := sp.Recycle
+	if r.ScrubProfile == "" && !r.AcknowledgeMicrovmResidualState {
 		return nil
 	}
 	return &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{
-			ScrubProfile:                    scrubProfileFromMode(tp.MicrovmScrubMode),
-			AcknowledgeMicrovmResidualState: tp.AcknowledgeMicrovmResidualState,
+			ScrubProfile:                    scrubProfileFromMode(r.ScrubProfile),
+			AcknowledgeMicrovmResidualState: r.AcknowledgeMicrovmResidualState,
 		},
 	}
 }

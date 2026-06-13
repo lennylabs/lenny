@@ -10,19 +10,21 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §6.2 lines 166-167
-// diagnosis: the Postgres concurrent_max_pod_uptime_seconds column
-// (migration 0157) did not round-trip, so the §6.2 concurrent-workspace
-// pod-uptime retirement cap an operator sets on the admin API never
-// reaches the SandboxTemplate and the slot-claim path can never drain an
-// over-uptime pod. The test runs against a real Postgres container with
-// the full migration set applied, so it also proves migration 0157.
-func TestConcurrentMaxPodUptimeRoundTrip_spec_6_2(t *testing.T) {
+// spec: §5.2 (recycle lifecycle, pod retirement)
+// diagnosis: the Postgres session_policy JSONB column (migration 0167
+// renames task_policy → session_policy) did not round-trip the §5.2
+// recycle.maxPodUptimeSeconds retirement cap an operator sets on the admin
+// API, so it never reaches the SandboxTemplate and the claim path can never
+// drain an over-uptime pod. The test runs against a real Postgres container
+// with the full migration set applied, so it also proves the migration
+// rename and the dropped concurrent-mode columns.
+func TestRecycleMaxPodUptimeRoundTrip_spec_5_2(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
@@ -30,18 +32,21 @@ func TestConcurrentMaxPodUptimeRoundTrip_spec_6_2(t *testing.T) {
 	store := poolpg.New(pg.Pool)
 	ctx := context.Background()
 
-	name := "cw-uptime-pool"
+	name := "recycle-uptime-pool"
 	if err := store.Create(ctx, poolstore.Pool{
-		Name:                             name,
-		RuntimeRef:                       "claude",
-		IsolationProfile:                 isolation.ProfileSandboxed,
-		ExecutionMode:                    "concurrent",
-		ConcurrencyStyle:                 poolstore.ConcurrencyStyleWorkspace,
-		MaxConcurrent:                    4,
-		AcknowledgeProcessLevelIsolation: true,
-		CleanupTimeoutSeconds:            20,
-		ConcurrentMaxPodUptimeSeconds:    3600,
-		WarmCount:                        1,
+		Name:             name,
+		RuntimeRef:       "claude",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          50,
+				MaxPodUptimeSeconds:        3600,
+			},
+		},
+		WarmCount: 1,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -50,16 +55,14 @@ func TestConcurrentMaxPodUptimeRoundTrip_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ConcurrentMaxPodUptimeSeconds != 3600 {
-		t.Fatalf("ConcurrentMaxPodUptimeSeconds = %d, want 3600 (migration 0157 column did not round-trip)", got.ConcurrentMaxPodUptimeSeconds)
+	if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil ||
+		got.SessionPolicy.Recycle.MaxPodUptimeSeconds != 3600 {
+		t.Fatalf("recycle.maxPodUptimeSeconds did not round-trip (session_policy column): %+v", got.SessionPolicy)
 	}
 
-	// Update the cap through the pgstore UPDATE path. concurrency_style
-	// round-trips through the store (migration 0167 leaves the column in
-	// place), so the re-read concurrent-mode pool re-validates cleanly
-	// without the mutate re-establishing it.
+	// Update the cap through the pgstore UPDATE path.
 	if _, err := store.Update(ctx, name, func(p *poolstore.Pool) error {
-		p.ConcurrentMaxPodUptimeSeconds = 7200
+		p.SessionPolicy.Recycle.MaxPodUptimeSeconds = 7200
 		return nil
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -68,26 +71,26 @@ func TestConcurrentMaxPodUptimeRoundTrip_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after update: %v", err)
 	}
-	if got.ConcurrentMaxPodUptimeSeconds != 7200 {
-		t.Errorf("after Update ConcurrentMaxPodUptimeSeconds = %d, want 7200", got.ConcurrentMaxPodUptimeSeconds)
+	if got.SessionPolicy.Recycle.MaxPodUptimeSeconds != 7200 {
+		t.Errorf("after Update recycle.maxPodUptimeSeconds = %d, want 7200", got.SessionPolicy.Recycle.MaxPodUptimeSeconds)
 	}
 
-	// A pool that never set the cap reads back zero (the column is NULL).
-	session := "session-pool"
+	// A pool that never set a session policy reads back nil (NULL column).
+	session := "plain-pool"
 	if err := store.Create(ctx, poolstore.Pool{
 		Name:             session,
 		RuntimeRef:       "claude",
 		IsolationProfile: isolation.ProfileSandboxed,
-		ExecutionMode:    "session",
+		ExecutionMode:    runtimestore.ExecutionModeSession,
 		WarmCount:        1,
 	}); err != nil {
-		t.Fatalf("Create session pool: %v", err)
+		t.Fatalf("Create plain pool: %v", err)
 	}
 	sp, err := store.Get(ctx, session)
 	if err != nil {
-		t.Fatalf("Get session pool: %v", err)
+		t.Fatalf("Get plain pool: %v", err)
 	}
-	if sp.ConcurrentMaxPodUptimeSeconds != 0 {
-		t.Errorf("session pool ConcurrentMaxPodUptimeSeconds = %d, want 0 (NULL column)", sp.ConcurrentMaxPodUptimeSeconds)
+	if sp.SessionPolicy != nil {
+		t.Errorf("plain pool sessionPolicy = %+v, want nil (NULL column)", sp.SessionPolicy)
 	}
 }

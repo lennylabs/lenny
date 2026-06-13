@@ -110,31 +110,30 @@ func TestListPoolsEmptyWhenPoolsUnwired(t *testing.T) {
 	}
 }
 
-// A concurrent pool surfaces its §5.2 concurrencyStyle and maxConcurrent;
-// a session pool omits them. spec: §5.2 line 703.
-func TestListPoolsConcurrentFieldsSurface_spec_5_2(t *testing.T) {
+// A service pool surfaces its §5.2 maxConcurrent; a session pool omits it.
+// spec: §5.2 line 703 (service mode).
+func TestListPoolsServiceFieldsSurface_spec_5_2(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
 
 	pools := poolstore.NewMemory()
 	_ = pools.Create(context.Background(), poolstore.Pool{Name: "pool-session", RuntimeRef: "claude-agent", WarmCount: 2})
 	_ = pools.Create(context.Background(), poolstore.Pool{
-		Name:             "pool-concurrent",
-		RuntimeRef:       "claude-agent",
-		ExecutionMode:    runtimestore.ExecutionModeConcurrent,
-		ConcurrencyStyle: poolstore.ConcurrencyStyleStateless,
-		MaxConcurrent:    8,
-		WarmCount:        1,
+		Name:          "pool-service",
+		RuntimeRef:    "claude-agent",
+		ExecutionMode: runtimestore.ExecutionModeService,
+		MaxConcurrent: 8,
+		WarmCount:     1,
 	})
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, Pools: pools})
 	byName := poolNames(getPools(t, srv, "/v1/pools").Items)
 
-	if c := byName["pool-concurrent"]; c.ConcurrencyStyle != "stateless" || c.MaxConcurrent != 8 {
-		t.Errorf("concurrent pool must surface concurrencyStyle/maxConcurrent: %+v", c)
+	if c := byName["pool-service"]; c.MaxConcurrent != 8 {
+		t.Errorf("service pool must surface maxConcurrent: %+v", c)
 	}
-	if sPool := byName["pool-session"]; sPool.ConcurrencyStyle != "" || sPool.MaxConcurrent != 0 {
-		t.Errorf("session pool must omit concurrency sub-fields: %+v", sPool)
+	if sPool := byName["pool-session"]; sPool.MaxConcurrent != 0 {
+		t.Errorf("session pool must omit maxConcurrent: %+v", sPool)
 	}
 }
 

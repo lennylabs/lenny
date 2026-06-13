@@ -761,8 +761,8 @@ func applyRuntimePayload(rt *runtimestore.Runtime, p RuntimePayload) {
 	if p.MinPlatformVersion != "" {
 		rt.MinPlatformVersion = p.MinPlatformVersion
 	}
-	if p.TaskPolicy != nil {
-		rt.TaskPolicy = p.TaskPolicy
+	if p.SessionPolicy != nil {
+		rt.SessionPolicy = p.SessionPolicy
 	}
 	if p.SDKWarmBlockingPaths != nil {
 		rt.SDKWarmBlockingPaths = p.SDKWarmBlockingPaths

@@ -92,8 +92,8 @@ func Merge(base, derived Runtime) Runtime {
 	if derived.AgentInterface == nil {
 		eff.AgentInterface = cb.AgentInterface
 	}
-	if derived.TaskPolicy == nil {
-		eff.TaskPolicy = cb.TaskPolicy
+	if derived.SessionPolicy == nil {
+		eff.SessionPolicy = cb.SessionPolicy
 	}
 	if derived.CapabilityInferenceMode == "" {
 		eff.CapabilityInferenceMode = cb.CapabilityInferenceMode

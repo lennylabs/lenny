@@ -1155,7 +1155,8 @@ type PoolProxyDialectError struct {
 func (e *PoolProxyDialectError) Error() string {
 	return fmt.Sprintf(
 		"pool proxyDialect %s is not declared in runtime credentialCapabilities.proxyDialect",
-		e.Dialect)
+		e.Dialect,
+	)
 }
 
 // poolDescriptor maps a §4.9 credential pool to the router's pool
@@ -1221,7 +1222,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
-	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
+	// spec: §5.2 — a session-mode pool with maxConcurrentSessions > 1 routes
+	// the bind through the slot-claim path; the one-session-per-pod default
+	// and service mode use the session-claim path.
+	if match.MaxConcurrentSessions > 1 {
 		slotReq := podsession.SlotBindRequest{
 			Pool:                    match.Pool,
 			SessionID:               row.ID,

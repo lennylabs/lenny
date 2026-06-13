@@ -71,7 +71,8 @@ func TestPoolStoreSourceMapsActivePools(t *testing.T) {
 // spec: §4.6.2 — soft-deleted pools are not reconciled; the source
 // lists only active rows.
 func TestPoolStoreSourceExcludesSoftDeleted(t *testing.T) {
-	store := newMemoryStore(t,
+	store := newMemoryStore(
+		t,
 		poolstore.Pool{Name: "live", RuntimeRef: "r1", WarmCount: 1},
 		poolstore.Pool{Name: "gone", RuntimeRef: "r2", WarmCount: 1},
 	)
@@ -110,21 +111,24 @@ func TestPoolStoreSourceRequiresNamespace(t *testing.T) {
 //
 // spec: §5.2 (recycle lifecycle, Kata scrub variant).
 func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
-	// The poolstore accepts a TaskPolicy only on a task-mode pool today;
-	// the gateway-side sessionPolicy mirror is a later step. The CRD
-	// mapping under test reads the scrub control from that TaskPolicy
-	// regardless of the store-side mode name.
+	// The CRD mapping reads the scrub control from the §5.2 sessionPolicy
+	// recycle block: scrubProfile (MicrovmScrubMode) and the in-place
+	// residual-state acknowledgment.
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:             "recycle-pool",
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
-		ExecutionMode:    runtimestore.ExecutionModeTask,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
 		WarmCount:        2,
-		TaskPolicy: &poolstore.TaskPolicy{
-			AcknowledgeBestEffortScrub:      true,
-			MaxTasksPerPod:                  50,
-			MicrovmScrubMode:                runtimestore.MicrovmScrubInPlace,
-			AcknowledgeMicrovmResidualState: true,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                         true,
+				AcknowledgeBestEffortScrub:      true,
+				MaxSessionsPerPod:               50,
+				AllowCrossTenantReuse:           true,
+				ScrubProfile:                    runtimestore.MicrovmScrubInPlace,
+				AcknowledgeMicrovmResidualState: true,
+			},
 		},
 	})
 	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
@@ -156,12 +160,16 @@ func TestPoolStoreSourceMapsRestartScrubMode(t *testing.T) {
 		Name:             "restart-pool",
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
-		ExecutionMode:    runtimestore.ExecutionModeTask,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
 		WarmCount:        1,
-		TaskPolicy: &poolstore.TaskPolicy{
-			AcknowledgeBestEffortScrub: true,
-			MaxTasksPerPod:             10,
-			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          10,
+				AllowCrossTenantReuse:      true,
+				ScrubProfile:               runtimestore.MicrovmScrubRestart,
+			},
 		},
 	})
 	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}

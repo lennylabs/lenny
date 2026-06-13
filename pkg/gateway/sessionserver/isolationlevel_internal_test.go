@@ -10,8 +10,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §7.1 lines 69-73 — sessionIsolationLevel maps the resolved §5.2
-// pool's execution mode and scrub policy to the client-visible fields.
+// spec: §5.2 / §7.1 lines 69-73 — sessionIsolationLevel maps the resolved
+// §5.2 pool's execution mode and scrub policy to the client-visible fields.
+// The former task and concurrent modes are session-mode presets: recycle
+// reuse and maxConcurrentSessions > 1.
 func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -36,46 +38,46 @@ func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 			wantExe: "session", wantPro: "sandboxed", wantRe: false, wantWar: false, wantScr: "",
 		},
 		{
-			name:    "task standard: best-effort scrub",
-			match:   podsession.PoolMatch{ExecutionMode: "task", IsolationProfile: "sandboxed"},
+			name:    "service mode: reuse + warning + no scrub",
+			match:   podsession.PoolMatch{ExecutionMode: "service", IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "task", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort",
+			wantExe: "service", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "none",
 		},
 		{
-			name:    "task microvm cross-tenant restart (explicit): vm-restart",
-			match:   podsession.PoolMatch{ExecutionMode: "task", IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "restart"},
-			req:     isolation.ProfileMicrovm,
-			wantExe: "task", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
-		},
-		{
-			name:    "task microvm cross-tenant default scrub mode: vm-restart",
-			match:   podsession.PoolMatch{ExecutionMode: "task", IsolationProfile: "microvm", AllowCrossTenantReuse: true},
-			req:     isolation.ProfileMicrovm,
-			wantExe: "task", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
-		},
-		{
-			name:    "task microvm cross-tenant in-place: best-effort-in-place",
-			match:   podsession.PoolMatch{ExecutionMode: "task", IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "in-place"},
-			req:     isolation.ProfileMicrovm,
-			wantExe: "task", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort-in-place",
-		},
-		{
-			name:    "task microvm same-tenant: best-effort (scrub mode irrelevant without cross-tenant)",
-			match:   podsession.PoolMatch{ExecutionMode: "task", IsolationProfile: "microvm", MicrovmScrubMode: "in-place"},
-			req:     isolation.ProfileMicrovm,
-			wantExe: "task", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort",
-		},
-		{
-			name:    "concurrent workspace: best-effort-per-slot",
-			match:   podsession.PoolMatch{ExecutionMode: "concurrent", ConcurrencyStyle: "workspace", IsolationProfile: "sandboxed"},
+			name:    "recycle standard: best-effort scrub",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "concurrent", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort-per-slot",
+			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort",
 		},
 		{
-			name:    "concurrent stateless: none",
-			match:   podsession.PoolMatch{ExecutionMode: "concurrent", ConcurrencyStyle: "stateless", IsolationProfile: "sandboxed"},
+			name:    "recycle microvm cross-tenant restart (explicit): vm-restart",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "restart"},
+			req:     isolation.ProfileMicrovm,
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
+		},
+		{
+			name:    "recycle microvm cross-tenant default scrub mode: vm-restart",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true},
+			req:     isolation.ProfileMicrovm,
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
+		},
+		{
+			name:    "recycle microvm cross-tenant in-place: best-effort-in-place",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "in-place"},
+			req:     isolation.ProfileMicrovm,
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort-in-place",
+		},
+		{
+			name:    "recycle microvm same-tenant: best-effort (scrub mode irrelevant without cross-tenant)",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", MicrovmScrubMode: "in-place"},
+			req:     isolation.ProfileMicrovm,
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort",
+		},
+		{
+			name:    "concurrent sessions: best-effort-per-slot",
+			match:   podsession.PoolMatch{ExecutionMode: "session", MaxConcurrentSessions: 4, IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "concurrent", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "none",
+			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort-per-slot",
 		},
 	}
 	for _, tc := range cases {
@@ -87,9 +89,8 @@ func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 			if got.IsolationProfile != tc.wantPro {
 				t.Errorf("isolationProfile = %q, want %q", got.IsolationProfile, tc.wantPro)
 			}
-			wantReuse := tc.wantExe != "session"
-			if got.PodReuse != wantReuse {
-				t.Errorf("podReuse = %v, want %v", got.PodReuse, wantReuse)
+			if got.PodReuse != tc.wantRe {
+				t.Errorf("podReuse = %v, want %v", got.PodReuse, tc.wantRe)
 			}
 			if got.ResidualStateWarning != tc.wantWar {
 				t.Errorf("residualStateWarning = %v, want %v", got.ResidualStateWarning, tc.wantWar)
@@ -152,14 +153,14 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			},
 		},
 		{
-			name: "task mode: pod reuse + warning + scrub",
+			name: "recycle mode: pod reuse + warning + scrub",
 			row: sessionstore.Session{
 				IsolationProfile: isolation.ProfileMicrovm,
-				ExecutionMode:    "task",
+				ExecutionMode:    "session",
 				ScrubPolicy:      "vm-restart",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "task",
+				ExecutionMode:        "session",
 				IsolationProfile:     "microvm",
 				PodReuse:             true,
 				ResidualStateWarning: true,
@@ -167,14 +168,14 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			},
 		},
 		{
-			name: "concurrent stateless: pod reuse + warning + no scrub",
+			name: "service mode: pod reuse + warning + no scrub",
 			row: sessionstore.Session{
 				IsolationProfile: isolation.ProfileSandboxed,
-				ExecutionMode:    "concurrent",
+				ExecutionMode:    "service",
 				ScrubPolicy:      "none",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "concurrent",
+				ExecutionMode:        "service",
 				IsolationProfile:     "sandboxed",
 				PodReuse:             true,
 				ResidualStateWarning: true,
@@ -182,14 +183,14 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			},
 		},
 		{
-			name: "concurrent workspace: per-slot scrub",
+			name: "concurrent sessions: per-slot scrub recorded on the row",
 			row: sessionstore.Session{
 				IsolationProfile: isolation.ProfileSandboxed,
-				ExecutionMode:    "concurrent",
+				ExecutionMode:    "session",
 				ScrubPolicy:      "best-effort-per-slot",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "concurrent",
+				ExecutionMode:        "session",
 				IsolationProfile:     "sandboxed",
 				PodReuse:             true,
 				ResidualStateWarning: true,
@@ -216,12 +217,12 @@ func TestToResponse_SurfacesPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 		ID:               "sess-1",
 		TenantID:         "tenant-1",
 		IsolationProfile: isolation.ProfileSandboxed,
-		ExecutionMode:    "concurrent",
+		ExecutionMode:    "session",
 		ScrubPolicy:      "best-effort-per-slot",
 	}
 	out := toResponse(row)
-	if out.SessionIsolationLevel.ExecutionMode != "concurrent" {
-		t.Errorf("executionMode = %q, want concurrent", out.SessionIsolationLevel.ExecutionMode)
+	if out.SessionIsolationLevel.ExecutionMode != "session" {
+		t.Errorf("executionMode = %q, want session", out.SessionIsolationLevel.ExecutionMode)
 	}
 	if out.SessionIsolationLevel.ScrubPolicy != "best-effort-per-slot" {
 		t.Errorf("scrubPolicy = %q, want best-effort-per-slot", out.SessionIsolationLevel.ScrubPolicy)

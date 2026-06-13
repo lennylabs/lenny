@@ -238,186 +238,98 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-// spec: 5.2
-// TestValidateConcurrentConfig covers the §5.2 / §13.1 admission rules
-// for a pool's concurrent-mode configuration: the deployer
-// acknowledgment, the slot bound, the categorical cross-tenant-reuse
-// rejection, the per-slot cleanup floor, and the rule that
-// concurrent-only fields are valid only on a concurrent-mode pool.
-func TestValidateConcurrentConfig(t *testing.T) {
+// spec: 5.2 (service mode)
+// TestValidateServiceConfig covers the §5.2 service-mode admission rules:
+// a service pool requires maxConcurrent >= 1 and must not carry a
+// sessionPolicy, and maxConcurrent is rejected on a non-service pool.
+func TestValidateServiceConfig(t *testing.T) {
 	cases := []struct {
 		name string
 		pool poolstore.Pool
 		ok   bool
 	}{
 		{
-			name: "session-mode pool with no concurrent fields is valid",
+			name: "session-mode pool with no maxConcurrent is valid",
 			pool: poolstore.Pool{Name: "p", ExecutionMode: runtimestore.ExecutionModeSession},
 			ok:   true,
 		},
 		{
-			name: "session-mode pool with concurrencyStyle is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace,
-			},
-		},
-		{
 			name: "session-mode pool with maxConcurrent is rejected",
+			pool: poolstore.Pool{Name: "p", ExecutionMode: runtimestore.ExecutionModeSession, MaxConcurrent: 4},
+		},
+		{
+			name: "service pool with maxConcurrent below 1 is rejected",
+			pool: poolstore.Pool{Name: "p", ExecutionMode: runtimestore.ExecutionModeService},
+		},
+		{
+			name: "service pool with a sessionPolicy is rejected",
 			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession, MaxConcurrent: 4,
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeService, MaxConcurrent: 8,
+				SessionPolicy: &runtimestore.SessionPolicy{MaxConcurrentSessions: 1},
 			},
 		},
 		{
-			name: "concurrent pool without a style is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent, MaxConcurrent: 4,
-			},
-		},
-		{
-			name: "concurrent pool with maxConcurrent below 1 is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless,
-			},
-		},
-		{
-			name: "concurrent-workspace pool without acknowledgment is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-			},
-		},
-		{
-			name: "concurrent-workspace pool with the acknowledgment is valid",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-				AcknowledgeProcessLevelIsolation: true,
-			},
-			ok: true,
-		},
-		{
-			name: "concurrent-stateless pool needs no acknowledgment",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
-			},
-			ok: true,
-		},
-		{
-			name: "concurrent pool with allowCrossTenantReuse is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
-				AllowCrossTenantReuse: true,
-			},
-		},
-		{
-			name: "concurrent-workspace cleanupTimeoutSeconds below maxConcurrent*5 is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-				AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 30,
-			},
-		},
-		{
-			name: "concurrent-workspace cleanupTimeoutSeconds at maxConcurrent*5 is valid",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-				AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 40,
-			},
-			ok: true,
-		},
-		{
-			// spec: §6.2 lines 166-167.
-			name: "concurrent-workspace pool with a pod-uptime cap is valid",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-				AcknowledgeProcessLevelIsolation: true, ConcurrentMaxPodUptimeSeconds: 86400,
-			},
-			ok: true,
-		},
-		{
-			// spec: §6.2 lines 166-167 — the cap is concurrent-only.
-			name: "session-mode pool with concurrentMaxPodUptimeSeconds is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession,
-				ConcurrentMaxPodUptimeSeconds: 86400,
-			},
-		},
-		{
-			name: "concurrent pool with a negative pod-uptime cap is rejected",
-			pool: poolstore.Pool{
-				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
-				ConcurrentMaxPodUptimeSeconds: -1,
-			},
+			name: "service pool with maxConcurrent and no sessionPolicy is valid",
+			pool: poolstore.Pool{Name: "p", ExecutionMode: runtimestore.ExecutionModeService, MaxConcurrent: 8},
+			ok:   true,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := poolstore.ValidateConcurrentConfig(c.pool)
+			err := poolstore.ValidateServiceConfig(c.pool)
 			if c.ok && err != nil {
-				t.Errorf("ValidateConcurrentConfig: unexpected error %v", err)
+				t.Errorf("ValidateServiceConfig: unexpected error %v", err)
 			}
 			if !c.ok && err == nil {
-				t.Error("ValidateConcurrentConfig: expected a rejection, got nil")
+				t.Error("ValidateServiceConfig: expected a rejection, got nil")
 			}
 		})
 	}
 }
 
-// spec: 5.2
-// diagnosis: the in-memory poolstore did not run ValidateConcurrentConfig
-// on Create — a concurrent-workspace pool without the deployer
-// acknowledgment must be rejected at Create time.
-func TestCreateRejectsConcurrentWorkspaceWithoutAcknowledgment(t *testing.T) {
+// spec: 5.2 (service mode)
+// diagnosis: the in-memory poolstore did not run ValidateServiceConfig on
+// Create — a service-mode pool without maxConcurrent must be rejected at
+// Create time, and a valid service pool must round-trip.
+func TestCreateRejectsServiceWithoutMaxConcurrent(t *testing.T) {
 	s := poolstore.NewMemory()
-	err := s.Create(context.Background(), poolstore.Pool{
-		Name: "cw-pool", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-		ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
-	})
-	if err == nil {
-		t.Error("concurrent-workspace pool without acknowledgeProcessLevelIsolation should fail")
+	if err := s.Create(context.Background(), poolstore.Pool{
+		Name: "svc-pool", ExecutionMode: runtimestore.ExecutionModeService,
+	}); err == nil {
+		t.Error("service-mode pool without maxConcurrent should fail")
 	}
 }
 
-// spec: 5.2
-// diagnosis: the in-memory poolstore admitted a concurrent-mode pool
-// configuration. A valid concurrent-stateless pool must round-trip
-// through Create and Get with its concurrency fields intact.
-func TestCreateAdmitsValidConcurrentPool(t *testing.T) {
+// spec: 5.2 (service mode)
+// diagnosis: a valid service pool must round-trip through Create and Get
+// with its maxConcurrent intact.
+func TestCreateAdmitsValidServicePool(t *testing.T) {
 	s := poolstore.NewMemory()
 	if err := s.Create(context.Background(), poolstore.Pool{
-		Name: "cs-pool", ExecutionMode: runtimestore.ExecutionModeConcurrent,
-		ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 6,
+		Name: "svc-pool", ExecutionMode: runtimestore.ExecutionModeService, MaxConcurrent: 6,
 	}); err != nil {
-		t.Fatalf("Create valid concurrent pool: %v", err)
+		t.Fatalf("Create valid service pool: %v", err)
 	}
-	got, err := s.Get(context.Background(), "cs-pool")
+	got, err := s.Get(context.Background(), "svc-pool")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ConcurrencyStyle != poolstore.ConcurrencyStyleStateless || got.MaxConcurrent != 6 {
-		t.Errorf("concurrent fields did not round-trip: %+v", got)
+	if got.MaxConcurrent != 6 {
+		t.Errorf("maxConcurrent did not round-trip: %+v", got)
 	}
 }
 
-// spec: §5.2 line 396 — the pool controller rejects allowCrossTenantReuse:
-// true on any pool whose associated Runtime is workspaceTier T4. The check
-// is mode-agnostic (it keys on the pool's reuse flag and the runtime's
-// tier), a no-op when reuse is off or the runtime is not T4, and emits the
-// verbatim spec error otherwise.
-// TestValidateTaskPolicy_spec_5_2 covers the §5.2 task-mode taskPolicy
-// admission rules: required on task pools, prohibited on other pools,
-// must carry acknowledgeBestEffortScrub + maxTasksPerPod, microvm
-// in-place scrub requires acknowledgement.
+// TestValidateSessionPolicy_spec_5_2 covers the §5.2 session-mode
+// sessionPolicy admission rules: the concurrent-session process-level
+// acknowledgment, the categorical cross-tenant prohibition for concurrent
+// sessions, the per-slot cleanup floor, the recycle best-effort-scrub
+// acknowledgment, the required session-count limit, the microvm-only
+// sequential cross-tenant gate, and the in-place residual-state
+// acknowledgment.
 //
-// spec: §5.2 lines 398-475.
-func TestValidateTaskPolicy_spec_5_2(t *testing.T) {
+// spec: §5.2 (sessionPolicy block, recycle lifecycle, cross-tenant
+// prohibition).
+func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 	mt := 1
 	cases := []struct {
 		name    string
@@ -425,135 +337,159 @@ func TestValidateTaskPolicy_spec_5_2(t *testing.T) {
 		wantSub string
 	}{
 		{
-			name: "session pool with TaskPolicy is rejected",
+			name: "session pool with no sessionPolicy is admitted",
+			pool: poolstore.Pool{ExecutionMode: runtimestore.ExecutionModeSession},
+		},
+		{
+			name: "concurrent sessions without the process-level acknowledgment is rejected",
 			pool: poolstore.Pool{
 				ExecutionMode: runtimestore.ExecutionModeSession,
-				TaskPolicy:    &poolstore.TaskPolicy{},
+				SessionPolicy: &runtimestore.SessionPolicy{MaxConcurrentSessions: 4},
 			},
-			wantSub: "taskPolicy is valid only when executionMode is task",
+			wantSub: "acknowledgeProcessLevelIsolation=true",
 		},
 		{
-			name: "concurrent pool with TaskPolicy is rejected",
+			name: "concurrent sessions cleanupTimeoutSeconds below the slot floor is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeConcurrent,
-				TaskPolicy:    &poolstore.TaskPolicy{},
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					MaxConcurrentSessions:            8,
+					AcknowledgeProcessLevelIsolation: true,
+					CleanupTimeoutSeconds:            30,
+				},
 			},
-			wantSub: "taskPolicy is valid only when executionMode is task",
+			wantSub: "cleanupTimeoutSeconds / maxConcurrentSessions",
 		},
 		{
-			name: "task pool without TaskPolicy is rejected",
+			name: "concurrent sessions with cross-tenant reuse is categorically rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					MaxConcurrentSessions:            4,
+					AcknowledgeProcessLevelIsolation: true,
+					Recycle:                          &runtimestore.RecyclePolicy{AllowCrossTenantReuse: true},
+				},
 			},
-			wantSub: "task-mode pool requires taskPolicy",
+			wantSub: "not permitted when maxConcurrentSessions > 1",
 		},
 		{
-			name: "task pool without acknowledgement is rejected",
+			name: "recycle.enabled without the best-effort-scrub acknowledgment is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
-				TaskPolicy:    &poolstore.TaskPolicy{MaxTasksPerPod: 10},
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 10},
+				},
 			},
-			wantSub: "acknowledgeBestEffortScrub: true",
+			wantSub: "recycle.acknowledgeBestEffortScrub: true",
 		},
 		{
-			name: "task pool without maxTasksPerPod is rejected",
+			name: "recycle.enabled without maxSessionsPerPod is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
-				TaskPolicy:    &poolstore.TaskPolicy{AcknowledgeBestEffortScrub: true},
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true},
+				},
 			},
-			wantSub: "maxTasksPerPod >= 1",
+			wantSub: "recycle.maxSessionsPerPod >= 1",
 		},
 		{
 			name: "in-place scrub without residual-state acknowledgement is rejected",
 			pool: poolstore.Pool{
-				IsolationProfile:      isolation.ProfileMicrovm,
-				ExecutionMode:         runtimestore.ExecutionModeTask,
-				AllowCrossTenantReuse: true,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub: true,
-					MaxTasksPerPod:             10,
-					MicrovmScrubMode:           runtimestore.MicrovmScrubInPlace,
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                    true,
+						AcknowledgeBestEffortScrub: true,
+						MaxSessionsPerPod:          10,
+						AllowCrossTenantReuse:      true,
+						ScrubProfile:               runtimestore.MicrovmScrubInPlace,
+					},
 				},
 			},
-			wantSub: "acknowledgeMicrovmResidualState",
+			wantSub: "recycle.acknowledgeMicrovmResidualState: true",
 		},
 		{
-			name: "cross-tenant reuse without microvm is rejected",
+			name: "sequential cross-tenant reuse without microvm is rejected",
 			pool: poolstore.Pool{
-				IsolationProfile:      isolation.ProfileSandboxed,
-				ExecutionMode:         runtimestore.ExecutionModeTask,
-				AllowCrossTenantReuse: true,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub: true,
-					MaxTasksPerPod:             10,
+				IsolationProfile: isolation.ProfileSandboxed,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                    true,
+						AcknowledgeBestEffortScrub: true,
+						MaxSessionsPerPod:          10,
+						AllowCrossTenantReuse:      true,
+					},
 				},
 			},
 			wantSub: "permitted only when isolationProfile is microvm",
 		},
 		{
-			name: "task pool with unrecognised scrub mode is rejected",
+			name: "unrecognised scrubProfile is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub: true,
-					MaxTasksPerPod:             10,
-					MicrovmScrubMode:           "wipe",
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
+						ScrubProfile: "wipe",
+					},
 				},
 			},
-			wantSub: "microvmScrubMode is not a recognised",
+			wantSub: "recycle.scrubProfile is not a recognised",
 		},
 		{
-			name: "task pool with unrecognised cleanup failure is rejected",
+			name: "unrecognised onScrubFailure is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub: true,
-					MaxTasksPerPod:             10,
-					OnCleanupFailure:           "boom",
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
+						OnScrubFailure: "boom",
+					},
 				},
 			},
-			wantSub: "onCleanupFailure is not a recognised",
+			wantSub: "recycle.onScrubFailure is not a recognised",
 		},
 		{
-			name: "task pool with negative max-task-retries is rejected",
+			name: "unrecognised onPoolExhausted is rejected",
 			pool: poolstore.Pool{
-				ExecutionMode: runtimestore.ExecutionModeTask,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub: true,
-					MaxTasksPerPod:             10,
-					MaxTaskRetries:             negInt(),
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{OnPoolExhausted: "drop"},
+			},
+			wantSub: "onPoolExhausted is not a recognised",
+		},
+		{
+			name: "full session policy is admitted",
+			pool: poolstore.Pool{
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					MaxConcurrentSessions: 1,
+					CleanupCommands:       []string{"rm -rf /tmp/x"},
+					CleanupTimeoutSeconds: 30,
+					MaxSessionRetries:     &mt,
+					OnPoolExhausted:       runtimestore.PoolExhaustedQueue,
+					MaxQueueWaitSeconds:   30,
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                         true,
+						AcknowledgeBestEffortScrub:      true,
+						AllowCrossTenantReuse:           true,
+						ScrubProfile:                    runtimestore.MicrovmScrubInPlace,
+						AcknowledgeMicrovmResidualState: true,
+						OnScrubFailure:                  runtimestore.CleanupFailureFail,
+						MaxScrubFailures:                3,
+						MaxSessionsPerPod:               50,
+						MaxPodUptimeSeconds:             3600,
+					},
 				},
 			},
-			wantSub: "maxTaskRetries must be >= 0",
-		},
-		{
-			name: "task pool with full TaskPolicy is admitted",
-			pool: poolstore.Pool{
-				IsolationProfile:      isolation.ProfileMicrovm,
-				ExecutionMode:         runtimestore.ExecutionModeTask,
-				AllowCrossTenantReuse: true,
-				TaskPolicy: &poolstore.TaskPolicy{
-					AcknowledgeBestEffortScrub:      true,
-					MicrovmScrubMode:                runtimestore.MicrovmScrubInPlace,
-					AcknowledgeMicrovmResidualState: true,
-					CleanupCommands:                 []string{"rm -rf /tmp/x"},
-					CleanupTimeoutSeconds:           30,
-					OnCleanupFailure:                runtimestore.CleanupFailureFail,
-					MaxScrubFailures:                3,
-					MaxTasksPerPod:                  50,
-					MaxPodUptimeSeconds:             3600,
-					MaxTaskRetries:                  &mt,
-				},
-			},
-		},
-		{
-			name: "session pool without TaskPolicy is admitted",
-			pool: poolstore.Pool{ExecutionMode: runtimestore.ExecutionModeSession},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := poolstore.ValidateTaskPolicy(tc.pool)
+			err := poolstore.ValidateSessionPolicy(tc.pool)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Fatalf("want nil, got %v", err)
@@ -570,43 +506,45 @@ func TestValidateTaskPolicy_spec_5_2(t *testing.T) {
 	}
 }
 
-func negInt() *int { n := -1; return &n }
-
-// TestCreatePersistsTaskPolicy verifies Memory.Create stores a task
-// policy block and Get returns the persisted shape.
+// TestCreatePersistsSessionPolicy verifies Memory.Create stores a session
+// policy block and Get returns the persisted shape, isolated from caller
+// mutation.
 //
-// spec: §5.2 lines 398-413.
-func TestCreatePersistsTaskPolicy(t *testing.T) {
+// spec: §5.2 (sessionPolicy block, recycle lifecycle).
+func TestCreatePersistsSessionPolicy(t *testing.T) {
 	ctx := context.Background()
 	store := poolstore.NewMemory()
 	if err := store.Create(ctx, poolstore.Pool{
-		Name:          "tp",
-		ExecutionMode: runtimestore.ExecutionModeTask,
-		TaskPolicy: &poolstore.TaskPolicy{
-			AcknowledgeBestEffortScrub: true,
-			MaxTasksPerPod:             20,
-			CleanupCommands:            []string{"pkill -f jupyter_kernel"},
+		Name:          "sp",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			CleanupCommands: []string{"pkill -f jupyter_kernel"},
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          20,
+			},
 		},
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, err := store.Get(ctx, "tp")
+	got, err := store.Get(ctx, "sp")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.TaskPolicy == nil {
-		t.Fatal("task policy not persisted")
+	if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil {
+		t.Fatal("session policy not persisted")
 	}
-	if got.TaskPolicy.MaxTasksPerPod != 20 {
-		t.Errorf("maxTasksPerPod: %d", got.TaskPolicy.MaxTasksPerPod)
+	if got.SessionPolicy.Recycle.MaxSessionsPerPod != 20 {
+		t.Errorf("maxSessionsPerPod: %d", got.SessionPolicy.Recycle.MaxSessionsPerPod)
 	}
-	if len(got.TaskPolicy.CleanupCommands) != 1 || got.TaskPolicy.CleanupCommands[0] != "pkill -f jupyter_kernel" {
-		t.Errorf("cleanup commands: %#v", got.TaskPolicy.CleanupCommands)
+	if len(got.SessionPolicy.CleanupCommands) != 1 || got.SessionPolicy.CleanupCommands[0] != "pkill -f jupyter_kernel" {
+		t.Errorf("cleanup commands: %#v", got.SessionPolicy.CleanupCommands)
 	}
 	// Mutating the returned slice must not leak into the store.
-	got.TaskPolicy.CleanupCommands[0] = "MUTATED"
-	again, _ := store.Get(ctx, "tp")
-	if again.TaskPolicy.CleanupCommands[0] == "MUTATED" {
+	got.SessionPolicy.CleanupCommands[0] = "MUTATED"
+	again, _ := store.Get(ctx, "sp")
+	if again.SessionPolicy.CleanupCommands[0] == "MUTATED" {
 		t.Error("Create shared the cleanup-command slice with the caller")
 	}
 }
@@ -620,24 +558,24 @@ func TestValidateCrossTenantReuseTier_spec_5_2_396(t *testing.T) {
 	}{
 		{
 			name: "T4 runtime with cross-tenant reuse is rejected",
-			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			pool: crossTenantPool(true),
 			tier: runtimestore.WorkspaceTierT4,
 		},
 		{
 			name: "T4 runtime without cross-tenant reuse is allowed",
-			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: false},
+			pool: crossTenantPool(false),
 			tier: runtimestore.WorkspaceTierT4,
 			ok:   true,
 		},
 		{
 			name: "T3 runtime with cross-tenant reuse is allowed",
-			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			pool: crossTenantPool(true),
 			tier: runtimestore.WorkspaceTierT3,
 			ok:   true,
 		},
 		{
 			name: "empty tier (implicit T3) with cross-tenant reuse is allowed",
-			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			pool: crossTenantPool(true),
 			tier: "",
 			ok:   true,
 		},
@@ -660,5 +598,18 @@ func TestValidateCrossTenantReuseTier_spec_5_2_396(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// crossTenantPool builds a §5.2 sequential-reuse pool that does or does not
+// request cross-tenant reuse, exercising the relocation of the flag onto
+// sessionPolicy.recycle.
+func crossTenantPool(crossTenant bool) poolstore.Pool {
+	return poolstore.Pool{
+		Name:          "p",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{AllowCrossTenantReuse: crossTenant},
+		},
 	}
 }

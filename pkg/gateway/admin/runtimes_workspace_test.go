@@ -23,7 +23,7 @@ func TestCreateRuntimeModelsWorkspaceDefaultsSharedAssetsOptionsSchema(t *testin
 		Name:          "langgraph",
 		Type:          "agent",
 		Image:         "ghcr.io/acme/langgraph@sha256:abcdef",
-		ExecutionMode: "concurrent",
+		ExecutionMode: "service",
 		WorkspaceDefaults: &runtimestore.WorkspaceDefaults{
 			Files:         []runtimestore.WorkspaceFile{{Path: "agent.py", Content: "..."}},
 			SetupCommands: []runtimestore.WorkspaceSetupCommand{{Cmd: "pip install -r requirements.txt"}},

@@ -10,41 +10,52 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
-// TestValidatePreConnectExecutionMode_spec_6_1 covers the §6.1 lines 77-78
-// preConnect/execution-mode compatibility matrix: an SDK-warm runtime
-// (capabilities.preConnect: true) is rejected on a concurrent-mode pool
-// regardless of concurrency style, with the spec's distinct error message
-// per style, while every non-concurrent mode and every non-preConnect
-// runtime is admitted.
-func TestValidatePreConnectExecutionMode_spec_6_1(t *testing.T) {
+// TestValidatePreConnectExecutionMode_spec_5_2_6_1 covers the §5.2 line 430
+// / §6.1 lines 77-78 preConnect/execution-mode compatibility matrix: an
+// SDK-warm runtime (capabilities.preConnect: true) is rejected on a
+// service-mode pool and on a session-mode pool with maxConcurrentSessions
+// > 1, while the one-session-per-pod default and every non-preConnect
+// runtime are admitted.
+func TestValidatePreConnectExecutionMode_spec_5_2_6_1(t *testing.T) {
+	concurrent := &runtimestore.SessionPolicy{MaxConcurrentSessions: 4}
+	single := &runtimestore.SessionPolicy{MaxConcurrentSessions: 1}
 	cases := []struct {
 		name       string
 		preConnect bool
 		mode       runtimestore.ExecutionMode
-		style      poolstore.ConcurrencyStyle
+		sp         *runtimestore.SessionPolicy
 		wantErr    string // substring; "" means accept
 	}{
-		{"preConnect concurrent workspace rejected", true,
-			runtimestore.ExecutionModeConcurrent, poolstore.ConcurrencyStyleWorkspace,
-			"concurrencyStyle: workspace"},
-		{"preConnect concurrent stateless rejected", true,
-			runtimestore.ExecutionModeConcurrent, poolstore.ConcurrencyStyleStateless,
-			"concurrencyStyle: stateless"},
-		{"preConnect concurrent empty-style defaults to workspace message", true,
-			runtimestore.ExecutionModeConcurrent, "",
-			"concurrencyStyle: workspace"},
-		{"preConnect session admitted", true,
-			runtimestore.ExecutionModeSession, "", ""},
-		{"preConnect task admitted", true,
-			runtimestore.ExecutionModeTask, "", ""},
-		{"non-preConnect concurrent workspace admitted", false,
-			runtimestore.ExecutionModeConcurrent, poolstore.ConcurrencyStyleWorkspace, ""},
-		{"non-preConnect concurrent stateless admitted", false,
-			runtimestore.ExecutionModeConcurrent, poolstore.ConcurrencyStyleStateless, ""},
+		{
+			"preConnect service rejected", true,
+			runtimestore.ExecutionModeService, nil,
+			"executionMode: service",
+		},
+		{
+			"preConnect concurrent sessions rejected", true,
+			runtimestore.ExecutionModeSession, concurrent,
+			"maxConcurrentSessions > 1",
+		},
+		{
+			"preConnect session single admitted", true,
+			runtimestore.ExecutionModeSession, single, "",
+		},
+		{
+			"preConnect session nil policy admitted", true,
+			runtimestore.ExecutionModeSession, nil, "",
+		},
+		{
+			"non-preConnect service admitted", false,
+			runtimestore.ExecutionModeService, nil, "",
+		},
+		{
+			"non-preConnect concurrent sessions admitted", false,
+			runtimestore.ExecutionModeSession, concurrent, "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := poolstore.ValidatePreConnectExecutionMode(tc.preConnect, tc.mode, tc.style)
+			err := poolstore.ValidatePreConnectExecutionMode(tc.preConnect, tc.mode, tc.sp)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("want accept, got error: %v", err)

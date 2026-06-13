@@ -43,7 +43,11 @@ var prodMigrationSchema = []struct {
 	{migration: "0019", table: "runtime_definitions", columns: []string{"setup_policy"}},
 	{migration: "0020", table: "runtime_definitions", columns: []string{"capabilities"}},
 	{migration: "0021", table: "runtime_definitions", columns: []string{"min_platform_version"}},
-	{migration: "0022", table: "runtime_definitions", columns: []string{"task_policy"}},
+	// 0022 introduces the runtime policy JSONB column as task_policy; the
+	// §5.2 mode collapse (migration 0167) renames it to session_policy, so
+	// the apply-all chain ends with session_policy and the 0167 down renames
+	// it back to task_policy before 0022's down drops it.
+	{migration: "0022", table: "runtime_definitions", columns: []string{"session_policy"}},
 	{migration: "0023", table: "runtime_definitions", columns: []string{"base_runtime"}},
 	{migration: "0024", table: "tenants", columns: []string{"elicitation_content_integrity", "billing_erasure_policy", "no_environment_policy"}},
 	{migration: "0025", table: "tenants", columns: []string{"experiment_targeting"}},
@@ -220,14 +224,17 @@ var prodMigrationSchema = []struct {
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
 	// 0167 re-keys the §5.2 execution-mode CHECK on runtime_definitions to
-	// (session, service) and adds the §12.6 gateway-written per-pod recycle
-	// counters to agent_pod_state. Both counters are nullable until the
-	// gateway first writes them. The migration leaves the concurrency_style
-	// column in place: its retirement is coupled with the later poolstore
-	// ConcurrencyStyle removal (proposal Section 5/13). spec: §5.2, §12.6.
+	// (session, service), adds the §12.6 gateway-written per-pod recycle
+	// counters to agent_pod_state (both nullable until the gateway first
+	// writes them), drops the retired sandbox_warm_pools.concurrency_style
+	// column, and renames the task_policy JSONB columns to session_policy on
+	// both registries. The pool session_policy column is asserted here; the
+	// runtime session_policy column is attributed to 0022 (its introducing
+	// migration) above. spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},
+	{migration: "0167", table: "sandbox_warm_pools", columns: []string{"session_policy"}},
 }
 
 // spec: 12.2, 18.5

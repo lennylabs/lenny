@@ -200,10 +200,10 @@ type Runtime struct {
 	// declares no minimum.
 	MinPlatformVersion string
 
-	// TaskPolicy is the §5.1 taskPolicy block: the §5.2 task-mode
-	// pod-reuse and workspace-cleanup policy. It is nil when the
-	// runtime declares no task policy.
-	TaskPolicy *TaskPolicy
+	// SessionPolicy is the §5.1 sessionPolicy block: the §5.2 session-mode
+	// pod-reuse, concurrency, and workspace-cleanup policy. It is nil when
+	// the runtime declares no session policy.
+	SessionPolicy *SessionPolicy
 
 	// BaseRuntime is the §5.1 baseRuntime reference. When set, this
 	// runtime is a derived runtime: the gateway resolves its effective
@@ -937,12 +937,17 @@ type SharedAsset struct {
 	DestPath string `json:"destPath"`
 }
 
-// MicrovmScrubMode is the §5.1 taskPolicy.microvmScrubMode enum: how a
-// microvm-isolated task-mode pod is scrubbed between cross-tenant tasks.
+// MicrovmScrubMode is the §5.2 sessionPolicy.recycle.scrubProfile enum:
+// how a microvm-isolated recycling pod is scrubbed between cross-tenant
+// sessions. The store carries this enum; the CRD projection maps it onto
+// the `scrubProfile` enum (`vm-restart`, `in-place`). spec: §5.2
+// (Kata/microvm scrub variant).
 type MicrovmScrubMode string
 
 const (
-	// MicrovmScrubRestart restarts the guest between tasks (default).
+	// MicrovmScrubRestart boots a fresh guest VM between tenants
+	// (projected as the CRD `vm-restart` scrub profile). Default for a
+	// cross-tenant-reuse microvm pool.
 	MicrovmScrubRestart MicrovmScrubMode = "restart"
 	// MicrovmScrubInPlace reuses the running guest, leaving documented
 	// guest-kernel residual state across tenants.
@@ -964,14 +969,14 @@ func (m MicrovmScrubMode) IsValid() bool {
 	return false
 }
 
-// CleanupFailureDisposition is the §5.1 taskPolicy.onCleanupFailure
-// enum: the disposition when a task-mode pod's cleanup commands fail.
+// CleanupFailureDisposition is the §5.2 sessionPolicy.recycle.onScrubFailure
+// enum: the disposition when a recycling pod's whole-pod scrub fails.
 type CleanupFailureDisposition string
 
 const (
 	// CleanupFailureWarn returns the pod to the pool with a warning.
 	CleanupFailureWarn CleanupFailureDisposition = "warn"
-	// CleanupFailureFail retires the pod on a cleanup failure.
+	// CleanupFailureFail retires the pod on a scrub failure.
 	CleanupFailureFail CleanupFailureDisposition = "fail"
 )
 
@@ -990,63 +995,162 @@ func (d CleanupFailureDisposition) IsValid() bool {
 	return false
 }
 
-// TaskPolicy is the §5.1 taskPolicy block: the §5.2 task-mode pod-reuse
-// and workspace-cleanup policy for a runtime.
-type TaskPolicy struct {
-	// AcknowledgeBestEffortScrub is the §5.1 deployer acknowledgment
-	// that workspace scrub is best-effort. Task mode requires it.
-	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub,omitempty"`
+// SessionPolicy is the §5.1 / §5.2 sessionPolicy block: the session-mode
+// pod-reuse, concurrency, and workspace-cleanup policy for a runtime. The
+// former task and concurrent modes collapse into presets of this block:
+// recycle.enabled is sequential pod reuse, and maxConcurrentSessions > 1
+// is the concurrent-slot configuration. spec: §5.2 ("Session mode is
+// parameterized by the `sessionPolicy` block").
+type SessionPolicy struct {
+	// MaxConcurrentSessions is the §5.2 simultaneous-session bound per
+	// pod. The default (1) is one session per pod; a value above 1
+	// requires the AcknowledgeProcessLevelIsolation acknowledgment.
+	MaxConcurrentSessions int `json:"maxConcurrentSessions,omitempty"`
 
-	// AllowCrossTenantReuse permits a task-mode pod to serve tasks from
-	// more than one tenant. §5.1 only permits it with microvm isolation.
-	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
+	// AcknowledgeProcessLevelIsolation is the §5.2 deployer acknowledgment
+	// that concurrent slots share the pod process namespace, /tmp, cgroup
+	// memory, network stack, and credential group-read access. Required
+	// when MaxConcurrentSessions > 1.
+	AcknowledgeProcessLevelIsolation bool `json:"acknowledgeProcessLevelIsolation,omitempty"`
 
-	// MicrovmScrubMode is the cross-task scrub mode for a microvm pod.
-	MicrovmScrubMode MicrovmScrubMode `json:"microvmScrubMode,omitempty"`
+	// Recycle is the §5.2 sequential pod-reuse policy. It is nil when the
+	// runtime declares no recycle block (the default one-session-per-pod
+	// configuration).
+	Recycle *RecyclePolicy `json:"recycle,omitempty"`
 
-	// AcknowledgeMicrovmResidualState is the §5.1 acknowledgment that
-	// in-place microvm scrub leaves guest-kernel residual state.
-	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
-
-	// CleanupCommands run between tasks to scrub the workspace.
+	// CleanupCommands are the §5.2 deployer cleanup executed before the
+	// whole-pod scrub.
 	CleanupCommands []string `json:"cleanupCommands,omitempty"`
 
-	// CleanupTimeoutSeconds bounds the cleanup-command phase.
+	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// OnCleanupFailure is the disposition when cleanup commands fail.
-	OnCleanupFailure CleanupFailureDisposition `json:"onCleanupFailure,omitempty"`
+	// MaxSessionRetries is the §5.2 / §6.6 crash re-dispatch budget. A nil
+	// value takes the §6.6 default of 1; an explicit 0 disables retries.
+	MaxSessionRetries *int `json:"maxSessionRetries,omitempty"`
+
+	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero
+	// declares no per-runtime cap and falls back to the platform default.
+	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
+
+	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound.
+	// Zero defaults to the effective MaxSessionAgeSeconds.
+	MaxClientIdleSeconds int `json:"maxClientIdleSeconds,omitempty"`
+
+	// SlotRetries is the §5.2 per-slot retry budget when
+	// MaxConcurrentSessions > 1. A nil value takes the §5.2 default of 1.
+	SlotRetries *int `json:"slotRetries,omitempty"`
+
+	// OnPoolExhausted is the §5.2 pool-exhaustion disposition
+	// (`reject`, `queue`). Empty defaults to `reject`.
+	OnPoolExhausted PoolExhaustedDisposition `json:"onPoolExhausted,omitempty"`
+
+	// MaxQueueWaitSeconds is the §5.2 queue-wait bound when
+	// OnPoolExhausted is `queue`. Zero falls back to the platform default.
+	MaxQueueWaitSeconds int `json:"maxQueueWaitSeconds,omitempty"`
+}
+
+// RecyclePolicy is the §5.2 sessionPolicy.recycle block: the sequential
+// pod-reuse and whole-pod scrub policy. spec: §5.2 ("Recycle lifecycle").
+type RecyclePolicy struct {
+	// Enabled turns on serving successive sessions on one pod with a
+	// whole-pod scrub between them.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// AcknowledgeBestEffortScrub is the §5.2 deployer acknowledgment that
+	// the workspace scrub is best-effort. Required when Enabled is true.
+	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub,omitempty"`
+
+	// AllowCrossTenantReuse permits a recycling pod to serve sessions from
+	// more than one tenant on the sequential-reuse path. §5.2 permits it
+	// only with microvm isolation and only when MaxConcurrentSessions is 1.
+	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
+
+	// ScrubProfile is the §5.2 cross-tenant scrub variant for microvm
+	// pods: `standard`, `vm-restart` (boot a fresh guest between tenants),
+	// or `in-place` (reuse the running guest with documented residual
+	// state). The store carries the MicrovmScrubMode enum; the CRD
+	// projection maps it onto the `scrubProfile` enum.
+	ScrubProfile MicrovmScrubMode `json:"scrubProfile,omitempty"`
+
+	// AcknowledgeMicrovmResidualState is the §5.2 acknowledgment that
+	// in-place microvm scrub leaves guest-kernel residual state. Required
+	// when ScrubProfile is `in-place`.
+	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
+
+	// OnScrubFailure is the §5.2 disposition when the whole-pod scrub
+	// fails: `warn` returns the pod with a scrub_warning annotation;
+	// `fail` retires the pod.
+	OnScrubFailure CleanupFailureDisposition `json:"onScrubFailure,omitempty"`
 
 	// MaxScrubFailures retires a pod after this many cumulative scrub
-	// failures. §5.1 default is 3.
+	// failures. §5.2 default is 3.
 	MaxScrubFailures int `json:"maxScrubFailures,omitempty"`
 
-	// MaxTasksPerPod retires a pod after this many tasks. §5.1 requires
-	// it for task mode.
-	MaxTasksPerPod int `json:"maxTasksPerPod,omitempty"`
+	// MaxSessionsPerPod retires a pod after serving this many sessions.
+	// §5.2 requires it (>= 1) when Enabled is true.
+	MaxSessionsPerPod int `json:"maxSessionsPerPod,omitempty"`
 
 	// MaxPodUptimeSeconds optionally retires a pod after this uptime.
 	MaxPodUptimeSeconds int `json:"maxPodUptimeSeconds,omitempty"`
+}
 
-	// MaxTaskRetries is the §6.6 per-task crash-retry budget. A nil
-	// value takes the §6.6 default of 1; an explicit 0 disables retries.
-	MaxTaskRetries *int `json:"maxTaskRetries,omitempty"`
+// Clone returns a deep copy of the recycle policy. A nil receiver clones
+// to nil.
+func (r *RecyclePolicy) Clone() *RecyclePolicy {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	return &cp
 }
 
 // Clone returns a deep copy of the policy so the store never shares the
-// cleanup-command slice or the retry pointer with a caller. A nil
-// receiver clones to nil.
-func (p *TaskPolicy) Clone() *TaskPolicy {
+// cleanup-command slice, the recycle pointer, or the retry pointers with a
+// caller. A nil receiver clones to nil.
+func (p *SessionPolicy) Clone() *SessionPolicy {
 	if p == nil {
 		return nil
 	}
 	cp := *p
 	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
-	if p.MaxTaskRetries != nil {
-		n := *p.MaxTaskRetries
-		cp.MaxTaskRetries = &n
+	cp.Recycle = p.Recycle.Clone()
+	if p.MaxSessionRetries != nil {
+		n := *p.MaxSessionRetries
+		cp.MaxSessionRetries = &n
+	}
+	if p.SlotRetries != nil {
+		n := *p.SlotRetries
+		cp.SlotRetries = &n
 	}
 	return &cp
+}
+
+// PoolExhaustedDisposition is the §5.2 sessionPolicy.onPoolExhausted enum.
+type PoolExhaustedDisposition string
+
+const (
+	// PoolExhaustedReject keeps the bounded claim-path wait and the
+	// Postgres fallback before returning WARM_POOL_EXHAUSTED. Default.
+	PoolExhaustedReject PoolExhaustedDisposition = "reject"
+	// PoolExhaustedQueue holds the request in the per-pool FIFO for up to
+	// MaxQueueWaitSeconds after the claim-path timeout.
+	PoolExhaustedQueue PoolExhaustedDisposition = "queue"
+)
+
+// AllPoolExhaustedDispositions returns the closed enum.
+func AllPoolExhaustedDispositions() []PoolExhaustedDisposition {
+	return []PoolExhaustedDisposition{PoolExhaustedReject, PoolExhaustedQueue}
+}
+
+// IsValid reports whether d is a known pool-exhaustion disposition.
+func (d PoolExhaustedDisposition) IsValid() bool {
+	for _, v := range AllPoolExhaustedDispositions() {
+		if d == v {
+			return true
+		}
+	}
+	return false
 }
 
 // RuntimeType is the §5.1 type discriminator.
@@ -1070,18 +1174,27 @@ func (t RuntimeType) IsValid() bool {
 	return false
 }
 
-// ExecutionMode is the §5.2 enum.
+// ExecutionMode is the §5.2 enum. The v1 mode set is the two modes
+// `session` and `service`: session mode is the managed unit parameterized
+// by the §5.1 sessionPolicy block (the former task and concurrent modes
+// are sessionPolicy presets), and service mode is the claimless replicated
+// service. spec: §5.2 ("The `session` and `service` execution modes").
 type ExecutionMode string
 
 const (
-	ExecutionModeSession    ExecutionMode = "session"
-	ExecutionModeTask       ExecutionMode = "task"
-	ExecutionModeConcurrent ExecutionMode = "concurrent"
+	// ExecutionModeSession binds each session to a claimed pod for the
+	// session's lifetime; the sessionPolicy block parameterizes pod reuse
+	// and concurrency. It is the §5.2 default.
+	ExecutionModeSession ExecutionMode = "session"
+	// ExecutionModeService is the §5.2 replicated-service mode: no
+	// SandboxClaim, no workspace, tenant-affinity routing to ready
+	// replicas.
+	ExecutionModeService ExecutionMode = "service"
 )
 
 // AllExecutionModes returns the closed enum.
 func AllExecutionModes() []ExecutionMode {
-	return []ExecutionMode{ExecutionModeSession, ExecutionModeTask, ExecutionModeConcurrent}
+	return []ExecutionMode{ExecutionModeSession, ExecutionModeService}
 }
 
 // IsValid reports whether m is a known execution mode.
@@ -1263,7 +1376,7 @@ func cloneRuntime(r Runtime) Runtime {
 	}
 	r.SetupPolicy = r.SetupPolicy.Clone()
 	r.Capabilities = r.Capabilities.Clone()
-	r.TaskPolicy = r.TaskPolicy.Clone()
+	r.SessionPolicy = r.SessionPolicy.Clone()
 	r.Limits = r.Limits.Clone()
 	r.SetupCommandPolicy = r.SetupCommandPolicy.Clone()
 	r.ArchivePolicy = r.ArchivePolicy.Clone()

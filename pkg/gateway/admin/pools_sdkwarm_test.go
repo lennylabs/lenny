@@ -12,40 +12,43 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
-// TestCreatePoolRejectsPreConnectConcurrent_spec_6_1 covers the §6.1 lines
-// 77-78 admission guard on pool creation: an SDK-warm runtime
-// (capabilities.preConnect: true) bound to a concurrent-mode pool is
-// rejected with the style-specific message, while the same runtime on a
-// session pool and a non-preConnect runtime on a concurrent pool are both
-// admitted.
-func TestCreatePoolRejectsPreConnectConcurrent_spec_6_1(t *testing.T) {
+// TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2
+// line 430 / §6.1 lines 77-78 admission guard on pool creation: an SDK-warm
+// runtime (capabilities.preConnect: true) bound to a service-mode pool or a
+// session pool with maxConcurrentSessions > 1 is rejected, while the same
+// runtime on a one-session-per-pod pool and a non-preConnect runtime on a
+// service pool are both admitted.
+func TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	mustCreateRuntime(t, runtimes, "warm-rt", true)
 	mustCreateRuntime(t, runtimes, "plain-rt", false)
 
-	// preConnect runtime + concurrent/workspace → rejected.
+	// preConnect runtime + service mode → rejected.
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:             "warm-concurrent-ws",
-		RuntimeRef:       "warm-rt",
-		ExecutionMode:    "concurrent",
-		ConcurrencyStyle: "workspace",
+		Name:          "warm-service",
+		RuntimeRef:    "warm-rt",
+		ExecutionMode: "service",
+		MaxConcurrent: 4,
 	})
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "concurrencyStyle: workspace") {
-		t.Fatalf("preConnect concurrent/workspace: status %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "executionMode: service") {
+		t.Fatalf("preConnect service: status %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// preConnect runtime + concurrent/stateless → rejected with its message.
+	// preConnect runtime + concurrent sessions → rejected with its message.
 	rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:             "warm-concurrent-sl",
-		RuntimeRef:       "warm-rt",
-		ExecutionMode:    "concurrent",
-		ConcurrencyStyle: "stateless",
+		Name:          "warm-concurrent",
+		RuntimeRef:    "warm-rt",
+		ExecutionMode: "session",
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+		},
 	})
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "concurrencyStyle: stateless") {
-		t.Fatalf("preConnect concurrent/stateless: status %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "maxConcurrentSessions") {
+		t.Fatalf("preConnect concurrent sessions: status %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// preConnect runtime on a session pool → admitted.
+	// preConnect runtime on a one-session-per-pod pool → admitted.
 	rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name:          "warm-session",
 		RuntimeRef:    "warm-rt",
@@ -56,28 +59,24 @@ func TestCreatePoolRejectsPreConnectConcurrent_spec_6_1(t *testing.T) {
 		t.Fatalf("preConnect session pool must be admitted: status %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// non-preConnect runtime on a concurrent pool → not rejected by this
-	// guard (it clears the §6.1 check and proceeds to the concurrent-config
-	// validation, which a complete config satisfies).
+	// non-preConnect runtime on a service pool → admitted.
 	rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:                             "plain-concurrent",
-		RuntimeRef:                       "plain-rt",
-		ExecutionMode:                    "concurrent",
-		ConcurrencyStyle:                 "workspace",
-		MaxConcurrent:                    4,
-		AcknowledgeProcessLevelIsolation: true,
-		ResourceClass:                    "small",
+		Name:          "plain-service",
+		RuntimeRef:    "plain-rt",
+		ExecutionMode: "service",
+		MaxConcurrent: 4,
+		ResourceClass: "small",
 	})
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("non-preConnect concurrent pool must be admitted: status %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("non-preConnect service pool must be admitted: status %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
-// TestUpdatePoolRejectsPreConnectConcurrent_spec_6_1 covers the §6.1 lines
-// 77-78 guard on the PUT path: switching a session pool that references a
-// preConnect runtime into concurrent mode is rejected on the effective
-// post-update mode, while a non-preConnect pool may switch freely.
-func TestUpdatePoolRejectsPreConnectConcurrent_spec_6_1(t *testing.T) {
+// TestUpdatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2
+// line 430 / §6.1 lines 77-78 guard on the PUT path: switching a session
+// pool that references a preConnect runtime into service mode is rejected on
+// the effective post-update mode.
+func TestUpdatePoolRejectsPreConnectIncompatible_spec_5_2_6_1(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	mustCreateRuntime(t, runtimes, "warm-rt", true)
 
@@ -92,13 +91,14 @@ func TestUpdatePoolRejectsPreConnectConcurrent_spec_6_1(t *testing.T) {
 		t.Fatalf("seed session pool: status %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	// PUT executionMode: concurrent → rejected because the bound runtime is
+	// PUT executionMode: service → rejected because the bound runtime is
 	// preConnect.
-	concurrent := "concurrent"
+	service := "service"
+	maxConcurrent := 4
 	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/warm-session",
-		admin.UpdatePoolRequest{ExecutionMode: &concurrent})
+		admin.UpdatePoolRequest{ExecutionMode: &service, MaxConcurrent: &maxConcurrent})
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "preConnect: true is not supported") {
-		t.Fatalf("PUT to concurrent on preConnect pool: status %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("PUT to service on preConnect pool: status %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

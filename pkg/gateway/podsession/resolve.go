@@ -55,21 +55,37 @@ func (e *PoolWarmingError) Error() string {
 type PoolMatch struct {
 	// Pool is the resolved SandboxWarmPool name.
 	Pool string
-	// ExecutionMode is the §5.2 pod-reuse mode declared on the
-	// template. Empty is treated as `session`.
+	// ExecutionMode is the §5.2 mode declared on the template: `session`
+	// or `service`. Empty is treated as `session`.
 	ExecutionMode string
-	// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant, set
-	// only when ExecutionMode is `concurrent`.
+	// ConcurrencyStyle is retained for the slot-claim path's per-slot
+	// workspace selection. The §5.2 mode collapse drops the
+	// concurrencyStyle CRD field, so it is zero from the CRD path; the
+	// gateway-claim-path step folds the gateway-side value in.
 	ConcurrencyStyle string
-	// MaxConcurrent is the per-pod slot count for concurrent mode.
+	// MaxConcurrent is the §5.2 service-mode per-pod request capacity,
+	// copied from the SandboxTemplate. Zero on session-mode pools.
 	MaxConcurrent int32
+	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
+	// bound: the per-pod simultaneous-session count for session mode. A
+	// value above 1 routes the bind through the slot-claim path. It is zero
+	// from the CRD path (the CRD carries only the gateway-enforced scrub
+	// subset); the gateway-claim-path step folds the gateway-side
+	// sessionPolicy mirror in.
+	MaxConcurrentSessions int32
 	// IsolationProfile is the §5.3 profile the pool's pods run under,
 	// copied from the SandboxTemplate so the §7.1 sessionIsolationLevel
 	// can report the assigned pod's profile.
 	IsolationProfile string
-	// AllowCrossTenantReuse and MicrovmScrubMode are the §5.2 task-mode
-	// TaskPolicy fields that select the §7.1 scrubPolicy variant for a
-	// task-mode microvm pool. Both are zero on non-task pools.
+	// Recycle reports whether the pool's §5.2 sessionPolicy.recycle block
+	// is present, so the §7.1 scrubPolicy derivation knows the pod is
+	// reused across sessions. It is set from the SandboxTemplate's
+	// sessionPolicy.recycle presence.
+	Recycle bool
+	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
+	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
+	// from sessionPolicy.recycle.scrubProfile; AllowCrossTenantReuse is zero
+	// from the CRD path (the gateway-claim-path step folds it in).
 	AllowCrossTenantReuse bool
 	MicrovmScrubMode      string
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
@@ -156,6 +172,7 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		// sessionPolicy mirror in the poolstore, which the gateway-claim-path
 		// step folds into ResolvePool; they default to zero here.
 		if sp := tmpl.Spec.SessionPolicy; sp != nil && sp.Recycle != nil {
+			m.Recycle = true
 			m.MicrovmScrubMode = sp.Recycle.ScrubProfile
 		}
 		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
