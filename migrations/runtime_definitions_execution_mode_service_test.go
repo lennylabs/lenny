@@ -22,13 +22,15 @@ const pgCheckViolation = "23514"
 
 // TestExecutionModeServiceMigrationSQL_spec_5_2_12_6 asserts the static
 // SQL surface of migration 0167: the up re-keys the runtime_definitions
-// execution_mode CHECK to the (session, service) set, re-keys the stale
-// mode-enum comments, retires the sandbox_warm_pools.concurrency_style
-// column behind a §10.5 Phase 3 preflight gate, and adds the
-// agent_pod_state recycle counters; the down reverses each. The §5.2 mode
-// collapse retires concurrency_style ("retired ... once concurrencyStyle
-// is removed"); the pgstore pool SELECT/INSERT/UPDATE/scan stop persisting
-// the column in the same change.
+// execution_mode CHECK to the (session, service) set, retires the
+// sandbox_warm_pools.concurrency_style column behind a §10.5 Phase 3
+// preflight gate, and adds the agent_pod_state recycle counters; the down
+// reverses each. The §5.2 mode collapse retires concurrency_style
+// ("retired ... once concurrencyStyle is removed"); the pgstore pool
+// SELECT/INSERT/UPDATE/scan stop persisting the column in the same change.
+// The migration issues no COMMENT ON statements: the stale mode-enum
+// documentation lives in the '--' source comments of 0033 and 0084, which
+// are re-keyed in place (TestStaleModeCommentsReKeyed_spec_5_2_12_6).
 //
 // spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
 func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
@@ -42,12 +44,6 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"CHECK (execution_mode IN ('session', 'service'))",
 		"ADD COLUMN sessions_served",
 		"scrub_failure_count INTEGER",
-		// The stale mode-enum comments are re-keyed by their database
-		// object. The 0084:18 anchor names sessions.scrub_policy (the
-		// only column whose comment gated on 'task' or 'concurrent'), so
-		// the up must COMMENT ON that column, not only execution_mode.
-		"COMMENT ON COLUMN sandbox_warm_pools.execution_mode",
-		"COMMENT ON COLUMN sessions.scrub_policy",
 		// The §5.2 mode collapse retires concurrency_style. The drop is
 		// idempotent (§10.5 line 430) and fronted by a DO $$ preflight gate
 		// (§10.5 line 417) so the column has no live dependents.
@@ -63,9 +59,11 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		strings.Contains(ups, "DROP COLUMN IF EXISTS max_concurrent") {
 		t.Error("0167 up must not drop max_concurrent")
 	}
-	// The re-keyed comments must not name the removed pod-reuse modes.
-	if strings.Contains(ups, "'task' or 'concurrent'") {
-		t.Error("0167 up must not retain the removed 'task' or 'concurrent' mode names in re-keyed comments")
+	// The stale mode-enum comments are re-keyed in the 0033/0084 source
+	// files, not as Postgres object comments. The proposal directs editing
+	// those '--' source lines; 0167 adds no COMMENT ON statement.
+	if strings.Contains(ups, "COMMENT ON") {
+		t.Error("0167 up must not add COMMENT ON statements; re-key the 0033/0084 source comments in place")
 	}
 
 	down, err := migrations.FS.ReadFile("0167_runtime_definitions_execution_mode_service.down.sql")
@@ -84,22 +82,58 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 			t.Errorf("0167 down missing %q", want)
 		}
 	}
-	// The down clears the object comments the up added (the pre-0167
-	// baseline carried none), so an up->down cycle returns the columns to
-	// their commentless state rather than inventing restored comment text.
-	for _, want := range []string{
-		"COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS NULL",
-		"COMMENT ON COLUMN sessions.execution_mode IS NULL",
-		"COMMENT ON COLUMN sessions.scrub_policy IS NULL",
-	} {
-		if !strings.Contains(downs, want) {
-			t.Errorf("0167 down missing object-comment clear %q", want)
-		}
+	// The down reverses only schema surfaces; it issues no COMMENT ON
+	// statement because the up issued none.
+	if strings.Contains(downs, "COMMENT ON") {
+		t.Error("0167 down must not add COMMENT ON statements")
 	}
-	// The down must not restore paraphrased object-comment text that never
-	// existed as an object comment in the pre-0167 baseline.
-	if strings.Contains(downs, "IS 'the §5.2 mode") || strings.Contains(downs, "IS 'the §7.1 scrub-policy") {
-		t.Error("0167 down must clear the up's object comments (IS NULL), not restore invented comment text")
+}
+
+// TestStaleModeCommentsReKeyed_spec_5_2_12_6 asserts the §5.2 mode collapse
+// re-keys the stale mode-enum '--' source comments in place: 0033:15 and
+// 0084 no longer name the removed 'task' and 'concurrent' modes, and both
+// name the surviving (session, service) set. The golang-migrate runner
+// tracks the version integer and never re-reads an applied migration body
+// (pkg/schemamigrate), so editing these schema-neutral source comments
+// alters no live schema and is the natural target of the proposal's
+// "re-key the comment at <file>:<line>" directive.
+//
+// spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
+func TestStaleModeCommentsReKeyed_spec_5_2_12_6(t *testing.T) {
+	for _, tc := range []struct {
+		file        string
+		mustHave    string
+		mustNotHave []string
+	}{
+		{
+			file:     "0033_sandbox_warm_pools.up.sql",
+			mustHave: "(session, service)",
+			mustNotHave: []string{
+				"(session, task, concurrent)",
+			},
+		},
+		{
+			file:     "0084_sessions_isolation_level.up.sql",
+			mustHave: "execution_mode is 'service'",
+			mustNotHave: []string{
+				"'task', or 'concurrent'",
+				"'task' or 'concurrent'",
+			},
+		},
+	} {
+		body, err := migrations.FS.ReadFile(tc.file)
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.file, err)
+		}
+		s := string(body)
+		if !strings.Contains(s, tc.mustHave) {
+			t.Errorf("%s: re-keyed comment must contain %q", tc.file, tc.mustHave)
+		}
+		for _, bad := range tc.mustNotHave {
+			if strings.Contains(s, bad) {
+				t.Errorf("%s: stale comment must not retain removed mode names %q", tc.file, bad)
+			}
+		}
 	}
 }
 
@@ -109,8 +143,7 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 // removed task and concurrent values, the concurrency_style column is
 // dropped (the §5.2 mode collapse) while max_concurrent remains, and the
 // nullable agent_pod_state recycle counters exist. The down restores
-// concurrency_style with its 0040 definition and clears the up's object
-// comments.
+// concurrency_style with its 0040 definition.
 //
 // diagnosis: a failure means migration 0167 did not re-key the
 // runtime_definitions execution_mode enum to (session, service), did not
@@ -146,11 +179,12 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 	defer pool.Close()
 
 	// The runtime_definitions and agent_pod_state tables (0001), the RLS
-	// roles 0167's GRANT-free comments rely on (0002), sandbox_warm_pools
-	// with its execution_mode column (0033) and the concurrency_style /
-	// max_concurrent columns (0040), and sessions.execution_mode (0084).
-	// The full set is not applied because an unrelated later migration
-	// needs the pgvector extension the embedded bundle lacks.
+	// roles and immutability triggers 0001 and 0033 GRANT to (0002),
+	// sandbox_warm_pools with its execution_mode column (0033) and the
+	// concurrency_style / max_concurrent columns (0040), and
+	// sessions.execution_mode (0084). The full set is not applied because
+	// an unrelated later migration needs the pgvector extension the
+	// embedded bundle lacks.
 	applyMigrations(
 		t, ctx, pool,
 		"0001_initial_schema.up.sql",
@@ -193,16 +227,6 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		t.Error("max_concurrent column must survive 0167")
 	}
 
-	// The 0084:18 stale comment lives on sessions.scrub_policy. The up
-	// re-keys that column's comment off the removed pod-reuse mode names.
-	scrubComment := columnComment(t, ctx, pool, "sessions", "scrub_policy")
-	if scrubComment == "" {
-		t.Error("0167 up must set a comment on sessions.scrub_policy (the 0084:18 anchor column)")
-	}
-	if strings.Contains(scrubComment, "task") || strings.Contains(scrubComment, "concurrent") {
-		t.Errorf("sessions.scrub_policy comment must not name the removed modes; got %q", scrubComment)
-	}
-
 	// The agent_pod_state recycle counters exist and are nullable.
 	for _, col := range []string{"sessions_served", "scrub_failure_count"} {
 		if !columnExists(t, ctx, pool, "agent_pod_state", col) {
@@ -236,22 +260,6 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		}
 	} else {
 		t.Error("after down, the restored CHECK must reject execution_mode 'service'")
-	}
-
-	// The down clears every object comment the up added: the pre-0167
-	// baseline carried no object comment on these columns (their
-	// documentation lived in the immutable '--' source comments of 0033 and
-	// 0084), so a clean up->down cycle leaves them commentless rather than
-	// inventing restored comment text.
-	for _, c := range []struct{ table, column string }{
-		{"sandbox_warm_pools", "execution_mode"},
-		{"sessions", "execution_mode"},
-		{"sessions", "scrub_policy"},
-	} {
-		if cm := columnComment(t, ctx, pool, c.table, c.column); cm != "" {
-			t.Errorf("after down, %s.%s object comment must be cleared (the pre-0167 baseline had none); got %q",
-				c.table, c.column, cm)
-		}
 	}
 
 	// The down restores concurrency_style with its 0040 definition
@@ -294,22 +302,6 @@ func columnExists(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, 
 		t.Fatalf("query column %s.%s: %v", table, column, err)
 	}
 	return exists
-}
-
-// columnComment returns the database object comment on the given column,
-// or the empty string when no comment is set.
-func columnComment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, column string) string {
-	t.Helper()
-	var comment string
-	err := pool.QueryRow(ctx,
-		`SELECT COALESCE(col_description(a.attrelid, a.attnum), '')
-		   FROM pg_catalog.pg_attribute a
-		   JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-		  WHERE c.relname = $1 AND a.attname = $2`, table, column).Scan(&comment)
-	if err != nil {
-		t.Fatalf("query comment %s.%s: %v", table, column, err)
-	}
-	return comment
 }
 
 // columnNullable reports whether the given column is nullable. The

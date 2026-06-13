@@ -1,7 +1,13 @@
 -- §5.2 / §12.6 execution-mode rename: the v1 mode set collapses from
 -- (session, task, concurrent) to (session, service). This migration
--- re-keys every Postgres surface that enumerated the old mode set and
--- adds the gateway-written per-pod recycle counters to agent_pod_state.
+-- re-keys the enforced runtime_definitions mode constraint, retires the
+-- concurrent sub-variant column on the pool table, and adds the
+-- gateway-written per-pod recycle counters to agent_pod_state. The stale
+-- mode-enum documentation on the unconstrained columns lived only in the
+-- '--' source comments of 0033 and 0084 and is re-keyed in place in those
+-- files; the golang-migrate runner tracks the version integer and never
+-- re-reads an applied migration body, so editing those schema-neutral
+-- comments alters no live schema and needs no statement here.
 --
 -- The live, enforced constraint is runtime_definitions_execution_mode_check
 -- (0001_initial_schema.up.sql), which no later migration altered. The
@@ -20,25 +26,6 @@ ALTER TABLE runtime_definitions
 ALTER TABLE runtime_definitions
     ADD CONSTRAINT runtime_definitions_execution_mode_check
         CHECK (execution_mode IN ('session', 'service'));
-
--- Re-key the stale mode-enum documentation on the unconstrained columns to
--- the (session, service) set by attaching a Postgres object comment. These
--- columns carry no CHECK constraint; the old mode enum was named only in
--- the immutable '--' source comments of 0033 and 0084, which no migration
--- ever issued as COMMENT ON statements, so the pre-0167 baseline carries no
--- object comment on these columns. This is not a re-key of a pre-existing
--- object comment: the up adds the object comment carrying the corrected
--- documentation forward, and the down removes it (sets it to NULL) so an
--- up->down cycle returns the columns to their commentless baseline.
---   - sandbox_warm_pools.execution_mode: corrects the 0033:15 source comment.
---   - sessions.execution_mode: corrects the 0084:10-11 source comment.
---   - sessions.scrub_policy: corrects the 0084:15-19 source comment, whose
---     gating clause at 0084:18 named the removed pod-reuse mode set. In the
---     (session, service) model the scrub policy applies to service-mode
---     pod reuse, so the gating clause re-keys to service mode.
-COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS 'the §5.2 mode (session, service)';
-COMMENT ON COLUMN sessions.execution_mode IS 'the §5.2 mode (session, service)';
-COMMENT ON COLUMN sessions.scrub_policy IS 'the §7.1 scrub-policy string; set only when execution_mode is service (the pod-reuse mode)';
 
 -- Retire the concurrency_style column on the pool table. The §5.2 mode
 -- collapse removes the concurrent sub-variant the column carried; this
