@@ -57,6 +57,65 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--skip-network-probes=true"
 
+  # spec: §17.9.2 line 1372 / §12.5 line 297 / F-17.9.11 — under
+  # skipNetworkProbes the MinIO SSE probe does not run, so the Job must not
+  # mount the lenny-datastore-conn MinIO credential env nor pass
+  # --minio-endpoint / --redis-url. On a fresh install the
+  # lenny-datastore-conn Secret renders after this pre-install hook, so a
+  # non-optional secretKeyRef for a probe that is skipped would block the
+  # preflight pod with CreateContainerConfigError until activeDeadlineSeconds
+  # and abort the chart install. The cluster-API checks still run.
+  - it: drops the MinIO credential env and backend-probe args under skipNetworkProbes
+    set:
+      preflight.skipNetworkProbes: true
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.bucket: "lenny-artifacts"
+      minio.accessKey: "a"
+      minio.secretKey: "s"
+      preflight.checkRedisMaxmemoryPolicy: true
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--minio-endpoint=lenny-minio.lenny-system.svc:9000"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+      # The container carries no env at all under skipNetworkProbes with no
+      # external pooler, so the not-yet-created Secret cannot block the pod.
+      - notExists:
+          path: spec.template.spec.containers[0].env
+
+  # spec: §12.5 line 297 / F-12.4.15 — with network probes enabled (the
+  # default) a configured MinIO endpoint still wires the SSE credential env
+  # from lenny-datastore-conn so the probe can authenticate. This pins that
+  # the skipNetworkProbes gate above did not over-broadly drop the env on a
+  # probing install.
+  - it: wires the MinIO credential env when network probes run
+    set:
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.bucket: "lenny-artifacts"
+      minio.accessKey: "a"
+      minio.secretKey: "s"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--minio-endpoint=lenny-minio.lenny-system.svc:9000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MINIO_ACCESS_KEY_ENV
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-access-key
+
   # spec: §10.3 lines 316, 334 (NET-064) — the preflight Job needs the
   # values at hand to feed CheckSPIFFETrustDomainUniqueness /
   # CheckSATokenAudienceUniqueness. F-10.3.5.

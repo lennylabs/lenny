@@ -9,6 +9,23 @@
 # This overlay is for the e2e test harness only. Production installs
 # use the chart defaults with real images and external data stores.
 
+# The §25.8 ImageResolver prepends platform.registry.url to every
+# component image name (lenny.componentImage helper), so the chart
+# default ghcr.io/lennylabs would render ghcr.io/lennylabs/lenny-*:e2e.
+# install.sh builds and `kind load docker-image`s the bare lenny-*:e2e
+# names instead, so with pullPolicy: Never the kubelet reports
+# ErrImageNeverPull for any pod whose image carries the registry prefix.
+# A long-running control-plane pod survives because it was admitted on a
+# prior install, but the per-upgrade lenny-preflight hook Job re-pulls a
+# fresh pod every time and fails closed, hanging at activeDeadlineSeconds
+# (DeadlineExceeded) and aborting the chart install. Clearing the URL
+# routes the helper to the bare image.repository names below, which match
+# the kind-loaded images. This is the e2e harness only; production installs
+# keep the registry URL.
+platform:
+  registry:
+    url: ""
+
 controller:
   image:
     repository: lenny-controller
@@ -83,6 +100,22 @@ preflight:
     repository: lenny-preflight
     tag: e2e
     pullPolicy: Never
+  # The §17.9.2 airgap path drops the backend-reachability probes (MinIO
+  # SSE, BYO-Redis maxmemory, OTLP TLS handshake, ops-admin internal-TLS)
+  # while keeping the admission-plane cluster-API checks the install needs.
+  # The e2e MinIO runs plaintext at lenny-minio.lenny-system.svc:9000, but
+  # the chart keys its MinIO TLS posture on minio.tls.enabled (default
+  # true) rather than the minio.useSSL set above, so the preflight Job
+  # otherwise probes MinIO over TLS at a plaintext endpoint and hangs until
+  # activeDeadlineSeconds (default 120s) kills the Job with DeadlineExceeded
+  # at the pre-install/pre-upgrade hook, aborting the chart install. Setting
+  # backends: embedded to flip the TLS posture is not available on this
+  # overlay (it uses real in-cluster data stores), so the airgap probe-skip
+  # is the targeted fix. The cluster-API admission-plane checks still run.
+  skipNetworkProbes: true
+  # Raise the activeDeadlineSeconds floor so a cold-cache cluster-API sweep
+  # on a loaded Kind host completes within the hook deadline.
+  timeoutSeconds: 300
 
 backups:
   image:

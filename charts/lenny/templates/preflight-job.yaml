@@ -176,8 +176,20 @@ subjects:
 {{- range $flag, $on := .Values.acceptFeatureFlagDowngrade }}
 {{-   if $on }}{{ $accepted = append $accepted $flag }}{{ end }}
 {{- end }}
+{{- /* §17.9.2 line 1372 — preflight.skipNetworkProbes drops the
+   backend-reachability probes (MinIO SSE, BYO-Redis maxmemory, OTLP TLS,
+   ops-admin internal-TLS, cloud-pooler sentinel) for air-gapped installs.
+   The MinIO SSE probe is the only consumer of the lenny-datastore-conn
+   MinIO credentials, so when probes are skipped the credential env below
+   is unused. On a fresh install the lenny-datastore-conn Secret renders
+   after this pre-install hook, so mounting a non-optional secretKeyRef for
+   a probe that will not run would block the preflight pod with
+   CreateContainerConfigError ("secret not found") and stall the Job until
+   activeDeadlineSeconds. Gate the env mount on the probes actually running.
+   F-17.9.11. */ -}}
+{{- $skipNetworkProbes := .Values.preflight.skipNetworkProbes | default false -}}
 {{- $minio := .Values.minio | default dict -}}
-{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
+{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") (not $skipNetworkProbes) -}}
 {{- $tls := $minio.tls | default dict -}}
 {{- $useSSL := true -}}
 {{- if hasKey ($tls | default dict) "enabled" -}}
@@ -210,7 +222,7 @@ them from the chart's enabled runtimeClasses.profiles entries, skipping:
        profile that brings its own Redis needs the preflight probe.
        F-12.4.15. */ -}}
 {{- $redis := .Values.redis | default dict -}}
-{{- $checkRedis := and .Values.preflight $.Values.preflight.checkRedisMaxmemoryPolicy $redis.url (ne ($redis.url | toString) "") -}}
+{{- $checkRedis := and .Values.preflight $.Values.preflight.checkRedisMaxmemoryPolicy $redis.url (ne ($redis.url | toString) "") (not $skipNetworkProbes) -}}
 {{- /* §17.6 line 488 — the cloud-pooler sentinel defense connects to
        Postgres to verify the lenny_tenant_guard trigger when the pooler
        is external. The DSN comes from the lenny-datastore-conn Secret,
@@ -219,7 +231,7 @@ them from the chart's enabled runtimeClasses.profiles entries, skipping:
        optional:true and the binary defers an unwired probe to the
        gateway's runtime LENNY_POOLER_MODE defense. F-17.9.2. */ -}}
 {{- $pgPooler := .Values.postgres | default dict -}}
-{{- $checkPoolerSentinel := and (eq $connectionPooler "external") $pgPooler.dsn (ne ($pgPooler.dsn | toString) "") -}}
+{{- $checkPoolerSentinel := and (eq $connectionPooler "external") $pgPooler.dsn (ne ($pgPooler.dsn | toString) "") (not $skipNetworkProbes) -}}
 {{- if and (not $rc.create) (not $global.devMode) -}}
 {{-   range $profile, $cfg := ($rc.profiles | default dict) -}}
 {{-     if and $cfg $cfg.enabled $cfg.name -}}
@@ -410,7 +422,7 @@ spec:
             # (MinIO SSE, BYO-Redis maxmemory, OTLP TLS handshake, ops-admin
             # internal-TLS handshake) are dropped while the cluster-API checks
             # still run. F-17.9.11.
-            - --skip-network-probes={{ .Values.preflight.skipNetworkProbes | default false }}
+            - --skip-network-probes={{ $skipNetworkProbes }}
           {{- if or $hasMinio $checkPoolerSentinel }}
           env:
             {{- if $hasMinio }}
