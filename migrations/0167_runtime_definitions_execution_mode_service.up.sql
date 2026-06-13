@@ -34,13 +34,17 @@ COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS 'the §5.2 mode (session,
 COMMENT ON COLUMN sessions.execution_mode IS 'the §5.2 mode (session, service)';
 COMMENT ON COLUMN sessions.scrub_policy IS 'the §7.1 scrub-policy string; set only when execution_mode is service (the pod-reuse mode)';
 
--- The concurrency_style column on the pool table is retired together with
--- the gateway ConcurrencyStyle field in the later poolstore step, not
--- here: the proposal conditions the column drop on the field's removal
--- ("retired ... once concurrencyStyle is removed"), so dropping it now,
--- while pgstore still reads and writes the column, would blank every
--- re-read pool's ConcurrencyStyle and invert that precondition. This
--- migration leaves concurrency_style in place; max_concurrent already
+-- The §5.2 mode collapse retires the concurrency_style column on the pool
+-- table together with the gateway ConcurrencyStyle field: the column drop
+-- is conditioned on the field's removal ("retired ... once concurrencyStyle
+-- is removed"). The pool INSERT, UPDATE, and SELECT in
+-- pkg/gateway/poolstore/pgstore still read and write concurrency_style and
+-- the typed Pool.ConcurrencyStyle field at HEAD, so the column drop cannot
+-- precede that field removal without blanking every re-read pool's
+-- ConcurrencyStyle. The column retirement therefore lands in the same
+-- change that removes the field (with a down that restores the column),
+-- which is the poolstore mode-collapse change rather than this
+-- constraint-and-counter migration. max_concurrent already
 -- survives as the per-pod bound consumed by service mode and the
 -- session-mode concurrency path (sessionPolicy.maxConcurrentSessions).
 

@@ -220,8 +220,9 @@ var prodMigrationSchema = []struct {
 	// adds the §12.6 gateway-written per-pod recycle counters to
 	// agent_pod_state. Both counters are nullable until the gateway first
 	// writes them. The concurrency_style column survives this migration;
-	// it is retired in the later poolstore step once the ConcurrencyStyle
-	// field is removed. spec: §5.2, §12.6.
+	// its drop lands with the gateway ConcurrencyStyle field removal in the
+	// poolstore mode-collapse change (pgstore still reads and writes the
+	// column at HEAD). spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},
