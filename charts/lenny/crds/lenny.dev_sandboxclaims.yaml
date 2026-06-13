@@ -174,12 +174,18 @@ spec:
               phase:
                 description: |-
                   Phase is the §4.6.3 binding state of the per-pod-occupancy claim:
-                  `bound` once the claim is bound to a claimed pod; `recycling`
-                  while the occupancy-zero whole-pod scrub (and, on preConnect
-                  pools, the SDK re-warm) runs; `reserved` while the scrubbed pod is
-                  held for its pinned tenant through the hold TTL; `released` once
-                  the pod is returned to the pool; `failed` on a binding failure.
-                  Per §4.6.3 only `released` and `failed` are terminal.
+                  `bound` once the claim is bound to a claimed pod; `recycling` while
+                  the occupancy-zero whole-pod scrub (and, on preConnect pools, the
+                  SDK re-warm) runs; `reserved` while the scrubbed pod is held for its
+                  pinned tenant through the hold TTL; `released` is the limit-reached
+                  retirement disposition (`recycle.maxSessionsPerPod` or
+                  `recycle.maxPodUptimeSeconds` reached) under which the
+                  WarmPoolController projects the pod to `draining` then `terminated`,
+                  retiring it rather than returning it to the pool; `failed` on a
+                  scrub-failure or crashed-session retirement, which likewise drains
+                  and terminates the pod. Per §4.6.3 only `released` and `failed` are
+                  terminal. Returning a pod to the pool (`reserved → idle` on hold
+                  expiry) is the claim DELETE edge, not a phase value.
                 enum:
                 - bound
                 - recycling

@@ -40,9 +40,15 @@ type SandboxClaimStatus struct {
 	// `bound` once the claim is bound to a claimed pod; `recycling` while
 	// the occupancy-zero whole-pod scrub (and, on preConnect pools, the
 	// SDK re-warm) runs; `reserved` while the scrubbed pod is held for its
-	// pinned tenant through the hold TTL; `released` once the pod is
-	// returned to the pool; `failed` on a binding failure. Per §4.6.3 only
-	// `released` and `failed` are terminal.
+	// pinned tenant through the hold TTL; `released` is the limit-reached
+	// retirement disposition (`recycle.maxSessionsPerPod` or
+	// `recycle.maxPodUptimeSeconds` reached) under which the
+	// WarmPoolController projects the pod to `draining` then `terminated`,
+	// retiring it rather than returning it to the pool; `failed` on a
+	// scrub-failure or crashed-session retirement, which likewise drains
+	// and terminates the pod. Per §4.6.3 only `released` and `failed` are
+	// terminal. Returning a pod to the pool (`reserved → idle` on hold
+	// expiry) is the claim DELETE edge, not a phase value.
 	// +kubebuilder:validation:Enum=bound;recycling;reserved;released;failed
 	// +optional
 	Phase string `json:"phase,omitempty"`

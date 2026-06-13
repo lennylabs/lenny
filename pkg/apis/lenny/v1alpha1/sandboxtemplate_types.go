@@ -12,9 +12,11 @@ import (
 // modes: `maxConcurrentSessions` sets simultaneous sessions per pod and
 // the nested Recycle block governs sequential pod reuse with a whole-pod
 // scrub between sessions. The CRD carries the cross-tenant microvm scrub
-// controls the API server enforces; the gateway's poolstore holds the
-// remaining sizing and acknowledgment knobs (§4.6.3 ownership). spec:
-// §5.2 (pool configuration and execution modes).
+// controls (ScrubProfile and AcknowledgeMicrovmResidualState) that the
+// pool controller's pool_config_validator reads to enforce the
+// fail-closed in-place acknowledgment gate; the gateway's poolstore
+// holds the remaining sizing and acknowledgment knobs (§4.6.3
+// ownership). spec: §5.2 (pool configuration and execution modes).
 type SessionPolicy struct {
 	// Recycle configures sequential pod reuse with a whole-pod scrub at
 	// the occupancy-zero recycle boundary. It is nil on pools that do not
@@ -26,11 +28,14 @@ type SessionPolicy struct {
 // RecyclePolicy is the §5.2 sessionPolicy.recycle block: sequential pod
 // reuse across whole sessions of one tenant. The CRD declares the
 // cross-tenant microvm scrub controls (ScrubProfile and
-// AcknowledgeMicrovmResidualState) because the API server enforces the
-// `in-place`-gated acknowledgment as a fail-closed admission gate; the
-// remaining recycle knobs (maxSessionsPerPod, maxScrubFailures, etc.)
-// live in the gateway poolstore. spec: §5.2 (recycle lifecycle, Kata
-// scrub variant).
+// AcknowledgeMicrovmResidualState) so the pool controller's
+// pool_config_validator can read them; that validator enforces the
+// fail-closed `in-place`-gated acknowledgment (it rejects
+// `scrubProfile: in-place` without `acknowledgeMicrovmResidualState`).
+// The API server validates only the ScrubProfile enum; it does not
+// enforce the in-place→acknowledgment gate. The remaining recycle knobs
+// (maxSessionsPerPod, maxScrubFailures, etc.) live in the gateway
+// poolstore. spec: §5.2 (recycle lifecycle, Kata scrub variant).
 type RecyclePolicy struct {
 	// ScrubProfile selects the whole-pod scrub variant: `standard` (the
 	// default) runs the in-guest scrub steps; `vm-restart` boots a fresh
