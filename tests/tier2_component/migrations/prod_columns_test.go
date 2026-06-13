@@ -52,13 +52,10 @@ var prodMigrationSchema = []struct {
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry. concurrency_style is not listed here:
-	// migration 0167 retires it (the §5.2 mode collapse), so it does not
-	// exist at HEAD. The forward test asserts only columns present at HEAD;
-	// 0167's down restores concurrency_style, so the per-step 0040 rollback
-	// still ends with the column absent. The drop/restore round-trip is
-	// covered by TestProdSchemaMigrationConcurrencyStyleDrop and the 0167
-	// migration test under migrations/.
+	// sandbox_warm_pools registry. concurrency_style is not listed here only
+	// because it is exercised by the pgstore round-trip tests; it is still a
+	// live column (migration 0167 leaves it in place, deferring its
+	// retirement to the later poolstore ConcurrencyStyle removal).
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
 		"max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
@@ -223,16 +220,11 @@ var prodMigrationSchema = []struct {
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
 	// 0167 re-keys the §5.2 execution-mode CHECK on runtime_definitions to
-	// (session, service), retires the concurrency_style column on
-	// sandbox_warm_pools (the §5.2 mode collapse removes the concurrent
-	// sub-variant the column encoded; pgstore stops persisting and scanning
-	// it in the same change), and adds the §12.6 gateway-written per-pod
-	// recycle counters to agent_pod_state. Both counters are nullable until
-	// the gateway first writes them. The dropped concurrency_style column is
-	// not listed here: the harness records only added columns (it asserts
-	// they are absent after the per-step rollback). The drop and its down
-	// restoration are covered by TestProdSchemaMigrationConcurrencyStyleDrop
-	// and the 0167 migration test under migrations/. spec: §5.2, §12.6.
+	// (session, service) and adds the §12.6 gateway-written per-pod recycle
+	// counters to agent_pod_state. Both counters are nullable until the
+	// gateway first writes them. The migration leaves the concurrency_style
+	// column in place: its retirement is coupled with the later poolstore
+	// ConcurrencyStyle removal (proposal Section 5/13). spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},
@@ -323,39 +315,6 @@ func columnType(t *testing.T, ctx context.Context, pg *containers.Postgres, tabl
 		t.Fatalf("read type of %s.%s: %v", table, col, err)
 	}
 	return dataType
-}
-
-// columnDefault returns the column's default expression as Postgres
-// records it in information_schema (for example ”::text), or the empty
-// string when the column carries no default.
-func columnDefault(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
-	t.Helper()
-	var def *string
-	err := pg.Pool.QueryRow(ctx, `
-		SELECT column_default FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
-		table, col).Scan(&def)
-	if err != nil {
-		t.Fatalf("read default of %s.%s: %v", table, col, err)
-	}
-	if def == nil {
-		return ""
-	}
-	return *def
-}
-
-// columnNullable reports whether the column is nullable.
-func columnNullable(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) bool {
-	t.Helper()
-	var isNullable string
-	err := pg.Pool.QueryRow(ctx, `
-		SELECT is_nullable FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
-		table, col).Scan(&isNullable)
-	if err != nil {
-		t.Fatalf("read nullability of %s.%s: %v", table, col, err)
-	}
-	return isNullable == "YES"
 }
 
 func mustHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {

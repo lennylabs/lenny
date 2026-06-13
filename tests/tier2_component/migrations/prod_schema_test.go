@@ -127,44 +127,6 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: 5.2, 12.6
-// diagnosis: migration 0167 did not retire sandbox_warm_pools.concurrency_style
-// (the §5.2 mode collapse removes the concurrent sub-variant the column
-// encoded), or its .down.sql did not restore the column to its 0040
-// definition (TEXT NOT NULL DEFAULT ”). A failure means the concurrent
-// sub-variant column survives at HEAD, or the down does not round-trip the
-// column back to the per-step 0040 baseline.
-func TestProdSchemaMigrationConcurrencyStyleDrop(t *testing.T) {
-	t.Parallel()
-	dir := prodMigrations(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
-	ctx := context.Background()
-
-	// At HEAD the column is gone: 0167 dropped it.
-	if columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("sandbox_warm_pools.concurrency_style must be dropped by migration 0167 (§5.2 mode collapse)")
-	}
-	// max_concurrent survives as the per-pod bound.
-	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "max_concurrent") {
-		t.Error("sandbox_warm_pools.max_concurrent must survive migration 0167")
-	}
-
-	// Rolling 0167 back restores the column with its 0040 definition.
-	pg.MigrateTo(t, dir, 166)
-	if !columnExists(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Fatal("migration 0167 down must restore sandbox_warm_pools.concurrency_style")
-	}
-	if got := columnType(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "text" {
-		t.Errorf("restored concurrency_style type: got %q, want text", got)
-	}
-	if got := columnDefault(t, ctx, pg, "sandbox_warm_pools", "concurrency_style"); got != "''::text" {
-		t.Errorf("restored concurrency_style default: got %q, want ''::text", got)
-	}
-	if columnNullable(t, ctx, pg, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("restored concurrency_style must be NOT NULL (the 0040 definition)")
-	}
-}
-
 // spec: §12.8 lines 743-758
 // diagnosis: migration 0096 must seed the reserved __preflight__ tenant
 // so the §12.8 MemoryStore erasure preflight's synthetic agent_memory

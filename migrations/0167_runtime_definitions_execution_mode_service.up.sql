@@ -1,13 +1,22 @@
 -- §5.2 / §12.6 execution-mode rename: the v1 mode set collapses from
 -- (session, task, concurrent) to (session, service). This migration
--- re-keys the enforced runtime_definitions mode constraint, retires the
--- concurrent sub-variant column on the pool table, and adds the
+-- re-keys the enforced runtime_definitions mode constraint and adds the
 -- gateway-written per-pod recycle counters to agent_pod_state. The stale
 -- mode-enum documentation on the unconstrained columns lived only in the
 -- '--' source comments of 0033 and 0084 and is re-keyed in place in those
 -- files; the golang-migrate runner tracks the version integer and never
 -- re-reads an applied migration body, so editing those schema-neutral
 -- comments alters no live schema and needs no statement here.
+--
+-- The concurrency_style column on the pool table (0040) is the §5.2
+-- concurrent sub-variant. The proposal retires it "once concurrencyStyle is
+-- removed" (Section 5, Section 13), coupling the column drop with the
+-- pkg/gateway/poolstore ConcurrencyStyle field, enum, and ValidateConcurrentConfig
+-- removal so no live code reads a column the migration has dropped. That
+-- Go-side removal is a later poolstore mode-collapse step, so the column drop
+-- lands there with it, not here. Dropping the column now would leave the
+-- still-live concurrent-mode validatePool -> ValidateConcurrentConfig path
+-- reading a zero-valued ConcurrencyStyle off a re-read row and rejecting it.
 --
 -- The live, enforced constraint is runtime_definitions_execution_mode_check
 -- (0001_initial_schema.up.sql), which no later migration altered. The
@@ -26,37 +35,6 @@ ALTER TABLE runtime_definitions
 ALTER TABLE runtime_definitions
     ADD CONSTRAINT runtime_definitions_execution_mode_check
         CHECK (execution_mode IN ('session', 'service'));
-
--- Retire the concurrency_style column on the pool table. The §5.2 mode
--- collapse removes the concurrent sub-variant the column encoded
--- ('workspace' or 'stateless'), so the column has no successor and is
--- dropped. The gateway pool store stops persisting and scanning the
--- column in the same change (pkg/gateway/poolstore/pgstore), so a pool
--- round-trip against the migrated schema does not error on a missing
--- column. max_concurrent survives as the per-pod bound consumed by
--- service mode and the session-mode concurrency path
--- (sessionPolicy.maxConcurrentSessions).
---
--- This is a §10.5 Phase 3 column drop: the preflight DO $$ gate aborts
--- when any pool still carries a non-empty concurrency_style, so the
--- concurrent sub-variant of a live pool is never silently lost, and the
--- drop is idempotent (DROP COLUMN IF EXISTS, §10.5 line 430). The platform
--- is pre-deployment, so no pool carries the value in practice and the gate
--- passes trivially; it is the §10.5 line 417 contract that the column has
--- no live dependents before it is removed.
--- gate-index: none required; the gate scans the column directly.
-DO $$
-DECLARE remaining bigint;
-BEGIN
-    SELECT COUNT(*) INTO remaining
-      FROM sandbox_warm_pools
-     WHERE concurrency_style <> '';
-    IF remaining > 0 THEN
-        RAISE EXCEPTION 'Phase 3 gate failed: % sandbox_warm_pools rows still carry a non-empty concurrency_style; migrate concurrent-mode pools before dropping the column', remaining;
-    END IF;
-END $$;
-ALTER TABLE sandbox_warm_pools
-    DROP COLUMN IF EXISTS concurrency_style;
 
 -- Add the nullable gateway-written per-pod recycle counters to
 -- agent_pod_state. sessions_served is incremented at each session
