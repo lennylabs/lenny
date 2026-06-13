@@ -146,6 +146,26 @@ func concurrentIdleSandbox(name, podIP string) *lennyv1.Sandbox {
 	}
 }
 
+// countPodClaims returns the live SandboxClaim count bound to sandboxName.
+// The per-pod slot count is no longer mirrored on Sandbox.status (§5.2:
+// the Redis counter, or in the SSA-only test path the pod's live claim
+// count, is the authority), so a pod's occupancy is read by counting its
+// claims.
+func countPodClaims(t *testing.T, c client.Client, sandboxName string) int {
+	t.Helper()
+	var list lennyv1.SandboxClaimList
+	if err := c.List(context.Background(), &list, client.InNamespace(testNS)); err != nil {
+		t.Fatalf("list claims: %v", err)
+	}
+	n := 0
+	for i := range list.Items {
+		if list.Items[i].Spec.SandboxRef == sandboxName && list.Items[i].DeletionTimestamp.IsZero() {
+			n++
+		}
+	}
+	return n
+}
+
 // spec: 5.2
 // diagnosis: BindSlot did not place a workspace-concurrent session on a
 // pod slot. §5.2: workspace-concurrent runs the §4.7 workspace-and-start
@@ -184,8 +204,8 @@ func TestBindSlotWorkspaceConcurrentStartsTheSlot(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "slot_active" || sb.Status.ActiveSlots != 1 {
-		t.Errorf("phase=%q slots=%d, want slot_active/1", sb.Status.Phase, sb.Status.ActiveSlots)
+	if sb.Status.Phase != "claimed" || countPodClaims(t, c, "sbx-1") != 1 {
+		t.Errorf("phase=%q slots=%d, want claimed/1", sb.Status.Phase, countPodClaims(t, c, "sbx-1"))
 	}
 }
 
@@ -231,8 +251,8 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: r1.SandboxName}, &shared); err != nil {
 		t.Fatalf("get shared pod: %v", err)
 	}
-	if shared.Status.ActiveSlots != 2 {
-		t.Errorf("shared pod activeSlots = %d, want 2", shared.Status.ActiveSlots)
+	if got := countPodClaims(t, c, r1.SandboxName); got != 2 {
+		t.Errorf("shared pod slot claims = %d, want 2", got)
 	}
 	started := a.startedSet()
 	if !started["sess-1"] || !started["sess-2"] {
@@ -274,8 +294,8 @@ func TestBindSlotStatelessConcurrentSkipsWorkspace(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "slot_active" || sb.Status.ActiveSlots != 1 {
-		t.Errorf("stateless slot: phase=%q slots=%d, want slot_active/1", sb.Status.Phase, sb.Status.ActiveSlots)
+	if sb.Status.Phase != "claimed" || countPodClaims(t, c, "sbx-1") != 1 {
+		t.Errorf("stateless slot: phase=%q slots=%d, want claimed/1", sb.Status.Phase, countPodClaims(t, c, "sbx-1"))
 	}
 }
 
@@ -333,9 +353,9 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "slot_active" || sb.Status.ActiveSlots != 1 {
-		t.Errorf("after releasing one slot: phase=%q slots=%d, want slot_active/1",
-			sb.Status.Phase, sb.Status.ActiveSlots)
+	if sb.Status.Phase != "claimed" || countPodClaims(t, c, "sbx-1") != 1 {
+		t.Errorf("after releasing one slot: phase=%q slots=%d, want claimed/1",
+			sb.Status.Phase, countPodClaims(t, c, "sbx-1"))
 	}
 
 	// Release the last slot — the pod returns to idle.
@@ -345,9 +365,9 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "idle" || sb.Status.ActiveSlots != 0 {
+	if sb.Status.Phase != "idle" || countPodClaims(t, c, "sbx-1") != 0 {
 		t.Errorf("after releasing the last slot: phase=%q slots=%d, want idle/0",
-			sb.Status.Phase, sb.Status.ActiveSlots)
+			sb.Status.Phase, countPodClaims(t, c, "sbx-1"))
 	}
 }
 
@@ -469,8 +489,7 @@ func TestBindSlotReturnsSlotBindError_spec_5_2(t *testing.T) {
 // Sandbox.
 func TestBinderDrainSandbox_spec_6_2(t *testing.T) {
 	sb := concurrentIdleSandbox("sbx-1", "10.244.1.7")
-	sb.Status.Phase = string(state.SlotActive)
-	sb.Status.ActiveSlots = 2
+	sb.Status.Phase = string(state.Claimed)
 	c := k8sClient(t, sb)
 	binder := newBinder(c, concurrentAdapterDialer(t, newConcurrentAdapter()))
 	ctx := context.Background()

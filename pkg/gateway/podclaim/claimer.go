@@ -144,8 +144,12 @@ func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName s
 			Namespace: namespace,
 		},
 		Spec: lennyv1.SandboxClaimSpec{
+			// The per-pod occupancy claim (§4.6.3) carries only sandboxRef
+			// and tenantId; the session-to-pod binding lives on the Postgres
+			// session row's pod_assignment column. The per-pod claim name and
+			// the binding-state status patches land with the gateway
+			// claim-path step.
 			SandboxRef: sandboxName,
-			SessionID:  req.SessionID,
 			TenantID:   req.TenantID,
 		},
 	}

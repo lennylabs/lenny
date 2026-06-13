@@ -149,10 +149,9 @@ type PodStatus struct {
 	NodeName string
 	// CertExpiresAt is the adapter cert expiry on the Sandbox.
 	CertExpiresAt time.Time
-	// ActiveSlots is the §5.2 concurrent-mode slot count.
-	ActiveSlots int32
 	// TenantID is the §5.2 tenant pinning, empty for an unassigned
-	// pod.
+	// pod. The per-pod slot count lives in the Redis counter (§5.2),
+	// no longer on Sandbox.status, so it is not surfaced here.
 	TenantID string
 }
 
@@ -239,7 +238,7 @@ type OrphanResult struct {
 type OrphanAction string
 
 const (
-	OrphanActionDeleted OrphanAction = "deleted"
+	OrphanActionDeleted  OrphanAction = "deleted"
 	OrphanActionRetained OrphanAction = "retained"
 )
 

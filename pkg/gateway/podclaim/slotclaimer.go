@@ -39,16 +39,17 @@ import (
 // spec's "never force-conflicts" guidance in §4.6.3 governs the
 // WPC/PSC interaction and does not extend to the §5.2 gateway-side
 // transitions where dual ownership is the spec-intended pattern.
-// ActiveSlots and TenantID are exclusively gateway-owned and don't
-// require force on their own; bundling them in the same Apply with
-// Phase still uses ForceOwnership because the API server applies
-// the force flag to the entire patch object.
-func gatewayStatusPatch(name, namespace, phase string, activeSlots int32, tenantID string) *unstructured.Unstructured {
+// TenantID is exclusively gateway-owned and does not require force on
+// its own; bundling it in the same Apply with Phase still uses
+// ForceOwnership because the API server applies the force flag to the
+// entire patch object. The per-pod slot count lives in the Redis counter
+// (§5.2), no longer on Sandbox.status, so the patch carries no slot
+// field.
+func gatewayStatusPatch(name, namespace, phase string, tenantID string) *unstructured.Unstructured {
 	status := map[string]interface{}{}
 	if phase != "" {
 		status["phase"] = phase
 	}
-	status["activeSlots"] = int64(activeSlots)
 	if tenantID != "" {
 		status["tenantId"] = tenantID
 	}
@@ -371,14 +372,18 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	sawTenantMismatch := false
 	for i := range list.Items {
 		sb := &list.Items[i]
-		if sb.Status.Phase != string(state.SlotActive) {
+		// §5.2: the coarse phase enum collapses `slot_active` into `claimed`
+		// (the WarmPoolController projects occupancy as `claimed`), so a
+		// slot-hosting pod reads `claimed`. Concurrency is observed through
+		// the Redis counter, not the phase.
+		if sb.Status.Phase != string(state.Claimed) {
 			continue
 		}
-		if sb.Status.ActiveSlots >= req.MaxConcurrent {
-			// Pod is at its slot bound; the §5.2 atomic cap check would
-			// reject a reservation here. Try the next pod.
-			continue
-		}
+		// The §5.2 atomic Redis counter enforces the maxConcurrent cap on
+		// the reservation itself: a pod at its slot bound returns a slot
+		// conflict from reserveSlot, which the caller skips. The slot count
+		// is no longer mirrored on Sandbox.status, so there is no cheap
+		// pre-filter here; the counter is the authority.
 		if sb.Status.TenantID != "" && sb.Status.TenantID != req.TenantID {
 			// §5.2 tenant pinning: this pod is pinned to another tenant.
 			sawTenantMismatch = true
@@ -508,14 +513,20 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		}
 		nextActiveSlots = newCount
 	} else {
-		// SSA-only fallback. The pre-read cap-check is a best-effort
-		// approximation of the atomic CAS and is documented as
+		// SSA-only fallback. The slot count is no longer mirrored on
+		// Sandbox.status, so the cap check counts the pod's live
+		// SandboxClaims (each claim is one slot reservation). It is a
+		// best-effort approximation of the atomic CAS and is documented as
 		// race-prone in the SlotClaimer doc comment.
-		if sb.Status.ActiveSlots >= req.MaxConcurrent {
+		current, err := c.countPodClaims(ctx, sb.Name)
+		if err != nil {
+			return nil, false, err
+		}
+		if int32(current) >= req.MaxConcurrent {
 			c.recordSlotConflict(req.Pool)
 			return nil, true, nil
 		}
-		nextActiveSlots = sb.Status.ActiveSlots + 1
+		nextActiveSlots = int32(current) + 1
 	}
 
 	// Create the binding SandboxClaim. The deterministic-name CREATE
@@ -537,17 +548,16 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		// First slot on this pod pins it to the tenant for its lifetime.
 		tenantID = req.TenantID
 	}
-	// Mirror the new slot count + phase + tenant pin onto the
-	// Sandbox.status (observable spec-§4.6.3 fields). When the
-	// Counter is wired, this write is purely observability — the
-	// Redis counter is the source of truth and the SSA mirror lags
-	// it. A conflict on the mirror is ignored (the slot is already
-	// reserved); a hard error is logged but does not unwind the
-	// reservation. When the Counter is unwired, the SSA mirror IS
-	// the cap check, so a conflict means another replica raced and
-	// the caller must retry on another pod.
+	// Mirror the new phase + tenant pin onto the Sandbox.status
+	// (observable spec-§4.6.3 fields). The per-pod slot count lives in
+	// the Redis counter, not on Sandbox.status, so only the phase and the
+	// tenant pin are written. A conflict on the mirror is ignored (the
+	// slot is already reserved); a hard error is logged but does not
+	// unwind the reservation. When the Counter is unwired, the SSA mirror
+	// conflict signals another replica raced and the caller must retry on
+	// another pod.
 	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
-		string(state.SlotActive), nextActiveSlots, tenantID)
+		string(state.Claimed), tenantID)
 	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
 		if apierrors.IsConflict(err) {
 			if c.Counter == nil {
@@ -572,9 +582,10 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	// Reflect the applied values onto the caller's in-memory Sandbox
 	// so downstream code observing this Sandbox sees the slot it just
 	// won; ReadyCount math in the planner remains based on a live
-	// re-read so this in-memory mutation is not load-bearing.
-	sb.Status.Phase = string(state.SlotActive)
-	sb.Status.ActiveSlots = nextActiveSlots
+	// re-read so this in-memory mutation is not load-bearing. The slot
+	// count is not a Sandbox.status field, so it is carried only on the
+	// SlotResult below.
+	sb.Status.Phase = string(state.Claimed)
 	sb.Status.TenantID = tenantID
 
 	// Stamp the §5.2 tenant-pinning label so the
@@ -619,8 +630,33 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		SlotID:      req.SessionID,
 		Claim:       claim,
 		FreshPod:    freshPod,
-		ActiveSlots: sb.Status.ActiveSlots,
+		ActiveSlots: nextActiveSlots,
 	}, false, nil
+}
+
+// countPodClaims returns the number of live (non-terminal) SandboxClaims
+// bound to the named Sandbox. In the SSA-only fallback (no Redis
+// counter), each claim is one slot reservation, so the claim count is the
+// pod's current slot occupancy. The Redis counter is the authority on the
+// wired path; this list-based count exists only for the single-writer
+// test harness. spec: §5.2 (intra-pod capacity gate).
+func (c *SlotClaimer) countPodClaims(ctx context.Context, sandboxName string) (int, error) {
+	var list lennyv1.SandboxClaimList
+	if err := c.Client.List(ctx, &list, client.InNamespace(c.Namespace)); err != nil {
+		return 0, fmt.Errorf("podclaim: list claims for sandbox %s: %w", sandboxName, err)
+	}
+	n := 0
+	for i := range list.Items {
+		cl := &list.Items[i]
+		if cl.Spec.SandboxRef != sandboxName {
+			continue
+		}
+		if !cl.DeletionTimestamp.IsZero() {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 // ReleaseSlot releases a concurrent-mode slot when its session ends or
@@ -657,34 +693,34 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		}
 	}
 
-	// Decrement the pod's slot count under SSA. Per spec §4.6.3 the
-	// gateway is the §5.2 owner of Sandbox.status.activeSlots; the
-	// patch carries only gateway-owned fields so the API server
-	// merges it under the `lenny-gateway` manager without racing the
-	// WPC's controller-owned fields. A conflict (the live phase
-	// moved past the gateway's read) triggers a re-read + re-compute.
+	// Project the pod phase under SSA. The slot count is no longer a
+	// Sandbox.status field, so the release counts the pod's remaining live
+	// SandboxClaims (the slot reservations): when the last claim drains
+	// the pod returns to idle, otherwise it stays slot_active. The patch
+	// carries only gateway-owned fields so the API server merges it under
+	// the `lenny-gateway` manager without racing the WPC's controller-owned
+	// fields. A conflict (the live phase moved past the gateway's read)
+	// triggers a re-read and re-compute.
 	for {
 		var sb lennyv1.Sandbox
 		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &sb); err != nil {
 			if apierrors.IsNotFound(err) {
 				// The pod is already gone (terminated/replaced); nothing to
-				// decrement.
+				// project.
 				return nil
 			}
 			return fmt.Errorf("podclaim: get sandbox %s for slot release: %w", sandboxName, err)
 		}
-		if sb.Status.ActiveSlots <= 0 {
-			// Already at zero — a double release, or the pod was reset.
-			return nil
+		remaining, err := c.countPodClaims(ctx, sandboxName)
+		if err != nil {
+			return err
 		}
-		nextActiveSlots := sb.Status.ActiveSlots - 1
 		nextPhase := sb.Status.Phase
-		if nextActiveSlots == 0 {
+		if remaining == 0 {
 			// §6.2: the last slot drained, the pod returns to idle.
 			nextPhase = string(state.Idle)
 		}
-		patch := gatewayStatusPatch(sb.Name, sb.Namespace,
-			nextPhase, nextActiveSlots, sb.Status.TenantID)
+		patch := gatewayStatusPatch(sb.Name, sb.Namespace, nextPhase, sb.Status.TenantID)
 		if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
@@ -698,8 +734,9 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 // createSlotClaim creates the SandboxClaim binding a concurrent-mode
 // slot to its pod. The claim name is deterministic per session, so a
 // repeated slot claim for the same session collides at CREATE rather
-// than opening a duplicate slot, and the SlotID field carries the §6.4
-// slot identifier.
+// than opening a duplicate slot. The per-pod occupancy claim (§4.6.3)
+// carries only sandboxRef and tenantId; the session-to-slot binding
+// lives on the Postgres session row's pod_assignment column.
 func createSlotClaim(ctx context.Context, cl client.Client, namespace, sandboxName string, req SlotRequest) (*lennyv1.SandboxClaim, error) {
 	claim := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{
@@ -708,9 +745,7 @@ func createSlotClaim(ctx context.Context, cl client.Client, namespace, sandboxNa
 		},
 		Spec: lennyv1.SandboxClaimSpec{
 			SandboxRef: sandboxName,
-			SessionID:  req.SessionID,
 			TenantID:   req.TenantID,
-			SlotID:     req.SessionID,
 		},
 	}
 	if err := cl.Create(ctx, claim); err != nil {

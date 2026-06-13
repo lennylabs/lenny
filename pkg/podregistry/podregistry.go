@@ -55,7 +55,6 @@ type PodRecord struct {
 	NodeName        string
 	PodIP           string
 	PodName         string
-	ActiveSlots     int32
 }
 
 // StateTransition is the §6.2 state-machine edge a write requests.

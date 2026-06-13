@@ -71,16 +71,17 @@ spec:
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
-                  under. spec: §12.6 line 421-422 — the PodRegistry projects it as
-                  PodRecord.ExecutionMode. The WarmPoolController denormalizes it
-                  from the pool's SandboxTemplate.spec.executionMode onto each
-                  Sandbox (the same copy-down as IsolationProfile) so the registry
-                  can project it without resolving the template on every read.
-                  Empty is treated as `session`.
+                  under: `session` (a pod parameterized by the pool's sessionPolicy)
+                  or `service` (a claimless, request-routed pod). spec: §12.6 line
+                  421-422 — the PodRegistry projects it as PodRecord.ExecutionMode.
+                  The WarmPoolController denormalizes it from the pool's
+                  SandboxTemplate.spec.executionMode onto each Sandbox (the same
+                  copy-down as IsolationProfile) so the registry can project it
+                  without resolving the template on every read. Empty is treated as
+                  `session`.
                 enum:
                 - session
-                - task
-                - concurrent
+                - service
                 type: string
               isolationProfile:
                 description: |-
@@ -317,14 +318,6 @@ spec:
               lenny-sandboxclaim-guard webhook read.
             x-kubernetes-preserve-unknown-fields: true
             properties:
-              activeSlots:
-                description: |-
-                  ActiveSlots is the count of concurrent-mode (§5.2) slots currently
-                  assigned to this pod. It is 0 for session-mode and task-mode pods,
-                  and for an idle concurrent-mode pod. It never exceeds the pool's
-                  maxConcurrent. The gateway slot-claim path is the sole writer.
-                format: int32
-                type: integer
               conditions:
                 description: Conditions is the standard Kubernetes condition list.
                 items:
@@ -398,30 +391,20 @@ spec:
                 type: integer
               phase:
                 description: |-
-                  Phase is the §6.2 pod lifecycle state. `slot_active` is the
-                  concurrent-mode (§5.2) pod-level phase: the pod hosts one or more
-                  simultaneous slots.
+                  Phase is the §6.2 coarse pod-occupancy state. The WarmPoolController
+                  is the sole writer and computes it as a level-triggered projection of
+                  per-pod SandboxClaim existence, the claim's binding state, and the
+                  pool's sessionPolicy (§4.6.3). The fine session-lifecycle states live
+                  in the Postgres session model (§7.2, §8.8) and are not projected onto
+                  the CRD; concurrent occupancy projects `claimed`.
                 enum:
                 - warming
-                - sdk_connecting
                 - idle
+                - reserved
                 - claimed
-                - slot_active
-                - receiving_uploads
-                - finalizing_workspace
-                - running_setup
-                - starting_session
-                - attached
-                - task_cleanup
-                - resuming
-                - suspended
-                - resume_pending
-                - awaiting_client_action
-                - completed
-                - failed
-                - cancelled
-                - expired
+                - sdk_connecting
                 - draining
+                - failed
                 - terminated
                 type: string
               podIP:

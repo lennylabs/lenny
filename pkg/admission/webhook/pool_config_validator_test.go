@@ -81,24 +81,34 @@ func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
 	tpl := lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef: "r", ExecutionMode: "task",
-			TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50},
+			RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
+			SessionPolicy: &lennyv1.SessionPolicy{
+				Recycle: &lennyv1.RecyclePolicy{
+					ScrubProfile:                    "in-place",
+					AcknowledgeMicrovmResidualState: true,
+				},
+			},
 		},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if !resp.Allowed {
-		t.Fatalf("an acknowledged task-mode SandboxTemplate must be admitted: %+v", resp.Result)
+		t.Fatalf("an acknowledged in-place recycle SandboxTemplate must be admitted: %+v", resp.Result)
 	}
 }
 
 func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
 	tpl := lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "r", ExecutionMode: "task"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
+			SessionPolicy: &lennyv1.SessionPolicy{
+				Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "in-place"},
+			},
+		},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if resp.Allowed {
-		t.Fatal("a task-mode SandboxTemplate without taskPolicy must be rejected")
+		t.Fatal("an in-place recycle SandboxTemplate without the residual-state acknowledgment must be rejected")
 	}
 	if resp.Result == nil || resp.Result.Code != 422 {
 		t.Fatalf("rejection code = %v, want 422", resp.Result)
@@ -143,8 +153,7 @@ func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
 	tpl := lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef: "r", ExecutionMode: "task",
-			TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50},
+			RuntimeRef: "r", ExecutionMode: "session",
 		},
 	}
 	req := poolConfigReqAs(t, "SandboxTemplate", tpl, "kubernetes-admin")
@@ -183,14 +192,9 @@ func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *te
 	tpl := lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:       "r",
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: "workspace",
-			MaxConcurrent:    8, // 8*90 + 90 + 30 = 840s > 600s
-			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-				AcknowledgeProcessLevelIsolation: true,
-				CleanupTimeoutSeconds:            60,
-			},
+			RuntimeRef:    "r",
+			ExecutionMode: "service",
+			MaxConcurrent: 8, // 8*90 + 90 + 30 = 840s > 600s
 		},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
@@ -214,14 +218,9 @@ func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t 
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                       "r",
-			ExecutionMode:                    "concurrent",
-			ConcurrencyStyle:                 "workspace",
+			ExecutionMode:                    "service",
 			MaxConcurrent:                    8,
 			MaxTerminationGracePeriodSeconds: &ceiling,
-			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-				AcknowledgeProcessLevelIsolation: true,
-				CleanupTimeoutSeconds:            60,
-			},
 		},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))

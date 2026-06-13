@@ -198,12 +198,13 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 			seedAfter = func() {
 				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
 					sbStatus.NodeName == "" && sbStatus.PodIP == "" &&
-					sbStatus.TenantID == "" && sbStatus.ActiveSlots == 0 {
+					sbStatus.TenantID == "" {
 					return
 				}
 				// Split the seed by §4.6.3 field ownership. WPC owns
 				// Phase / PodName / NodeName / PodIP / ObservedGeneration;
-				// the gateway owns ActiveSlots / TenantID. Seeding each
+				// the gateway owns TenantID. The per-pod slot count lives in
+				// the Redis counter, not on Sandbox.status. Seeding each
 				// subset under its rightful manager keeps the production
 				// Apply paths conflict-free.
 				wpc := map[string]interface{}{}
@@ -230,10 +231,8 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 						t.Fatalf("seed WPC status Sandbox %s: %v", sb.Name, err)
 					}
 				}
-				if sbStatus.ActiveSlots > 0 || sbStatus.TenantID != "" {
-					gw := map[string]interface{}{
-						"activeSlots": int64(sbStatus.ActiveSlots),
-					}
+				if sbStatus.TenantID != "" {
+					gw := map[string]interface{}{}
 					if sbStatus.TenantID != "" {
 						gw["tenantId"] = sbStatus.TenantID
 					}
@@ -1266,9 +1265,8 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &claim); err != nil {
 		t.Fatalf("the fallback did not create a SandboxClaim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.SessionID != "sess-1" ||
-		claim.Spec.TenantID != "acme" {
-		t.Errorf("SandboxClaim spec = %+v, want a binding of sess-1/acme to sbx-fb", claim.Spec)
+	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.TenantID != "acme" {
+		t.Errorf("SandboxClaim spec = %+v, want a binding of acme to sbx-fb", claim.Spec)
 	}
 
 	// The fallback flipped the Sandbox idle → claimed, then the full Bind

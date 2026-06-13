@@ -54,16 +54,18 @@ var orphanedClaims = func() *prometheus.CounterVec {
 // SessionLookup reports whether an active (non-terminal) session backs a
 // SandboxClaim. spec: §4.6.1 — "the controller queries Postgres to check
 // whether an active session references it. If no active session exists,
-// the claim is deleted". The WarmPoolController depends only on this
-// narrow contract so the GC loop stays decoupled from the session store
-// package.
+// the claim is deleted". The per-pod claim (§4.6.3) carries no session
+// identifier, so the check keys on the pod through the Postgres
+// `pod_assignment` binding (Section 3.2). The WarmPoolController depends
+// only on this narrow contract so the GC loop stays decoupled from the
+// session store package.
 type SessionLookup interface {
-	// SessionActive reports whether a non-terminal session with the
-	// given (tenantID, sessionID) exists. A missing session row reports
-	// false (the gateway crashed before persisting the session), and a
-	// session in a terminal state also reports false (it no longer needs
-	// its claim).
-	SessionActive(ctx context.Context, tenantID, sessionID string) (bool, error)
+	// PodHasActiveSession reports whether any non-terminal session is
+	// bound to the named Sandbox pod. A pod with no live session reports
+	// false (the gateway crashed before persisting the session, or every
+	// session it served has reached a terminal state), so its orphaned
+	// claim is reclaimable.
+	PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error)
 }
 
 // ClaimGarbageCollector is the §4.6.1 GarbageCollect loop: a leader-elected
@@ -163,10 +165,10 @@ func (g *ClaimGarbageCollector) sweep(ctx context.Context) error {
 			if !claim.DeletionTimestamp.IsZero() {
 				continue
 			}
-			active, err := g.Sessions.SessionActive(ctx, claim.Spec.TenantID, claim.Spec.SessionID)
+			active, err := g.Sessions.PodHasActiveSession(ctx, claim.Spec.SandboxRef)
 			if err != nil {
 				logf.FromContext(ctx).Error(err, "orphan-claim session lookup failed; skipping",
-					"claim", claim.Name, "session", claim.Spec.SessionID)
+					"claim", claim.Name, "sandbox", claim.Spec.SandboxRef)
 				continue
 			}
 			if active {

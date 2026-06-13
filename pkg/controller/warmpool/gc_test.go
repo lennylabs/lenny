@@ -16,25 +16,27 @@ import (
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 )
 
-// stubSessions is a fake §4.6.1 active-session oracle keyed on sessionID.
+// stubSessions is a fake §4.6.1 active-session oracle keyed on the pod
+// (sandboxRef). The per-pod claim (§4.6.3) carries no session identifier,
+// so the GC keys the active-session check on the pod through the Postgres
+// pod_assignment binding.
 type stubSessions struct {
 	active map[string]bool
 	err    error
 }
 
-func (s stubSessions) SessionActive(_ context.Context, _, sessionID string) (bool, error) {
+func (s stubSessions) PodHasActiveSession(_ context.Context, sandboxRef string) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
-	return s.active[sessionID], nil
+	return s.active[sandboxRef], nil
 }
 
-func claim(name, sessionID, sandboxRef string) *lennyv1.SandboxClaim {
+func claim(name, sandboxRef string) *lennyv1.SandboxClaim {
 	return &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
 		Spec: lennyv1.SandboxClaimSpec{
 			SandboxRef: sandboxRef,
-			SessionID:  sessionID,
 			TenantID:   "acme",
 		},
 	}
@@ -57,7 +59,7 @@ func gcSweep(t *testing.T, g *warmpool.ClaimGarbageCollector) {
 // active session is deleted and its backing Sandbox returns to idle.
 func TestGCReclaimsOrphanedClaim(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "sess-gone", "pod-1"))
+	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "pod-1"))
 
 	g := &warmpool.ClaimGarbageCollector{
 		Client:     c,
@@ -92,11 +94,11 @@ func TestGCReclaimsOrphanedClaim(t *testing.T) {
 // spec: §4.6.1 — a claim whose session is still active is never reclaimed.
 func TestGCKeepsClaimWithActiveSession(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "sess-live", "pod-1"))
+	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "pod-1"))
 
 	g := &warmpool.ClaimGarbageCollector{
 		Client:     c,
-		Sessions:   stubSessions{active: map[string]bool{"sess-live": true}},
+		Sessions:   stubSessions{active: map[string]bool{"pod-1": true}},
 		Namespaces: []string{testNS},
 		Now:        func() time.Time { return time.Now().Add(time.Hour) },
 	}
@@ -112,7 +114,7 @@ func TestGCKeepsClaimWithActiveSession(t *testing.T) {
 // candidate, even with no session (the gateway may still be persisting it).
 func TestGCSkipsYoungClaim(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "sess-gone", "pod-1"))
+	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "pod-1"))
 
 	g := &warmpool.ClaimGarbageCollector{
 		Client:        c,
@@ -133,7 +135,7 @@ func TestGCSkipsYoungClaim(t *testing.T) {
 // sweep skips the candidate and retries on the next tick.
 func TestGCSkipsOnLookupError(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "sess-gone", "pod-1"))
+	c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "pod-1"))
 
 	g := &warmpool.ClaimGarbageCollector{
 		Client:     c,

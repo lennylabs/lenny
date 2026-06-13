@@ -247,12 +247,11 @@ func (m *AgentSandboxPodLifecycleManager) GetPodStatus(ctx context.Context, hand
 		return PodStatus{}, fmt.Errorf("podlifecycle: get Sandbox %q: %w", handle.SandboxName, err)
 	}
 	return PodStatus{
-		Phase:       PodState(pod.Status.Phase),
-		PodIP:       pod.Status.PodIP,
-		PodName:     pod.Status.PodName,
-		NodeName:    pod.Status.NodeName,
-		ActiveSlots: pod.Status.ActiveSlots,
-		TenantID:    pod.Status.TenantID,
+		Phase:    PodState(pod.Status.Phase),
+		PodIP:    pod.Status.PodIP,
+		PodName:  pod.Status.PodName,
+		NodeName: pod.Status.NodeName,
+		TenantID: pod.Status.TenantID,
 	}, nil
 }
 

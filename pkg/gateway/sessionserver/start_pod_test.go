@@ -158,22 +158,6 @@ func podBindTemplate(name, runtimeRef, isolationProfile string) *lennyv1.Sandbox
 	}
 }
 
-// podBindConcurrentTemplate is podBindTemplate's concurrent-mode
-// sibling: ExecutionMode is `concurrent` so the start path is forced
-// down the BindSlot dispatch branch (§5.2 stateless-concurrent).
-func podBindConcurrentTemplate(name, runtimeRef, isolationProfile string, maxConcurrent int32) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: podTestNS},
-		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:       runtimeRef,
-			IsolationProfile: isolationProfile,
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: "stateless",
-			MaxConcurrent:    maxConcurrent,
-		},
-	}
-}
-
 func podBindIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -266,73 +250,6 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	// claimed).
 	if sb.Status.Phase != "attached" {
 		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
-	}
-}
-
-// TestSessionStartDispatchesConcurrentRuntimeToSlotClaim is the
-// regression test for the dispatch bug observed on EKS where
-// `executionMode: concurrent` runtimes were routed through Bind
-// (session-claim) instead of BindSlot. The observable signature of
-// the bug: a concurrent-mode Sandbox ended up at phase=claimed with
-// activeSlots=0 (session-claim path) instead of phase=slot_active
-// with activeSlots=1 (slot-claim path per §5.2).
-func TestSessionStartDispatchesConcurrentRuntimeToSlotClaim(t *testing.T) {
-	rt := &podBindRuntime{}
-	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.Runtime = rt
-
-	cluster := podBindEnvtestClient(
-		t,
-		podBindWarmPool("cstateless-pool", "cstateless-tmpl"),
-		podBindConcurrentTemplate("cstateless-tmpl", "concurrent-runtime", string(isolation.ProfileSandboxed), 4),
-		podBindIdleSandbox("sbx-cn-1", "cstateless-pool", "10.244.3.7"),
-	)
-	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
-
-	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:                  func() string { return "sess-slot-1" },
-		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               binder,
-		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
-	})
-
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "concurrent-runtime", UserID: "alice@acme.com"})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
-	}
-
-	binding, ok := registry.Get("sess-slot-1")
-	if !ok {
-		t.Fatal("registry holds no binding for the concurrent-mode session")
-	}
-	if binding.SlotID == "" {
-		t.Errorf("binding.SlotID is empty — a slot-claim bind would record a non-empty SlotID (regression: dispatch went to Bind, not BindSlot)")
-	}
-	if binding.SandboxName != "sbx-cn-1" {
-		t.Errorf("binding.SandboxName = %q, want sbx-cn-1", binding.SandboxName)
-	}
-
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-cn-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "slot_active" {
-		t.Errorf("sandbox phase = %q, want slot_active (regression: session-claim path put it in `claimed` instead of §5.2 slot_active)", sb.Status.Phase)
-	}
-	if sb.Status.ActiveSlots != 1 {
-		t.Errorf("sandbox activeSlots = %d, want 1 after one slot reservation", sb.Status.ActiveSlots)
-	}
-	if sb.Status.TenantID != "acme" {
-		t.Errorf("sandbox tenantId = %q, want acme (§5.2 tenant pinning)", sb.Status.TenantID)
 	}
 }
 

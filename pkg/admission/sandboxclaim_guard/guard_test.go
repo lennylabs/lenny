@@ -46,7 +46,7 @@ func TestCreateAdmitsWhenExistingClaimsAreTerminal(t *testing.T) {
 }
 
 func TestCreateRejectsWhenNonTerminalClaimExists(t *testing.T) {
-	cases := []ClaimStatus{ClaimBound, ClaimActive}
+	cases := []ClaimStatus{ClaimBound, ClaimRecycling, ClaimReserved}
 	for _, s := range cases {
 		t.Run(string(s), func(t *testing.T) {
 			d, err := Decide(Request{
@@ -287,10 +287,10 @@ func TestDecideRejectsUnsupportedOperation(t *testing.T) {
 }
 
 // TestSandboxClaimCRDEnumCoversEveryClaimStatus guards against the
-// F-4.6.10 drift: the guard recognizes `active` but the CRD OpenAPI
-// enum must admit it too, otherwise the API server rejects any write
-// setting status.phase: active. spec: §4.6.3 — the SandboxClaim
-// status.phase enumeration lists bound, active, released, failed.
+// F-4.6.10 drift: every ClaimStatus the guard recognizes must appear in
+// the CRD OpenAPI enum, otherwise the API server rejects any status patch
+// setting that binding state. spec: §4.6.3 — the SandboxClaim status.phase
+// enumeration lists bound, recycling, reserved, released, failed.
 func TestSandboxClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
 	crdPath := filepath.Join("..", "..", "..", "charts", "lenny", "crds", "lenny.dev_sandboxclaims.yaml")
 	data, err := os.ReadFile(crdPath)
@@ -298,7 +298,7 @@ func TestSandboxClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
 		t.Fatalf("read CRD %s: %v", crdPath, err)
 	}
 	crd := string(data)
-	for _, s := range []ClaimStatus{ClaimBound, ClaimActive, ClaimReleased, ClaimFailed} {
+	for _, s := range []ClaimStatus{ClaimBound, ClaimRecycling, ClaimReserved, ClaimReleased, ClaimFailed} {
 		if !strings.Contains(crd, "- "+string(s)) {
 			t.Errorf("SandboxClaim CRD phase enum is missing %q; the API server will reject writes setting that value", s)
 		}
@@ -307,10 +307,11 @@ func TestSandboxClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
 
 func TestClaimStatusIsTerminal(t *testing.T) {
 	cases := map[ClaimStatus]bool{
-		ClaimBound:    false,
-		ClaimActive:   false,
-		ClaimReleased: true,
-		ClaimFailed:   true,
+		ClaimBound:     false,
+		ClaimRecycling: false,
+		ClaimReserved:  false,
+		ClaimReleased:  true,
+		ClaimFailed:    true,
 	}
 	for s, want := range cases {
 		if got := s.IsTerminal(); got != want {

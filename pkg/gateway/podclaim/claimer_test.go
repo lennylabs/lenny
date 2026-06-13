@@ -73,8 +73,10 @@ func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-1" || claim.Spec.SessionID != "sess-1" || claim.Spec.TenantID != "acme" {
-		t.Errorf("claim spec = %+v, want a binding of sess-1/acme to sbx-1", claim.Spec)
+	// The per-pod occupancy claim (§4.6.3) carries sandboxRef and tenantId
+	// only; the session-to-pod binding lives on the Postgres session row.
+	if claim.Spec.SandboxRef != "sbx-1" || claim.Spec.TenantID != "acme" {
+		t.Errorf("claim spec = %+v, want a binding of acme to sbx-1", claim.Spec)
 	}
 
 	var sb lennyv1.Sandbox

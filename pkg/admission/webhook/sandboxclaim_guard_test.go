@@ -33,7 +33,7 @@ func claimRaw(t *testing.T, name, sandboxRef string) runtime.RawExtension {
 	t.Helper()
 	raw, err := json.Marshal(lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guardNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxRef, SessionID: "sess-1"},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxRef},
 	})
 	if err != nil {
 		t.Fatalf("marshal claim: %v", err)
@@ -51,7 +51,7 @@ func sandbox(name, phase string) *lennyv1.Sandbox {
 func seededClaim(name, sandboxRef, phase string) *lennyv1.SandboxClaim {
 	return &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guardNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxRef, SessionID: "seed"},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxRef},
 		Status:     lennyv1.SandboxClaimStatus{Phase: phase},
 	}
 }

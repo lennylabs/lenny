@@ -61,9 +61,8 @@ import (
 type ExecutionMode string
 
 const (
-	ModeSession    ExecutionMode = "session"
-	ModeTask       ExecutionMode = "task"
-	ModeConcurrent ExecutionMode = "concurrent"
+	ModeSession ExecutionMode = "session"
+	ModeService ExecutionMode = "service"
 )
 
 // PoolType distinguishes a standard pool from a variant pool of an A/B
@@ -308,9 +307,9 @@ func validate(in ScalingInputs) error {
 		return fmt.Errorf("%w: BootstrapMinWarm must be >= 0", ErrInvalidInput)
 	}
 	switch in.Mode {
-	case ModeSession, ModeTask, ModeConcurrent, "":
+	case ModeSession, ModeService, "":
 	default:
-		return fmt.Errorf("%w: Mode %q is not one of session, task, concurrent", ErrInvalidInput, in.Mode)
+		return fmt.Errorf("%w: Mode %q is not one of session, service", ErrInvalidInput, in.Mode)
 	}
 	return nil
 }

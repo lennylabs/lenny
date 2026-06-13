@@ -25,8 +25,9 @@ import (
 // claims the field.
 //
 // On success sb.Status.Phase is updated in place. The apply preserves
-// the in-memory ActiveSlots and TenantID values: those are gateway-owned
-// status fields that must not be cleared by a phase-only write.
+// the in-memory TenantID value: it is a gateway-owned status field that
+// must not be cleared by a phase-only write. The per-pod slot count lives
+// in the Redis counter, not on Sandbox.status.
 //
 // Drain handoff: this helper is NOT used by the binder.drain or
 // slotbinder.drainSandbox paths. The drain step writes phase=draining
@@ -45,7 +46,7 @@ import (
 // dispositions.
 func ApplyGatewayPhase(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, phase state.State) error {
 	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
-		string(phase), sb.Status.ActiveSlots, sb.Status.TenantID)
+		string(phase), sb.Status.TenantID)
 	if err := cl.Status().Patch(ctx, patch, client.Apply,
 		client.FieldOwner(string(ownership.Gateway)),
 		client.ForceOwnership); err != nil {

@@ -28,43 +28,39 @@ func sandboxTemplate(name, runtimeRef, isolation string) *lennyv1.SandboxTemplat
 	}
 }
 
-func concurrentTemplate(name, runtimeRef, isolation, style string, maxConcurrent int32) *lennyv1.SandboxTemplate {
+func serviceTemplate(name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:       runtimeRef,
 			IsolationProfile: isolation,
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: style,
+			ExecutionMode:    "service",
 			MaxConcurrent:    maxConcurrent,
 		},
 	}
 }
 
-// TestResolvePoolReturnsConcurrentDispatchFields covers the gateway
-// dispatch fix: ResolvePool must surface ExecutionMode,
-// ConcurrencyStyle, and MaxConcurrent so startOnPod can route a
-// concurrent-mode runtime through BindSlot rather than Bind. A
-// regression here would put concurrent-mode sandboxes into `claimed`
-// instead of `slot_active`.
-func TestResolvePoolReturnsConcurrentDispatchFields(t *testing.T) {
+// TestResolvePoolReturnsServiceDispatchFields covers the gateway
+// dispatch path: ResolvePool surfaces ExecutionMode and MaxConcurrent so
+// the start path routes a service-mode runtime through its claimless,
+// request-routed path. The concurrency-style and pod-uptime dispatch
+// fields now reach the gateway through the poolstore sessionPolicy
+// mirror; the CRD carries only the execution mode and per-pod slot bound.
+func TestResolvePoolReturnsServiceDispatchFields(t *testing.T) {
 	c := k8sClient(
 		t,
-		warmPool("cstateless-pool", "cstateless-tmpl"),
-		concurrentTemplate("cstateless-tmpl", "load-cstateless-runtime", "sandboxed", "stateless", 8),
+		warmPool("svc-pool", "svc-tmpl"),
+		serviceTemplate("svc-tmpl", "load-svc-runtime", "sandboxed", 8),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "load-cstateless-runtime", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "load-svc-runtime", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got.Pool != "cstateless-pool" {
-		t.Errorf("resolved pool = %q, want cstateless-pool", got.Pool)
+	if got.Pool != "svc-pool" {
+		t.Errorf("resolved pool = %q, want svc-pool", got.Pool)
 	}
-	if got.ExecutionMode != "concurrent" {
-		t.Errorf("executionMode = %q, want concurrent (the start path dispatches to BindSlot when this is concurrent)", got.ExecutionMode)
-	}
-	if got.ConcurrencyStyle != "stateless" {
-		t.Errorf("concurrencyStyle = %q, want stateless", got.ConcurrencyStyle)
+	if got.ExecutionMode != "service" {
+		t.Errorf("executionMode = %q, want service", got.ExecutionMode)
 	}
 	if got.MaxConcurrent != 8 {
 		t.Errorf("maxConcurrent = %d, want 8", got.MaxConcurrent)
@@ -72,8 +68,9 @@ func TestResolvePoolReturnsConcurrentDispatchFields(t *testing.T) {
 }
 
 // TestResolvePoolSessionModeLeavesDispatchFieldsEmpty covers the
-// negative case: a session-mode pool must not carry concurrent-mode
-// dispatch fields, so startOnPod takes the Bind path.
+// negative case: a session-mode pool with no per-pod slot bound leaves
+// the dispatch fields empty so the start path takes the session-claim
+// path.
 func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 	c := k8sClient(
 		t,
@@ -95,46 +92,46 @@ func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 	}
 }
 
-// TestResolvePoolSurfacesConcurrentMaxPodUptime covers the §6.2 lines
-// 166-167 retirement cap: ResolvePool must surface the concurrent-
-// workspace pool's maxPodUptimeSeconds so the slot-claim path drains an
-// over-uptime pod before its next slot assignment.
+// TestResolvePoolSurfacesScrubProfile covers the §5.2 Kata/microvm scrub
+// variant: ResolvePool surfaces the sessionPolicy.recycle scrubProfile so
+// the start path can select the §7.1 scrubPolicy variant. This is the
+// only recycle dispatch field the CRD carries; the rest reach the gateway
+// through the poolstore mirror.
 //
-// spec: §6.2 lines 166-167.
-func TestResolvePoolSurfacesConcurrentMaxPodUptime(t *testing.T) {
-	tmpl := concurrentTemplate("cw-tmpl", "cw-runtime", "sandboxed", "workspace", 4)
-	uptime := int64(86400)
-	tmpl.Spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
-		AcknowledgeProcessLevelIsolation: true,
-		MaxPodUptimeSeconds:              &uptime,
+// spec: §5.2 (Kata/microvm scrub variant).
+func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
+	tmpl := serviceTemplate("recycle-tmpl", "recycle-runtime", "microvm", 1)
+	tmpl.Spec.ExecutionMode = "session"
+	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
+		Recycle: &lennyv1.RecyclePolicy{
+			ScrubProfile:                    "in-place",
+			AcknowledgeMicrovmResidualState: true,
+		},
 	}
-	c := k8sClient(t, warmPool("cw-pool", "cw-tmpl"), tmpl)
+	c := k8sClient(t, warmPool("recycle-pool", "recycle-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "cw-runtime", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "recycle-runtime", "microvm")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got.MaxPodUptimeSeconds != 86400 {
-		t.Errorf("MaxPodUptimeSeconds = %d, want 86400", got.MaxPodUptimeSeconds)
+	if got.MicrovmScrubMode != "in-place" {
+		t.Errorf("MicrovmScrubMode = %q, want in-place", got.MicrovmScrubMode)
 	}
 }
 
-// TestResolvePoolLeavesUptimeUnsetWithoutPolicy covers the optional cap:
-// a concurrent-workspace pool with no maxPodUptimeSeconds leaves the
-// PoolMatch field zero so the slot-claim path disables the check.
-func TestResolvePoolLeavesUptimeUnsetWithoutPolicy(t *testing.T) {
-	tmpl := concurrentTemplate("cw2-tmpl", "cw2-runtime", "sandboxed", "workspace", 4)
-	tmpl.Spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
-		AcknowledgeProcessLevelIsolation: true,
-	}
-	c := k8sClient(t, warmPool("cw2-pool", "cw2-tmpl"), tmpl)
+// TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle covers the default:
+// a pool with no recycle block leaves the scrub-profile dispatch field
+// empty.
+func TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle(t *testing.T) {
+	tmpl := sandboxTemplate("plain-tmpl", "plain-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("plain-pool", "plain-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "cw2-runtime", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "plain-runtime", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got.MaxPodUptimeSeconds != 0 {
-		t.Errorf("MaxPodUptimeSeconds = %d, want 0 (cap unset)", got.MaxPodUptimeSeconds)
+	if got.MicrovmScrubMode != "" {
+		t.Errorf("MicrovmScrubMode = %q, want empty (no recycle block)", got.MicrovmScrubMode)
 	}
 }
 

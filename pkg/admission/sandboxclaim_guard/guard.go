@@ -107,13 +107,16 @@ var claimBoundPhases = map[SandboxPhase]bool{
 type ClaimStatus string
 
 const (
-	ClaimBound    ClaimStatus = "bound"
-	ClaimActive   ClaimStatus = "active"
-	ClaimReleased ClaimStatus = "released"
-	ClaimFailed   ClaimStatus = "failed"
+	ClaimBound     ClaimStatus = "bound"
+	ClaimRecycling ClaimStatus = "recycling"
+	ClaimReserved  ClaimStatus = "reserved"
+	ClaimReleased  ClaimStatus = "released"
+	ClaimFailed    ClaimStatus = "failed"
 )
 
-// IsTerminal reports whether a ClaimStatus is terminal per §4.6.3.
+// IsTerminal reports whether a ClaimStatus is terminal per §4.6.3. Only
+// `released` and `failed` are terminal; `bound`, `recycling`, and
+// `reserved` are live binding states.
 func (c ClaimStatus) IsTerminal() bool {
 	return c == ClaimReleased || c == ClaimFailed
 }

@@ -64,7 +64,7 @@ func TestReconcileHoldsFinalizerWhileClaimActive(t *testing.T) {
 	ctx := context.Background()
 	if err := c.Create(ctx, &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-1", Namespace: testNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: testName, SessionID: "sess-1"},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: testName},
 	}); err != nil {
 		t.Fatalf("create claim: %v", err)
 	}

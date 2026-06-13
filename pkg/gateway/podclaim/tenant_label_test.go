@@ -73,7 +73,7 @@ func getPod(t *testing.T, c client.Client, name string) corev1.Pod {
 // `unset → {tenant_id}` transition to guard. Before F-17.2.3 the
 // gateway stamped lenny.dev/tenant-id only on the Sandbox.
 func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
-	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", 0, ""))
+	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 	mustCreate(t, c, agentPod("sbx-1", ""))
 
 	if _, err := claimer.ClaimSlot(context.Background(),
@@ -91,7 +91,7 @@ func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
 // A second slot on an already-pinned pod re-stamps the same tenant pin
 // idempotently — the webhook treats unset→same-value as a no-op edge.
 func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
-	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", 0, ""))
+	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 	mustCreate(t, c, agentPod("sbx-1", ""))
 
 	for i, sess := range []string{"sess-1", "sess-2"} {
@@ -129,7 +129,7 @@ func TestClaimStampsTenantLabelOnSessionPod_spec_17_2_3(t *testing.T) {
 // materialized) must not fail the claim: the pin stands on Sandbox.status
 // and the next assignment re-stamps it. The helper tolerates NotFound.
 func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
-	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", 0, ""))
+	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8))
@@ -147,7 +147,7 @@ func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
 // Kata-RuntimeClass pod and lands the §5.2 tenant pin on it. Kata's slot
 // binding was previously type-checked but never exercised by a test.
 func TestClaimSlotBindsKataMicrovmPod_spec_5_3_8(t *testing.T) {
-	sb := concurrentSandbox("kata-sbx-1", "idle", 0, "")
+	sb := concurrentSandbox("kata-sbx-1", "idle", "")
 	sb.Spec.IsolationProfile = "microvm"
 	claimer, c := slotClaimerFor(t, sb)
 

@@ -101,32 +101,30 @@ func TestPoolStoreSourceRequiresNamespace(t *testing.T) {
 	}
 }
 
-// TestPoolStoreSourceFoldsTaskPolicyIntoCRD verifies the §5.2 task-mode
-// taskPolicy block + the top-level Pool.AllowCrossTenantReuse are folded
-// onto SandboxTemplate.spec.taskPolicy so the pool-config validator sees
-// the deployer's intent.
+// TestPoolStoreSourceFoldsScrubProfileIntoCRD verifies the store recycle
+// scrub control (microvmScrubMode → scrubProfile, plus the residual-state
+// acknowledgment) is folded onto SandboxTemplate.spec.sessionPolicy.recycle
+// so the pool-config validator's fail-closed in-place gate sees the
+// deployer's intent. The remaining recycle and concurrency knobs reach the
+// gateway through the poolstore directly and are not carried on the CRD.
 //
-// spec: §5.2 lines 398-475.
-func TestPoolStoreSourceFoldsTaskPolicyIntoCRD(t *testing.T) {
-	mt := 2
+// spec: §5.2 (recycle lifecycle, Kata scrub variant).
+func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
+	// The poolstore accepts a TaskPolicy only on a task-mode pool today;
+	// the gateway-side sessionPolicy mirror is a later step. The CRD
+	// mapping under test reads the scrub control from that TaskPolicy
+	// regardless of the store-side mode name.
 	store := newMemoryStore(t, poolstore.Pool{
-		Name:                  "task-pool",
-		RuntimeRef:            "claude-code",
-		IsolationProfile:      isolation.ProfileMicrovm,
-		ExecutionMode:         runtimestore.ExecutionModeTask,
-		AllowCrossTenantReuse: true,
-		WarmCount:             2,
+		Name:             "recycle-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileMicrovm,
+		ExecutionMode:    runtimestore.ExecutionModeTask,
+		WarmCount:        2,
 		TaskPolicy: &poolstore.TaskPolicy{
 			AcknowledgeBestEffortScrub:      true,
+			MaxTasksPerPod:                  50,
 			MicrovmScrubMode:                runtimestore.MicrovmScrubInPlace,
 			AcknowledgeMicrovmResidualState: true,
-			CleanupCommands:                 []string{"pkill jupyter"},
-			CleanupTimeoutSeconds:           30,
-			OnCleanupFailure:                runtimestore.CleanupFailureFail,
-			MaxScrubFailures:                4,
-			MaxTasksPerPod:                  50,
-			MaxPodUptimeSeconds:             86400,
-			MaxTaskRetries:                  &mt,
 		},
 	})
 	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
@@ -137,82 +135,67 @@ func TestPoolStoreSourceFoldsTaskPolicyIntoCRD(t *testing.T) {
 	if len(configs) != 1 {
 		t.Fatalf("want 1 config, got %d", len(configs))
 	}
-	tp := configs[0].Template.TaskPolicy
-	if tp == nil {
-		t.Fatal("CRD TaskPolicy not populated")
+	sp := configs[0].Template.SessionPolicy
+	if sp == nil || sp.Recycle == nil {
+		t.Fatal("CRD SessionPolicy.Recycle not populated")
 	}
-	if !tp.AllowCrossTenantReuse {
-		t.Error("AllowCrossTenantReuse should mirror the top-level Pool field")
+	if sp.Recycle.ScrubProfile != "in-place" {
+		t.Errorf("ScrubProfile = %q, want in-place", sp.Recycle.ScrubProfile)
 	}
-	if !tp.AcknowledgeBestEffortScrub {
-		t.Error("AcknowledgeBestEffortScrub did not propagate")
-	}
-	if tp.MicrovmScrubMode != "in-place" {
-		t.Errorf("MicrovmScrubMode = %q", tp.MicrovmScrubMode)
-	}
-	if !tp.AcknowledgeMicrovmResidualState {
+	if !sp.Recycle.AcknowledgeMicrovmResidualState {
 		t.Error("AcknowledgeMicrovmResidualState did not propagate")
-	}
-	if tp.MaxTasksPerPod != 50 {
-		t.Errorf("MaxTasksPerPod = %d", tp.MaxTasksPerPod)
-	}
-	if tp.MaxScrubFailures == nil || *tp.MaxScrubFailures != 4 {
-		t.Errorf("MaxScrubFailures: %#v", tp.MaxScrubFailures)
-	}
-	if tp.MaxPodUptimeSeconds == nil || *tp.MaxPodUptimeSeconds != 86400 {
-		t.Errorf("MaxPodUptimeSeconds: %#v", tp.MaxPodUptimeSeconds)
-	}
-	if tp.MaxTaskRetries == nil || *tp.MaxTaskRetries != 2 {
-		t.Errorf("MaxTaskRetries: %#v", tp.MaxTaskRetries)
-	}
-	if len(tp.CleanupCommands) != 1 || tp.CleanupCommands[0] != "pkill jupyter" {
-		t.Errorf("CleanupCommands: %#v", tp.CleanupCommands)
-	}
-	if tp.OnCleanupFailure != "fail" {
-		t.Errorf("OnCleanupFailure = %q", tp.OnCleanupFailure)
 	}
 }
 
-// TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy verifies the
-// §5.2 concurrent-workspace pool's stored AcknowledgeProcessLevelIsolation
-// + CleanupTimeoutSeconds flow into the SandboxTemplate's
-// concurrentWorkspacePolicy block so the pool-config validation webhook
-// admits the pool.
+// TestPoolStoreSourceMapsRestartScrubMode verifies the store `restart`
+// scrub mode maps onto the CRD `vm-restart` scrub profile.
 //
-// spec: §5.2 lines 487-494.
-func TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy(t *testing.T) {
+// spec: §5.2 (Kata/microvm scrub variant).
+func TestPoolStoreSourceMapsRestartScrubMode(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
-		Name:                             "cw-pool",
-		RuntimeRef:                       "claude-code",
-		ExecutionMode:                    runtimestore.ExecutionModeConcurrent,
-		ConcurrencyStyle:                 poolstore.ConcurrencyStyleWorkspace,
-		MaxConcurrent:                    4,
-		AcknowledgeProcessLevelIsolation: true,
-		CleanupTimeoutSeconds:            60,
-		ConcurrentMaxPodUptimeSeconds:    86400,
-		WarmCount:                        1,
+		Name:             "restart-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileMicrovm,
+		ExecutionMode:    runtimestore.ExecutionModeTask,
+		WarmCount:        1,
+		TaskPolicy: &poolstore.TaskPolicy{
+			AcknowledgeBestEffortScrub: true,
+			MaxTasksPerPod:             10,
+			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
+		},
 	})
 	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
 	configs, err := src.ListPoolConfigs(context.Background())
 	if err != nil {
 		t.Fatalf("ListPoolConfigs: %v", err)
 	}
-	if len(configs) != 1 {
-		t.Fatalf("want 1 config, got %d", len(configs))
+	sp := configs[0].Template.SessionPolicy
+	if sp == nil || sp.Recycle == nil {
+		t.Fatal("CRD SessionPolicy.Recycle not populated")
 	}
-	cw := configs[0].Template.ConcurrentWorkspacePolicy
-	if cw == nil {
-		t.Fatal("CRD ConcurrentWorkspacePolicy not populated")
+	if sp.Recycle.ScrubProfile != "vm-restart" {
+		t.Errorf("ScrubProfile = %q, want vm-restart", sp.Recycle.ScrubProfile)
 	}
-	if !cw.AcknowledgeProcessLevelIsolation {
-		t.Error("AcknowledgeProcessLevelIsolation did not propagate")
+}
+
+// TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl verifies a
+// pool with no recycle scrub control leaves the CRD on its default
+// one-session-per-pod configuration (no SessionPolicy block).
+//
+// spec: §5.2 (sessionPolicy default).
+func TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:          "plain-pool",
+		RuntimeRef:    "claude-code",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		WarmCount:     1,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
 	}
-	if cw.CleanupTimeoutSeconds != 60 {
-		t.Errorf("CleanupTimeoutSeconds = %d", cw.CleanupTimeoutSeconds)
-	}
-	// spec: §6.2 lines 166-167 — the concurrent-workspace pod-uptime
-	// retirement cap flows into the CRD so ResolvePool can surface it.
-	if cw.MaxPodUptimeSeconds == nil || *cw.MaxPodUptimeSeconds != 86400 {
-		t.Errorf("MaxPodUptimeSeconds = %#v, want 86400", cw.MaxPodUptimeSeconds)
+	if sp := configs[0].Template.SessionPolicy; sp != nil {
+		t.Errorf("SessionPolicy = %#v, want nil for a pool with no scrub control", sp)
 	}
 }

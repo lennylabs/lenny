@@ -25,7 +25,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -47,7 +46,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
-	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
@@ -648,20 +646,20 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 
 // sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
 // GC's warmpool.SessionLookup contract: a claim is reclaimable when no
-// non-terminal session backs it. A missing session row (the gateway
-// crashed before persisting the session) and a terminal session both
-// report inactive.
+// non-terminal session backs it. The per-pod claim (§4.6.3) carries no
+// session identifier, so the check keys on the pod through the Postgres
+// `pod_assignment` binding: GetActiveSlotsByPod counts the live
+// (non-terminal) sessions bound to the Sandbox, and a pod with none has
+// no live session. A pod whose sessions all reached a terminal state (or
+// whose gateway crashed before persisting any session) reports inactive.
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }
 
-func (l *sessionActiveLookup) SessionActive(ctx context.Context, tenantID, sessionID string) (bool, error) {
-	sess, err := l.store.Get(ctx, tenantID, sessionID)
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return false, nil
-	}
+func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
+	n, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
 	if err != nil {
 		return false, err
 	}
-	return !apisession.IsTerminal(sess.State), nil
+	return n > 0, nil
 }

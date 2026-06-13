@@ -8,6 +8,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
 // PoolStoreSource adapts the §5.2 poolstore.Store to the §4.6.2
@@ -55,11 +56,12 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 
 // toConfig maps one store row into a PoolConfig. The whole
 // SandboxTemplate spec is PoolScalingController-owned (§4.6.3), so every
-// field the store models is copied. spec: §5.2 — the §5.2 task-mode
-// taskPolicy block and §5.2 concurrent-workspace
-// concurrentWorkspacePolicy block are populated from the corresponding
-// store fields so the SandboxTemplate carries the full mode-specific
-// configuration the pool-config validation webhook expects.
+// field the CRD models is copied. spec: §5.2 — the §5.2 sessionPolicy
+// recycle block carries the cross-tenant microvm scrub controls
+// (scrubProfile and acknowledgeMicrovmResidualState) the API server
+// enforces as a fail-closed admission gate; the remaining recycle and
+// concurrency knobs live in the gateway poolstore and reach the gateway
+// directly rather than through the CRD.
 func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	warm := int32(p.WarmCount)
 	spec := lennyv1.SandboxTemplateSpec{
@@ -68,25 +70,11 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		EgressProfile:        string(p.EgressProfile),
 		ResourceClass:        p.ResourceClass,
 		ExecutionMode:        string(p.ExecutionMode),
-		ConcurrencyStyle:     string(p.ConcurrencyStyle),
 		MaxConcurrent:        int32(p.MaxConcurrent),
 		MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
 	}
-	if p.TaskPolicy != nil || p.AllowCrossTenantReuse {
-		spec.TaskPolicy = taskPolicyToCRD(p.TaskPolicy, p.AllowCrossTenantReuse)
-	}
-	if p.ConcurrencyStyle == poolstore.ConcurrencyStyleWorkspace {
-		spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
-			AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
-			CleanupTimeoutSeconds:            int64(p.CleanupTimeoutSeconds),
-		}
-		// spec: §6.2 lines 166-167 — carry the concurrent-workspace
-		// pod-uptime retirement cap so ResolvePool surfaces it to the
-		// slot-claim path's drain-before-assign check.
-		if p.ConcurrentMaxPodUptimeSeconds > 0 {
-			n := int64(p.ConcurrentMaxPodUptimeSeconds)
-			spec.ConcurrentWorkspacePolicy.MaxPodUptimeSeconds = &n
-		}
+	if sp := sessionPolicyToCRD(p.TaskPolicy); sp != nil {
+		spec.SessionPolicy = sp
 	}
 	cfg := PoolConfig{
 		Name:        p.Name,
@@ -116,36 +104,41 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	return cfg
 }
 
-// taskPolicyToCRD renders a store TaskPolicy into the CRD shape. The
-// pool-level AllowCrossTenantReuse flag lives at the Pool top level in
-// the store (legacy v1 admin contract) but at the CRD's TaskPolicy
-// level in §5.2 spec yaml, so the value is folded in here. A nil store
-// policy with allowCrossTenantReuse=true still produces a CRD
-// TaskPolicy carrying the flag — the webhook then rejects it for
-// missing acknowledgeBestEffortScrub / maxTasksPerPod, surfacing the
-// configuration error to the operator. spec: §5.2 lines 398-475.
-func taskPolicyToCRD(tp *poolstore.TaskPolicy, allowCrossTenantReuse bool) *lennyv1.TaskPolicy {
-	out := &lennyv1.TaskPolicy{AllowCrossTenantReuse: allowCrossTenantReuse}
-	if tp != nil {
-		out.AcknowledgeBestEffortScrub = tp.AcknowledgeBestEffortScrub
-		out.MicrovmScrubMode = string(tp.MicrovmScrubMode)
-		out.AcknowledgeMicrovmResidualState = tp.AcknowledgeMicrovmResidualState
-		out.CleanupCommands = append([]string(nil), tp.CleanupCommands...)
-		out.CleanupTimeoutSeconds = int64(tp.CleanupTimeoutSeconds)
-		out.OnCleanupFailure = string(tp.OnCleanupFailure)
-		if tp.MaxScrubFailures > 0 {
-			n := int32(tp.MaxScrubFailures)
-			out.MaxScrubFailures = &n
-		}
-		out.MaxTasksPerPod = int32(tp.MaxTasksPerPod)
-		if tp.MaxPodUptimeSeconds > 0 {
-			n := int64(tp.MaxPodUptimeSeconds)
-			out.MaxPodUptimeSeconds = &n
-		}
-		if tp.MaxTaskRetries != nil {
-			n := int32(*tp.MaxTaskRetries)
-			out.MaxTaskRetries = &n
-		}
+// sessionPolicyToCRD renders the store recycle policy into the CRD
+// SessionPolicy block. The CRD carries only the cross-tenant microvm
+// scrub controls the API server enforces as a fail-closed admission gate
+// (§4.6.3 ownership): the scrub profile and the in-place residual-state
+// acknowledgment. The store's `MicrovmScrubMode` enum (`restart`,
+// `in-place`) maps onto the CRD `scrubProfile` enum (`vm-restart`,
+// `in-place`); the remaining recycle and concurrency knobs reach the
+// gateway directly through the poolstore. A store row with no recycle
+// scrub control returns nil, leaving the CRD on its default
+// one-session-per-pod configuration. spec: §5.2 (recycle lifecycle,
+// Kata scrub variant).
+func sessionPolicyToCRD(tp *poolstore.TaskPolicy) *lennyv1.SessionPolicy {
+	if tp == nil || (tp.MicrovmScrubMode == "" && !tp.AcknowledgeMicrovmResidualState) {
+		return nil
 	}
-	return out
+	return &lennyv1.SessionPolicy{
+		Recycle: &lennyv1.RecyclePolicy{
+			ScrubProfile:                    scrubProfileFromMode(tp.MicrovmScrubMode),
+			AcknowledgeMicrovmResidualState: tp.AcknowledgeMicrovmResidualState,
+		},
+	}
+}
+
+// scrubProfileFromMode translates the store `microvmScrubMode` enum onto
+// the CRD `scrubProfile` enum. `restart` (boot a fresh guest VM between
+// tenants) becomes `vm-restart`; `in-place` (reuse the running guest)
+// keeps its name; an empty mode leaves the profile unset (the CRD
+// default `standard`). spec: §5.2 (Kata/microvm scrub variant).
+func scrubProfileFromMode(m runtimestore.MicrovmScrubMode) string {
+	switch m {
+	case runtimestore.MicrovmScrubRestart:
+		return "vm-restart"
+	case runtimestore.MicrovmScrubInPlace:
+		return "in-place"
+	default:
+		return ""
+	}
 }

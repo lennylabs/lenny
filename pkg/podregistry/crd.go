@@ -506,6 +506,5 @@ func toPodRecord(sb *lennyv1.Sandbox) PodRecord {
 		NodeName:         sb.Status.NodeName,
 		PodIP:            sb.Status.PodIP,
 		PodName:          sb.Status.PodName,
-		ActiveSlots:      sb.Status.ActiveSlots,
 	}
 }

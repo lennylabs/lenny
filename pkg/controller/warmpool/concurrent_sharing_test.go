@@ -26,26 +26,12 @@ func runtimeCR(name string, providers []string) *lennyv1.Runtime {
 			Type:               "agent",
 			Image:              "registry.example.com/agent@sha256:" + digest64,
 			IntegrationLevel:   "basic",
-			ExecutionMode:      "concurrent",
+			ExecutionMode:      "session",
 			SupportedProviders: providers,
 		},
 	}
 	rt.Name = name
 	return rt
-}
-
-func concurrentWorkspaceTemplate(runtimeRef string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
-		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:       runtimeRef,
-			IsolationProfile: "sandboxed",
-			DeliveryMode:     "proxy",
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: "workspace",
-			MaxConcurrent:    4,
-		},
-	}
 }
 
 func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition, bool) {
@@ -58,58 +44,15 @@ func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition,
 	return metav1.Condition{}, false
 }
 
-// spec: §13.1 line 29 — a concurrent-workspace pool against a Runtime
-// with non-empty supportedProviders carries the warning-class condition
-// True so the cross-slot credential-read tradeoff is visible in pool
-// status. F-13.1.5.
-func TestReconcileStampsConcurrentWorkspaceCredentialSharing(t *testing.T) {
-	s := newScheme(t)
-	c := newClient(t, s,
-		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
-		concurrentWorkspaceTemplate("cred-runtime"),
-		pool(1, 3),
-	)
-	reconcile(t, c, s)
-
-	p := getPool(t, c)
-	cond, ok := sharingCondition(t, p.Status.Conditions)
-	if !ok {
-		t.Fatalf("pool carries no %s condition; conditions = %+v", condTypeConcurrentSharing, p.Status.Conditions)
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("%s = %s, want True", condTypeConcurrentSharing, cond.Status)
-	}
-	if cond.Reason != "CredentialBearingRuntime" {
-		t.Errorf("reason = %q, want CredentialBearingRuntime", cond.Reason)
-	}
-}
-
-// A concurrent-workspace pool against a Runtime with no supportedProviders
-// records the condition False: no credentials are shared across slots.
-// F-13.1.5.
-func TestReconcileConcurrentWorkspaceNoProvidersConditionFalse(t *testing.T) {
-	s := newScheme(t)
-	c := newClient(t, s,
-		runtimeCR("nocred-runtime", nil),
-		concurrentWorkspaceTemplate("nocred-runtime"),
-		pool(1, 3),
-	)
-	reconcile(t, c, s)
-
-	p := getPool(t, c)
-	cond, ok := sharingCondition(t, p.Status.Conditions)
-	if !ok {
-		t.Fatalf("pool carries no %s condition; conditions = %+v", condTypeConcurrentSharing, p.Status.Conditions)
-	}
-	if cond.Status != metav1.ConditionFalse {
-		t.Errorf("%s = %s, want False for a non-credential-bearing runtime", condTypeConcurrentSharing, cond.Status)
-	}
-}
-
-// A non-concurrent pool leaves the credential-sharing condition unmanaged;
-// the §13.1 line 29 warning applies only to concurrent-workspace pools.
-// F-13.1.5.
-func TestReconcileNonConcurrentNoCredentialSharingCondition(t *testing.T) {
+// spec: §13.1 line 29 — the cross-slot credential-sharing warning fires
+// when a pool runs more than one session per pod
+// (`maxConcurrentSessions > 1`). That trigger lives on the gateway-side
+// sessionPolicy mirror in the poolstore, which the SandboxTemplate CRD
+// does not carry, so the condition is unmanaged from the CRD surface
+// until the warmpool step wires the mirror into the reconcile. The
+// SandboxTemplate `executionMode` enum no longer admits `concurrent`, so
+// no CRD template selects the warning branch. F-13.1.5.
+func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s,
 		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
@@ -120,7 +63,7 @@ func TestReconcileNonConcurrentNoCredentialSharingCondition(t *testing.T) {
 
 	p := getPool(t, c)
 	if _, ok := sharingCondition(t, p.Status.Conditions); ok {
-		t.Errorf("a non-concurrent pool carries the %s condition; conditions = %+v",
+		t.Errorf("a session-mode pool carries the %s condition; conditions = %+v",
 			condTypeConcurrentSharing, p.Status.Conditions)
 	}
 }

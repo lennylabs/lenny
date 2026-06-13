@@ -1132,53 +1132,23 @@ func podWarmupSeconds(cfg PoolConfig) float64 {
 }
 
 // resolveModeFactors returns the (mode_factor, burst_mode_factor) the
-// §5.2 line 569 mode-adjusted scaling formula consumes for one pool.
+// §5.2 mode-adjusted scaling formula consumes for one pool.
 //
-//   - Session mode: both factors are 1.0 (the base formula).
-//   - Task mode: mode_factor defaults to maxTasksPerPod (the static
-//     reuse-limit choice). When the runtime declares preConnect and a
-//     ModeFactorSource carries a converged task-reuse median, that
-//     observed reuse overrides the static fallback per §5.2 line 569.
-//     burst_mode_factor stays 1.0 for task mode (no per-pod burst reuse).
-//   - Concurrent mode: both factors are maxConcurrent (the per-pod slot
-//     bound) — the §5.2 line 569 formula treats concurrent pods as
+//   - Session mode: both factors are 1.0 (the base formula). The
+//     session-rate reuse derivation (expected sessions per pod lifetime
+//     from `sessionPolicy`, observed through the reuse histogram) lands
+//     with the poolscaling step that introduces the gateway-side
+//     sessionPolicy sizing knobs; the CRD carries only the scrub-profile
+//     acknowledgment, so the CRD-derived steady state stays at the base.
+//   - Service mode: both factors are maxConcurrent (the per-pod slot
+//     bound) — the §5.2 saturation formula treats service pods as
 //     reusing their slots for both the steady-state and burst terms.
 //
-// spec: §5.2 lines 549, 569.
-func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSource) (modeFactor, burstModeFactor float64) {
-	switch cfg.Template.ExecutionMode {
-	case "task":
-		modeFactor = taskStaticReuseFloor(cfg)
-		if src != nil {
-			if med, ok, err := src.PoolTaskReuseMedian(ctx, cfg.Name); err == nil && ok && med > 0 {
-				modeFactor = med
-			}
-		}
-		burstModeFactor = 1
-	case "concurrent":
-		if cfg.Template.MaxConcurrent > 0 {
-			modeFactor = float64(cfg.Template.MaxConcurrent)
-			burstModeFactor = modeFactor
-		} else {
-			modeFactor = 1
-			burstModeFactor = 1
-		}
-	default:
-		modeFactor = 1
-		burstModeFactor = 1
+// spec: §5.2 (execution mode scaling implications).
+func resolveModeFactors(_ context.Context, cfg PoolConfig, _ ModeFactorSource) (modeFactor, burstModeFactor float64) {
+	if cfg.Template.ExecutionMode == "service" && cfg.Template.MaxConcurrent > 0 {
+		modeFactor = float64(cfg.Template.MaxConcurrent)
+		return modeFactor, modeFactor
 	}
-	return modeFactor, burstModeFactor
-}
-
-// taskStaticReuseFloor resolves the §5.2 task-mode static
-// `mode_factor` fallback from the pool's TaskPolicy.MaxTasksPerPod.
-// Spec line 549 names the field as the bootstrap-mode value; a missing
-// or zero TaskPolicy maps to 1.0 (session-equivalent sizing) until the
-// pool-config validator catches the misconfiguration. spec: §5.2 line
-// 549.
-func taskStaticReuseFloor(cfg PoolConfig) float64 {
-	if cfg.Template.TaskPolicy != nil && cfg.Template.TaskPolicy.MaxTasksPerPod > 0 {
-		return float64(cfg.Template.TaskPolicy.MaxTasksPerPod)
-	}
-	return 1
+	return 1, 1
 }

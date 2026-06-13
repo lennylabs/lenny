@@ -229,185 +229,57 @@ func TestTemplate(t *testing.T) {
 			spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "r"},
 		},
 		{
-			name: "task mode with acknowledged scrub and reuse limit is admitted",
+			name: "service mode carries no pool-config invariant",
 			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task",
-				TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50},
+				RuntimeRef: "r", ExecutionMode: "service", MaxConcurrent: 4,
 			},
 		},
 		{
-			name:       "task mode without taskPolicy is rejected",
-			spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "r", ExecutionMode: "task"},
-			reject:     true,
-			wantSubstr: "spec.taskPolicy is absent",
-		},
-		{
-			name: "task mode without scrub acknowledgment is rejected",
+			// spec: §5.2 (Kata/microvm scrub variant) — the in-place scrub
+			// profile reuses the running guest and leaves guest-kernel
+			// residual state across tenants, so it requires the explicit
+			// acknowledgment. The gate is the only sessionPolicy.recycle
+			// acknowledgment the CRD carries; the rest re-key onto the
+			// gateway-side poolstore mirror.
+			name: "recycle in-place scrub with residual-state acknowledgment is admitted",
 			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task",
-				TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: false, MaxTasksPerPod: 50},
-			},
-			reject:     true,
-			wantSubstr: "acknowledgeBestEffortScrub must be true",
-		},
-		{
-			name: "task mode without maxTasksPerPod is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task",
-				TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true},
-			},
-			reject:     true,
-			wantSubstr: "maxTasksPerPod (0) must be at least 1",
-		},
-		{
-			name: "cross-tenant reuse on microvm pool is admitted",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
+				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
+				SessionPolicy: &lennyv1.SessionPolicy{
+					Recycle: &lennyv1.RecyclePolicy{
+						ScrubProfile:                    "in-place",
+						AcknowledgeMicrovmResidualState: true,
+					},
 				},
 			},
 		},
 		{
-			// spec: §12.9 line 1043 — a microvm pool clears the isolation gate,
-			// so the T4 classification is the control that blocks cross-tenant
-			// reuse of Restricted workspace state.
-			name: "cross-tenant reuse on T4 microvm pool is rejected",
+			name: "recycle in-place scrub without residual-state acknowledgment is rejected",
 			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
-				WorkspaceTier: "T4",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-				},
-			},
-			reject:     true,
-			wantSubstr: "prohibited for T4 (Restricted) runtimes",
-		},
-		{
-			// A T3 microvm pool is admitted; the T4 gate is tier-specific.
-			name: "cross-tenant reuse on T3 microvm pool is admitted",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
-				WorkspaceTier: "T3",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-				},
-			},
-		},
-		{
-			name: "cross-tenant reuse on standard pool is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "standard",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-				},
-			},
-			reject:     true,
-			wantSubstr: "permitted only with isolationProfile: microvm",
-		},
-		{
-			name: "cross-tenant reuse with unset isolation profile is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-				},
-			},
-			reject:     true,
-			wantSubstr: "standard (unset)",
-		},
-		{
-			name: "in-place microvm scrub with residual-state acknowledgment is admitted",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-					MicrovmScrubMode: "in-place", AcknowledgeMicrovmResidualState: true,
-				},
-			},
-		},
-		{
-			name: "in-place microvm scrub without residual-state acknowledgment is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "task", IsolationProfile: "microvm",
-				TaskPolicy: &lennyv1.TaskPolicy{
-					AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50, AllowCrossTenantReuse: true,
-					MicrovmScrubMode: "in-place",
+				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
+				SessionPolicy: &lennyv1.SessionPolicy{
+					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "in-place"},
 				},
 			},
 			reject:     true,
 			wantSubstr: "acknowledgeMicrovmResidualState",
 		},
 		{
-			name: "concurrent-workspace mode with acknowledgment and budget is admitted",
+			name: "recycle vm-restart scrub carries no residual-state gate",
 			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-				MaxConcurrent: 4,
-				ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-					AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 60,
+				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
+				SessionPolicy: &lennyv1.SessionPolicy{
+					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"},
 				},
 			},
 		},
 		{
-			name: "concurrent stateless mode carries no concurrent-workspace invariant",
+			name: "recycle standard scrub carries no residual-state gate",
 			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "stateless",
-			},
-		},
-		{
-			name: "concurrent-workspace mode without policy is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-			},
-			reject:     true,
-			wantSubstr: "spec.concurrentWorkspacePolicy is absent",
-		},
-		{
-			name: "concurrent-workspace mode without process-isolation acknowledgment is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-				MaxConcurrent: 2,
-				ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-					AcknowledgeProcessLevelIsolation: false, CleanupTimeoutSeconds: 60,
+				RuntimeRef: "r", ExecutionMode: "session",
+				SessionPolicy: &lennyv1.SessionPolicy{
+					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "standard"},
 				},
 			},
-			reject:     true,
-			wantSubstr: "acknowledgeProcessLevelIsolation must be true",
-		},
-		{
-			name: "concurrent-workspace cleanup budget below per-slot floor is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-				MaxConcurrent: 8,
-				ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-					AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 30,
-				},
-			},
-			reject:     true,
-			wantSubstr: "cleanupTimeoutSeconds >= maxConcurrent x 5 (40s)",
-		},
-		{
-			name: "concurrent-workspace cleanup budget exactly at floor is admitted",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-				MaxConcurrent: 8,
-				ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-					AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 40,
-				},
-			},
-		},
-		{
-			name: "concurrent-workspace cross-tenant reuse via taskPolicy is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "r", ExecutionMode: "concurrent", ConcurrencyStyle: "workspace",
-				MaxConcurrent: 2,
-				ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-					AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 60,
-				},
-				TaskPolicy: &lennyv1.TaskPolicy{AllowCrossTenantReuse: true},
-			},
-			reject:     true,
-			wantSubstr: "no isolation boundary in concurrent-workspace mode",
 		},
 	}
 	for _, tc := range tests {
@@ -435,15 +307,14 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }
 
 	baseSpec := func() lennyv1.SandboxTemplateSpec {
+		// A service-mode pool fans the per-slot checkpoint cap across
+		// maxConcurrent slots, so the §10.1 / §5.2 line 516 termination
+		// budget floor applies with the maxConcurrent multiplier exactly as
+		// the former concurrent-workspace pool did.
 		return lennyv1.SandboxTemplateSpec{
-			RuntimeRef:       "r",
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: "workspace",
-			MaxConcurrent:    2,
-			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-				AcknowledgeProcessLevelIsolation: true,
-				CleanupTimeoutSeconds:            60,
-			},
+			RuntimeRef:    "r",
+			ExecutionMode: "service",
+			MaxConcurrent: 2,
 		}
 	}
 
@@ -461,7 +332,6 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		// maxConcurrent=8 → 8*90 + 90 + 30 = 840s > 600s.
 		spec := baseSpec()
 		spec.MaxConcurrent = 8
-		spec.ConcurrentWorkspacePolicy.CleanupTimeoutSeconds = 60
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 1 {
@@ -476,7 +346,6 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec := baseSpec()
 		spec.MaxConcurrent = 8
 		spec.MaxTerminationGracePeriodSeconds = int64p(600)
-		spec.ConcurrentWorkspacePolicy.CleanupTimeoutSeconds = 60
 		d := pcv.DecideTemplate(template(spec))
 		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds (600s)")
 	})
@@ -566,13 +435,13 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		assertAllowed(t, d)
 	})
 
-	t.Run("stateless concurrent pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
-		// A stateless-concurrent pool checkpoints a single workspace, so
-		// the multiplier is 1: floor = 1*90 + 90 + 30 = 210s.
+	t.Run("service pool with unit slot below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+		// A service pool with maxConcurrent 1 checkpoints a single
+		// workspace, so the multiplier is 1: floor = 1*90 + 90 + 30 = 210s.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
-			ExecutionMode:                 "concurrent",
-			ConcurrencyStyle:              "stateless",
+			ExecutionMode:                 "service",
+			MaxConcurrent:                 1,
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
 		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
@@ -581,11 +450,12 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		}
 	})
 
-	t.Run("task-mode pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+	t.Run("session pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+		// A session pool checkpoints a single workspace: multiplier 1,
+		// floor = 1*90 + 90 + 30 = 210s.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
-			ExecutionMode:                 "task",
-			TaskPolicy:                    &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 10},
+			ExecutionMode:                 "session",
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
 		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
@@ -607,14 +477,9 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 	t.Run("maxTerminationGracePeriodSeconds breach sets BudgetExceeded", func(t *testing.T) {
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                       "r",
-			ExecutionMode:                    "concurrent",
-			ConcurrencyStyle:                 "workspace",
+			ExecutionMode:                    "service",
 			MaxConcurrent:                    8,
 			MaxTerminationGracePeriodSeconds: int64p(600),
-			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
-				AcknowledgeProcessLevelIsolation: true,
-				CleanupTimeoutSeconds:            60,
-			},
 		}))
 		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds")
 		if !d.BudgetExceeded {

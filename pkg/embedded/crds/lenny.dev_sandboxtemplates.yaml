@@ -78,52 +78,6 @@ spec:
                   workspace checkpoints for sessions in this pool.
                 format: int64
                 type: integer
-              concurrencyStyle:
-                description: |-
-                  ConcurrencyStyle selects the concurrent sub-variant when
-                  ExecutionMode is `concurrent`: `stateless` routes through a
-                  Service with no workspace materialization, `workspace`
-                  materializes a per-slot workspace.
-                enum:
-                - stateless
-                - workspace
-                type: string
-              concurrentWorkspacePolicy:
-                description: |-
-                  ConcurrentWorkspacePolicy configures concurrent-workspace
-                  execution. It is required when ExecutionMode is `concurrent` and
-                  ConcurrencyStyle is `workspace`.
-                properties:
-                  acknowledgeProcessLevelIsolation:
-                    description: |-
-                      AcknowledgeProcessLevelIsolation records the deployer's
-                      acknowledgment that concurrent slots share the pod process
-                      namespace, /tmp, cgroup memory, network stack, and credential
-                      group-read access. Concurrent-workspace mode is rejected at
-                      validation time unless this is true.
-                    type: boolean
-                  cleanupTimeoutSeconds:
-                    description: |-
-                      CleanupTimeoutSeconds bounds per-slot cleanup. The per-slot
-                      budget is CleanupTimeoutSeconds divided by MaxConcurrent; the
-                      pool-config webhook rejects a pool where that quotient is below
-                      5 seconds.
-                    format: int64
-                    type: integer
-                  maxPodUptimeSeconds:
-                    description: |-
-                      MaxPodUptimeSeconds retires a concurrent-workspace pod once its
-                      wall-clock uptime since first boot exceeds this value: the pod
-                      accepts no new slots and its existing slots drain (§6.2 line 166
-                      slot_active to draining), and an idle pod is drained before its
-                      next slot assignment (§6.2 line 167 idle to draining). When unset,
-                      a concurrent-workspace pod is retired only by the unhealthy-slot
-                      threshold. spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
-                    format: int64
-                    type: integer
-                required:
-                - acknowledgeProcessLevelIsolation
-                type: object
               deliveryMode:
                 description: DeliveryMode is the §4.9 credential delivery mode for
                   the pool.
@@ -145,12 +99,12 @@ spec:
                 type: string
               executionMode:
                 description: |-
-                  ExecutionMode is the §5.2 pod-reuse mode. Empty is treated as
-                  `session`.
+                  ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+                  parameterized by SessionPolicy) or `service` (a claimless,
+                  request-routed pod). Empty is treated as `session`.
                 enum:
                 - session
-                - task
-                - concurrent
+                - service
                 type: string
               isolationProfile:
                 description: |-
@@ -192,6 +146,43 @@ spec:
               runtimeRef:
                 description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
                 type: string
+              sessionPolicy:
+                description: |-
+                  SessionPolicy parameterizes session-mode pod reuse: simultaneous
+                  sessions per pod and the nested recycle block. It is nil on pools
+                  that take the default one-session-per-pod configuration.
+                properties:
+                  recycle:
+                    description: |-
+                      Recycle configures sequential pod reuse with a whole-pod scrub
+                      at the occupancy-zero recycle boundary. It is nil on pools that
+                      do not recycle (`recycle.enabled: false`, the default).
+                    properties:
+                      acknowledgeMicrovmResidualState:
+                        description: |-
+                          AcknowledgeMicrovmResidualState records the deployer's
+                          acknowledgment that guest-kernel residual state (DNS cache,
+                          TCP TIME_WAIT, page cache, inotify/fanotify registrations)
+                          persists across tenants. The pool controller requires it
+                          when ScrubProfile is `in-place` and rejects the pool
+                          otherwise.
+                        type: boolean
+                      scrubProfile:
+                        description: |-
+                          ScrubProfile selects the whole-pod scrub variant: `standard`
+                          (the default) runs the in-guest scrub steps; `vm-restart`
+                          boots a fresh guest VM between tenants on a microvm
+                          cross-tenant-reuse pool; `in-place` reuses the running guest
+                          and leaves guest-kernel residual state. The pool controller
+                          rejects `standard` on a pool with
+                          `recycle.allowCrossTenantReuse: true`.
+                        enum:
+                        - standard
+                        - vm-restart
+                        - in-place
+                        type: string
+                    type: object
+                type: object
               spiffeBinding:
                 description: |-
                   SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding.
@@ -204,97 +195,6 @@ spec:
                 - enabled
                 - disabled
                 type: string
-              taskPolicy:
-                description: |-
-                  TaskPolicy configures task-mode pod reuse. It is required when
-                  ExecutionMode is `task`.
-                properties:
-                  acknowledgeBestEffortScrub:
-                    description: |-
-                      AcknowledgeBestEffortScrub records the deployer's acknowledgment
-                      that the between-task workspace scrub is best-effort and is not a
-                      security boundary between tenants. Task mode is rejected at
-                      validation time unless this is true.
-                    type: boolean
-                  acknowledgeMicrovmResidualState:
-                    description: |-
-                      AcknowledgeMicrovmResidualState records the deployer's
-                      acknowledgment that guest-kernel residual state persists across
-                      tenants. The pool-config webhook requires it when MicrovmScrubMode
-                      is `in-place`.
-                    type: boolean
-                  allowCrossTenantReuse:
-                    description: |-
-                      AllowCrossTenantReuse permits a task-mode pod to serve more than
-                      one tenant. It is valid only when IsolationProfile is `microvm`
-                      and the runtime is not workspaceTier T4; the pool-config webhook
-                      rejects it on any other pool.
-                    type: boolean
-                  cleanupCommands:
-                    description: |-
-                      CleanupCommands are deployer-defined commands run between tasks
-                      before the Lenny scrub. They run after the credential file has
-                      been purged, so they have no access to the previous task's
-                      credentials.
-                    items:
-                      type: string
-                    type: array
-                  cleanupTimeoutSeconds:
-                    description: CleanupTimeoutSeconds bounds the cleanup command
-                      execution.
-                    format: int64
-                    type: integer
-                  maxPodUptimeSeconds:
-                    description: |-
-                      MaxPodUptimeSeconds retires a pod once its wall-clock uptime
-                      exceeds this value. When unset, only MaxTasksPerPod and
-                      MaxScrubFailures govern retirement.
-                    format: int64
-                    type: integer
-                  maxScrubFailures:
-                    description: |-
-                      MaxScrubFailures retires a pod once its cumulative scrub failure
-                      count reaches this value. It defaults to 3 when unset.
-                    format: int32
-                    type: integer
-                  maxTaskRetries:
-                    description: |-
-                      MaxTaskRetries is the retry count when a pod crashes mid-task. It
-                      defaults to 1 (two total attempts) when unset; 0 disables retries.
-                    format: int32
-                    type: integer
-                  maxTasksPerPod:
-                    description: |-
-                      MaxTasksPerPod retires a pod after this many completed tasks. It
-                      is required for task-mode pools; the pool-config webhook rejects
-                      a TaskPolicy that omits it, forcing an explicit reuse-limit
-                      choice.
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  microvmScrubMode:
-                    description: |-
-                      MicrovmScrubMode selects the cross-tenant scrub variant for
-                      microvm pods: `restart` boots a fresh guest VM between tenants,
-                      `in-place` reuses the running guest. It is relevant only when
-                      AllowCrossTenantReuse is true.
-                    enum:
-                    - restart
-                    - in-place
-                    type: string
-                  onCleanupFailure:
-                    description: |-
-                      OnCleanupFailure selects pod handling when cleanup fails: `warn`
-                      returns the pod to the pool with a scrub_warning annotation,
-                      `fail` retires and replaces the pod.
-                    enum:
-                    - warn
-                    - fail
-                    type: string
-                required:
-                - acknowledgeBestEffortScrub
-                - maxTasksPerPod
-                type: object
               terminationGracePeriodSeconds:
                 description: |-
                   TerminationGracePeriodSeconds is the §5.2 deployer-set pod

@@ -32,7 +32,11 @@ func SandboxClaimGuard(reader client.Reader) Decider {
 		guardReq := guard.Request{
 			ClaimName:  claim.Name,
 			SandboxRef: claim.Spec.SandboxRef,
-			HasSlotID:  claim.Spec.SlotID != "",
+			// The per-pod claim (§4.6.3) carries no slot identifier, so the
+			// inbound-claim slot signal is gone. The slot exemption and the
+			// phase-read PATCH/PUT rule are dropped in the sandboxclaim-guard
+			// step; until then the guard sees no slot signal.
+			HasSlotID: false,
 		}
 
 		switch req.Operation {

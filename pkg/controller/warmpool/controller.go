@@ -701,19 +701,26 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 
 // evaluateConcurrentWorkspaceSharing returns the §13.1 line 29
 // ConcurrentWorkspaceCredentialSharing condition for the pool. The
-// condition is managed only for concurrent-workspace pools (executionMode
-// concurrent + concurrencyStyle workspace), where multiple slots share one
-// pod, one agent UID, and the lenny-cred-readers group, so any slot can
-// read every other slot's credential file. It is True when the pool's
-// Runtime declares non-empty supportedProviders (a credential-bearing
-// runtime) and False otherwise, so the operator-visible warning tracks the
-// Runtime's current provider set. A nil return leaves the condition
-// unmanaged: the pool is not concurrent-workspace, or the Runtime could not
-// be resolved (a transient read error propagates so the reconcile retries).
+// condition is managed only for pools that run more than one session per
+// pod, where multiple slots share one pod, one agent UID, and the
+// lenny-cred-readers group, so any slot can read every other slot's
+// credential file. It is True when the pool's Runtime declares non-empty
+// supportedProviders (a credential-bearing runtime) and False otherwise,
+// so the operator-visible warning tracks the Runtime's current provider
+// set. A nil return leaves the condition unmanaged: the pool runs one
+// session per pod, or the Runtime could not be resolved (a transient read
+// error propagates so the reconcile retries).
 //
-// spec: §13.1 line 29; §5.2 (concurrent-workspace pool model). F-13.1.5.
+// The `maxConcurrentSessions > 1` trigger lives on the gateway-side
+// `sessionPolicy` mirror in the poolstore, which the SandboxTemplate CRD
+// does not carry; until the warmpool step wires that mirror into the
+// reconcile, the condition is unmanaged from the CRD surface. The
+// SandboxTemplate `executionMode` enum no longer admits `concurrent`, so
+// no template selects this branch yet.
+//
+// spec: §13.1 line 29; §5.2 (concurrent sessions on one pod). F-13.1.5.
 func (r *Reconciler) evaluateConcurrentWorkspaceSharing(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
-	if tmpl.Spec.ExecutionMode != "concurrent" || tmpl.Spec.ConcurrencyStyle != "workspace" {
+	if tmpl.Spec.ExecutionMode != "concurrent" {
 		return nil, nil
 	}
 	if tmpl.Spec.RuntimeRef == "" {
@@ -742,10 +749,10 @@ func (r *Reconciler) evaluateConcurrentWorkspaceSharing(ctx context.Context, poo
 		Status: metav1.ConditionTrue,
 		Reason: "CredentialBearingRuntime",
 		Message: fmt.Sprintf(
-			"Concurrent-workspace slots share one pod and the lenny-cred-readers group; "+
+			"Concurrent slots share one pod and the lenny-cred-readers group; "+
 				"any slot can read every other slot's credential file for Runtime %q "+
-				"(supportedProviders: %v). Use executionMode session or task for strict "+
-				"per-task credential isolation.",
+				"(supportedProviders: %v). Use maxConcurrentSessions: 1 for strict "+
+				"per-session credential isolation.",
 			tmpl.Spec.RuntimeRef, rt.Spec.SupportedProviders),
 	}, nil
 }

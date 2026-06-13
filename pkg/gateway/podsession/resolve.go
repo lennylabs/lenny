@@ -143,21 +143,20 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		m := PoolMatch{
 			Pool:             pool.Name,
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
-			ConcurrencyStyle: tmpl.Spec.ConcurrencyStyle,
 			MaxConcurrent:    tmpl.Spec.MaxConcurrent,
 			IsolationProfile: tmpl.Spec.IsolationProfile,
 			PoolWarmingUp:    warmingUp,
 			PodsWarming:      podsWarming,
 		}
-		if tp := tmpl.Spec.TaskPolicy; tp != nil {
-			m.AllowCrossTenantReuse = tp.AllowCrossTenantReuse
-			m.MicrovmScrubMode = tp.MicrovmScrubMode
-		}
-		// spec: §6.2 lines 166-167 — surface the concurrent-workspace
-		// pod-uptime cap so the slot-claim path drains an over-uptime pod
-		// before its next slot assignment.
-		if cwp := tmpl.Spec.ConcurrentWorkspacePolicy; cwp != nil && cwp.MaxPodUptimeSeconds != nil {
-			m.MaxPodUptimeSeconds = *cwp.MaxPodUptimeSeconds
+		// The CRD carries the cross-tenant microvm scrub control on the
+		// sessionPolicy.recycle block (§4.6.3 ownership); the scrub profile
+		// selects the §7.1 scrubPolicy variant. The remaining dispatch
+		// fields (allowCrossTenantReuse, concurrencyStyle, the
+		// concurrent-workspace pod-uptime cap) live on the gateway-side
+		// sessionPolicy mirror in the poolstore, which the gateway-claim-path
+		// step folds into ResolvePool; they default to zero here.
+		if sp := tmpl.Spec.SessionPolicy; sp != nil && sp.Recycle != nil {
+			m.MicrovmScrubMode = sp.Recycle.ScrubProfile
 		}
 		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
 		// workspace size cap so the resume path can pass it to the adapter

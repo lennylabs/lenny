@@ -80,37 +80,37 @@ func TestReconcileDoesNotFlipGateBeforeContainersReady_spec_6_1(t *testing.T) {
 	}
 }
 
-// TestReconcileStampsCoarseActiveLabel_spec_6_2 verifies a serving phase
-// (attached) maps to the coarse lenny.dev/state value "active" rather than
-// carrying the raw §6.2 phase. The phase itself is gateway-owned, so the
-// planner takes no action; only the label sync runs.
+// TestReconcileStampsCoarseActiveLabel_spec_6_2 verifies an occupied
+// coarse phase (claimed) maps to the coarse lenny.dev/state value "active"
+// rather than carrying the raw §6.2 phase. The phase itself is gateway-
+// owned, so the planner takes no action; only the label sync runs.
 func TestReconcileStampsCoarseActiveLabel_spec_6_2(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("attached"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR("claimed"), runtimeCR(), podCR(corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got := getPod(t, c).Labels["lenny.dev/state"]; got != "active" {
-		t.Errorf("coarse state label = %q, want active for the attached phase", got)
+		t.Errorf("coarse state label = %q, want active for the claimed phase", got)
 	}
 }
 
 // TestReconcileRemovesCoarseLabelOnTerminal_spec_6_2 verifies a terminal
-// phase (completed) clears the coarse lenny.dev/state label rather than
-// leaving a stale value: a completed pod is neither idle, active, nor
+// coarse phase (terminated) clears the coarse lenny.dev/state label rather
+// than leaving a stale value: a terminated pod is neither idle, active, nor
 // draining.
 func TestReconcileRemovesCoarseLabelOnTerminal_spec_6_2(t *testing.T) {
 	s := newScheme(t)
 	pod := podCR(corev1.PodRunning, true)
 	pod.Labels = map[string]string{"lenny.dev/state": "active"}
-	c := newClient(t, s, sandboxCR("completed"), runtimeCR(), pod)
+	c := newClient(t, s, sandboxCR("terminated"), runtimeCR(), pod)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got, ok := getPod(t, c).Labels["lenny.dev/state"]; ok {
-		t.Errorf("coarse state label = %q, want removed for the terminal completed phase", got)
+		t.Errorf("coarse state label = %q, want removed for the terminal terminated phase", got)
 	}
 }
 
