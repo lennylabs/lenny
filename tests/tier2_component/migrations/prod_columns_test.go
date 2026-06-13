@@ -52,12 +52,15 @@ var prodMigrationSchema = []struct {
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry. concurrency_style survives the full
-	// chain at this step: migration 0167 defers its retirement to the
-	// later poolstore step that removes the gateway ConcurrencyStyle field,
-	// so the column is still present at HEAD.
+	// sandbox_warm_pools registry. concurrency_style is not listed here:
+	// migration 0167 retires it (the §5.2 mode collapse), so it does not
+	// exist at HEAD. The forward test asserts only columns present at HEAD;
+	// 0167's down restores concurrency_style, so the per-step 0040 rollback
+	// still ends with the column absent. The drop/restore round-trip is
+	// covered by TestProdSchemaMigrationConcurrencyStyleDrop and the 0167
+	// migration test under migrations/.
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
-		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
+		"max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
 	}},
 	// 0042 creates the §12.8 GDPR erasure-job registry. The
@@ -220,15 +223,16 @@ var prodMigrationSchema = []struct {
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
 	// 0167 re-keys the §5.2 execution-mode CHECK on runtime_definitions to
-	// (session, service) and adds the §12.6 gateway-written per-pod recycle
-	// counters to agent_pod_state. Both counters are nullable until the
-	// gateway first writes them. concurrency_style on sandbox_warm_pools is
-	// intentionally NOT dropped at this step: its retirement is deferred to
-	// the later poolstore step that removes the gateway ConcurrencyStyle
-	// field ("retired ... once concurrencyStyle is removed"), and pgstore
-	// still persists and scans the column. Its survival across the full
-	// migration chain is asserted by
-	// TestProdSchemaMigrationConcurrencyStyleSurvives. spec: §5.2, §12.6.
+	// (session, service), retires the concurrency_style column on
+	// sandbox_warm_pools (the §5.2 mode collapse removes the concurrent
+	// sub-variant the column encoded; pgstore stops persisting and scanning
+	// it in the same change), and adds the §12.6 gateway-written per-pod
+	// recycle counters to agent_pod_state. Both counters are nullable until
+	// the gateway first writes them. The dropped concurrency_style column is
+	// not listed here: the harness records only added columns (it asserts
+	// they are absent after the per-step rollback). The drop and its down
+	// restoration are covered by TestProdSchemaMigrationConcurrencyStyleDrop
+	// and the 0167 migration test under migrations/. spec: §5.2, §12.6.
 	{migration: "0167", table: "agent_pod_state", columns: []string{
 		"sessions_served", "scrub_failure_count",
 	}},

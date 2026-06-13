@@ -42,13 +42,14 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var _ poolstore.Store = (*Store)(nil)
 
-// concurrency_style survives at this step: migration 0167 defers the
-// column drop to the later poolstore step that removes the gateway
-// ConcurrencyStyle field, so the pool store still persists and scans it.
-// spec: §5.2 (execution modes), §12.6.
+// concurrency_style is absent: migration 0167 retired the column with the
+// §5.2 concurrent sub-variant, leaving max_concurrent as the surviving
+// per-pod bound. The store no longer persists or scans it; the typed
+// Pool.ConcurrencyStyle field remains until the later poolstore
+// mode-collapse step removes it. spec: §5.2 (execution modes), §12.6.
 const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	resource_class, warm_count, max_session_age_seconds,
-	allow_standard_isolation, concurrency_style, max_concurrent,
+	allow_standard_isolation, max_concurrent,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
 	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 	pool_config_generation, task_policy, elicitation_policy, draining_since,
@@ -279,16 +280,16 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	_, err = s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
-		allow_standard_isolation, concurrency_style, max_concurrent,
+		allow_standard_isolation, max_concurrent,
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
 		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
 		pool_config_generation, task_policy, elicitation_policy, draining_since,
 		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
 		concurrent_max_pod_uptime_seconds
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
+		p.AllowStandardIsolation, p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
@@ -361,16 +362,16 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
-		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
-		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
-		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
-		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20,
-		bootstrap_min_warm = $21, reconciliation_resume_epoch = $22, sdk_warm_config = $23,
-		concurrent_max_pod_uptime_seconds = $24
+		allow_standard_isolation = $8, max_concurrent = $9,
+		acknowledge_process_level_isolation = $10, cleanup_timeout_seconds = $11,
+		allow_cross_tenant_reuse = $12, egress_profile = $13, updated_at = $14, deleted_at = $15,
+		pool_config_generation = $16, task_policy = $17, elicitation_policy = $18, draining_since = $19,
+		bootstrap_min_warm = $20, reconciliation_resume_epoch = $21, sdk_warm_config = $22,
+		concurrent_max_pod_uptime_seconds = $23
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
+		p.AllowStandardIsolation, p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
 		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
@@ -472,20 +473,20 @@ func (s *Store) BumpResumeEpoch(ctx context.Context, name string) (int64, error)
 // scanPool reads one row in selectList order into a Pool.
 func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	var (
-		p                                                                poolstore.Pool
-		isolationProfile, executionMode, concurrencyStyle, egressProfile string
-		deletedAt                                                        *time.Time
-		drainingSince                                                    *time.Time
-		taskPolicy                                                       []byte
-		elicitationPolicy                                                []byte
-		bootstrapMinWarm                                                 *int
-		sdkWarmConfig                                                    []byte
-		concurrentMaxPodUptime                                           *int
+		p                                              poolstore.Pool
+		isolationProfile, executionMode, egressProfile string
+		deletedAt                                      *time.Time
+		drainingSince                                  *time.Time
+		taskPolicy                                     []byte
+		elicitationPolicy                              []byte
+		bootstrapMinWarm                               *int
+		sdkWarmConfig                                  []byte
+		concurrentMaxPodUptime                         *int
 	)
 	if err := row.Scan(
 		&p.Name, &p.RuntimeRef, &isolationProfile, &executionMode,
 		&p.ResourceClass, &p.WarmCount, &p.MaxSessionAgeSeconds,
-		&p.AllowStandardIsolation, &concurrencyStyle, &p.MaxConcurrent,
+		&p.AllowStandardIsolation, &p.MaxConcurrent,
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
@@ -503,7 +504,9 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	}
 	p.IsolationProfile = isolation.Profile(isolationProfile)
 	p.ExecutionMode = runtimestore.ExecutionMode(executionMode)
-	p.ConcurrencyStyle = poolstore.ConcurrencyStyle(concurrencyStyle)
+	// concurrency_style is no longer scanned: migration 0167 retired the
+	// column. Pool.ConcurrencyStyle stays zero-valued on a re-read until the
+	// later poolstore step removes the field. spec: §5.2, §12.6.
 	p.EgressProfile = egress.Profile(egressProfile)
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
