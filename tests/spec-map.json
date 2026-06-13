@@ -291,7 +291,8 @@
       "title": "Runtime Adapter",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "pkg/adapter/..."
+        "pkg/adapter/...",
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -393,7 +394,8 @@
         "tests/tier2_component/admission/pool_config_validator_test.go::TestExecutionModeEnumRejectsRemovedModes_spec_5_2",
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
-        "tests/tier4_integration/concurrent_stateless_test.go"
+        "tests/tier4_integration/concurrent_stateless_test.go",
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",

@@ -71,6 +71,12 @@ func dialScrub(t *testing.T, srv *scrubServer) adapterv1.GatewayControlClient {
 // survives a proto binary marshal/unmarshal, so a sender and a receiver
 // built from the same schema agree on the wire.
 // spec: 4.7 (Adapter → Gateway RPCs), 5.2 (scrub model)
+//
+// diagnosis: a failure means a field of ReportSessionScrubRequest was
+// renumbered, retyped, or dropped in schemas/lenny-adapter.proto without
+// the generated Go being regenerated, so the binary encoding no longer
+// round-trips and the adapter's per-slot scrub report would be silently
+// truncated or misread on the gateway side.
 func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 	in := &adapterv1.ReportSessionScrubRequest{
 		PodId:     "pod-7",
@@ -94,6 +100,12 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 // TestReportPodScrubRequestRoundTrip pins that the ReportPodScrubRequest
 // fields (pod id, outcome, detail) survive a proto binary round-trip.
 // spec: 4.7 (Adapter → Gateway RPCs), 3.4 (recycle disposition)
+//
+// diagnosis: a failure means a field of ReportPodScrubRequest was
+// renumbered, retyped, or dropped in schemas/lenny-adapter.proto without
+// the generated Go being regenerated, so the whole-pod scrub outcome no
+// longer round-trips and the occupancy-zero recycle disposition cannot be
+// computed from the report.
 func TestReportPodScrubRequestRoundTrip_spec_3_4(t *testing.T) {
 	in := &adapterv1.ReportPodScrubRequest{
 		PodId:   "pod-7",
@@ -169,6 +181,11 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 // report as LEAKED (or a SUCCEEDED scrub as FAILED) across a mixed-version
 // client and server, so the values are part of the contract.
 // spec: 5.2 (scrub model)
+//
+// diagnosis: a failure means a scrub-outcome enum value was renumbered in
+// schemas/lenny-adapter.proto, so a mixed-version client and server would
+// reinterpret a RELEASED report as LEAKED (or a SUCCEEDED scrub as FAILED)
+// and the gateway's leak accounting and recycle disposition would be wrong.
 func TestScrubOutcomeEnumWireValues_spec_5_2(t *testing.T) {
 	if got := int32(adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_UNSPECIFIED); got != 0 {
 		t.Errorf("SESSION_SCRUB_OUTCOME_UNSPECIFIED = %d, want 0", got)
