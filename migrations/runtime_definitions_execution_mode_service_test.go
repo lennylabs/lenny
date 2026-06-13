@@ -36,7 +36,12 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 	for _, want := range []string{
 		"DROP CONSTRAINT runtime_definitions_execution_mode_check",
 		"CHECK (execution_mode IN ('session', 'service'))",
-		"DROP COLUMN concurrency_style",
+		// concurrency_style is a Phase 3 drop: it must be idempotent and
+		// fronted by the §10.5 DO $$ preflight gate with a gate-index
+		// declaration.
+		"DROP COLUMN IF EXISTS concurrency_style",
+		"DO $$",
+		"-- gate-index:",
 		"ADD COLUMN sessions_served",
 		"scrub_failure_count INTEGER",
 	} {

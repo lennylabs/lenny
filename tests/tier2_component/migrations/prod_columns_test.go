@@ -51,10 +51,13 @@ var prodMigrationSchema = []struct {
 	// credentials table; the secret column's type change to BYTEA is
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
-	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry.
+	// 0040 added the §5.2 concurrent-mode columns to the
+	// sandbox_warm_pools registry. The (session, service) model retires
+	// the concurrent sub-variant, so migration 0167 drops
+	// concurrency_style; only max_concurrent and the remaining 0040
+	// columns survive the full chain. spec: §5.2.
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
-		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
+		"max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
 	}},
 	// 0042 creates the §12.8 GDPR erasure-job registry. The
@@ -216,6 +219,14 @@ var prodMigrationSchema = []struct {
 	// the users and environments admin resources.
 	{migration: "0139", table: "users", columns: []string{"version"}},
 	{migration: "0139", table: "environments", columns: []string{"version"}},
+	// 0167 re-keys the §5.2 execution-mode enum to (session, service),
+	// retires sandbox_warm_pools.concurrency_style (asserted gone from the
+	// 0040 entry above), and adds the §12.6 gateway-written per-pod recycle
+	// counters to agent_pod_state. Both counters are nullable until the
+	// gateway first writes them. spec: §5.2, §12.6.
+	{migration: "0167", table: "agent_pod_state", columns: []string{
+		"sessions_served", "scrub_failure_count",
+	}},
 }
 
 // spec: 12.2, 18.5
