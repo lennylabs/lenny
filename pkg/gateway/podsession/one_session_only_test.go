@@ -51,13 +51,15 @@ func TestSessionModeReleaseDrainsSandbox_spec_6_1_invariant(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	// Verify the Sandbox is attached after Bind.
+	// Verify the Sandbox projects the coarse `claimed` phase after Bind: the
+	// session reaching `running` is a session-model state on the Postgres
+	// session row, not a CRD phase (§6.2 lines 82, 172).
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-orig"}, &sb); err != nil {
 		t.Fatalf("get sandbox after bind: %v", err)
 	}
-	if sb.Status.Phase != string(state.Attached) {
-		t.Fatalf("phase after Bind = %q, want attached", sb.Status.Phase)
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Fatalf("phase after Bind = %q, want claimed", sb.Status.Phase)
 	}
 
 	// Drive the §6.2 terminal disposition through Release with

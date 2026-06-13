@@ -13,16 +13,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// ApplyGatewayPhase writes Sandbox.status.phase via SSA Apply under the
-// §4.6.3 gateway field manager and ForceOwnership. The §4.6.3 ownership
-// table records status.phase as WPC-owned by default; the gateway claims
-// it for the duration of the session-mode lifecycle (idle → claimed →
-// receiving_uploads → finalizing_workspace → running_setup →
-// starting_session → attached → completed/failed/cancelled) and the
-// §5.2 slot-mode lifecycle (idle → slot_active → idle). ForceOwnership
-// is the spec-intended cross-manager override that lets a write succeed
-// even though the default-owning manager (WarmPoolController) still
-// claims the field.
+// ApplyGatewayPhase writes a coarse Sandbox.status.phase occupancy value
+// via SSA Apply under the §4.6.3 gateway field manager and ForceOwnership.
+// The §4.6.3 ownership table records status.phase as WPC-owned by default;
+// the gateway claims it to project the coarse occupancy phase on the
+// idle → claimed acquisition edge. The §6.2 enum carries only the coarse
+// occupancy set (warming, idle, reserved, claimed, sdk_connecting,
+// draining, failed, terminated); the fine session-lifecycle states live on
+// the Postgres session row and are not projected onto the CRD (§6.2 lines
+// 82, 172), so a pod serving a session in any session state projects the
+// coarse `claimed` phase. ForceOwnership is the spec-intended cross-manager
+// override that lets a write succeed even though the default-owning manager
+// (WarmPoolController) still claims the field.
 //
 // On success sb.Status.Phase is updated in place. The apply preserves
 // the in-memory TenantID value: it is a gateway-owned status field that
@@ -41,9 +43,8 @@ import (
 // fields it writes, so the WPC can re-claim status.phase to write
 // terminated. See drain() in podsession/binder.go.
 //
-// spec: §4.6.3 ownership table; §5.2 slot-reservation gateway-side
-// transitions; §6.2 lines 83-94 setup chain; §6.2 lines 105-117 terminal
-// dispositions.
+// spec: §4.6.3 ownership table; §6.2 lines 82, 172 coarse occupancy enum;
+// §6.2 idle → claimed acquisition edge.
 func ApplyGatewayPhase(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, phase state.State) error {
 	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
 		string(phase), sb.Status.TenantID)

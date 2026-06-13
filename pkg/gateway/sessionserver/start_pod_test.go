@@ -245,11 +245,11 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — a successful session-mode start advances the
-	// Sandbox through the full setup chain to attached (no longer stuck at
-	// claimed).
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	// spec: §6.2 lines 82, 172 — a successful session-mode start leaves the
+	// pod in the coarse `claimed` phase; the session reaching `running` is a
+	// session-model state on the Postgres session row, not a CRD phase.
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
 	}
 }
 
@@ -392,10 +392,11 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — the two-step start advances the Sandbox through
-	// the full setup chain to attached.
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	// spec: §6.2 lines 82, 172 — the two-step start leaves the pod in the
+	// coarse `claimed` phase (the session's running state lives on the
+	// Postgres session row, not status.phase).
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
 	}
 
 	// The plan stored at create was re-parsed at start and materialized

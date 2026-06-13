@@ -349,18 +349,20 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — a successful Bind advances the Sandbox through
-	// the setup chain to attached.
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	// spec: §6.2 lines 82, 172 — a successful Bind leaves the pod in the
+	// coarse `claimed` phase; the session reaching `running` is a session-model
+	// state on the Postgres session row, not a CRD phase.
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
 	}
 }
 
 // spec: §5.1 line 42 — a runtime declaring integrationLevel `full` whose
 // adapter handshake is observed at Basic (no lifecycle channel, no MCP)
 // has its first session assignment rejected with
-// RUNTIME_LEVEL_UNDERPERFORMS, and the Sandbox is failed rather than
-// advanced to attached.
+// RUNTIME_LEVEL_UNDERPERFORMS, and the pod is reclaimed by draining it
+// (the pre-attached failure is a terminal claim disposition, §6.2)
+// rather than serving the session.
 func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -385,8 +387,8 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase == "attached" {
-		t.Error("Sandbox reached attached despite an underperforming runtime")
+	if sb.Status.Phase != string(state.Draining) {
+		t.Errorf("sandbox phase = %q, want draining (failed pod reclaimed)", sb.Status.Phase)
 	}
 }
 
@@ -414,8 +416,8 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
 	}
 }
 
@@ -758,15 +760,15 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
 	}
 
-	// spec: §6.2 lines 99-102 — a pre-attached setup-RPC failure best-effort
-	// moves the Sandbox to the `failed` phase (here finalizing_workspace →
-	// failed, after receiving_uploads → finalizing_workspace had advanced it).
+	// spec: §6.2 — a pre-attached setup-RPC failure is a terminal claim
+	// disposition: the pod is reclaimed by draining it (coarse claimed →
+	// draining → terminated), so the warm-pool sizer provisions a replacement.
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Failed) {
-		t.Errorf("sandbox phase = %q, want failed after a pre-attached RPC failure", sb.Status.Phase)
+	if sb.Status.Phase != string(state.Draining) {
+		t.Errorf("sandbox phase = %q, want draining after a pre-attached RPC failure", sb.Status.Phase)
 	}
 }
 
@@ -804,11 +806,10 @@ func (w *phaseStatusWriter) Update(ctx context.Context, obj client.Object, opts 
 	return nil
 }
 
-// Patch records the §4.6.3 SSA Apply path the binder uses for the
-// gateway-claimed phases (claimed, receiving_uploads, finalizing_workspace,
-// running_setup, starting_session, attached, completed/failed/cancelled).
-// The drain step still uses Update (yields to WPC); both paths are
-// observed so the test asserts the full §6.2 transition sequence.
+// Patch records the §4.6.3 SSA Apply path the binder uses for the coarse
+// gateway-claimed occupancy phase (claimed, applied on the idle → claimed
+// acquisition edge). The drain step still uses Update (yields to WPC); both
+// paths are observed so the test asserts the coarse §6.2 occupancy sequence.
 func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
 		return err
@@ -821,12 +822,14 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 	return nil
 }
 
-// TestBindWritesSetupChainPhases_spec_6_2 asserts Bind advances the Sandbox
-// through the full §6.2 lines 83-94 setup chain (claimed →
-// receiving_uploads → finalizing_workspace → running_setup →
-// starting_session → attached) so the authoritative state machine
-// (line 305) reflects each phase, not just claimed.
-func TestBindWritesSetupChainPhases_spec_6_2(t *testing.T) {
+// TestBindProjectsClaimedThroughSetupChain_spec_6_2 asserts Bind runs the
+// §4.7 setup chain without projecting any fine session-lifecycle phase onto
+// the CRD: the pod is set to the coarse `claimed` phase once, on the
+// idle → claimed acquisition edge, and stays there through workspace
+// materialization, setup, credential assignment, and runtime start. The fine
+// session states (receiving_uploads .. running) live on the Postgres session
+// row, not status.phase (§6.2 lines 82, 172).
+func TestBindProjectsClaimedThroughSetupChain_spec_6_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -842,24 +845,26 @@ func TestBindWritesSetupChainPhases_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	want := []string{"claimed", "receiving_uploads", "finalizing_workspace", "running_setup", "starting_session", "attached"}
+	want := []string{"claimed"}
 	if !equalStrings(phases, want) {
-		t.Errorf("setup-chain phase sequence = %v, want %v", phases, want)
+		t.Errorf("occupancy phase sequence = %v, want %v (no fine phases projected)", phases, want)
 	}
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Attached) {
-		t.Errorf("final sandbox phase = %q, want attached", sb.Status.Phase)
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Errorf("final sandbox phase = %q, want claimed", sb.Status.Phase)
 	}
 }
 
-// TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2 asserts Release records
-// the session's terminal disposition on the Sandbox (§6.2 lines 105-117,
-// attached → completed) before draining the exclusive pod (→ draining), so
-// the state machine reflects how the session ended.
-func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
+// TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2 asserts Release drains
+// the exclusive pod (coarse claimed → draining) when its session settles, and
+// records the session's terminal disposition as a Terminated condition. The
+// disposition is a session-model state on the Postgres session row, not a
+// coarse status.phase value (§6.2 lines 82, 172), so it is not written to
+// status.phase; it is surfaced on the Sandbox as a condition. F-6.2.12.
+func TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -874,14 +879,14 @@ func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	phases = phases[:0] // drop the setup-chain phases; assert the release sequence
+	phases = phases[:0] // drop the acquisition phase; assert the release sequence
 	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
-	want := []string{"completed", "draining"}
+	want := []string{"draining"}
 	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v", phases, want)
+		t.Errorf("release phase sequence = %v, want %v (no terminal phase projected)", phases, want)
 	}
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
@@ -891,9 +896,8 @@ func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
 		t.Errorf("final sandbox phase = %q, want draining", sb.Status.Phase)
 	}
 	// spec: §6.2 line 305 / §4.6.1 — the disposition is recorded as a
-	// Terminated condition (with reason Completed) before the drain, and
-	// survives the drain because it is owned by a distinct field manager.
-	// F-6.2.12.
+	// Terminated condition (with reason Completed), owned by a distinct field
+	// manager so it survives the drain's status.phase write. F-6.2.12.
 	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
 		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
 	} else if cond.Reason != "Completed" {
@@ -901,11 +905,10 @@ func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
 	}
 }
 
-// TestReleaseExpiredSkipsTerminalPhase_spec_6_2 asserts a disposition with no
-// §6.2 edge from the current phase (attached → expired, which the state
-// machine does not model) is skipped gracefully: Release drains the pod
-// without recording the terminal phase, so reclamation is never blocked.
-func TestReleaseExpiredSkipsTerminalPhase_spec_6_2(t *testing.T) {
+// TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2 asserts an expired
+// session's Release drains the pod (coarse claimed → draining) and records the
+// Expired terminal condition, projecting no fine terminal phase onto the CRD.
+func TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -927,7 +930,16 @@ func TestReleaseExpiredSkipsTerminalPhase_spec_6_2(t *testing.T) {
 
 	want := []string{"draining"}
 	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v (expired has no edge from attached)", phases, want)
+		t.Errorf("release phase sequence = %v, want %v (no terminal phase projected)", phases, want)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
+		t.Errorf("missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
+	} else if cond.Reason != "Expired" {
+		t.Errorf("condition reason = %q, want Expired", cond.Reason)
 	}
 }
 
@@ -1269,16 +1281,16 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 		t.Errorf("SandboxClaim spec = %+v, want a binding of acme to sbx-fb", claim.Spec)
 	}
 
-	// The fallback flipped the Sandbox idle → claimed, then the full Bind
-	// advanced it through the §6.2 setup chain to attached (the fallback
-	// claim feeds the same Bind path as a normal claim).
+	// The fallback flipped the Sandbox idle → claimed; the full Bind ran the
+	// §4.7 setup chain without projecting any fine session phase, so the pod
+	// stays in the coarse `claimed` phase (§6.2 lines 82, 172).
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: testNS, Name: "sbx-fb"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached after the fallback claim + Bind", sb.Status.Phase)
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed after the fallback claim + Bind", sb.Status.Phase)
 	}
 }
 

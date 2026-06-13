@@ -27,10 +27,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// spec: §6.2 line 214 — `running → suspended` on interrupt_request +
-// interrupt_acknowledged must also advance the Sandbox.status.phase
-// from `attached` to `suspended` so the operator-visible phase mirrors
-// the session row. F-6.2.13.
+// spec: §6.2 lines 82, 172, 214 — `running → suspended` on
+// interrupt_request + interrupt_acknowledged is a session-model state on the
+// Postgres session row, not a coarse Sandbox.status.phase value. The pod
+// stays in the coarse `claimed` phase; the gateway records a Suspended
+// condition so the operator-visible history mirrors the interrupt. F-6.2.13.
 
 func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status) (*stubAdapterServer, *adapterclient.Client) {
 	t.Helper()
@@ -49,7 +50,7 @@ func TestInterruptAdvancesSandboxToSuspended_spec_6_2_214(t *testing.T) {
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Attached), PodIP: "10.0.0.1"},
+		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.1"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED)
@@ -81,8 +82,10 @@ func TestInterruptAdvancesSandboxToSuspended_spec_6_2_214(t *testing.T) {
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-att"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Suspended) {
-		t.Errorf("F-6.2.13: Sandbox.status.phase = %q, want suspended", sb.Status.Phase)
+	// spec: §6.2 lines 82, 172 — suspended is a session-model state; the pod
+	// stays in the coarse `claimed` phase.
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Errorf("F-6.2.13: Sandbox.status.phase = %q, want claimed (suspended is a session-model state)", sb.Status.Phase)
 	}
 	// spec: §6.2 line 305 / §4.6.1 — the acknowledged interrupt records a
 	// Suspended condition with the InterruptAcknowledged reason. F-6.2.12.
@@ -105,7 +108,7 @@ func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Attached), PodIP: "10.0.0.2"},
+		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.2"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT)
@@ -129,8 +132,9 @@ func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-to"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Suspended) {
-		t.Errorf("F-6.2.13 timeout path: Sandbox.status.phase = %q, want suspended", sb.Status.Phase)
+	// spec: §6.2 lines 82, 172 — the pod stays in the coarse `claimed` phase.
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Errorf("F-6.2.13 timeout path: Sandbox.status.phase = %q, want claimed", sb.Status.Phase)
 	}
 	// spec: §7.2 line 169 / §4.6.1 — the forced suspend records the
 	// InterruptTimeout reason so the history distinguishes it. F-6.2.12.
@@ -141,9 +145,10 @@ func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
 	}
 }
 
-// spec: §4.7 STATUS_BUSY — the row stays running; the Sandbox phase
-// must therefore stay attached (no spurious suspend write).
-func TestInterruptBusyLeavesSandboxAttached_spec_6_2_214(t *testing.T) {
+// spec: §4.7 STATUS_BUSY — the row stays running; the Sandbox must
+// therefore stay in the coarse `claimed` phase with no Suspended condition
+// written (no spurious suspend).
+func TestInterruptBusyLeavesSandboxClaimed_spec_6_2_214(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -153,7 +158,7 @@ func TestInterruptBusyLeavesSandboxAttached_spec_6_2_214(t *testing.T) {
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Attached), PodIP: "10.0.0.3"},
+		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.3"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_BUSY)
@@ -177,8 +182,12 @@ func TestInterruptBusyLeavesSandboxAttached_spec_6_2_214(t *testing.T) {
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-bz"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Attached) {
-		t.Errorf("BUSY must not flip Sandbox.status.phase; got %q, want attached", sb.Status.Phase)
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Errorf("BUSY must not flip Sandbox.status.phase; got %q, want claimed", sb.Status.Phase)
+	}
+	// BUSY does not suspend the session, so no Suspended condition is recorded.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond != nil {
+		t.Errorf("BUSY must not record a Suspended condition; got %+v", cond)
 	}
 }
 
@@ -208,12 +217,13 @@ func TestInterruptSuspendNoBindingSafe_spec_6_2_214(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 214 — the binder's Suspend method must be idempotent
-// when the Sandbox is already in `suspended` so a retry never errors.
+// spec: §6.2 line 214 — the binder's Suspend method is idempotent: a
+// retry re-applies the Suspended condition in place (status.conditions is a
+// listType=map keyed by type) and never errors.
 func TestBinderSuspendIsIdempotent_spec_6_2_214(t *testing.T) {
 	cluster := podBindClient(t, &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-id", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Suspended), PodIP: "10.0.0.4"},
+		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.4"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 
@@ -224,25 +234,28 @@ func TestBinderSuspendIsIdempotent_spec_6_2_214(t *testing.T) {
 	}
 }
 
-// spec: §6.2 — Suspend must NOT advance a Sandbox whose phase has no
-// legal edge to suspended (the row is the source of truth; the Sandbox
-// is the best-effort projection). The current state must be preserved.
-func TestBinderSuspendInvalidEdgeIsNoOp_spec_6_2_214(t *testing.T) {
+// spec: §6.2 lines 82, 172 — Suspend never writes Sandbox.status.phase
+// (suspended is a session-model state, not a coarse occupancy value); the
+// pod's coarse phase is preserved while the Suspended condition is recorded.
+func TestBinderSuspendPreservesCoarsePhase_spec_6_2_214(t *testing.T) {
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bad", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Idle), PodIP: "10.0.0.5"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-keep", Namespace: podTestNS},
+		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.5"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
 
-	if err := binder.Suspend(context.Background(), "sbx-bad", ""); err != nil {
-		t.Errorf("Suspend on invalid edge must no-op, got error: %v", err)
+	if err := binder.Suspend(context.Background(), "sbx-keep", ""); err != nil {
+		t.Errorf("Suspend: %v", err)
 	}
 	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-bad"}, &sb); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-keep"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Idle) {
-		t.Errorf("phase = %q, want idle (unchanged)", sb.Status.Phase)
+	if sb.Status.Phase != string(state.Claimed) {
+		t.Errorf("phase = %q, want claimed (unchanged; suspended is session-model)", sb.Status.Phase)
+	}
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
+		t.Errorf("missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
 	}
 }
 
