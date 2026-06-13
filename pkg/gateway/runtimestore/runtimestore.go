@@ -41,8 +41,8 @@ type Runtime struct {
 	// references; the admin handler enforces the digest check.
 	Image string
 
-	// ExecutionMode is the §5.2 mode: `session`, `task`, or
-	// `concurrent`.
+	// ExecutionMode is the §5.2 mode: `session` or `service`. Empty
+	// defaults to session.
 	ExecutionMode ExecutionMode
 
 	// IsolationProfile is the §5.3 profile this runtime defaults to.
