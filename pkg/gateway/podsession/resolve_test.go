@@ -40,10 +40,115 @@ func serviceTemplate(name, runtimeRef, isolation string, maxConcurrent int32) *l
 	}
 }
 
+// fakePolicyReader is a podsession.PoolPolicyReader test double keyed by
+// pool name, so a test can assert ResolvePool folds the gateway-enforced
+// §5.2 sessionPolicy mirror into the PoolMatch.
+type fakePolicyReader struct {
+	mirrors map[string]podsession.PoolPolicyMirror
+	err     error
+}
+
+func (f fakePolicyReader) PoolPolicy(_ context.Context, name string) (podsession.PoolPolicyMirror, bool, error) {
+	if f.err != nil {
+		return podsession.PoolPolicyMirror{}, false, f.err
+	}
+	m, ok := f.mirrors[name]
+	return m, ok, nil
+}
+
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset)
+// TestResolvePoolFoldsPolicyMirror covers the §5.2 re-source: the
+// gateway-enforced sessionPolicy fields (maxConcurrentSessions,
+// allowCrossTenantReuse, the concurrent-workspace pod-uptime cap) live on
+// the poolstore mirror, not the CRD pair, so ResolvePool reads them
+// through the PoolPolicyReader keyed by the resolved pool name.
+func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
+	tmpl := sandboxTemplate("conc-tmpl", "conc-runtime", "microvm")
+	c := k8sClient(t, warmPool("conc-pool", "conc-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"conc-pool": {
+			MaxConcurrentSessions: 4,
+			AllowCrossTenantReuse: true,
+			MaxPodUptimeSeconds:   86400,
+		},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "conc-runtime", "microvm")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.MaxConcurrentSessions != 4 {
+		t.Errorf("MaxConcurrentSessions = %d, want 4 (from the mirror)", got.MaxConcurrentSessions)
+	}
+	if !got.AllowCrossTenantReuse {
+		t.Error("AllowCrossTenantReuse = false, want true (from the mirror)")
+	}
+	if got.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("MaxPodUptimeSeconds = %d, want 86400 (from the mirror)", got.MaxPodUptimeSeconds)
+	}
+}
+
+// spec: §5.2 (service mode, gateway-enforced routing capacity)
+// TestResolvePoolMirrorOverridesServiceMaxConcurrent covers the
+// service-mode capacity re-source: the poolstore mirror is authoritative
+// for the per-pod request capacity, so a non-zero mirror value overrides
+// the CRD-derived MaxConcurrent.
+func TestResolvePoolMirrorOverridesServiceMaxConcurrent(t *testing.T) {
+	c := k8sClient(
+		t,
+		warmPool("svc-pool", "svc-tmpl"),
+		serviceTemplate("svc-tmpl", "load-svc-runtime", "sandboxed", 8),
+	)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"svc-pool": {MaxConcurrent: 16},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "load-svc-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.MaxConcurrent != 16 {
+		t.Errorf("MaxConcurrent = %d, want 16 (the mirror is authoritative)", got.MaxConcurrent)
+	}
+}
+
+// spec: §5.2 (gateway-enforced subset, fail-closed read)
+// TestResolvePoolPropagatesPolicyError covers the error path: a mirror
+// read failure surfaces as a ResolvePool error rather than silently
+// falling back to always-zero dispatch fields.
+func TestResolvePoolPropagatesPolicyError(t *testing.T) {
+	tmpl := sandboxTemplate("err-tmpl", "err-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("err-pool", "err-tmpl"), tmpl)
+	policy := fakePolicyReader{err: errors.New("mirror down")}
+
+	_, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "err-runtime", "sandboxed")
+	if err == nil {
+		t.Fatal("ResolvePool: want a propagated error when the policy mirror read fails")
+	}
+}
+
+// spec: §5.2 (gateway-enforced subset, missing mirror row)
+// TestResolvePoolKeepsCRDDefaultsWhenMirrorAbsent covers the
+// Postgres-only / CRD-only posture: a pool with no mirror row leaves the
+// dispatch fields at their CRD-derived defaults instead of erroring.
+func TestResolvePoolKeepsCRDDefaultsWhenMirrorAbsent(t *testing.T) {
+	tmpl := sandboxTemplate("nomirror-tmpl", "nomirror-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("nomirror-pool", "nomirror-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "nomirror-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.MaxConcurrentSessions != 0 || got.AllowCrossTenantReuse || got.MaxPodUptimeSeconds != 0 {
+		t.Errorf("dispatch fields = %+v, want zero when no mirror row exists", got)
+	}
+}
+
 // TestResolvePoolReturnsServiceDispatchFields covers the gateway
 // dispatch path: ResolvePool surfaces ExecutionMode and MaxConcurrent so
 // the start path routes a service-mode runtime through its claimless,
-// request-routed path. The concurrency-style and pod-uptime dispatch
+// request-routed path. The maxConcurrentSessions and pod-uptime dispatch
 // fields now reach the gateway through the poolstore sessionPolicy
 // mirror; the CRD carries only the execution mode and per-pod slot bound.
 func TestResolvePoolReturnsServiceDispatchFields(t *testing.T) {
@@ -52,7 +157,7 @@ func TestResolvePoolReturnsServiceDispatchFields(t *testing.T) {
 		warmPool("svc-pool", "svc-tmpl"),
 		serviceTemplate("svc-tmpl", "load-svc-runtime", "sandboxed", 8),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "load-svc-runtime", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "load-svc-runtime", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -77,15 +182,15 @@ func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 		warmPool("session-pool", "session-tmpl"),
 		sandboxTemplate("session-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
 	if got.ExecutionMode != "" {
 		t.Errorf("executionMode = %q, want empty for the default session mode", got.ExecutionMode)
 	}
-	if got.ConcurrencyStyle != "" {
-		t.Errorf("concurrencyStyle = %q, want empty", got.ConcurrencyStyle)
+	if got.MaxConcurrentSessions != 0 {
+		t.Errorf("maxConcurrentSessions = %d, want 0 with no policy mirror", got.MaxConcurrentSessions)
 	}
 	if got.MaxConcurrent != 0 {
 		t.Errorf("maxConcurrent = %d, want 0", got.MaxConcurrent)
@@ -110,7 +215,7 @@ func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
 	}
 	c := k8sClient(t, warmPool("recycle-pool", "recycle-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "recycle-runtime", "microvm")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "recycle-runtime", "microvm")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -126,7 +231,7 @@ func TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle(t *testing.T) {
 	tmpl := sandboxTemplate("plain-tmpl", "plain-runtime", "sandboxed")
 	c := k8sClient(t, warmPool("plain-pool", "plain-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "plain-runtime", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "plain-runtime", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -141,7 +246,7 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -156,7 +261,7 @@ func TestResolvePoolNoMatch(t *testing.T) {
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
-	_, err := podsession.ResolvePool(context.Background(), c, testNS, "other-runtime", "")
+	_, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "other-runtime", "")
 	if !errors.Is(err, podsession.ErrNoMatchingPool) {
 		t.Errorf("error = %v, want ErrNoMatchingPool", err)
 	}
@@ -170,7 +275,7 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 		warmPool("claude-kata", "tmpl-kata"),
 		sandboxTemplate("tmpl-kata", "claude-code", "microvm"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "microvm")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "microvm")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -189,7 +294,7 @@ func TestResolvePoolAmbiguous(t *testing.T) {
 		warmPool("pool-b", "tmpl-b"),
 		sandboxTemplate("tmpl-b", "claude-code", "sandboxed"),
 	)
-	_, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	_, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed")
 	if !errors.Is(err, podsession.ErrAmbiguousPool) {
 		t.Errorf("error = %v, want ErrAmbiguousPool", err)
 	}
@@ -204,7 +309,7 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -255,13 +360,14 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 // session creation against a bootstrapping pool with the 503 Pool Not
 // Ready response instead of burning a claim attempt.
 func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("warming-pool", "warming-tmpl"),
 		sandboxTemplate("warming-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "warming-tmpl", "warming-pool", 2, 0, true)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -276,13 +382,14 @@ func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
 // spec: §5.2 line 600 — a pool with idle pods is not warming; PodsWarming
 // clamps at zero.
 func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("ready-pool", "ready-tmpl"),
 		sandboxTemplate("ready-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "ready-tmpl", "ready-pool", 3, 3, false)
 
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -298,7 +405,8 @@ func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 // poolCondition and idlePodCount. One client carries a warming pool, a
 // ready pool, and an absent pool so the three cases share one envtest.
 func TestPoolStatusLookup(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("warming-p", "warming-t"),
 		sandboxTemplate("warming-t", "rt-warming", "sandboxed"),
 		warmPool("ready-p", "ready-t"),

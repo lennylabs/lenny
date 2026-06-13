@@ -3,12 +3,111 @@
 package sessionserver
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset)
+// poolPolicyReader returns nil when no pool store is wired, so
+// ResolvePool keeps its CRD-derived dispatch defaults under the
+// Postgres-only / CRD-only posture.
+func TestPoolPolicyReader_NilWithoutStore(t *testing.T) {
+	s := &Server{}
+	if r := s.poolPolicyReader(); r != nil {
+		t.Errorf("poolPolicyReader without a pool store = %v, want nil", r)
+	}
+}
+
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset)
+// poolPolicyMirror maps the §5.2 poolstore sessionPolicy mirror onto the
+// PoolPolicyMirror ResolvePool folds in: maxConcurrentSessions, the
+// service-mode maxConcurrent, recycle.allowCrossTenantReuse, and
+// recycle.maxPodUptimeSeconds. The three pools exercise the
+// concurrent-session, cross-tenant sequential-reuse, and service-mode
+// sourcing in one store.
+func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
+	store := poolstore.NewMemory()
+	ctx := context.Background()
+	// Concurrent-session pool: maxConcurrentSessions > 1 requires the
+	// process-level acknowledgment and forbids cross-tenant reuse (§5.2).
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:          "conc-pool",
+		RuntimeRef:    "conc-runtime",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+		},
+	}); err != nil {
+		t.Fatalf("create concurrent pool: %v", err)
+	}
+	// Sequential cross-tenant reuse pool: microvm-gated, single session
+	// per pod, with the recycle acknowledgments and a uptime cap (§5.2).
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:             "reuse-pool",
+		RuntimeRef:       "reuse-runtime",
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		IsolationProfile: isolation.ProfileMicrovm,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions: 1,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          50,
+				AllowCrossTenantReuse:      true,
+				MaxPodUptimeSeconds:        86400,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create reuse pool: %v", err)
+	}
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:          "svc-pool",
+		RuntimeRef:    "svc-runtime",
+		ExecutionMode: runtimestore.ExecutionModeService,
+		MaxConcurrent: 16,
+	}); err != nil {
+		t.Fatalf("create service pool: %v", err)
+	}
+
+	m := poolPolicyMirror{pools: store}
+
+	got, found, err := m.PoolPolicy(ctx, "conc-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(conc-pool): found=%v err=%v", found, err)
+	}
+	if got.MaxConcurrentSessions != 4 {
+		t.Errorf("conc-pool MaxConcurrentSessions = %d, want 4", got.MaxConcurrentSessions)
+	}
+
+	got, found, err = m.PoolPolicy(ctx, "reuse-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(reuse-pool): found=%v err=%v", found, err)
+	}
+	if !got.AllowCrossTenantReuse || got.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("reuse-pool mirror = %+v, want allowCrossTenantReuse / 86400", got)
+	}
+
+	got, found, err = m.PoolPolicy(ctx, "svc-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(svc-pool): found=%v err=%v", found, err)
+	}
+	if got.MaxConcurrent != 16 {
+		t.Errorf("svc-pool MaxConcurrent = %d, want 16", got.MaxConcurrent)
+	}
+
+	// A missing pool reports found=false with no error so ResolvePool
+	// keeps the CRD-derived defaults rather than failing the resolve.
+	if _, found, err = m.PoolPolicy(ctx, "absent"); err != nil || found {
+		t.Errorf("PoolPolicy(absent): found=%v err=%v, want found=false / no error", found, err)
+	}
+}
 
 // spec: §5.2 / §7.1 lines 69-73 — sessionIsolationLevel maps the resolved
 // §5.2 pool's execution mode and scrub policy to the client-visible fields.

@@ -1208,7 +1208,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return nil, err
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return nil, err
@@ -1231,8 +1231,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			SessionID:               row.ID,
 			TenantID:                row.TenantID,
 			Runtime:                 row.RuntimeRef,
-			Style:                   podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
-			MaxConcurrent:           match.MaxConcurrent,
+			MaxConcurrentSessions:   match.MaxConcurrentSessions,
 			MaxPodUptimeSeconds:     match.MaxPodUptimeSeconds,
 			Plan:                    podsession.WorkspacePlanToProto(plan),
 			ExperimentContext:       experimentContextToProto(row.ExperimentContext),
@@ -1354,7 +1353,7 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		// Account the failure toward the pod's §5.2 rolling fail/leak window
 		// and retire the whole pod when it crosses the unhealthy threshold.
 		health.RecordFailure(sbe.Pod)
-		if health.Unhealthy(sbe.Pod, req.MaxConcurrent) {
+		if health.Unhealthy(sbe.Pod, req.MaxConcurrentSessions) {
 			if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
 				log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
 			}
@@ -2106,7 +2105,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		}
 		return "", nil
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return "", err

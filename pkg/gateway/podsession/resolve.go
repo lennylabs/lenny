@@ -49,29 +49,31 @@ func (e *PoolWarmingError) Error() string {
 }
 
 // PoolMatch is a resolved SandboxWarmPool with the dispatch-relevant
-// SandboxTemplate fields copied alongside it, so the start path can
-// decide between session-claim and slot-claim without re-reading the
-// template.
+// fields copied alongside it, so the start path can decide between the
+// session-claim and slot-claim paths without re-reading the template.
+//
+// The CRD pair carries the execution mode, the §5.3 isolation profile,
+// the service-mode per-pod request capacity, and the recycle scrub
+// profile. The remaining §5.2 sessionPolicy dispatch fields
+// (maxConcurrentSessions, recycle.allowCrossTenantReuse, and the
+// concurrent-workspace pod-uptime cap) are gateway-enforced and live on
+// the poolstore sessionPolicy mirror; ResolvePool folds them in from the
+// PoolPolicyReader when one is wired, keyed by the resolved pool name.
 type PoolMatch struct {
 	// Pool is the resolved SandboxWarmPool name.
 	Pool string
 	// ExecutionMode is the §5.2 mode declared on the template: `session`
 	// or `service`. Empty is treated as `session`.
 	ExecutionMode string
-	// ConcurrencyStyle is retained for the slot-claim path's per-slot
-	// workspace selection. The §5.2 mode collapse drops the
-	// concurrencyStyle CRD field, so it is zero from the CRD path; the
-	// gateway-claim-path step folds the gateway-side value in.
-	ConcurrencyStyle string
-	// MaxConcurrent is the §5.2 service-mode per-pod request capacity,
-	// copied from the SandboxTemplate. Zero on session-mode pools.
+	// MaxConcurrent is the §5.2 service-mode per-pod request capacity. For
+	// a service-mode pool it is sourced from the poolstore mirror (the
+	// gateway-enforced routing capacity); zero on session-mode pools.
 	MaxConcurrent int32
 	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
 	// bound: the per-pod simultaneous-session count for session mode. A
-	// value above 1 routes the bind through the slot-claim path. It is zero
-	// from the CRD path (the CRD carries only the gateway-enforced scrub
-	// subset); the gateway-claim-path step folds the gateway-side
-	// sessionPolicy mirror in.
+	// value above 1 routes the bind through the slot-claim path. It is
+	// sourced from the poolstore sessionPolicy mirror; the CRD pair does
+	// not carry it. Zero (or 1) keeps the session-claim path.
 	MaxConcurrentSessions int32
 	// IsolationProfile is the §5.3 profile the pool's pods run under,
 	// copied from the SandboxTemplate so the §7.1 sessionIsolationLevel
@@ -84,8 +86,9 @@ type PoolMatch struct {
 	Recycle bool
 	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
 	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
-	// from sessionPolicy.recycle.scrubProfile; AllowCrossTenantReuse is zero
-	// from the CRD path (the gateway-claim-path step folds it in).
+	// from sessionPolicy.recycle.scrubProfile on the CRD pair;
+	// AllowCrossTenantReuse is gateway-enforced and folded in from the
+	// poolstore sessionPolicy mirror.
 	AllowCrossTenantReuse bool
 	MicrovmScrubMode      string
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
@@ -111,6 +114,36 @@ type PoolMatch struct {
 	MaxPodUptimeSeconds int64
 }
 
+// PoolPolicyMirror is the gateway-enforced subset of a pool's §5.2
+// sessionPolicy that does not live on the CRD pair: the per-pod
+// simultaneous-session bound, the cross-tenant-reuse gate, the
+// service-mode per-pod request capacity, and the concurrent-workspace
+// pod-uptime retirement cap. ResolvePool folds it into the PoolMatch so
+// the start path's dispatch and the §7.1 scrubPolicy derivation read the
+// gateway-side values rather than always-zero CRD fields.
+type PoolPolicyMirror struct {
+	// MaxConcurrentSessions is sessionPolicy.maxConcurrentSessions; > 1
+	// routes the bind through the slot-claim path.
+	MaxConcurrentSessions int32
+	// MaxConcurrent is the service-mode per-pod request capacity.
+	MaxConcurrent int32
+	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
+	AllowCrossTenantReuse bool
+	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
+	// §6.2 concurrent-workspace pod-uptime retirement cap.
+	MaxPodUptimeSeconds int64
+}
+
+// PoolPolicyReader reads a pool's gateway-enforced §5.2 sessionPolicy
+// mirror by pool name. It is defined at the consumer (ResolvePool) so the
+// poolstore is injected rather than imported here, keeping the CRD
+// resolver free of a storage dependency. found is false when the pool has
+// no mirror row (the Postgres-only posture or a CRD-only pool), in which
+// case the dispatch fields keep their CRD-derived defaults.
+type PoolPolicyReader interface {
+	PoolPolicy(ctx context.Context, name string) (mirror PoolPolicyMirror, found bool, err error)
+}
+
 // poolWarming derives the §5.2 PoolWarmingUp signal and the warming-pod
 // count for a resolved (template, pool) pair. PodsWarming is the warm
 // count minus the ready count, clamped at zero.
@@ -127,12 +160,19 @@ func poolWarming(tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool) (
 // the given runtime — and, when isolationProfile is non-empty, the
 // given §5.3 isolation profile. The gateway calls it to choose the
 // pool a session's pod is claimed from, and to read the dispatch
-// fields (executionMode, concurrencyStyle, maxConcurrent) that route
-// the bind between session-claim and slot-claim. A pool whose
-// templateRef dangles is skipped rather than treated as an error.
-// ResolvePool returns ErrNoMatchingPool when none match and
+// fields (executionMode, maxConcurrentSessions, maxConcurrent) that
+// route the bind between the session-claim and slot-claim paths. A
+// pool whose templateRef dangles is skipped rather than treated as an
+// error. ResolvePool returns ErrNoMatchingPool when none match and
 // ErrAmbiguousPool when more than one does.
-func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRef, isolationProfile string) (PoolMatch, error) {
+//
+// policy may be nil. When wired, ResolvePool folds the matched pool's
+// gateway-enforced §5.2 sessionPolicy mirror (maxConcurrentSessions,
+// the service-mode maxConcurrent, allowCrossTenantReuse, and the
+// concurrent-workspace pod-uptime cap) into the PoolMatch, keyed by the
+// resolved pool name. spec: §5.2 (sessionPolicy block, gateway-enforced
+// subset).
+func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyReader, namespace, runtimeRef, isolationProfile string) (PoolMatch, error) {
 	var pools lennyv1.SandboxWarmPoolList
 	if err := reader.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return PoolMatch{}, fmt.Errorf("podsession: list warm pools: %w", err)
@@ -166,11 +206,10 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		}
 		// The CRD carries the cross-tenant microvm scrub control on the
 		// sessionPolicy.recycle block (§4.6.3 ownership); the scrub profile
-		// selects the §7.1 scrubPolicy variant. The remaining dispatch
-		// fields (allowCrossTenantReuse, concurrencyStyle, the
-		// concurrent-workspace pod-uptime cap) live on the gateway-side
-		// sessionPolicy mirror in the poolstore, which the gateway-claim-path
-		// step folds into ResolvePool; they default to zero here.
+		// selects the §7.1 scrubPolicy variant. The remaining gateway-enforced
+		// dispatch fields (maxConcurrentSessions, allowCrossTenantReuse, the
+		// concurrent-workspace pod-uptime cap) live on the poolstore
+		// sessionPolicy mirror and are folded in from policy below.
 		if sp := tmpl.Spec.SessionPolicy; sp != nil && sp.Recycle != nil {
 			m.Recycle = true
 			m.MicrovmScrubMode = sp.Recycle.ScrubProfile
@@ -188,10 +227,40 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 	case 0:
 		return PoolMatch{}, ErrNoMatchingPool
 	case 1:
-		return matches[0], nil
+		m := matches[0]
+		if err := foldPoolPolicy(ctx, policy, &m); err != nil {
+			return PoolMatch{}, err
+		}
+		return m, nil
 	default:
 		return PoolMatch{}, ErrAmbiguousPool
 	}
+}
+
+// foldPoolPolicy folds the resolved pool's gateway-enforced §5.2
+// sessionPolicy mirror into m. It is a no-op when no reader is wired or
+// the pool has no mirror row, leaving the CRD-derived dispatch fields
+// unchanged. spec: §5.2 (sessionPolicy block, gateway-enforced subset).
+func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) error {
+	if policy == nil {
+		return nil
+	}
+	mirror, found, err := policy.PoolPolicy(ctx, m.Pool)
+	if err != nil {
+		return fmt.Errorf("podsession: read pool policy mirror for %s: %w", m.Pool, err)
+	}
+	if !found {
+		return nil
+	}
+	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
+	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
+	m.MaxPodUptimeSeconds = mirror.MaxPodUptimeSeconds
+	// The service-mode per-pod request capacity is gateway-enforced; the
+	// mirror is authoritative. A session-mode pool leaves it zero.
+	if mirror.MaxConcurrent > 0 {
+		m.MaxConcurrent = mirror.MaxConcurrent
+	}
+	return nil
 }
 
 // PoolStatusLookup reads the live §5.2 bootstrap status of a pool from

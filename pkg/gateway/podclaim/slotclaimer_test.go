@@ -149,10 +149,10 @@ func slotClaimerFor(t *testing.T, objs ...client.Object) (*podclaim.SlotClaimer,
 	return &podclaim.SlotClaimer{Client: c, Namespace: testNS}, c
 }
 
-func slotReq(session, tenant string, style podclaim.ConcurrencyStyle, max int32) podclaim.SlotRequest {
+func slotReq(session, tenant string, maxConcurrentSessions int32) podclaim.SlotRequest {
 	return podclaim.SlotRequest{
 		Pool: testPool, SessionID: session, TenantID: tenant,
-		Style: style, MaxConcurrent: max,
+		MaxConcurrentSessions: maxConcurrentSessions,
 	}
 }
 
@@ -165,7 +165,7 @@ func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8))
+		slotReq("sess-1", "acme", 8))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 	seedSlotClaims(t, c, "sbx-busy", "acme", 1)
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-2", "acme", podclaim.StyleWorkspace, 3))
+		slotReq("sess-2", "acme", 3))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 	seedSlotClaims(t, c, "sbx-full", "acme", 2)
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-3", "acme", podclaim.StyleWorkspace, 2))
+		slotReq("sess-3", "acme", 2))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
 	seedSlotClaims(t, c, "sbx-a", "acme", 4)
 	seedSlotClaims(t, c, "sbx-b", "acme", 4)
 	_, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-x", "acme", podclaim.StyleWorkspace, 4))
+		slotReq("sess-x", "acme", 4))
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
 		t.Errorf("error = %v, want ErrNoConcurrentSlot when all pods are at the bound", err)
 	}
@@ -303,7 +303,7 @@ func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
 
 // spec: 5.2
 // diagnosis: ClaimSlot placed a slot for one tenant on a pod pinned to
-// another. §5.2 tenant pinning: a concurrent-mode pod is bound to its
+// another. §5.2 tenant pinning: a concurrent-session pod is bound to its
 // first tenant for its lifetime; a slot for a different tenant must
 // never join it. With no fresh pod available the claim reports the
 // tenant-mismatch distinctly.
@@ -315,7 +315,7 @@ func TestClaimSlotRejectsCrossTenantSlotSharing(t *testing.T) {
 	)
 	seedSlotClaims(t, c, "sbx-globex", "globex", 1)
 	_, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-acme", "acme", podclaim.StyleWorkspace, 8))
+		slotReq("sess-acme", "acme", 8))
 	if !errors.Is(err, podclaim.ErrTenantMismatch) {
 		t.Errorf("error = %v, want ErrTenantMismatch; a slot must not join another tenant's pod", err)
 	}
@@ -339,7 +339,7 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 	)
 	seedSlotClaims(t, c, "sbx-globex", "globex", 1)
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-acme", "acme", podclaim.StyleWorkspace, 8))
+		slotReq("sess-acme", "acme", 8))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
@@ -352,39 +352,14 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 }
 
 // spec: 5.2
-// diagnosis: stateless-concurrent slot assignment did not behave like
-// workspace-concurrent at the claim layer. §5.2: both concurrency
-// styles share the per-pod slot bound and the tenant-pinning rule; only
-// the workspace materialization differs (handled by the binder).
-func TestClaimSlotStatelessStyleHonorsTheBound(t *testing.T) {
-	claimer, c := slotClaimerFor(
-		t,
-		concurrentSandbox("sbx-1", "claimed", "acme"),
-	)
-	seedSlotClaims(t, c, "sbx-1", "acme", 1)
-	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-2", "acme", podclaim.StyleStateless, 4))
-	if err != nil {
-		t.Fatalf("ClaimSlot stateless: %v", err)
-	}
-	if res.SandboxName != "sbx-1" || res.ActiveSlots != 2 {
-		t.Errorf("stateless slot = %+v, want a second slot on sbx-1", res)
-	}
-}
-
-// spec: 5.2
-// diagnosis: ClaimSlot accepted an invalid concurrent-mode request.
-// §5.2: a concurrent-mode claim requires a valid concurrency style and
-// maxConcurrent >= 1.
+// diagnosis: ClaimSlot accepted a concurrent-session request with an
+// invalid per-pod bound. §5.2: a concurrent-session claim requires
+// maxConcurrentSessions >= 1.
 func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("s", "acme", "bogus", 4)); err == nil {
-		t.Error("an invalid concurrency style should be rejected")
-	}
-	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("s", "acme", podclaim.StyleWorkspace, 0)); err == nil {
-		t.Error("maxConcurrent=0 should be rejected")
+		slotReq("s", "acme", 0)); err == nil {
+		t.Error("maxConcurrentSessions=0 should be rejected")
 	}
 }
 
@@ -399,7 +374,8 @@ func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 // claimer to fall through to sbx-b. Subsequent applies pass through
 // to the real apiserver.
 func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
-	envClient := newEnvtestClient(t,
+	envClient := newEnvtestClient(
+		t,
 		concurrentSandbox("sbx-a", "idle", ""),
 		concurrentSandbox("sbx-b", "idle", ""),
 	)
@@ -419,7 +395,7 @@ func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-1", "acme", podclaim.StyleWorkspace, 4))
+		slotReq("sess-1", "acme", 4))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
@@ -434,7 +410,7 @@ func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
 // spec: 5.2
 // diagnosis: ReleaseSlot did not decrement a pod's slot count or did
 // not return the pod to idle when its last slot drained. §6.2: a
-// concurrent-mode pod returns to idle only when activeSlots reaches 0;
+// concurrent-session pod returns to idle only when activeSlots reaches 0;
 // while sibling slots remain it stays slot_active.
 func TestReleaseSlotDecrementsAndReturnsToIdleOnLastSlot(t *testing.T) {
 	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
@@ -565,7 +541,7 @@ func TestClaimSlotForcesPhaseFromWPCOwnership(t *testing.T) {
 	seedWPCSandboxStatus(t, c, "sbx-wpc-owned", string(state.Idle), "", "", "10.0.0.7")
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-force", "acme", podclaim.StyleStateless, 4))
+		slotReq("sess-force", "acme", 4))
 	if err != nil {
 		t.Fatalf("ClaimSlot under WPC-owned phase: %v", err)
 	}
@@ -606,7 +582,7 @@ func TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply(t *testing.T) {
 		string(state.Idle), "pod-keep-wpc", "node-keep-wpc", "10.0.0.42")
 
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-keep", "acme", podclaim.StyleStateless, 4)); err != nil {
+		slotReq("sess-keep", "acme", 4)); err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 
@@ -630,7 +606,7 @@ func TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply(t *testing.T) {
 
 // TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle is the
 // release-side regression for the same Go-zero-value clobbering bug.
-// When a concurrent-mode pod returns to idle on its last slot
+// When a concurrent-session pod returns to idle on its last slot
 // release, the gateway's Apply must transition phase back to idle
 // without touching the WPC-owned podName / nodeName / podIP fields.
 // A typed-struct patch would zero them.
@@ -648,7 +624,7 @@ func TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle(t *testing.T) {
 	// Claim a single slot to set up the slot_active state, then
 	// release it: the release path is what transitions back to idle.
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-release", "acme", podclaim.StyleStateless, 4)); err != nil {
+		slotReq("sess-release", "acme", 4)); err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 	if err := claimer.ReleaseSlot(context.Background(), "sbx-release-keep", "sess-release"); err != nil {
@@ -675,11 +651,11 @@ func TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle(t *testing.T) {
 func TestClaimSlotRepeatedSessionCollides(t *testing.T) {
 	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-dup", "acme", podclaim.StyleWorkspace, 8)); err != nil {
+		slotReq("sess-dup", "acme", 8)); err != nil {
 		t.Fatalf("first ClaimSlot: %v", err)
 	}
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-dup", "acme", podclaim.StyleWorkspace, 8)); err == nil {
+		slotReq("sess-dup", "acme", 8)); err == nil {
 		t.Error("a repeated slot claim for the same session should collide at CREATE")
 	}
 }
@@ -692,7 +668,7 @@ func TestClaimSlotRepeatedSessionCollides(t *testing.T) {
 func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
 	claimer, _ := slotClaimerFor(t) // no pods in the pool at all
 	_, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-x", "acme", podclaim.StyleWorkspace, 4))
+		slotReq("sess-x", "acme", 4))
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Errorf("error = %v, want ErrNoIdlePod when the pool holds no pods (§5.2 no_idle_pods)", err)
 	}
@@ -733,7 +709,7 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 		OnSlotConflict: func(pool string) { conflicts = append(conflicts, pool) },
 	}
 
-	_, err := claimer.ClaimSlot(ctx, slotReq("sess-x", "acme", podclaim.StyleWorkspace, 2))
+	_, err := claimer.ClaimSlot(ctx, slotReq("sess-x", "acme", 2))
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
 		t.Errorf("error = %v, want ErrNoConcurrentSlot (pods exist but full)", err)
 	}
@@ -754,7 +730,7 @@ func TestClaimSlotDrainsOverUptimeSlotActivePod_spec_6_2(t *testing.T) {
 	// past creation so its uptime exceeds the 60s cap.
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
-	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 60
 	_, err := claimer.ClaimSlot(context.Background(), req)
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
@@ -779,7 +755,7 @@ func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 		concurrentSandbox("sbx-old", "idle", ""))
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
-	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 60
 	_, err := claimer.ClaimSlot(context.Background(), req)
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
@@ -803,7 +779,7 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 		concurrentSandbox("sbx-fresh", "idle", ""))
 	// Real clock: the pod was created ~now, well under the one-day cap.
 
-	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 86400
 	res, err := claimer.ClaimSlot(context.Background(), req)
 	if err != nil {
@@ -831,7 +807,7 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 	// Even with the clock far in the future, a zero cap means no check.
 	claimer.Now = func() time.Time { return time.Now().Add(1000 * time.Hour) }
 
-	req := slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)
+	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 0
 	res, err := claimer.ClaimSlot(context.Background(), req)
 	if err != nil {

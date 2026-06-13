@@ -77,7 +77,7 @@ func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
 	mustCreate(t, c, agentPod("sbx-1", ""))
 
 	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8)); err != nil {
+		slotReq("sess-1", "acme", 8)); err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
 
 	for i, sess := range []string{"sess-1", "sess-2"} {
 		if _, err := claimer.ClaimSlot(context.Background(),
-			slotReq(sess, "acme", podclaim.StyleWorkspace, 8)); err != nil {
+			slotReq(sess, "acme", 8)); err != nil {
 			t.Fatalf("ClaimSlot #%d: %v", i, err)
 		}
 	}
@@ -132,7 +132,7 @@ func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
 	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-1", "acme", podclaim.StyleWorkspace, 8))
+		slotReq("sess-1", "acme", 8))
 	if err != nil {
 		t.Fatalf("ClaimSlot must succeed when the backing pod is absent: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestClaimSlotBindsKataMicrovmPod_spec_5_3_8(t *testing.T) {
 	mustCreate(t, c, kataPod)
 
 	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-k", "acme", podclaim.StyleWorkspace, 4))
+		slotReq("sess-k", "acme", 4))
 	if err != nil {
 		t.Fatalf("ClaimSlot on a Kata pod: %v", err)
 	}

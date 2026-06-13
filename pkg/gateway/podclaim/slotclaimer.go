@@ -63,7 +63,7 @@ func gatewayStatusPatch(name, namespace, phase string, tenantID string) *unstruc
 }
 
 // LabelTenant is the §5.2 tenant-pinning label. The gateway stamps it
-// on a concurrent-mode (or task-mode) pod at first slot assignment; the
+// on a concurrent-session pod at first slot assignment; the
 // lenny-tenant-label-immutability admission webhook rejects any mutation
 // of it to a different non-empty value, so a pod pinned to one tenant
 // can never be re-pinned to another. It is the Kubernetes-layer half of
@@ -114,28 +114,7 @@ func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tena
 	return err
 }
 
-// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
-type ConcurrencyStyle string
-
-const (
-	// StyleWorkspace is `concurrencyStyle: workspace` — workspace-
-	// concurrent. Each slot gets its own per-slot workspace tree under
-	// /workspace/slots/{slotId}/ and the pod's /workspace/shared/ is
-	// shared read-only across the pod's slots (§6.4).
-	StyleWorkspace ConcurrencyStyle = "workspace"
-
-	// StyleStateless is `concurrencyStyle: stateless` — stateless-
-	// concurrent. No workspace is materialized for a slot; the pod holds
-	// no Lenny-managed per-slot workspace or session state (§5.2).
-	StyleStateless ConcurrencyStyle = "stateless"
-)
-
-// IsValid reports whether s is a known concurrency style.
-func (s ConcurrencyStyle) IsValid() bool {
-	return s == StyleWorkspace || s == StyleStateless
-}
-
-// Concurrent-mode claim sentinels.
+// Concurrent-session claim sentinels.
 var (
 	// ErrNoConcurrentSlot reports that the pool can host no further slot:
 	// every existing pod is at its maxConcurrent bound and no idle warm
@@ -153,8 +132,8 @@ var (
 	ErrTenantMismatch = errors.New("podclaim: candidate pods are pinned to a different tenant")
 )
 
-// SlotRequest identifies the session a concurrent-mode slot is claimed
-// for, the pool to claim from, and the concurrent-mode parameters of
+// SlotRequest identifies the session a concurrent-session slot is claimed
+// for, the pool to claim from, and the concurrent-session parameters of
 // that pool.
 type SlotRequest struct {
 	// Pool is the SandboxWarmPool to claim a slot from.
@@ -166,15 +145,14 @@ type SlotRequest struct {
 	// stable and collision-free for the slot's lifetime.
 	SessionID string
 	// TenantID is the tenant that owns the session. §5.2 tenant pinning
-	// binds a concurrent-mode pod to the first tenant it serves; a slot
+	// binds a concurrent-session pod to the first tenant it serves; a slot
 	// for a different tenant is never placed on that pod.
 	TenantID string
-	// Style is the §5.2 concurrency style of the pool.
-	Style ConcurrencyStyle
-	// MaxConcurrent is the §5.2 per-pod slot bound. A pod hosts at most
-	// this many slots simultaneously; the (MaxConcurrent+1)-th slot
-	// request claims a fresh warm pod instead.
-	MaxConcurrent int32
+	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
+	// per-pod slot bound. A pod hosts at most this many slots
+	// simultaneously; the (MaxConcurrentSessions+1)-th slot request claims
+	// a fresh warm pod instead.
+	MaxConcurrentSessions int32
 	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
 	// pod-uptime retirement cap. Before a slot is placed on a candidate
 	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
@@ -186,7 +164,7 @@ type SlotRequest struct {
 	MaxPodUptimeSeconds int64
 }
 
-// SlotResult reports the slot a concurrent-mode session was placed on.
+// SlotResult reports the slot a concurrent-session session was placed on.
 type SlotResult struct {
 	// SandboxName is the pod the slot was opened on.
 	SandboxName string
@@ -199,13 +177,13 @@ type SlotResult struct {
 	// hosting other slots.
 	FreshPod bool
 	// ActiveSlots is the pod's slot count after this slot was reserved,
-	// including this slot. It never exceeds MaxConcurrent.
+	// including this slot. It never exceeds MaxConcurrentSessions.
 	ActiveSlots int32
 }
 
-// SlotClaimer places concurrent-mode (§5.2) sessions onto warm pods. In
-// `executionMode: concurrent` a pod hosts up to maxConcurrent
-// simultaneous slots rather than being claimed exclusively for one
+// SlotClaimer places concurrent-session (§5.2) sessions onto warm pods.
+// When sessionPolicy.maxConcurrentSessions > 1 a pod hosts up to that
+// many simultaneous slots rather than being claimed exclusively for one
 // session, so SlotClaimer first tries to land the slot on a pod that is
 // already hosting slots (slot_active phase) and only claims a fresh
 // idle pod when every partially-occupied pod is at its bound.
@@ -319,7 +297,7 @@ func (c *SlotClaimer) drainExpiredPod(ctx context.Context, sb *lennyv1.Sandbox) 
 	}
 }
 
-// ClaimSlot reserves a concurrent-mode slot for the request's session.
+// ClaimSlot reserves a concurrent-session slot for the request's session.
 //
 // Placement (§5.2 concurrent-workspace slot assignment):
 //
@@ -351,11 +329,8 @@ func (c *SlotClaimer) drainExpiredPod(ctx context.Context, sb *lennyv1.Sandbox) 
 // lenny-tenant-label-immutability admission webhook is the
 // Kubernetes-layer backstop.
 func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResult, error) {
-	if !req.Style.IsValid() {
-		return nil, fmt.Errorf("podclaim: invalid concurrency style %q", req.Style)
-	}
-	if req.MaxConcurrent < 1 {
-		return nil, fmt.Errorf("podclaim: maxConcurrent must be >= 1, got %d", req.MaxConcurrent)
+	if req.MaxConcurrentSessions < 1 {
+		return nil, fmt.Errorf("podclaim: maxConcurrentSessions must be >= 1, got %d", req.MaxConcurrentSessions)
 	}
 
 	var list lennyv1.SandboxList
@@ -495,7 +470,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	// requires --redis-url.
 	var nextActiveSlots int32
 	if c.Counter != nil {
-		newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
+		newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrentSessions)
 		if rehydrated {
 			// §5.2 line 521: this reservation seeded the pod's slot
 			// counter from Postgres after a Redis restart. Emit the
@@ -522,7 +497,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		if err != nil {
 			return nil, false, err
 		}
-		if int32(current) >= req.MaxConcurrent {
+		if int32(current) >= req.MaxConcurrentSessions {
 			c.recordSlotConflict(req.Pool)
 			return nil, true, nil
 		}
@@ -659,14 +634,14 @@ func (c *SlotClaimer) countPodClaims(ctx context.Context, sandboxName string) (i
 	return n, nil
 }
 
-// ReleaseSlot releases a concurrent-mode slot when its session ends or
+// ReleaseSlot releases a concurrent-session slot when its session ends or
 // fails. It deletes the slot's SandboxClaim and decrements the pod's
 // status.activeSlots; per §6.2 the pod returns to the idle phase when
 // its last slot drains (activeSlots reaches 0) and otherwise stays
 // slot_active. The pod's status.tenantId pin is left in place: §5.2
-// tenant pinning binds a concurrent-mode pod to its tenant for the pod's
+// tenant pinning binds a concurrent-session pod to its tenant for the pod's
 // lifetime, not just while a slot is occupied, so an idle-again
-// concurrent-mode pod keeps its pin and accepts further slots only for
+// concurrent-session pod keeps its pin and accepts further slots only for
 // the same tenant.
 //
 // A status-update conflict is retried against a refreshed Sandbox so a
@@ -731,7 +706,7 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 	}
 }
 
-// createSlotClaim creates the SandboxClaim binding a concurrent-mode
+// createSlotClaim creates the SandboxClaim binding a concurrent-session
 // slot to its pod. The claim name is deterministic per session, so a
 // repeated slot claim for the same session collides at CREATE rather
 // than opening a duplicate slot. The per-pod occupancy claim (§4.6.3)

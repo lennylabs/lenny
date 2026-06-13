@@ -2443,6 +2443,50 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// poolPolicyReader adapts the §5.2 poolstore onto the
+// podsession.PoolPolicyReader the CRD resolver folds the gateway-enforced
+// sessionPolicy mirror through. It returns nil when no pool store is
+// wired, so ResolvePool keeps its CRD-derived dispatch defaults.
+func (s *Server) poolPolicyReader() podsession.PoolPolicyReader {
+	if s.pools == nil {
+		return nil
+	}
+	return poolPolicyMirror{pools: s.pools}
+}
+
+// poolPolicyMirror reads a pool's gateway-enforced §5.2 sessionPolicy
+// fields (maxConcurrentSessions, the service-mode maxConcurrent,
+// recycle.allowCrossTenantReuse, and recycle.maxPodUptimeSeconds) from
+// the poolstore so ResolvePool can fold them into the PoolMatch. The CRD
+// pair does not carry these; the poolstore is the source of truth.
+//
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset).
+type poolPolicyMirror struct {
+	pools poolstore.Store
+}
+
+// PoolPolicy implements podsession.PoolPolicyReader. found is false for a
+// missing or soft-deleted pool, leaving the CRD-derived dispatch fields
+// unchanged.
+func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsession.PoolPolicyMirror, bool, error) {
+	p, err := m.pools.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			return podsession.PoolPolicyMirror{}, false, nil
+		}
+		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
+	}
+	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
+	if sp := p.SessionPolicy; sp != nil {
+		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
+		if r := sp.Recycle; r != nil {
+			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
+			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)
+		}
+	}
+	return mirror, true, nil
+}
+
 // resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
 // session against its assigned pool. spec: §7.1 line 75 — the field is
 // populated from the assigned pool's configuration at session creation
@@ -2457,7 +2501,7 @@ func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, r
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return defaultIsolationLevel(requested)
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace, runtimeRef, string(requested))
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
 	if err != nil {
 		return defaultIsolationLevel(requested)
 	}
