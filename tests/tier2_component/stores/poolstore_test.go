@@ -70,10 +70,9 @@ func TestPoolStoreContract(t *testing.T) {
 	})
 
 	t.Run("concurrent-mode pool round-trips and re-validates", func(t *testing.T) {
-		// §5.2 / §12.6: a workspace-concurrent pool persists the per-pod
-		// slot bound and the process-level-isolation acknowledgment.
-		// concurrency_style is no longer persisted: migration 0167 retired
-		// the column, leaving max_concurrent as the surviving per-pod bound.
+		// §5.2 / Phase 12c: a workspace-concurrent pool persists the
+		// concurrency style, the per-pod slot bound, and the
+		// process-level-isolation acknowledgment.
 		ws := poolstore.Pool{
 			Name:                             poolName(t),
 			RuntimeRef:                       "claude",
@@ -91,7 +90,8 @@ func TestPoolStoreContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		if got.MaxConcurrent != 8 || !got.AcknowledgeProcessLevelIsolation ||
+		if got.ConcurrencyStyle != poolstore.ConcurrencyStyleWorkspace ||
+			got.MaxConcurrent != 8 || !got.AcknowledgeProcessLevelIsolation ||
 			got.CleanupTimeoutSeconds != 60 {
 			t.Errorf("concurrent fields did not round-trip: %+v", got)
 		}

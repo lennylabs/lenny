@@ -34,30 +34,15 @@ COMMENT ON COLUMN sandbox_warm_pools.execution_mode IS 'the §5.2 mode (session,
 COMMENT ON COLUMN sessions.execution_mode IS 'the §5.2 mode (session, service)';
 COMMENT ON COLUMN sessions.scrub_policy IS 'the §7.1 scrub-policy string; set only when execution_mode is service (the pod-reuse mode)';
 
--- Retire the concurrency_style column from the pool table. The
--- (session, service) model has no concurrent sub-variant; max_concurrent
+-- The concurrency_style column on the pool table is retired together with
+-- the gateway ConcurrencyStyle field in the later poolstore step, not
+-- here: the proposal conditions the column drop on the field's removal
+-- ("retired ... once concurrencyStyle is removed"), so dropping it now,
+-- while pgstore still reads and writes the column, would blank every
+-- re-read pool's ConcurrencyStyle and invert that precondition. This
+-- migration leaves concurrency_style in place; max_concurrent already
 -- survives as the per-pod bound consumed by service mode and the
 -- session-mode concurrency path (sessionPolicy.maxConcurrentSessions).
---
--- Dropping concurrency_style is a Phase 3 (contract) step, so it is
--- fronted by the §10.5 preflight gate: the DO block aborts the migration
--- when any pool still carries a non-default concurrency_style (an
--- un-retired concurrent sub-variant), and the DROP runs idempotently
--- (DROP COLUMN IF EXISTS) so a re-run after a partial failure succeeds.
--- spec: §10.5 (Phase 3 enforcement gate, idempotency).
--- gate-index: idx_sandbox_warm_pools_concurrency_style_partial
-DO $$
-DECLARE remaining bigint;
-BEGIN
-    SELECT COUNT(*) INTO remaining
-        FROM sandbox_warm_pools
-        WHERE concurrency_style <> '';
-    IF remaining > 0 THEN
-        RAISE EXCEPTION 'Phase 3 gate failed: % un-migrated rows remain in sandbox_warm_pools.concurrency_style. Resolve data migration before retrying.', remaining;
-    END IF;
-END $$;
-ALTER TABLE sandbox_warm_pools
-    DROP COLUMN IF EXISTS concurrency_style;
 
 -- Add the nullable gateway-written per-pod recycle counters to
 -- agent_pod_state. sessions_served is incremented at each session

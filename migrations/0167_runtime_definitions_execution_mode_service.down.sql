@@ -1,16 +1,13 @@
 -- Reverse 0167: restore the (session, task, concurrent) execution-mode
--- enum, the stale column comments, the concurrency_style column, and
--- drop the agent_pod_state recycle counters.
+-- enum, the stale column comments, and drop the agent_pod_state recycle
+-- counters. The up migration only re-keys the constraint and comments
+-- and adds the recycle counters, so the down reverses exactly those.
 --
 -- spec: §5.2 (execution modes), §12.6 (agent_pod_state schema).
 
 ALTER TABLE agent_pod_state
     DROP COLUMN IF EXISTS sessions_served,
     DROP COLUMN IF EXISTS scrub_failure_count;
-
--- Restore concurrency_style with its original definition from 0040.
-ALTER TABLE sandbox_warm_pools
-    ADD COLUMN concurrency_style TEXT NOT NULL DEFAULT '';
 
 -- Restore each column's original comment meaning: execution_mode names
 -- the §5.2 mode set; scrub_policy carries the gating clause keyed to the

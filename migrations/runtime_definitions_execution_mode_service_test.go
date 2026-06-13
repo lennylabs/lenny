@@ -22,9 +22,11 @@ const pgCheckViolation = "23514"
 
 // TestExecutionModeServiceMigrationSQL_spec_5_2_12_6 asserts the static
 // SQL surface of migration 0167: the up re-keys the runtime_definitions
-// execution_mode CHECK to the (session, service) set, retires
-// concurrency_style while leaving max_concurrent, and adds the
-// agent_pod_state recycle counters; the down reverses each.
+// execution_mode CHECK to the (session, service) set, re-keys the stale
+// mode-enum comments, and adds the agent_pod_state recycle counters; the
+// down reverses each. The concurrency_style column is retired in the
+// later poolstore step (once the gateway ConcurrencyStyle field is
+// removed), so this migration must not touch it.
 //
 // spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
 func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
@@ -36,12 +38,6 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 	for _, want := range []string{
 		"DROP CONSTRAINT runtime_definitions_execution_mode_check",
 		"CHECK (execution_mode IN ('session', 'service'))",
-		// concurrency_style is a Phase 3 drop: it must be idempotent and
-		// fronted by the §10.5 DO $$ preflight gate with a gate-index
-		// declaration.
-		"DROP COLUMN IF EXISTS concurrency_style",
-		"DO $$",
-		"-- gate-index:",
 		"ADD COLUMN sessions_served",
 		"scrub_failure_count INTEGER",
 		// The stale mode-enum comments are re-keyed by their database
@@ -55,7 +51,13 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 			t.Errorf("0167 up missing %q", want)
 		}
 	}
-	// max_concurrent survives the retirement: the up must not drop it.
+	// The concurrency_style retirement belongs to the later poolstore
+	// step, once the gateway ConcurrencyStyle field is removed; this
+	// migration must not drop the column while pgstore still reads it.
+	if strings.Contains(ups, "DROP COLUMN") && strings.Contains(ups, "concurrency_style") {
+		t.Error("0167 up must not drop concurrency_style; the column is retired in the later poolstore step")
+	}
+	// max_concurrent is untouched: the up must not drop it.
 	if strings.Contains(ups, "DROP COLUMN max_concurrent") {
 		t.Error("0167 up must not drop max_concurrent")
 	}
@@ -72,12 +74,16 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 	for _, want := range []string{
 		"DROP COLUMN IF EXISTS sessions_served",
 		"DROP COLUMN IF EXISTS scrub_failure_count",
-		"ADD COLUMN concurrency_style",
 		"CHECK (execution_mode IN ('session', 'task', 'concurrent'))",
 	} {
 		if !strings.Contains(downs, want) {
 			t.Errorf("0167 down missing %q", want)
 		}
+	}
+	// The down does not restore concurrency_style because the up never
+	// dropped it.
+	if strings.Contains(downs, "concurrency_style") {
+		t.Error("0167 down must not reference concurrency_style; the up does not drop it")
 	}
 }
 
@@ -158,9 +164,13 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 	// session mode still inserts: the surviving value is unaffected.
 	insertRuntimeDef(t, ctx, pool, "sess-runtime", "session")
 
-	// concurrency_style is retired; max_concurrent survives.
-	if columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("concurrency_style column must be dropped by 0167")
+	// concurrency_style and max_concurrent both survive 0167. The column
+	// drop moves to the later poolstore step, once the gateway
+	// ConcurrencyStyle field is removed; pgstore still reads and writes
+	// concurrency_style at this step, so dropping it here would blank
+	// every re-read pool's ConcurrencyStyle.
+	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
+		t.Error("concurrency_style column must survive 0167 (retired in the later poolstore step)")
 	}
 	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "max_concurrent") {
 		t.Error("max_concurrent column must survive 0167")
@@ -223,9 +233,11 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		t.Errorf("down must not copy scrub_policy's gating clause onto execution_mode; got %q", downMode)
 	}
 
-	// concurrency_style is restored and the recycle counters are dropped.
+	// concurrency_style is untouched by both up and down (it survives the
+	// up, so the down leaves it in place); the recycle counters are
+	// dropped.
 	if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-		t.Error("down must restore the concurrency_style column")
+		t.Error("down must leave concurrency_style in place (the up never dropped it)")
 	}
 	for _, col := range []string{"sessions_served", "scrub_failure_count"} {
 		if columnExists(t, ctx, pool, "agent_pod_state", col) {
