@@ -5490,8 +5490,8 @@ type NegotiateVersionResponse struct {
 	// The protocol version both sides agreed on.
 	SelectedProtocolVersion string `protobuf:"bytes,1,opt,name=selected_protocol_version,json=selectedProtocolVersion,proto3" json:"selected_protocol_version,omitempty"`
 	// Adapter capabilities. The platform-known set includes (but is not
-	// limited to): preConnect, multiTurn, fullLifecycle, immediateInjection,
-	// queuedInjection.
+	// limited to): preConnect, multiTurn, fullLifecycle, concurrentWorkspace,
+	// immediateInjection, queuedInjection.
 	Capabilities []string `protobuf:"bytes,2,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// The adapter's own version string, surfaced for observability.
 	AdapterVersion string `protobuf:"bytes,3,opt,name=adapter_version,json=adapterVersion,proto3" json:"adapter_version,omitempty"`

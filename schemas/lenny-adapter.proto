@@ -1383,8 +1383,8 @@ message NegotiateVersionResponse {
   // The protocol version both sides agreed on.
   string selected_protocol_version = 1;
   // Adapter capabilities. The platform-known set includes (but is not
-  // limited to): preConnect, multiTurn, fullLifecycle, immediateInjection,
-  // queuedInjection.
+  // limited to): preConnect, multiTurn, fullLifecycle, concurrentWorkspace,
+  // immediateInjection, queuedInjection.
   repeated string capabilities = 2;
   // The adapter's own version string, surfaced for observability.
   string adapter_version = 3;
