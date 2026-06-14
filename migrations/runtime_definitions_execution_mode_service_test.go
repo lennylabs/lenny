@@ -25,8 +25,11 @@ const pgCheckViolation = "23514"
 // execution_mode CHECK to the (session, service) set, adds the
 // agent_pod_state recycle counters, drops the retired
 // sandbox_warm_pools.concurrency_style column (coupled with the
-// pkg/gateway/poolstore ConcurrencyStyle field removal in the same change),
-// and renames the task_policy JSONB columns to session_policy on both
+// pkg/gateway/poolstore ConcurrencyStyle field removal in the same change)
+// behind a §10.5 Phase 3 DO $$ gate whose un-migrated predicate keys off the
+// out-of-vocabulary concurrency_style set so it never aborts on the legitimate
+// 'workspace'/'stateless' values the mode collapse maps forward, and renames
+// the task_policy JSONB columns to session_policy on both
 // registries (the persistence layer now writes the §5.2 sessionPolicy
 // mirror). The down reverses each. The migration issues no COMMENT ON
 // statements: the stale mode-enum documentation lives in the '--' source
@@ -47,10 +50,29 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"scrub_failure_count INTEGER",
 		"DROP COLUMN IF EXISTS concurrency_style",
 		"RENAME COLUMN task_policy TO session_policy",
+		// §10.5 line 417: the Phase 3 column drop is fronted by a DO $$
+		// preflight gate and declares the covering partial index in a
+		// -- gate-index: comment.
+		"DO $$",
+		"gate-index:",
 	} {
 		if !strings.Contains(ups, want) {
 			t.Errorf("0167 up missing %q", want)
 		}
+	}
+	// The Phase 3 gate's un-migrated predicate must match the proposal's data
+	// model: the mode collapse maps every known concurrency_style value
+	// ('', 'workspace', 'stateless') forward, so the gate must key off the
+	// out-of-vocabulary set and must NOT abort on the legitimate forward-mapped
+	// values. A gate keyed on `concurrency_style <> ''` would fence the
+	// proposal-mandated §5.2 CHECK re-key and §12.6 counter additions behind a
+	// precondition the proposal never establishes (legitimate pre-collapse rows
+	// necessarily carry 'stateless' or 'workspace').
+	if !strings.Contains(ups, "NOT IN ('', 'workspace', 'stateless')") {
+		t.Error("0167 up gate must count rows outside the ('', 'workspace', 'stateless') set the mode collapse maps forward")
+	}
+	if strings.Contains(ups, "concurrency_style <> ''") {
+		t.Error("0167 up gate must not abort on the legitimate 'stateless'/'workspace' values the §5.2 mode collapse maps forward")
 	}
 	// max_concurrent survives as the service-mode per-pod bound: the up must
 	// not drop it.
@@ -310,6 +332,133 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 		if columnExists(t, ctx, pool, "agent_pod_state", col) {
 			t.Errorf("down must drop agent_pod_state.%s", col)
 		}
+	}
+}
+
+// TestExecutionModeServiceGatePredicate_spec_5_2_10_5 applies the migration
+// chain through 0040 (which adds concurrency_style), populates
+// sandbox_warm_pools with rows carrying each legitimate pre-collapse value the
+// §5.2 mode collapse maps forward (”, 'workspace', 'stateless'), then applies
+// 0167 and asserts the §10.5 Phase 3 gate passes and drops the column. A second
+// run on a fresh database seeds an out-of-vocabulary value and asserts the gate
+// fails closed with a Phase 3 RAISE EXCEPTION, rolling back the whole 0167
+// up-file (the migration runner wraps it in one transaction) so the column
+// survives. This pins the corrected predicate: the gate must not abort on the
+// legitimate forward-mapped values, and it must abort on a value the collapse
+// cannot map.
+//
+// diagnosis: a failure means migration 0167's Phase 3 gate predicate diverges
+// from the proposal's data model. If the populated-legitimate-values case
+// fails, the gate aborts on 'workspace'/'stateless' rows the mode collapse maps
+// forward and so fences the §5.2 CHECK re-key and §12.6 counter additions behind
+// a precondition the proposal never establishes. If the unknown-value case does
+// not abort, the fail-closed gate no longer guards an unmappable pool.
+//
+// spec: 5.2 (execution modes), 10.5 (Phase 3 enforcement gate)
+func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+	}
+
+	// preChain applies the migrations that establish sandbox_warm_pools, the
+	// concurrency_style column 0167 drops, and the task_policy columns 0167
+	// renames, stopping short of 0167 itself.
+	preChain := []string{
+		"0001_initial_schema.up.sql",
+		"0002_rls_immutability_roles.up.sql",
+		"0022_runtime_task_policy.up.sql",
+		"0033_sandbox_warm_pools.up.sql",
+		"0040_warm_pool_concurrency.up.sql",
+		"0085_pool_task_policy.up.sql",
+	}
+
+	t.Run("gate passes on legitimate forward-mapped values", func(t *testing.T) {
+		pool, done := startGatePostgres(t, 15568)
+		defer done()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		applyMigrations(t, ctx, pool, preChain...)
+		// Every legitimate pre-collapse value the §5.2 mode collapse maps
+		// forward: '' (session), 'workspace' (session, maxConcurrentSessions > 1),
+		// and 'stateless' (service mode).
+		for name, style := range map[string]string{
+			"empty-pool":     "",
+			"workspace-pool": "workspace",
+			"stateless-pool": "stateless",
+		} {
+			insertPoolStyle(t, ctx, pool, name, style)
+		}
+		// 0167 applies cleanly: the gate does not abort on the forward-mapped
+		// values, and the column is dropped.
+		applyMigrations(t, ctx, pool, "0167_runtime_definitions_execution_mode_service.up.sql")
+		if columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
+			t.Error("0167 must drop concurrency_style when only forward-mapped values are present")
+		}
+	})
+
+	t.Run("gate fails closed on an unmappable value", func(t *testing.T) {
+		pool, done := startGatePostgres(t, 15569)
+		defer done()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		applyMigrations(t, ctx, pool, preChain...)
+		// A value the mode collapse cannot map: the gate must fail closed.
+		insertPoolStyle(t, ctx, pool, "unmappable-pool", "legacy-unknown")
+		up, err := migrations.FS.ReadFile("0167_runtime_definitions_execution_mode_service.up.sql")
+		if err != nil {
+			t.Fatalf("read 0167 up: %v", err)
+		}
+		_, err = pool.Exec(ctx, string(up))
+		if err == nil {
+			t.Fatal("0167 must abort when an unmappable concurrency_style value is present")
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "Phase 3 gate failed") {
+			t.Fatalf("want Phase 3 gate RAISE EXCEPTION, got %v", err)
+		}
+		// The whole up-file rolled back in one transaction: the column survives.
+		if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
+			t.Error("a gate abort must roll back the whole 0167 up-file, leaving concurrency_style intact")
+		}
+	})
+}
+
+// startGatePostgres starts an embedded Postgres on the given port for a gate
+// subtest and returns a connected pool plus a cleanup closure.
+func startGatePostgres(t *testing.T, port uint32) (*pgxpool.Pool, func()) {
+	t.Helper()
+	pg := embpostgres.New(embpostgres.Config{
+		DataDir:      t.TempDir(),
+		Port:         port,
+		Database:     "lenny",
+		Username:     "lenny",
+		Password:     "lenny",
+		StartTimeout: 3 * time.Minute,
+	})
+	if err := pg.Start(); err != nil {
+		t.Fatalf("embedded postgres Start: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, pg.DSN())
+	if err != nil {
+		_ = pg.Stop()
+		t.Fatalf("connect: %v", err)
+	}
+	return pool, func() {
+		pool.Close()
+		_ = pg.Stop()
+	}
+}
+
+// insertPoolStyle inserts a sandbox_warm_pools row with the given
+// concurrency_style, failing the test on error.
+func insertPoolStyle(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, style string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO sandbox_warm_pools (name, concurrency_style) VALUES ($1, $2)`,
+		name, style); err != nil {
+		t.Fatalf("insert pool %s (style %q): %v", name, style, err)
 	}
 }
 

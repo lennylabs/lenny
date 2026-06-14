@@ -60,9 +60,17 @@ func scanPhase3(src string) phase3Violations {
 
 // TestPhase3MigrationsAreGuarded_spec_10_5_417 asserts that every Phase 3
 // migration in the tree drops columns idempotently and carries the
-// preflight gate. The tree currently has no Phase 3 migration, so this is
-// a forward-looking guard: the first DROP COLUMN author cannot ship a
-// migration that re-runs unsafely or skips the un-migrated-rows gate.
+// preflight gate. Migration 0167 (the §5.2 mode collapse) is the first
+// Phase 3 migration: it drops sandbox_warm_pools.concurrency_style behind a
+// DO $$ gate keyed on the out-of-vocabulary value set, so this guard now
+// exercises a live Phase 3 file and keeps later DROP COLUMN authors from
+// shipping a migration that re-runs unsafely or skips the un-migrated-rows
+// gate.
+//
+// diagnosis: a failure means a Phase 3 migration (one that DROPs a column,
+// migration 0167 being the first) either drops without IF EXISTS or omits the
+// DO $$ preflight gate, so a re-run would fail or the §10.5 un-migrated-rows
+// guard is absent and the contract could run before its data migration.
 //
 // spec: §10.5 line 417 / line 430.
 func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
