@@ -21,12 +21,18 @@
 #      that does not know the new column issues INSERTs that omit it, and a
 #      NOT NULL constraint without a default makes those INSERTs fail.
 #      spec: §10.5 line 415.
-#   5. Every Phase 3 migration (an .up.sql that DROPs a column) uses
+#   5. Every Phase 3 contract migration (an .up.sql that DROPs a column from
+#      a table that held data under a prior release) uses
 #      `DROP COLUMN IF EXISTS` (idempotency, §10.5 line 430) and begins
 #      with a PL/pgSQL `DO $$` preflight gate block that aborts when
 #      un-migrated rows remain (§10.5 line 417). A missing gate or a
 #      non-idempotent DROP is a violation; a missing `-- gate-index:`
-#      declaration is a non-blocking warning (§10.5 line 417).
+#      declaration is a non-blocking warning (§10.5 line 417). A migration
+#      that reshapes an empty pre-deployment table (no rows in any
+#      deployment) declares its DROP out of scope with a
+#      `-- phase3: not-required` comment marker and is exempt, because the
+#      gate has no un-migrated rows to count. The marker is required to opt
+#      out, so an unmarked, ungated DROP COLUMN still trips the check.
 #
 # Exit code:
 #   0  success
@@ -132,6 +138,12 @@ while IFS= read -r up; do
     total_drops="$(grep -oE 'drop[[:space:]]+column' <<<"${norm}" | wc -l | tr -d ' ')"
     if [[ "${total_drops}" == "0" ]]; then
         continue # not a Phase 3 migration
+    fi
+    # An empty pre-deployment table reshape opts out with a marker. The
+    # marker lives in a `--` comment, so it is matched against the raw file
+    # rather than the comment-stripped `norm`.
+    if grep -qiE 'phase3:[[:space:]]*not-required' "${up}"; then
+        continue # author declared the DROP out of Phase 3 scope (empty table)
     fi
     guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')"
     if (( total_drops > guarded_drops )); then

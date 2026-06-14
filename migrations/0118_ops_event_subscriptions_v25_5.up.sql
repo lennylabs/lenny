@@ -12,6 +12,12 @@
 -- `secret` columns are dropped and `types` is rebuilt as the spec's
 -- TEXT[] rather than cast in place.
 --
+-- phase3: not-required (ops_event_subscriptions is empty in every
+-- deployment. The stub was created by migration 0046 in the same
+-- unreleased line, so this DROP COLUMN is an empty-table reshape rather
+-- than a §10.5 contract drop. The un-migrated-rows preflight gate has no
+-- rows to count, so it does not apply.)
+--
 -- spec: §25.5 lines 2613-2664.
 
 ALTER TABLE ops_event_subscriptions

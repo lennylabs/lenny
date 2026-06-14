@@ -44,6 +44,11 @@
 -- credential_leases has no rows in any deployment (the table was
 -- created by migration 0038 in the same unreleased line), so the
 -- conversion does not preserve or re-encrypt existing data.
+--
+-- phase3: not-required (credential_leases is empty in every deployment, so
+-- dropping lease_token is an empty-table reshape, not a §10.5 contract
+-- drop. The un-migrated-rows preflight gate has no rows to count, so it
+-- does not apply.)
 
 ALTER TABLE credential_leases
     ALTER COLUMN lease TYPE BYTEA USING convert_to(lease::text, 'UTF8'),
