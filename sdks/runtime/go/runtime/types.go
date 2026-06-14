@@ -119,7 +119,10 @@ type AdapterManifest struct {
 	Version int `json:"version,omitempty"`
 	// SessionID is the session this runtime instance is bound to.
 	SessionID string `json:"sessionId,omitempty"`
-	// TaskID is the current task identifier.
+	// TaskID is the root task identifier for this session. Each session
+	// has exactly one execution, so the manifest is per-session and
+	// TaskID is frozen for the session's lifetime.
+	// spec: §6.71 (TaskID frozen to a single OnCreate)
 	TaskID string `json:"taskId,omitempty"`
 	// MCPNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
 	// SDK injects it as params._lennyNonce on every MCP initialize.
@@ -186,13 +189,16 @@ type TerminationReason struct {
 	DeadlineMS int
 }
 
-// CreateRequest is the §15.7 snapshot of task-scoped context handed to
-// Handler.OnCreate before the first Message. Handler implementations
+// CreateRequest is the §15.7 snapshot of session context handed to
+// Handler.OnCreate once before the first Message. Handler implementations
 // MUST treat it as read-only.
 type CreateRequest struct {
 	// SessionID is the session this runtime instance is bound to.
 	SessionID string `json:"sessionId"`
-	// TaskID is the current task identifier.
+	// TaskID is the root task identifier for this session. Each session
+	// has exactly one execution, so TaskID is frozen for the session's
+	// lifetime and OnCreate is invoked once with this value.
+	// spec: §6.71 (TaskID frozen to a single OnCreate)
 	TaskID string `json:"taskId"`
 	// RuntimeOptions is the effective caller options map.
 	RuntimeOptions map[string]any `json:"runtimeOptions,omitempty"`
@@ -215,7 +221,10 @@ type Message struct {
 	Envelope *MessageEnvelope `json:"envelope"`
 	// SessionID is the session the message was delivered to.
 	SessionID string `json:"sessionId"`
-	// TaskID is the active task the message belongs to.
+	// TaskID is the root task identifier of the session the message
+	// belongs to. It always equals CreateRequest.TaskID, which is frozen
+	// for the session's lifetime.
+	// spec: §6.71 (TaskID frozen to a single OnCreate)
 	TaskID string `json:"taskId"`
 	// Sequence is a monotonic, SDK-assigned per-task counter ordering
 	// messages as the SDK observed them on stdin. It is local to this
