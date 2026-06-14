@@ -49,6 +49,10 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 // reason, is idempotent (a second call revokes nothing already
 // revoked), leaves an unrelated tree untouched, and returns ErrNotFound
 // for an unknown root or a cross-tenant root.
+// diagnosis: a failure means RevokeCascade misses delegation
+// descendants, stamps the wrong revocation reason, is not idempotent,
+// touches an unrelated tree, or fails to fail-closed on an unknown or
+// cross-tenant root.
 func TestRevokeCascadeContract_spec_13_3_603(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -155,6 +159,9 @@ func TestRevokeCascadeContract_spec_13_3_603(t *testing.T) {
 // rotation_replaced, with no window in which both are live or the old is
 // revoked but the new never issued. A missing or already-revoked
 // previous token reports revoked=false and leaves the mint intact.
+// diagnosis: a failure means token rotation is not atomic: a window
+// exists where both tokens are live or the old is revoked while the new
+// was never issued, breaking the §13.3 rotation invariant.
 func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

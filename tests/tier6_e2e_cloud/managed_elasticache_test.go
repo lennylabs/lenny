@@ -27,13 +27,13 @@ import (
 )
 
 type redisParams struct {
-	host         string
-	port         string
-	authToken    string
-	clusterMode  bool
-	configHost   string
-	configPort   string
-	region       string
+	host        string
+	port        string
+	authToken   string
+	clusterMode bool
+	configHost  string
+	configPort  string
+	region      string
 }
 
 func requireRedis(t *testing.T) redisParams {

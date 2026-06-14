@@ -26,6 +26,9 @@ import (
 // dead-lettered audit rows in place under a signed receipt and emits the
 // paired §16.7 events, while leaving other users' rows and the chain
 // verifiability intact.
+// diagnosis: a failure means DeleteByUser step-14 either misses the
+// user's dead-lettered rows, redacts another user's rows, or breaks the
+// audit chain verification after redaction.
 func TestDeadLetterRedaction_spec_12_8(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

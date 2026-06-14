@@ -61,7 +61,7 @@ func newDelegateMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Serve
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	return srv, store
 }

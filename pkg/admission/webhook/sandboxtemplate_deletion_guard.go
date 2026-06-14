@@ -111,19 +111,22 @@ func SandboxTemplateDeletionGuard(reader client.Reader, probe RuntimeUpgradeProb
 		if err != nil {
 			return Deny(http.StatusServiceUnavailable, fmt.Sprintf(
 				"SandboxTemplate %q deletion blocked: cannot list referencing SandboxWarmPools to verify no active RuntimeUpgrade (§10.5 line 508): %v",
-				template, err))
+				template, err,
+			))
 		}
 		for _, pool := range pools {
 			active, err := probe.ActiveForPool(ctx, pool)
 			if err != nil {
 				return Deny(http.StatusServiceUnavailable, fmt.Sprintf(
 					"SandboxTemplate %q deletion blocked: cannot reach the gateway to check the RuntimeUpgrade state of pool %q (§10.5 line 508): %v",
-					template, pool, err))
+					template, pool, err,
+				))
 			}
 			if active {
 				return Deny(http.StatusConflict, fmt.Sprintf(
 					"SandboxTemplate %q deletion blocked: SandboxWarmPool %q has an active RuntimeUpgrade. The old SandboxTemplate is preserved until the upgrade reaches Complete (§10.5 line 508); roll back or complete the upgrade before deleting the template.",
-					template, pool))
+					template, pool,
+				))
 			}
 		}
 		return Allow()

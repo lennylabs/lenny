@@ -70,8 +70,10 @@ func TestEvaluatorContextDrivenVariant_spec_10_7_825(t *testing.T) {
 		return "control", openfeature.ProviderResolutionDetail{Variant: "control", Reason: openfeature.DefaultReason}
 	}
 	cache := newCacheWithFactory(memFactory(map[string]memprovider.InMemoryFlag{
-		"exp_a": {State: memprovider.Enabled, DefaultVariant: "control",
-			Variants: map[string]any{"treatment": "treatment", "control": "control"}, ContextEvaluator: &eval},
+		"exp_a": {
+			State: memprovider.Enabled, DefaultVariant: "control",
+			Variants: map[string]any{"treatment": "treatment", "control": "control"}, ContextEvaluator: &eval,
+		},
 	}))
 	ev, err := cache.For(context.Background(), ldCfg())
 	if err != nil {

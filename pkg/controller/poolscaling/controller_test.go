@@ -465,7 +465,8 @@ func TestSyncBacksOffWithinPause(t *testing.T) {
 			creates++
 			return apierrors.NewForbidden(
 				schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
-				obj.GetName(), errors.New("validator rejected"))
+				obj.GetName(), errors.New("validator rejected"),
+			)
 		},
 	}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
@@ -511,7 +512,8 @@ func TestSyncStuckPoolResumesAfterReconciliationReset(t *testing.T) {
 				creates++
 				return apierrors.NewForbidden(
 					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
-					obj.GetName(), errors.New("validator rejected"))
+					obj.GetName(), errors.New("validator rejected"),
+				)
 			}
 			return cl.Create(ctx, obj, opts...)
 		},

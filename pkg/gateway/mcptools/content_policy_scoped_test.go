@@ -10,10 +10,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 )
 
 // recordingScanner is an external (non-built-in) PreMessageDelivery /
@@ -91,8 +91,10 @@ func TestSendMessage_runsOnlyNamedScanner_spec_8_3_157(t *testing.T) {
 		name: "scanner-a", calls: &calls,
 		result: interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: []byte("redacted")},
 	})
-	mustRegisterScanner(t, chain, recordingScanner{name: "scanner-b", calls: &calls,
-		result: interceptor.Result{Action: interceptor.ActionAllow}})
+	mustRegisterScanner(t, chain, recordingScanner{
+		name: "scanner-b", calls: &calls,
+		result: interceptor.Result{Action: interceptor.ActionAllow},
+	})
 
 	srv, store := newMCPContentPolicy(t, chain, fakeContentPolicy{ref: "scanner-a", ok: true})
 	runningSession(t, store)
@@ -126,8 +128,10 @@ func TestSendMessage_runsOnlyNamedScanner_spec_8_3_157(t *testing.T) {
 func TestSendMessage_nullRef_runsNoScanner_spec_8_3_157(t *testing.T) {
 	var calls []string
 	chain := interceptor.NewChain()
-	mustRegisterScanner(t, chain, recordingScanner{name: "scanner-a", calls: &calls,
-		result: interceptor.Result{Action: interceptor.ActionAllow}})
+	mustRegisterScanner(t, chain, recordingScanner{
+		name: "scanner-a", calls: &calls,
+		result: interceptor.Result{Action: interceptor.ActionAllow},
+	})
 
 	srv, store := newMCPContentPolicy(t, chain, fakeContentPolicy{ref: "", ok: true})
 	runningSession(t, store)
@@ -149,8 +153,10 @@ func TestSendMessage_nullRef_runsNoScanner_spec_8_3_157(t *testing.T) {
 func TestSendMessage_unresolvableRef_failsClosed_spec_4_8_1032(t *testing.T) {
 	chain := interceptor.NewChain()
 	// scanner-a is registered, but the policy names a different (absent) ref.
-	mustRegisterScanner(t, chain, recordingScanner{name: "scanner-a",
-		result: interceptor.Result{Action: interceptor.ActionAllow}})
+	mustRegisterScanner(t, chain, recordingScanner{
+		name:   "scanner-a",
+		result: interceptor.Result{Action: interceptor.ActionAllow},
+	})
 
 	srv, store := newMCPContentPolicy(t, chain, fakeContentPolicy{ref: "ghost-scanner", ok: true})
 	runningSession(t, store)

@@ -29,11 +29,11 @@ func TestTreeVisibilityIsValid_spec_8_5_540(t *testing.T) {
 // `full` applies for an empty or unrecognised value (fail-open, broadest).
 func TestTreeVisibilityOrDefault_spec_8_5_540(t *testing.T) {
 	cases := map[session.TreeVisibility]session.TreeVisibility{
-		"":                            session.VisibilityFull,
-		"garbage":                     session.VisibilityFull,
-		session.VisibilityFull:        session.VisibilityFull,
+		"":                              session.VisibilityFull,
+		"garbage":                       session.VisibilityFull,
+		session.VisibilityFull:          session.VisibilityFull,
 		session.VisibilityParentAndSelf: session.VisibilityParentAndSelf,
-		session.VisibilitySelfOnly:    session.VisibilitySelfOnly,
+		session.VisibilitySelfOnly:      session.VisibilitySelfOnly,
 	}
 	for in, want := range cases {
 		if got := in.OrDefault(); got != want {
@@ -69,9 +69,9 @@ func TestTreeVisibilityAtLeastAsNarrow_spec_8_3_313(t *testing.T) {
 // `direct` for any unset or unrecognised messaging scope.
 func TestMessagingScopeOrDefault_spec_7_2_240(t *testing.T) {
 	cases := map[session.MessagingScope]session.MessagingScope{
-		"":                            session.MessagingScopeDirect,
-		"garbage":                     session.MessagingScopeDirect,
-		session.MessagingScopeDirect:  session.MessagingScopeDirect,
+		"":                             session.MessagingScopeDirect,
+		"garbage":                      session.MessagingScopeDirect,
+		session.MessagingScopeDirect:   session.MessagingScopeDirect,
 		session.MessagingScopeSiblings: session.MessagingScopeSiblings,
 	}
 	for in, want := range cases {

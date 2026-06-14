@@ -152,7 +152,8 @@ func (r *k8sDoctorRemediator) applyCoreDNS(ctx context.Context) error {
 	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
 		restartedAtAnnotation, r.clock().UTC().Format(time.RFC3339))
 	_, err := r.clientset.AppsV1().Deployments(corednsNamespace).Patch(
-		ctx, corednsDeployment, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+		ctx, corednsDeployment, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{},
+	)
 	return err
 }
 
@@ -209,7 +210,8 @@ func (r *k8sDoctorRemediator) applyCertExpiring(ctx context.Context, resource st
 	secretName, _, _ := unstructured.NestedString(cert.Object, "spec", "secretName")
 	annPatch := fmt.Sprintf(`{"metadata":{"annotations":{%q:"true"}}}`, issueTempCertAnnotation)
 	if _, err := r.dyn.Resource(certManagerGVR).Namespace(ns).Patch(
-		ctx, name, types.MergePatchType, []byte(annPatch), metav1.PatchOptions{}); err != nil {
+		ctx, name, types.MergePatchType, []byte(annPatch), metav1.PatchOptions{},
+	); err != nil {
 		return err
 	}
 	if secretName != "" {

@@ -78,7 +78,8 @@ func (p *GCPPoller) Tick(ctx context.Context, now time.Time) ([]Sample, error) {
 	}
 	queries := []query{}
 	if p.sqlInstance != "" {
-		queries = append(queries,
+		queries = append(
+			queries,
 			query{
 				filter: fmt.Sprintf(`metric.type="cloudsql.googleapis.com/database/cpu/utilization" resource.labels.database_id="%s:%s"`, p.projectID, p.sqlInstance),
 				name:   "lenny_cloud_cloudsql_cpu_ratio",
@@ -94,7 +95,8 @@ func (p *GCPPoller) Tick(ctx context.Context, now time.Time) ([]Sample, error) {
 		)
 	}
 	if p.cacheName != "" {
-		queries = append(queries,
+		queries = append(
+			queries,
 			query{
 				filter: fmt.Sprintf(`metric.type="redis.googleapis.com/stats/cpu_utilization" resource.labels.instance_id="%s"`, p.cacheName),
 				name:   "lenny_cloud_memorystore_cpu_ratio",
@@ -110,7 +112,8 @@ func (p *GCPPoller) Tick(ctx context.Context, now time.Time) ([]Sample, error) {
 		)
 	}
 	if p.lbName != "" {
-		queries = append(queries,
+		queries = append(
+			queries,
 			query{
 				filter: fmt.Sprintf(`metric.type="loadbalancing.googleapis.com/https/request_count" resource.labels.url_map_name="%s"`, p.lbName),
 				name:   "lenny_cloud_lb_request_count",
@@ -197,7 +200,9 @@ func (a *gcpClientAdapter) ListTimeSeries(ctx context.Context, req *monitoringpb
 }
 func (a *gcpClientAdapter) Close() error { return a.raw.Close() }
 
-type gcpIteratorAdapter struct{ it *monitoring.TimeSeriesIterator }
+type gcpIteratorAdapter struct {
+	it *monitoring.TimeSeriesIterator
+}
 
 func (a *gcpIteratorAdapter) Next() (*monitoringpb.TimeSeries, error) { return a.it.Next() }
 

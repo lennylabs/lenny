@@ -77,6 +77,9 @@ func findCheckpoint(rows []delegationbudget.Checkpoint, tenant, root string) (de
 }
 
 // spec: §11.2 lines 29, 44, 48; §12.4 line 218.
+// diagnosis: a failure means the delegation-budget store mis-accounts a
+// tree's token/depth budget or mishandles the §12.4 erasure scope, so
+// delegation budget enforcement would admit or reject the wrong calls.
 func TestDelegationBudgetStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

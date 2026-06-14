@@ -146,7 +146,7 @@ func TestRun_IPCAfterKill_spec_5_2_step1b(t *testing.T) {
 	if _, err := Run(context.Background(), ops, Config{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	var killAt, ipcAt = -1, -1
+	killAt, ipcAt := -1, -1
 	for i, c := range ops.calls {
 		if c == "kill" {
 			killAt = i

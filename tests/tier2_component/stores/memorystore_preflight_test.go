@@ -24,6 +24,9 @@ import (
 // the default Postgres backend: the seeded probe row under the reserved
 // __preflight__ tenant is written and then fully erased by both
 // DeleteByUser and DeleteByTenant.
+// diagnosis: a failure means the startup erasure preflight does not pass
+// against Postgres, so the memory store could ship without a working
+// DeleteByUser/DeleteByTenant erasure path.
 func TestMemoryStoreErasurePreflightPostgres(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
@@ -41,6 +44,9 @@ func TestMemoryStoreErasurePreflightPostgres(t *testing.T) {
 // the default Postgres backend, covering tenant isolation, empty-scope
 // rejection, the six-label instrumentation contract, and the §12.8 erasure
 // stub-detection.
+// diagnosis: a failure means the published memory-store contract helper
+// fails against Postgres, indicating a break in tenant isolation,
+// empty-scope rejection, instrumentation, or erasure stub-detection.
 func TestMemoryStoreContractHelperPostgres(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

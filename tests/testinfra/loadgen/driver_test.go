@@ -61,7 +61,7 @@ func TestRunRecordsErrors(t *testing.T) {
 	t.Parallel()
 	var iter atomic.Int64
 	s := &testScenario{
-		name: "error-test",
+		name:  "error-test",
 		setup: func(ctx context.Context) error { return nil },
 		run: func(ctx context.Context, vu, it int) error {
 			n := iter.Add(1)
@@ -176,11 +176,11 @@ type testScenario struct {
 	assert   func(*Result) error
 }
 
-func (t *testScenario) Name() string                                 { return t.name }
-func (t *testScenario) Setup(ctx context.Context) error              { return t.setup(ctx) }
-func (t *testScenario) Run(ctx context.Context, vu, it int) error    { return t.run(ctx, vu, it) }
-func (t *testScenario) Teardown(ctx context.Context) error           { return t.teardown(ctx) }
-func (t *testScenario) DefaultProfile() Profile                      { return t.profile }
+func (t *testScenario) Name() string                              { return t.name }
+func (t *testScenario) Setup(ctx context.Context) error           { return t.setup(ctx) }
+func (t *testScenario) Run(ctx context.Context, vu, it int) error { return t.run(ctx, vu, it) }
+func (t *testScenario) Teardown(ctx context.Context) error        { return t.teardown(ctx) }
+func (t *testScenario) DefaultProfile() Profile                   { return t.profile }
 func (t *testScenario) Assert(r *Result) error {
 	if t.assert == nil {
 		return nil

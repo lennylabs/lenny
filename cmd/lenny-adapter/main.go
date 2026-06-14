@@ -42,7 +42,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-
 	"time"
 
 	"google.golang.org/grpc"
@@ -64,7 +63,8 @@ var version = "0.1.0"
 // workspace RuntimeFactory when neither --runtime-socket nor --runtime-bin
 // was configured, so a per-slot runtime cannot be built.
 var errNoConcurrentRuntimeTransport = errors.New(
-	"concurrent-workspace mode requires --runtime-socket or --runtime-bin")
+	"concurrent-workspace mode requires --runtime-socket or --runtime-bin",
+)
 
 // resolveRuntimeUID returns the agent runtime UID for the §4.7/§13
 // SO_PEERCRED MCP peer check. The --runtime-uid flag takes precedence; a
@@ -244,7 +244,8 @@ func main() {
 	// keep the connection observably alive. F-11.3.12.
 	keepaliveTime := time.Duration(*keepaliveTimeMs) * time.Millisecond
 	keepaliveTimeout := time.Duration(*keepaliveTimeoutMs) * time.Millisecond
-	opts = append(opts,
+	opts = append(
+		opts,
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             keepaliveTime / 2,
 			PermitWithoutStream: true,

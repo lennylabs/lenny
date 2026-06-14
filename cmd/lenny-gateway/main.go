@@ -1288,7 +1288,8 @@ func main() {
 		if perr != nil {
 			log.Fatalf("lenny-gateway: §10.3 startup TLS probe configuration: %v", perr)
 		}
-		if err := tlsprobe.Probe(context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
+		if err := tlsprobe.Probe(
+			context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
 			tlsprobe.Target{Backend: tlsprobe.BackendRedis, Addr: *startupProbeRedisAddr},
 			tlsprobe.Target{Backend: tlsprobe.BackendPgBouncer, Addr: *startupProbePgBouncerAddr},
 		); err != nil {
@@ -2042,7 +2043,8 @@ func main() {
 		}
 	}
 	resolvedGrantCheckInterval, err := integrity.ResolveGrantCheckInterval(
-		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated)
+		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated,
+	)
 	if err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -2086,7 +2088,8 @@ func main() {
 	if *auditPgauditEnabled && pgPool != nil {
 		if err := pgaudit.Preflight(context.Background(), pgPool); err != nil {
 			regulatedPresent := admin.ValidatePgauditForRegulatedTenants(
-				context.Background(), tenants, false) != nil
+				context.Background(), tenants, false,
+			) != nil
 			if regulatedPresent && os.Getenv("LENNY_ENV") == "production" {
 				log.Fatalf("lenny-gateway: FATAL: §11.7 pgaudit preflight failed with a regulated tenant present: %v", err)
 			}
@@ -2627,7 +2630,8 @@ func main() {
 	toolApprovalWaits := toolapproval.NewRegistry()
 	if pe, ok := exec.(*executor.PodExecutor); ok {
 		pe.SetApprovalGate(sessionserver.NewToolApprovalGate(
-			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout))
+			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout,
+		))
 	}
 	var evals evalstore.Store = evalstore.NewMemory(0, nil)
 	if pgPool != nil {
@@ -3110,7 +3114,8 @@ func main() {
 				jwtaudit.PlatformTenantID,
 				storeRouter,
 				tenantResidencyLookup{tenants: tenants},
-				gwMetrics),
+				gwMetrics,
+			),
 			// spec: §25.9 line 3710 — bound the cross-tenant audit
 			// scatter-gather fan-out by the shared storeRouter scatter
 			// config (max concurrency, per-shard + aggregate timeout). v1 is
@@ -3192,7 +3197,8 @@ func main() {
 				// AuditPartitionDropBlocked alert evaluates when the SIEM
 				// delivery guard holds a partition past its retention TTL.
 				Metrics: auditRetentionMetrics{gwMetrics},
-			})
+			},
+		)
 		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
 		// durable correctness layer that re-publishes every audit row whose
 		// first EventBus publish failed (eventbus_publish_state IN
@@ -3210,14 +3216,16 @@ func main() {
 			}
 			eventBusPublisher := eventbus.NewRedisEventBus(
 				securityBus, eventBusMetrics,
-				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor))
+				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor),
+			)
 			eventBusRetranscriber = eventbus.NewRetranscriber(
 				pgAudit, eventBusPublisher,
 				eventbus.RetranscribeConfig{
 					RetryInterval:    time.Duration(*eventBusRetryIntervalSeconds) * time.Second,
 					MaxRetryAttempts: *eventBusMaxRetryAttempts,
 				},
-				eventBusMetrics)
+				eventBusMetrics,
+			)
 		}
 	} else {
 		auditChains := audit.NewChainSet()
@@ -4775,7 +4783,8 @@ func main() {
 		if pgPool != nil {
 			ruStore = runtimeupgradepg.New(pgPool)
 		}
-		mgr := runtimeupgrade.NewManager(ruStore,
+		mgr := runtimeupgrade.NewManager(
+			ruStore,
 			runtimeupgrade.WithPoolReader(poolSpecReader{store: pools}),
 			runtimeupgrade.WithMetrics(gwMetrics),
 		)
@@ -4909,7 +4918,8 @@ func main() {
 			Audience:         expectedAuds,
 			Clock:            clockinject.Now,
 			NewID:            func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("imp-%x", b[:]) },
-		})
+		},
+	)
 	adminRouter = adminRouter.WithImpersonation(impersonationSvc)
 	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
@@ -5064,7 +5074,8 @@ func main() {
 			userScoped = append(userScoped,
 				erasure.Eraser{Name: "quota", DeleteByUser: quotaEraser.DeleteByUser})
 		}
-		userScoped = append(userScoped,
+		userScoped = append(
+			userScoped,
 			// step 8: §9.4 MemoryStore is a §12.1 pluggable role; FromStore
 			// adapts its error-only DeleteByUser and compile-checks it against
 			// StoreEraser. Memory and the session-keyed interaction rows
@@ -5177,7 +5188,8 @@ func main() {
 		// so the redaction is wired only on the durable store.
 		if auditOpsStore != nil && auditValidator != nil {
 			receiptSigner, rerr := deadletterredaction.NewKMSReceiptSigner(
-				context.Background(), kmsProvider, "platform:audit-redaction-signing", "boot")
+				context.Background(), kmsProvider, "platform:audit-redaction-signing", "boot",
+			)
 			if rerr != nil {
 				log.Fatalf("lenny-gateway: §12.8 redaction receipt signer: %v", rerr)
 			}
@@ -5249,7 +5261,8 @@ func main() {
 				return 0, mem.DeleteByTenant(ctx, tenantID)
 			}})
 		}
-		tenantErasers = append(tenantErasers,
+		tenantErasers = append(
+			tenantErasers,
 			namedTenantEraser{"eval_results", evals.DeleteByTenant},
 			namedTenantEraser{"interactions", interactions.DeleteByTenant},
 			// SessionStore is the FK parent of the session-keyed stores
@@ -5427,11 +5440,13 @@ func main() {
 	// full_revoke fan-out's deny-list path.
 	if ls, ok := llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
-			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp})
+			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp},
+		)
 		// §24.5 row 2: surface per-credential lease counts on the admin GET
 		// from the same lease store the revoker drains.
 		adminRouter = adminRouter.WithPoolCredentialHealth(
-			&poolCredentialHealthReader{leases: ls})
+			&poolCredentialHealthReader{leases: ls},
+		)
 	}
 	// §4.9.1 KMS-key-rotation re-encryption admin surface. Registered
 	// only when at least one envelope-backed store is wired (Postgres).
@@ -9006,7 +9021,8 @@ func (a mcpVCSLeaseAuditor) RecordVCSLease(ctx context.Context, lease mcptools.V
 	// is not pool-backed, so credential_pool_id is empty; the provider is
 	// the credential attribution and the access mode is the delivery mode.
 	a.billing.Emit(ctx, billingfanout.CredentialLeased(
-		lease.TenantID, lease.SessionID, "", lease.Provider, lease.Mode))
+		lease.TenantID, lease.SessionID, "", lease.Provider, lease.Mode,
+	))
 	if a.appender == nil {
 		return
 	}
@@ -9039,7 +9055,8 @@ type deriveDowngradeBillingAuditor struct {
 func (a deriveDowngradeBillingAuditor) EmitDeriveIsolationDowngrade(ctx context.Context, ev sessionserver.DeriveIsolationDowngradeEvent) {
 	a.billing.Emit(ctx, billingfanout.DeriveIsolationDowngrade(
 		ev.TenantID, ev.SourceSessionID, string(ev.SourceIsolationProfile),
-		ev.TargetPool, string(ev.TargetIsolationProfile), ev.AuthorizingUserSubject, ev.TicketID))
+		ev.TargetPool, string(ev.TargetIsolationProfile), ev.AuthorizingUserSubject, ev.TicketID,
+	))
 }
 
 // sessionLifecycleAuditor adapts the gateway audit appender to the

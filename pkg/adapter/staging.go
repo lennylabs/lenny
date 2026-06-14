@@ -68,7 +68,8 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 			closeAll()
 			spanErr = tracing.CategorizeError(
 				status.Error(codes.InvalidArgument, "PrepareWorkspace frame requires a session id"),
-				tracing.CategoryPermanent)
+				tracing.CategoryPermanent,
+			)
 			return status.Error(codes.InvalidArgument,
 				"PrepareWorkspace frame requires a session id")
 		}
@@ -167,7 +168,8 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	if req.GetSessionId().GetValue() == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
 	// spec: §6.4 lines 401-405 — a slot-qualified finalize materializes
@@ -186,7 +188,8 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
@@ -324,7 +327,8 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 	if req.GetSessionId().GetValue() == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "RunSetup requires a session id"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
 	// spec: §6.4 line 404 — a slot-qualified setup runs against the slot's
@@ -342,7 +346,8 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}

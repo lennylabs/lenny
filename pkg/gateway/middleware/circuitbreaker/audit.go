@@ -69,12 +69,12 @@ type RejectionMetrics interface {
 // no Redis or EventBus coordination (spec: §11.6 line 331 "Sampling
 // window locality").
 type AuditReporter struct {
-	appender   AuditAppender
-	metrics    RejectionMetrics
-	replicaID  string
-	clock      func() time.Time
-	mu         sync.Mutex
-	lastWrite  map[string]time.Time
+	appender  AuditAppender
+	metrics   RejectionMetrics
+	replicaID string
+	clock     func() time.Time
+	mu        sync.Mutex
+	lastWrite map[string]time.Time
 }
 
 // NewAuditReporter returns an AuditReporter backed by appender. metrics

@@ -133,7 +133,8 @@ func TestDelegateExportScanRunsThroughResolver_spec_13_5_5(t *testing.T) {
 	obs := &recordingExportObserver{}
 	mat := export.NewMaterializer(
 		inlineExporter{files: []export.ExportedFile{{Path: "docs/a.txt", Content: []byte("alpha"), Size: 5}}},
-		inlineSink{}, nil)
+		inlineSink{}, nil,
+	)
 
 	svc := delegation.NewService(store, delegation.Options{
 		Clock:                   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -176,7 +177,8 @@ func TestDelegateExportScanRejectFailsClosed_spec_13_5_5(t *testing.T) {
 	obs := &recordingExportObserver{}
 	mat := export.NewMaterializer(
 		inlineExporter{files: []export.ExportedFile{{Path: "docs/a.txt", Content: []byte("alpha"), Size: 5}}},
-		inlineSink{}, nil)
+		inlineSink{}, nil,
+	)
 
 	svc := delegation.NewService(store, delegation.Options{
 		Clock:                   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },

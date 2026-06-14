@@ -17,13 +17,13 @@ import (
 // fakeLeaseStore is a configurable LeaseStore that records how many
 // times each method was called and returns a preset (lease, err).
 type fakeLeaseStore struct {
-	name      string
-	lease     Lease
-	count     int
-	err       error
-	delCount  int
-	delErr    error
-	calls     map[string]int
+	name     string
+	lease    Lease
+	count    int
+	err      error
+	delCount int
+	delErr   error
+	calls    map[string]int
 }
 
 func newFake(name string) *fakeLeaseStore {
@@ -34,22 +34,27 @@ func (f *fakeLeaseStore) Acquire(_ context.Context, t, s, h string, _ time.Durat
 	f.calls["Acquire"]++
 	return f.lease, f.err
 }
+
 func (f *fakeLeaseStore) Renew(_ context.Context, t, s, h string, _ time.Duration) (Lease, error) {
 	f.calls["Renew"]++
 	return f.lease, f.err
 }
+
 func (f *fakeLeaseStore) Release(_ context.Context, t, s, h string) error {
 	f.calls["Release"]++
 	return f.err
 }
+
 func (f *fakeLeaseStore) Get(_ context.Context, t, s string) (Lease, error) {
 	f.calls["Get"]++
 	return f.lease, f.err
 }
+
 func (f *fakeLeaseStore) DeleteByUser(_ context.Context, t, u string) (int, error) {
 	f.calls["DeleteByUser"]++
 	return f.delCount, f.delErr
 }
+
 func (f *fakeLeaseStore) DeleteByTenant(_ context.Context, t string) (int, error) {
 	f.calls["DeleteByTenant"]++
 	return f.delCount, f.delErr

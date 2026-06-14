@@ -99,9 +99,9 @@ type Config struct {
 // on its own goroutine, signs every attempt with a fresh delivery
 // timestamp, and finalizes the callback state when the budget resolves.
 type Dispatcher struct {
-	gatewayID string
-	opener    SecretOpener
-	finalize  Finalizer
+	gatewayID  string
+	opener     SecretOpener
+	finalize   Finalizer
 	nowFn      func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) bool
 	newClient  func(pinned netip.Addr) *http.Client

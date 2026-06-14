@@ -34,12 +34,12 @@ var ErrSetupAggregateTimeoutWarn = errors.New("setup phase exceeded the aggregat
 // audit log, and the §7.5 line 488 "rejection reason in the session's
 // setup output" surface. spec: §7.5 line 475 — F-7.5.4 / F-7.5.11.
 type SetupCommandOutput struct {
-	Cmd        string
-	ExitCode   int32
-	Stdout     string
-	Stderr     string
-	Duration   time.Duration
-	Truncated  bool
+	Cmd       string
+	ExitCode  int32
+	Stdout    string
+	Stderr    string
+	Duration  time.Duration
+	Truncated bool
 }
 
 // SetupStreamCapBytes bounds each captured stream (stdout, stderr) per

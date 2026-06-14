@@ -46,6 +46,7 @@ func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 8, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 4, Duration: 1 * time.Second},

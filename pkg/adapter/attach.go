@@ -175,7 +175,8 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame,
 	if toolResultIsError(result) {
 		tracing.RecordError(span, tracing.CategorizeError(
 			errors.New("adapter-local tool reported an error result"),
-			tracing.CategoryUpstream))
+			tracing.CategoryUpstream,
+		))
 	}
 	if err := rt.WriteEnvelope(sessionID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))

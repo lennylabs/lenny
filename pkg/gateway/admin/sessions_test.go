@@ -68,8 +68,10 @@ func newSessionAdminRouter(t *testing.T, sa admin.SessionAdmin, audit admin.Audi
 
 func TestAdminGetSession_Found_spec_24_11(t *testing.T) {
 	sa := &fakeSessionAdmin{rows: map[string]sessionstore.Session{
-		"sess_1": {ID: "sess_1", TenantID: "acme", UserID: "alice@acme.com",
-			State: session.StateRunning, PodAssignment: "pod-7", RuntimeRef: "rt-python"},
+		"sess_1": {
+			ID: "sess_1", TenantID: "acme", UserID: "alice@acme.com",
+			State: session.StateRunning, PodAssignment: "pod-7", RuntimeRef: "rt-python",
+		},
 	}}
 	h := newSessionAdminRouter(t, sa, nil).Handler()
 

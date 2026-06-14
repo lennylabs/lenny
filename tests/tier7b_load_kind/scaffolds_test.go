@@ -258,6 +258,11 @@ func TestCredentialRotationUnderLoad(t *testing.T) {
 // baseline target is a real cluster-internal client (Service mesh
 // or NodePort), not a port-forward; defer the SLO assertion until
 // that target lands.
+//
+// spec: §12.7.
+// diagnosis: a failure means the §12.7 checkpoint-duration smoke
+// scenario does not run on Kind, distinguishing a real envelope/SLO
+// regression from the known port-forward instability noted above.
 func TestCheckpointDuration(t *testing.T) {
 	_, baseURL := prepareGateway(t)
 	res := load.RunScenario(t, "checkpoint_duration", smokeOptions(baseURL, map[string]string{

@@ -13,12 +13,12 @@ func TestSplitEnvModel_spec_10_6_557(t *testing.T) {
 		wantMod string
 	}{
 		{"environments/security-team/claude-code", "security-team", "claude-code"},
-		{"echo", "", "echo"},                    // plain model, no namespace
-		{"", "", ""},                            // empty
-		{"environments/", "", "environments/"},  // no name, no model: literal
-		{"environments/sec", "", "environments/sec"}, // name only, no slash: literal
-		{"environments/sec/", "", "environments/sec/"}, // trailing slash, empty model: literal
-		{"environments//echo", "", "environments//echo"}, // empty name: literal
+		{"echo", "", "echo"},                                   // plain model, no namespace
+		{"", "", ""},                                           // empty
+		{"environments/", "", "environments/"},                 // no name, no model: literal
+		{"environments/sec", "", "environments/sec"},           // name only, no slash: literal
+		{"environments/sec/", "", "environments/sec/"},         // trailing slash, empty model: literal
+		{"environments//echo", "", "environments//echo"},       // empty name: literal
 		{"environments/sec/claude/code", "sec", "claude/code"}, // model may contain slashes
 	}
 	for _, tc := range cases {

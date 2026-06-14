@@ -53,7 +53,7 @@ type Result struct {
 
 func main() {
 	var (
-		binary  = flag.String("binary", "", "adapter binary to measure (built into a temp dir if empty)")
+		binary = flag.String("binary", "", "adapter binary to measure (built into a temp dir if empty)")
 		// 200 iterations are roughly the conventional minimum for a
 		// stable p95 estimate at one-sample resolution; below that the
 		// p95 column is not a defensible reference. p99 is not reported

@@ -31,8 +31,8 @@ func (f *fakeCatalog) Insert(context.Context, artifactcatalog.Record) error { re
 func (f *fakeCatalog) Get(context.Context, string) (artifactcatalog.Record, error) {
 	return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
 }
-func (f *fakeCatalog) SoftDelete(context.Context, string, time.Time) error      { return nil }
-func (f *fakeCatalog) Tombstone(context.Context, string) error                  { return nil }
+func (f *fakeCatalog) SoftDelete(context.Context, string, time.Time) error       { return nil }
+func (f *fakeCatalog) Tombstone(context.Context, string) error                   { return nil }
 func (f *fakeCatalog) HardPruneExpired(context.Context, time.Time) (int, error)  { return 0, nil }
 func (f *fakeCatalog) ListPrunable(context.Context, time.Time) ([]string, error) { return nil, nil }
 func (f *fakeCatalog) HardPruneURIs(context.Context, []string) (int, error)      { return 0, nil }
@@ -42,15 +42,19 @@ func (f *fakeCatalog) ListBySession(_ context.Context, tenantID, sessionID strin
 	}
 	return f.rows[tenantID+"|"+sessionID], nil
 }
+
 func (f *fakeCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
 	return nil
 }
+
 func (f *fakeCatalog) ListLegalHeld(context.Context, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }
+
 func (f *fakeCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+
 func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]artifactcatalog.SessionRef, error) {
 	if f.candidatesErr != nil {
 		return nil, f.candidatesErr

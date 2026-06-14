@@ -73,7 +73,7 @@ func TestMinioReplicationLagAndFailed(t *testing.T) {
 	m.SetMinioReplicationLag("eu-west-1", 30) // latest sample wins (gauge)
 	m.AddMinioReplicationFailed("eu-west-1", 2)
 	m.AddMinioReplicationFailed("eu-west-1", 5)
-	m.AddMinioReplicationFailed("eu-west-1", 0) // a zero delta is dropped
+	m.AddMinioReplicationFailed("eu-west-1", 0)  // a zero delta is dropped
 	m.AddMinioReplicationFailed("us-east-1", -3) // a negative delta is dropped
 
 	body := scrapeMetrics(t, m)

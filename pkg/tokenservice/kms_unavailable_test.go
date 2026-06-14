@@ -29,7 +29,7 @@ func (s *breakerStubSigner) Sign(c jwt.Claims) (string, error) {
 	return s.inner.Sign(c)
 }
 
-func (s *breakerStubSigner) KeyID() string                     { return s.inner.KeyID() }
+func (s *breakerStubSigner) KeyID() string                       { return s.inner.KeyID() }
 func (s *breakerStubSigner) Verify(t string) (jwt.Claims, error) { return s.inner.Verify(t) }
 
 // spec: §10.2 line 225 — when the JWTSigner breaker has tripped open,

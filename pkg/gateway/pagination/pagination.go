@@ -193,8 +193,10 @@ func ParseRequest(r *http.Request, allowedSorts []string, defaultSort Sort, now 
 		// the encoded key/tiebreaker are sort-specific. Reject so the
 		// client requests a fresh page instead of getting a silently
 		// wrong slice.
-		return Params{}, &FieldError{Field: "cursor", Rule: "cursor_sort_mismatch",
-			Message: "cursor was minted under a different sort"}
+		return Params{}, &FieldError{
+			Field: "cursor", Rule: "cursor_sort_mismatch",
+			Message: "cursor was minted under a different sort",
+		}
 	}
 	return Params{Cursor: cursor, Limit: limit, Sort: sort}, nil
 }

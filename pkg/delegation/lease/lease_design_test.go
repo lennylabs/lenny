@@ -21,12 +21,12 @@ import (
 // and asserts that every documented lease field has a corresponding
 // home on the child row.
 //
-//   * granted_at        ==> sessions.created_at on the child
-//   * expiry            ==> sessions.resume_eligible_until on child
-//   * parent reference  ==> sessions.parent_session_id on child
-//   * policy reference  ==> sessions.policy_enforcement_state on
-//                           child (gateway writes the resolved
-//                           §8.3 effective policy here)
+//   - granted_at        ==> sessions.created_at on the child
+//   - expiry            ==> sessions.resume_eligible_until on child
+//   - parent reference  ==> sessions.parent_session_id on child
+//   - policy reference  ==> sessions.policy_enforcement_state on
+//     child (gateway writes the resolved
+//     §8.3 effective policy here)
 //
 // The runtime budget (LeaseSlice arithmetic) is held in Redis under
 // {root_session_id}:dlg:* and is not part of the session row; that

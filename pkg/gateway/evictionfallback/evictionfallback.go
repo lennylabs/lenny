@@ -362,15 +362,15 @@ type Result struct {
 //     MaxOriginalContextBytes): try to upload the context to MinIO at
 //     the canonical key.
 //     - On success: record the §4.4 line 291 artifact_store row
-//       (when Catalog is wired), encode the Record with the MinIO
-//       key, write to the EvictionStateStore, then bump the §4.4
-//       line 291 Redis storage_bytes_used counter (when Quota is
-//       wired).
+//     (when Catalog is wired), encode the Record with the MinIO
+//     key, write to the EvictionStateStore, then bump the §4.4
+//     line 291 Redis storage_bytes_used counter (when Quota is
+//     wired).
 //     - On MinIO failure: degrade to the truncation path —
-//       truncate to MaxTruncatedContextBytes, set
-//       ContextTruncated=true, write inline. On a Postgres failure,
-//       emit the §4.4 line 279 partial-keys WARN log and metric,
-//       then fire the total-loss path.
+//     truncate to MaxTruncatedContextBytes, set
+//     ContextTruncated=true, write inline. On a Postgres failure,
+//     emit the §4.4 line 279 partial-keys WARN log and metric,
+//     then fire the total-loss path.
 //  3. WorkspaceLost is forced to true on every persisted record so
 //     the §7.2 resume path observes a consistent signal.
 //
@@ -621,4 +621,3 @@ func (w *Writer) logPartialKeys(template evictionstatestore.Record, p WriteParam
 		w.Metrics.IncCheckpointEvictionPartialKeysLogged(p.Pool, keysLabel)
 	}
 }
-

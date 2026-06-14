@@ -82,6 +82,12 @@ func extTokens(t *testing.T, ctx context.Context, pg *containers.Postgres, tenan
 	return tokens
 }
 
+// spec: §8.6 lines 730-733 — the delegation-tree denial store records a
+// Deny with a cool-off expiry, round-trips Denied, reports not-denied
+// for an untouched tree, and isolates denials per tenant and root.
+// diagnosis: a failure means the lease-denial store mis-records the
+// cool-off window, leaks a denial across tenants or roots, or fails to
+// fail-closed (reporting not-denied when a denial is in force).
 func TestLeaseDenialStoreContract(t *testing.T) {
 	t.Parallel()
 	store, pg := startDenialStore(t)

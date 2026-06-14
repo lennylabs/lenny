@@ -25,10 +25,10 @@ type AzurePoller struct {
 	client AzureMetricsClient
 	region string
 
-	pgServerResourceID   string
-	cacheResourceID      string
-	lbResourceID         string
-	vmssResourceID       string
+	pgServerResourceID string
+	cacheResourceID    string
+	lbResourceID       string
+	vmssResourceID     string
 }
 
 // NewAzurePoller constructs a poller against the default Azure
@@ -76,33 +76,55 @@ func (p *AzurePoller) Tick(ctx context.Context, now time.Time) ([]Sample, error)
 	}
 	queries := []query{}
 	if p.pgServerResourceID != "" {
-		queries = append(queries,
-			query{p.pgServerResourceID, "cpu_percent", "lenny_cloud_flexible_server_cpu_percent",
-				"Flexible Server CPU utilization (percent).", map[string]string{"resource": p.pgServerResourceID}},
-			query{p.pgServerResourceID, "active_connections", "lenny_cloud_flexible_server_connections",
-				"Flexible Server active connections.", map[string]string{"resource": p.pgServerResourceID}},
+		queries = append(
+			queries,
+			query{
+				p.pgServerResourceID, "cpu_percent", "lenny_cloud_flexible_server_cpu_percent",
+				"Flexible Server CPU utilization (percent).",
+				map[string]string{"resource": p.pgServerResourceID},
+			},
+			query{
+				p.pgServerResourceID, "active_connections", "lenny_cloud_flexible_server_connections",
+				"Flexible Server active connections.",
+				map[string]string{"resource": p.pgServerResourceID},
+			},
 		)
 	}
 	if p.cacheResourceID != "" {
-		queries = append(queries,
-			query{p.cacheResourceID, "percentProcessorTime", "lenny_cloud_cache_cpu_percent",
-				"Azure Cache for Redis CPU (percent).", map[string]string{"resource": p.cacheResourceID}},
-			query{p.cacheResourceID, "evictedkeys", "lenny_cloud_cache_evictions_total",
-				"Azure Cache for Redis evicted keys in window.", map[string]string{"resource": p.cacheResourceID}},
+		queries = append(
+			queries,
+			query{
+				p.cacheResourceID, "percentProcessorTime", "lenny_cloud_cache_cpu_percent",
+				"Azure Cache for Redis CPU (percent).",
+				map[string]string{"resource": p.cacheResourceID},
+			},
+			query{
+				p.cacheResourceID, "evictedkeys", "lenny_cloud_cache_evictions_total",
+				"Azure Cache for Redis evicted keys in window.",
+				map[string]string{"resource": p.cacheResourceID},
+			},
 		)
 	}
 	if p.lbResourceID != "" {
-		queries = append(queries,
-			query{p.lbResourceID, "PacketCount", "lenny_cloud_lb_request_count",
-				"Azure Load Balancer packet count in window.", map[string]string{"resource": p.lbResourceID}},
-			query{p.lbResourceID, "ALBHealthState", "lenny_cloud_lb_health",
-				"Azure Load Balancer health state.", map[string]string{"resource": p.lbResourceID}},
+		queries = append(
+			queries,
+			query{
+				p.lbResourceID, "PacketCount", "lenny_cloud_lb_request_count",
+				"Azure Load Balancer packet count in window.",
+				map[string]string{"resource": p.lbResourceID},
+			},
+			query{
+				p.lbResourceID, "ALBHealthState", "lenny_cloud_lb_health",
+				"Azure Load Balancer health state.",
+				map[string]string{"resource": p.lbResourceID},
+			},
 		)
 	}
 	if p.vmssResourceID != "" {
 		queries = append(queries, query{
 			p.vmssResourceID, "Percentage CPU", "lenny_cloud_node_cpu_percent",
-			"VMSS node CPU utilization (percent).", map[string]string{"resource": p.vmssResourceID},
+			"VMSS node CPU utilization (percent).",
+			map[string]string{"resource": p.vmssResourceID},
 		})
 	}
 

@@ -20,13 +20,16 @@ type recCounter struct{ restores int }
 func (c *recCounter) Usage(context.Context, string, string, quota.ResetPeriod, time.Time) (int64, error) {
 	return 123, nil
 }
+
 func (c *recCounter) TenantRollupUsage(context.Context, string, quota.ResetPeriod, time.Time) (int64, error) {
 	return 456, nil
 }
+
 func (c *recCounter) RestoreUserWindow(_ context.Context, _, _ string, _ quota.ResetPeriod, _ time.Time, v int64) (int64, error) {
 	c.restores++
 	return v, nil
 }
+
 func (c *recCounter) RestoreTenantRollupWindow(_ context.Context, _ string, _ quota.ResetPeriod, _ time.Time, v int64) (int64, error) {
 	c.restores++
 	return v, nil

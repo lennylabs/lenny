@@ -27,8 +27,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	"github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
 // gatewayClientHarness wires both halves of the §4.3 boundary into one

@@ -115,7 +115,7 @@ func TestReleaseFreesTheCredentialSlot(t *testing.T) {
 
 	first, _ := svc.Assign("claude-prod", "s_1", "", "") // key-1, active{key-1:1}
 	_, _ = svc.Assign("claude-prod", "s_2", "", "")      // key-2, active{key-2:1}
-	svc.Release(first.LeaseID)                       // active{key-1:0}
+	svc.Release(first.LeaseID)                           // active{key-1:0}
 
 	// key-1 is now the least loaded, so the next assignment picks it.
 	third, err := svc.Assign("claude-prod", "s_3", "", "")
@@ -195,8 +195,8 @@ func TestReleaseSessionUnknownSessionIsNoOp_spec_7_1(t *testing.T) {
 		healthyCred("key-a", "sk-a")))
 	lease, _ := svc.Assign("anthropic", "s_1", "", "")
 
-	svc.ReleaseSession("")           // empty id: no panic, no effect
-	svc.ReleaseSession("s_absent")   // unknown session: no effect
+	svc.ReleaseSession("")         // empty id: no panic, no effect
+	svc.ReleaseSession("s_absent") // unknown session: no effect
 	if _, ok := leases.GetByID(lease.LeaseID); !ok {
 		t.Error("ReleaseSession for an unrelated/empty session removed a live lease")
 	}

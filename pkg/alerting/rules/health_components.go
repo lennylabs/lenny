@@ -22,11 +22,11 @@ package rules
 // registers on its §25.3 health aggregator (cmd/lenny-gateway) so a firing
 // alert overlays the right component's probe verdict.
 const (
-	HealthComponentPostgres           = "postgres"
-	HealthComponentRedis              = "redis"
-	HealthComponentObjectStore        = "objectStore"
-	HealthComponentCertManager        = "cert-manager"
-	HealthComponentGateway            = "gateway"
+	HealthComponentPostgres            = "postgres"
+	HealthComponentRedis               = "redis"
+	HealthComponentObjectStore         = "objectStore"
+	HealthComponentCertManager         = "cert-manager"
+	HealthComponentGateway             = "gateway"
 	HealthComponentCircuitBreakerCache = "circuit-breaker-cache"
 )
 

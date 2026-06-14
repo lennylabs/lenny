@@ -122,8 +122,10 @@ func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Cl
 
 // utilruntime + clientgoscheme stay referenced for tests that build a
 // fresh scheme directly.
-var _ = utilruntime.Must
-var _ = clientgoscheme.AddToScheme
+var (
+	_ = utilruntime.Must
+	_ = clientgoscheme.AddToScheme
+)
 
 func sandboxCR(phase string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{

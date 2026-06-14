@@ -137,8 +137,10 @@ func TestManifestLLMMultiProviderDeterministic_spec_4_7(t *testing.T) {
 // endpoint, and is omitted when none is configured.
 func TestWriteSessionManifestObservability_spec_4_7(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir,
-		OTLPEndpoint: "https://otel.lenny-system:4317"}
+	srv := &Server{
+		WorkspaceRoot: "/workspace/current", ManifestDir: dir,
+		OTLPEndpoint: "https://otel.lenny-system:4317",
+	}
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-1"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}

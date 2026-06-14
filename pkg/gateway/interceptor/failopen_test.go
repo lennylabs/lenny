@@ -38,6 +38,7 @@ type recordingObserver struct {
 func (r *recordingObserver) FailOpenEscalated(_ context.Context, ev interceptor.FailOpenEvent) {
 	r.escalated = append(r.escalated, ev)
 }
+
 func (r *recordingObserver) FailOpenRestored(_ context.Context, ev interceptor.FailOpenEvent) {
 	r.restored = append(r.restored, ev)
 }
@@ -96,7 +97,7 @@ func TestFailOpenRestore(t *testing.T) {
 	c.SetFailOpenEscalation(1, time.Minute, obs, func() time.Time { return time.Unix(0, 0) })
 	_ = c.Register(interceptor.PhasePreDelegation, ic)
 
-	c.Run(context.Background(), interceptor.Request{Phase: interceptor.PhasePreDelegation}) // err 1, within ceiling 1
+	c.Run(context.Background(), interceptor.Request{Phase: interceptor.PhasePreDelegation})        // err 1, within ceiling 1
 	res := c.Run(context.Background(), interceptor.Request{Phase: interceptor.PhasePreDelegation}) // err 2 > 1 → escalate
 	if res.Action != interceptor.ActionReject {
 		t.Fatalf("expected escalation REJECT, got %v", res.Action)

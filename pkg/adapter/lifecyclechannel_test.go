@@ -536,7 +536,7 @@ func TestLifecycleVersionsCompatible_MalformedRejected(t *testing.T) {
 		{"1.0", true},
 		{"1.7", true},
 		{"2.0", false},
-		{"", false},   // direct compat predicate test; the handshake handles "" separately.
+		{"", false}, // direct compat predicate test; the handshake handles "" separately.
 		{"abc", false},
 		{".5", false},
 		{"1", false},

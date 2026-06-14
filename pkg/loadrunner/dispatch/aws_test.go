@@ -33,18 +33,21 @@ func (f *fakeSQS) ReceiveMessage(ctx context.Context, in *sqs.ReceiveMessageInpu
 	f.queue = f.queue[1:]
 	return &sqs.ReceiveMessageOutput{Messages: []types.Message{msg}}, nil
 }
+
 func (f *fakeSQS) DeleteMessage(ctx context.Context, in *sqs.DeleteMessageInput, _ ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedRH = append(f.deletedRH, aws.ToString(in.ReceiptHandle))
 	return &sqs.DeleteMessageOutput{}, nil
 }
+
 func (f *fakeSQS) ChangeMessageVisibility(ctx context.Context, in *sqs.ChangeMessageVisibilityInput, _ ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.visChange = append(f.visChange, *in)
 	return &sqs.ChangeMessageVisibilityOutput{}, nil
 }
+
 func (f *fakeSQS) SendMessage(ctx context.Context, in *sqs.SendMessageInput, _ ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

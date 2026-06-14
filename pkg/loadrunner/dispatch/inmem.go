@@ -17,11 +17,11 @@ import (
 // (Receive, Ack, Nack, Heartbeat) with a configurable visibility
 // timeout.
 type InMem struct {
-	mu                 sync.Mutex
-	queue              []*Job
-	inFlight           map[string]*inFlightEntry
-	visibilityTimeout  time.Duration
-	closed             bool
+	mu                sync.Mutex
+	queue             []*Job
+	inFlight          map[string]*inFlightEntry
+	visibilityTimeout time.Duration
+	closed            bool
 }
 
 type inFlightEntry struct {

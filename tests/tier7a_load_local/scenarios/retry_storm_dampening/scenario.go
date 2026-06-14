@@ -31,10 +31,10 @@ func init() {
 // retryClient models a client doing exponential backoff with jitter
 // against a downstream that always fails.
 type retryClient struct {
-	mu        sync.Mutex
-	initial   time.Duration
-	maxDelay  time.Duration
-	rng       *rand.Rand
+	mu       sync.Mutex
+	initial  time.Duration
+	maxDelay time.Duration
+	rng      *rand.Rand
 }
 
 func newRetryClient() *retryClient {
@@ -76,6 +76,7 @@ func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 8, Duration: 2 * time.Second},

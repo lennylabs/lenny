@@ -17,7 +17,9 @@ import (
 // space, and per-user keying on the session's owning user.
 
 // fakePools answers Get with one pool. A nil pool returns ErrNotFound.
-type fakePools struct{ pool *credentialpoolstore.CredentialPool }
+type fakePools struct {
+	pool *credentialpoolstore.CredentialPool
+}
 
 func (f fakePools) Get(_ context.Context, tenantID, name string) (credentialpoolstore.CredentialPool, error) {
 	if f.pool == nil || f.pool.TenantID != tenantID || f.pool.Name != name {
@@ -105,7 +107,7 @@ func TestPerUserUnkeyableWhenUserUnresolved(t *testing.T) {
 	cp := &credentialpoolstore.CachePolicy{Enabled: true}
 	// A user-lookup miss and a nil lookup both leave it uncached.
 	for name, users := range map[string]proxycache.SessionUserLookup{
-		"user miss": fakeUsers{ok: false},
+		"user miss":  fakeUsers{ok: false},
 		"nil lookup": nil,
 	} {
 		a := proxycache.New(fakePools{poolWith("per-user", cp)}, newStore(t), users)

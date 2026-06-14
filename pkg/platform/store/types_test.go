@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
-	"github.com/lennylabs/lenny/pkg/podregistry"
 	"github.com/lennylabs/lenny/pkg/platform/store"
+	"github.com/lennylabs/lenny/pkg/podregistry"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

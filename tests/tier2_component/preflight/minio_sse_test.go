@@ -62,6 +62,11 @@ func findCheck(t *testing.T, report []preflight.CheckResult, name string) prefli
 // TestMinIOSSECheckPassesWithAES256UnderRegulatedProfile verifies the
 // §12.5 line 297 check passes the install when MinIO SSE is enabled
 // even under a regulated complianceProfile.
+//
+// spec: §12.5 line 297.
+// diagnosis: a failure means the MinIO SSE preflight check fails the
+// install even though SSE is enabled, blocking a valid regulated-profile
+// deployment.
 func TestMinIOSSECheckPassesWithAES256UnderRegulatedProfile(t *testing.T) {
 	probe := preflight.MinIOEncryptionProbeFunc(func(ctx context.Context, bucket string) (string, error) {
 		if bucket != "lenny-artifacts" {
@@ -83,6 +88,11 @@ func TestMinIOSSECheckPassesWithAES256UnderRegulatedProfile(t *testing.T) {
 
 // TestMinIOSSECheckFailsClosedUnderRegulatedProfileWhenAbsent verifies
 // the install fails when SSE is absent under SOC2.
+//
+// spec: §12.5 line 297.
+// diagnosis: a failure means the preflight check does not fail closed on
+// absent MinIO SSE under a regulated profile, letting an unencrypted
+// artifact store pass a SOC2/FedRAMP/HIPAA install.
 func TestMinIOSSECheckFailsClosedUnderRegulatedProfileWhenAbsent(t *testing.T) {
 	probe := preflight.MinIOEncryptionProbeFunc(func(context.Context, string) (string, error) {
 		return "", nil
@@ -104,6 +114,10 @@ func TestMinIOSSECheckFailsClosedUnderRegulatedProfileWhenAbsent(t *testing.T) {
 
 // TestMinIOSSECheckSkippedWhenBucketAbsent verifies the check is
 // skipped when no bucket is configured.
+//
+// spec: §12.5 line 297.
+// diagnosis: a failure means the SSE check runs even when no bucket is
+// configured, emitting a spurious check outcome for a non-existent store.
 func TestMinIOSSECheckSkippedWhenBucketAbsent(t *testing.T) {
 	report := preflight.Run(context.Background(), fakeReader(t), preflight.Config{
 		Namespace: "lenny-system",

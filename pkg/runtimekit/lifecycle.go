@@ -53,14 +53,14 @@ type CheckpointHandler func(ctx context.Context, deadlineMs int32) error
 // HandleFrame from one goroutine and Cancel/Close from another remains
 // correct.
 type LifecycleClient struct {
-	enc       *json.Encoder
-	stderr    io.Writer
+	enc         *json.Encoder
+	stderr      io.Writer
 	autoTimeout time.Duration
-	now       func() time.Time
-	logf      func(format string, args ...any)
+	now         func() time.Time
+	logf        func(format string, args ...any)
 
-	mu       sync.Mutex
-	pending  map[string]*pendingCheckpoint
+	mu      sync.Mutex
+	pending map[string]*pendingCheckpoint
 }
 
 // pendingCheckpoint tracks one checkpoint waiting for `checkpoint_complete`.
@@ -130,11 +130,11 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 // HandleCheckpointRequest acknowledges a `checkpoint_request` frame
 // from the adapter. The flow is:
 //
-//   1. Invoke `handler` to drive the runtime's quiesce path.
-//   2. On handler success, write `checkpoint_ready` and start the
-//      autonomous-resume timer.
-//   3. On handler error, write `checkpoint_complete{status:"failed"}`
-//      and skip the autonomous-resume timer (the handshake is over).
+//  1. Invoke `handler` to drive the runtime's quiesce path.
+//  2. On handler success, write `checkpoint_ready` and start the
+//     autonomous-resume timer.
+//  3. On handler error, write `checkpoint_complete{status:"failed"}`
+//     and skip the autonomous-resume timer (the handshake is over).
 //
 // HandleCheckpointRequest blocks while `handler` runs; the caller's
 // JSONL dispatch loop may want to run it in a separate goroutine if

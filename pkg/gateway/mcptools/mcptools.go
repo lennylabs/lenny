@@ -41,6 +41,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
@@ -84,7 +86,6 @@ import (
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/task"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 // mcpStateForSession returns the §8.8 MCP-protocol state spelling for
@@ -3131,8 +3132,10 @@ func vcsTokenError(err error) error {
 	if errors.As(err, &resolveErr) {
 		if resolveErr.Reason == credentialpoolstore.VCSHostAmbiguous {
 			return mcp.NewToolError("GIT_CLONE_AUTH_HOST_AMBIGUOUS", err.Error(),
-				map[string]any{"host": resolveErr.Host, "provider": resolveErr.Provider,
-					"matchingPools": resolveErr.MatchingPools})
+				map[string]any{
+					"host": resolveErr.Host, "provider": resolveErr.Provider,
+					"matchingPools": resolveErr.MatchingPools,
+				})
 		}
 		return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(),
 			map[string]any{"host": resolveErr.Host, "provider": resolveErr.Provider})

@@ -22,6 +22,7 @@ type fakeResolver struct {
 func (f fakeResolver) Resolve(_ context.Context, _ string) (Target, error) {
 	return f.target, f.resolveE
 }
+
 func (f fakeResolver) ResolveLatest(_ context.Context, _ string) (Target, bool, error) {
 	return f.target, f.ok, f.latestE
 }
@@ -77,6 +78,7 @@ func (f *fakeVerifyReporter) MarkVerified(_ context.Context, id string) error {
 	f.verified = id
 	return nil
 }
+
 func (f *fakeVerifyReporter) MarkVerificationFailed(_ context.Context, id, reason string) error {
 	f.failedID = id
 	f.failedReason = reason
@@ -356,6 +358,7 @@ type errStore struct{}
 func (errStore) Record(context.Context, restoretest.Result) error {
 	return errors.New("postgres down")
 }
+
 func (errStore) Latest(context.Context) (restoretest.Result, bool, error) {
 	return restoretest.Result{}, false, nil
 }

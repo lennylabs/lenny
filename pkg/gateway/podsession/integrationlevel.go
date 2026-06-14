@@ -41,7 +41,8 @@ type RuntimeLevelUnderperforms struct {
 func (e *RuntimeLevelUnderperforms) Error() string {
 	return fmt.Sprintf(
 		"podsession: runtime %s declares integrationLevel %q but the adapter handshake observed %q (RUNTIME_LEVEL_UNDERPERFORMS)",
-		e.Runtime, e.Declared, e.Observed)
+		e.Runtime, e.Declared, e.Observed,
+	)
 }
 
 // integrationLevelRank orders the §5.1 / §15.4.3 integration levels:

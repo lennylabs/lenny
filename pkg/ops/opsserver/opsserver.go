@@ -86,17 +86,17 @@ type Server struct {
 	// internal route to register.
 	cacheInvalidator     CacheInvalidator
 	cacheInvalidateToken string
-	mcp                *mcp.Server
-	releaseChannel     *releasechannel.Publisher
-	upgrade            *upgradeservice.Service
-	upgradeChecker     *upgradeservice.Checker
-	upgradePreflighter *upgradeservice.Preflighter
-	versionAggregator  *upgradeservice.VersionAggregator
-	platformConfig     *configservice.Service
-	registry           *registryservice.Service
-	buildVersion       string // §25.8 compiled-in lenny-ops version for the preflight version gate
-	podLogs            PodLogReader
-	production         bool
+	mcp                  *mcp.Server
+	releaseChannel       *releasechannel.Publisher
+	upgrade              *upgradeservice.Service
+	upgradeChecker       *upgradeservice.Checker
+	upgradePreflighter   *upgradeservice.Preflighter
+	versionAggregator    *upgradeservice.VersionAggregator
+	platformConfig       *configservice.Service
+	registry             *registryservice.Service
+	buildVersion         string // §25.8 compiled-in lenny-ops version for the preflight version gate
+	podLogs              PodLogReader
+	production           bool
 
 	// inventory backs the §25.4 Operations Inventory read endpoints
 	// (/v1/admin/operations + /operations/{id}) and the /me/operations
@@ -320,36 +320,36 @@ type Options struct {
 // and restore endpoints, and the §25.12 MCP management server.
 func New(opts Options) *Server {
 	s := &Server{
-		mux:                http.NewServeMux(),
-		probes:             opts.Probes,
-		runbooks:           opts.Runbooks,
-		selfHealth:         opts.SelfHealth,
-		leader:             opts.Leader,
-		backups:            opts.Backups,
-		diagnostics:        opts.Diagnostics,
-		doctor:             opts.Doctor,
-		drift:              opts.Drift,
-		locks:              opts.Locks,
-		lockCoordination:   opts.LockCoordination,
-		escalations:        opts.Escalations,
+		mux:                  http.NewServeMux(),
+		probes:               opts.Probes,
+		runbooks:             opts.Runbooks,
+		selfHealth:           opts.SelfHealth,
+		leader:               opts.Leader,
+		backups:              opts.Backups,
+		diagnostics:          opts.Diagnostics,
+		doctor:               opts.Doctor,
+		drift:                opts.Drift,
+		locks:                opts.Locks,
+		lockCoordination:     opts.LockCoordination,
+		escalations:          opts.Escalations,
 		eventStream:          opts.EventStream,
 		eventSubscriptions:   opts.EventSubscriptions,
 		cacheInvalidator:     opts.CacheInvalidator,
 		cacheInvalidateToken: opts.CacheInvalidateToken,
-		releaseChannel:     opts.ReleaseChannel,
-		upgrade:            opts.Upgrade,
-		upgradeChecker:     opts.UpgradeChecker,
-		upgradePreflighter: opts.UpgradePreflighter,
-		versionAggregator:  opts.VersionAggregator,
-		platformConfig:     opts.PlatformConfig,
-		registry:           opts.Registry,
-		buildVersion:       opts.BuildVersion,
-		podLogs:            opts.PodLogs,
-		production:         opts.Production,
-		inventory:          opts.Inventory,
-		me:                 opts.Me,
-		audit:              opts.Audit,
-		diagAuditCfg:       opts.DiagnosticsAudit,
+		releaseChannel:       opts.ReleaseChannel,
+		upgrade:              opts.Upgrade,
+		upgradeChecker:       opts.UpgradeChecker,
+		upgradePreflighter:   opts.UpgradePreflighter,
+		versionAggregator:    opts.VersionAggregator,
+		platformConfig:       opts.PlatformConfig,
+		registry:             opts.Registry,
+		buildVersion:         opts.BuildVersion,
+		podLogs:              opts.PodLogs,
+		production:           opts.Production,
+		inventory:            opts.Inventory,
+		me:                   opts.Me,
+		audit:                opts.Audit,
+		diagAuditCfg:         opts.DiagnosticsAudit,
 	}
 	// The me endpoint surfaces the caller's rate-limit balance from the
 	// same limiter the auth chain enforces.

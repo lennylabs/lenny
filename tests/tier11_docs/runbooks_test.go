@@ -40,8 +40,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/pkg/alerting/rules"
 )
 
 type runbookTrigger struct {

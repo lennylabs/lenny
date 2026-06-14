@@ -47,6 +47,10 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
+// spec: §5.1 line 49.
+// diagnosis: a failure means the per-tenant runtime-capability-override
+// store does not round-trip a written override, so an admin-configured
+// override would be lost or corrupted on read-back.
 func TestPgStoreRoundTrip_spec_5_1_49(t *testing.T) {
 	ctx := context.Background()
 	store, pg := startStore(t)
@@ -113,6 +117,9 @@ func TestPgStoreRoundTrip_spec_5_1_49(t *testing.T) {
 
 // spec: §12.3 — the RLS guard isolates overrides per tenant: an override
 // written under tenant A is invisible to a Get/List run under tenant B.
+// diagnosis: a failure means the RLS guard does not isolate
+// runtime-capability overrides per tenant, leaking one tenant's override
+// into another tenant's Get/List.
 func TestPgStoreTenantIsolation_spec_12_3(t *testing.T) {
 	ctx := context.Background()
 	store, pg := startStore(t)

@@ -54,8 +54,8 @@ type Scenario struct {
 	// many iterations may overlap on the same pod; we count the
 	// successful reservations in flight at any instant and assert
 	// that count never exceeds maxConcurrent.
-	mu        sync.Mutex
-	inFlight  int32
+	mu           sync.Mutex
+	inFlight     int32
 	peakInFlight int32
 
 	// Aggregate counters captured at Teardown for the Assert path.

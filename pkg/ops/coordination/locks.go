@@ -166,8 +166,8 @@ const (
 // reaches them through NormalizeTTL so all tiers clamp identically.
 // spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds}.
 var ttlPolicy = struct {
-	mu               sync.RWMutex
-	min, def, max    int
+	mu            sync.RWMutex
+	min, def, max int
 }{min: minTTLSeconds, def: defaultTTLSeconds, max: maxTTLSeconds}
 
 // SetTTLBounds configures the process-wide §25.4 lock TTL policy from the

@@ -15,9 +15,9 @@ import (
 // through String.
 func TestParseScope_Canonical(t *testing.T) {
 	cases := []struct {
-		in      string
-		domain  string
-		action  string
+		in     string
+		domain string
+		action string
 	}{
 		{"tools:pool:scale", "pool", "scale"},
 		{"tools:health:read", "health", "read"},

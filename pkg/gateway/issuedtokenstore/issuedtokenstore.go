@@ -387,10 +387,14 @@ func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason
 		}
 		rows, err := tx.Query(ctx,
 			`WITH RECURSIVE subtree AS (
-				SELECT jti FROM issued_tokens WHERE jti = $1 AND tenant_id = $2
+				SELECT jti, tenant_id FROM issued_tokens WHERE jti = $1 AND tenant_id = $2
 				UNION ALL
-				SELECT c.jti FROM issued_tokens c
-					JOIN subtree p ON c.parent_jti = p.jti
+				-- The recursion stays inside one tenant: the seed binds
+				-- tenant_id = $2 and the join pins each child to its parent's
+				-- tenant (R-02 tenant-isolation: the descent never crosses a
+				-- tenant boundary).
+				SELECT c.jti, c.tenant_id FROM issued_tokens c
+					JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
 					WHERE c.tenant_id = $2
 			)
 			UPDATE issued_tokens t

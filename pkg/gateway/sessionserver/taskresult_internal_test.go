@@ -41,7 +41,8 @@ var taskResultClock = func() time.Time { return time.Date(2026, 5, 30, 12, 0, 0,
 // wired (the developer posture). F-8.8.2.
 func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 	tx := transcriptstore.NewMemory()
-	if err := tx.Append(context.Background(), "acme", "sess_c",
+	if err := tx.Append(
+		context.Background(), "acme", "sess_c",
 		transcriptstore.Entry{Role: "user", Content: "do X"},
 		transcriptstore.Entry{Role: "assistant", Content: "result: done"},
 	); err != nil {

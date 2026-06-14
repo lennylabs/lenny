@@ -41,7 +41,11 @@ func checkIdent(name string) error {
 const listPartitionsSQL = `
 SELECT c.relname
 FROM pg_inherits i
+-- platform-admin-cross-tenant-justification: joins Postgres system catalogs (pg_inherits, pg_class) to enumerate a partitioned parent's children; these carry no tenant_id and the query is schema metadata.
+-- platform-admin-cross-tenant-allowed
 JOIN pg_class c ON c.oid = i.inhrelid
+-- platform-admin-cross-tenant-justification: second leg of the same system-catalog metadata join; no tenant-scoped table is involved.
+-- platform-admin-cross-tenant-allowed
 JOIN pg_class p ON p.oid = i.inhparent
 WHERE p.relname = $1
 ORDER BY c.relname`

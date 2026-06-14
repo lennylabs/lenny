@@ -87,6 +87,9 @@ func violatesNullableRule(src string) bool {
 // after every replica runs the new code.
 //
 // spec: §10.5 line 415.
+// diagnosis: a failure means a production up-migration adds a NOT NULL
+// column with no DEFAULT, which breaks the §10.5 expand-contract
+// rolling-deploy invariant by failing INSERTs from old-version replicas.
 func TestPhase1ColumnsAreNullableOrDefaulted_spec_10_5_415(t *testing.T) {
 	t.Parallel()
 	migrationsDir := filepath.Join(repoRootFromCaller(t), "migrations")
@@ -119,6 +122,12 @@ func TestPhase1ColumnsAreNullableOrDefaulted_spec_10_5_415(t *testing.T) {
 // the clause before the DEFAULT keyword is seen), a multi-column ALTER
 // where only one column violates (flagged), and a CREATE TABLE with NOT
 // NULL columns (allowed — a new table has no old-version writers).
+//
+// spec: §10.5 line 415.
+// diagnosis: a failure means the nullable-column scanner misclassifies a
+// boundary case (a DEFAULT with an embedded comma, a multi-column ALTER,
+// or a CREATE TABLE), so the §10.5 CI defense would miss or falsely flag
+// migrations.
 func TestViolatesNullableRule_spec_10_5_415(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

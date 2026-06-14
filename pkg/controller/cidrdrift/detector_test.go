@@ -290,7 +290,8 @@ func TestDetectorServiceCIDRDrift_spec_13_2_NET065(t *testing.T) {
 // spec: §13.2 NET-065 — a service CIDR the except block covers (here a
 // supernet of the apiserver ClusterIP) records no drift.
 func TestDetectorServiceCIDRCoveredNoDrift(t *testing.T) {
-	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+	delta := runScanField(
+		t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
 		"svc-clean-policy", cidrdrift.FieldServiceCIDR,
 		node("node-1", "10.244.0.0/16"),
 		kubernetesService("10.96.0.1"),
@@ -316,7 +317,8 @@ func TestDetectorServiceCIDRDualStack(t *testing.T) {
 			}},
 		},
 	}
-	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+	delta := runScanField(
+		t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
 		"svc-v6-policy", cidrdrift.FieldServiceCIDR,
 		kubernetesService("10.96.0.1", "fd00:1234::1"),
 		dualStack,
@@ -332,7 +334,8 @@ func TestDetectorServiceCIDRDualStack(t *testing.T) {
 // canonical `gateway-llm-upstream` policy label rather than the object
 // name.
 func TestDetectorAuditsSystemGatewayRule_spec_13_2_NET065(t *testing.T) {
-	delta := runScanField(t,
+	delta := runScanField(
+		t,
 		&cidrdrift.Detector{AgentNamespaces: []string{agentNS}, SystemNamespace: systemNS},
 		"gateway-llm-upstream", cidrdrift.FieldPodCIDR,
 		node("node-1", "100.64.0.0/24"),
@@ -348,7 +351,8 @@ func TestDetectorAuditsSystemGatewayRule_spec_13_2_NET065(t *testing.T) {
 // label. A missing cluster CIDR on this surface is the SSRF gap NET-065
 // closes.
 func TestDetectorAuditsSystemOpsEgressRule(t *testing.T) {
-	delta := runScanField(t,
+	delta := runScanField(
+		t,
 		&cidrdrift.Detector{AgentNamespaces: []string{agentNS}, SystemNamespace: systemNS},
 		"ops-egress", cidrdrift.FieldPodCIDR,
 		node("node-1", "100.64.0.0/24"),
@@ -363,7 +367,8 @@ func TestDetectorAuditsSystemOpsEgressRule(t *testing.T) {
 // so long as the release namespace is configured, so the gateway and
 // ops surfaces are still audited on a control-plane-only configuration.
 func TestDetectorRunsForSystemNamespaceOnly(t *testing.T) {
-	delta := runScanField(t,
+	delta := runScanField(
+		t,
 		&cidrdrift.Detector{SystemNamespace: systemNS},
 		"ops-egress", cidrdrift.FieldServiceCIDR,
 		kubernetesService("100.64.0.1"),
@@ -378,7 +383,8 @@ func TestDetectorRunsForSystemNamespaceOnly(t *testing.T) {
 // reports a pod CIDR (a managed CNI), so the service surface is not
 // skipped along with the pod surface.
 func TestDetectorServiceCIDRDriftWithoutNodes(t *testing.T) {
-	delta := runScanField(t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
+	delta := runScanField(
+		t, &cidrdrift.Detector{AgentNamespaces: []string{agentNS}},
 		"nonode-svc-policy", cidrdrift.FieldServiceCIDR,
 		kubernetesService("100.64.0.1"),
 		internetPolicy("nonode-svc-policy"),

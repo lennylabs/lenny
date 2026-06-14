@@ -163,6 +163,10 @@ func TestAuditStoreContract(t *testing.T) {
 // audit.retentionDays, holds gdpr.* erasure receipts (separate window),
 // and honors the SIEM delivery guard (no row past the forwarder's
 // high-water mark is dropped unless forced). F-11.7.17.
+// diagnosis: a failure means the retention pruner deletes the wrong
+// rows: either it drops gdpr.* erasure receipts early, or it drops rows
+// the SIEM forwarder has not yet acknowledged, breaching the §16.4
+// delivery guard.
 func TestPruneRetentionWindowsAndSIEMGuard(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -240,6 +244,9 @@ func TestPruneRetentionWindowsAndSIEMGuard(t *testing.T) {
 // spec: §16.7 line 687 — RetentionWindowStats summarizes the
 // non-gdpr.* rows older than the cutoff and reads the SIEM high-water
 // mark for the audit.partition_drop_forced payload. F-11.7.17.
+// diagnosis: a failure means RetentionWindowStats miscounts the
+// droppable window or misreports the SIEM high-water mark, so the
+// audit.partition_drop_forced payload would carry wrong numbers.
 func TestRetentionWindowStats(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -283,6 +290,9 @@ func TestRetentionWindowStats(t *testing.T) {
 // the retention cutoff that the SIEM delivery guard is withholding from
 // the drop (sequence_number above the forwarder's high-water mark). A
 // non-zero result is the AuditPartitionDropBlocked condition. F-16.4.6.
+// diagnosis: a failure means SIEMHeldCount miscounts rows withheld by
+// the SIEM delivery guard, so AuditPartitionDropBlocked would fire or
+// clear incorrectly and a partition drop could lose undelivered rows.
 func TestSIEMHeldCount(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

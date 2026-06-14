@@ -127,7 +127,8 @@ func (s *Store) Denied(ctx context.Context, tenantID, rootSessionID string) (boo
 func (s *Store) Grant(ctx context.Context, tenantID, rootSessionID string, granted leasecontrol.Dimensions) error {
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var ok bool
-		scanErr := tx.QueryRow(ctx,
+		scanErr := tx.QueryRow(
+			ctx,
 			`INSERT INTO delegation_tree_budget
 			     (tenant_id, root_session_id,
 			      ext_tokens, ext_seconds, ext_children, ext_parallel_children,

@@ -36,6 +36,9 @@ func startPGForWriteBeforeIssue(t *testing.T) *containers.Postgres {
 // Postgres transaction. After a successful call the audit chain
 // contains one new row and the issued_tokens table contains the new
 // jti.
+// diagnosis: a failure means the issued_tokens INSERT and the
+// token.exchanged audit INSERT are not bound in one transaction, so a
+// token could be issued without its audit row or vice versa.
 func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 	t.Parallel()
 	pg := startPGForWriteBeforeIssue(t)
@@ -105,6 +108,9 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 // spec: §13.3 line 589 / F-4.3.7 — repeated calls produce a
 // sequenced audit chain: each new audit row links to its predecessor
 // and the issued_tokens primary key prevents duplicate jti.
+// diagnosis: a failure means repeated RecordWithAudit calls do not
+// produce a correctly sequenced, linked audit chain, so chain
+// verification across multiple token exchanges would not hold.
 func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 	t.Parallel()
 	pg := startPGForWriteBeforeIssue(t)
@@ -146,6 +152,9 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 
 // spec: §13.3 line 589 / F-4.3.7 — a duplicate JTI on a retry rolls
 // the entire transaction back: the audit chain length does not grow.
+// diagnosis: a failure means a duplicate-JTI retry leaks a partial
+// write, growing the audit chain without a corresponding token and
+// breaking the write-before-issue atomicity guarantee.
 func TestRecordWithAuditRollsBackOnDuplicateJTI(t *testing.T) {
 	t.Parallel()
 	pg := startPGForWriteBeforeIssue(t)

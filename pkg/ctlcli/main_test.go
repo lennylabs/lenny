@@ -310,8 +310,10 @@ func TestAdminTenantsForceDeleteNoOverride(t *testing.T) {
 // The override requires a justification; the CLI rejects it locally.
 func TestAdminTenantsForceDeleteOverrideRequiresJustification(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--api-url", "http://127.0.0.1:0",
-		"admin", "tenants", "force-delete", "acme", "--acknowledge-hold-override"}, &stdout, &stderr)
+	code := run([]string{
+		"--api-url", "http://127.0.0.1:0",
+		"admin", "tenants", "force-delete", "acme", "--acknowledge-hold-override",
+	}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code: got %d, want 2", code)
 	}
@@ -320,8 +322,10 @@ func TestAdminTenantsForceDeleteOverrideRequiresJustification(t *testing.T) {
 // force-delete requires an <id>.
 func TestAdminTenantsForceDeleteRequiresID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--api-url", "http://127.0.0.1:0",
-		"admin", "tenants", "force-delete"}, &stdout, &stderr)
+	code := run([]string{
+		"--api-url", "http://127.0.0.1:0",
+		"admin", "tenants", "force-delete",
+	}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code: got %d, want 2", code)
 	}
@@ -734,8 +738,10 @@ func TestBootstrapAdminTokenFirstUsePrompt_spec_17_6_473(t *testing.T) {
 	}))
 	defer created.Close()
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--api-url", created.URL, "--token", "t",
-		"bootstrap", "--from-values", path, "--wait-timeout", "0"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{
+		"--api-url", created.URL, "--token", "t",
+		"bootstrap", "--from-values", path, "--wait-timeout", "0",
+	}, &stdout, &stderr); code != 0 {
 		t.Fatalf("bootstrap: exit %d; stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "Initial admin token written to Secret lenny-system/lenny-admin-token") {
@@ -752,8 +758,10 @@ func TestBootstrapAdminTokenFirstUsePrompt_spec_17_6_473(t *testing.T) {
 	defer existing.Close()
 	stdout.Reset()
 	stderr.Reset()
-	if code := run([]string{"--api-url", existing.URL, "--token", "t",
-		"bootstrap", "--from-values", path, "--wait-timeout", "0"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{
+		"--api-url", existing.URL, "--token", "t",
+		"bootstrap", "--from-values", path, "--wait-timeout", "0",
+	}, &stdout, &stderr); code != 0 {
 		t.Fatalf("bootstrap re-run: exit %d; stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "Admin token Secret already exists") {

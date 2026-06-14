@@ -292,9 +292,9 @@ func TestRefreshAccessTokenPublicClientOmitsSecret(t *testing.T) {
 // spec: §4.3 line 200 — refresh grant rejects missing required fields.
 func TestRefreshAccessTokenRejectsMissingFields(t *testing.T) {
 	for i, r := range []RefreshTokenRequest{
-		{ClientID: "c", RefreshToken: "rt"},                              // no token endpoint
-		{TokenEndpoint: "https://t.example.com", ClientID: "c"},          // no refresh_token
-		{TokenEndpoint: "https://t.example.com", RefreshToken: "rt"},     // no client_id
+		{ClientID: "c", RefreshToken: "rt"},                          // no token endpoint
+		{TokenEndpoint: "https://t.example.com", ClientID: "c"},      // no refresh_token
+		{TokenEndpoint: "https://t.example.com", RefreshToken: "rt"}, // no client_id
 	} {
 		if _, err := RefreshAccessToken(context.Background(), http.DefaultClient, r); err == nil {
 			t.Errorf("case %d: RefreshAccessToken accepted an invalid request", i)

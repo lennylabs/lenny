@@ -133,11 +133,15 @@ func validateAzureOpenAI(cfg MaterializedConfig) error {
 	hasAccessToken := cfg["accessToken"] != ""
 	switch {
 	case hasAPIKey && hasAccessToken:
-		return &MaterializationError{Provider: ProviderAzureOpenAI, Missing: missing,
-			Reason: "exactly one of apiKey (API-key pool) or accessToken (Azure AD pool) is allowed, not both"}
+		return &MaterializationError{
+			Provider: ProviderAzureOpenAI, Missing: missing,
+			Reason: "exactly one of apiKey (API-key pool) or accessToken (Azure AD pool) is allowed, not both",
+		}
 	case !hasAPIKey && !hasAccessToken:
-		return &MaterializationError{Provider: ProviderAzureOpenAI, Missing: missing,
-			Reason: "one of apiKey (API-key pool) or accessToken (Azure AD pool) is required"}
+		return &MaterializationError{
+			Provider: ProviderAzureOpenAI, Missing: missing,
+			Reason: "one of apiKey (API-key pool) or accessToken (Azure AD pool) is required",
+		}
 	}
 	if hasAccessToken {
 		// Azure AD pool: the short-lived token carries an expiry.

@@ -20,7 +20,8 @@ func newManager(t *testing.T, now func() time.Time) (*Manager, *recordingObserve
 	t.Helper()
 	obs := &recordingObserver{}
 	store := carotationstore.NewMemory().WithClock(now)
-	m := NewManager(store,
+	m := NewManager(
+		store,
 		WithObserver(obs),
 		WithOverlapWindow(24*time.Hour),
 		WithClock(now),

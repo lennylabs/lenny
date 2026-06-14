@@ -39,8 +39,10 @@ func (r *recordingAuditor) Append(_ context.Context, tenantID, eventType string,
 	r.rows = append(r.rows, recordedAudit{
 		TenantID: tenantID, EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at,
 	})
-	return audit.Row{Seq: uint64(len(r.rows)), TenantID: tenantID, EventType: eventType,
-		Payload: payload, Timestamp: at}, nil
+	return audit.Row{
+		Seq: uint64(len(r.rows)), TenantID: tenantID, EventType: eventType,
+		Payload: payload, Timestamp: at,
+	}, nil
 }
 
 func (r *recordingAuditor) snapshot() []recordedAudit {
@@ -66,21 +68,25 @@ func (m *recordingMetrics) RecordRequestDuration(op string, _ time.Duration) {
 	defer m.mu.Unlock()
 	m.requestDurations = append(m.requestDurations, op)
 }
+
 func (m *recordingMetrics) IncErrors(op, class string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.errors = append(m.errors, op+":"+class)
 }
+
 func (m *recordingMetrics) IncRateLimited(tier string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rateLimited = append(m.rateLimited, tier)
 }
+
 func (m *recordingMetrics) IncRateLimitedSampled(tier string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rateLimitedSampled = append(m.rateLimitedSampled, tier)
 }
+
 func (m *recordingMetrics) Inc5xx(errorType string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,7 +138,8 @@ func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) er
 }
 
 func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	eventType string, payload json.RawMessage, at time.Time,
+) (audit.Row, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.failErr != nil {
@@ -144,11 +151,15 @@ func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.Issued
 	if t.failAt == "issued" {
 		return audit.Row{}, &txStoreErr{"issued insert failed"}
 	}
-	t.audits = append(t.audits, recordedAudit{TenantID: tok.TenantID,
-		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at})
+	t.audits = append(t.audits, recordedAudit{
+		TenantID:  tok.TenantID,
+		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at,
+	})
 	t.records = append(t.records, tok)
-	return audit.Row{Seq: uint64(len(t.audits)), TenantID: tok.TenantID,
-		EventType: eventType, Payload: payload, Timestamp: at}, nil
+	return audit.Row{
+		Seq: uint64(len(t.audits)), TenantID: tok.TenantID,
+		EventType: eventType, Payload: payload, Timestamp: at,
+	}, nil
 }
 
 func (t *txStore) snapshot() ([]issuedtokenstore.IssuedToken, []recordedAudit) {

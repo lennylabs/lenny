@@ -38,6 +38,9 @@ func startPG(t *testing.T) *containers.Postgres {
 // spec: §11.7 line 435 (ops_event.* route to the platform tenant);
 // §25.4 lines 1490-1500 (lenny-ops uses the StoreRouter); §25.4 lines
 // 2338-2340 (lock audit events). F-25.4.14, F-25.4.22.
+// diagnosis: a failure means lenny-ops does not durably commit ops_event
+// rows to the platform-tenant audit chain through the StoreRouter, so
+// lock and other operational audit events could be lost.
 func TestOpsAuditDurable_CommitsPlatformChain_spec_25_4_22(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

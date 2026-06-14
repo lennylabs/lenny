@@ -140,8 +140,10 @@ func TestExternalAdaptersUpdateSendsIfMatch(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--api-url", srv.URL, "admin", "external-adapters", "update",
-		"--name", "acme-a2a", "--display-name", "Acme"}, &stdout, &stderr)
+	code := run([]string{
+		"--api-url", srv.URL, "admin", "external-adapters", "update",
+		"--name", "acme-a2a", "--display-name", "Acme",
+	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}

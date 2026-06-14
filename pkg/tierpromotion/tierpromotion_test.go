@@ -287,16 +287,16 @@ func TestValidateInputsRejectsUnsetProviderAtTier3_spec_17_8_3_1285(t *testing.T
 // so the autoscaling-provider check SKIPs when the target is not Tier 3.
 func TestValidateInputsSkipsProviderCheckBelowTier3_spec_17_8_2_963(t *testing.T) {
 	in := tierpromotion.Inputs{
-		From:                  tierpromotion.Tier1,
-		To:                    tierpromotion.Tier2,
-		ChartValuesTier:       tierpromotion.Tier2,
-		GatewayReplicas:       3,
-		ControllerReplicas:    2,
-		OpsReplicas:           2,
-		AuditRetainDays:       30,
-		AutoscalingProvider:   "hpa", // permitted at Tier 1 / 2
-		MinReplicas:           9,
-		MaxSessionsPerReplica: 200,
+		From:                          tierpromotion.Tier1,
+		To:                            tierpromotion.Tier2,
+		ChartValuesTier:               tierpromotion.Tier2,
+		GatewayReplicas:               3,
+		ControllerReplicas:            2,
+		OpsReplicas:                   2,
+		AuditRetainDays:               30,
+		AutoscalingProvider:           "hpa", // permitted at Tier 1 / 2
+		MinReplicas:                   9,
+		MaxSessionsPerReplica:         200,
 		PostgresUsesPersistentStorage: true,
 		RedisUsesPersistentStorage:    true,
 		SecretEncryptionVerified:      true,
@@ -361,16 +361,16 @@ func TestValidateInputsRejectsUncalibratedMaxSessions_spec_17_8_3_1284(t *testin
 // on Phase 13.5 attestations; the check SKIPs.
 func TestValidateInputsSkipsPhase135BelowTier3_spec_17_8_3(t *testing.T) {
 	in := tierpromotion.Inputs{
-		From:                  tierpromotion.Tier1,
-		To:                    tierpromotion.Tier2,
-		ChartValuesTier:       tierpromotion.Tier2,
-		GatewayReplicas:       3,
-		ControllerReplicas:    2,
-		OpsReplicas:           2,
-		AuditRetainDays:       30,
-		AutoscalingProvider:   "keda",
-		MinReplicas:           3,
-		MaxSessionsPerReplica: 200,
+		From:                          tierpromotion.Tier1,
+		To:                            tierpromotion.Tier2,
+		ChartValuesTier:               tierpromotion.Tier2,
+		GatewayReplicas:               3,
+		ControllerReplicas:            2,
+		OpsReplicas:                   2,
+		AuditRetainDays:               30,
+		AutoscalingProvider:           "keda",
+		MinReplicas:                   3,
+		MaxSessionsPerReplica:         200,
 		PostgresUsesPersistentStorage: true,
 		RedisUsesPersistentStorage:    true,
 		SecretEncryptionVerified:      true,

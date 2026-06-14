@@ -376,7 +376,8 @@ func TestRegistrationErrorCode(t *testing.T) {
 	}
 	// A wrapped priority sentinel still maps via errors.Is semantics.
 	if _, _, ok := interceptor.RegistrationErrorCode(
-		errors.Join(errors.New("register"), interceptor.ErrInvalidPriority)); !ok {
+		errors.Join(errors.New("register"), interceptor.ErrInvalidPriority),
+	); !ok {
 		t.Error("a wrapped ErrInvalidPriority did not map")
 	}
 	if _, _, ok := interceptor.RegistrationErrorCode(errors.New("x")); ok {

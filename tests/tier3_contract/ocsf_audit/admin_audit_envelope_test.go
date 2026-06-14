@@ -62,20 +62,27 @@ func newRouter(t *testing.T) *admin.Router {
 // contract on the list endpoint: the response is the OCSF envelope
 // (ocsfVersion, translatorVersion, items[]) with each item satisfying
 // the §11.7 OCSF v1.1.0 structural contract.
+//
+// spec: §4.4 line 232, §11.7.
+// diagnosis: a failure means the admin audit-events list endpoint does
+// not return a well-formed OCSF envelope, so SIEM consumers would
+// receive a non-conformant audit payload.
 func TestAdminAuditEventsListReturnsOCSFEnvelope(t *testing.T) {
 	router := newRouter(t)
 	// Generate one row by creating a tenant.
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body),
+	)))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
 
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil)))
+		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil,
+	)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list: %d body=%s", rr.Code, rr.Body.String())
 	}
@@ -128,19 +135,26 @@ func TestAdminAuditEventsListReturnsOCSFEnvelope(t *testing.T) {
 
 // TestAdminAuditEventsGetReturnsOCSFEnvelope is the same contract on
 // the single-row endpoint /v1/admin/audit-events/{seq}.
+//
+// spec: §4.4 line 232, §11.7.
+// diagnosis: a failure means the single-row admin audit-events endpoint
+// does not return a well-formed OCSF envelope, diverging from the list
+// endpoint's contract.
 func TestAdminAuditEventsGetReturnsOCSFEnvelope(t *testing.T) {
 	router := newRouter(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body),
+	)))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
 
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodGet, "/v1/admin/audit-events/1?tenantId=platform", nil)))
+		http.MethodGet, "/v1/admin/audit-events/1?tenantId=platform", nil,
+	)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("get: %d body=%s", rr.Code, rr.Body.String())
 	}
@@ -160,19 +174,26 @@ func TestAdminAuditEventsGetReturnsOCSFEnvelope(t *testing.T) {
 // version of the prior tests: the list response MUST NOT carry the
 // legacy `auditEvents` field (the pre-translation canonical Postgres
 // tuple). A regression that re-introduces it would fail this assertion.
+//
+// spec: §4.4 line 232, §11.7.
+// diagnosis: a failure means the list response re-introduces the legacy
+// auditEvents canonical-tuple field, leaking the pre-translation
+// Postgres tuple alongside the OCSF envelope.
 func TestAdminAuditEventsListIsOCSFNotCanonicalTuple(t *testing.T) {
 	router := newRouter(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body),
+	)))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
 
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
-		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil)))
+		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil,
+	)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list: %d", rr.Code)
 	}

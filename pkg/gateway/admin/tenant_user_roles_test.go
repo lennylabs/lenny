@@ -265,8 +265,10 @@ func TestListTenantUsersProjectsRoles_spec_15_1_826(t *testing.T) {
 		RoleAssignedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 	seedRoleUser(t, store, userstore.User{Subject: "bob@acme.com", TenantID: "acme", RoleAssigned: false})
-	seedRoleUser(t, store, userstore.User{Subject: "carol@globex.com", TenantID: "globex", RoleAssigned: true,
-		Roles: []pkgauth.Role{pkgauth.RoleUser}})
+	seedRoleUser(t, store, userstore.User{
+		Subject: "carol@globex.com", TenantID: "globex", RoleAssigned: true,
+		Roles: []pkgauth.Role{pkgauth.RoleUser},
+	})
 
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, roleReq(http.MethodGet,

@@ -40,6 +40,9 @@ func rec(tenant, session, uri, key string) legalholdescrow.Record {
 
 // spec: §12.8 lines 884-885 — the escrow record store round-trips the
 // release-lookup keys and the MarkReleased transition is idempotent.
+// diagnosis: a failure means the legal-hold escrow store does not
+// round-trip the release-lookup keys or MarkReleased is not idempotent,
+// so an escrow record could be released twice or become unfindable.
 func TestLegalHoldEscrowRecordsPgStore_spec_12_8_884(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

@@ -35,12 +35,12 @@ const (
 )
 
 type breaker struct {
-	mu                sync.Mutex
-	st                state
-	consecutiveFails  int
-	failThreshold     int
-	openExpiresAt     time.Time
-	cooldown          time.Duration
+	mu               sync.Mutex
+	st               state
+	consecutiveFails int
+	failThreshold    int
+	openExpiresAt    time.Time
+	cooldown         time.Duration
 }
 
 func (b *breaker) call(ok bool, now time.Time) (allowed bool, transition string) {
@@ -135,9 +135,9 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 }
 
 var legalTransitions = map[string]bool{
-	"closed->open":     true,
-	"open->half_open":  true,
-	"half_open->open":  true,
+	"closed->open":      true,
+	"open->half_open":   true,
+	"half_open->open":   true,
 	"half_open->closed": true,
 }
 

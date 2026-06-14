@@ -191,12 +191,18 @@ func TestMeOperationsScopesToCallerAndInFlight(t *testing.T) {
 	src := &fakeOpsSource{
 		kinds: []operations.Kind{operations.KindRemediationLock},
 		ops: []operations.Operation{
-			{OperationID: "mine-held", Kind: operations.KindRemediationLock, Status: operations.StatusHeld,
-				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{}},
-			{OperationID: "mine-done", Kind: operations.KindRemediationLock, Status: operations.StatusCompleted,
-				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{}},
-			{OperationID: "others", Kind: operations.KindRemediationLock, Status: operations.StatusInProgress,
-				StartedBy: "bob@acme.com", StartedAt: now, Resources: map[string]string{}},
+			{
+				OperationID: "mine-held", Kind: operations.KindRemediationLock, Status: operations.StatusHeld,
+				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{},
+			},
+			{
+				OperationID: "mine-done", Kind: operations.KindRemediationLock, Status: operations.StatusCompleted,
+				StartedBy: "admin@acme.com", StartedAt: now, Resources: map[string]string{},
+			},
+			{
+				OperationID: "others", Kind: operations.KindRemediationLock, Status: operations.StatusInProgress,
+				StartedBy: "bob@acme.com", StartedAt: now, Resources: map[string]string{},
+			},
 		},
 	}
 	router := newOperationsAdmin(t, src)

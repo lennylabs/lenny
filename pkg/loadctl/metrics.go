@@ -160,5 +160,5 @@ func statusClass(code int) string {
 	if code >= 300 {
 		return "3xx"
 	}
-	return strconv.Itoa(code / 100) + "xx"
+	return strconv.Itoa(code/100) + "xx"
 }

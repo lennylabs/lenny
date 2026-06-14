@@ -21,7 +21,9 @@ import (
 
 type capturingAudit struct{ events []AuditEvent }
 
-func (c *capturingAudit) EmitAdminEvent(_ context.Context, e AuditEvent) { c.events = append(c.events, e) }
+func (c *capturingAudit) EmitAdminEvent(_ context.Context, e AuditEvent) {
+	c.events = append(c.events, e)
+}
 
 // spec: §8.3 lines 349-352 / §11.2.1 — registering a weaker pool that a
 // more-restrictive parent could delegate to under an active

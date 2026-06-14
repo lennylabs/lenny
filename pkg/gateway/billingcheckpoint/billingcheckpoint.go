@@ -117,7 +117,8 @@ func (c *Checkpointer) Checkpoint(ctx context.Context) {
 			continue
 		}
 		c.emitter.Emit(ctx, billingfanout.TokenUsageCheckpoint(
-			s.TenantID, s.SessionID, s.UserID, uint64(dIn), uint64(dOut)))
+			s.TenantID, s.SessionID, s.UserID, uint64(dIn), uint64(dOut),
+		))
 		c.baseline[key] = cur
 	}
 	for key := range c.baseline {

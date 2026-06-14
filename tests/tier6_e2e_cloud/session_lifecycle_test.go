@@ -229,5 +229,7 @@ func freeLocalPortCloud(t *testing.T) int {
 }
 
 // guards: keep imports stable across edits.
-var _ = url.Parse
-var _ = strings.TrimSpace
+var (
+	_ = url.Parse
+	_ = strings.TrimSpace
+)

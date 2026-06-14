@@ -60,7 +60,8 @@ func (c IngressControllerCheck) Decide() Decision {
 			"WARNING: ingressControllerNamespace '%s' does not exist in the cluster; the allow-gateway-ingress "+
 				"NetworkPolicy namespaceSelector matches no namespace, so no external HTTPS reaches the gateway TLS "+
 				"listener. Set ingressControllerNamespace to the namespace the Ingress controller runs in (§13.2 NET-038).",
-			c.Namespace)}
+			c.Namespace,
+		)}
 	}
 	if strings.TrimSpace(c.PodLabelKey) == "" || strings.TrimSpace(c.PodLabelValue) == "" {
 		return Decision{Passed: true}
@@ -70,7 +71,8 @@ func (c IngressControllerCheck) Decide() Decision {
 			"WARNING: no running pod in namespace '%s' carries the label '%s=%s'; the allow-gateway-ingress "+
 				"NetworkPolicy podSelector matches no Ingress controller pod, so no external HTTPS reaches the gateway "+
 				"TLS listener. Set ingress.controllerPodLabel.key/value to a label on the Ingress controller pods (§13.2 NET-038).",
-			c.Namespace, c.PodLabelKey, c.PodLabelValue)}
+			c.Namespace, c.PodLabelKey, c.PodLabelValue,
+		)}
 	}
 	return Decision{Passed: true}
 }

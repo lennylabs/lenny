@@ -22,9 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
-	"golang.org/x/time/rate"
 )
 
 const name = "clientgo_throttle_floor"

@@ -82,9 +82,9 @@ type Record struct {
 	// ArtifactType is the §4.4 / §12.5 artifact-kind tag. Empty maps
 	// to ArtifactTypeWorkspace (the default the migration 0063 column
 	// stamps onto pre-existing rows).
-	ArtifactType      ArtifactType
-	KMSKeyAlias       string
-	LegalHold         bool
+	ArtifactType ArtifactType
+	KMSKeyAlias  string
+	LegalHold    bool
 	// LegalHoldSetBy, LegalHoldSetAt, and LegalHoldNote carry the §15.1
 	// line 865 provenance the `GET /v1/admin/legal-holds` list reports
 	// for an artifact-scoped hold. Populated when LegalHold flips true,

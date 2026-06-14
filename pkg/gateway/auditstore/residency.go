@@ -288,7 +288,8 @@ type PlatformAuditRegionUnresolvableError struct {
 func (e *PlatformAuditRegionUnresolvableError) Error() string {
 	return fmt.Sprintf(
 		"auditstore: platform-tenant audit write for target tenant %q (event %q) failed closed: region %q unresolvable (%s)",
-		e.TargetTenantID, e.EventType, e.Region, e.FailureMode)
+		e.TargetTenantID, e.EventType, e.Region, e.FailureMode,
+	)
 }
 
 // Code returns the §15.1 line 1044 error code for HTTP mapping.

@@ -112,10 +112,10 @@ func SLODefinitions() []SLODefinition {
 	t := `deployment_tier="` + SLOTierPlaceholder + `"`
 	return []SLODefinition{
 		{
-			Name:         "session-creation-success-rate",
-			AlertName:    "SessionCreationSuccessRateBurnRate",
-			Objective:    "Session creation success rate >= 99.5%",
-			Target:       0.995,
+			Name:        "session-creation-success-rate",
+			AlertName:   "SessionCreationSuccessRateBurnRate",
+			Objective:   "Session creation success rate >= 99.5%",
+			Target:      0.995,
 			RunbookSlug: "session-creation-success-rate-burn-rate",
 			// Session creation is the two-step POST /v1/sessions handler
 			// (handleCreate): a 5xx response is a failed creation attempt,
@@ -134,10 +134,10 @@ func SLODefinitions() []SLODefinition {
 			},
 		},
 		{
-			Name:         "session-creation-latency",
-			AlertName:    "SessionCreationLatencyBurnRate",
-			Objective:    "Session creation latency P99 < 500ms",
-			Target:       0.99,
+			Name:        "session-creation-latency",
+			AlertName:   "SessionCreationLatencyBurnRate",
+			Objective:   "Session creation latency P99 < 500ms",
+			Target:      0.99,
 			RunbookSlug: "session-creation-latency-burn-rate",
 			// The slow fraction is the share of POST /v1/sessions creation
 			// requests slower than the 500ms SLO, against the 1% error
@@ -155,10 +155,10 @@ func SLODefinitions() []SLODefinition {
 			},
 		},
 		{
-			Name:         "session-availability",
-			AlertName:    "SessionAvailabilityBurnRate",
-			Objective:    "Session availability >= 99.9%",
-			Target:       0.999,
+			Name:        "session-availability",
+			AlertName:   "SessionAvailabilityBurnRate",
+			Objective:   "Session availability >= 99.9%",
+			Target:      0.999,
 			RunbookSlug: "session-availability-burn-rate",
 			// lenny_session_unavailability_ratio is the fraction of active
 			// sessions currently in a retry/recovery state (resume_pending,
@@ -174,10 +174,10 @@ func SLODefinitions() []SLODefinition {
 			},
 		},
 		{
-			Name:         "gateway-availability",
-			AlertName:    "GatewayAvailabilityBurnRate",
-			Objective:    "Gateway availability >= 99.95%",
-			Target:       0.9995,
+			Name:        "gateway-availability",
+			AlertName:   "GatewayAvailabilityBurnRate",
+			Objective:   "Gateway availability >= 99.95%",
+			Target:      0.9995,
 			RunbookSlug: "gateway-availability-burn-rate",
 			// Gateway availability is the share of HTTP requests served
 			// without a 5xx across every route — a request that returns
@@ -248,10 +248,10 @@ func SLODefinitions() []SLODefinition {
 			},
 		},
 		{
-			Name:         "checkpoint-duration",
-			AlertName:    "CheckpointDurationBurnRate",
-			Objective:    "Checkpoint duration P95 < 2s (<= 100MB)",
-			Target:       0.95,
+			Name:        "checkpoint-duration",
+			AlertName:   "CheckpointDurationBurnRate",
+			Objective:   "Checkpoint duration P95 < 2s (<= 100MB)",
+			Target:      0.95,
 			RunbookSlug: "checkpoint-duration-burn-rate",
 			// The slow fraction is the share of checkpoints slower than the
 			// 2s SLO, against the 5% error budget. le="2" is an explicit

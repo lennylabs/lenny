@@ -54,6 +54,7 @@ type metricsFake struct {
 func (m *metricsFake) IncDataResidencyViolation(op string) {
 	m.residency = append(m.residency, op)
 }
+
 func (m *metricsFake) IncPlatformAuditRegionUnresolvable(region, failureMode string) {
 	m.unresolvable = append(m.unresolvable, [2]string{region, failureMode})
 }
@@ -106,7 +107,7 @@ func TestResidencyDecideRule1RegionalPool_spec_11_7_431(t *testing.T) {
 // with no storage.regions entry fails closed.
 func TestResidencyDecideRule3MissingEntry_spec_11_7_433(t *testing.T) {
 	pr := newResidencyRouter(
-		regionRouterFake{byRegion: map[string]*pgxpool.Pool{"eu-west-1": &pgxpool.Pool{}}},
+		regionRouterFake{byRegion: map[string]*pgxpool.Pool{"eu-west-1": {}}},
 		lookupFake{region: "ap-south-1"}, // not configured
 		&metricsFake{},
 		func(context.Context, *pgxpool.Pool) error { return nil },
@@ -158,9 +159,11 @@ type errAuditRouter struct{}
 func (errAuditRouter) AuditShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
 	return nil, errors.New("no audit shard in unit test")
 }
+
 func (errAuditRouter) AuditReadShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
 	return nil, errors.New("no audit read shard in unit test")
 }
+
 func (errAuditRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle, error) {
 	return nil, errors.New("no audit shards in unit test")
 }
@@ -216,7 +219,8 @@ func TestAppendDoesNotEngageResidencyGateOffPath_spec_11_7_435(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mx := &metricsFake{}
 			s := New(errAuditRouter{}, WithPlatformAuditResidency(
-				"platform", regionRouterFake{}, lookupFake{region: "eu-west-1"}, mx))
+				"platform", regionRouterFake{}, lookupFake{region: "eu-west-1"}, mx,
+			))
 			_, err := s.Append(context.Background(), tc.tenant, "evt", json.RawMessage(tc.payload), time.Unix(0, 0))
 
 			var unresolvable *PlatformAuditRegionUnresolvableError

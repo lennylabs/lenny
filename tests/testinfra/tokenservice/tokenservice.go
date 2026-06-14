@@ -81,7 +81,8 @@ func Start(t testing.TB) *Process {
 		t.Fatalf("create stderr log: %v", err)
 	}
 
-	cmd := exec.Command(binary,
+	cmd := exec.Command(
+		binary,
 		"--addr", httpAddr,
 		"--grpc-addr", grpcAddr,
 	)

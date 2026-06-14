@@ -152,7 +152,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore",
+        "tests/tier6_e2e_cloud/aws_resources_test.go"
       ],
       "packages": [
         "pkg/token",
@@ -173,7 +174,11 @@
         "pkg/checkpoint/checkpoint_test.go::TestAllResumeModesIsExhaustive",
         "pkg/checkpoint/checkpoint_test.go::TestResumeModeWorkspaceLost",
         "pkg/checkpoint/checkpoint_test.go::TestWorkspaceSizePreCheckRejectsExceed",
-        "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale"
+        "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale",
+        "tests/tier2_component/stores/evictionfallback_test.go",
+        "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
+        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go"
       ],
       "packages": [
         "pkg/store/event",
@@ -255,7 +260,8 @@
         "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeVariantPool",
         "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeAdjustedBasePool",
         "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeBootstrapMode",
-        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeRejectsVariantWeightsExceedingOne"
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeRejectsVariantWeightsExceedingOne",
+        "tests/tier2_component/poolresume/resume_epoch_test.go"
       ],
       "packages": [
         "pkg/controller/poolscaling/strategy"
@@ -367,7 +373,8 @@
       "title": "Runtime",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
-        "tests/tier2_component/stores/runtimestore_test.go"
+        "tests/tier2_component/stores/runtimestore_test.go",
+        "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -395,7 +402,12 @@
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier4_integration/concurrent_stateless_test.go",
-        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go"
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
+        "tests/tier12_load_cloud/concurrent_stateless_test.go",
+        "tests/tier12_load_cloud/concurrent_workspace_test.go",
+        "tests/tier12_load_cloud/task_mode_test.go",
+        "tests/tier2_component/poolresume/concurrent_uptime_test.go",
+        "tests/tier12_load_cloud/session_mode_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -678,7 +690,8 @@
       "title": "Lease Extension",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/delegation/lease/..."
+        "pkg/delegation/lease/...",
+        "tests/tier2_component/leasedenial/leasedenialstore_test.go"
       ],
       "packages": [
         "pkg/delegation/lease"
@@ -774,7 +787,8 @@
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateHappyPath",
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID",
         "tests/tier2_component/stores/interactionstore_test.go",
-        "tests/tier4_integration/elicitation_test.go"
+        "tests/tier4_integration/elicitation_test.go",
+        "tests/tier9_security/elicitation_tamper_test.go"
       ],
       "packages": [
         "pkg/elicitation"
@@ -912,7 +926,8 @@
       "title": "Gateway Horizontal Scaling",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
-        "tests/tier2_component/coordination/..."
+        "tests/tier2_component/coordination/...",
+        "tests/tier2_component/stores/coordleasestore_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -1088,7 +1103,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantHonoursDefinitionOrder",
         "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
         "tests/tier2_component/stores/experimentstore_test.go",
-        "tests/tier2_component/stores/evalstore_test.go"
+        "tests/tier2_component/stores/evalstore_test.go",
+        "tests/tier2_component/evalaggregates/eval_aggregates_test.go"
       ],
       "packages": [
         "pkg/experiment"
@@ -1205,7 +1221,8 @@
         "tests/tier2_component/quota/...",
         "tests/tier2_component/storagequota/...",
         "tests/tier2_component/stores/billingstore_test.go",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport",
+        "tests/tier2_component/stores/delegationbudgetstore_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -1327,7 +1344,8 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier4_integration/audit_pipeline_test.go",
-        "tests/tier8_chaos/audit_chain_test.go"
+        "tests/tier8_chaos/audit_chain_test.go",
+        "tests/tier2_component/opsaudit/opsaudit_durable_test.go"
       ],
       "packages": [
         "pkg/audit",
@@ -1415,7 +1433,8 @@
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
         "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
         "tests/tier2_component/rls/...",
-        "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline"
+        "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline",
+        "tests/tier2_component/stores/storerouter_routing_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1435,7 +1454,8 @@
       "tests": [
         "tests/tier2_component/breakers/breakerstore_test.go",
         "tests/tier2_component/quota/quotastore_test.go",
-        "pkg/redisconn/redisconn_test.go"
+        "pkg/redisconn/redisconn_test.go",
+        "tests/tier8_chaos/redis_sentinel_failover_test.go"
       ],
       "packages": [
         "pkg/store/lease",
@@ -1451,7 +1471,8 @@
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
         "tests/tier2_component/stores/artifactcatalog_test.go",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
+        "tests/tier2_component/preflight/minio_sse_test.go"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -1467,7 +1488,8 @@
         "pkg/storerouter/storerouter_test.go",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier2_component/stores/storerouter_test.go",
-        "tests/tier3_contract/cloudevents/cloudevents_test.go"
+        "tests/tier3_contract/cloudevents/cloudevents_test.go",
+        "tests/tier2_component/stores/postgrespodregistry_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1497,7 +1519,10 @@
         "tests/tier8_chaos/component_failure_test.go",
         "tests/tier8_chaos/config_drift_test.go",
         "tests/tier8_chaos/live_session_test.go",
-        "tests/tier8_chaos/store_failure_test.go"
+        "tests/tier8_chaos/store_failure_test.go",
+        "tests/tier2_component/legalholdescrow/pgstore_test.go",
+        "tests/tier2_component/stores/memorystore_preflight_test.go",
+        "tests/tier2_component/tenantsalt/tenantsalt_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1515,7 +1540,8 @@
         "tests/tier9_security/rbac_test.go",
         "tests/tier9_security/ssrf_test.go",
         "tests/tier9_security/store_helpers_test.go",
-        "tests/tier9_security/tenant_isolation_test.go"
+        "tests/tier9_security/tenant_isolation_test.go",
+        "tests/tier9_security/credential_leakage_test.go"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
@@ -1581,7 +1607,8 @@
         "tests/tier5_e2e_kind/lifecycle_test.go",
         "tests/tier5_e2e_kind/pod_lifecycle_test.go",
         "tests/tier9_security/gateway_probe_test.go",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudOIDC"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudOIDC",
+        "tests/tier6_e2e_cloud/behavior_test.go"
       ],
       "packages": [
         "pkg/podsecurity",
@@ -1628,7 +1655,9 @@
       "tests": [
         "tests/tier2_component/migrations/migrations_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
-        "tests/tier9_security/network_policy_test.go"
+        "tests/tier9_security/network_policy_test.go",
+        "tests/tier6_e2e_cloud/managed_elasticache_test.go",
+        "tests/tier6_e2e_cloud/managed_rds_test.go"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -1663,7 +1692,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
-        "tests/tier2_component/stores/connectorcredstore_test.go"
+        "tests/tier2_component/stores/connectorcredstore_test.go",
+        "tests/tier2_component/issuedtokencascade/cascade_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1876,7 +1906,8 @@
         "tests/tier2_component/stores/usagestore_test.go",
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
-        "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go"
+        "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
+        "tests/tier6_e2e_cloud/session_lifecycle_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -1904,7 +1935,9 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "pkg/gateway/mcp/..."
+        "pkg/gateway/mcp/...",
+        "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2194,7 +2227,8 @@
         "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
-        "pkg/observability/audit/catalog_test.go::TestIsKnownEventType"
+        "pkg/observability/audit/catalog_test.go::TestIsKnownEventType",
+        "tests/tier2_component/stores/deploymentconfigstore_test.go"
       ],
       "packages": [
         "pkg/observability/audit"
@@ -2305,7 +2339,8 @@
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier11_docs/time_to_hello_world_test.go"
+        "tests/tier11_docs/time_to_hello_world_test.go",
+        "tests/tier3_contract/compose_mode/compose_mode_test.go"
       ],
       "packages": [
         "cmd/lenny-dev"
@@ -2333,7 +2368,8 @@
       "title": "Packaging and Installation",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier6_e2e_cloud/eks_platform_test.go"
       ],
       "packages": [
         "charts/lenny",
@@ -2828,7 +2864,8 @@
         "pkg/ops/diagnostics/bottleneck_test.go",
         "pkg/ops/diagnostics/chain_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
-        "pkg/ops/auditrate/auditrate_test.go"
+        "pkg/ops/auditrate/auditrate_test.go",
+        "tests/tier2_component/stores/diagnostics_prodsource_test.go"
       ],
       "packages": [
         "pkg/operability/diag"

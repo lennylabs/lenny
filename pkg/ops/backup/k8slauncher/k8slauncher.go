@@ -371,7 +371,8 @@ func (l *Launcher) env(spec backup.JobSpec) []corev1.EnvVar {
 	if t.kmsKeyID != "" {
 		env = append(env, corev1.EnvVar{Name: "LENNY_BACKUP_KMS_KEY_ID", Value: t.kmsKeyID})
 	}
-	env = append(env,
+	env = append(
+		env,
 		secretEnv("LENNY_BACKUP_POSTGRES_DSN", l.cfg.PostgresSecret, "postgres-dsn"),
 		secretEnv("LENNY_BACKUP_MINIO_ACCESS_KEY", t.minioSecret, "minio-access-key"),
 		secretEnv("LENNY_BACKUP_MINIO_SECRET_KEY", t.minioSecret, "minio-secret-key"),

@@ -281,4 +281,3 @@ func TestHandlerSoftDeletedRuntimeReturns404(t *testing.T) {
 		t.Fatalf("status = %d, want 404 for soft-deleted runtime", rr.Code)
 	}
 }
-

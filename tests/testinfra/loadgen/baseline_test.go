@@ -11,8 +11,10 @@ func TestFileBaselineStoreRoundTrip(t *testing.T) {
 	store := &FileBaselineStore{Dir: t.TempDir()}
 	in := BaselineFromResult("slot_counter_race",
 		Profile{Kind: ConstantVU, VUs: 50, Duration: 3 * time.Second},
-		&Result{Iterations: 1000, Throughput: 333.0, ErrorRate: 0.001,
-			Latency: HistogramSnapshot{P95: 0.012, P99: 0.020}})
+		&Result{
+			Iterations: 1000, Throughput: 333.0, ErrorRate: 0.001,
+			Latency: HistogramSnapshot{P95: 0.012, P99: 0.020},
+		})
 	if err := store.Save(in); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

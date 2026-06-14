@@ -212,23 +212,31 @@ func (d Definition) Validate() error {
 		v = append(v, Violation{Code: CodeValidationError, Field: "id", Message: "id is required"})
 	}
 	if !d.Status.IsValid() {
-		v = append(v, Violation{Code: CodeValidationError, Field: "status", Value: string(d.Status),
-			Message: fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status)})
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "status", Value: string(d.Status),
+			Message: fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status),
+		})
 	}
 	if d.BaseRuntime == "" {
 		v = append(v, Violation{Code: CodeValidationError, Field: "baseRuntime", Message: "baseRuntime is required"})
 	}
 	if !d.TargetingMode.IsValid() {
-		v = append(v, Violation{Code: CodeValidationError, Field: "targeting.mode", Value: string(d.TargetingMode),
-			Message: fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode)})
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "targeting.mode", Value: string(d.TargetingMode),
+			Message: fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode),
+		})
 	}
 	if !d.Sticky.IsValid() {
-		v = append(v, Violation{Code: CodeValidationError, Field: "targeting.sticky", Value: string(d.Sticky),
-			Message: fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky)})
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "targeting.sticky", Value: string(d.Sticky),
+			Message: fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky),
+		})
 	}
 	if !d.Propagation.IsValid() {
-		v = append(v, Violation{Code: CodeValidationError, Field: "propagation.childSessions", Value: string(d.Propagation),
-			Message: fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation)})
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "propagation.childSessions", Value: string(d.Propagation),
+			Message: fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation),
+		})
 	}
 	var totalWeight float64
 	seen := map[string]bool{}
@@ -242,28 +250,36 @@ func (d Definition) Validate() error {
 			// spec: §10.7 line 703 / §15.1 line 1005 — variant id
 			// "control" is reserved; admin must surface
 			// RESERVED_IDENTIFIER with details.field + details.value.
-			v = append(v, Violation{Code: CodeReservedIdentifier, Field: field, Value: vt.ID,
-				Message: fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID)})
+			v = append(v, Violation{
+				Code: CodeReservedIdentifier, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID),
+			})
 		}
 		if seen[vt.ID] {
-			v = append(v, Violation{Code: CodeValidationError, Field: field, Value: vt.ID,
-				Message: fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID)})
+			v = append(v, Violation{
+				Code: CodeValidationError, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID),
+			})
 		}
 		seen[vt.ID] = true
 		if vt.Weight < 0 || vt.Weight >= 1 {
 			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
 			// 1.0 always violates the cross-Σ < 1.0 rule (line 743);
 			// 0.0 is admitted (staged variant with no traffic).
-			v = append(v, Violation{Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
-				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight)})
+			v = append(v, Violation{
+				Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
+				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight),
+			})
 		}
 		totalWeight += vt.Weight
 	}
 	if totalWeight >= 1 {
 		// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 returns
 		// INVALID_VARIANT_WEIGHTS at admission.
-		v = append(v, Violation{Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,
-			Message: fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight)})
+		v = append(v, Violation{
+			Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,
+			Message: fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight),
+		})
 	}
 	if len(v) == 0 {
 		return nil

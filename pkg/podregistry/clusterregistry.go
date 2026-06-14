@@ -106,7 +106,7 @@ type RemotePodOperations interface {
 // satisfies the restricted cross-cluster interface. spec: §12.6 lines
 // 609-612 ("the local CRDPodRegistry ... satisfies RemotePodOperations
 // (it is a superset)").
-var _ RemotePodOperations = (PodRegistry)(nil)
+var _ RemotePodOperations = PodRegistry(nil)
 
 // ClusterRegistry abstracts cluster topology for multi-cluster
 // delegation routing (§8 lenny/delegate_task cross-cluster routing).

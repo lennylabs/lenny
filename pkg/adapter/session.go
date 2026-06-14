@@ -92,7 +92,8 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		// same request cannot succeed).
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "StartSession requires a session id"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
 	// spec: §6.4 lines 385-405 — a slot-qualified StartSession claims one
@@ -107,7 +108,8 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	if s.Runtime == nil {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a runtime"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a runtime")
 	}

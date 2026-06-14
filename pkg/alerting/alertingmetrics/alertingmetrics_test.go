@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 )
 
 // TestNewRegistersSurface_spec_25_13_4833 asserts the three §25.13

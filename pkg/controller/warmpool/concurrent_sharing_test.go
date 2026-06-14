@@ -54,7 +54,8 @@ func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition,
 // no CRD template selects the warning branch. F-13.1.5.
 func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s,
+	c := newClient(
+		t, s,
 		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
 		template(), // default session-mode template
 		pool(1, 3),

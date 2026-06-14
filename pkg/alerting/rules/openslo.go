@@ -153,7 +153,8 @@ func RenderOpenSLO(service, tier string) ([]byte, error) {
 			ratio.Bad = &b
 		}
 
-		docs = append(docs,
+		docs = append(
+			docs,
 			openSLODoc{
 				APIVersion: openSLOAPIVersion,
 				Kind:       "SLI",

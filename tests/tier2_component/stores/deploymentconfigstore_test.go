@@ -32,6 +32,9 @@ func newDeploymentConfigStore(t *testing.T) (*deploymentconfigpg.Store, *contain
 // spec: §16.7 — the baseline survives a gateway restart so the audit
 // emitter diffs against a real prior value rather than re-emitting every
 // transition as a first install.
+// diagnosis: a failure means the deployment-config baseline does not
+// survive a gateway restart, so the audit emitter would re-emit every
+// config transition as a first install after each restart.
 func TestDeploymentConfigStorePgRoundTrip_spec_16_7(t *testing.T) {
 	store, pg := newDeploymentConfigStore(t)
 	ctx := context.Background()

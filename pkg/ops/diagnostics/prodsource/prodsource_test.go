@@ -24,9 +24,11 @@ type fakePG struct {
 func (f *fakePG) Session(context.Context, string) (SessionRow, error) {
 	return f.session, f.sessionErr
 }
+
 func (f *fakePG) PoolPodCounts(context.Context, string) (diagnostics.PodCountBreakdown, bool, error) {
 	return f.counts, f.countsFound, f.countsErr
 }
+
 func (f *fakePG) CredentialPoolLoad(context.Context, string) (CredentialPoolLoad, error) {
 	return f.load, f.loadErr
 }

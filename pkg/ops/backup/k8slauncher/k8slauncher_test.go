@@ -230,7 +230,8 @@ func TestJobStatusProjection_spec_25_11(t *testing.T) {
 	complete := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "lenny-restore-done", Namespace: "lenny-system"},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{backupIDAnnotation: "rst-1"}}}},
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{backupIDAnnotation: "rst-1"}},
+		}},
 		Status: batchv1.JobStatus{
 			Succeeded:  1,
 			Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},

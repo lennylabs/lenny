@@ -511,6 +511,9 @@ func TestAgentPodStateReconcileAll(t *testing.T) {
 // read must surface the pool, phase, and the nullable tenant/session
 // columns, report a missing pod as (·, false, nil), and treat an empty
 // pod id as a non-match without a round trip. F-10.1.5.
+// diagnosis: a failure means GetByPodID returns the wrong pool/phase or
+// mishandles the nullable tenant/session columns, so the orphan-session
+// reconciler would act on a misread of the bound pod's mirrored phase.
 func TestAgentPodStateGetByPodID_spec_10_1_51(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

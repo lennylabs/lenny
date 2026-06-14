@@ -88,7 +88,8 @@ func TestGetAuditEventRawCanonical_spec_25_9_3653(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
@@ -121,7 +122,8 @@ func TestGetAuditEventRawCanonical_forbiddenWithoutScope(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
@@ -144,7 +146,8 @@ func TestListAuditEventsTranslationStateFilter_spec_25_9_3659(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
@@ -152,7 +155,8 @@ func TestListAuditEventsTranslationStateFilter_spec_25_9_3659(t *testing.T) {
 	// Invalid value → 400.
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=bogus", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=bogus", nil),
+	))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid state: status %d, want 400", rr.Code)
 	}
@@ -160,7 +164,8 @@ func TestListAuditEventsTranslationStateFilter_spec_25_9_3659(t *testing.T) {
 	// succeeded → all rows present.
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=succeeded", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=succeeded", nil),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("succeeded filter: status %d", rr.Code)
 	}
@@ -173,7 +178,8 @@ func TestListAuditEventsTranslationStateFilter_spec_25_9_3659(t *testing.T) {
 	// dead_lettered → empty on the inline-translating backend.
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=dead_lettered", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&ocsf_translation_state=dead_lettered", nil),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("dead_lettered filter: status %d", rr.Code)
 	}
@@ -191,7 +197,8 @@ func TestRetranslateInMemoryNotRetryable(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}

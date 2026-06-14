@@ -40,7 +40,9 @@ func (g *fakeGateway) ApplyConfig(_ context.Context, desired map[string]any) (bo
 }
 
 // fakeValidator returns a fixed list of violations.
-type fakeValidator struct{ errs []configservice.ValidationError }
+type fakeValidator struct {
+	errs []configservice.ValidationError
+}
 
 func (v fakeValidator) Validate(map[string]any) []configservice.ValidationError { return v.errs }
 

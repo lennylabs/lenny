@@ -43,9 +43,9 @@ func TestResolveRuntimeClassNameAppliesOverrides_spec_17_5(t *testing.T) {
 		isolation.ProfileMicrovm:   "kata-qemu",
 	}
 	cases := map[isolation.Profile]string{
-		isolation.ProfileStandard:  "runc",       // no override → default
-		isolation.ProfileSandboxed: "runsc",      // overridden
-		isolation.ProfileMicrovm:   "kata-qemu",  // overridden
+		isolation.ProfileStandard:  "runc",      // no override → default
+		isolation.ProfileSandboxed: "runsc",     // overridden
+		isolation.ProfileMicrovm:   "kata-qemu", // overridden
 	}
 	for p, want := range cases {
 		got, ok := isolation.ResolveRuntimeClassName(p, overrides)

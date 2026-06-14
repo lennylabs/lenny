@@ -78,7 +78,7 @@ func TestFlushDeletesOnlyExperimentKeys_spec_10_7(t *testing.T) {
 	ctx := context.Background()
 	mustPut(t, c, "acme", "exp-1", "alice", "a")
 	mustPut(t, c, "acme", "exp-1", "bob", "b")
-	mustPut(t, c, "acme", "exp-2", "alice", "c") // different experiment, survives
+	mustPut(t, c, "acme", "exp-2", "alice", "c")   // different experiment, survives
 	mustPut(t, c, "globex", "exp-1", "alice", "d") // different tenant, survives
 
 	n, err := c.Flush(ctx, "acme", "exp-1", "paused")

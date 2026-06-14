@@ -148,7 +148,8 @@ func TestClaimScopesToTheRequestedPool(t *testing.T) {
 // ErrNoIdlePod so the caller does not silently bind a second pod to the
 // same session.
 func TestClaimSameSessionRetryCollidesOnAlreadyExists_spec_4_6(t *testing.T) {
-	c := newEnvtestClient(t,
+	c := newEnvtestClient(
+		t,
 		sandboxIn(testPool, "sbx-1", "idle"),
 		sandboxIn(testPool, "sbx-2", "idle"),
 	)

@@ -187,6 +187,8 @@ func TenantGuardCoverageGaps(ctx context.Context, db Querier) ([]string, error) 
 	rows, err := db.Query(ctx, `
 		SELECT c.relname
 		FROM pg_class c
+		-- platform-admin-cross-tenant-justification: joins Postgres system catalogs (pg_class, pg_namespace), which carry no tenant_id; this is a schema-metadata coverage check, not a tenant-data query.
+		-- platform-admin-cross-tenant-allowed
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind = 'r'
 		  AND n.nspname = current_schema()

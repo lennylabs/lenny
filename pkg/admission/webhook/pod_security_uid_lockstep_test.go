@@ -116,9 +116,9 @@ func TestEphemeralCredGuardHonoursOverriddenUIDs_spec_13_1_16(t *testing.T) {
 	resp := webhook.EphemeralContainerCredGuard(adapter, agent, gid, podspec.CredVolumeName)(
 		context.Background(),
 		&admissionv1.AdmissionRequest{
-			UID:       "ephemeral",
-			Operation: admissionv1.Update,
-			Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+			UID:         "ephemeral",
+			Operation:   admissionv1.Update,
+			Kind:        metav1.GroupVersionKind{Kind: "Pod"},
 			SubResource: "ephemeralcontainers",
 			Object:      runtime.RawExtension{Raw: newRaw},
 			OldObject:   runtime.RawExtension{Raw: oldRaw},

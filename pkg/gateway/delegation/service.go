@@ -703,7 +703,8 @@ type TreeVisibilityWeakeningError struct {
 func (e *TreeVisibilityWeakeningError) Error() string {
 	return fmt.Sprintf(
 		"delegation: child treeVisibility %q widens the parent's effective %q (§8.3 lines 313-317; ordering full → parent-and-self → self-only is strict)",
-		e.ChildVisibility, e.ParentVisibility)
+		e.ChildVisibility, e.ParentVisibility,
+	)
 }
 
 // TreeVisibilityMessagingScopeError reports a §8.3 lines 321-324
@@ -723,7 +724,8 @@ type TreeVisibilityMessagingScopeError struct {
 func (e *TreeVisibilityMessagingScopeError) Error() string {
 	return fmt.Sprintf(
 		"delegation: effective messagingScope %q requires treeVisibility full, but the child lease resolves to %q (§8.3 lines 321-324)",
-		e.EffectiveMessagingScope, e.EffectiveTreeVisibility)
+		e.EffectiveMessagingScope, e.EffectiveTreeVisibility,
+	)
 }
 
 // ContentPolicyWeakeningError reports a §8.3 lines 157-187 contentPolicy
@@ -743,7 +745,8 @@ type ContentPolicyWeakeningError struct {
 func (e *ContentPolicyWeakeningError) Error() string {
 	return fmt.Sprintf(
 		"delegation: child contentPolicy.%s %q weakens the parent's effective %q (§8.3 lines 157-187; a child lease may only make contentPolicy stricter)",
-		e.Axis, e.ChildValue, e.ParentValue)
+		e.Axis, e.ChildValue, e.ParentValue,
+	)
 }
 
 // ContentPolicyInterceptorSubstitutionError reports the §8.3 line 188
@@ -762,7 +765,8 @@ type ContentPolicyInterceptorSubstitutionError struct {
 func (e *ContentPolicyInterceptorSubstitutionError) Error() string {
 	return fmt.Sprintf(
 		"delegation: child contentPolicy.interceptorRef %q substitutes the parent's %q (§8.3 line 188; a child cannot swap the parent's named interceptor for an unrelated one)",
-		e.ChildRef, e.ParentRef)
+		e.ChildRef, e.ParentRef,
+	)
 }
 
 // Delegate validates a §8 delegation request against the parent's
@@ -1193,7 +1197,8 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		// F-8.2.2 / F-8.10.5.
 		DelegationLease: stampLeasePolicy(
 			storeLeaseFromSlice(req.LeaseSlice),
-			delegationPolicyRef, effectivePolicy, haveEffectivePolicy, childContentEff),
+			delegationPolicyRef, effectivePolicy, haveEffectivePolicy, childContentEff,
+		),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the

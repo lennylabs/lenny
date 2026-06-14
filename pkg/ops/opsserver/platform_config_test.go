@@ -28,7 +28,9 @@ func (g *stubGateway) ApplyConfig(_ context.Context, desired map[string]any) (bo
 	return g.restart, nil
 }
 
-type stubValidator struct{ errs []configservice.ValidationError }
+type stubValidator struct {
+	errs []configservice.ValidationError
+}
 
 func (v stubValidator) Validate(map[string]any) []configservice.ValidationError { return v.errs }
 

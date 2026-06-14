@@ -41,7 +41,7 @@ func (stubCatalog) Get(context.Context, string) (artifactcatalog.Record, error) 
 	return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
 }
 func (stubCatalog) SoftDelete(context.Context, string, time.Time) error { return nil }
-func (stubCatalog) Tombstone(context.Context, string) error            { return nil }
+func (stubCatalog) Tombstone(context.Context, string) error             { return nil }
 func (stubCatalog) HardPruneExpired(context.Context, time.Time) (int, error) {
 	return 0, nil
 }
@@ -50,10 +50,13 @@ func (stubCatalog) HardPruneURIs(context.Context, []string) (int, error)      { 
 func (stubCatalog) ListBySession(context.Context, string, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }
+
 func (stubCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
 	return nil
 }
+
 func (stubCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) { return false, nil }
+
 func (stubCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]artifactcatalog.SessionRef, error) {
 	return nil, nil
 }

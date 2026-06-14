@@ -33,9 +33,9 @@ func init() {
 }
 
 type Scenario struct {
-	env       *inproc.Env
-	hits      atomic.Int64
-	failures  atomic.Int64
+	env      *inproc.Env
+	hits     atomic.Int64
+	failures atomic.Int64
 }
 
 func (s *Scenario) Name() string { return "idempotency_cache_eviction" }

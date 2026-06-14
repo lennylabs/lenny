@@ -44,8 +44,8 @@ func (noopSink) Open(string) (io.ReadCloser, error)  { return nil, ErrNoProgress
 type fileSink struct {
 	dir string
 
-	mu     sync.Mutex
-	locks  map[string]*sync.Mutex
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
 }
 
 func newFileSink(dir string) (*fileSink, error) {

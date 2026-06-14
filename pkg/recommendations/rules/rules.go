@@ -197,11 +197,11 @@ func Catalog() []Rule {
 			// spec: §17.8.2 line 1104 first-week monitoring workflow:
 			// "P99 claim latency exceeds 2s, the pool is not keeping up
 			// with demand; increase `minWarm` or investigate pod startup".
-			Name:     "WarmPoolClaimLatencyHigh",
-			Category: CategoryWarmPoolSizing,
+			Name:      "WarmPoolClaimLatencyHigh",
+			Category:  CategoryWarmPoolSizing,
 			Condition: `histogram_quantile(0.99, sum by (le, pool) (rate(lenny_pod_claim_queue_wait_seconds_bucket[5m]))) > 2`,
-			Window:   5 * time.Minute,
-			Summary:  "Warm pool P99 claim latency exceeds 2s — raise minWarm or investigate pod startup",
+			Window:    5 * time.Minute,
+			Summary:   "Warm pool P99 claim latency exceeds 2s — raise minWarm or investigate pod startup",
 			Description: "First-week tuning (§17.8.2): P99 claim queue wait above 2s indicates " +
 				"the warm pool is not keeping up with demand. Recommend raising `minWarm` (by ~25%) " +
 				"or, when P99 pod-startup time is also rising, investigating image pull and runtime " +

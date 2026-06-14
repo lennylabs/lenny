@@ -452,7 +452,8 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	}
 	if r.bootstrapTracker == nil {
 		r.bootstrapTracker = convergence.NewTrackerWithWindow(
-			r.BootstrapStabilityWindow, convergence.DefaultMaxCoefficientOfVariation)
+			r.BootstrapStabilityWindow, convergence.DefaultMaxCoefficientOfVariation,
+		)
 	}
 	if r.resumeEpochs == nil {
 		r.resumeEpochs = map[string]int64{}

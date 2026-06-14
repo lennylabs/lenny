@@ -215,15 +215,15 @@ func TestTickWithTerminalHookSkipsInPackageArchive(t *testing.T) {
 
 // fakeMetricsSink captures §8.10 / §16.1 sweeper observations.
 type fakeMetricsSink struct {
-	runs         int
-	terminated   int
-	active       int
-	perTenant    map[string]int
+	runs       int
+	terminated int
+	active     int
+	perTenant  map[string]int
 }
 
-func (m *fakeMetricsSink) IncOrphanCleanupRun()                { m.runs++ }
-func (m *fakeMetricsSink) AddOrphanTasksTerminated(n int)      { m.terminated += n }
-func (m *fakeMetricsSink) SetOrphanTasksActive(value int)      { m.active = value }
+func (m *fakeMetricsSink) IncOrphanCleanupRun()           { m.runs++ }
+func (m *fakeMetricsSink) AddOrphanTasksTerminated(n int) { m.terminated += n }
+func (m *fakeMetricsSink) SetOrphanTasksActive(value int) { m.active = value }
 func (m *fakeMetricsSink) SetOrphanTasksActivePerTenant(tenantID string, value int) {
 	if m.perTenant == nil {
 		m.perTenant = map[string]int{}

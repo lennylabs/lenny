@@ -36,8 +36,8 @@ func readManifest(t *testing.T, dir string) adapter.Manifest {
 // engage instead of returning Unimplemented.
 type fakeSDKWarmRuntime struct {
 	fakeRuntime
-	preConnected int   // number of PreConnect calls
-	preConnErr   error // error PreConnect returns
+	preConnected int      // number of PreConnect calls
+	preConnErr   error    // error PreConnect returns
 	configured   []string // cwd of each ConfigureWorkspace call
 	configErr    error
 	demoted      int

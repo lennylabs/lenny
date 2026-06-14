@@ -15,13 +15,13 @@ import (
 // versioning the upstream API server enforces. Annotations carry
 // arbitrary scenario state (e.g. the §5.2 Sandbox phase mirror).
 type Object struct {
-	Kind             string
-	Namespace        string
-	Name             string
-	ResourceVersion  string
-	Labels           map[string]string
-	Annotations      map[string]string
-	Data             []byte
+	Kind            string
+	Namespace       string
+	Name            string
+	ResourceVersion string
+	Labels          map[string]string
+	Annotations     map[string]string
+	Data            []byte
 }
 
 // ObjectStore is the typed CRUD surface scenarios drive. It is the
@@ -32,10 +32,10 @@ type Object struct {
 //   - Optimistic-locking conflict on stale ResourceVersion.
 //   - Watch-event delivery deferred by the watchlag stream.
 type ObjectStore struct {
-	mu     sync.RWMutex
-	rv     atomic.Uint64
-	store  map[string]*Object
-	hooks  []ObjectHook
+	mu    sync.RWMutex
+	rv    atomic.Uint64
+	store map[string]*Object
+	hooks []ObjectHook
 }
 
 // ObjectHook is a notification function called for every store

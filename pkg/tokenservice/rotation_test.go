@@ -36,19 +36,25 @@ func (f *fakeRotationStore) Record(_ context.Context, tok issuedtokenstore.Issue
 }
 
 func (f *fakeRotationStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	eventType string, payload json.RawMessage, at time.Time,
+) (audit.Row, error) {
 	f.recordWithAud++
 	f.minted = append(f.minted, tok)
-	f.exchangeRows = append(f.exchangeRows, recordedAudit{TenantID: tok.TenantID,
-		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at})
+	f.exchangeRows = append(f.exchangeRows, recordedAudit{
+		TenantID:  tok.TenantID,
+		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at,
+	})
 	return audit.Row{Seq: uint64(len(f.exchangeRows)), TenantID: tok.TenantID, EventType: eventType}, nil
 }
 
 func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	prevJTI, revokedReason, eventType string, payload json.RawMessage, at time.Time) (string, bool, error) {
+	prevJTI, revokedReason, eventType string, payload json.RawMessage, at time.Time,
+) (string, bool, error) {
 	f.minted = append(f.minted, tok)
-	f.exchangeRows = append(f.exchangeRows, recordedAudit{TenantID: tok.TenantID,
-		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at})
+	f.exchangeRows = append(f.exchangeRows, recordedAudit{
+		TenantID:  tok.TenantID,
+		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at,
+	})
 	f.gotPrevJTI = prevJTI
 	f.gotReason = revokedReason
 	return f.prevSub, f.prevRevoked, nil
@@ -78,8 +84,10 @@ func TestHandlerRotationRevokesPreviousToken_spec_16_7_5(t *testing.T) {
 
 	// The caller authenticates with — and rotates — the same token, so
 	// caller.jti == subject.jti.
-	claims := jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"}}
+	claims := jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	}
 	tok := mintToken(t, signer, claims)
 
 	resp := doExchange(t, srv, tok, Request{
@@ -127,11 +135,15 @@ func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, func(context.Context, string, string) error { return nil })
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "lenny-gateway",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
@@ -149,11 +161,15 @@ func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "lenny-gateway",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
@@ -175,11 +191,15 @@ func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T)
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway", "llm-proxy"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway", "llm-proxy"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "llm-proxy"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "llm-proxy",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
@@ -198,11 +218,15 @@ func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		ActorToken: tok, Scope: "sessions:read", Audience: "lenny-gateway"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		ActorToken: tok, Scope: "sessions:read", Audience: "lenny-gateway",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body indicates delegation mint should succeed", resp.StatusCode)
 	}
@@ -222,11 +246,15 @@ func TestHandlerRotationPreviousAlreadyGoneEmitsNoRevoked_spec_16_7_5(t *testing
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "lenny-gateway",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
@@ -247,11 +275,15 @@ func TestHandlerRotationOnInMemoryStoreMintsWithoutRevoke_spec_16_7_5(t *testing
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
 
-	tok := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"}})
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	})
 
-	resp := doExchange(t, srv, tok, Request{GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway"})
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "lenny-gateway",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}

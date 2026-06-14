@@ -25,6 +25,7 @@ func (c *mutClock) now() time.Time {
 	defer c.mu.Unlock()
 	return c.t
 }
+
 func (c *mutClock) set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -43,6 +44,7 @@ func (e *captureEmitter) Emit(_ context.Context, ev events.OperationalEvent) err
 	e.events = append(e.events, ev)
 	return nil
 }
+
 func (e *captureEmitter) count() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()

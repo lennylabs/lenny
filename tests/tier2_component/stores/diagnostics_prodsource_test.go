@@ -28,6 +28,11 @@ func startDiagPG(t *testing.T) *containers.Postgres {
 
 // TestProdSourceSessionJoin seeds a tenant, a failed session, and its
 // agent_pod_state row, then reads them back through the §25.6 reader.
+//
+// spec: §25.6 line 2885.
+// diagnosis: a failure means the prod-source diagnostics reader joins
+// the session and its agent_pod_state row incorrectly, so operator
+// diagnostics would show wrong pod state for a failed session.
 func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -70,6 +75,11 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 
 // TestProdSourceSessionNotFound covers the unknown-id and invalid-UUID
 // paths: both report Found=false without an error.
+//
+// spec: §25.6 line 2885.
+// diagnosis: a failure means the reader errors or reports Found=true for
+// an unknown or malformed session id, so a missing session would surface
+// as an error rather than a clean not-found.
 func TestProdSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -85,6 +95,10 @@ func TestProdSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 
 // TestProdSourcePoolPodCounts seeds pods in several states and reads the
 // §25.6 pod-count breakdown.
+//
+// spec: §25.6 line 2861.
+// diagnosis: a failure means the pod-count breakdown miscounts pods by
+// state, so the operator pool diagnostics would misreport capacity.
 func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -93,9 +107,12 @@ func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 	states := []struct {
 		pod, state string
 	}{
-		{"p-idle-1", "idle"}, {"p-idle-2", "idle"},
+		{"p-idle-1", "idle"},
+		{"p-idle-2", "idle"},
 		{"p-warm-1", "warming"},
-		{"p-claim-1", "claimed"}, {"p-claim-2", "claimed"}, {"p-claim-3", "claimed"},
+		{"p-claim-1", "claimed"},
+		{"p-claim-2", "claimed"},
+		{"p-claim-3", "claimed"},
 		{"p-fail-1", "failed"},
 		{"p-drain-1", "draining"}, // not counted in the breakdown
 	}
@@ -124,6 +141,10 @@ func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 
 // TestProdSourceCredentialPoolLoad seeds leases on a pool and reads the
 // per-credential load the hot-key analysis ranks.
+//
+// spec: §25.6.
+// diagnosis: a failure means the per-credential load read is wrong, so
+// the hot-key analysis would rank the wrong credentials.
 func TestProdSourceCredentialPoolLoad_spec_25_6(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -132,7 +153,9 @@ func TestProdSourceCredentialPoolLoad_spec_25_6(t *testing.T) {
 	leases := []struct {
 		id, pool, cred string
 	}{
-		{"l1", "cp-1", "cred-a"}, {"l2", "cp-1", "cred-a"}, {"l3", "cp-1", "cred-a"},
+		{"l1", "cp-1", "cred-a"},
+		{"l2", "cp-1", "cred-a"},
+		{"l3", "cp-1", "cred-a"},
 		{"l4", "cp-1", "cred-b"},
 		{"l5", "cp-2", "cred-z"}, // a different pool
 	}

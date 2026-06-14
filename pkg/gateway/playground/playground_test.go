@@ -544,16 +544,16 @@ func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 	// The selected/dropped tarball must reach the upload endpoint with the
 	// uploadToken, and the plan it produces must be finalized and started.
 	for _, want := range []string{
-		"createSessionWithWorkspace",      // the decomposed-lifecycle driver
-		"/upload-archive",                 // staging POST
-		"X-Lenny-Upload-Token",            // §7.1 uploadToken header
-		"uploadArchive",                   // §14 plan source type
-		"/finalize",                       // plan binding
-		"/start",                          // run the bound session
-		"readFileBytes",                   // the file is actually read
-		"FileReader",                      // client-side read of the tarball
-		"dragover",                        // §27.4 drag-drop affordance
-		"workspacePlan",                   // finalize body field
+		"createSessionWithWorkspace", // the decomposed-lifecycle driver
+		"/upload-archive",            // staging POST
+		"X-Lenny-Upload-Token",       // §7.1 uploadToken header
+		"uploadArchive",              // §14 plan source type
+		"/finalize",                  // plan binding
+		"/start",                     // run the bound session
+		"readFileBytes",              // the file is actually read
+		"FileReader",                 // client-side read of the tarball
+		"dragover",                   // §27.4 drag-drop affordance
+		"workspacePlan",              // finalize body field
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js missing workspace-upload wiring substring %q", want)

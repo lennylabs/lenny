@@ -17,8 +17,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 type composeFile struct {
@@ -63,6 +64,9 @@ func loadCompose(t *testing.T) composeFile {
 
 // spec: §17.4 lines 213–225 — `docker compose up` starts the gateway,
 // the single agent, Postgres, Redis, and MinIO.
+// diagnosis: a failure means the default Compose profile does not bring
+// up the expected service set, so `docker compose up` would not yield a
+// working single-agent stack.
 func TestComposeDefaultProfileServices_spec_17_4_216(t *testing.T) {
 	cf := loadCompose(t)
 	for _, name := range []string{"postgres", "redis", "minio", "minio-setup", "migrate", "gateway"} {
@@ -82,6 +86,9 @@ func TestComposeDefaultProfileServices_spec_17_4_216(t *testing.T) {
 // gateway service builds the lenny-gateway binary and is wired to the
 // embedded Postgres, Redis, and MinIO backends with the §17.4 line 262
 // echo runtime.
+// diagnosis: a failure means the Compose gateway service is not wired to
+// the production lenny-gateway binary and embedded backends, so Compose
+// Mode would run a divergent gateway from production.
 func TestComposeGatewayWiring_spec_17_4_168(t *testing.T) {
 	cf := loadCompose(t)
 	gw := cf.Services["gateway"]
@@ -126,6 +133,9 @@ func TestComposeGatewayWiring_spec_17_4_168(t *testing.T) {
 // spec: §17.4 line 276 — `docker compose run smoke-test` creates a
 // session, sends a prompt, verifies a response, and exits. The
 // smoke-test service is profiled out of `docker compose up`.
+// diagnosis: a failure means the smoke-test service is misconfigured or
+// not profiled out of the default `up`, so it would either fail to run
+// the session round-trip or start unintentionally.
 func TestComposeSmokeTestService_spec_17_4_276(t *testing.T) {
 	cf := loadCompose(t)
 	st, ok := cf.Services["smoke-test"]
@@ -154,6 +164,9 @@ func TestComposeSmokeTestService_spec_17_4_276(t *testing.T) {
 // spec: §17.4 lines 236–254 — the credentials profile sets
 // LENNY_DEV_TLS=true and generates self-signed mTLS material under
 // ./lenny-data/certs.
+// diagnosis: a failure means the credentials profile does not enable
+// LENNY_DEV_TLS or generate mTLS material, so the dev mTLS path would be
+// unavailable in Compose Mode.
 func TestComposeCredentialsProfile_spec_17_4_245(t *testing.T) {
 	cf := loadCompose(t)
 	certs, ok := cf.Services["dev-certs"]
@@ -184,6 +197,9 @@ func TestComposeCredentialsProfile_spec_17_4_245(t *testing.T) {
 
 // spec: §17.4 line 258 — the observability profile adds Prometheus,
 // Grafana, and Jaeger.
+// diagnosis: a failure means the observability profile does not add
+// Prometheus, Grafana, and Jaeger, so the Compose observability stack
+// would be incomplete.
 func TestComposeObservabilityProfile_spec_17_4_258(t *testing.T) {
 	cf := loadCompose(t)
 	for _, name := range []string{"prometheus", "grafana", "jaeger"} {
@@ -207,6 +223,9 @@ func TestComposeObservabilityProfile_spec_17_4_258(t *testing.T) {
 }
 
 // spec: §17.4 — the make targets named in the spec and docs.
+// diagnosis: a failure means a Compose Mode make target named in the
+// spec and docs is missing or renamed, so the documented developer
+// commands would not work.
 func TestComposeMakeTargets_spec_17_4(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	mk, err := os.ReadFile(filepath.Join(root, "Makefile"))

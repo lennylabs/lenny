@@ -58,6 +58,9 @@ func (r *recordingRouter) AllAuditShards(context.Context) ([]storerouter.ShardHa
 }
 
 // spec: §12.3 R-03 line 144.
+// diagnosis: a failure means billing and audit writes bypass the
+// StoreRouter, breaking the §12.3 R-03 routing that targets the correct
+// per-tenant shard.
 func TestBillingAuditRoutedThroughStoreRouter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

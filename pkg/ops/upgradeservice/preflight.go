@@ -129,8 +129,10 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 	if prev, ok, err := p.store.Load(ctx); err != nil {
 		return PreflightResult{}, err
 	} else if ok && prev.Active() {
-		res.add(PreflightCheckResult{Name: CheckNoUpgradeInProgress, Passed: false,
-			Detail: fmt.Sprintf("an upgrade to %s is already in progress (phase %s)", prev.TargetVersion, prev.Phase)})
+		res.add(PreflightCheckResult{
+			Name: CheckNoUpgradeInProgress, Passed: false,
+			Detail: fmt.Sprintf("an upgrade to %s is already in progress (phase %s)", prev.TargetVersion, prev.Phase),
+		})
 	} else {
 		res.add(PreflightCheckResult{Name: CheckNoUpgradeInProgress, Passed: true})
 	}
@@ -138,19 +140,25 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 	// 2. Current version meets minUpgradeFrom (spec line 3499).
 	switch {
 	case req.MinUpgradeFrom == "":
-		res.add(PreflightCheckResult{Name: CheckVersionPrerequisite, Passed: true, Skipped: true,
-			Detail: "no minUpgradeFrom prerequisite advertised"})
+		res.add(PreflightCheckResult{
+			Name: CheckVersionPrerequisite, Passed: true, Skipped: true,
+			Detail: "no minUpgradeFrom prerequisite advertised",
+		})
 	case CompareSemver(req.CurrentVersion, req.MinUpgradeFrom) < 0:
-		res.add(PreflightCheckResult{Name: CheckVersionPrerequisite, Passed: false,
-			Detail: fmt.Sprintf("running %s is below the required minimum %s", req.CurrentVersion, req.MinUpgradeFrom)})
+		res.add(PreflightCheckResult{
+			Name: CheckVersionPrerequisite, Passed: false,
+			Detail: fmt.Sprintf("running %s is below the required minimum %s", req.CurrentVersion, req.MinUpgradeFrom),
+		})
 	default:
 		res.add(PreflightCheckResult{Name: CheckVersionPrerequisite, Passed: true})
 	}
 
 	// 3. Platform health is green (spec line 3497).
 	if p.health == nil {
-		res.add(PreflightCheckResult{Name: CheckPlatformHealthy, Passed: true, Skipped: true,
-			Detail: "health gate not configured"})
+		res.add(PreflightCheckResult{
+			Name: CheckPlatformHealthy, Passed: true, Skipped: true,
+			Detail: "health gate not configured",
+		})
 	} else {
 		healthy, detail, err := p.health.Healthy(ctx)
 		if err != nil {
@@ -161,8 +169,10 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 
 	// 4. Target images are pullable (spec line 3500).
 	if p.images == nil {
-		res.add(PreflightCheckResult{Name: CheckImagesPullable, Passed: true, Skipped: true,
-			Detail: "image pullability gate not configured; plan returned unverified"})
+		res.add(PreflightCheckResult{
+			Name: CheckImagesPullable, Passed: true, Skipped: true,
+			Detail: "image pullability gate not configured; plan returned unverified",
+		})
 	} else {
 		var unpullable []string
 		var firstDetail string
@@ -181,8 +191,10 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 		}
 		if len(unpullable) > 0 {
 			res.UnpullableImages = unpullable
-			res.add(PreflightCheckResult{Name: CheckImagesPullable, Passed: false,
-				Detail: fmt.Sprintf("%d image(s) not pullable: %s", len(unpullable), firstDetail)})
+			res.add(PreflightCheckResult{
+				Name: CheckImagesPullable, Passed: false,
+				Detail: fmt.Sprintf("%d image(s) not pullable: %s", len(unpullable), firstDetail),
+			})
 		} else {
 			res.add(PreflightCheckResult{Name: CheckImagesPullable, Passed: true})
 		}
@@ -190,8 +202,10 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 
 	// 5. Postgres has free connections for migration (spec line 3501).
 	if p.conns == nil {
-		res.add(PreflightCheckResult{Name: CheckPostgresConnections, Passed: true, Skipped: true,
-			Detail: "connection gate not configured"})
+		res.add(PreflightCheckResult{
+			Name: CheckPostgresConnections, Passed: true, Skipped: true,
+			Detail: "connection gate not configured",
+		})
 	} else {
 		ok, detail, err := p.conns.HasFreeConnections(ctx)
 		if err != nil {

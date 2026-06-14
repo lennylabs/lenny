@@ -143,7 +143,8 @@ func TestNonceCheckpointCorruptFileFallsBack_spec_25_3_748(t *testing.T) {
 		t.Fatalf("seed corrupt checkpoint: %v", err)
 	}
 	var loggedErr error
-	em := NewEmitter(NewEventBuffer(0), "r",
+	em := NewEmitter(
+		NewEventBuffer(0), "r",
 		WithNonceCheckpoint(NonceCheckpoint{Path: path}),
 		WithEmitErrorLogger(func(e error) { loggedErr = e }),
 	)

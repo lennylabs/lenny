@@ -31,7 +31,8 @@ import (
 // spec: §25.4 lines 2083-2271.
 func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 	gate *coordination.CoordinationGate, reg prometheus.Registerer,
-	emitter events.EventEmitter, recorder *opsaudit.Recorder, replicaID string) *coordination.Service {
+	emitter events.EventEmitter, recorder *opsaudit.Recorder, replicaID string,
+) *coordination.Service {
 	opts := coordination.ServiceOptions{
 		Gate:    gate,
 		Metrics: newLockMetrics(reg),
@@ -115,9 +116,11 @@ func (m *lockMetrics) SetActiveStore(store string) {
 	}
 }
 
-func (m *lockMetrics) SetOutageEpoch(epoch uint64)         { m.outage.Set(float64(epoch)) }
-func (m *lockMetrics) SplitBrainDetected(pattern string)   { m.splitBrain.WithLabelValues(pattern).Inc() }
-func (m *lockMetrics) StealDone(pattern string)            { m.steal.WithLabelValues(pattern).Inc() }
+func (m *lockMetrics) SetOutageEpoch(epoch uint64)       { m.outage.Set(float64(epoch)) }
+func (m *lockMetrics) SplitBrainDetected(pattern string) { m.splitBrain.WithLabelValues(pattern).Inc() }
+
+func (m *lockMetrics) StealDone(pattern string) { m.steal.WithLabelValues(pattern).Inc() }
+
 func (m *lockMetrics) SetClockSkew(pair string, s float64) { m.clockSkew.WithLabelValues(pair).Set(s) }
 
 // lockAuditEmitter routes the §25.4 remediation-lock audit events onto two

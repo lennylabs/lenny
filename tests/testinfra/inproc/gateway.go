@@ -34,18 +34,18 @@ type gateway struct {
 	mxAtomic atomic.Int64
 	idemHits atomic.Int64
 
-	idem    map[string]idempotentResponse
-	idemMu  sync.Mutex
+	idem   map[string]idempotentResponse
+	idemMu sync.Mutex
 
 	server   *http.Server
 	listener net.Listener
 }
 
 type session struct {
-	ID       string    `json:"id"`
-	Status   string    `json:"status"`
-	Created  time.Time `json:"created_at"`
-	Runtime  string    `json:"runtime_ref"`
+	ID      string    `json:"id"`
+	Status  string    `json:"status"`
+	Created time.Time `json:"created_at"`
+	Runtime string    `json:"runtime_ref"`
 }
 
 type idempotentResponse struct {

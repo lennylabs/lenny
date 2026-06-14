@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -15,7 +16,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -46,7 +46,7 @@ func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, 
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	return srv, store
 }

@@ -35,14 +35,14 @@ import (
 // session-keyed (§12.8 step 9), so it is compile-checked against its own
 // evictionstatestore.Store interface rather than this shared contract.
 var (
-	_ erasure.CountingEraser = (sessionstore.Store)(nil)
-	_ erasure.CountingEraser = (interactionstore.Store)(nil)
-	_ erasure.CountingEraser = (quotastore.QuotaStore)(nil)
-	_ erasure.CountingEraser = (auditstore.EventStore)(nil)
-	_ erasure.CountingEraser = (billingstore.Store)(nil)
-	_ erasure.CountingEraser = (evalstore.Store)(nil)
-	_ erasure.CountingEraser = (leasestore.LeaseStore)(nil)
+	_ erasure.CountingEraser = sessionstore.Store(nil)
+	_ erasure.CountingEraser = interactionstore.Store(nil)
+	_ erasure.CountingEraser = quotastore.QuotaStore(nil)
+	_ erasure.CountingEraser = auditstore.EventStore(nil)
+	_ erasure.CountingEraser = billingstore.Store(nil)
+	_ erasure.CountingEraser = evalstore.Store(nil)
+	_ erasure.CountingEraser = leasestore.LeaseStore(nil)
 
-	_ erasure.StoreEraser = (memorystore.Store)(nil)
-	_ erasure.StoreEraser = (semanticcache.Store)(nil)
+	_ erasure.StoreEraser = memorystore.Store(nil)
+	_ erasure.StoreEraser = semanticcache.Store(nil)
 )

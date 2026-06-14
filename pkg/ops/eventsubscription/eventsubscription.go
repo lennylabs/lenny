@@ -687,8 +687,10 @@ func resolveTenantFilter(requested string, caller Caller) (filter, createdByTena
 		requested = caller.TenantID
 	}
 	if requested == TenantFilterAll || requested != caller.TenantID {
-		return "", "", &Error{Code: ErrCodeTenantForbidden,
-			Message: "tenant-admin may only subscribe to its own tenant"}
+		return "", "", &Error{
+			Code:    ErrCodeTenantForbidden,
+			Message: "tenant-admin may only subscribe to its own tenant",
+		}
 	}
 	return caller.TenantID, caller.TenantID, nil
 }

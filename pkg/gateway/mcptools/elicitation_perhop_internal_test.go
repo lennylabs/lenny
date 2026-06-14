@@ -41,15 +41,19 @@ func (s *slowAncestorStore) Get(ctx context.Context, tenantID, id string) (sessi
 func (s *slowAncestorStore) GetByID(context.Context, string) (sessionstore.Session, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) Create(context.Context, sessionstore.Session) error {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) List(context.Context, string, sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) ListByRoot(context.Context, string, string) ([]sessionstore.Session, error) {
 	panic("unused")
 }
@@ -57,30 +61,39 @@ func (s *slowAncestorStore) Delete(context.Context, string, string) error { pani
 func (s *slowAncestorStore) DeleteByUser(context.Context, string, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) PoolDrainStats(context.Context, string) (int, time.Time, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveSessions(context.Context, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveSessionsByUser(context.Context, string, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveSessionsByRuntime(context.Context, string, string) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveSessionsGlobal(context.Context) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveSessionsInRecoveryGlobal(context.Context) (int, error) {
 	panic("unused")
 }
+
 func (s *slowAncestorStore) CountActiveDelegatedChildrenByUser(context.Context, string, string) (int, error) {
 	panic("unused")
 }

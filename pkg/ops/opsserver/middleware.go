@@ -55,7 +55,8 @@ func withAccessLog(next http.Handler) http.Handler {
 		start := time.Now()
 		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rw, r)
-		slog.LogAttrs(r.Context(), slog.LevelInfo, "lenny-ops request",
+		slog.LogAttrs(
+			r.Context(), slog.LevelInfo, "lenny-ops request",
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", rw.status),

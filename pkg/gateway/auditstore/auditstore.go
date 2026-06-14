@@ -568,7 +568,8 @@ func (s *Store) PruneRetention(ctx context.Context, tenantID string, opts PruneO
 		// The SIEM guard, when active, caps the highest deletable
 		// sequence at the forwarder's acknowledged high-water mark
 		// (0 when the forwarder has acked nothing, holding everything).
-		tag, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(
+			ctx, `
 			DELETE FROM audit_log
 			WHERE tenant_id = $1
 			  AND (

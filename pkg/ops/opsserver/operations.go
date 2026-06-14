@@ -57,9 +57,9 @@ func init() {
 
 // §25.4 line 1779 audit event + line 1769 error code.
 const (
-	eventInventoryQueried   = "operations.inventory_queried"
-	codeOperationNotFound   = "OPERATION_NOT_FOUND"
-	codeInventoryPartial    = "OPERATIONS_INVENTORY_PARTIAL"
+	eventInventoryQueried = "operations.inventory_queried"
+	codeOperationNotFound = "OPERATION_NOT_FOUND"
+	codeInventoryPartial  = "OPERATIONS_INVENTORY_PARTIAL"
 )
 
 // registerOperationsRoutes wires the §25.4 Operations Inventory read
@@ -146,8 +146,8 @@ func (s *Server) listOperations(w http.ResponseWriter, r *http.Request, opt list
 	inventoryRequestsTotal.WithLabelValues(actorKind(actor)).Inc()
 	inventoryKindsReturned.Observe(float64(distinctKinds(page.Operations)))
 	s.recordOpsAudit(r, eventInventoryQueried, map[string]any{
-		"actor":       actor,
-		"resultCount": len(page.Operations),
+		"actor":        actor,
+		"resultCount":  len(page.Operations),
 		"statusFilter": statusFilterLabel(opt.statuses),
 	})
 

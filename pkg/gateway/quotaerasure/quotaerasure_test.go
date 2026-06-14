@@ -20,6 +20,7 @@ func (f *fakeEraser) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	f.userHits++
 	return f.count, f.err
 }
+
 func (f *fakeEraser) DeleteByTenant(_ context.Context, _ string) (int, error) {
 	f.tenHits++
 	return f.count, f.err

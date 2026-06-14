@@ -42,17 +42,18 @@ func init() {
 }
 
 type Scenario struct {
-	counters       *scenkit.Counters
-	server         *httptest.Server
-	upstreamHits   atomic.Int64
-	failureMode    atomic.Bool // when true, upstream returns 503; flipped over the run
-	forwarder      *llmproxy.Forwarder
+	counters     *scenkit.Counters
+	server       *httptest.Server
+	upstreamHits atomic.Int64
+	failureMode  atomic.Bool // when true, upstream returns 503; flipped over the run
+	forwarder    *llmproxy.Forwarder
 }
 
 func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 8, Duration: 1 * time.Second},

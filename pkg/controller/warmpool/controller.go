@@ -753,7 +753,8 @@ func (r *Reconciler) evaluateConcurrentWorkspaceSharing(ctx context.Context, poo
 				"any slot can read every other slot's credential file for Runtime %q "+
 				"(supportedProviders: %v). Use maxConcurrentSessions: 1 for strict "+
 				"per-session credential isolation.",
-			tmpl.Spec.RuntimeRef, rt.Spec.SupportedProviders),
+			tmpl.Spec.RuntimeRef, rt.Spec.SupportedProviders,
+		),
 	}, nil
 }
 

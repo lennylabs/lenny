@@ -195,7 +195,8 @@ func TestProbeFailsOnHandshakeFailure(t *testing.T) {
 // dev-mode / in-memory gateway (no Redis or PgBouncer) passes trivially.
 // spec: §10.3 line 359 (probe runs per configured endpoint); §17.4.
 func TestProbeSkipsEmptyAddr(t *testing.T) {
-	if err := Probe(context.Background(), testConfig(nil),
+	if err := Probe(
+		context.Background(), testConfig(nil),
 		Target{Backend: BackendRedis, Addr: ""},
 		Target{Backend: BackendPgBouncer, Addr: ""},
 	); err != nil {

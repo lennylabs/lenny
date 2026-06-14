@@ -241,8 +241,10 @@ func TestReconcileCertIssuance_NonDrainPaths_spec_10_3(t *testing.T) {
 	})
 
 	t.Run("inside grace requeues without draining", func(t *testing.T) {
-		r := &PodReconciler{RequireCertIssuance: true, CertIssuanceGrace: 60 * time.Second,
-			Now: func() time.Time { return created.Add(20 * time.Second) }}
+		r := &PodReconciler{
+			RequireCertIssuance: true, CertIssuanceGrace: 60 * time.Second,
+			Now: func() time.Time { return created.Add(20 * time.Second) },
+		}
 		rq, replaced, err := r.reconcileCertIssuance(context.Background(), preIdle(nil))
 		if err != nil || replaced {
 			t.Fatalf("got replaced=%v err=%v, want false nil", replaced, err)

@@ -26,10 +26,14 @@ func TestSessionEnumeratorCountsAliveNodes_spec_11_2_48(t *testing.T) {
 	t.Parallel()
 	store := memstore.New()
 	mustCreate(t, store, sessionstore.Session{ID: "root", TenantID: "acme", RootSessionID: "root", State: sessionapi.StateRunning})
-	mustCreate(t, store, sessionstore.Session{ID: "c1", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
-		State: sessionapi.StateRunning, DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 400}})
-	mustCreate(t, store, sessionstore.Session{ID: "c2", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
-		State: sessionapi.StateCompleted, DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 900}}) // terminal, excluded
+	mustCreate(t, store, sessionstore.Session{
+		ID: "c1", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
+		State: sessionapi.StateRunning, DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 400},
+	})
+	mustCreate(t, store, sessionstore.Session{
+		ID: "c2", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
+		State: sessionapi.StateCompleted, DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 900},
+	}) // terminal, excluded
 
 	e := delegationbudget.SessionEnumerator{Sessions: store}
 	lt, err := e.LiveTree(context.Background(), "acme", "root")

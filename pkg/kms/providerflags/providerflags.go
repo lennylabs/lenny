@@ -113,7 +113,8 @@ func Resolve(ctx context.Context, opts Options) (kms.Provider, error) {
 // not hold in production. spec: F-4.3.11 / F-17.5.2.
 var ErrLocalForbidden = errors.New(
 	"kms/providerflags: --kms-provider=local is forbidden when --environment=prod " +
-		"(the in-process random KEK does not survive a restart; pick aws|gcp|azure)")
+		"(the in-process random KEK does not survive a restart; pick aws|gcp|azure)",
+)
 
 func resolveAWS(ctx context.Context, opts Options) (kms.Provider, error) {
 	cfg, err := loadAWSConfig(ctx, opts.AWSRegion)

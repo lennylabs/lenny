@@ -138,7 +138,8 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 		span.SetAttributes(attribute.String(tracing.AttrOutcome, "exhausted"))
 		// Chain exhaustion is a §16.3 POLICY-category terminal outcome.
 		tracing.RecordError(span, tracing.CategorizeError(
-			errChainExhausted, tracing.CategoryPolicy))
+			errChainExhausted, tracing.CategoryPolicy,
+		))
 		h.writeError(w, http.StatusForbidden, CodeFallbackExhausted,
 			"the credential fallback chain is exhausted for this session")
 		return true

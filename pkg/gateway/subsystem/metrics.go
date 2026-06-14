@@ -240,8 +240,8 @@ func classifyError(err error) string {
 // zero-value-usable" invariant from the package doc.
 type noopObserver struct{}
 
-func (noopObserver) OnStateChange(string, State, State)               {}
-func (noopObserver) OnDo(string, time.Duration, State, int, error)    {}
+func (noopObserver) OnStateChange(string, State, State)            {}
+func (noopObserver) OnDo(string, time.Duration, State, int, error) {}
 
 // nopObserver is shared by every Subsystem that has no Observer wired.
 var nopObserver Observer = noopObserver{}

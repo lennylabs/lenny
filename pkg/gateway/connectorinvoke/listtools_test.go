@@ -32,7 +32,8 @@ func TestInvokerListToolsReturnsCatalog_spec_9_3_142(t *testing.T) {
 		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.example",
 	})
 	doer := &fakeDoer{responses: toolsListResponses(
-		`[{"name":"list_repos","description":"list","inputSchema":{"type":"object"}}]`)}
+		`[{"name":"list_repos","description":"list","inputSchema":{"type":"object"}}]`,
+	)}
 	iv := NewInvoker(connectors, nil, New(doer), nil, nil)
 
 	tools, err := iv.ListTools(context.Background(), "acme", "sess-1", "github", "alice", "")
@@ -94,7 +95,8 @@ func TestInvokerListToolsFiltersByCapability_spec_10_6_607(t *testing.T) {
 	envs := environmentstore.NewMemory()
 	seedEnvironment(t, envs, securityEnv())
 	doer := &fakeDoer{responses: toolsListResponses(
-		`[{"name":"search_repos"},{"name":"delete_repo"}]`)}
+		`[{"name":"search_repos"},{"name":"delete_repo"}]`,
+	)}
 	iv := NewInvoker(connectors, nil, New(doer), nil, nil).WithEnvironments(envs)
 
 	tools, err := iv.ListTools(context.Background(), "acme", "sess-1", "github", "alice", "security-team")

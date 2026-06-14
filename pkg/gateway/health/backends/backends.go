@@ -203,9 +203,9 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 			fr := rate.FailureRate()
 			if fr > thresholdPercent {
 				return health.Component{
-					Name:            name,
-					Status:          health.StatusDegraded,
-					Detail:          fmt.Sprintf("SIEM delivery failure rate %.1f%% exceeds the %.1f%% threshold; audit rows persist in Postgres but the external immutable copy is lagging", fr, thresholdPercent),
+					Name:   name,
+					Status: health.StatusDegraded,
+					Detail: fmt.Sprintf("SIEM delivery failure rate %.1f%% exceeds the %.1f%% threshold; audit rows persist in Postgres but the external immutable copy is lagging", fr, thresholdPercent),
 					// spec: §25.3 lines 459-501 — the aggregator resolves
 					// the structured hint and runbook from the Issue code.
 					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",
@@ -213,9 +213,9 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 			}
 			if !fwd.Healthy() {
 				return health.Component{
-					Name:            name,
-					Status:          health.StatusDegraded,
-					Detail:          "the most recent SIEM batch delivery failed",
+					Name:   name,
+					Status: health.StatusDegraded,
+					Detail: "the most recent SIEM batch delivery failed",
 					// spec: §25.3 lines 459-501 — the aggregator resolves
 					// the structured hint and runbook from the Issue code.
 					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",

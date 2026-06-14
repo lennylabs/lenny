@@ -47,8 +47,10 @@ func playgroundCtx() context.Context {
 // counter. F-27.3.3.
 func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 	count := 0
-	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30},
-		incPlaygroundSessionCreated: func(string) { count++ }}
+	s := &Server{
+		playgroundCaps:              fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30},
+		incPlaygroundSessionCreated: func(string) { count++ },
+	}
 
 	// no principal at all
 	row := sessionstore.Session{}

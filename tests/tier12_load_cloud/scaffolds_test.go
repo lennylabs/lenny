@@ -142,13 +142,13 @@ func loadScale(t *testing.T) scaleConfig {
 // user) by smokeOptions, mirroring tier-7's pattern.
 func scenarioEnv(s scaleConfig, extra map[string]string) map[string]string {
 	env := map[string]string{
-		"LENNY_TENANT":     loadTenant,
-		"LENNY_ROLES":      "tenant-admin",
-		"LENNY_USER":       "alice",
-		"LENNY_RATE":       fmt.Sprintf("%d", s.Rate),
-		"LENNY_FANOUT":     fmt.Sprintf("%d", s.Fanout),
-		"LENNY_STREAMING":  fmt.Sprintf("%d", s.StreamingSessions),
-		"LENNY_DURATION":   s.Duration.String(),
+		"LENNY_TENANT":    loadTenant,
+		"LENNY_ROLES":     "tenant-admin",
+		"LENNY_USER":      "alice",
+		"LENNY_RATE":      fmt.Sprintf("%d", s.Rate),
+		"LENNY_FANOUT":    fmt.Sprintf("%d", s.Fanout),
+		"LENNY_STREAMING": fmt.Sprintf("%d", s.StreamingSessions),
+		"LENNY_DURATION":  s.Duration.String(),
 	}
 	for k, v := range extra {
 		env[k] = v

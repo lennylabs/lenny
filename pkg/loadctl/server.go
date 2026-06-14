@@ -96,15 +96,15 @@ type Server struct {
 
 // Run is a single tier-12 load run.
 type Run struct {
-	ID              string    `json:"id"`
-	Status          string    `json:"status"`
-	Scale           string    `json:"scale"`
-	Scenarios       []string  `json:"scenarios"`
-	ClusterRelease  string    `json:"cluster_release"`
-	StartedAt       time.Time `json:"started_at"`
-	CompletedAt     time.Time `json:"completed_at,omitempty"`
-	ReportURL       string    `json:"report_url,omitempty"`
-	CurrentMetrics  string    `json:"current_metrics,omitempty"`
+	ID             string    `json:"id"`
+	Status         string    `json:"status"`
+	Scale          string    `json:"scale"`
+	Scenarios      []string  `json:"scenarios"`
+	ClusterRelease string    `json:"cluster_release"`
+	StartedAt      time.Time `json:"started_at"`
+	CompletedAt    time.Time `json:"completed_at,omitempty"`
+	ReportURL      string    `json:"report_url,omitempty"`
+	CurrentMetrics string    `json:"current_metrics,omitempty"`
 }
 
 // Runner is a registered loadrunner instance.
@@ -123,11 +123,11 @@ type Scenario struct {
 }
 
 const (
-	StatusPending  = "PENDING"
-	StatusRunning  = "RUNNING"
-	StatusPass     = "PASS"
-	StatusFail     = "FAIL"
-	StatusAborted  = "ABORTED"
+	StatusPending = "PENDING"
+	StatusRunning = "RUNNING"
+	StatusPass    = "PASS"
+	StatusFail    = "FAIL"
+	StatusAborted = "ABORTED"
 )
 
 // NewServer returns a configured Server.

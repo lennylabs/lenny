@@ -194,11 +194,15 @@ func TestVerifyRowsMarksTamperedRowBroken(t *testing.T) {
 // spec: §25.9 lines 3676-3679.
 func TestVerifyRowsDetectsSequenceGap(t *testing.T) {
 	t.Parallel()
-	r1 := Row{Seq: 1, TenantID: "acme", EventType: "e1", EventSchemaVersion: DefaultEventSchemaVersion,
-		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash}
+	r1 := Row{
+		Seq: 1, TenantID: "acme", EventType: "e1", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash,
+	}
 	r1.Hash = ComputeHash(r1)
-	r5 := Row{Seq: 5, TenantID: "acme", EventType: "e5", EventSchemaVersion: DefaultEventSchemaVersion,
-		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: LinkHash(r1)}
+	r5 := Row{
+		Seq: 5, TenantID: "acme", EventType: "e5", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: LinkHash(r1),
+	}
 	r5.Hash = ComputeHash(r5)
 
 	got := ChainFromRows("acme", []Row{r1, r5}, nil).VerifyRows()

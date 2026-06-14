@@ -109,6 +109,11 @@ func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
 
 // TestScanPhase3_spec_10_5_417 exercises the scanner against the boundary
 // cases the §10.5 Phase 3 rules turn on.
+//
+// spec: §10.5 lines 417, 430.
+// diagnosis: a failure means the Phase 3 scanner misclassifies a
+// boundary case, so the CI gate would miss a bare DROP COLUMN or a
+// Phase 3 migration with no preflight gate, or falsely flag a safe one.
 func TestScanPhase3_spec_10_5_417(t *testing.T) {
 	t.Parallel()
 	const goodGate = `-- gate-index: idx_sessions_legacy_token_partial

@@ -108,8 +108,8 @@ type Worker struct {
 
 // trackedLease pairs a lease with its proactive-renewal retry count.
 type trackedLease struct {
-	lease           Lease
-	retries         int
+	lease              Lease
+	retries            int
 	expiryWarningFired bool
 }
 

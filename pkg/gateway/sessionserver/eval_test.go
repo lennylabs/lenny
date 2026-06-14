@@ -184,7 +184,8 @@ func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
 	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
 
 	first := postEval(t, h, "sess_1", sessionserver.EvalRequest{
-		Scorer: "llm-judge", Score: evalScore(0.5), IdempotencyKey: "k1"})
+		Scorer: "llm-judge", Score: evalScore(0.5), IdempotencyKey: "k1",
+	})
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first submission: status %d, want 201", first.Code)
 	}
@@ -194,7 +195,8 @@ func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
 	// Replay with the same key but a different score: returns 200 with the
 	// ORIGINAL record (id and score unchanged), no second row.
 	replay := postEval(t, h, "sess_1", sessionserver.EvalRequest{
-		Scorer: "llm-judge", Score: evalScore(0.99), IdempotencyKey: "k1"})
+		Scorer: "llm-judge", Score: evalScore(0.99), IdempotencyKey: "k1",
+	})
 	if replay.Code != http.StatusOK {
 		t.Fatalf("idempotent replay: status %d, want 200", replay.Code)
 	}
@@ -212,7 +214,8 @@ func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
 
 	// A different key inserts a fresh record.
 	other := postEval(t, h, "sess_1", sessionserver.EvalRequest{
-		Scorer: "llm-judge", Score: evalScore(0.7), IdempotencyKey: "k2"})
+		Scorer: "llm-judge", Score: evalScore(0.7), IdempotencyKey: "k2",
+	})
 	if other.Code != http.StatusCreated {
 		t.Fatalf("distinct-key submission: status %d, want 201", other.Code)
 	}

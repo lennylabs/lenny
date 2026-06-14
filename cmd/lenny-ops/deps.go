@@ -1260,7 +1260,8 @@ func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, gwClient *g
 	svc.StaleWarningDays = cfg.StaleWarningDays
 	if cfg.RunningStateCacheTTLSec > 0 {
 		svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(
-			time.Duration(cfg.RunningStateCacheTTLSec) * time.Second))
+			time.Duration(cfg.RunningStateCacheTTLSec) * time.Second,
+		))
 	}
 	svc.SetMetrics(driftPromMetrics{})
 	svc.SetAuditSink(driftAuditSink{recorder: recorder})
@@ -2057,11 +2058,13 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	}
 	if gatewayURL != "" && gw != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"gateway", buildVersion, gatewayVersionFunc(gw, gatewayURL)))
+			"gateway", buildVersion, gatewayVersionFunc(gw, gatewayURL),
+		))
 	}
 	if clientset != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"controllers", buildVersion, controllerVersionFunc(clientset, namespace)))
+			"controllers", buildVersion, controllerVersionFunc(clientset, namespace),
+		))
 	}
 	if pool != nil {
 		// The Postgres schema version is a migration counter, not the
@@ -2069,7 +2072,8 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 		// value yet (drift detection for it lands with the embedded
 		// required-schema constant). It is reported for introspection.
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"postgres-schema", "", schemaVersionFunc(pool)))
+			"postgres-schema", "", schemaVersionFunc(pool),
+		))
 	}
 	return upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
 		PlatformVersion: buildVersion,

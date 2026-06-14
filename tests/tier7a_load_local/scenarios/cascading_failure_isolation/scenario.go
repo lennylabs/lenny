@@ -35,15 +35,16 @@ func init() {
 }
 
 type Scenario struct {
-	counters     *scenkit.Counters
-	server       *httptest.Server
-	innerServed  atomic.Int64
+	counters    *scenkit.Counters
+	server      *httptest.Server
+	innerServed atomic.Int64
 }
 
 func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 16, Duration: 1 * time.Second},

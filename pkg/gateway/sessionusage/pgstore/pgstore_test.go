@@ -61,7 +61,8 @@ func TestSessionUsagePgStore_spec_8_8_897(t *testing.T) {
 	// the session_usage table itself (0158). The full set is not applied
 	// because an unrelated later migration needs the pgvector extension the
 	// embedded bundle lacks.
-	applyMigrations(t, ctx, pool,
+	applyMigrations(
+		t, ctx, pool,
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
 		"0158_session_usage.up.sql",

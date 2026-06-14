@@ -202,6 +202,11 @@ func TestTenantAccessStoreGrantRevokeUseAdminMode(t *testing.T) {
 // halves: a SELECT under lenny_app with the connect_query sentinel
 // value returns zero rows, and a SELECT after explicitly setting the
 // tenant context returns the expected row.
+//
+// spec: §4.2 line 163.
+// diagnosis: a failure means the RLS predicate treats an unset
+// app.current_tenant GUC as a readable context, so a fresh connection
+// with no tenant SET could read rows instead of being filtered to zero.
 func TestRLSHardErrorOnMissingContext(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

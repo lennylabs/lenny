@@ -19,9 +19,9 @@ import (
 
 // messageNodeWire mirrors the §15.4.1 MessageDAG node the handler emits.
 type messageNodeWire struct {
-	ID       string `json:"id"`
-	Seq      uint64 `json:"seq"`
-	From     struct {
+	ID   string `json:"id"`
+	Seq  uint64 `json:"seq"`
+	From struct {
 		Kind string `json:"kind"`
 		ID   string `json:"id"`
 	} `json:"from"`
@@ -71,7 +71,8 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 	_ = store.Create(ctx, sessionstore.Session{
 		ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0),
 	})
-	if err := transcripts.Append(ctx, "acme", "s1",
+	if err := transcripts.Append(
+		ctx, "acme", "s1",
 		transcriptstore.Entry{Role: "user", Content: "hi", Timestamp: time.Unix(10, 0)},
 		transcriptstore.Entry{Role: "assistant", Content: "hello", Timestamp: time.Unix(11, 0)},
 		transcriptstore.Entry{Role: "system", Content: "rotated creds", Timestamp: time.Unix(12, 0)},

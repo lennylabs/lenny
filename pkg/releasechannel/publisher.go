@@ -104,7 +104,8 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if currentVersion := r.URL.Query().Get("currentVersion"); !manifest.MeetsMinUpgradeFrom(currentVersion) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf(
 			"release %s requires a current version of at least %s; %s is below the prerequisite",
-			manifest.Version, manifest.MinUpgradeFrom, currentVersion))
+			manifest.Version, manifest.MinUpgradeFrom, currentVersion,
+		))
 		return
 	}
 

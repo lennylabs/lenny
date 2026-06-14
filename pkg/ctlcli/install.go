@@ -569,7 +569,8 @@ func validateAnswers(a installAnswers) []string {
 		if !knownReferenceRuntimes[rt] {
 			errs = append(errs, fmt.Sprintf(
 				"referenceRuntimes %q is not a §26 catalog runtime (one of %s)",
-				rt, strings.Join(referenceRuntimeNames(), ", ")))
+				rt, strings.Join(referenceRuntimeNames(), ", "),
+			))
 		}
 	}
 	// spec: §17.9.3 — validate the object-storage selection. A cloud
@@ -582,10 +583,12 @@ func validateAnswers(a installAnswers) []string {
 	switch {
 	case provider != "" && provider != "minio" && !isCloud:
 		errs = append(errs, fmt.Sprintf(
-			"objectStorage.provider %q is not one of minio|s3|gcs|azure", a.ObjectStorage.Provider))
+			"objectStorage.provider %q is not one of minio|s3|gcs|azure", a.ObjectStorage.Provider,
+		))
 	case isCloud && a.ObjectStorage.Bucket == "":
 		errs = append(errs, fmt.Sprintf(
-			"objectStorage.provider=%s requires objectStorage.bucket", provider))
+			"objectStorage.provider=%s requires objectStorage.bucket", provider,
+		))
 	case provider == "azure" && a.ObjectStorage.AccountURL == "":
 		errs = append(errs,
 			"objectStorage.provider=azure requires objectStorage.accountUrl (https://<account>.blob.core.windows.net)")

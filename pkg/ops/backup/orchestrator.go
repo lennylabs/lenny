@@ -355,7 +355,8 @@ func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup,
 // then returns the coded error. spec: §12.8 line 936, §25.11 line 4336.
 func (s *Service) abortResidency(ctx context.Context, b Backup, region, shardID string) error {
 	detail := fmt.Sprintf(
-		"region %s has no backups.regions entry (or endpoint/KMS is unreachable)", region)
+		"region %s has no backups.regions entry (or endpoint/KMS is unreachable)", region,
+	)
 	b.Status = StatusFailed
 	b.Error = ErrCodeBackupRegionUnresolvable + ": " + detail
 	completedAt := s.now()

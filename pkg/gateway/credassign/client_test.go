@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	tokenservice "github.com/lennylabs/lenny/pkg/tokenservice"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	tokenservice "github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
 // clientHarness wires a §4.3 Token Service gRPC server backed by a real

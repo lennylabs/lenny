@@ -28,10 +28,10 @@ func TestPoolPhase_spec_15_1_797(t *testing.T) {
 // floored at zero, uncapped when the pool has no lifetime bound.
 func TestEstimatedDrainSeconds_spec_15_1_797(t *testing.T) {
 	cases := []struct {
-		name      string
-		maxAge    int
-		ageInput  int
-		wantSecs  int
+		name     string
+		maxAge   int
+		ageInput int
+		wantSecs int
 	}{
 		{"under cap", 3600, 100, 100},
 		{"over cap clamps", 30, 100, 30},

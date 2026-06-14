@@ -58,23 +58,28 @@ func NewMetricsCollector(svc *Service) *MetricsCollector {
 		backupDuration: prometheus.NewDesc(
 			"lenny_backup_duration_seconds",
 			"§25.11 backup duration in seconds by type.",
-			[]string{"type"}, nil),
+			[]string{"type"}, nil,
+		),
 		backupSize: prometheus.NewDesc(
 			"lenny_backup_size_bytes",
 			"§25.11 backup archive size in bytes by type and backup id.",
-			[]string{"type", "backup_id"}, nil),
+			[]string{"type", "backup_id"}, nil,
+		),
 		backupTotal: prometheus.NewDesc(
 			"lenny_backup_total",
 			"§25.11 backup outcomes by type and terminal status.",
-			[]string{"type", "status"}, nil),
+			[]string{"type", "status"}, nil,
+		),
 		restoreDuration: prometheus.NewDesc(
 			"lenny_restore_duration_seconds",
 			"§25.11 restore duration in seconds.",
-			nil, nil),
+			nil, nil,
+		),
 		restoreTotal: prometheus.NewDesc(
 			"lenny_restore_total",
 			"§25.11 restore outcomes by terminal status.",
-			[]string{"status"}, nil),
+			[]string{"status"}, nil,
+		),
 	}
 }
 
@@ -170,17 +175,20 @@ func (c *MetricsCollector) collectBackups(ctx context.Context, ch chan<- prometh
 			h.observe(elapsed(b.StartedAt, *b.CompletedAt))
 			if b.SizeBytes > 0 {
 				ch <- prometheus.MustNewConstMetric(
-					c.backupSize, prometheus.GaugeValue, float64(b.SizeBytes), b.Type, b.ID)
+					c.backupSize, prometheus.GaugeValue, float64(b.SizeBytes), b.Type, b.ID,
+				)
 			}
 		}
 	}
 	for k, n := range totals {
 		ch <- prometheus.MustNewConstMetric(
-			c.backupTotal, prometheus.CounterValue, float64(n), k.typ, k.status)
+			c.backupTotal, prometheus.CounterValue, float64(n), k.typ, k.status,
+		)
 	}
 	for typ, h := range durByType {
 		ch <- prometheus.MustNewConstHistogram(
-			c.backupDuration, h.count, h.sum, h.bkt, typ)
+			c.backupDuration, h.count, h.sum, h.bkt, typ,
+		)
 	}
 }
 
@@ -212,13 +220,15 @@ func (c *MetricsCollector) collectRestores(ctx context.Context, ch chan<- promet
 	}
 	for status, n := range totals {
 		ch <- prometheus.MustNewConstMetric(
-			c.restoreTotal, prometheus.CounterValue, float64(n), status)
+			c.restoreTotal, prometheus.CounterValue, float64(n), status,
+		)
 	}
 	// Emit the restore duration histogram only when at least one restore
 	// has completed; an empty histogram would read as a stalled
 	// distribution before the first restore.
 	if dur.count > 0 {
 		ch <- prometheus.MustNewConstHistogram(
-			c.restoreDuration, dur.count, dur.sum, dur.bkt)
+			c.restoreDuration, dur.count, dur.sum, dur.bkt,
+		)
 	}
 }

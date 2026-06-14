@@ -47,7 +47,7 @@ func TestTenantIDPatternRejectsInjection(t *testing.T) {
 		"acme\nDROP TABLE",
 		"a b",
 		"acme/admin",
-		"alice'; --",     // example from the §4.2.16 closure brief
+		"alice'; --", // example from the §4.2.16 closure brief
 		strings.Repeat("a", 129),
 		"αβγ",
 	}

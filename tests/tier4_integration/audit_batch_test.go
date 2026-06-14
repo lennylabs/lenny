@@ -25,6 +25,9 @@ import (
 
 // spec: §12.3 line 81 — batched T2 inserts seal and chain correctly,
 // and the resulting audit chain verifies.
+// diagnosis: a failure means batched T2 audit inserts do not seal and
+// chain correctly, so the audit chain would fail verification after a
+// batch flush.
 func TestAuditBatchBufferChainsCorrectly(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

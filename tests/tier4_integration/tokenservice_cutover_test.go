@@ -67,7 +67,8 @@ func TestGatewayWithTokenServiceWiringBoots(t *testing.T) {
 	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	ts := tokensvc.Start(t)
-	gw := gateway.StartWith(t,
+	gw := gateway.StartWith(
+		t,
 		"--token-service-grpc-addr", ts.GRPCAddr(),
 		"--token-service-tenant", "tier4-cutover",
 	)
@@ -93,7 +94,8 @@ func TestSessionCreateWithoutPoolsUnderCutover(t *testing.T) {
 	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	ts := tokensvc.Start(t)
-	gw := gateway.StartWith(t,
+	gw := gateway.StartWith(
+		t,
 		"--token-service-grpc-addr", ts.GRPCAddr(),
 		"--token-service-tenant", "tier4-cutover",
 	)

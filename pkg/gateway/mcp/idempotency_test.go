@@ -265,4 +265,3 @@ func TestMCPIdempotency_KeyNamespacing_spec_11_5(t *testing.T) {
 		t.Errorf("mcp-namespaced row should exist: found=%v err=%v", found, err)
 	}
 }
-

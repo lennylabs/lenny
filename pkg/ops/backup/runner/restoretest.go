@@ -164,7 +164,8 @@ func RunVerify(ctx context.Context, cfg VerifyConfig) error {
 		if got := sha256Hex(data); got != target.Checksum {
 			return failed(
 				fmt.Sprintf("checksum mismatch: recorded %s, archive hashes to %s", target.Checksum, got),
-				ErrChecksumMismatch)
+				ErrChecksumMismatch,
+			)
 		}
 	}
 	dumps, err := cfg.Opener.ExtractPostgresDumps(ctx, data)
@@ -175,7 +176,8 @@ func RunVerify(ctx context.Context, cfg VerifyConfig) error {
 		if err := cfg.Inspector.ListDump(ctx, d); err != nil {
 			return failed(
 				fmt.Sprintf("pg_restore --list shard %d: %s", i, err.Error()),
-				fmt.Errorf("%w: shard %d: %v", ErrDumpUnreadable, i, err))
+				fmt.Errorf("%w: shard %d: %v", ErrDumpUnreadable, i, err),
+			)
 		}
 	}
 	if err := cfg.Reporter.MarkVerified(ctx, cfg.BackupID); err != nil {
@@ -240,7 +242,8 @@ func RunRestoreTest(ctx context.Context, cfg RestoreTestConfig) (restoretest.Res
 	if cfg.Resolver == nil || cfg.Downloader == nil || cfg.Opener == nil ||
 		cfg.Inspector == nil || cfg.Store == nil {
 		return restoretest.Result{}, errors.New(
-			"runner: restore-test requires Resolver, Downloader, Opener, Inspector, and Store")
+			"runner: restore-test requires Resolver, Downloader, Opener, Inspector, and Store",
+		)
 	}
 	now := cfg.Now
 	if now == nil {
@@ -319,7 +322,8 @@ func RunRestoreTest(ctx context.Context, cfg RestoreTestConfig) (restoretest.Res
 				result.Success = false
 				result.Error = fmt.Sprintf(
 					"artifact success rate %.4f below the §25.11 %.2f floor (%d of %d sampled objects present)",
-					result.ArtifactSuccessRate, artifactSuccessFloor, present, sampled)
+					result.ArtifactSuccessRate, artifactSuccessFloor, present, sampled,
+				)
 			}
 		}
 	}

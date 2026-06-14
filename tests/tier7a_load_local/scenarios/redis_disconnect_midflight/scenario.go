@@ -137,4 +137,3 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	}
 	return nil
 }
-

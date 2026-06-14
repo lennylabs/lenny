@@ -129,7 +129,7 @@ func (s *Stub) shouldError() bool {
 	// count crosses the boundary.
 	step := uint64(s.config.ErrorRate * float64(1<<32))
 	state := s.rngState.Add(step)
-	return (state>>32) != ((state-step)>>32)
+	return (state >> 32) != ((state - step) >> 32)
 }
 
 // TotalCalls returns the count of accepted calls.

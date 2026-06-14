@@ -38,7 +38,8 @@ func resolveExecutor(runtimeBin, agentRuntime string) (executor.Executor, string
 		return nil, "", fmt.Errorf(
 			"unknown LENNY_AGENT_RUNTIME %q: the only built-in dev runtime is %q; "+
 				"register other runtimes via the admin API or point at a binary with LENNY_AGENT_BINARY",
-			agentRuntime, "echo")
+			agentRuntime, "echo",
+		)
 	case runtimeBin != "":
 		return executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: runtimeBin}),
 			fmt.Sprintf("runtime binary %s", runtimeBin), nil

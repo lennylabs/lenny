@@ -165,13 +165,15 @@ func (r *Router) emitScanExportedFilesTransition(ctx context.Context, p authmw.P
 		// cost-attribution / compliance event under the operator's tenant.
 		r.appendBilling(ctx, billingfanout.DelegationPolicyExportScan(
 			billingstore.EventDelegationPolicyExportScanWeakened, p.TenantID, name,
-			oldScan, newScan, transitionTs, uint32(interceptorWeakeningCooldownSeconds)))
+			oldScan, newScan, transitionTs, uint32(interceptorWeakeningCooldownSeconds),
+		))
 		return
 	}
 	r.emit(ctx, p, "delegation_policy.export_scan_strengthened", name, detail)
 	r.appendBilling(ctx, billingfanout.DelegationPolicyExportScan(
 		billingstore.EventDelegationPolicyExportScanStrengthened, p.TenantID, name,
-		oldScan, newScan, transitionTs, 0))
+		oldScan, newScan, transitionTs, 0,
+	))
 }
 
 // writeDelegationPolicyStoreError maps a delegationpolicystore error to

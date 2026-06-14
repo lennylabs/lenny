@@ -63,14 +63,14 @@ func dispatcherFor(srv *httptest.Server, secret []byte, done chan *DeliveryRecor
 
 func completedJob(srvURL string) Job {
 	return Job{
-		TenantID:    "t_acme",
-		SessionID:   "sess_1",
+		TenantID:     "t_acme",
+		SessionID:    "sess_1",
 		CallbackURL:  srvURL,
 		PinnedIP:     netip.MustParseAddr("127.0.0.1"),
 		SealedSecret: []byte("opaque-sealed"),
 		ShortName:    EventSessionCompleted,
-		Subject:     "session/sess_1",
-		Data:        CompletedData(SessionInfo{SessionID: "sess_1"}),
+		Subject:      "session/sess_1",
+		Data:         CompletedData(SessionInfo{SessionID: "sess_1"}),
 	}
 }
 

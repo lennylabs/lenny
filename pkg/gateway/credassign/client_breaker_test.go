@@ -86,7 +86,8 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 		Name:    "token_service",
 		Breaker: &subsystem.Breaker{FailureThreshold: 3, Cooldown: time.Hour},
 	}
-	client, stub, closer := newStubClient(t,
+	client, stub, closer := newStubClient(
+		t,
 		func(req *tokensv1.AssignCredentialsRequest) (*tokensv1.AssignCredentialsResponse, error) {
 			stub := req // shadow the outer; not needed
 			_ = stub
@@ -127,7 +128,8 @@ func TestClientBreakerSkipsNotFound(t *testing.T) {
 		Name:    "token_service",
 		Breaker: &subsystem.Breaker{FailureThreshold: 2, Cooldown: time.Hour},
 	}
-	client, _, closer := newStubClient(t,
+	client, _, closer := newStubClient(
+		t,
 		func(req *tokensv1.AssignCredentialsRequest) (*tokensv1.AssignCredentialsResponse, error) {
 			return nil, status.Error(codes.NotFound, "pool not registered")
 		},
@@ -156,7 +158,8 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 	}
 	var failing atomic.Bool
 	failing.Store(true)
-	client, _, closer := newStubClient(t,
+	client, _, closer := newStubClient(
+		t,
 		func(req *tokensv1.AssignCredentialsRequest) (*tokensv1.AssignCredentialsResponse, error) {
 			if failing.Load() {
 				return nil, status.Error(codes.Unavailable, "blip")
@@ -214,7 +217,8 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 // spec: §4.3 line 211 — nil breaker is a no-op: tests/dev mode without
 // the breaker continue to receive raw gRPC errors.
 func TestClientWithoutBreakerPassesRawErrors(t *testing.T) {
-	client, _, closer := newStubClient(t,
+	client, _, closer := newStubClient(
+		t,
 		func(req *tokensv1.AssignCredentialsRequest) (*tokensv1.AssignCredentialsResponse, error) {
 			return nil, status.Error(codes.Unavailable, "down")
 		},

@@ -33,6 +33,9 @@ func startPG(t *testing.T) *containers.Postgres {
 
 // spec: §12.8 lines 845-850 — erasure_salt is envelope-encrypted at rest,
 // round-trips, is stored as ciphertext, and is destroyed to NULL. F-12.8.5.
+// diagnosis: a failure means the tenant erasure_salt is persisted in
+// plaintext rather than envelope-encrypted, or is not destroyed to NULL,
+// breaking the §12.8 crypto-erasure guarantee.
 func TestTenantStoreErasureSaltEnvelope(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -113,6 +116,9 @@ func TestTenantStoreErasureSaltEnvelope(t *testing.T) {
 
 // spec: §12.8 line 845 — a non-empty salt write with no KMS provider is
 // rejected rather than persisted in plaintext. F-12.8.5.
+// diagnosis: a failure means a salt write with no KMS provider is
+// persisted in plaintext instead of being rejected, so the store does
+// not fail closed on the credential-handling path.
 func TestTenantStoreErasureSaltFailsClosedWithoutKMS(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

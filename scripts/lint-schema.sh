@@ -187,12 +187,19 @@ lint_migration_file() {
     if echo "$body" | grep -qiE 'PRIMARY[[:space:]]+KEY[[:space:]]*\([[:space:]]*tenant_id'; then
       pk_starts_with_tenant=1
     fi
+    # Table-level UNIQUE (tenant_id, ...) constraint. Postgres backs a
+    # UNIQUE constraint with a tenant_id-leading composite index, which
+    # satisfies R-01 the same way a CREATE INDEX (tenant_id, ...) does.
+    if echo "$body" | grep -qiE 'UNIQUE[[:space:]]*\([[:space:]]*tenant_id'; then
+      pk_starts_with_tenant=1
+    fi
 
     # Composite indexes on this table: scan the file for CREATE INDEX ...
     # ON <table> (tenant_id, ...). If any exists, the rule is satisfied
-    # via the index path.
+    # via the index path. The regex tolerates the column list wrapping to
+    # the next line after the table name (a common migration style).
     composite_idx_leading_tenant=0
-    if grep -iE 'CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX[[:space:]]+.*ON[[:space:]]+'"$tbl_name"'[[:space:]]*\([[:space:]]*tenant_id' "$f" >/dev/null 2>&1; then
+    if tr '\n' ' ' < "$f" | grep -iE 'CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX[[:space:]]+[^;]*ON[[:space:]]+'"$tbl_name"'[[:space:]]*\([[:space:]]*tenant_id' >/dev/null 2>&1; then
       composite_idx_leading_tenant=1
     fi
 

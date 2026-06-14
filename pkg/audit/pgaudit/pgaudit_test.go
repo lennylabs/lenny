@@ -47,6 +47,7 @@ type recordingMetrics struct {
 func (m *recordingMetrics) PgAuditEvent(class pgaudit.Class) {
 	m.events = append(m.events, class)
 }
+
 func (m *recordingMetrics) PgAuditDeliveryFailed(class pgaudit.Class) {
 	m.deliv = append(m.deliv, class)
 }

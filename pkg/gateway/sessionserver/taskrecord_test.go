@@ -66,7 +66,8 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := transcripts.Append(context.Background(), "acme", "sess_tr1",
+	if err := transcripts.Append(
+		context.Background(), "acme", "sess_tr1",
 		transcriptstore.Entry{Seq: 1, Role: "user", Content: "do the thing"},
 		transcriptstore.Entry{Seq: 2, Role: "assistant", Content: "did the thing"},
 	); err != nil {

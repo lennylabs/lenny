@@ -50,7 +50,8 @@ func TestDeleteByUserAndTenant_ErasesCheckpoint_spec_12_8_step6(t *testing.T) {
 	}
 	defer pool.Close()
 
-	applyMigrations(t, ctx, pool,
+	applyMigrations(
+		t, ctx, pool,
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
 		"0119_token_usage_checkpoint.up.sql",

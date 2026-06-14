@@ -417,7 +417,8 @@ func (r *Report) verify(ops Ops, cfg Config) {
 // than the file.
 func CleanupEnv(workdir, prevProvider, prevLeaseID string) []string {
 	env := workspace.DefaultSetupEnv(workdir)
-	env = append(env,
+	env = append(
+		env,
 		"LENNY_PREV_CREDENTIAL_PROVIDER="+prevProvider,
 		"LENNY_PREV_LEASE_ID="+prevLeaseID,
 	)
