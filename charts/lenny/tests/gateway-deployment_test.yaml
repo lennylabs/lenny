@@ -690,13 +690,22 @@ tests:
           content:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxclaims"]
-            verbs: ["get", "list", "watch", "create", "delete"]
+            verbs: ["get", "create", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxclaims/status"]
             verbs: ["get", "patch"]
+      # The gateway holds no list/watch on SandboxClaim (§4.6.3 / §5.2).
+      # Intra-pod capacity is gated by the Redis slot counter with a
+      # Postgres GetActiveSlotsByPod fallback during a Redis outage.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxclaims"]
+            verbs: ["get", "list", "watch", "create", "delete"]
       - contains:
           path: rules
           content:

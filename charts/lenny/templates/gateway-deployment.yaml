@@ -135,14 +135,19 @@ rules:
     resources: ["sandboxes"]
     verbs: ["get", "list"]
   # SandboxClaim: the gateway creates the per-pod binding claim CRD that
-  # the §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, and
-  # deletes it on the claim-lifecycle edges (hold expiry, session-mode
-  # Release, and §5.2 SlotClaimer.ReleaseSlot all do Client.Delete on
-  # the SandboxClaim). The SSA-only fallback intra-pod capacity gate
-  # lists claims by .spec.sandboxRef when no Redis counter is wired.
+  # the §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, gets
+  # it to read the binding state and the resourceVersion guarding a
+  # hold-expiry DELETE precondition, and deletes it on the claim-lifecycle
+  # edges (hold expiry, session-mode Release, and §5.2
+  # SlotClaimer.ReleaseSlot all do Client.Delete on the SandboxClaim).
+  # Intra-pod capacity is gated by the §5.2 atomic Redis slot counter with
+  # a §12.4 Postgres SessionStore.GetActiveSlotsByPod fallback under a
+  # per-pod advisory lock during a Redis outage, so the gateway does not
+  # list or watch claims to gate capacity. The §4.6.3 grant is
+  # create/get/delete.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxclaims"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "create", "delete"]
   # SandboxClaim status: the gateway is the sole writer of the §4.6.3
   # claim binding state. It patches the binding-state phase, the
   # transition time, rewarmStartedAt (preConnect re-warm anchor), and

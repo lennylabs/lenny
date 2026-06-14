@@ -25,9 +25,13 @@ var requiredVerbs = []struct {
 	Resource string
 	Verbs    []string
 }{
-	// §4.6.3: gateway creates/gets/deletes per-pod SandboxClaims (the
-	// SSA-only fallback capacity gate also lists them).
-	{"lenny-gateway", "sandboxclaims", []string{"get", "list", "watch", "create", "delete"}},
+	// §4.6.3: gateway creates/gets/deletes per-pod SandboxClaims. It gets
+	// a claim to read the binding state and the resourceVersion guarding
+	// the hold-expiry DELETE precondition. Intra-pod capacity is gated by
+	// the §5.2 Redis slot counter with a §12.4 Postgres
+	// GetActiveSlotsByPod fallback, so the gateway does not list or watch
+	// claims and the §4.6.3 grant is create/get/delete.
+	{"lenny-gateway", "sandboxclaims", []string{"get", "create", "delete"}},
 	// §4.6.3: gateway is the sole writer of the claim binding state on
 	// the sandboxclaims/status subresource (binding phase, transition
 	// time, rewarmStartedAt, holdExpiresAt).
@@ -81,12 +85,17 @@ func TestClusterRolesGrantRequiredVerbs(t *testing.T) {
 // projection-blind to Sandbox.status (the WarmPoolController is its sole
 // writer) and reads the Sandbox main resource read-only, so the gateway
 // holds no write verb on `sandboxes` and no grant whatsoever on the
-// `sandboxes/status` subresource. A positive-only verb matrix would
-// still pass if a later edit re-added a Sandbox.status write to the
-// gateway; this table catches that regression. An empty Verbs slice
+// `sandboxes/status` subresource. It also pins the converged SandboxClaim
+// grant to create/get/delete: the gateway holds no list or watch verb,
+// because §5.2 intra-pod capacity is gated by the Redis slot counter with
+// a §12.4 Postgres GetActiveSlotsByPod fallback. A positive-only verb
+// matrix would still pass if a later edit
+// re-added a Sandbox.status write or the SSA claim-list capacity gate to
+// the gateway; this table catches that regression. An empty Verbs slice
 // asserts the resource carries no rule for the role at all.
 //
-// spec: 4.6.3 (gateway loses every Sandbox.status write surface)
+// spec: 4.6.3 (gateway loses every Sandbox.status write surface), 5.2
+// (intra-pod capacity gate)
 var forbiddenVerbs = []struct {
 	Role     string
 	Resource string
@@ -97,6 +106,12 @@ var forbiddenVerbs = []struct {
 	// patch/update/watch here would let the gateway mutate pod state or
 	// re-establish the Sandbox.status write path the decomposition removed.
 	{"lenny-gateway", "sandboxes", []string{"create", "update", "patch", "delete", "watch"}},
+	// §4.6.3 / §5.2: the gateway's SandboxClaim grant is create/get/delete.
+	// It must hold no list or watch verb. Intra-pod capacity is gated by
+	// the Redis slot counter with a Postgres GetActiveSlotsByPod fallback,
+	// so a re-added list/watch would re-establish the SSA claim-list
+	// capacity gate the converged design does not use.
+	{"lenny-gateway", "sandboxclaims", []string{"list", "watch"}},
 	// §4.6.3: the gateway holds no grant on the Sandbox.status
 	// subresource. An empty want asserts the absence of any rule, so even
 	// a read (`get`) grant on sandboxes/status fails this test.
