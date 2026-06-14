@@ -113,9 +113,9 @@ func TestDecide(t *testing.T) {
 			want:  lifecycle.Decision{Action: lifecycle.ActionNone},
 		},
 		{
-			name:  "a gateway-owned attached phase takes no action",
-			phase: state.Attached,
-			pod:   lifecycle.PodFailed,
+			name:  "a gateway-owned reserved phase takes no action",
+			phase: state.Reserved,
+			pod:   lifecycle.PodReady,
 			want:  lifecycle.Decision{Action: lifecycle.ActionNone},
 		},
 	}

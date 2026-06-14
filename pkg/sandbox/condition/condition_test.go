@@ -14,7 +14,6 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -120,21 +119,26 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 105-117 — TerminalReason maps every terminal phase and
-// only terminal phases.
-func TestTerminalReason_spec_6_2_105(t *testing.T) {
-	cases := map[state.State]string{
-		state.Completed: "Completed",
-		state.Failed:    "Failed",
-		state.Cancelled: "Cancelled",
-		state.Expired:   "Expired",
-		state.Attached:  "",
-		state.Idle:      "",
-		state.Draining:  "",
+// spec: §6.2, §6.37 — TerminalReason maps every session-terminal disposition
+// to its PascalCase condition reason and returns "" for any non-terminal or
+// unrecognized disposition. The fine session-terminal states are recorded on
+// the Postgres session model and are no longer coarse CRD phases, so the
+// helper keys on the disposition string rather than a Sandbox.status.phase.
+func TestTerminalReason_spec_6_2(t *testing.T) {
+	cases := map[string]string{
+		"completed": "Completed",
+		"failed":    "Failed",
+		"cancelled": "Cancelled",
+		"expired":   "Expired",
+		// Non-terminal or unknown dispositions carry no reason; the caller
+		// then records no Terminated condition.
+		"claimed": "",
+		"":        "",
+		"bogus":   "",
 	}
-	for phase, want := range cases {
-		if got := sandboxcond.TerminalReason(phase); got != want {
-			t.Errorf("TerminalReason(%q) = %q, want %q", phase, got, want)
+	for disposition, want := range cases {
+		if got := sandboxcond.TerminalReason(disposition); got != want {
+			t.Errorf("TerminalReason(%q) = %q, want %q", disposition, got, want)
 		}
 	}
 }

@@ -111,11 +111,14 @@ func (r *AgentSandboxPoolReader) statusFromTemplate(ctx context.Context, tmpl *l
 		if sb.Spec.PoolRef != tmpl.Name {
 			continue
 		}
+		// spec: §6.2 — claimed and reserved are the occupied coarse phases.
+		// A reserved pod is held for its pinned tenant and excluded from idle
+		// inventory, so it counts as claimed for pool accounting; a pod
+		// serving any number of concurrent sessions projects claimed.
 		switch PodState(sb.Status.Phase) {
 		case PodStateIdle:
 			status.IdleCount++
-		case PodStateClaimed, PodStateSlotActive,
-			PodStateRunningSetup, PodStateStartingSession, PodStateAttached:
+		case PodStateClaimed, PodStateReserved:
 			status.ClaimedCount++
 		}
 	}
@@ -615,25 +618,23 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// allowedTransition reports whether the §6.2 state machine admits a
-// from → to transition. The list here is the subset the interface
-// surface enforces; the runtime SDK-warm path adds the SDK-specific
-// transitions in pkg/controller/warmpool. spec: spec/06_warm-pod-model.md
-// §6.2.
+// allowedTransition reports whether the §6.2 coarse pod-occupancy state
+// machine admits a from → to transition. This mirror stays in lockstep with
+// pkg/sandbox/state.ValidTransitions(): the warm-fill paths, the
+// claim-driven occupancy projection (including the claimed → claimed
+// concurrent-occupancy self-edge), and the recycle edges (the occupancy-zero
+// re-warm, the same-tenant rebind, and the hold-expiry return to idle). The
+// fine session-lifecycle transitions live in the Postgres session model and
+// are not CRD edges (spec: §6.2, §6.37). spec: spec/06_warm-pod-model.md §6.2.
 func allowedTransition(from, to PodState) bool {
 	allowed := map[PodState]sets.Set[PodState]{
-		PodStateWarming:             sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
-		PodStateSDKConnecting:       sets.New(PodStateIdle, PodStateFailed),
-		PodStateIdle:                sets.New(PodStateClaimed, PodStateSlotActive, PodStateDraining, PodStateTerminated),
-		PodStateClaimed:             sets.New(PodStateReceivingUploads, PodStateRunningSetup, PodStateAttached, PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateSlotActive:          sets.New(PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateReceivingUploads:    sets.New(PodStateFinalizingWorkspace, PodStateFailed),
-		PodStateFinalizingWorkspace: sets.New(PodStateRunningSetup, PodStateStartingSession, PodStateFailed),
-		PodStateRunningSetup:        sets.New(PodStateStartingSession, PodStateFailed),
-		PodStateStartingSession:     sets.New(PodStateAttached, PodStateFailed),
-		PodStateAttached:            sets.New(PodStateTaskCleanup, PodStateCompleted, PodStateFailed, PodStateCancelled, PodStateExpired, PodStateDraining),
-		PodStateTaskCleanup:         sets.New(PodStateIdle, PodStateDraining, PodStateTerminated),
-		PodStateDraining:            sets.New(PodStateTerminated),
+		PodStateWarming:       sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
+		PodStateSDKConnecting: sets.New(PodStateIdle, PodStateFailed, PodStateTerminated, PodStateReserved),
+		PodStateIdle:          sets.New(PodStateClaimed, PodStateDraining),
+		PodStateClaimed:       sets.New(PodStateClaimed, PodStateDraining, PodStateSDKConnecting, PodStateReserved),
+		PodStateReserved:      sets.New(PodStateClaimed, PodStateIdle),
+		PodStateFailed:        sets.New(PodStateDraining),
+		PodStateDraining:      sets.New(PodStateTerminated),
 	}
 	if next, ok := allowed[from]; ok {
 		return next.Has(to)

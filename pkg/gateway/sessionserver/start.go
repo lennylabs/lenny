@@ -31,7 +31,6 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -1554,7 +1553,7 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 	if result.SlotID != "" {
 		err = s.podBinder.ReleaseSlot(ctx, result)
 	} else {
-		err = s.podBinder.Release(ctx, result, state.Failed)
+		err = s.podBinder.Release(ctx, result, "failed")
 	}
 	if err != nil {
 		log.Printf("sessionserver: rollback binding for session %s: %v", result.SessionID, err)

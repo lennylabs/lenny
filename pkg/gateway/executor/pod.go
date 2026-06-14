@@ -11,7 +11,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // PodExecutor is the Executor backed by Kubernetes agent pods. It
@@ -281,24 +280,10 @@ func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition
 	if bind.SlotID != "" {
 		return e.binder.ReleaseSlot(ctx, bind)
 	}
-	return e.binder.Release(ctx, bind, dispositionPhase(disposition))
-}
-
-// dispositionPhase maps a session's terminal Disposition to the §6.2 Sandbox
-// phase Release records before draining the pod. An unrecognized or empty
-// disposition maps to the empty phase, which Release treats as "no terminal
-// phase to record" and drains directly.
-func dispositionPhase(d Disposition) state.State {
-	switch d {
-	case DispositionCompleted:
-		return state.Completed
-	case DispositionFailed:
-		return state.Failed
-	case DispositionCancelled:
-		return state.Cancelled
-	case DispositionExpired:
-		return state.Expired
-	default:
-		return ""
-	}
+	// The session-terminal disposition (completed/failed/cancelled/expired)
+	// is recorded on the Postgres session model and surfaced on the Sandbox
+	// only as a Terminated condition; it is no longer a coarse
+	// Sandbox.status.phase value (spec: §6.2, §6.37). Release maps the
+	// disposition string to that condition reason and drains the pod.
+	return e.binder.Release(ctx, bind, string(disposition))
 }

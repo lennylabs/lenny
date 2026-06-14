@@ -676,7 +676,7 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -711,7 +711,7 @@ func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if len(assigner.released) != 1 || assigner.released[0] != "sess-rel" {
@@ -740,7 +740,7 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	if err := c.Delete(context.Background(), &sb); err != nil {
 		t.Fatalf("delete sandbox: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err == nil {
+	if err := binder.Release(context.Background(), res, "completed"); err == nil {
 		t.Error("Release succeeded though the Sandbox was deleted, want an error")
 	}
 }
@@ -880,7 +880,7 @@ func TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 	phases = phases[:0] // drop the acquisition phase; assert the release sequence
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -924,7 +924,7 @@ func TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 	phases = phases[:0]
-	if err := binder.Release(context.Background(), res, state.Expired); err != nil {
+	if err := binder.Release(context.Background(), res, "expired"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 

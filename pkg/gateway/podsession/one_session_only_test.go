@@ -62,10 +62,10 @@ func TestSessionModeReleaseDrainsSandbox_spec_6_1_invariant(t *testing.T) {
 		t.Fatalf("phase after Bind = %q, want claimed", sb.Status.Phase)
 	}
 
-	// Drive the §6.2 terminal disposition through Release with
-	// state.Completed. The §6.1 invariant requires this to drain the
-	// Sandbox, not return it to idle.
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	// Drive the §6.2 terminal disposition through Release with the
+	// `completed` disposition. The §6.1 invariant requires this to drain
+	// the Sandbox, not return it to idle.
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -88,20 +88,21 @@ func TestSessionModeReleaseDrainsSandbox_spec_6_1_invariant(t *testing.T) {
 	}
 }
 
-// spec: §6.1 — the §6.2 state machine must NOT model a session-mode
-// pod-recycling edge (attached → idle, completed → idle, etc.). This
-// is the static invariant: even with a misbehaving writer, the only
-// path out of a terminal/draining Sandbox phase is termination.
+// spec: §6.1, §6.2 — a session-mode pod (recycle.enabled: false) is
+// terminated and replaced after its session ends; it is never returned to
+// idle for a different session. The fine session-terminal states moved to
+// the Postgres session model (§6.2, §6.37), so the static §6.2 invariant is
+// that no coarse terminal or draining phase has an edge back to idle: a pod
+// that reaches failed, draining, or terminated can only proceed toward
+// termination, never re-enter the claimable pool. The recycle path's
+// reserved → idle hold-expiry edge is reachable only on a recycling pool
+// and never from a session-mode pod, which drains directly from claimed.
 func TestStateMachineHasNoRecyclingEdgeForSessionPod_spec_6_1(t *testing.T) {
 	forbidden := []struct {
 		from state.State
 		to   state.State
 	}{
-		{state.Attached, state.Idle},
-		{state.Completed, state.Idle},
 		{state.Failed, state.Idle},
-		{state.Cancelled, state.Idle},
-		{state.Expired, state.Idle},
 		{state.Draining, state.Idle},
 		{state.Terminated, state.Idle},
 	}

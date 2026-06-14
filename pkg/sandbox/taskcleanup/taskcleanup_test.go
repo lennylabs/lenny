@@ -182,9 +182,15 @@ func TestDecideSpecEdges(t *testing.T) {
 			if got.Reason != tc.wantReason {
 				t.Errorf("spec line %s: Reason = %q, want %q", tc.specLine, got.Reason, tc.wantReason)
 			}
-			// Every disposition must be a legal §6.2 task_cleanup edge.
-			if err := state.IsValid(state.TaskCleanup, got.NextPhase); err != nil {
-				t.Errorf("spec line %s: disposition %q is not a valid task_cleanup edge: %v", tc.specLine, got.NextPhase, err)
+			// Every recycle disposition is one of the coarse §6.2 occupancy
+			// phases the recycle edges target (re-warm, reserve/idle reuse,
+			// or retire). The former task_cleanup source phase no longer
+			// exists (spec §6.2, §6.37); the disposition driver selects the
+			// NextPhase directly.
+			switch got.NextPhase {
+			case state.SDKConnecting, state.Idle, state.Draining, state.Failed:
+			default:
+				t.Errorf("spec line %s: disposition NextPhase %q is not a coarse §6.2 recycle outcome", tc.specLine, got.NextPhase)
 			}
 		})
 	}

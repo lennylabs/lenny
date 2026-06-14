@@ -278,34 +278,28 @@ const (
 	WarmModeSDKWarm WarmMode = "sdk_warm"
 )
 
-// PodState is the §6.2 authoritative pod lifecycle phase. The named
-// constants here mirror the values written into Sandbox.status.phase.
+// PodState mirrors the §6.2 coarse pod-occupancy phase written into
+// Sandbox.status.phase. The named constants here are the only values the
+// WarmPoolController projects onto the CRD; the fine session-lifecycle
+// states live in the Postgres session model and are not mirrored here
+// (spec: §6.2, §6.37). This block stays in lockstep with
+// pkg/sandbox/state.All().
 // spec: spec/06_warm-pod-model.md §6.2; spec/04_system-components.md
 // lines 340-358 (the read/write surface that consumes them).
 type PodState string
 
 const (
-	PodStateWarming             PodState = "warming"
-	PodStateSDKConnecting       PodState = "sdk_connecting"
-	PodStateIdle                PodState = "idle"
-	PodStateClaimed             PodState = "claimed"
-	PodStateSlotActive          PodState = "slot_active"
-	PodStateReceivingUploads    PodState = "receiving_uploads"
-	PodStateFinalizingWorkspace PodState = "finalizing_workspace"
-	PodStateRunningSetup        PodState = "running_setup"
-	PodStateStartingSession     PodState = "starting_session"
-	PodStateAttached            PodState = "attached"
-	PodStateTaskCleanup         PodState = "task_cleanup"
-	PodStateResuming            PodState = "resuming"
-	PodStateSuspended           PodState = "suspended"
-	PodStateResumePending       PodState = "resume_pending"
-	PodStateAwaitingClient      PodState = "awaiting_client_action"
-	PodStateCompleted           PodState = "completed"
-	PodStateFailed              PodState = "failed"
-	PodStateCancelled           PodState = "cancelled"
-	PodStateExpired             PodState = "expired"
-	PodStateDraining            PodState = "draining"
-	PodStateTerminated          PodState = "terminated"
+	PodStateWarming       PodState = "warming"
+	PodStateSDKConnecting PodState = "sdk_connecting"
+	PodStateIdle          PodState = "idle"
+	// PodStateReserved is the §6.2 coarse occupancy phase a recycled pod
+	// projects while its claim is held for the pinned tenant through the
+	// hold window. It is excluded from idle inventory.
+	PodStateReserved   PodState = "reserved"
+	PodStateClaimed    PodState = "claimed"
+	PodStateFailed     PodState = "failed"
+	PodStateDraining   PodState = "draining"
+	PodStateTerminated PodState = "terminated"
 )
 
 // FinalizerAction is the action ManageFinalizer takes on the

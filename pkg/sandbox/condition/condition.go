@@ -21,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // Sandbox lifecycle condition types written by Apply. They are the §4.6.1
@@ -88,18 +87,22 @@ func Apply(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, cond meta
 	return nil
 }
 
-// TerminalReason maps a §6.2 terminal phase to the PascalCase reason
-// recorded on the Terminated condition. It returns "" for a non-terminal
-// phase.
-func TerminalReason(phase state.State) string {
-	switch phase {
-	case state.Completed:
+// TerminalReason maps a session-terminal disposition to the PascalCase
+// reason recorded on the Terminated condition. The disposition is the
+// session outcome the gateway records on the Postgres session model; the
+// fine session-terminal states are no longer coarse CRD phases (spec: §6.2,
+// §6.37), so this helper keys on the disposition string rather than on a
+// Sandbox.status.phase value. It returns "" for an empty or unrecognized
+// disposition, which the caller treats as "no terminal condition to record".
+func TerminalReason(disposition string) string {
+	switch disposition {
+	case "completed":
 		return "Completed"
-	case state.Failed:
+	case "failed":
 		return "Failed"
-	case state.Cancelled:
+	case "cancelled":
 		return "Cancelled"
-	case state.Expired:
+	case "expired":
 		return "Expired"
 	default:
 		return ""

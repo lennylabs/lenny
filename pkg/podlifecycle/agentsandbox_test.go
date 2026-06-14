@@ -286,7 +286,7 @@ func TestAgentSandboxPoolManager_TransitionPodState_RejectsIllegalEdge(t *testin
 	}
 	err := m.TransitionPodState(context.Background(),
 		podlifecycle.PodHandle{SandboxName: "p1", Namespace: "agents"},
-		podlifecycle.PodStateIdle, podlifecycle.PodStateAttached) // not in the idle→{...} allow set
+		podlifecycle.PodStateIdle, podlifecycle.PodStateReserved) // not in the idle→{claimed,draining} allow set
 	if !errors.Is(err, podlifecycle.ErrInvalidTransition) {
 		t.Errorf("TransitionPodState illegal edge = %v, want ErrInvalidTransition", err)
 	}

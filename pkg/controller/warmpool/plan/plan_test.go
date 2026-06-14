@@ -99,13 +99,13 @@ func TestCompute(t *testing.T) {
 			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
 		},
 		{
-			name: "draining and terminal pods are ignored",
+			name: "occupied, draining, and terminal pods are ignored",
 			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
 				{Name: "i1", Phase: state.Idle},
 				{Name: "d1", Phase: state.Draining},
 				{Name: "f1", Phase: state.Failed},
 				{Name: "t1", Phase: state.Terminated},
-				{Name: "x1", Phase: state.Completed},
+				{Name: "r1", Phase: state.Reserved},
 			}},
 			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1},
 		},

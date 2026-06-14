@@ -1398,18 +1398,18 @@ func (b *Binder) recordFallbackSkip(reason string) {
 // pod's runtime down through the adapter, closes the adapter connection,
 // records the session's terminal disposition as a Sandbox condition, and
 // drains the pod so the Sandbox reconciler reclaims it (§6.2 → draining →
-// terminated). terminal is the §6.2 session-terminal disposition the
-// session reached (completed, failed, cancelled, or expired); the gateway
-// maps the session state to it. The terminal disposition is a session-model
-// state recorded on the Postgres session row, not a coarse
-// Sandbox.status.phase occupancy value (§6.2 lines 82, 172), so Release does
-// not write it to status.phase; the pod's coarse phase moves directly from
-// claimed to draining. The disposition is still surfaced on the Sandbox as a
-// Terminated condition (best-effort) so operators can read why the pod was
-// reclaimed. The adapter Shutdown and the condition write are best-effort —
-// the drain reclaims the pod regardless — so Release returns only an error
-// from the drain transition. spec: §6.2 lines 82, 172, 305; §4.6.1.
-func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state.State) error {
+// terminated). disposition is the session-terminal outcome the session
+// reached (completed, failed, cancelled, or expired). The fine
+// session-terminal states are recorded on the Postgres session model and
+// are no longer coarse Sandbox.status.phase occupancy values (§6.2, §6.37),
+// so Release does not write the disposition to status.phase; the pod's
+// coarse phase moves directly from claimed to draining. The disposition is
+// still surfaced on the Sandbox as a Terminated condition (best-effort) so
+// operators can read why the pod was reclaimed. The adapter Shutdown and the
+// condition write are best-effort — the drain reclaims the pod regardless —
+// so Release returns only an error from the drain transition. spec: §6.2,
+// §6.37; §4.6.1.
+func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
 	if result.Adapter != nil {
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
@@ -1432,12 +1432,12 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state
 	// reclaimed. The condition write carries only status.conditions and does
 	// not disturb status.phase. Best-effort: the drain reclaims the pod
 	// regardless of whether the condition write lands.
-	if reason := sandboxcond.TerminalReason(terminal); reason != "" {
+	if reason := sandboxcond.TerminalReason(disposition); reason != "" {
 		cond := metav1.Condition{
 			Type:    sandboxcond.Terminated,
 			Status:  metav1.ConditionTrue,
 			Reason:  reason,
-			Message: "session ended: " + string(terminal),
+			Message: "session ended: " + disposition,
 		}
 		if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
 			log.Printf("podsession: record terminal condition %s on sandbox %s: %v", reason, result.SandboxName, err)
