@@ -40,10 +40,13 @@ type SlotBindRequest struct {
 	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
 	// per-pod simultaneous-session bound.
 	MaxConcurrentSessions int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
-	// pod-uptime retirement cap. The slot-claim path drains a candidate
-	// pod whose uptime exceeds it before assigning a slot. Zero leaves
-	// uptime retirement off.
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
+	// pod-uptime retirement cap. The slot-claim path skips a candidate pod
+	// whose uptime exceeds it before assigning a slot; the skip is a
+	// read-only placement filter and the gateway does not write
+	// Sandbox.status. The WarmPoolController owns the resulting draining
+	// transition, derived from the pod CreationTimestamp (§4.6.1). Zero
+	// leaves uptime retirement off.
 	MaxPodUptimeSeconds int64
 	// Plan is the per-slot workspace the adapter materializes under
 	// /workspace/slots/{slotId}/ before start. spec: §5.2 — concurrent

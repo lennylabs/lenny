@@ -113,14 +113,16 @@ type SlotRequest struct {
 	// simultaneously; the (MaxConcurrentSessions+1)-th slot request claims
 	// a fresh warm pod instead.
 	MaxConcurrentSessions int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
 	// pod-uptime retirement cap. Before a slot is placed on a candidate
 	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
-	// Sandbox's creation timestamp) against this value; a pod over the
-	// cap is transitioned to draining (slot_active → draining when it
-	// still hosts slots, idle → draining otherwise) and skipped, so it
-	// accepts no new slots and is replaced from the warm pool. Zero
-	// leaves uptime retirement off.
+	// Sandbox's creation timestamp) against this value and skips a pod over
+	// the cap so no new slot lands on it. The skip is a read-only placement
+	// filter: the gateway does not write Sandbox.status. The
+	// WarmPoolController owns the actual draining transition, which it
+	// derives from the pod CreationTimestamp against
+	// recycle.maxPodUptimeSeconds (§4.6.1). Zero leaves uptime retirement
+	// off. spec: §4.6.1 (uptime drains are WarmPoolController-written).
 	MaxPodUptimeSeconds int64
 }
 
@@ -205,12 +207,16 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 }
 
 // expiredByUptime reports whether sb has exceeded the pool's
-// concurrent-workspace maxPodUptimeSeconds and is therefore due for
-// §6.2 lines 166-167 retirement. The pod's wall-clock uptime is measured
-// from the Sandbox's creation timestamp, which the WarmPoolController
-// stamps when it provisions the warm pod; a zero cap disables the check.
+// maxConcurrentSessions pool maxPodUptimeSeconds and is therefore not a
+// valid slot-placement candidate (§6.2 lines 166-167). The pod's
+// wall-clock uptime is measured from the Sandbox's creation timestamp,
+// which the WarmPoolController stamps when it provisions the warm pod; a
+// zero cap disables the check. It is a read-only predicate: ClaimSlot uses
+// it to skip the pod, and the WarmPoolController owns the resulting
+// draining transition, derived from the same CreationTimestamp (§4.6.1).
 //
-// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+// spec: spec/06_warm-pod-model.md §6.2 lines 166-167; spec/04 §4.6.1
+// (uptime drains are WarmPoolController-written).
 func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
 	if req.MaxPodUptimeSeconds <= 0 {
 		return false
@@ -221,41 +227,6 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 	}
 	limit := time.Duration(req.MaxPodUptimeSeconds) * time.Second
 	return c.now().Sub(created) > limit
-}
-
-// drainExpiredPod transitions an over-uptime concurrent-workspace pod to
-// the §6.2 draining phase so the pod accepts no new slots (its existing
-// slots run to completion) and the WarmPoolController provisions a
-// replacement. The legal source phases are slot_active (§6.2 line 166)
-// and idle (§6.2 line 167); the transition is idempotent (a no-op when
-// the pod is already draining or gone) and conflict-retried so a status
-// race re-reads and re-applies.
-//
-// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
-func (c *SlotClaimer) drainExpiredPod(ctx context.Context, sb *lennyv1.Sandbox) error {
-	const maxConflictRetries = 3
-	name := sb.Name
-	for attempt := 0; ; attempt++ {
-		var cur lennyv1.Sandbox
-		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, &cur); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("podclaim: get sandbox %s: %w", name, err)
-		}
-		if cur.Status.Phase == string(state.Draining) {
-			return nil
-		}
-		cur.Status.Phase = string(state.Draining)
-		err := c.Client.Status().Update(ctx, &cur)
-		if err == nil {
-			return nil
-		}
-		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
-			continue
-		}
-		return fmt.Errorf("podclaim: drain over-uptime sandbox %s: %w", name, err)
-	}
 }
 
 // ClaimSlot reserves a concurrent-session slot for the request's session
@@ -333,11 +304,12 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			continue
 		}
 		if c.expiredByUptime(sb, req) {
-			// §6.2 line 166: maxPodUptimeSeconds exceeded — the pod accepts
-			// no new slots and its existing slots drain. Drain it and skip.
-			if err := c.drainExpiredPod(ctx, sb); err != nil {
-				return nil, err
-			}
+			// §6.2 line 166 / §4.6.1: maxPodUptimeSeconds exceeded — the pod
+			// accepts no new slots and its existing slots drain. This is a
+			// read-only placement filter; the gateway skips the pod without
+			// writing Sandbox.status. The WarmPoolController owns the
+			// claimed → draining uptime transition, derived from the pod
+			// CreationTimestamp.
 			continue
 		}
 		res, conflict, err := c.reserveSlot(ctx, sb, claim, req, false)
@@ -372,11 +344,11 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			continue
 		}
 		if c.expiredByUptime(sb, req) {
-			// §6.2 line 167: maxPodUptimeSeconds exceeded while idle, checked
-			// before next assignment — drain and skip.
-			if err := c.drainExpiredPod(ctx, sb); err != nil {
-				return nil, err
-			}
+			// §6.2 line 167 / §4.6.1: maxPodUptimeSeconds exceeded while idle,
+			// checked before next assignment. Read-only placement filter: the
+			// gateway skips the pod without writing Sandbox.status. The
+			// WarmPoolController owns the idle → draining uptime transition,
+			// derived from the pod CreationTimestamp.
 			continue
 		}
 		res, conflict, err := c.reserveSlot(ctx, sb, nil, req, true)

@@ -99,12 +99,17 @@ type Binder struct {
 	// BindRequest then names no user providers and Bind delivers none.
 	// spec: §4.9 lines 1340-1381.
 	UserCredentials UserCredentialAssigner
-	// SlotCounter is the §5.2 atomic slot counter. Wired in production
-	// installs that expose --redis-url; the SlotClaimer constructed
-	// per BindSlot call carries it through so the Redis Lua
-	// GET-compare-INCR sequence enforces maxConcurrent atomically
-	// across gateway replicas. Nil when no Redis is wired; the
-	// SlotClaimer then falls back to its race-prone SSA-only path.
+	// SlotCounter is the §5.2 atomic slot counter and the only intra-pod
+	// capacity gate for the maxConcurrentSessions > 1 slot path. Wired in
+	// production installs that expose --redis-url; the SlotClaimer
+	// constructed per BindSlot call carries it through so the Redis Lua
+	// GET-compare-INCR sequence enforces maxConcurrentSessions atomically
+	// across gateway replicas. It is required: a nil counter makes ClaimSlot
+	// fail closed (it returns a configuration error rather than degrading to
+	// an SSA-only path, which no longer exists). A Redis outage does not
+	// disable the gate. It routes to the §12.4 Postgres-fallback capacity
+	// gate under a per-pod advisory lock, which fails closed after a bounded
+	// outage window. spec: §5.2, §12.4.
 	SlotCounter *slotcounter.Counter
 	// APIServerReachable is the §4.6.1 admission-reachability precondition
 	// (precondition 2): before initiating the Postgres-backed fallback,

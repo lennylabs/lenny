@@ -147,6 +147,25 @@ func podClaimExists(t *testing.T, c client.Client, sandboxName string) bool {
 	return false
 }
 
+// assertNotGatewayStatusOwned fails if the gateway field manager owns any
+// part of the Sandbox status subresource. Per §4.6.3 the gateway does not
+// write Sandbox.status (the WarmPoolController projects the pod phase from
+// the claim binding state); the seed in newEnvtestClient writes status under
+// the WarmPoolController field manager, so a lenny-gateway status entry can
+// only come from a gateway-side write the redesign removed.
+func assertNotGatewayStatusOwned(t *testing.T, c client.Client, sandboxName string) {
+	t.Helper()
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: sandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox %s: %v", sandboxName, err)
+	}
+	for _, mf := range sb.ManagedFields {
+		if mf.Manager == string(ownership.Gateway) && mf.Subresource == "status" {
+			t.Errorf("gateway must not write Sandbox.status (§4.6.3); found managedFields entry %+v on %s", mf, sandboxName)
+		}
+	}
+}
+
 // newCounter wires a miniredis-backed slot counter for the slot-claim
 // tests. The Redis counter (with its §12.4 Postgres fallback) is the
 // intra-pod capacity gate, so every SlotClaimer test runs with one.
@@ -487,12 +506,16 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 166-167 — concurrent-session pod-uptime retirement.
+// spec: §6.2 lines 166-167 (uptime placement filter), §4.6.1 (uptime drains
+// are WarmPoolController-written).
 // diagnosis: ClaimSlot placed a slot on a pod whose wall-clock uptime had
-// exceeded the pool's maxPodUptimeSeconds. §6.2 line 166: an over-uptime
-// claimed pod accepts no new slots and its existing slots drain — it must
-// transition to draining and be skipped as a candidate.
-func TestClaimSlotDrainsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
+// exceeded the pool's maxPodUptimeSeconds, or it wrote Sandbox.status to
+// drain the pod itself. §6.2 line 166: an over-uptime claimed pod accepts no
+// new slots, so ClaimSlot must skip it as a candidate. Per §4.6.1 the
+// gateway no longer owns the draining transition; the WarmPoolController
+// derives it from the pod CreationTimestamp. The gateway therefore skips the
+// pod read-only and must not mutate Sandbox.status.
+func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 	claimer, c, counter := slotClaimerFor(t,
 		concurrentSandbox("sbx-old", "claimed", "acme"))
 	seedOccupiedPod(t, c, counter, "sbx-old", "acme", 1)
@@ -504,23 +527,29 @@ func TestClaimSlotDrainsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 	req.MaxPodUptimeSeconds = 60
 	_, err := claimer.ClaimSlot(context.Background(), req)
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
-		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was drained)", err)
+		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was skipped)", err)
 	}
 
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-old"}, &sb); err != nil {
 		t.Fatalf("get sbx-old: %v", err)
 	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("over-uptime claimed pod phase = %q, want draining (§6.2 line 166)", sb.Status.Phase)
+	// §4.6.1: the gateway does not write Sandbox.status; the seeded
+	// (WPC-owned) phase is left untouched. The WarmPoolController owns the
+	// claimed → draining uptime transition.
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("over-uptime claimed pod phase = %q, want claimed unchanged (gateway must not write Sandbox.status, §4.6.1)", sb.Status.Phase)
 	}
+	assertNotGatewayStatusOwned(t, c, "sbx-old")
 }
 
-// spec: §6.2 line 167 — maxPodUptimeSeconds exceeded while idle, checked
-// before next assignment.
+// spec: §6.2 line 167 (uptime placement filter), §4.6.1 (uptime drains are
+// WarmPoolController-written).
 // diagnosis: ClaimSlot acquired a fresh slot on an idle pod that was already
-// past its uptime cap instead of draining it first.
-func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
+// past its uptime cap, or it wrote Sandbox.status to drain the pod. Per
+// §4.6.1 the gateway skips an over-uptime idle pod read-only and leaves the
+// idle → draining transition to the WarmPoolController.
+func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 	claimer, c, _ := slotClaimerFor(t,
 		concurrentSandbox("sbx-old", "idle", ""))
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
@@ -529,16 +558,22 @@ func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 	req.MaxPodUptimeSeconds = 60
 	_, err := claimer.ClaimSlot(context.Background(), req)
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
-		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was drained)", err)
+		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was skipped)", err)
 	}
 
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-old"}, &sb); err != nil {
 		t.Fatalf("get sbx-old: %v", err)
 	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("over-uptime idle pod phase = %q, want draining (§6.2 line 167)", sb.Status.Phase)
+	// §4.6.1: the gateway does not write Sandbox.status; the idle phase is
+	// left untouched and no per-pod claim is created for the skipped pod.
+	if sb.Status.Phase != string(state.Idle) {
+		t.Errorf("over-uptime idle pod phase = %q, want idle unchanged (gateway must not write Sandbox.status, §4.6.1)", sb.Status.Phase)
 	}
+	if podClaimExists(t, c, "sbx-old") {
+		t.Error("over-uptime idle pod was acquired (per-pod claim created); it must be skipped read-only")
+	}
+	assertNotGatewayStatusOwned(t, c, "sbx-old")
 }
 
 // spec: §6.2 lines 166-167.
