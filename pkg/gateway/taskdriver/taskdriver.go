@@ -54,21 +54,21 @@ type Policy struct {
 	MaxTaskRetries int
 }
 
-// Metrics is the §5.2 / §16.1 task-retirement metric sink. A nil sink is
+// Metrics is the §5.2 / §16.1 pod-retirement metric sink. A nil sink is
 // the no-op default. The production wiring adapts it onto gatewaymetrics:
-// the §16.1 lenny_task_pod_scrub_failure_count gauge and
-// lenny_task_pod_retirement_total counter, plus the §5.2-named aggregate
-// lenny_task_scrub_failure_total (named only in §5.2, outside the §16.1
+// the §16.1 lenny_pod_scrub_failure_count gauge and
+// lenny_pod_retirement_total counter, plus the §5.2-named aggregate
+// lenny_pod_scrub_failure_total (named only in §5.2, outside the §16.1
 // catalog).
 type Metrics interface {
 	// SetPodScrubFailureCount reports the pod's cumulative scrub-failure
-	// count (lenny_task_pod_scrub_failure_count gauge, per k8s_pod_name).
+	// count (lenny_pod_scrub_failure_count gauge, per k8s_pod_name).
 	SetPodScrubFailureCount(pool, podName string, count int)
 	// IncPodRetirement records a pod retirement by reason
-	// (lenny_task_pod_retirement_total{reason}).
+	// (lenny_pod_retirement_total{reason}).
 	IncPodRetirement(pool string, reason taskcleanup.RetireReason)
 	// IncScrubFailureTotal increments the aggregate scrub-failure counter
-	// (lenny_task_scrub_failure_total) on each failed scrub.
+	// (lenny_pod_scrub_failure_total) on each failed scrub.
 	IncScrubFailureTotal(pool string)
 }
 
@@ -91,7 +91,7 @@ func (NoopMetrics) IncScrubFailureTotal(string) {}
 // safe for concurrent use — a task-mode pod runs one task at a time, and
 // the driver owns the pod's state for the duration.
 type PodTaskState struct {
-	// PodName is the k8s pod name, the lenny_task_pod_scrub_failure_count
+	// PodName is the k8s pod name, the lenny_pod_scrub_failure_count
 	// gauge label.
 	PodName string
 	// Pool is the pool the pod belongs to, the retirement-metric label.
@@ -158,11 +158,11 @@ func (e *Evaluator) RecordCompletion(st *PodTaskState, scrubResult taskcleanup.S
 	st.TasksCompleted++
 	if scrubResult == taskcleanup.ScrubFailed {
 		st.ScrubFailureCount++
-		// §5.2 lenny_task_scrub_failure_total: the aggregate counts every
+		// §5.2 lenny_pod_scrub_failure_total: the aggregate counts every
 		// failed scrub across pods.
 		e.metrics.IncScrubFailureTotal(st.Pool)
 	}
-	// §16.1 lenny_task_pod_scrub_failure_count: the per-pod cumulative
+	// §16.1 lenny_pod_scrub_failure_count: the per-pod cumulative
 	// gauge tracks the count whether or not this task failed, so a
 	// recovering pod's gauge holds its history until replacement.
 	e.metrics.SetPodScrubFailureCount(st.Pool, st.PodName, st.ScrubFailureCount)
@@ -180,7 +180,7 @@ func (e *Evaluator) RecordCompletion(st *PodTaskState, scrubResult taskcleanup.S
 		HostSchedulable:     hostSchedulable,
 	})
 
-	// §16.1 lenny_task_pod_retirement_total{reason}: one increment per
+	// §16.1 lenny_pod_retirement_total{reason}: one increment per
 	// retirement (draining or failed); reuse dispositions are not counted.
 	if d.Retire {
 		e.metrics.IncPodRetirement(st.Pool, d.Reason)

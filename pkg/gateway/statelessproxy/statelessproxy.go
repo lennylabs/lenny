@@ -97,7 +97,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decision, err := p.Router.Route(tenantID)
 	if err != nil {
 		// Route already counted the arrival as demand
-		// (lenny_stateless_requests_total) before failing, so the
+		// (lenny_service_requests_total) before failing, so the
 		// PoolScalingController scales up under this unmet load.
 		reason := "no_idle_pods"
 		status := http.StatusServiceUnavailable

@@ -252,7 +252,7 @@ type DemotionRateSource interface {
 // ModeFactorSource yields the observed-reuse multiplier the §5.2 line
 // 569 mode-adjusted scaling formula consumes as `mode_factor` for
 // task-mode pools. The production implementation reads the
-// `lenny_task_reuse_count` histogram's median over a rolling 100-task
+// `lenny_pod_session_reuse_count` histogram's median over a rolling 100-task
 // convergence window (§5.2 line 549). `ok=false` means the histogram
 // has not converged yet — the PoolScalingController falls back to the
 // pool's `maxTasksPerPod` (preConnect=false pools) or 1.0

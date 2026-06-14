@@ -1947,8 +1947,8 @@ func TestStatelessMetricsRegistered_spec_5_2_573(t *testing.T) {
 	m.SetStatelessConcurrentActive("stateless-pool", 5)
 	body := scrapeMetrics(t, m)
 	for _, want := range []string{
-		`lenny_stateless_requests_total{pool="stateless-pool"} 2`,
-		`lenny_stateless_concurrent_active{pool="stateless-pool"} 5`,
+		`lenny_service_requests_total{pool="stateless-pool"} 2`,
+		`lenny_service_concurrent_active{pool="stateless-pool"} 5`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics missing %q", want)
@@ -1989,22 +1989,22 @@ func TestAdapterLeakedSlotsGauge_spec_6_2_179(t *testing.T) {
 	nilM.SetAdapterLeakedSlots("pod-a", "p", 1)
 }
 
-// TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 line
-// 569 / §16.1 line 124 lenny_task_reuse_count histogram registration +
-// observation + the in-process TaskReuseQuantile helper the
-// PoolScalingController consumes as mode_factor.
+// TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 / §16.1
+// lenny_pod_session_reuse_count histogram registration + observation +
+// the in-process TaskReuseQuantile helper the PoolScalingController
+// consumes as mode_factor.
 func TestTaskReuseHistogramRegistered_spec_5_2_569(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// Two pods on the same pool: pod-1 retired after 4 tasks, pod-2 after
-	// 16. The cross-series median should be ~10 (the linear-interpolation
-	// midpoint between 8 and 16 buckets).
+	// Two pods on the same pool: pod-1 retired after 4 sessions, pod-2
+	// after 16. The cross-series median should be ~10 (the
+	// linear-interpolation midpoint between 8 and 16 buckets).
 	m.ObserveTaskReuseCount("tp", "pod-1", 4)
 	m.ObserveTaskReuseCount("tp", "pod-2", 16)
 	body := scrapeMetrics(t, m)
-	if !strings.Contains(body, `lenny_task_reuse_count_count{k8s_pod_name="pod-1",pool="tp"} 1`) {
+	if !strings.Contains(body, `lenny_pod_session_reuse_count_count{k8s_pod_name="pod-1",pool="tp"} 1`) {
 		t.Errorf("/metrics missing pod-1 sample: %s", body)
 	}
 	med, ok := m.TaskReuseQuantile("tp", 0.5)

@@ -79,7 +79,7 @@ type Inputs struct {
 
 	// ScrubFailureCount is the pod's cumulative scrub-failure count
 	// INCLUDING this task's scrub. It is compared against
-	// MaxScrubFailures. spec: §5.2 lenny_task_pod_scrub_failure_count.
+	// MaxScrubFailures. spec: §5.2 lenny_pod_scrub_failure_count.
 	ScrubFailureCount int
 
 	// MaxScrubFailures is taskPolicy.maxScrubFailures. A value <= 0 is
@@ -111,7 +111,7 @@ type Inputs struct {
 }
 
 // RetireReason is a stable label for the disposition the driver records
-// on lenny_task_pod_retirement_total{reason} and in the audit trail.
+// on lenny_pod_retirement_total{reason} and in the audit trail.
 type RetireReason string
 
 const (
@@ -160,7 +160,7 @@ type Disposition struct {
 	ScrubWarning bool
 
 	// Retire is true when NextPhase removes the pod from the warm pool
-	// (draining or failed). It drives lenny_task_pod_retirement_total.
+	// (draining or failed). It drives lenny_pod_retirement_total.
 	Retire bool
 
 	// Reason is the stable observability/audit label for the branch.

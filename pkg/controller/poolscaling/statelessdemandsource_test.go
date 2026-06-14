@@ -33,14 +33,14 @@ func (q *scriptedQuerier) Query(_ context.Context, query string) (float64, error
 	return 0, nil
 }
 
-// spec: §5.2 line 573 — base_demand_p95 from
-// rate(lenny_stateless_requests_total[5m]) and burst_p99_claims from
-// max_over_time(lenny_stateless_concurrent_active[5m]).
+// spec: §5.2 — base_demand_p95 from
+// rate(lenny_service_requests_total[5m]) and burst_p99_claims from
+// max_over_time(lenny_service_concurrent_active[5m]).
 func TestStatelessDemand_ObservedPoolDerivesBothSignals(t *testing.T) {
 	q := &scriptedQuerier{answers: map[string]float64{
-		"count(lenny_stateless_requests_total":                2, // present
-		"sum(rate(lenny_stateless_requests_total":             4.5,
-		"sum(max_over_time(lenny_stateless_concurrent_active": 7,
+		"count(lenny_service_requests_total":                2, // present
+		"sum(rate(lenny_service_requests_total":             4.5,
+		"sum(max_over_time(lenny_service_concurrent_active": 7,
 	}}
 	s := &PrometheusStatelessDemandSource{Querier: q}
 	d, err := s.PoolDemand(context.Background(), "acme-stateless")
@@ -69,7 +69,7 @@ func TestStatelessDemand_ObservedPoolDerivesBothSignals(t *testing.T) {
 // demand queries.
 func TestStatelessDemand_AbsentSeriesStaysBootstrap(t *testing.T) {
 	q := &scriptedQuerier{answers: map[string]float64{
-		"count(lenny_stateless_requests_total": 0, // no series
+		"count(lenny_service_requests_total": 0, // no series
 	}}
 	s := &PrometheusStatelessDemandSource{Querier: q}
 	d, err := s.PoolDemand(context.Background(), "session-pool")
@@ -90,7 +90,7 @@ func TestStatelessDemand_AbsentSeriesStaysBootstrap(t *testing.T) {
 // silently reporting Observed=false.
 func TestStatelessDemand_QueryErrorPropagates(t *testing.T) {
 	q := &scriptedQuerier{
-		answers: map[string]float64{"count(lenny_stateless_requests_total": 1},
+		answers: map[string]float64{"count(lenny_service_requests_total": 1},
 		err:     map[string]error{"sum(rate(": errors.New("prometheus down")},
 	}
 	s := &PrometheusStatelessDemandSource{Querier: q}

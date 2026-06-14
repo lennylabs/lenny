@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// fakeMetrics records the §5.2 line 573 demand-signal calls so tests can
-// assert the router emits lenny_stateless_requests_total and
-// lenny_stateless_concurrent_active.
+// fakeMetrics records the §5.2 demand-signal calls so tests can assert
+// the router emits lenny_service_requests_total and
+// lenny_service_concurrent_active.
 type fakeMetrics struct {
 	mu       sync.Mutex
 	requests map[string]int

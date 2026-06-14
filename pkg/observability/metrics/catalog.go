@@ -62,19 +62,24 @@ type MetricSpec struct {
 var metricCatalog = []MetricSpec{
 	{"lenny_gateway_active_sessions", TypeGauge, "Active sessions known to a gateway replica"},
 	{"lenny_warmpool_idle_pods", TypeGauge, "Warm pods available in the idle state"},
+	// lenny_warmpool_reserved_pods is the §16.1 gauge of pods whose
+	// occupancy claim is in the `reserved` hold window: scrubbed, SDK-warm
+	// on preConnect pools, held for the pinned tenant until the claim-hold
+	// TTL expires, and excluded from idle inventory. spec: §16.1 — reserved
+	// pods.
+	{"lenny_warmpool_reserved_pods", TypeGauge, "Pods whose occupancy claim is in the reserved hold window"},
 	{"lenny_warmpool_stale_pods", TypeGauge, "Warm pods idle beyond the pool maxIdleSeconds threshold"},
-	// lenny_task_pod_scrub_failure_count is a per-pod cumulative scrub
+	// lenny_pod_scrub_failure_count is a per-pod cumulative scrub
 	// failure count. Labeled by k8s_pod_name so each pod's series is
-	// independent. spec: §5.2 line 446 — task-mode scrub. Reset semantics:
-	// the series is monotonically incremented over the pod's lifetime,
-	// reset to zero on a fresh pod (a new k8s_pod_name produces a new
-	// series), and removed when the pod is deleted (the scrape just
+	// independent. spec: §5.2 — recycling session-mode scrub. Reset
+	// semantics: the series is monotonically incremented over the pod's
+	// lifetime, reset to zero on a fresh pod (a new k8s_pod_name produces a
+	// new series), and removed when the pod is deleted (the scrape just
 	// stops; Prometheus retains the historical series per its own
 	// retention). The emitter compares the running value against the
-	// pool's TaskPolicy.MaxScrubFailures (default 3) to drive pod
-	// retirement.
-	{"lenny_task_pod_scrub_failure_count", TypeGauge, "Task-mode per-pod scrub failure count (cumulative per k8s_pod_name; resets only on pod replacement)"},
-	{"lenny_task_pod_retirement_total", TypeCounter, "Task-mode pod retirements by reason"},
+	// pool's recycle.maxScrubFailures (default 3) to drive pod retirement.
+	{"lenny_pod_scrub_failure_count", TypeGauge, "Per-pod scrub failure count on a recycling session-mode pod (cumulative per k8s_pod_name; resets only on pod replacement)"},
+	{"lenny_pod_retirement_total", TypeCounter, "Session-pool pod retirements by reason"},
 	{"lenny_slot_failure_total", TypeCounter, "Concurrent-workspace slot failure count"},
 	{"lenny_slot_pod_replacement_total", TypeCounter, "Concurrent-workspace slot pod replacement count"},
 	{"lenny_session_startup_duration_seconds", TypeHistogram, "End-to-end session startup duration"},
@@ -88,6 +93,12 @@ var metricCatalog = []MetricSpec{
 	{"lenny_tokens_consumed_total", TypeCounter, "Cumulative LLM input+output tokens by tenant and runtime class"},
 	{"lenny_session_retry_total", TypeCounter, "Session-level retry attempts by failure class"},
 	{"lenny_session_resume_attempts_total", TypeCounter, "Session resume attempts by outcome"},
+	// lenny_session_expiry_total counts sessions terminated by a platform
+	// expiry clock, labeled by reason (max_session_age | max_idle_time).
+	// The max_idle_time series is the idle-termination counter keyed to the
+	// maxClientIdleSeconds bound. spec: §16.1 — session expiries; §16.1.1
+	// retirement/expiry reason vocabulary.
+	{"lenny_session_expiry_total", TypeCounter, "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time)"},
 	{"lenny_inbox_drain_failure_total", TypeCounter, "Atomic inbox-to-DLQ drain failures"},
 	{"lenny_inbox_duplicate_suppressed_total", TypeCounter, "Inbox duplicate redeliveries suppressed"},
 	{"lenny_inbox_redis_unavailable_total", TypeCounter, "Durable-inbox enqueues failed because Redis is unreachable"},
@@ -186,7 +197,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_warmpool_fill_duration_seconds", TypeHistogram, "Time from pool creation to reaching minWarm ready pods"},
 	{"lenny_warmpool_claims_total", TypeCounter, "Warm pod claims (idle to claimed transitions)"},
 	{"lenny_warmpool_sdk_demotions_total", TypeCounter, "SDK-warm pods demoted to pod-warm before session assignment"},
-	{"lenny_task_reuse_count", TypeHistogram, "Tasks executed on a single pod in task mode"},
+	{"lenny_pod_session_reuse_count", TypeHistogram, "Sessions served by a single pod under recycle.enabled"},
 	{"lenny_pool_config_reconciliation_lag_seconds", TypeGauge, "Time since the last successful CRD reconciliation"},
 	{"lenny_pool_bootstrap_mode", TypeGauge, "Pool bootstrap mode flag (1 active, 0 converged)"},
 	{"lenny_pool_scaling_admission_denied_total", TypeCounter, "PoolScalingController admission rejections by reason"},
