@@ -48,9 +48,13 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # SandboxClaims: the §4.6.1 orphaned-claim garbage-collection loop
-  # lists all claims and deletes those that no live session references
-  # (§4.6.3 RBAC backstop grants list/delete).
+  # SandboxClaims: the §4.6.1 occupancy projection watches SandboxClaim
+  # resources and computes Sandbox.status.phase as a level-triggered
+  # projection of claim existence and binding state, so the
+  # WarmPoolController needs `get`/`watch` here. The §4.6.1
+  # orphaned-claim garbage-collection loop additionally lists all
+  # claims and deletes those that no live session references
+  # (§4.6.3 RBAC backstop grants get/list/watch/delete).
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxclaims"]
     verbs: ["get", "list", "watch", "delete"]

@@ -674,7 +674,13 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
           value: 3
 
-  - it: grants SandboxClaim create+delete and Sandbox status RBAC
+  # spec: §4.6.3 (gateway ServiceAccount RBAC grants) — the §4.6.3
+  # pod-status ownership decomposition makes the WarmPoolController the
+  # sole writer of Sandbox.status. The gateway therefore holds
+  # create/get/delete on SandboxClaim, get/patch on sandboxclaims/status
+  # for the binding-state write, read-only get/list on the Sandbox main
+  # resource (no patch, no watch), and no sandboxes/status grant at all.
+  - it: grants SandboxClaim create+delete and the sandboxclaims/status binding-state write
     documentSelector:
       path: kind
       value: ClusterRole
@@ -689,14 +695,63 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxes/status"]
-            verbs: ["get", "update", "patch"]
+            resources: ["sandboxclaims/status"]
+            verbs: ["get", "patch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxes"]
+            verbs: ["get", "list"]
       - contains:
           path: rules
           content:
             apiGroups: [""]
             resources: ["pods"]
             verbs: ["get", "list", "watch", "patch"]
+      # The gateway holds no sandboxes/status grant: Sandbox.status is
+      # written solely by the WarmPoolController (§4.6.3).
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxes/status"]
+            verbs: ["get", "update", "patch"]
+      # The gateway holds no patch/watch on the Sandbox main resource
+      # (§4.6.3): the tenant pin is a Pod label, the lenny.dev/state
+      # label is a WarmPoolController projection.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxes"]
+            verbs: ["get", "list", "watch", "patch"]
+
+  # spec: §4.6.1 (reserved hold TTL) — gateway.claimHoldTTLSeconds is the
+  # deployment-level TTL of the `reserved` claim window. It renders into
+  # the LENNY_CLAIM_HOLD_TTL_SECONDS env var with the default of 10s.
+  - it: renders the §4.6.1 reserved-hold TTL into LENNY_CLAIM_HOLD_TTL_SECONDS from gateway.claimHoldTTLSeconds
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CLAIM_HOLD_TTL_SECONDS
+            value: "10"
+  - it: honors a gateway.claimHoldTTLSeconds override for the reserved-hold TTL env var
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.claimHoldTTLSeconds: 30
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CLAIM_HOLD_TTL_SECONDS
+            value: "30"
 
   # spec: §10.2 line 227 — the §8.6 GatewayControl listener verifies each
   # pod-presented projected SA token via a TokenReview, so the gateway SA
@@ -847,10 +902,12 @@ tests:
       #   quotaEnforcementMode defaults to `redis` and renders)
       # + LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS (§10.1 line 167 /
       #   §11.3 line 210, F-11.3.15 — checkpointBarrierAckTimeoutSeconds
-      #   defaults to 90 and renders) = 80.
+      #   defaults to 90 and renders)
+      # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
+      #   claimHoldTTLSeconds defaults to 10 and renders) = 81.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 80
+          count: 81
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME

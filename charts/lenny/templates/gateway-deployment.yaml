@@ -7,10 +7,13 @@ replica count and the §13.1 Restricted-PSS posture (non-root, all
 capabilities dropped, read-only root filesystem, RuntimeDefault
 seccomp) shared with the controller.
 
-The gateway claims §5 warm pods: it lists Sandbox and SandboxWarmPool
-CRDs, creates the binding SandboxClaim CRD the §17.2
-lenny-sandboxclaim-guard webhook checks, and writes Sandbox status. The
-ClusterRole below grants exactly those verbs.
+The gateway claims §5 warm pods: it reads Sandbox and SandboxWarmPool
+CRDs, creates the per-pod binding SandboxClaim CRD the §17.2
+lenny-sandboxclaim-guard webhook checks on CREATE, and writes the
+SandboxClaim binding state on the sandboxclaims/status subresource. It
+does not write Sandbox.status: under the §4.6.3 pod-status ownership
+decomposition the WarmPoolController is the sole writer of
+Sandbox.status. The ClusterRole below grants exactly those verbs.
 
 Two Services are rendered. lenny-gateway is the ClusterIP Service the
 internal control plane reaches (the §17.2 lenny-drain-readiness webhook
@@ -113,36 +116,46 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
-  # The gateway lists warm pools and Sandboxes to claim a §5 warm pod,
-  # writes Sandbox status on a successful claim, and reads pods to
-  # resolve the claimed pod's IP for the adapter dial.
+  # The gateway reads warm pools and Sandboxes to select a §5 warm pod
+  # for a claim and reads pods to resolve the claimed pod's IP for the
+  # adapter dial. It does not write Sandbox.status: under the §4.6.3
+  # pod-status ownership decomposition the WarmPoolController is the
+  # sole writer of Sandbox.status and projects occupancy from claim
+  # existence, so the gateway holds only read access on Sandbox.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxwarmpools", "sandboxtemplates", "runtimes"]
     verbs: ["get", "list", "watch"]
+  # Sandboxes: read-only for pod selection during claim (§4.6.3). The
+  # gateway holds no `patch` or `watch` verb on the main resource and
+  # no `sandboxes/status` grant — the tenant pin lives on the agent
+  # Pod's lenny.dev/tenant-id label (granted via the Pods rule below),
+  # and the lenny.dev/state label is a WarmPoolController projection of
+  # the coarse occupancy phase rather than a gateway write.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes"]
-    # The §5.2 slot-claim path SSA-patches the Sandbox metadata to
-    # stamp the tenant-pinning label (lenny.dev/tenant-id) on a
-    # concurrent-mode Sandbox's first slot reservation. That patch
-    # targets the main resource (not /status), so the gateway needs
-    # the `patch` verb here in addition to the read verbs.
-    verbs: ["get", "list", "watch", "patch"]
-  - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes/status"]
-    verbs: ["get", "update", "patch"]
-  # SandboxClaim: the gateway creates the binding claim CRD that the
-  # §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, and
-  # deletes it on session terminate (session-mode Release path and
-  # §5.2 concurrent-mode SlotClaimer.ReleaseSlot both do
-  # Client.Delete on the SandboxClaim). Without `delete`, the
-  # gateway returns terminate=200 but the claim deletion silently
-  # 403s and Sandbox.status.activeSlots stays elevated indefinitely.
+    verbs: ["get", "list"]
+  # SandboxClaim: the gateway creates the per-pod binding claim CRD that
+  # the §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, and
+  # deletes it on the claim-lifecycle edges (hold expiry, session-mode
+  # Release, and §5.2 SlotClaimer.ReleaseSlot all do Client.Delete on
+  # the SandboxClaim). The SSA-only fallback intra-pod capacity gate
+  # lists claims by .spec.sandboxRef when no Redis counter is wired.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxclaims"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Pods: read to resolve the claimed pod's IP for the adapter dial,
-  # and patch for the §4.6.3 gateway-SA grant covering tenant-id and
-  # state label mutations on agent pods.
+  # SandboxClaim status: the gateway is the sole writer of the §4.6.3
+  # claim binding state. It patches the binding-state phase, the
+  # transition time, rewarmStartedAt (preConnect re-warm anchor), and
+  # holdExpiresAt (reserved-hold window) on the sandboxclaims/status
+  # subresource.
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxclaims/status"]
+    verbs: ["get", "patch"]
+  # Pods: read to resolve the claimed pod's IP for the adapter dial and
+  # the WarmPoolController-projected lenny.dev/host-schedulable label,
+  # and patch for the §4.6.3 gateway-SA grant covering the
+  # lenny.dev/tenant-id pin on first assignment and the
+  # lenny.dev/drain-request annotation on agent pods.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "patch"]
@@ -646,6 +659,18 @@ spec:
             # when both Postgres and Redis are wired.
             - name: LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS
               value: {{ .Values.gateway.dualStoreUnavailableMaxSeconds | default 60 | quote }}
+            # §4.6.1 reserved hold — gateway.claimHoldTTLSeconds is the
+            # deployment-level TTL of the `reserved` claim window. When a
+            # recycling pod's occupancy reaches zero the gateway patches
+            # the per-pod SandboxClaim to `reserved` and holds it for this
+            # many seconds so a back-to-back same-tenant session rebinds
+            # (reserved → bound) with no acquisition round trip; on expiry
+            # the holder deletes the claim and the pod returns to idle. A
+            # reserved pod is counted as occupied for inventory and scaling
+            # (§4.6.2), so a high value depresses apparent idle inventory;
+            # the gateway warns at startup when it is set high.
+            - name: LENNY_CLAIM_HOLD_TTL_SECONDS
+              value: {{ .Values.gateway.claimHoldTTLSeconds | default 10 | quote }}
             # §11.3 line 215 — credentials.expiryWarningLeadSeconds. The
             # renewal worker emits a structured warning log when a tracked
             # lease enters this window of its ExpiresAt. 0 disables.

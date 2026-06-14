@@ -12,22 +12,37 @@ import (
 )
 
 // requiredVerbs is the hand-curated set of {role, resource, verb}
-// triples the Wave 4 cut asserts the chart's ClusterRole templates
-// grant. Every entry corresponds to an actual client.<Verb> call site
-// in pkg/gateway or pkg/controller; when a call site is added, the
-// reviewer adds the verb here in the same PR.
+// triples the chart's ClusterRole templates must grant. The set tracks
+// the §4.6.3 CRD-field-ownership decomposition: the gateway creates and
+// deletes per-pod SandboxClaims and writes the claim binding state on
+// sandboxclaims/status, while the WarmPoolController is the sole writer
+// of Sandbox.status. When a verb is added or removed in §4.6.3, the
+// reviewer updates the entry here in the same change.
+//
+// spec: 4.6.3 (gateway and controller ServiceAccount RBAC grants)
 var requiredVerbs = []struct {
 	Role     string
 	Resource string
 	Verbs    []string
 }{
-	// §5.2: gateway dispatches against sandboxclaims, including the
-	// f54b7bb-mandated delete on slot release.
+	// §4.6.3: gateway creates/gets/deletes per-pod SandboxClaims (the
+	// SSA-only fallback capacity gate also lists them).
 	{"lenny-gateway", "sandboxclaims", []string{"get", "list", "watch", "create", "delete"}},
-	// §5.2: gateway patches sandbox metadata (tenant pinning).
-	{"lenny-gateway", "sandboxes", []string{"get", "list", "watch", "patch"}},
+	// §4.6.3: gateway is the sole writer of the claim binding state on
+	// the sandboxclaims/status subresource (binding phase, transition
+	// time, rewarmStartedAt, holdExpiresAt).
+	{"lenny-gateway", "sandboxclaims/status", []string{"get", "patch"}},
+	// §4.6.3: gateway reads Sandbox for pod selection during claim. It
+	// holds no patch/watch on the main resource and no sandboxes/status
+	// grant — Sandbox.status is written solely by the WarmPoolController.
+	{"lenny-gateway", "sandboxes", []string{"get", "list"}},
 	// §4.6.3: controller creates sandboxes from templates.
 	{"lenny-controller", "sandboxes", []string{"get", "list", "watch", "create"}},
+	// §4.6.3: WarmPoolController is the sole writer of Sandbox.status.
+	{"lenny-controller", "sandboxes/status", []string{"get", "update", "patch"}},
+	// §4.6.1 / §4.6.3: WarmPoolController watches SandboxClaims (the
+	// occupancy projection) and lists/deletes them (orphan-claim GC).
+	{"lenny-controller", "sandboxclaims", []string{"get", "list", "watch", "delete"}},
 	// §4.6.3: controller reads pool/template/runtime definitions.
 	{"lenny-controller", "sandboxtemplates", []string{"get", "list", "watch"}},
 	{"lenny-controller", "sandboxwarmpools", []string{"get", "list", "watch"}},
