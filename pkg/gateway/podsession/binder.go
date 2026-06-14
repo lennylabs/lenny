@@ -728,45 +728,21 @@ func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox) {
 	}
 }
 
-// drain transitions the Sandbox to draining so the WarmPoolController
-// reclaims the pod (§6.2 → draining → terminated). It does NOT validate
-// the edge: drain reclaims the pod from whatever phase it holds (a
-// terminal disposition, attached, or an early claimed/idle release), so
-// reclamation is never blocked by a state-machine check. A Sandbox
-// already draining or terminated is a no-op.
+// drain releases a session-mode pod by deleting its per-pod occupancy
+// SandboxClaim. The gateway does not write Sandbox.status (§4.6.3 ownership
+// decomposition): the WarmPoolController is the sole writer of the coarse
+// occupancy phase and projects it from claim existence and pool policy
+// (§4.6.1). On a `recycle.enabled: false` pool a claim DELETE projects
+// `draining` then `terminated`, so deleting the claim is the gateway's
+// reclaim action; on a recycling pool under its limits the projection
+// returns the pod to `idle`. The delete is idempotent — a claim already
+// gone (a double release, or one the orphan GC collected) is a no-op.
 //
-// Direct Update (rather than SSA Apply) is the documented yield
-// mechanism per §4.6.3: per the Kubernetes SSA spec, a non-Apply request
-// removes other managers' claims on the fields it writes. After the
-// drain step the §6.2 draining → terminated edge belongs to the
-// WPC's lifecycle planner, which SSA-applies status.phase under its
-// own field manager without ForceOwnership; if the gateway held
-// ownership via ForceOwnership the WPC's apply would conflict
-// indefinitely. Direct Update strips the gateway's prior SSA claim
-// (from setPhase) so the WPC can re-claim and write terminated. spec:
-// §4.6.3 "never force-conflicts" guidance for WPC/PSC; §6.2 lines
-// 91-94 reclamation edges.
+// spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
+// not a writer of Sandbox.status). The WarmPoolController-side projection
+// that consumes the claim DELETE lands in the WPC occupancy-projection step.
 func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
-	const maxAttempts = 4
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if sb.Status.Phase == string(state.Draining) || sb.Status.Phase == string(state.Terminated) {
-			return nil
-		}
-		sb.Status.Phase = string(state.Draining)
-		err := b.Client.Status().Update(ctx, sb)
-		if err == nil {
-			return nil
-		}
-		if !apierrors.IsConflict(err) {
-			return fmt.Errorf("podsession: drain sandbox %s: %w", sb.Name, err)
-		}
-		lastErr = err
-		if gerr := b.Client.Get(ctx, client.ObjectKeyFromObject(sb), sb); gerr != nil {
-			return fmt.Errorf("podsession: re-read sandbox %s after drain conflict: %w", sb.Name, gerr)
-		}
-	}
-	return fmt.Errorf("podsession: drain sandbox %s exhausted retries: %w", sb.Name, lastErr)
+	return podclaim.DeleteClaim(ctx, b.Client, b.Namespace, sb.Name)
 }
 
 // assignCredentials mints the session's §4.9 credential leases and

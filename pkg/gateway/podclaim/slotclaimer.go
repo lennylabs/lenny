@@ -74,6 +74,38 @@ func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tena
 	return err
 }
 
+// StampDrainRequest stamps the §4.6.3 lenny.dev/drain-request annotation on
+// the agent Pod named podName (the §4.6.1 reconciler names the pod
+// identically to its Sandbox). The gateway stamps this annotation when a
+// pod crosses the §5.2 unhealthy-slot threshold; the WarmPoolController
+// consumes it and writes the draining transition on Sandbox.status. The
+// gateway never writes Sandbox.status itself (§4.6.3 ownership
+// decomposition), so the unhealthy-threshold drain is routed through this
+// annotation rather than a gateway phase write. The annotation value is the
+// RFC3339Nano request instant so a re-stamp is idempotent in effect and the
+// WarmPoolController can age the request.
+//
+// A JSON-merge patch is used (matching stampPodTenant) so a missing pod
+// returns NotFound rather than being created annotation-only; an absent or
+// terminating pod is tolerated because a pod with no slots needs no drain.
+//
+// spec: §4.6.3 (gateway stamps drain-request; WarmPoolController writes the
+// drain); §5.2 (unhealthy-slot whole-pod replacement trigger).
+func StampDrainRequest(ctx context.Context, cl client.Client, namespace, podName string, requestedAt time.Time) error {
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationDrainRequest, requestedAt.UTC().Format(time.RFC3339Nano))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp drain-request on pod %s: %w", podName, err)
+	}
+	return nil
+}
+
 // Concurrent-session claim sentinels.
 var (
 	// ErrNoConcurrentSlot reports that the pool can host no further slot:
@@ -517,14 +549,5 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 	// Last slot drained: delete the per-pod occupancy claim so the pod
 	// returns to the pool. The §4.6.1 occupancy projection moves the pod
 	// from claimed back toward idle on the claim DELETE.
-	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(sandboxName),
-			Namespace: c.Namespace,
-		},
-	}
-	if err := c.Client.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("podclaim: delete per-pod claim for sandbox %s: %w", sandboxName, err)
-	}
-	return nil
+	return DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
 }

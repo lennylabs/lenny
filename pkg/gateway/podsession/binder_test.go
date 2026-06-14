@@ -40,7 +40,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -386,12 +385,14 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 		t.Errorf("error levels = declared %q / observed %q, want full / basic", underperf.Declared, underperf.Observed)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("sandbox phase = %q, want draining (failed pod reclaimed)", sb.Status.Phase)
+	// The pre-attached failure is a terminal claim disposition: the gateway
+	// reclaims the pod by deleting its per-pod claim (§4.6.3); it does not
+	// write Sandbox.status.phase. The WarmPoolController projects draining
+	// from the claim DELETE on a recycle.enabled:false pod.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after reclaim = %v, want NotFound (claim deleted)", gerr)
 	}
 }
 
@@ -688,12 +689,13 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "draining" {
-		t.Errorf("sandbox phase = %q, want draining after Release", sb.Status.Phase)
+	// The gateway releases the pod by deleting its per-pod claim; it does not
+	// write Sandbox.status.phase (§4.6.3). The WarmPoolController projects
+	// draining from the claim DELETE.
+	var claim lennyv1.SandboxClaim
+	err = c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", err)
 	}
 }
 
@@ -768,24 +770,26 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
 	}
 
-	// spec: §6.2 — a pre-attached setup-RPC failure is a terminal claim
-	// disposition: the pod is reclaimed by draining it (coarse claimed →
-	// draining → terminated), so the warm-pool sizer provisions a replacement.
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("sandbox phase = %q, want draining after a pre-attached RPC failure", sb.Status.Phase)
+	// spec: §4.6.3 — a pre-attached setup-RPC failure is a terminal claim
+	// disposition: the gateway reclaims the pod by deleting its per-pod claim
+	// (it writes no Sandbox.status.phase); the WarmPoolController projects
+	// draining then terminated from the claim DELETE, so the warm-pool sizer
+	// provisions a replacement.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after a pre-attached RPC failure = %v, want NotFound (claim deleted)", gerr)
 	}
 }
 
-// recordingPhaseClient wraps c so a test can assert the §6.2 transition
-// sequence the gateway wrote, including phases that are transient in the
-// final stored object (like the terminal disposition recorded just before
-// draining). It records the Sandbox phase of every status-subresource Update.
-// A wrapper struct is used rather than controller-runtime's interceptor.Funcs
-// because the envtest client is a plain client.Client, not a client.WithWatch.
+// recordingPhaseClient wraps c so a test can assert that the gateway wrote
+// no Sandbox.status.phase (§4.6.3: the gateway is not a writer of
+// Sandbox.status; the WarmPoolController projects occupancy from the per-pod
+// claim). It records the Sandbox phase of every status-subresource Update and
+// Apply, so a test can assert the recorded sequence is empty across Bind and
+// Release. A wrapper struct is used rather than controller-runtime's
+// interceptor.Funcs because the envtest client is a plain client.Client, not
+// a client.WithWatch.
 func recordingPhaseClient(c client.Client, phases *[]string) client.Client {
 	return &phaseRecorder{Client: c, phases: phases}
 }
@@ -814,10 +818,10 @@ func (w *phaseStatusWriter) Update(ctx context.Context, obj client.Object, opts 
 	return nil
 }
 
-// Patch records the §4.6.3 SSA Apply path the binder uses for the coarse
-// gateway-claimed occupancy phase (claimed, applied on the idle → claimed
-// acquisition edge). The drain step still uses Update (yields to WPC); both
-// paths are observed so the test asserts the coarse §6.2 occupancy sequence.
+// Patch records any §4.6.3 Sandbox.status.phase write that reaches the status
+// subresource through SSA Apply, so a test can assert the gateway writes none.
+// The gateway no longer writes Sandbox.status.phase on any path (acquisition
+// is recorded on the per-pod claim, drain deletes the claim).
 func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
 		return err
@@ -864,13 +868,13 @@ func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 	}
 }
 
-// TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2 asserts Release drains
-// the exclusive pod (coarse claimed → draining) when its session settles, and
-// records the session's terminal disposition as a Terminated condition. The
-// disposition is a session-model state on the Postgres session row, not a
-// coarse status.phase value (§6.2 lines 82, 172), so it is not written to
-// status.phase; it is surfaced on the Sandbox as a condition. F-6.2.12.
-func TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2(t *testing.T) {
+// TestReleaseDeletesClaimAndRecordsTerminalCondition_spec_4_6_3 asserts
+// Release releases the exclusive pod by deleting its per-pod claim and writes
+// no Sandbox.status.phase (§4.6.3 ownership decomposition: the gateway is not
+// a writer of Sandbox.status; the WarmPoolController projects draining from
+// the claim DELETE). The session's terminal disposition is still surfaced on
+// the Sandbox as a Terminated condition. F-6.2.12.
+func TestReleaseDeletesClaimAndRecordsTerminalCondition_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -890,20 +894,21 @@ func TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	want := []string{"draining"}
-	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v (no terminal phase projected)", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
+	}
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
 	}
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("final sandbox phase = %q, want draining", sb.Status.Phase)
-	}
 	// spec: §6.2 line 305 / §4.6.1 — the disposition is recorded as a
 	// Terminated condition (with reason Completed), owned by a distinct field
-	// manager so it survives the drain's status.phase write. F-6.2.12.
+	// manager. F-6.2.12.
 	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
 		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
 	} else if cond.Reason != "Completed" {
@@ -911,10 +916,10 @@ func TestReleaseDrainsAndRecordsTerminalCondition_spec_6_2(t *testing.T) {
 	}
 }
 
-// TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2 asserts an expired
-// session's Release drains the pod (coarse claimed → draining) and records the
-// Expired terminal condition, projecting no fine terminal phase onto the CRD.
-func TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2(t *testing.T) {
+// TestReleaseExpiredDeletesClaimWithoutPhaseWrite_spec_4_6_3 asserts an
+// expired session's Release deletes the per-pod claim and records the Expired
+// terminal condition, writing no Sandbox.status.phase (§4.6.3).
+func TestReleaseExpiredDeletesClaimWithoutPhaseWrite_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -934,9 +939,13 @@ func TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	want := []string{"draining"}
-	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v (no terminal phase projected)", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
+	}
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
 	}
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
@@ -947,18 +956,6 @@ func TestReleaseExpiredDrainsWithoutTerminalPhase_spec_6_2(t *testing.T) {
 	} else if cond.Reason != "Expired" {
 		t.Errorf("condition reason = %q, want Expired", cond.Reason)
 	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestBindStagesUploadFile(t *testing.T) {

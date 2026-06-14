@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
@@ -24,10 +24,14 @@ import (
 // transition time, which the WarmPoolController orphan GC keys its
 // live-binding-state reclaim predicate on (§4.6.1 / §4.6.3).
 //
-// The write is a status-subresource Update with bounded conflict retry: a
-// fresh CREATE has no competing status writer, but a concurrent
-// WarmPoolController projection read or orphan GC may bump the
-// resourceVersion, so a conflict re-reads and re-applies the bound state.
+// The write is a status-subresource PATCH via Server-Side Apply under the
+// gateway field manager (§4.6.3 grants the gateway `get`/`patch` on the
+// `sandboxclaims/status` subresource and no `update` verb, so the write
+// must be a PATCH; controller-runtime's Status().Update issues an HTTP PUT
+// the API server authorizes against `update`). The gateway is the sole
+// writer of SandboxClaim.status (the WarmPoolController consumes the
+// binding state as projection input but never writes it, §4.6.3), so the
+// apply is naturally idempotent and conflict-free without a retry loop.
 // The supplied now() clock makes the transition stamp testable.
 //
 // WriteBoundStatus writes the first `bound` binding-state status patch on a
@@ -40,31 +44,41 @@ func WriteBoundStatus(ctx context.Context, cl client.Client, namespace, claimNam
 }
 
 // spec: §4.6.1 (pod claim mechanism; first `bound` status patch);
-// §4.6.3 (gateway-owned SandboxClaim.status binding state).
+// §4.6.3 (gateway-owned SandboxClaim.status binding state via the
+// `patch`-only sandboxclaims/status grant).
 func writeBoundStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
-	const maxConflictRetries = 3
 	if now == nil {
 		now = time.Now
 	}
-	for attempt := 0; ; attempt++ {
-		var cur lennyv1.SandboxClaim
-		if err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, &cur); err != nil {
-			return fmt.Errorf("podclaim: get claim %s for bound status: %w", claimName, err)
-		}
-		if cur.Status.Phase == string(claimstate.Bound) {
-			// Idempotent: a retry after a partial success finds the claim
-			// already bound and returns without a redundant write.
-			return nil
-		}
-		cur.Status.Phase = string(claimstate.Bound)
-		cur.Status.BindingStateTransitionTime = &metav1.Time{Time: now().UTC()}
-		err := cl.Status().Update(ctx, &cur)
-		if err == nil {
-			return nil
-		}
-		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
-			continue
-		}
+	// Idempotent: a retry after a partial success finds the claim already
+	// bound and returns without re-stamping the transition time. A NotFound
+	// surfaces as an error so the caller can undo the counter reservation.
+	var cur lennyv1.SandboxClaim
+	if err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, &cur); err != nil {
+		return fmt.Errorf("podclaim: get claim %s for bound status: %w", claimName, err)
+	}
+	if cur.Status.Phase == string(claimstate.Bound) {
+		return nil
+	}
+	// §4.6.3 — write only status.phase and status.bindingStateTransitionTime
+	// via an SSA apply (PATCH verb) under the gateway field manager. The
+	// claim is CREATEd with spec only, so this apply establishes the first
+	// binding state. ForceOwnership is not needed: the gateway is the sole
+	// writer of SandboxClaim.status.
+	patch := &lennyv1.SandboxClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: lennyv1.GroupVersion.String(),
+			Kind:       "SandboxClaim",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claimName,
+			Namespace: namespace,
+		},
+	}
+	patch.Status.Phase = string(claimstate.Bound)
+	patch.Status.BindingStateTransitionTime = &metav1.Time{Time: now().UTC()}
+	if err := cl.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
 		return fmt.Errorf("podclaim: write bound status on claim %s: %w", claimName, err)
 	}
+	return nil
 }

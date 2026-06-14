@@ -8,15 +8,11 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
@@ -324,16 +320,17 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
-// It shuts the slot's runtime down through the adapter, closes the
-// adapter connection, deletes the slot's SandboxClaim, and decrements
-// the pod's status.activeSlots.
+// It shuts the slot's runtime down through the adapter, closes the adapter
+// connection, and decrements the pod's §5.2 Redis slot counter; when the
+// last slot drains (the counter reaches zero) the per-pod SandboxClaim is
+// deleted so the pod returns to the pool.
 //
-// Unlike session-mode Release, ReleaseSlot does not drain the pod: a
-// concurrent-session pod hosts sibling slots, and per §6.2 the pod returns
-// to the idle phase only when its last slot drains (activeSlots reaches
-// 0). The slot-count decrement and the idle-on-last transition are
-// handled by podclaim.SlotClaimer.ReleaseSlot. The adapter Shutdown is
-// best-effort.
+// Unlike session-mode Release, ReleaseSlot does not delete the claim while
+// sibling slots remain: a concurrent-session pod hosts up to
+// maxConcurrentSessions slots on one per-pod claim, and the claim spans the
+// whole occupancy episode. The Redis-counter decrement and the
+// claim-delete-on-last edge are handled by podclaim.SlotClaimer.ReleaseSlot.
+// The adapter Shutdown is best-effort.
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	if result.Adapter != nil {
 		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
@@ -349,41 +346,24 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
 }
 
-// DrainSandbox transitions a concurrent-session Sandbox to the draining
-// phase. It is the §6.2 line 165 whole-pod retirement used when a pod
-// crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2) slots
-// failed or leaked within the rolling window) rather than releasing a
-// single slot: the pod accepts no new slots and its existing slots drain.
+// DrainSandbox requests the whole-pod retirement of a concurrent-session
+// pod that crossed the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
+// slots failed or leaked within the rolling window) rather than releasing a
+// single slot. The gateway stamps the §4.6.3 lenny.dev/drain-request
+// annotation on the agent Pod; the WarmPoolController consumes it and writes
+// the draining transition on Sandbox.status. The gateway never writes
+// Sandbox.status itself (§4.6.3 ownership decomposition: the
+// WarmPoolController is the sole writer), so the unhealthy-threshold drain
+// is routed through the annotation rather than a gateway phase write.
 //
-// The transition is idempotent (a no-op when the Sandbox is already
-// draining or gone) and is best-effort under contention: a status-update
-// conflict re-reads and re-applies, and the legal source phases are
-// slot_active and idle (a pod that drained to idle between observation and
-// apply still retires).
+// The stamp is idempotent: a re-request overwrites the annotation with a
+// fresh instant, and a pod already gone is a no-op (a pod with no slots
+// needs no drain).
 //
-// spec: §6.2 line 165 (slot_active → draining on the unhealthy threshold);
-// §5.2 "whole-pod replacement trigger".
+// spec: §4.6.3 (gateway stamps drain-request; WarmPoolController writes the
+// drain); §5.2 "whole-pod replacement trigger". The WarmPoolController-side
+// projection that consumes the annotation lands in the WPC
+// occupancy-projection step.
 func (b *Binder) DrainSandbox(ctx context.Context, sandboxName string) error {
-	const maxConflictRetries = 3
-	for attempt := 0; ; attempt++ {
-		var sb lennyv1.Sandbox
-		if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
-		}
-		if sb.Status.Phase == string(state.Draining) {
-			return nil
-		}
-		sb.Status.Phase = string(state.Draining)
-		err := b.Client.Status().Update(ctx, &sb)
-		if err == nil {
-			return nil
-		}
-		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
-			continue
-		}
-		return fmt.Errorf("podsession: drain sandbox %s: %w", sandboxName, err)
-	}
+	return podclaim.StampDrainRequest(ctx, b.Client, b.Namespace, sandboxName, time.Now())
 }

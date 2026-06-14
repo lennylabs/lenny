@@ -23,4 +23,18 @@ const (
 	// lastReconciledAt and derives lagSeconds from it.
 	// spec: spec/04_system-components.md line 560.
 	AnnotationLastReconciledAt = "lenny.dev/last-reconciled-at"
+
+	// AnnotationDrainRequest is stamped by the gateway on an agent Pod when
+	// the pod crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
+	// slots failed or leaked within the rolling window). The
+	// WarmPoolController consumes the annotation as the source of the
+	// unhealthy-threshold drain transition, so the gateway never writes
+	// Sandbox.status.phase=draining itself: the WarmPoolController is the
+	// sole writer of Sandbox.status (§4.6.3 ownership decomposition). The
+	// gateway's `get`/`patch` on agent Pods grant covers this annotation
+	// write alongside the lenny.dev/tenant-id pin.
+	// spec: spec/04_system-components.md §4.6.3 (gateway stamps
+	// drain-request; WarmPoolController-written drain); §5.2 (unhealthy
+	// threshold).
+	AnnotationDrainRequest = "lenny.dev/drain-request"
 )

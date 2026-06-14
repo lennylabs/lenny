@@ -165,6 +165,31 @@ func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName s
 	return claim, nil
 }
 
+// DeleteClaim deletes the per-pod occupancy SandboxClaim for podName. It is
+// the gateway's only action when a session-mode occupancy episode ends: the
+// gateway never writes Sandbox.status (§4.6.3 ownership decomposition), so it
+// releases the pod by deleting the claim and the WarmPoolController projects
+// the resulting occupancy phase (a claim deleted on a `recycle.enabled:
+// false` pod projects `draining` then `terminated`; on a recycling pod under
+// its limits it projects `idle`, §4.6.1 occupancy projection). The delete is
+// idempotent: a missing claim is a no-op so a double release or a claim the
+// orphan GC already collected does not error.
+//
+// spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
+// not a writer of Sandbox.status; releases via the claim lifecycle).
+func DeleteClaim(ctx context.Context, cl client.Client, namespace, podName string) error {
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claimName(podName),
+			Namespace: namespace,
+		},
+	}
+	if err := cl.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("podclaim: delete per-pod claim for sandbox %s: %w", podName, err)
+	}
+	return nil
+}
+
 // claimName is the deterministic SandboxClaim name for a pod, so a second
 // claim for the same pod collides at CREATE rather than duplicating. The
 // per-pod name (claim-<podName>) replaces the former per-session name now

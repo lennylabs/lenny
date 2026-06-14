@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -454,32 +455,65 @@ func TestBindSlotReturnsSlotBindError_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 165 — DrainSandbox retires a concurrent-session pod as a
-// whole (slot_active → draining), is idempotent, and tolerates a missing
-// Sandbox.
-func TestBinderDrainSandbox_spec_6_2(t *testing.T) {
+// spec: §4.6.3 — DrainSandbox retires a concurrent-session pod that crossed
+// the §5.2 unhealthy threshold by stamping the lenny.dev/drain-request
+// annotation on the agent Pod; the gateway writes no Sandbox.status.phase
+// (the WarmPoolController is the sole writer and consumes the annotation).
+// The stamp is idempotent and a missing pod is tolerated.
+//
+// diagnosis: a failure means the gateway either failed to stamp the
+// drain-request annotation the WarmPoolController keys the unhealthy drain on,
+// or it wrote Sandbox.status.phase directly, breaking the §4.6.3 single-writer
+// invariant.
+func TestBinderDrainSandbox_spec_4_6_3(t *testing.T) {
 	sb := concurrentIdleSandbox("sbx-1", "10.244.1.7")
-	sb.Status.Phase = string(state.Claimed)
 	c := k8sClient(t, sb)
+	if err := c.Create(context.Background(), drainAgentPod("sbx-1")); err != nil {
+		t.Fatalf("seed agent pod: %v", err)
+	}
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, newConcurrentAdapter()))
 	ctx := context.Background()
 
 	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
 		t.Fatalf("DrainSandbox: %v", err)
 	}
+	// The gateway stamps the drain-request annotation on the agent Pod and
+	// writes no Sandbox.status.phase.
+	var pod corev1.Pod
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if pod.Annotations[lennyv1.AnnotationDrainRequest] == "" {
+		t.Errorf("pod missing %s annotation after DrainSandbox", lennyv1.AnnotationDrainRequest)
+	}
 	var got lennyv1.Sandbox
 	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &got); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if got.Status.Phase != string(state.Draining) {
-		t.Errorf("phase = %q, want draining", got.Status.Phase)
+	if got.Status.Phase == string(state.Draining) {
+		t.Errorf("gateway wrote Sandbox.status.phase=draining; the WPC is the sole writer (§4.6.3)")
 	}
-	// Idempotent: a second drain is a no-op and does not error.
+	// Idempotent: a second drain re-stamps and does not error.
 	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
 		t.Fatalf("idempotent DrainSandbox: %v", err)
 	}
-	// Missing sandbox: tolerated.
+	// Missing pod: tolerated (a pod with no slots needs no drain).
 	if err := binder.DrainSandbox(ctx, "sbx-absent"); err != nil {
-		t.Fatalf("DrainSandbox on missing sandbox: %v", err)
+		t.Fatalf("DrainSandbox on missing pod: %v", err)
+	}
+}
+
+// drainAgentPod builds a minimal managed agent Pod named for its Sandbox so
+// the DrainSandbox annotation stamp has a pod to patch.
+func drainAgentPod(name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelManaged: "true", warmpool.LabelPool: testPool},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "agent", Image: "k8s.gcr.io/pause"}},
+		},
 	}
 }
