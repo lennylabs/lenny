@@ -39,6 +39,18 @@ func (m *recordingMirror) ClaimIdle(context.Context, string, string, string) (ag
 	return agentpodstate.PodState{}, false, nil
 }
 
+func (m *recordingMirror) IncrementSessionsServed(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *recordingMirror) IncrementScrubFailureCount(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *recordingMirror) RecycleCounters(context.Context, string) (agentpodstate.RecycleCounters, bool, error) {
+	return agentpodstate.RecycleCounters{}, false, nil
+}
+
 // spec: §4.6.1 "WarmPoolController mirror reconciliation on recovery" —
 // the runnable re-lists every Sandbox in the agent namespaces and
 // converges the full mirror in one bulk ReconcileAll.
