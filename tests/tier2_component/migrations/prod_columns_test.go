@@ -56,10 +56,12 @@ var prodMigrationSchema = []struct {
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
-	// sandbox_warm_pools registry. concurrency_style is not listed here only
-	// because it is exercised by the pgstore round-trip tests; it is still a
-	// live column (migration 0167 leaves it in place, deferring its
-	// retirement to the later poolstore ConcurrencyStyle removal).
+	// sandbox_warm_pools registry. concurrency_style is added here too, but the
+	// §5.2 mode collapse retires it: migration 0167 drops the column (coupled
+	// with the pkg/gateway/poolstore ConcurrencyStyle removal per the proposal),
+	// so it does not exist after the full prod chain. concurrency_style is
+	// intentionally absent from this list; the drop is asserted by the 0167
+	// entry below.
 	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
 		"max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
