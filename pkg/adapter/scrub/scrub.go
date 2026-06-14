@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 
-// Package scrub implements the §5.2 Lenny scrub procedure that a task-mode
-// pod runs between tasks (spec/05_runtime-registry-and-pool-model.md lines
-// 415-465). The procedure has two phases: a pre-cleanup credential purge
-// (step 0) executed before any deployer code, and a post-cleanup scrub
-// sequence (steps 1-6) executed after the deployer-defined cleanupCommands
-// finish. The full ordering the adapter drives between tasks is:
+// Package scrub implements the §5.2 Lenny scrub procedure a recycling pod
+// runs at the §6.2 occupancy-zero recycle boundary (spec/05_runtime-
+// registry-and-pool-model.md lines 415-465). The procedure has two phases:
+// a pre-cleanup credential purge (step 0) executed before any deployer
+// code, and a post-cleanup scrub sequence (steps 1-6) executed after the
+// deployer-defined cleanupCommands finish. The whole-pod scrub runs once
+// occupancy reaches zero on a recycle-enabled pod; its ordering is:
 //
-//	task_complete (lifecycle channel) → task_complete_acknowledged
+//	occupancy reaches zero (claim patched bound → recycling)
 //	  → step 0: remove /run/lenny/credentials.json
 //	  → cleanupCommands (deployer code, with LENNY_PREV_* env, no cred file)
 //	  → steps 1-6: kill user procs, ipcrm shm, rm -rf workspace, env reset,
 //	    clear /tmp + /dev/shm + scratch, truncate log buffers, stat-verify
 //	  → step 7 (microvm + restart mode only): guest VM restart, re-verify
-//	  → task_ready (lifecycle channel)
 //
 // Run is the orchestrator. It reports a Result the §6.2 disposition decider
 // (pkg/sandbox/taskcleanup) consumes to choose the next pod phase. The host
@@ -22,9 +22,9 @@
 // best-effort failure semantics, and the post-scrub verification can be
 // exhaustively unit-tested off-Linux; DefaultOps runs the real commands.
 //
-// The scrub is best-effort, not a security boundary (spec line 438): it
-// reduces cross-task data leakage within a single tenant but does not
-// replace isolation, which is why task-mode pods are tenant-pinned.
+// The scrub is best-effort rather than a security boundary (spec line 438):
+// it reduces cross-session data leakage within a single tenant but does not
+// replace isolation, which is why recycled pods are tenant-pinned.
 package scrub
 
 import (

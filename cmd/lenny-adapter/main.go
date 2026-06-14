@@ -155,9 +155,6 @@ func main() {
 		"§9.1/§8.6 gateway GatewayControl address (host:port) the adapter dials to forward "+
 			"platform tool calls (and lease extensions); empty leaves the platform MCP server "+
 			"serving an empty catalog")
-	taskMode := flag.Bool("task-mode", false,
-		"§4.7/§5.2: advertise the task_lifecycle capability on the lifecycle channel; "+
-			"set on task-mode pods so the runtime is driven through task_complete / task_ready")
 	otlpEndpoint := flag.String("otlp-endpoint", "",
 		"§4.7/§16.3 OTLP collector URL written into the adapter manifest's "+
 			"observability.otlpEndpoint; empty omits the observability object")
@@ -377,11 +374,7 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.LifecycleChannel
 	if *lifecycleSocket != "" {
-		var lcOpts []adapter.LifecycleOption
-		if *taskMode {
-			lcOpts = append(lcOpts, adapter.WithTaskLifecycle())
-		}
-		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket, lcOpts...)
+		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
