@@ -85,6 +85,20 @@ spec:
                 - proxy
                 - direct
                 type: string
+              dnsPolicy:
+                description: |-
+                  DNSPolicy opts the pool out of the dedicated lenny-system CoreDNS
+                  instance. The only accepted value is `cluster-default`: pods in the
+                  pool revert to the Kubernetes default ClusterFirst behavior and
+                  resolve through kube-system CoreDNS. Empty (the default) routes DNS
+                  through the dedicated instance, where the WarmPoolController sets
+                  `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
+                  Opting out is permitted only for `standard` (runc) pools and removes
+                  the dedicated instance's query logging, rate limiting, and response
+                  filtering for that pool. spec: §13.2 lines 470-490.
+                enum:
+                - cluster-default
+                type: string
               egressProfile:
                 description: |-
                   EgressProfile is the §13.2 egress profile the WarmPoolController
@@ -116,8 +130,7 @@ spec:
                 - microvm
                 type: string
               maxConcurrent:
-                description: MaxConcurrent is the per-pod slot count for concurrent
-                  mode.
+                description: MaxConcurrent is the per-pod slot count for service mode.
                 format: int32
                 minimum: 1
                 type: integer
@@ -144,7 +157,8 @@ spec:
                 - large
                 type: string
               runtimeRef:
-                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
+                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this
+                  pool warms.
                 type: string
               sessionPolicy:
                 description: |-
@@ -154,28 +168,28 @@ spec:
                 properties:
                   recycle:
                     description: |-
-                      Recycle configures sequential pod reuse with a whole-pod scrub
-                      at the occupancy-zero recycle boundary. It is nil on pools that
-                      do not recycle (`recycle.enabled: false`, the default).
+                      Recycle configures sequential pod reuse with a whole-pod scrub at
+                      the occupancy-zero recycle boundary. It is nil on pools that do not
+                      recycle (`recycle.enabled: false`, the default).
                     properties:
                       acknowledgeMicrovmResidualState:
                         description: |-
                           AcknowledgeMicrovmResidualState records the deployer's
-                          acknowledgment that guest-kernel residual state (DNS cache,
-                          TCP TIME_WAIT, page cache, inotify/fanotify registrations)
-                          persists across tenants. The pool controller requires it
-                          when ScrubProfile is `in-place` and rejects the pool
-                          otherwise.
+                          acknowledgment that guest-kernel residual state (DNS cache, TCP
+                          TIME_WAIT, page cache, inotify/fanotify registrations) persists
+                          across tenants. The pool controller requires it when ScrubProfile is
+                          `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
+                          scrub variant).
                         type: boolean
                       scrubProfile:
                         description: |-
-                          ScrubProfile selects the whole-pod scrub variant: `standard`
-                          (the default) runs the in-guest scrub steps; `vm-restart`
-                          boots a fresh guest VM between tenants on a microvm
-                          cross-tenant-reuse pool; `in-place` reuses the running guest
-                          and leaves guest-kernel residual state. The pool controller
-                          rejects `standard` on a pool with
-                          `recycle.allowCrossTenantReuse: true`.
+                          ScrubProfile selects the whole-pod scrub variant: `standard` (the
+                          default) runs the in-guest scrub steps; `vm-restart` boots a fresh
+                          guest VM between tenants on a microvm cross-tenant-reuse pool;
+                          `in-place` reuses the running guest and leaves guest-kernel residual
+                          state. The pool controller rejects `standard` on a pool with
+                          `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
+                          scrub variant).
                         enum:
                         - standard
                         - vm-restart
@@ -397,6 +411,21 @@ spec:
                   defaults to the 90s conservative tier per §10.1 line 108.
                 format: int64
                 type: integer
+              workspaceTier:
+                description: |-
+                  WorkspaceTier is the §12.9 data-classification tier of the runtime
+                  this pool serves. The pool-config webhook reads it to enforce the
+                  §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
+                  pool may not set `taskPolicy.allowCrossTenantReuse: true`, because
+                  T4 workspace state must never be reused across tenants regardless of
+                  isolation profile. Empty leaves the tier unclassified at the pool
+                  level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
+                enum:
+                - T1
+                - T2
+                - T3
+                - T4
+                type: string
             required:
             - runtimeRef
             type: object

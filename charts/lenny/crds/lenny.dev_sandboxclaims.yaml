@@ -63,6 +63,7 @@ spec:
               so its deletion is an explicit step of the claim lifecycle (hold expiry,
               orphan GC, or pod termination) rather than a cascade from pod deletion;
               the WarmPoolController garbage-collects orphaned claims.
+              spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
             x-kubernetes-preserve-unknown-fields: true
             properties:
               sandboxRef:
@@ -73,28 +74,29 @@ spec:
                 type: string
               tenantId:
                 description: |-
-                  TenantID is the tenant the claimed pod is pinned to. A recycling
-                  or concurrent-session pod is pinned to a single tenant for its
-                  lifetime; the claim records the pin the gateway enforces.
+                  TenantID is the tenant the claimed pod is pinned to. spec: §5.2 —
+                  a recycling or concurrent-session pod is pinned to a single tenant
+                  for its lifetime; the claim records the pin the gateway enforces.
                 type: string
             required:
             - sandboxRef
             type: object
           status:
             description: |-
-              SandboxClaimStatus is the observed state of a SandboxClaim. Per
-              §4.6.3 the status carries the gateway-owned binding state of the
-              per-pod-occupancy claim, distinct from the Sandbox pod lifecycle
-              state machine (§6.2) that the WarmPoolController projects from this
-              binding state.
+              SandboxClaimStatus is the observed state of a SandboxClaim. Per §4.6.3
+              the status carries the gateway-owned binding state of the pod-occupancy
+              claim, distinct from the Sandbox pod lifecycle state machine (§6.2) that
+              the WarmPoolController projects from this binding state.
             x-kubernetes-preserve-unknown-fields: true
             properties:
               bindingStateTransitionTime:
                 description: |-
                   BindingStateTransitionTime is the time of the last `Phase`
                   (binding-state) transition. The WarmPoolController orphan GC keys
-                  the §4.6.3 live-binding-state reclaim predicate on this stamp
-                  rather than `metadata.creationTimestamp`.
+                  the §4.6.3 live-binding-state reclaim predicate on this stamp rather
+                  than `metadata.creationTimestamp`, because a per-pod claim's creation
+                  time marks the start of the whole occupancy episode rather than the
+                  start of the orphan window. spec: §4.6.3 (orphan claim detection).
                 format: date-time
                 type: string
               conditions:
@@ -160,11 +162,13 @@ spec:
               holdExpiresAt:
                 description: |-
                   HoldExpiresAt is the §4.6.3 reserved-hold deadline the gateway
-                  stamps when it patches the claim to `reserved`: the reservation
-                  time plus the deployment-level hold TTL. A same-tenant session
-                  arriving before this deadline rebinds the claim; after it the
-                  holder deletes the claim and the pod returns to `idle`. Empty
-                  until the claim enters `reserved`.
+                  stamps when it patches the claim to `reserved`: the reservation time
+                  plus the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`,
+                  default 10s). A same-tenant session arriving before this deadline
+                  rebinds the claim (`reserved → bound`); after it the holder deletes
+                  the claim and the pod returns to `idle`. Empty until the claim
+                  enters `reserved`. spec: §4.6.3 (reserved hold), §6.2 (pod state
+                  machine).
                 format: date-time
                 type: string
               observedGeneration:
@@ -195,12 +199,13 @@ spec:
                 type: string
               rewarmStartedAt:
                 description: |-
-                  RewarmStartedAt is the §4.6.3 re-warm-start stamp the gateway
-                  writes on a preConnect pool when the whole-pod scrub report
-                  arrives and the recycle disposition begins the SDK re-warm. The
-                  `sdkConnectTimeoutSeconds` watchdog (§6.1) measures only the
-                  re-warm leg from this stamp. Empty on non-preConnect pools and
-                  before the re-warm begins.
+                  RewarmStartedAt is the §4.6.3 re-warm-start stamp the gateway writes
+                  on a preConnect pool when the whole-pod scrub report arrives and the
+                  recycle disposition begins the SDK re-warm. The `sdkConnectTimeoutSeconds`
+                  watchdog (§6.1) measures only the re-warm leg from this stamp, so
+                  neither the prior occupancy episode nor the whole-pod scrub counts
+                  against the re-warm budget. Empty on non-preConnect pools and before
+                  the re-warm begins. spec: §4.6.3 (occupancy projection), §6.1, §6.2.
                 format: date-time
                 type: string
             type: object

@@ -130,8 +130,7 @@ spec:
                 - microvm
                 type: string
               maxConcurrent:
-                description: MaxConcurrent is the per-pod slot count for concurrent
-                  mode.
+                description: MaxConcurrent is the per-pod slot count for service mode.
                 format: int32
                 minimum: 1
                 type: integer
@@ -158,7 +157,8 @@ spec:
                 - large
                 type: string
               runtimeRef:
-                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
+                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this
+                  pool warms.
                 type: string
               sessionPolicy:
                 description: |-
@@ -168,28 +168,28 @@ spec:
                 properties:
                   recycle:
                     description: |-
-                      Recycle configures sequential pod reuse with a whole-pod scrub
-                      at the occupancy-zero recycle boundary. It is nil on pools that
-                      do not recycle (`recycle.enabled: false`, the default).
+                      Recycle configures sequential pod reuse with a whole-pod scrub at
+                      the occupancy-zero recycle boundary. It is nil on pools that do not
+                      recycle (`recycle.enabled: false`, the default).
                     properties:
                       acknowledgeMicrovmResidualState:
                         description: |-
                           AcknowledgeMicrovmResidualState records the deployer's
-                          acknowledgment that guest-kernel residual state (DNS cache,
-                          TCP TIME_WAIT, page cache, inotify/fanotify registrations)
-                          persists across tenants. The pool controller requires it
-                          when ScrubProfile is `in-place` and rejects the pool
-                          otherwise.
+                          acknowledgment that guest-kernel residual state (DNS cache, TCP
+                          TIME_WAIT, page cache, inotify/fanotify registrations) persists
+                          across tenants. The pool controller requires it when ScrubProfile is
+                          `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
+                          scrub variant).
                         type: boolean
                       scrubProfile:
                         description: |-
-                          ScrubProfile selects the whole-pod scrub variant: `standard`
-                          (the default) runs the in-guest scrub steps; `vm-restart`
-                          boots a fresh guest VM between tenants on a microvm
-                          cross-tenant-reuse pool; `in-place` reuses the running guest
-                          and leaves guest-kernel residual state. The pool controller
-                          rejects `standard` on a pool with
-                          `recycle.allowCrossTenantReuse: true`.
+                          ScrubProfile selects the whole-pod scrub variant: `standard` (the
+                          default) runs the in-guest scrub steps; `vm-restart` boots a fresh
+                          guest VM between tenants on a microvm cross-tenant-reuse pool;
+                          `in-place` reuses the running guest and leaves guest-kernel residual
+                          state. The pool controller rejects `standard` on a pool with
+                          `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
+                          scrub variant).
                         enum:
                         - standard
                         - vm-restart
