@@ -10,13 +10,11 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -27,72 +25,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-// concurrentSandbox builds a Sandbox in the test pool with the given
-// phase and tenant pin. The per-pod slot count is no longer mirrored on
-// Sandbox.status (§5.2: the Redis counter, or in the SSA-only test path
-// the pod's live SandboxClaim count, is the authority), so a pod's
-// occupancy is set up by seeding the matching number of SandboxClaims
-// with seedSlotClaims rather than by a status field.
-func concurrentSandbox(name, phase, tenantID string) *lennyv1.Sandbox {
-	sb := &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: testNS,
-			Labels:    map[string]string{warmpool.LabelPool: testPool},
-		},
-		Status: lennyv1.SandboxStatus{
-			Phase:    phase,
-			PodIP:    "10.0.0.1",
-			TenantID: tenantID,
-		},
-	}
-	if tenantID != "" {
-		sb.Labels[podclaim.LabelTenant] = tenantID
-	}
-	return sb
-}
-
-// seedSlotClaims creates n live SandboxClaims bound to sandboxName so the
-// SSA-only slot-claim path reads the pod as hosting n slots. The claims
-// carry deterministic names so each is distinct.
-func seedSlotClaims(t *testing.T, c client.Client, sandboxName, tenantID string, n int) {
-	t.Helper()
-	for i := 0; i < n; i++ {
-		claim := &lennyv1.SandboxClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "claim-" + sandboxName + "-seed-" + string(rune('a'+i)),
-				Namespace: testNS,
-			},
-			Spec: lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
-		}
-		if err := c.Create(context.Background(), claim); err != nil {
-			t.Fatalf("seed slot claim %d on %s: %v", i, sandboxName, err)
-		}
-	}
-}
-
-// countSlotClaims returns the number of live SandboxClaims bound to
-// sandboxName, the test-side equivalent of the pod's slot occupancy.
-func countSlotClaims(t *testing.T, c client.Client, sandboxName string) int {
-	t.Helper()
-	var list lennyv1.SandboxClaimList
-	if err := c.List(context.Background(), &list, client.InNamespace(testNS)); err != nil {
-		t.Fatalf("list claims: %v", err)
-	}
-	n := 0
-	for i := range list.Items {
-		if list.Items[i].Spec.SandboxRef == sandboxName && list.Items[i].DeletionTimestamp.IsZero() {
-			n++
-		}
-	}
-	return n
-}
-
-// newEnvtestClient boots an envtest API server, creates the test
-// namespace, and seeds the supplied objects (Spec via Create, Status
-// via SSA Apply under the `lenny-gateway` field manager — matching
-// the production SlotClaimer's field manager so the test's pre-seed
-// is on the same code path the gateway exercises at runtime).
+// newEnvtestClient boots an envtest API server, creates the test namespace,
+// and seeds the supplied objects (spec via Create, Sandbox status via SSA
+// Apply under the lenny-gateway field manager so the seed lands on the same
+// status code path a controller would use). The gateway no longer writes
+// Sandbox.status at runtime; the seed pre-stages the WPC-owned phase the
+// idle-pod scan reads.
 func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	env := envtest.Start(t)
@@ -128,7 +66,10 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 					ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
 				}
 				patch.Status = sbStatus
-				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
+				// The WarmPoolController owns Sandbox.status; seed under its
+				// field manager so a test asserting the gateway never writes
+				// Sandbox.status is not contaminated by the seed itself.
+				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
 					t.Fatalf("seed status Sandbox %s: %v", sb.Name, err)
 				}
 			}
@@ -143,10 +84,85 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	return c
 }
 
-func slotClaimerFor(t *testing.T, objs ...client.Object) (*podclaim.SlotClaimer, client.Client) {
+// concurrentSandbox builds a Sandbox in the test pool with the given phase
+// and tenant pin. Occupancy is no longer a Sandbox.status field: the per-pod
+// SandboxClaim (claim-<podName>) is the occupancy authority and the Redis
+// counter is the intra-pod capacity gate, so a pod's slots are set up with
+// seedOccupiedPod rather than a status field.
+func concurrentSandbox(name, phase, tenantID string) *lennyv1.Sandbox {
+	sb := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: testPool},
+		},
+		Status: lennyv1.SandboxStatus{
+			Phase:    phase,
+			PodIP:    "10.0.0.1",
+			TenantID: tenantID,
+		},
+	}
+	if tenantID != "" {
+		sb.Labels[podclaim.LabelTenant] = tenantID
+	}
+	return sb
+}
+
+// seedOccupiedPod establishes a pod already hosting n slots for tenantID:
+// it creates the per-pod SandboxClaim (claim-<podName>) with binding state
+// `bound` and drives the Redis counter for the pod up to n. This is the
+// per-pod-claim equivalent of the former per-session claim seeding.
+func seedOccupiedPod(t *testing.T, c client.Client, counter *slotcounter.Counter, sandboxName, tenantID string, n int32) {
+	t.Helper()
+	ctx := context.Background()
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + sandboxName, Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
+	}
+	if err := c.Create(ctx, claim); err != nil {
+		t.Fatalf("seed per-pod claim for %s: %v", sandboxName, err)
+	}
+	if err := podclaim.WriteBoundStatus(ctx, c, testNS, claim.Name); err != nil {
+		t.Fatalf("seed bound status for %s: %v", sandboxName, err)
+	}
+	for i := int32(0); i < n; i++ {
+		if _, _, err := counter.Reserve(ctx, sandboxName, n+1); err != nil {
+			t.Fatalf("seed counter %d on %s: %v", i, sandboxName, err)
+		}
+	}
+}
+
+// podClaimExists reports whether a per-pod SandboxClaim (claim-<podName>)
+// exists for sandboxName.
+func podClaimExists(t *testing.T, c client.Client, sandboxName string) bool {
+	t.Helper()
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + sandboxName}, &lennyv1.SandboxClaim{})
+	if err == nil {
+		return true
+	}
+	if apierrors.IsNotFound(err) {
+		return false
+	}
+	t.Fatalf("get per-pod claim for %s: %v", sandboxName, err)
+	return false
+}
+
+// newCounter wires a miniredis-backed slot counter for the slot-claim
+// tests. The Redis counter (with its §12.4 Postgres fallback) is the
+// intra-pod capacity gate, so every SlotClaimer test runs with one.
+func newCounter(t *testing.T) *slotcounter.Counter {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	return slotcounter.New(rc)
+}
+
+func slotClaimerFor(t *testing.T, objs ...client.Object) (*podclaim.SlotClaimer, client.Client, *slotcounter.Counter) {
 	t.Helper()
 	c := newEnvtestClient(t, objs...)
-	return &podclaim.SlotClaimer{Client: c, Namespace: testNS}, c
+	counter := newCounter(t)
+	return &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}, c, counter
 }
 
 func slotReq(session, tenant string, maxConcurrentSessions int32) podclaim.SlotRequest {
@@ -157,12 +173,12 @@ func slotReq(session, tenant string, maxConcurrentSessions int32) podclaim.SlotR
 }
 
 // spec: 5.2
-// diagnosis: SlotClaimer.ClaimSlot did not open the first concurrent
-// slot on an idle pod correctly. §5.2: the first slot on a pod
-// transitions it idle → slot_active, sets activeSlots to 1, and pins
-// the pod to the tenant.
+// diagnosis: SlotClaimer.ClaimSlot did not acquire a fresh idle pod for
+// the first concurrent slot. §5.2 / §4.6.1: the first slot on a pod CREATEs
+// the per-pod claim (claim-<podName>), writes its first `bound` binding
+// state, reserves the first Redis slot, and pins the pod to the tenant.
 func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
-	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-1", "acme", 8))
@@ -182,48 +198,39 @@ func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 		t.Errorf("SlotID = %q, want the session id", res.SlotID)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("phase = %q, want claimed", sb.Status.Phase)
-	}
-	// The slot count is the pod's live SandboxClaim count, not a status
-	// field: one claim was created for this slot.
-	if got := countSlotClaims(t, c, "sbx-1"); got != 1 {
-		t.Errorf("live claims on sbx-1 = %d, want 1", got)
-	}
-	if sb.Status.TenantID != "acme" {
-		t.Errorf("status.tenantId = %q, want acme (the pod must be pinned)", sb.Status.TenantID)
-	}
-	if sb.Labels[podclaim.LabelTenant] != "acme" {
-		t.Errorf("tenant label = %q, want acme", sb.Labels[podclaim.LabelTenant])
-	}
-
+	// The per-pod claim (§4.6.3) carries sandboxRef and tenantId and its
+	// first binding state is `bound`.
 	var stored lennyv1.SandboxClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.Claim.Name}, &stored); err != nil {
-		t.Fatalf("the SandboxClaim was not persisted: %v", err)
+		t.Fatalf("the per-pod SandboxClaim was not persisted: %v", err)
 	}
-	// The per-pod claim (§4.6.3) carries sandboxRef and tenantId only.
-	if stored.Spec.SandboxRef != "sbx-1" {
-		t.Errorf("claim sandboxRef = %q, want sbx-1", stored.Spec.SandboxRef)
+	if stored.Name != "claim-sbx-1" {
+		t.Errorf("claim name = %q, want claim-sbx-1 (per-pod deterministic name)", stored.Name)
 	}
+	if stored.Spec.SandboxRef != "sbx-1" || stored.Spec.TenantID != "acme" {
+		t.Errorf("claim spec = %+v, want sandboxRef=sbx-1 tenantId=acme", stored.Spec)
+	}
+	if stored.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound (first status patch)", stored.Status.Phase)
+	}
+	// The tenant pin is carried on the claim's tenantId; the pod-label pin
+	// (the §13.2 NET-003 NetworkPolicy selector) is covered by the
+	// tenant-label tests, which create a backing agent pod. The gateway no
+	// longer writes Sandbox.status, so no Sandbox-status assertion applies.
 }
 
 // spec: 5.2
-// diagnosis: a second concurrent slot did not land on the same pod. The
-// §5.2 concurrent-slot assignment rule places further slots on a pod
-// already hosting slots while activeSlots < maxConcurrent — sharing the
-// pod is the point of concurrent mode — before claiming a fresh pod.
+// diagnosis: a second concurrent slot did not land on the same pod. §5.2:
+// further slots multiplex onto a pod already hosting slots for the tenant
+// (its per-pod claim exists) while the Redis counter is below the bound,
+// sharing the pod rather than acquiring a fresh one.
 func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
-	// One pod already hosts a slot for acme; one spare idle pod exists.
-	claimer, c := slotClaimerFor(
+	claimer, c, counter := slotClaimerFor(
 		t,
 		concurrentSandbox("sbx-busy", "claimed", "acme"),
 		concurrentSandbox("sbx-spare", "idle", ""),
 	)
-	seedSlotClaims(t, c, "sbx-busy", "acme", 1)
+	seedOccupiedPod(t, c, counter, "sbx-busy", "acme", 1)
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-2", "acme", 3))
@@ -240,29 +247,24 @@ func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 		t.Errorf("ActiveSlots = %d, want 2", res.ActiveSlots)
 	}
 
-	// The spare pod must be untouched: concurrent mode fills a pod's
-	// slots before claiming a fresh one.
-	var spare lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-spare"}, &spare); err != nil {
-		t.Fatalf("get spare: %v", err)
-	}
-	if spare.Status.Phase != "idle" || countSlotClaims(t, c, "sbx-spare") != 0 {
-		t.Errorf("spare pod was disturbed: phase=%q slots=%d", spare.Status.Phase, countSlotClaims(t, c, "sbx-spare"))
+	// The spare pod must be untouched: concurrent mode fills a pod's slots
+	// before acquiring a fresh one.
+	if podClaimExists(t, c, "sbx-spare") {
+		t.Error("the spare idle pod must not be acquired while sbx-busy has free capacity")
 	}
 }
 
 // spec: 5.2
-// diagnosis: ClaimSlot overran the maxConcurrent bound. §5.2: a pod
-// hosts at most maxConcurrent slots; the (maxConcurrent+1)-th slot
-// request claims a fresh warm pod instead of overrunning the bound.
+// diagnosis: ClaimSlot overran the maxConcurrentSessions bound. §5.2: a pod
+// hosts at most maxConcurrentSessions slots; the (bound+1)-th slot request
+// acquires a fresh warm pod instead of overrunning the bound.
 func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
-	// sbx-full is at the maxConcurrent=2 bound; sbx-fresh is idle.
-	claimer, c := slotClaimerFor(
+	claimer, c, counter := slotClaimerFor(
 		t,
 		concurrentSandbox("sbx-full", "claimed", "acme"),
 		concurrentSandbox("sbx-fresh", "idle", ""),
 	)
-	seedSlotClaims(t, c, "sbx-full", "acme", 2)
+	seedOccupiedPod(t, c, counter, "sbx-full", "acme", 2)
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-3", "acme", 2))
@@ -275,25 +277,20 @@ func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 	if !res.FreshPod || res.ActiveSlots != 1 {
 		t.Errorf("a slot on a fresh pod should report FreshPod=true, ActiveSlots=1; got %+v", res)
 	}
-
-	// sbx-full stays exactly at the bound.
-	if got := countSlotClaims(t, c, "sbx-full"); got != 2 {
-		t.Errorf("full pod slot claims = %d, want 2 (unchanged)", got)
-	}
 }
 
 // spec: 5.2
-// diagnosis: ClaimSlot did not return ErrNoConcurrentSlot when every
-// pod is at its bound and no idle pod remains. §5.2 maps this to
+// diagnosis: ClaimSlot did not return ErrNoConcurrentSlot when every pod is
+// at its bound and no idle pod remains. §5.2 maps this to
 // WARM_POOL_EXHAUSTED / "concurrent_slots_exhausted".
 func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
-	claimer, c := slotClaimerFor(
+	claimer, c, counter := slotClaimerFor(
 		t,
 		concurrentSandbox("sbx-a", "claimed", "acme"),
 		concurrentSandbox("sbx-b", "claimed", "acme"),
 	)
-	seedSlotClaims(t, c, "sbx-a", "acme", 4)
-	seedSlotClaims(t, c, "sbx-b", "acme", 4)
+	seedOccupiedPod(t, c, counter, "sbx-a", "acme", 4)
+	seedOccupiedPod(t, c, counter, "sbx-b", "acme", 4)
 	_, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-x", "acme", 4))
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
@@ -304,40 +301,34 @@ func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
 // spec: 5.2
 // diagnosis: ClaimSlot placed a slot for one tenant on a pod pinned to
 // another. §5.2 tenant pinning: a concurrent-session pod is bound to its
-// first tenant for its lifetime; a slot for a different tenant must
-// never join it. With no fresh pod available the claim reports the
-// tenant-mismatch distinctly.
+// first tenant for its lifetime; a slot for a different tenant must never
+// join it. With no fresh pod available the claim reports the tenant
+// mismatch distinctly.
 func TestClaimSlotRejectsCrossTenantSlotSharing(t *testing.T) {
-	// The only pod with free capacity is pinned to globex; no idle pod.
-	claimer, c := slotClaimerFor(
+	claimer, c, counter := slotClaimerFor(
 		t,
 		concurrentSandbox("sbx-globex", "claimed", "globex"),
 	)
-	seedSlotClaims(t, c, "sbx-globex", "globex", 1)
+	seedOccupiedPod(t, c, counter, "sbx-globex", "globex", 1)
 	_, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-acme", "acme", 8))
 	if !errors.Is(err, podclaim.ErrTenantMismatch) {
 		t.Errorf("error = %v, want ErrTenantMismatch; a slot must not join another tenant's pod", err)
 	}
-
-	// The globex pod's slot count must be unchanged — no slot was opened.
-	if got := countSlotClaims(t, c, "sbx-globex"); got != 1 {
-		t.Errorf("globex pod slot claims = %d, want 1 (unchanged)", got)
-	}
 }
 
 // spec: 5.2
-// diagnosis: ClaimSlot did not fall through to a fresh pod when the
-// only occupied pod is pinned to a different tenant. §5.2: a slot for a
-// new tenant claims a fresh idle pod rather than joining a foreign
-// tenant's pod.
+// diagnosis: ClaimSlot did not fall through to a fresh pod when the only
+// occupied pod is pinned to a different tenant. §5.2: a slot for a new
+// tenant acquires a fresh idle pod rather than joining a foreign tenant's
+// pod.
 func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
-	claimer, c := slotClaimerFor(
+	claimer, c, counter := slotClaimerFor(
 		t,
 		concurrentSandbox("sbx-globex", "claimed", "globex"),
 		concurrentSandbox("sbx-idle", "idle", ""),
 	)
-	seedSlotClaims(t, c, "sbx-globex", "globex", 1)
+	seedOccupiedPod(t, c, counter, "sbx-globex", "globex", 1)
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-acme", "acme", 8))
 	if err != nil {
@@ -347,7 +338,7 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 		t.Errorf("slot landed on %q, want sbx-idle; acme must get a fresh pod", res.SandboxName)
 	}
 	if !res.FreshPod {
-		t.Error("the slot should have opened a fresh pod")
+		t.Error("the slot should have acquired a fresh pod")
 	}
 }
 
@@ -356,7 +347,7 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 // invalid per-pod bound. §5.2: a concurrent-session claim requires
 // maxConcurrentSessions >= 1.
 func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
-	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
+	claimer, _, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
 	if _, err := claimer.ClaimSlot(context.Background(),
 		slotReq("s", "acme", 0)); err == nil {
 		t.Error("maxConcurrentSessions=0 should be rejected")
@@ -364,299 +355,92 @@ func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 }
 
 // spec: 5.2
-// diagnosis: the §5.2 atomic slot-reservation guarantee was not upheld
-// under a competing gateway replica. A status-apply conflict on a pod
-// (a competing replica reserved a slot there first) must make ClaimSlot
-// re-evaluate or move on rather than overrun the maxConcurrent bound.
-//
-// The test wraps the envtest client with an interceptor that returns
-// a 409 conflict on the first SSA Apply targeting sbx-a, forcing the
-// claimer to fall through to sbx-b. Subsequent applies pass through
-// to the real apiserver.
-func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
-	envClient := newEnvtestClient(
-		t,
-		concurrentSandbox("sbx-a", "idle", ""),
-		concurrentSandbox("sbx-b", "idle", ""),
-	)
-	conflicted := false
-	c := interceptor.NewClient(envClient, interceptor.Funcs{
-		SubResourcePatch: func(ctx context.Context, cl client.Client, sr string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-			if obj.GetName() == "sbx-a" && !conflicted {
-				conflicted = true
-				return apierrors.NewConflict(
-					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
-					"sbx-a", errors.New("slot reserved by a competing replica"),
-				)
-			}
-			return cl.Status().Patch(ctx, obj, patch, opts...)
-		},
-	})
+// diagnosis: ClaimSlot ran without an intra-pod capacity gate. The Redis
+// counter (with its §12.4 Postgres fallback) is the only intra-pod gate now
+// that the gateway does not mirror the slot count onto Sandbox.status; a nil
+// Counter must fail closed rather than overrun the bound.
+func TestClaimSlotRequiresCounter(t *testing.T) {
+	c := newEnvtestClient(t, concurrentSandbox("sbx-1", "idle", ""))
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
+	if _, err := claimer.ClaimSlot(context.Background(), slotReq("s", "acme", 4)); err == nil {
+		t.Error("ClaimSlot with no Counter must fail closed")
+	}
+}
 
-	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-1", "acme", 4))
+// spec: §4.6.1, §5.2
+// diagnosis: a concurrent acquisition of the same idle pod opened two
+// per-pod claims. The deterministic claim-<podName> CREATE is the
+// acquisition guard: when two replicas race for the same idle pod, the
+// loser's CREATE collides on AlreadyExists, its counter reservation is
+// undone, and it retries on the next pod.
+func TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName(t *testing.T) {
+	c := newEnvtestClient(
+		t,
+		concurrentSandbox("sbx-1", "idle", ""),
+		concurrentSandbox("sbx-2", "idle", ""),
+	)
+	ctx := context.Background()
+	// A competing replica already acquired sbx-1: its per-pod claim exists.
+	seed := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "globex"},
+	}
+	if err := c.Create(ctx, seed); err != nil {
+		t.Fatalf("seed competing claim: %v", err)
+	}
+	if err := podclaim.WriteBoundStatus(ctx, c, testNS, seed.Name); err != nil {
+		t.Fatalf("seed competing claim status: %v", err)
+	}
+
+	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: newCounter(t)}
+	res, err := claimer.ClaimSlot(ctx, slotReq("sess-1", "acme", 4))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName == "sbx-a" {
-		t.Error("ClaimSlot opened sbx-a despite the conflicting status apply")
-	}
-	if !conflicted {
-		t.Error("the conflicting-apply path was not exercised")
+	// acme is a different tenant, so sbx-1 (pinned to globex) is skipped and
+	// the fresh acquisition lands on sbx-2.
+	if res.SandboxName != "sbx-2" {
+		t.Errorf("acquired %q, want sbx-2 (sbx-1 is claimed by globex)", res.SandboxName)
 	}
 }
 
 // spec: 5.2
-// diagnosis: ReleaseSlot did not decrement a pod's slot count or did
-// not return the pod to idle when its last slot drained. §6.2: a
-// concurrent-session pod returns to idle only when activeSlots reaches 0;
-// while sibling slots remain it stays slot_active.
-func TestReleaseSlotDecrementsAndReturnsToIdleOnLastSlot(t *testing.T) {
-	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
-	// Two slot claims, deterministically named per session so ReleaseSlot
-	// deletes the matching one. The slot count is the live claim count.
-	for _, sess := range []string{"sess-1", "sess-2"} {
-		claim := &lennyv1.SandboxClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: "claim-" + sess, Namespace: testNS},
-			Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
-		}
-		if err := c.Create(context.Background(), claim); err != nil {
-			t.Fatalf("seed claim %s: %v", sess, err)
-		}
-	}
+// diagnosis: ReleaseSlot did not decrement a pod's Redis counter or did not
+// delete the per-pod claim when the last slot drained. §5.2 / §4.6.1: the
+// per-pod claim spans the whole occupancy episode; it is deleted only when
+// the counter reaches zero, returning the pod to the pool.
+func TestReleaseSlotDecrementsAndDeletesClaimOnLastSlot(t *testing.T) {
+	claimer, c, counter := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 2)
 
-	// Release one of the two slots: the pod stays slot_active.
+	// Release one of the two slots: the per-pod claim stays.
 	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1"); err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if got := countSlotClaims(t, c, "sbx-1"); got != 1 {
-		t.Errorf("after one release slot claims = %d, want 1", got)
-	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("phase = %q, want claimed while a sibling slot remains", sb.Status.Phase)
-	}
-	if got := apierrors.IsNotFound(c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &lennyv1.SandboxClaim{})); !got {
-		t.Error("the slot's SandboxClaim should have been deleted")
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("the per-pod claim must remain while a sibling slot is held")
 	}
 
-	// Release the last slot: the pod returns to idle.
+	// Release the last slot: the per-pod claim is deleted.
 	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-2"); err != nil {
 		t.Fatalf("ReleaseSlot last: %v", err)
 	}
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if got := countSlotClaims(t, c, "sbx-1"); got != 0 {
-		t.Errorf("after the last release slot claims = %d, want 0", got)
-	}
-	if sb.Status.Phase != "idle" {
-		t.Errorf("phase = %q, want idle after the last slot drained", sb.Status.Phase)
-	}
-	// §5.2 tenant pinning persists: an idle-again concurrent pod keeps
-	// its pin.
-	if sb.Status.TenantID != "acme" {
-		t.Errorf("status.tenantId = %q, want acme; the tenant pin must survive an idle-again pod", sb.Status.TenantID)
+	if podClaimExists(t, c, "sbx-1") {
+		t.Error("the per-pod claim must be deleted when the last slot drains")
 	}
 }
 
 // spec: 5.2
-// diagnosis: a double ReleaseSlot drove the slot count negative.
-// ReleaseSlot must clamp the decrement at 0 so a repeated release is a
-// no-op.
+// diagnosis: a double ReleaseSlot drove the slot counter negative.
+// ReleaseSlot must clamp the decrement at zero so a repeated release is a
+// no-op that touches no claim.
 func TestReleaseSlotIsIdempotentAtZero(t *testing.T) {
-	claimer, c := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", "acme"))
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", "acme"))
 	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-gone"); err != nil {
 		t.Fatalf("ReleaseSlot on a zero-slot pod: %v", err)
 	}
-	if got := countSlotClaims(t, c, "sbx-1"); got != 0 {
-		t.Errorf("slot claims = %d, want 0; release must not create a claim", got)
-	}
-}
-
-// seedWPCSandboxStatus writes the WPC-owned subset of
-// Sandbox.status (phase, podName, nodeName, podIP) under the
-// WarmPoolController field manager. Tests that need to verify
-// cross-manager Apply behavior (gateway forcing Phase ownership,
-// gateway's unstructured patch leaving WPC-owned fields intact)
-// must seed those fields under WPC, not Gateway — otherwise the
-// test would pre-claim ownership for the gateway and fail to
-// exercise the spec-§4.6.3 dual-ownership tension that the slot-
-// claim path resolves with ForceOwnership.
-func seedWPCSandboxStatus(t *testing.T, c client.Client, name, phase, podName, nodeName, podIP string) {
-	t.Helper()
-	wpc := map[string]interface{}{}
-	if phase != "" {
-		wpc["phase"] = phase
-	}
-	if podName != "" {
-		wpc["podName"] = podName
-	}
-	if nodeName != "" {
-		wpc["nodeName"] = nodeName
-	}
-	if podIP != "" {
-		wpc["podIP"] = podIP
-	}
-	if len(wpc) == 0 {
-		return
-	}
-	u := &unstructured.Unstructured{}
-	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
-	u.SetName(name)
-	u.SetNamespace(testNS)
-	_ = unstructured.SetNestedField(u.Object, wpc, "status")
-	if err := c.Status().Patch(context.Background(), u, client.Apply,
-		client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-		t.Fatalf("seed WPC status %s: %v", name, err)
-	}
-}
-
-// TestClaimSlotForcesPhaseFromWPCOwnership is the regression for the
-// §4.6.3-vs-§5.2 cross-manager Phase write that the spec-aligned
-// gateway slot-claim resolves with client.ForceOwnership. The seed
-// puts Sandbox.status.phase under the WarmPoolController field
-// manager (§4.6.3 owner). The gateway's slot-reservation Apply must
-// still transition phase to slot_active per §5.2, which only
-// succeeds when ForceOwnership is on the Apply call. Without it,
-// the API server returns a 409 Conflict on the Phase field and the
-// slot-claim fails — exactly the regression that pinned EKS
-// sandboxes in `claimed` instead of `slot_active`.
-func TestClaimSlotForcesPhaseFromWPCOwnership(t *testing.T) {
-	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sbx-wpc-owned",
-			Namespace: testNS,
-			Labels:    map[string]string{warmpool.LabelPool: testPool},
-		},
-	})
-	// Re-seed phase=idle under the WPC field manager so the
-	// gateway's slot-claim Apply must force ownership across managers.
-	seedWPCSandboxStatus(t, c, "sbx-wpc-owned", string(state.Idle), "", "", "10.0.0.7")
-
-	res, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-force", "acme", 4))
-	if err != nil {
-		t.Fatalf("ClaimSlot under WPC-owned phase: %v", err)
-	}
-	if res.SandboxName != "sbx-wpc-owned" {
-		t.Errorf("claimed %q, want sbx-wpc-owned", res.SandboxName)
-	}
-
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-wpc-owned"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("phase = %q, want claimed — the gateway's Phase Apply must force across the §4.6.3 WPC ownership (regression: 409 Conflict left it idle)", sb.Status.Phase)
-	}
-	if got := countSlotClaims(t, c, "sbx-wpc-owned"); got != 1 {
-		t.Errorf("slot claims = %d, want 1", got)
-	}
-}
-
-// TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply is the
-// regression for the SSA Go-zero-value clobbering bug. The gateway
-// slot-claim patch is built as *unstructured.Unstructured carrying
-// only gateway-owned fields (phase, tenantId).
-// A typed-struct patch would serialize unset WPC-owned fields
-// (PodName, NodeName, PodIP, ObservedGeneration) as Go zero values
-// and the SSA apply would claim those fields and wipe WPC's writes.
-// This test seeds full WPC-owned state, runs the gateway's Apply,
-// and asserts every WPC-owned field still holds the seeded value.
-func TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply(t *testing.T) {
-	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sbx-keep-wpc",
-			Namespace: testNS,
-			Labels:    map[string]string{warmpool.LabelPool: testPool},
-		},
-	})
-	seedWPCSandboxStatus(t, c, "sbx-keep-wpc",
-		string(state.Idle), "pod-keep-wpc", "node-keep-wpc", "10.0.0.42")
-
-	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-keep", "acme", 4)); err != nil {
-		t.Fatalf("ClaimSlot: %v", err)
-	}
-
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-keep-wpc"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("phase = %q, want claimed — the gateway must still transition it", sb.Status.Phase)
-	}
-	if sb.Status.PodName != "pod-keep-wpc" {
-		t.Errorf("podName = %q, want pod-keep-wpc — regression: gateway Apply zeroed a WPC-owned field", sb.Status.PodName)
-	}
-	if sb.Status.NodeName != "node-keep-wpc" {
-		t.Errorf("nodeName = %q, want node-keep-wpc — regression: gateway Apply zeroed a WPC-owned field", sb.Status.NodeName)
-	}
-	if sb.Status.PodIP != "10.0.0.42" {
-		t.Errorf("podIP = %q, want 10.0.0.42 — regression: gateway Apply zeroed a WPC-owned field", sb.Status.PodIP)
-	}
-}
-
-// TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle is the
-// release-side regression for the same Go-zero-value clobbering bug.
-// When a concurrent-session pod returns to idle on its last slot
-// release, the gateway's Apply must transition phase back to idle
-// without touching the WPC-owned podName / nodeName / podIP fields.
-// A typed-struct patch would zero them.
-func TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle(t *testing.T) {
-	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sbx-release-keep",
-			Namespace: testNS,
-			Labels:    map[string]string{warmpool.LabelPool: testPool},
-		},
-	})
-	seedWPCSandboxStatus(t, c, "sbx-release-keep",
-		string(state.Idle), "pod-release", "node-release", "10.0.0.99")
-
-	// Claim a single slot to set up the slot_active state, then
-	// release it: the release path is what transitions back to idle.
-	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-release", "acme", 4)); err != nil {
-		t.Fatalf("ClaimSlot: %v", err)
-	}
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-release-keep", "sess-release"); err != nil {
-		t.Fatalf("ReleaseSlot: %v", err)
-	}
-
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-release-keep"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Idle) {
-		t.Errorf("phase = %q, want idle after the last slot drains", sb.Status.Phase)
-	}
-	if sb.Status.PodName != "pod-release" || sb.Status.NodeName != "node-release" || sb.Status.PodIP != "10.0.0.99" {
-		t.Errorf("WPC-owned fields after release = %+v, want podName=pod-release nodeName=node-release podIP=10.0.0.99 — regression: gateway Apply on return-to-idle zeroed WPC fields",
-			sb.Status)
-	}
-}
-
-// spec: 5.2
-// diagnosis: a repeated slot claim for the same session opened a
-// duplicate slot. The SandboxClaim name is deterministic per session,
-// so a second claim for a live session must collide at CREATE.
-func TestClaimSlotRepeatedSessionCollides(t *testing.T) {
-	claimer, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
-	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-dup", "acme", 8)); err != nil {
-		t.Fatalf("first ClaimSlot: %v", err)
-	}
-	if _, err := claimer.ClaimSlot(context.Background(),
-		slotReq("sess-dup", "acme", 8)); err == nil {
-		t.Error("a repeated slot claim for the same session should collide at CREATE")
+	if podClaimExists(t, c, "sbx-1") {
+		t.Error("release on a zero-slot pod must not create a claim")
 	}
 }
 
@@ -666,7 +450,7 @@ func TestClaimSlotRepeatedSessionCollides(t *testing.T) {
 // the cause via details.reason: an empty pool is "no_idle_pods", mapped
 // from ErrNoIdlePod (the same sentinel session-mode exhaustion uses).
 func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
-	claimer, _ := slotClaimerFor(t) // no pods in the pool at all
+	claimer, _, _ := slotClaimerFor(t) // no pods in the pool at all
 	_, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-x", "acme", 4))
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
@@ -680,26 +464,11 @@ func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
 // spec: §5.2 line 519
 // diagnosis: lenny_slot_assignment_conflict_total had no emitter. The
 // SlotClaimer must record a slot-contention conflict via OnSlotConflict
-// when the atomic counter finds a candidate pod at its maxConcurrent
-// bound. A slot_active candidate pod reaches reserveSlot, where the
-// authoritative Redis counter (already at the cap) rejects the
-// reservation.
+// when the atomic Redis counter finds a candidate pod at its bound.
 func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	c := newEnvtestClient(t, concurrentSandbox("sbx-a", "claimed", "acme"))
-
-	mr := miniredis.RunT(t)
-	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rc.Close() })
-	counter := slotcounter.New(rc)
-	ctx := context.Background()
-	// Drive the authoritative counter for sbx-a up to the cap (2) so the
-	// next reservation on it is rejected.
-	if _, _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
-		t.Fatalf("seed counter (1): %v", err)
-	}
-	if _, _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
-		t.Fatalf("seed counter (2): %v", err)
-	}
+	counter := newCounter(t)
+	seedOccupiedPod(t, c, counter, "sbx-a", "acme", 2)
 
 	var conflicts []string
 	claimer := &podclaim.SlotClaimer{
@@ -709,7 +478,7 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 		OnSlotConflict: func(pool string) { conflicts = append(conflicts, pool) },
 	}
 
-	_, err := claimer.ClaimSlot(ctx, slotReq("sess-x", "acme", 2))
+	_, err := claimer.ClaimSlot(context.Background(), slotReq("sess-x", "acme", 2))
 	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
 		t.Errorf("error = %v, want ErrNoConcurrentSlot (pods exist but full)", err)
 	}
@@ -718,16 +487,17 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 166-167 — concurrent-workspace pod-uptime retirement.
+// spec: §6.2 lines 166-167 — concurrent-session pod-uptime retirement.
 // diagnosis: ClaimSlot placed a slot on a pod whose wall-clock uptime had
 // exceeded the pool's maxPodUptimeSeconds. §6.2 line 166: an over-uptime
-// slot_active pod accepts no new slots and its existing slots drain — it
-// must transition to draining and be skipped as a candidate.
-func TestClaimSlotDrainsOverUptimeSlotActivePod_spec_6_2(t *testing.T) {
-	claimer, c := slotClaimerFor(t,
+// claimed pod accepts no new slots and its existing slots drain — it must
+// transition to draining and be skipped as a candidate.
+func TestClaimSlotDrainsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
+	claimer, c, counter := slotClaimerFor(t,
 		concurrentSandbox("sbx-old", "claimed", "acme"))
-	// The pod was created ~now; advance the claimer's clock two hours
-	// past creation so its uptime exceeds the 60s cap.
+	seedOccupiedPod(t, c, counter, "sbx-old", "acme", 1)
+	// The pod was created ~now; advance the claimer's clock two hours past
+	// creation so its uptime exceeds the 60s cap.
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
 	req := slotReq("sess-1", "acme", 8)
@@ -742,16 +512,16 @@ func TestClaimSlotDrainsOverUptimeSlotActivePod_spec_6_2(t *testing.T) {
 		t.Fatalf("get sbx-old: %v", err)
 	}
 	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("over-uptime slot_active pod phase = %q, want draining (§6.2 line 166)", sb.Status.Phase)
+		t.Errorf("over-uptime claimed pod phase = %q, want draining (§6.2 line 166)", sb.Status.Phase)
 	}
 }
 
 // spec: §6.2 line 167 — maxPodUptimeSeconds exceeded while idle, checked
 // before next assignment.
-// diagnosis: ClaimSlot opened a fresh slot on an idle pod that was already
+// diagnosis: ClaimSlot acquired a fresh slot on an idle pod that was already
 // past its uptime cap instead of draining it first.
 func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
-	claimer, c := slotClaimerFor(t,
+	claimer, c, _ := slotClaimerFor(t,
 		concurrentSandbox("sbx-old", "idle", ""))
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
@@ -775,9 +545,8 @@ func TestClaimSlotDrainsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 // diagnosis: ClaimSlot drained a pod still within its uptime budget. A pod
 // under maxPodUptimeSeconds must serve the slot normally.
 func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
-	claimer, c := slotClaimerFor(t,
+	claimer, c, _ := slotClaimerFor(t,
 		concurrentSandbox("sbx-fresh", "idle", ""))
-	// Real clock: the pod was created ~now, well under the one-day cap.
 
 	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 86400
@@ -786,15 +555,18 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 	if res.SandboxName != "sbx-fresh" {
-		t.Errorf("claimed %q, want sbx-fresh", res.SandboxName)
+		t.Errorf("acquired %q, want sbx-fresh", res.SandboxName)
 	}
 
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-fresh"}, &sb); err != nil {
 		t.Fatalf("get sbx-fresh: %v", err)
 	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("under-uptime pod phase = %q, want claimed (served the slot)", sb.Status.Phase)
+	if sb.Status.Phase == string(state.Draining) {
+		t.Error("under-uptime pod was drained")
+	}
+	if !podClaimExists(t, c, "sbx-fresh") {
+		t.Error("under-uptime pod must be acquired (per-pod claim created)")
 	}
 }
 
@@ -802,9 +574,8 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 // diagnosis: ClaimSlot drained a pod even though the pool set no
 // maxPodUptimeSeconds, retiring pods that should run indefinitely.
 func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
-	claimer, c := slotClaimerFor(t,
+	claimer, c, _ := slotClaimerFor(t,
 		concurrentSandbox("sbx-fresh", "idle", ""))
-	// Even with the clock far in the future, a zero cap means no check.
 	claimer.Now = func() time.Time { return time.Now().Add(1000 * time.Hour) }
 
 	req := slotReq("sess-1", "acme", 8)
@@ -814,7 +585,7 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 	if res.SandboxName != "sbx-fresh" {
-		t.Errorf("claimed %q, want sbx-fresh", res.SandboxName)
+		t.Errorf("acquired %q, want sbx-fresh", res.SandboxName)
 	}
 
 	var sb lennyv1.Sandbox

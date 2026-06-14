@@ -12,6 +12,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // spec: §6.1 lines 5, 16, 24 — "After a session completes or fails in
@@ -51,16 +52,18 @@ func TestSessionModeReleaseDrainsSandbox_spec_6_1_invariant(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	// Verify the Sandbox projects the coarse `claimed` phase after Bind: the
-	// session reaching `running` is a session-model state on the Postgres
-	// session row, not a CRD phase (§6.2 lines 82, 172).
+	// The gateway no longer writes Sandbox.status; the acquisition is
+	// recorded on the per-pod claim's `bound` binding state, from which the
+	// WPC projects `claimed`. The session reaching `running` is a
+	// session-model state on the Postgres session row, not a CRD phase.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-orig"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim after bind: %v", err)
+	}
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Fatalf("claim binding state after Bind = %q, want bound", claim.Status.Phase)
+	}
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-orig"}, &sb); err != nil {
-		t.Fatalf("get sandbox after bind: %v", err)
-	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Fatalf("phase after Bind = %q, want claimed", sb.Status.Phase)
-	}
 
 	// Drive the §6.2 terminal disposition through Release with the
 	// `completed` disposition. The §6.1 invariant requires this to drain

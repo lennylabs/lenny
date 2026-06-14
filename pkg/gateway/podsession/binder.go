@@ -1374,11 +1374,12 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 		_ = b.Client.Delete(ctx, claim)
 		return "", podclaim.ErrNoIdlePod
 	}
-	// SSA Apply phase = claimed under the §4.6.3 gateway carve-out, the
-	// same path the in-cluster Claimer takes. ForceOwnership is required
-	// to transfer status.phase from the WPC default to the gateway for
-	// the session lifecycle.
-	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Claimed); err != nil {
+	// §4.6.1: the per-pod claim is CREATEd with spec only; write its first
+	// `bound` binding state with a subsequent status patch, the same first
+	// status the in-cluster Claimer writes. The gateway does not write
+	// Sandbox.status; the WarmPoolController projects the pod's occupancy
+	// phase from the claim binding state.
+	if err := podclaim.WriteBoundStatus(ctx, b.Client, b.Namespace, claim.Name); err != nil {
 		_ = b.Client.Delete(ctx, claim)
 		return "", err
 	}

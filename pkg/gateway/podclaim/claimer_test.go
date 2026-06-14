@@ -61,9 +61,11 @@ func claimerFor(t *testing.T, objs ...client.Object) (*podclaim.Claimer, client.
 }
 
 // spec: §4.6.1, §4.6.3
-// TestClaimBindsAnIdlePod_spec_4_6 — Claim CREATEs the SandboxClaim
-// first (single-claim guard) and then SSA-applies status.phase = claimed
-// under the gateway field manager.
+// TestClaimBindsAnIdlePod_spec_4_6 — Claim CREATEs the per-pod occupancy
+// SandboxClaim (claim-<podName>) with spec only, then writes its first
+// `bound` binding-state status patch. The gateway does not write
+// Sandbox.status; the WarmPoolController projects the pod's phase from the
+// claim binding state.
 func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
 
@@ -73,23 +75,32 @@ func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	// The per-pod occupancy claim (§4.6.3) carries sandboxRef and tenantId
-	// only; the session-to-pod binding lives on the Postgres session row.
+	// The per-pod occupancy claim (§4.6.3) is named claim-<podName> and
+	// carries sandboxRef and tenantId only; the session-to-pod binding lives
+	// on the Postgres session row's pod_assignment column.
+	if claim.Name != "claim-sbx-1" {
+		t.Errorf("claim name = %q, want claim-sbx-1 (per-pod deterministic name)", claim.Name)
+	}
 	if claim.Spec.SandboxRef != "sbx-1" || claim.Spec.TenantID != "acme" {
 		t.Errorf("claim spec = %+v, want a binding of acme to sbx-1", claim.Spec)
 	}
 
+	var stored lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: claim.Name}, &stored); err != nil {
+		t.Fatalf("the SandboxClaim was not persisted: %v", err)
+	}
+	if stored.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound (first status patch)", stored.Status.Phase)
+	}
+
+	// The gateway no longer writes Sandbox.status.phase; the WPC projection
+	// owns it, so the pod's status stays at the WPC-written idle value here.
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
-	}
-
-	var stored lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: claim.Name}, &stored); err != nil {
-		t.Errorf("the SandboxClaim was not persisted: %v", err)
+	if sb.Status.Phase != "idle" {
+		t.Errorf("sandbox phase = %q, want idle (gateway does not write Sandbox.status; WPC projects claimed from the claim binding state)", sb.Status.Phase)
 	}
 }
 
@@ -141,20 +152,19 @@ func TestClaimScopesToTheRequestedPool(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 ADR-007 — the SandboxClaim CREATE with a
-// session-deterministic name (claim-<sessionID>) is the §4.6.1
-// authoritative single-claim guard. A repeated Claim() for the same
-// session collides on AlreadyExists everywhere it tries, surfacing
-// ErrNoIdlePod so the caller does not silently bind a second pod to the
-// same session.
-func TestClaimSameSessionRetryCollidesOnAlreadyExists_spec_4_6(t *testing.T) {
+// spec: §4.6.1 ADR-007 — the per-pod SandboxClaim CREATE with the
+// deterministic name claim-<podName> is the §4.6.1 authoritative
+// single-claim guard. A claimed pod (its claim already exists) collides on
+// AlreadyExists, so Claim skips it and acquires the next idle pod; a pool
+// where every idle pod is already claimed surfaces ErrNoIdlePod.
+func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
 	c := newEnvtestClient(
 		t,
 		sandboxIn(testPool, "sbx-1", "idle"),
 		sandboxIn(testPool, "sbx-2", "idle"),
 	)
 	ctx := context.Background()
-	// First claim succeeds and creates claim-s bound to one of the pods.
+	// A competing replica already claimed sbx-1: its per-pod claim exists.
 	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-1", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
 	}); err != nil {
@@ -162,23 +172,45 @@ func TestClaimSameSessionRetryCollidesOnAlreadyExists_spec_4_6(t *testing.T) {
 	}
 	claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
 
-	// A retried Claim for the same session sees AlreadyExists on every
-	// CREATE attempt (deterministic name claim-s); ErrNoIdlePod surfaces.
-	_, err := claimer.Claim(ctx, podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "s", TenantID: "acme",
+	// Claim skips the already-claimed sbx-1 (AlreadyExists on the per-pod
+	// name) and acquires the next idle pod, sbx-2.
+	claim, err := claimer.Claim(ctx, podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s2", TenantID: "acme",
 	})
-	if !errors.Is(err, podclaim.ErrNoIdlePod) {
-		t.Errorf("retry error = %v, want ErrNoIdlePod (the deterministic name collides everywhere)", err)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if claim.Spec.SandboxRef != "sbx-2" {
+		t.Errorf("acquired %q, want sbx-2 (sbx-1 already has a per-pod claim)", claim.Spec.SandboxRef)
 	}
 }
 
-// spec: §4.6.3 ownership table — status.phase under SSA Apply with
-// FieldOwner=lenny-gateway and ForceOwnership transfers ownership from
-// the WPC default to the gateway. A subsequent SSA Apply by the gateway
-// is idempotent on the value (same manager, same field).
-// TestClaimSSAOwnershipIsGateway_spec_4_6_3 — verifies the managedFields
-// entry for status.phase ends up under the gateway field manager.
-func TestClaimSSAOwnershipIsGateway_spec_4_6_3(t *testing.T) {
+// spec: §4.6.1 — when every idle pod already carries a per-pod claim, a new
+// acquisition surfaces ErrNoIdlePod so the caller does not double-claim.
+func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6(t *testing.T) {
+	c := newEnvtestClient(t, sandboxIn(testPool, "sbx-1", "idle"))
+	ctx := context.Background()
+	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-1", podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s", TenantID: "acme",
+	}); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
+	_, err := claimer.Claim(ctx, podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s2", TenantID: "acme",
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod when every idle pod is already claimed", err)
+	}
+}
+
+// spec: §4.6.3 ownership table — the gateway does not write Sandbox.status;
+// the WarmPoolController projects the pod phase from the claim binding
+// state. Claim must therefore leave Sandbox.status untouched by the
+// gateway field manager.
+// TestClaimDoesNotWriteSandboxStatus_spec_4_6_3 — verifies no
+// lenny-gateway managedFields entry on the Sandbox status subresource.
+func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
 	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
 
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
@@ -191,35 +223,30 @@ func TestClaimSSAOwnershipIsGateway_spec_4_6_3(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	foundGateway := false
 	for _, mf := range sb.ManagedFields {
 		if mf.Manager == "lenny-gateway" && mf.Subresource == "status" {
-			foundGateway = true
+			t.Errorf("gateway must not write Sandbox.status; found managedFields entry %+v", mf)
 		}
-	}
-	if !foundGateway {
-		t.Errorf("status managedFields did not include lenny-gateway: %+v", sb.ManagedFields)
 	}
 }
 
-// Defensive: verify the deterministic-name AlreadyExists path returns
-// the right error class for apierrors.IsAlreadyExists detection.
-func TestClaimCreateClaimAlreadyExistsClass(t *testing.T) {
+// Defensive: a second CREATE for the same pod (the deterministic
+// claim-<podName> name) returns the AlreadyExists error class so the
+// claimer's apierrors.IsAlreadyExists skip-to-next-pod path triggers.
+func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 	c := newEnvtestClient(t)
 	ctx := context.Background()
-	first, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
+	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("first CreateClaim: %v", err)
 	}
-	_ = first
 
-	_, err = podclaim.CreateClaim(ctx, c, testNS, "sbx-y", podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "s", TenantID: "acme",
+	_, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s2", TenantID: "acme",
 	})
 	if err == nil {
-		t.Fatal("second CreateClaim with same session id should fail")
+		t.Fatal("second CreateClaim for the same pod should fail")
 	}
 	if !apierrors.IsAlreadyExists(err) {
 		t.Errorf("second CreateClaim error = %v, want apierrors.IsAlreadyExists", err)

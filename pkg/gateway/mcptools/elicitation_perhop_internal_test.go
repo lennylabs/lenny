@@ -70,6 +70,10 @@ func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, e
 	panic("unused")
 }
 
+func (s *slowAncestorStore) ReserveSlotUnderLock(context.Context, string, int32) (int32, bool, error) {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) PoolDrainStats(context.Context, string) (int, time.Time, error) {
 	panic("unused")
 }

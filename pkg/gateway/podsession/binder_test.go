@@ -41,6 +41,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -345,15 +346,17 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 		t.Errorf("runtime started for %q, want sess-1", rt.started)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — a successful Bind records the acquisition on the per-pod
+	// claim's `bound` binding state; the gateway no longer writes
+	// Sandbox.status, and the WPC projects the coarse `claimed` phase from
+	// the claim. The session reaching `running` is a session-model state on
+	// the Postgres session row, not a CRD phase.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 82, 172 — a successful Bind leaves the pod in the
-	// coarse `claimed` phase; the session reaching `running` is a session-model
-	// state on the Postgres session row, not a CRD phase.
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -412,12 +415,14 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the per-pod claim records
+	// the acquisition with binding state `bound`.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -504,12 +509,15 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 		t.Errorf("Mode = %q, want %q", res.Mode, "full")
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the per-pod occupancy
+	// claim records the acquisition with binding state `bound`, and the WPC
+	// projects the pod phase from it.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -822,14 +830,13 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 	return nil
 }
 
-// TestBindProjectsClaimedThroughSetupChain_spec_6_2 asserts Bind runs the
-// §4.7 setup chain without projecting any fine session-lifecycle phase onto
-// the CRD: the pod is set to the coarse `claimed` phase once, on the
-// idle → claimed acquisition edge, and stays there through workspace
-// materialization, setup, credential assignment, and runtime start. The fine
-// session states (receiving_uploads .. running) live on the Postgres session
-// row, not status.phase (§6.2 lines 82, 172).
-func TestBindProjectsClaimedThroughSetupChain_spec_6_2(t *testing.T) {
+// TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3 asserts Bind
+// runs the §4.7 setup chain without writing any Sandbox.status.phase: the
+// gateway no longer mirrors occupancy onto the Sandbox (§4.6.3); the
+// WarmPoolController projects the pod phase from the per-pod claim's binding
+// state. The acquisition is recorded as a `bound` binding state on the
+// per-pod SandboxClaim instead.
+func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -845,16 +852,15 @@ func TestBindProjectsClaimedThroughSetupChain_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	want := []string{"claimed"}
-	if !equalStrings(phases, want) {
-		t.Errorf("occupancy phase sequence = %v, want %v (no fine phases projected)", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v, want none (the WPC projects occupancy from the claim)", phases)
 	}
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("final sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -1269,28 +1275,20 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 		t.Errorf("mirror claims = %+v, want one claim of sbx-fb for sess-1/acme", mirror.claims)
 	}
 
-	// The fallback created the binding SandboxClaim, so the
-	// lenny-sandboxclaim-guard webhook's CREATE-time check still guards
-	// the single-claim invariant.
+	// The fallback created the per-pod SandboxClaim (claim-<podName>), so the
+	// lenny-sandboxclaim-guard webhook's CREATE-time per-pod-uniqueness check
+	// still guards the single-claim invariant, and wrote its first `bound`
+	// binding state. The gateway no longer writes Sandbox.status.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &claim); err != nil {
-		t.Fatalf("the fallback did not create a SandboxClaim: %v", err)
+		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		t.Fatalf("the fallback did not create a per-pod SandboxClaim: %v", err)
 	}
 	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.TenantID != "acme" {
 		t.Errorf("SandboxClaim spec = %+v, want a binding of acme to sbx-fb", claim.Spec)
 	}
-
-	// The fallback flipped the Sandbox idle → claimed; the full Bind ran the
-	// §4.7 setup chain without projecting any fine session phase, so the pod
-	// stays in the coarse `claimed` phase (§6.2 lines 82, 172).
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "sbx-fb"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed after the fallback claim + Bind", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound after the fallback claim + Bind", claim.Status.Phase)
 	}
 }
 
@@ -1320,11 +1318,12 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	if res.Result.SandboxName != "sbx-fb" {
 		t.Errorf("resumed onto %q, want sbx-fb claimed via the fallback", res.Result.SandboxName)
 	}
-	// Resume and Bind share connect, so the fallback benefits both.
+	// Resume and Bind share connect, so the fallback benefits both. The
+	// per-pod claim is named claim-<podName>.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &claim); err != nil {
-		t.Errorf("the fallback did not create a SandboxClaim for Resume: %v", err)
+		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		t.Errorf("the fallback did not create a per-pod SandboxClaim for Resume: %v", err)
 	}
 }
 

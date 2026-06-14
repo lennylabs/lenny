@@ -459,6 +459,10 @@ func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
 }
 
+func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+	return c.inner.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
+}
+
 func (c *countingStore) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {
 	return c.inner.PoolDrainStats(ctx, poolRef)
 }

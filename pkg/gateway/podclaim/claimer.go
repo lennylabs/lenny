@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: MIT
 
 // Package podclaim holds the gateway-side pod-claim path (§4.6.1,
-// ADR-007). To run a session the gateway claims an idle Sandbox: it
-// flips the Sandbox phase idle → claimed with an optimistic-locking
-// guard and creates the binding SandboxClaim. When two gateway
-// replicas race for the same pod the API server rejects the loser's
-// status update with a conflict, and the loser moves to the next idle
-// pod. The lenny-sandboxclaim-guard admission webhook backstops the
-// same single-claim invariant.
+// ADR-007). To run a session the gateway acquires an idle Sandbox pod by
+// creating a per-pod SandboxClaim with the deterministic name
+// `claim-<podName>`. Exactly one gateway replica's CREATE wins; the
+// others receive an AlreadyExists conflict (or a Forbidden from the
+// lenny-sandboxclaim-guard webhook) and move to the next idle pod. The
+// gateway does not write Sandbox.status: the WarmPoolController projects
+// the pod's occupancy phase from the claim's binding state (§4.6.1
+// occupancy projection). The session-to-pod binding is recorded on the
+// Postgres session row's pod_assignment column by the session server, so
+// the claim carries no session identifier.
 package podclaim
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,31 +47,30 @@ type Claimer struct {
 type ClaimRequest struct {
 	// Pool is the SandboxWarmPool to claim a pod from.
 	Pool string
-	// SessionID is the §15.1 session the claim serves.
+	// SessionID is the §15.1 session the claim serves. It is recorded on
+	// the Postgres session row's pod_assignment column by the session
+	// server; the per-pod SandboxClaim carries no session identifier.
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
 }
 
-// Claim finds an idle Sandbox in the request's pool, creates the binding
-// SandboxClaim (the §4.6.1 authoritative single-claim guard, backed by
-// the lenny-sandboxclaim-guard ValidatingAdmissionWebhook), and then
-// flips the Sandbox phase idle → claimed via SSA Apply under the
-// §4.6.3 gateway field manager + ForceOwnership.
+// Claim acquires an idle Sandbox pod in the request's pool by creating the
+// per-pod occupancy SandboxClaim (§4.6.1, the authoritative single-claim
+// guard backed by the lenny-sandboxclaim-guard ValidatingAdmissionWebhook)
+// and then writing the claim's first `bound` binding-state status patch.
 //
-// The race protection is the SandboxClaim CREATE: the deterministic
-// claim name (claim-<sessionID>) collides when the same session retries,
-// and the webhook rejects a CREATE that races a different session for
-// the same pod (a non-terminal claim already binds the Sandbox). On a
-// CREATE rejection or an AlreadyExists collision, Claim moves to the
-// next idle pod. The SSA phase write that follows is observability + a
-// §6.2 state-machine signal: it transfers ownership of status.phase from
-// the WPC to the gateway for the duration of the session lifecycle, per
-// §4.6.3's gateway carve-out.
+// The race protection is the SandboxClaim CREATE under the deterministic
+// name claim-<podName>: a second CREATE for the same pod collides on
+// AlreadyExists, and the webhook rejects a CREATE that races a different
+// claim for the same pod. On a CREATE rejection or an AlreadyExists
+// collision, Claim moves to the next idle pod. The gateway does not write
+// Sandbox.status; the WarmPoolController projects the pod's occupancy
+// phase from the claim binding state (§4.6.1 occupancy projection).
 //
 // ErrNoIdlePod is returned when no idle pod can be claimed. spec:
-// §4.6.1 ADR-007 (single-claim invariant), §4.6.3 ownership table,
-// §5.2 / §6.2 lines 83-94 gateway-driven phase set.
+// §4.6.1 (pod claim mechanism, occupancy projection), §4.6.3 (ownership
+// decomposition), §5.2 (slot assignment atomicity).
 func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.SandboxClaim, retErr error) {
 	// spec: §16.3 line 337 — the session.claim_pod span. The spec marks
 	// the span "Controller"; in this implementation the idle-pod claim is
@@ -92,14 +95,13 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		if sb.Status.Phase != string(state.Idle) {
 			continue
 		}
-		// §4.6.1 CREATE-first: the SandboxClaim CRD is the authoritative
-		// single-claim guard. AlreadyExists (the deterministic claim-<sessionID>
-		// name) and Forbidden (the lenny-sandboxclaim-guard webhook flagging a
-		// non-terminal existing claim) are the two race outcomes that mean
-		// "another claim already binds this pod"; either way the gateway has
-		// not touched Sandbox.status, so a skip to the next idle pod leaves
-		// no cleanup behind. Every other CREATE error (validation, network,
-		// internal) is a real failure that propagates to the caller.
+		// §4.6.1 CREATE-first: the per-pod SandboxClaim is the
+		// authoritative single-claim guard. AlreadyExists (the deterministic
+		// claim-<podName> name) and Forbidden (the lenny-sandboxclaim-guard
+		// webhook flagging an existing claim for this pod) are the two race
+		// outcomes that mean "another claim already binds this pod"; either
+		// way a skip to the next idle pod leaves no cleanup behind. Every
+		// other CREATE error (validation, network, internal) propagates.
 		claim, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, req)
 		if err != nil {
 			if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
@@ -107,19 +109,20 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 			}
 			return nil, err
 		}
-		// SSA + ForceOwnership for the §4.6.3 status.phase claim. A failure
-		// here means the gateway holds the binding SandboxClaim but failed
-		// to advance the phase observability; the §4.6.1 orphan-claim
-		// garbage collector (F-4.6.3) reclaims the dangling claim.
-		if err := ApplyGatewayPhase(ctx, c.Client, sb, state.Claimed); err != nil {
+		// §4.6.1: the claim is created with spec only; write the first
+		// `bound` binding state with a subsequent status patch (the status
+		// subresource is not writable by the Create call). A failure here
+		// leaves the claim with empty status, which the §4.6.1 orphan GC
+		// reclaims by its CREATE-before-status creation-timestamp predicate.
+		if err := writeBoundStatus(ctx, c.Client, c.Namespace, claim.Name, time.Now); err != nil {
 			_ = c.Client.Delete(ctx, claim)
 			return nil, err
 		}
-		// §5.2 line 392 / §17.2 item 5: a warm-pool pod is labeled with
-		// its tenant on first assignment by the gateway so the pod-scoped
+		// §5.2 / §17.2 item 5: a warm-pool pod is labeled with its tenant
+		// on first assignment by the gateway so the pod-scoped
 		// lenny-tenant-label-immutability webhook backstops the pin at the
 		// Kubernetes layer (the §13.2 NET-003 NetworkPolicies select pods,
-		// not Sandboxes). A missing pod is tolerated by the helper. F-17.2.3.
+		// not Sandboxes). A missing pod is tolerated by the helper.
 		if err := stampPodTenant(ctx, c.Client, c.Namespace, sb.Name, req.TenantID); err != nil {
 			return nil, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 		}
@@ -128,41 +131,44 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 	return nil, ErrNoIdlePod
 }
 
-// CreateClaim creates the binding SandboxClaim CRD that links a session
-// to the named Sandbox. The §4.6.1 normal claim path and the
-// Postgres-backed fallback claim path share this helper so both create
-// an identical SandboxClaim: the CRD a fallback claim creates is a real
-// object, so the lenny-sandboxclaim-guard admission webhook's
-// CREATE-time single-claim check guards the fallback exactly as it
-// guards the normal path. The SandboxClaim name is deterministic per
-// session, so a repeated claim for the same session collides at CREATE
-// rather than duplicating the binding.
+// CreateClaim creates the per-pod occupancy SandboxClaim (§4.6.1) that
+// records the gateway's acquisition of the named Sandbox pod. The §4.6.1
+// normal claim path and the Postgres-backed fallback claim path share this
+// helper so both create an identical SandboxClaim: the CRD a fallback claim
+// creates is a real object, so the lenny-sandboxclaim-guard admission
+// webhook's CREATE-time per-pod-uniqueness check guards the fallback
+// exactly as it guards the normal path. The claim name is deterministic
+// per pod (claim-<podName>), so a second CREATE for the same pod collides
+// at CREATE rather than duplicating the binding. The claim is created with
+// spec only; the gateway writes the first binding state with a subsequent
+// status patch (see writeBoundStatus).
 func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName string, req ClaimRequest) (*lennyv1.SandboxClaim, error) {
 	claim := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(req.SessionID),
+			Name:      claimName(sandboxName),
 			Namespace: namespace,
 		},
 		Spec: lennyv1.SandboxClaimSpec{
 			// The per-pod occupancy claim (§4.6.3) carries only sandboxRef
 			// and tenantId; the session-to-pod binding lives on the Postgres
-			// session row's pod_assignment column. The per-pod claim name and
-			// the binding-state status patches land with the gateway
-			// claim-path step.
+			// session row's pod_assignment column.
 			SandboxRef: sandboxName,
 			TenantID:   req.TenantID,
 		},
 	}
 	if err := cl.Create(ctx, claim); err != nil {
-		// The pod is claimed but unbound; the §4.6.1 orphan-claim
-		// garbage collection reclaims it.
+		// The pod is acquired but its binding state is unset; the §4.6.1
+		// orphan-claim garbage collection reclaims it on the
+		// CREATE-before-status predicate.
 		return nil, fmt.Errorf("create sandbox claim for %s: %w", sandboxName, err)
 	}
 	return claim, nil
 }
 
-// claimName is the deterministic SandboxClaim name for a session, so a
-// repeated claim for the same session collides rather than duplicating.
-func claimName(sessionID string) string {
-	return "claim-" + sessionID
+// claimName is the deterministic SandboxClaim name for a pod, so a second
+// claim for the same pod collides at CREATE rather than duplicating. The
+// per-pod name (claim-<podName>) replaces the former per-session name now
+// that the SandboxClaim is a per-pod occupancy claim (§4.6.1).
+func claimName(podName string) string {
+	return "claim-" + podName
 }

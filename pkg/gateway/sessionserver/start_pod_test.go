@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -241,15 +242,17 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 		t.Errorf("adapter runtime started for %q, want sess-pod-1", rt.started)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — a successful session-mode start records the acquisition
+	// on the per-pod claim's `bound` binding state; the gateway no longer
+	// writes Sandbox.status, and the WPC projects the coarse `claimed` phase.
+	// The session reaching `running` is a session-model state on the Postgres
+	// session row, not a CRD phase.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 82, 172 — a successful session-mode start leaves the
-	// pod in the coarse `claimed` phase; the session reaching `running` is a
-	// session-model state on the Postgres session row, not a CRD phase.
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -388,15 +391,16 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 		t.Error("registry holds no binding after the two-step start")
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — the two-step start records the acquisition on the
+	// per-pod claim's `bound` binding state (the gateway no longer writes
+	// Sandbox.status; the session's running state lives on the Postgres
+	// session row).
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 82, 172 — the two-step start leaves the pod in the
-	// coarse `claimed` phase (the session's running state lives on the
-	// Postgres session row, not status.phase).
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 
 	// The plan stored at create was re-parsed at start and materialized
@@ -533,12 +537,14 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 		t.Errorf("binding = %+v, want sbx-1 / 10.244.2.5", binding)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the resumed pod's
+	// acquisition is recorded on the per-pod claim's `bound` binding state.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 

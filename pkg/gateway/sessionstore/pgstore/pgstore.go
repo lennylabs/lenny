@@ -669,6 +669,62 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 	return count, nil
 }
 
+// ReserveSlotUnderLock implements Store — the §12.4 line 208 Redis-outage
+// capacity gate. The count-and-decide runs inside one transaction holding a
+// per-pod `pg_advisory_xact_lock`, so two concurrent admissions for the same
+// pod during a Redis outage serialize: the second waits for the first to
+// commit (releasing the xact lock) before reading the count, and cannot
+// observe the same free slot. The lock key is a 64-bit hash of podID; the
+// xact-scoped form releases automatically at commit or rollback, so a
+// crashed gateway never strands the lock. The count predicate matches
+// GetActiveSlotsByPod (and session.TerminalStates()) verbatim so the gate
+// reads the same source the blocking-rehydration protocol reads. The
+// returned post-admission count is the observed count plus one; the caller
+// (slotcounter) does not write the Postgres row — the slot occupancy is
+// recorded when the session row's pod_assignment is persisted on bind.
+// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
+// §5.2 line 541 (intra-pod capacity gate during a Redis outage).
+func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+	if podID == "" {
+		return 0, false, nil
+	}
+	if maxConcurrent < 1 {
+		return 0, false, fmt.Errorf("pgstore: maxConcurrent must be >= 1, got %d", maxConcurrent)
+	}
+	var count int32
+	var admitted bool
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		// Per-pod advisory lock scoped to this transaction. The lock key is a
+		// stable 64-bit hash of the pod identifier so distinct pods never
+		// contend; hashtext returns a 32-bit value, widened to the bigint the
+		// single-argument advisory-lock form expects.
+		if _, err := tx.Exec(ctx,
+			"SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", podID); err != nil {
+			return fmt.Errorf("pgstore: acquire per-pod advisory lock for %s: %w", podID, err)
+		}
+		var current int32
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE pod_assignment = $1
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			podID).Scan(&current); err != nil {
+			return fmt.Errorf("pgstore: count active slots under lock for pod %s: %w", podID, err)
+		}
+		if current >= maxConcurrent {
+			count = current
+			admitted = false
+			return nil
+		}
+		count = current + 1
+		admitted = true
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return count, admitted, nil
+}
+
 // PoolDrainStats implements Store — the §15.1 line 797 pool-drain
 // accounting. It counts live (non-terminal) sessions bound to poolRef
 // across every tenant and reports the oldest created_at among them so

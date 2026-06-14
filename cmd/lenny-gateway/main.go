@@ -2455,7 +2455,14 @@ func main() {
 			// slot reservation on each concurrent-mode pod re-seeds the
 			// pod's active_slots counter from GetActiveSlotsByPod before
 			// any new slot is allowed, closing the over-commit race.
-			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination), slotcounter.WithSlotSource(sessions))
+			// §12.4 line 208: the SessionStore is also the Redis-outage
+			// capacity-gate fallback. When Redis is unreachable the counter
+			// gates intra-pod slot admission on GetActiveSlotsByPod under a
+			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
+			// closed only after the bounded outage window.
+			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination),
+				slotcounter.WithSlotSource(sessions),
+				slotcounter.WithFallbackSource(sessions))
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,

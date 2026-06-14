@@ -923,6 +923,22 @@ type Store interface {
 	// spec: §5.2 line 521 (post-recovery rehydration; GetActiveSlotsByPod).
 	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
 
+	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
+	// per-pod session-mode slot counter. It serializes the slot-admission
+	// decision for podID under a per-pod Postgres advisory lock so two
+	// concurrent admissions during a Redis outage cannot both observe the
+	// same free slot: under the lock it counts live (non-terminal) sessions
+	// bound to podID (the same source GetActiveSlotsByPod reads) and admits
+	// only when that count is below maxConcurrent. It returns the
+	// post-admission slot count on success (the observed count plus one) and
+	// ErrSlotsExhausted-equivalent semantics via admitted=false when the pod
+	// is already at its bound. The lock is held only for the duration of the
+	// count-and-decide; the §12.4 posture documents the fallback as a
+	// degraded Postgres-latency path bounded by slotCounterPostgresFallbackMaxSeconds.
+	// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
+	// §5.2 line 541 (intra-pod capacity gate during a Redis outage).
+	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
+
 	// PoolDrainStats returns the §15.1 line 797 pool-drain accounting for
 	// poolRef: the number of live (non-terminal) sessions bound to the
 	// pool across every tenant, and the create time of the longest-running
