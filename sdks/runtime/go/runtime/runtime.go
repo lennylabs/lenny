@@ -80,7 +80,7 @@ import (
 // invoked once per pod occupancy with the session's frozen TaskID and is
 // not re-invoked mid-session. A recycling pool serves the next session
 // in a fresh OnCreate invocation after the runtime exits.
-// spec: 6.71 (TaskID frozen to a single OnCreate)
+// spec: §15.7 (single OnCreate per session), §7.1 (one execution per session)
 type Handler interface {
 	// OnCreate receives the session-scoped context snapshot before the
 	// first Message is delivered. A non-nil error aborts the runtime.
@@ -449,7 +449,7 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 	// turn. The slot id from the inbound envelope is threaded onto every
 	// tool_call so a runtime on a pool with maxConcurrentSessions > 1
 	// stays correlated to the originating slot.
-	// spec: 6.71 (slotId re-keyed off the removed concurrent-workspace mode)
+	// spec: §15.4.1 (slotId present only when maxConcurrentSessions > 1)
 	mctx := context.WithValue(s.withSessionContext(ctx), ctxKeyAdapterTools, &AdapterTools{
 		w:       s.w,
 		timeout: s.cfg.dialTimeout,
