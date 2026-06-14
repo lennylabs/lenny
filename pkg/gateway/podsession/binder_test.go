@@ -166,6 +166,21 @@ func (m *fakeMirror) ClaimIdle(_ context.Context, poolID, sessionID, tenantID st
 	return claimed, true, nil
 }
 
+// The recycle-counter accessors are unused on the §4.6.1 fallback-claim
+// path the Binder exercises; the fake reports not-found so the contract is
+// satisfied without fabricating a counter.
+func (m *fakeMirror) IncrementSessionsServed(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *fakeMirror) IncrementScrubFailureCount(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *fakeMirror) RecycleCounters(context.Context, string) (agentpodstate.RecycleCounters, bool, error) {
+	return agentpodstate.RecycleCounters{}, false, nil
+}
+
 func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
 	// envtest backs the client with a real kube-apiserver so the
