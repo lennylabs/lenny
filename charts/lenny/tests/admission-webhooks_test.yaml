@@ -232,6 +232,14 @@ tests:
       - equal:
           path: webhooks[0].rules[0].resources[0]
           value: sandboxclaims
+      # spec §4.6.1: the webhook intercepts CREATE only; PATCH/PUT are
+      # admitted without inspection and are not registered.
+      - equal:
+          path: webhooks[0].rules[0].operations[0]
+          value: CREATE
+      - lengthEqual:
+          path: webhooks[0].rules[0].operations
+          count: 1
       - equal:
           path: webhooks[0].clientConfig.service.path
           value: /sandboxclaim-guard

@@ -3,9 +3,12 @@
 package webhook_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -13,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -41,13 +45,6 @@ func claimRaw(t *testing.T, name, sandboxRef string) runtime.RawExtension {
 	return runtime.RawExtension{Raw: raw}
 }
 
-func sandbox(name, phase string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guardNS},
-		Status:     lennyv1.SandboxStatus{Phase: phase},
-	}
-}
-
 func seededClaim(name, sandboxRef, phase string) *lennyv1.SandboxClaim {
 	return &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guardNS},
@@ -61,30 +58,30 @@ func guardClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(guardScheme(t)).WithObjects(objs...).Build()
 }
 
+// spec: §4.6.1 — the first claim for a Sandbox is admitted.
 func TestSandboxClaimGuardAllowsCreateWithNoExistingClaim(t *testing.T) {
-	c := guardClient(t, sandbox("sbx-1", "idle"))
+	c := guardClient(t)
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "c1",
 		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-1", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-1", "sbx-1"),
 	})
 	if !resp.Allowed {
 		t.Errorf("creating the first claim for a Sandbox should be allowed: %+v", resp.Result)
 	}
 }
 
+// spec: §4.6.1 — a second non-terminal claim for the same Sandbox is
+// rejected with 403. The guard reads no Sandbox phase, so the rejection
+// holds regardless of any Sandbox.status.phase value.
 func TestSandboxClaimGuardRejectsCreateWithExistingBoundClaim(t *testing.T) {
-	c := guardClient(
-		t,
-		sandbox("sbx-1", "claimed"),
-		seededClaim("claim-existing", "sbx-1", "bound"),
-	)
+	c := guardClient(t, seededClaim("claim-pod-existing", "sbx-1", "bound"))
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "c2",
 		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-2", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-2", "sbx-1"),
 	})
 	if resp.Allowed {
 		t.Fatal("a second claim for an already-claimed Sandbox should be rejected")
@@ -94,97 +91,163 @@ func TestSandboxClaimGuardRejectsCreateWithExistingBoundClaim(t *testing.T) {
 	}
 }
 
-// TestSandboxClaimGuardAllowsCreateOnSlotActiveSandbox is the
-// regression for the §5.2 concurrent-mode dispatch path. A Sandbox in
-// `slot_active` phase already hosts a non-terminal claim from a prior
-// slot reservation; the next dispatched session must be able to add
-// its own claim without the §4.6.1 duplicate-claim rule rejecting it.
-// The 100% error rate on every tier-7 cstateless / cworkspace
-// scenario before this fix came from the webhook applying the
-// session-mode rule uniformly.
-func TestSandboxClaimGuardAllowsCreateOnSlotActiveSandbox(t *testing.T) {
-	c := guardClient(
-		t,
-		sandbox("sbx-1", "slot_active"),
-		seededClaim("claim-slot-1", "sbx-1", "active"),
-	)
+// TestSandboxClaimGuardRejectsConcurrentClaimNoExemption is the
+// proposal 0002 regression: per-pod uniqueness has no concurrency
+// exemption. A pool that multiplexes multiple concurrent sessions onto
+// one per-pod claim (§5.2) still produces exactly one SandboxClaim, so a
+// second non-terminal claim for the same Sandbox is a duplicate. spec:
+// §4.6.1, §5.2.
+func TestSandboxClaimGuardRejectsConcurrentClaimNoExemption(t *testing.T) {
+	c := guardClient(t, seededClaim("claim-pod-slot-1", "sbx-1", "bound"))
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "cslot",
 		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-slot-2", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-slot-2", "sbx-1"),
 	})
-	if !resp.Allowed {
-		t.Errorf("a slot_active Sandbox must accept additional concurrent slot claims; got %+v", resp.Result)
+	if resp.Allowed {
+		t.Fatalf("a concurrent-pool Sandbox carries one per-pod claim; a second claim must be rejected: %+v", resp.Result)
+	}
+	if resp.Result == nil || resp.Result.Code != http.StatusForbidden {
+		t.Errorf("rejection result = %+v, want code 403", resp.Result)
 	}
 }
 
+// spec: §4.6.1 — a terminal sibling claim does not block a fresh claim.
 func TestSandboxClaimGuardAllowsCreateWhenExistingClaimTerminal(t *testing.T) {
-	c := guardClient(
-		t,
-		sandbox("sbx-1", "idle"),
-		seededClaim("claim-old", "sbx-1", "released"),
-	)
+	c := guardClient(t, seededClaim("claim-pod-old", "sbx-1", "released"))
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "c3",
 		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-3", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-3", "sbx-1"),
 	})
 	if !resp.Allowed {
 		t.Errorf("a released sibling claim must not block a fresh claim: %+v", resp.Result)
 	}
 }
 
-func TestSandboxClaimGuardAllowsUpdateWhenSandboxClaimed(t *testing.T) {
-	c := guardClient(t, sandbox("sbx-1", "claimed"))
+// spec: §4.6.1 — a sibling claim targeting a different Sandbox does not
+// block a CREATE for this Sandbox.
+func TestSandboxClaimGuardIgnoresClaimsForOtherSandbox(t *testing.T) {
+	c := guardClient(t, seededClaim("claim-pod-other", "sbx-other", "bound"))
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
-		UID:       "u1",
-		Operation: admissionv1.Update,
+		UID:       "c4",
+		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-1", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-1", "sbx-1"),
 	})
 	if !resp.Allowed {
-		t.Errorf("updating a claim whose Sandbox is claimed should be allowed: %+v", resp.Result)
+		t.Errorf("a claim for a different Sandbox must not block this CREATE: %+v", resp.Result)
 	}
 }
 
-func TestSandboxClaimGuardRejectsUpdateWhenSandboxNotClaimed(t *testing.T) {
-	c := guardClient(t, sandbox("sbx-1", "idle"))
+// TestSandboxClaimGuardRejectsNonCreateOperation guards the CREATE-only
+// contract: the webhook is registered on CREATE only, so any other
+// operation reaching the handler is rejected. spec: §4.6.1 — PATCH/PUT
+// are admitted without inspection and are not registered with the
+// webhook.
+func TestSandboxClaimGuardRejectsNonCreateOperation(t *testing.T) {
+	c := guardClient(t)
+	for _, op := range []admissionv1.Operation{admissionv1.Update, admissionv1.Delete, admissionv1.Connect} {
+		t.Run(string(op), func(t *testing.T) {
+			resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
+				UID:       "u1",
+				Operation: op,
+				Namespace: guardNS,
+				Object:    claimRaw(t, "claim-pod-1", "sbx-1"),
+			})
+			if resp.Allowed {
+				t.Fatalf("operation %q must not be handled by the CREATE-only guard", op)
+			}
+			if resp.Result == nil || resp.Result.Code != http.StatusBadRequest {
+				t.Errorf("rejection result = %+v, want code 400", resp.Result)
+			}
+		})
+	}
+}
+
+// TestSandboxClaimGuardWireContractCreateRoundTrip is the contract-tier
+// check: the guard Decider, wrapped by the shared AdmissionReview
+// Handler, accepts a v1 AdmissionReview over the wire, echoes the
+// request UID, and carries the §4.6.1 duplicate-claim 403 in the
+// response body. spec: §4.6.1 (sandboxclaim-guard webhook AdmissionReview
+// contract).
+func TestSandboxClaimGuardWireContractCreateRoundTrip(t *testing.T) {
+	c := guardClient(t, seededClaim("claim-pod-existing", "sbx-1", "bound"))
+	h := webhook.Handler(webhook.SandboxClaimGuard(c))
+
+	review := admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "wire-uid",
+			Operation: admissionv1.Create,
+			Namespace: guardNS,
+			Object:    claimRaw(t, "claim-pod-2", "sbx-1"),
+		},
+	}
+	body, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal review: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sandboxclaim-guard", bytes.NewReader(body)))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("HTTP status = %d, want 200 (the admission verdict rides in the body)", rr.Code)
+	}
+	var out admissionv1.AdmissionReview
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response review: %v\nbody: %s", err, rr.Body.String())
+	}
+	if out.Response == nil {
+		t.Fatal("response review carries no Response")
+	}
+	if out.Response.UID != "wire-uid" {
+		t.Errorf("response UID = %q, want the request UID wire-uid", out.Response.UID)
+	}
+	if out.Response.Allowed {
+		t.Fatal("a duplicate per-pod claim must be denied over the wire")
+	}
+	if out.Response.Result == nil || out.Response.Result.Code != http.StatusForbidden {
+		t.Errorf("denial result = %+v, want code 403", out.Response.Result)
+	}
+}
+
+// TestSandboxClaimGuardFailsClosedOnAPIServerError covers the
+// fail-closed path: when the sibling-claim List against the API server
+// fails, the guard rejects the CREATE with 500 rather than admitting it.
+// The webhook is deployed failurePolicy: Fail, so a read error during
+// admission must deny. spec: §4.6.1 (sandboxclaim-guard webhook,
+// fail-closed).
+func TestSandboxClaimGuardFailsClosedOnAPIServerError(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(guardScheme(t)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errors.New("apiserver unreachable")
+			},
+		}).
+		Build()
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
-		UID:       "u2",
-		Operation: admissionv1.Update,
+		UID:       "err1",
+		Operation: admissionv1.Create,
 		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-1", "sbx-1"),
+		Object:    claimRaw(t, "claim-pod-1", "sbx-1"),
 	})
 	if resp.Allowed {
-		t.Fatal("a stale claim update against a non-claimed Sandbox should be rejected")
+		t.Fatal("a sibling-claim List failure must fail closed, not admit the CREATE")
 	}
-	if resp.Result == nil || resp.Result.Code != http.StatusForbidden {
-		t.Errorf("rejection result = %+v, want code 403", resp.Result)
-	}
-}
-
-func TestSandboxClaimGuardRejectsUpdateWhenSandboxMissing(t *testing.T) {
-	c := guardClient(t) // no Sandbox seeded
-	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
-		UID:       "u3",
-		Operation: admissionv1.Update,
-		Namespace: guardNS,
-		Object:    claimRaw(t, "claim-1", "sbx-missing"),
-	})
-	if resp.Allowed {
-		t.Fatal("updating a claim whose Sandbox no longer exists should be rejected")
-	}
-	if resp.Result == nil || resp.Result.Code != http.StatusForbidden {
-		t.Errorf("rejection result = %+v, want code 403", resp.Result)
+	if resp.Result == nil || resp.Result.Code != http.StatusInternalServerError {
+		t.Errorf("rejection result = %+v, want code 500", resp.Result)
 	}
 }
 
+// spec: §4.6.1 — a malformed object is rejected with 400 before any
+// rule evaluation.
 func TestSandboxClaimGuardRejectsMalformedObject(t *testing.T) {
 	c := guardClient(t)
 	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
-		UID:       "u4",
+		UID:       "m1",
 		Operation: admissionv1.Create,
 		Namespace: guardNS,
 		Object:    runtime.RawExtension{Raw: []byte("{not a claim")},

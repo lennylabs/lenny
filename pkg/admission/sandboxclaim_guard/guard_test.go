@@ -10,10 +10,12 @@ import (
 	"testing"
 )
 
+// spec: §4.6.1 (sandboxclaim-guard webhook) — a CREATE with no sibling
+// claim for the Sandbox is admitted.
 func TestCreateAdmitsWhenNoExistingClaim(t *testing.T) {
 	d, err := Decide(Request{
 		Operation:  OpCreate,
-		ClaimName:  "claim-1",
+		ClaimName:  "claim-pod-1",
 		SandboxRef: "sandbox-1",
 	})
 	if err != nil {
@@ -27,14 +29,16 @@ func TestCreateAdmitsWhenNoExistingClaim(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — only `released`/`failed` claims are terminal, so a
+// CREATE whose only siblings are terminal is admitted.
 func TestCreateAdmitsWhenExistingClaimsAreTerminal(t *testing.T) {
 	d, err := Decide(Request{
 		Operation:  OpCreate,
-		ClaimName:  "claim-2",
+		ClaimName:  "claim-pod-2",
 		SandboxRef: "sandbox-1",
 		ExistingClaims: []ExistingClaim{
-			{Name: "claim-1", Status: ClaimReleased},
-			{Name: "claim-old", Status: ClaimFailed},
+			{Name: "claim-pod-old", Status: ClaimReleased},
+			{Name: "claim-pod-older", Status: ClaimFailed},
 		},
 	})
 	if err != nil {
@@ -45,16 +49,19 @@ func TestCreateAdmitsWhenExistingClaimsAreTerminal(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — per-pod uniqueness: a second non-terminal claim for the
+// same Sandbox is rejected with the spec-mandated 403 message. Every
+// live binding state (bound, recycling, reserved) triggers the rule.
 func TestCreateRejectsWhenNonTerminalClaimExists(t *testing.T) {
 	cases := []ClaimStatus{ClaimBound, ClaimRecycling, ClaimReserved}
 	for _, s := range cases {
 		t.Run(string(s), func(t *testing.T) {
 			d, err := Decide(Request{
 				Operation:  OpCreate,
-				ClaimName:  "claim-2",
+				ClaimName:  "claim-pod-2",
 				SandboxRef: "sandbox-1",
 				ExistingClaims: []ExistingClaim{
-					{Name: "claim-1", Status: s},
+					{Name: "claim-pod-1", Status: s},
 				},
 			})
 			if err != nil {
@@ -73,216 +80,74 @@ func TestCreateRejectsWhenNonTerminalClaimExists(t *testing.T) {
 	}
 }
 
-// spec: §5.2 — a slot-bearing claim is concurrent-mode by definition.
-// The duplicate-claim rule from §4.6.1 (added to prevent the
-// Postgres-fallback claim path from racing with the CRD claim path
-// for session-mode pods) does not apply: concurrent-mode dispatch
-// opens up to maxConcurrent simultaneous claims against the same
-// Sandbox, and the maxConcurrent cap is enforced upstream by the
-// gateway's Redis Lua slot counter (§5.2 atomic GET-compare-INCR).
-// The webhook must admit a slot-bearing claim even when an existing
-// non-terminal sibling claim references the same Sandbox.
-func TestCreateAdmitsSlotClaimEvenWithExistingSiblings(t *testing.T) {
-	d, err := Decide(Request{
-		Operation:    OpCreate,
-		ClaimName:    "claim-session-2",
-		SandboxRef:   "sandbox-1",
-		HasSlotID:    true,
-		SandboxPhase: PhaseIdle, // first slot: phase mirror has not yet been patched
-		ExistingClaims: []ExistingClaim{
-			{Name: "claim-session-1", Status: ClaimBound},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Decide: %v", err)
-	}
-	if !d.Allowed {
-		t.Errorf("CREATE of a slot-bearing claim must be admitted regardless of siblings: %v", d)
-	}
-}
-
-// spec: §5.2 — the first slot reservation transitions the Sandbox
-// from idle to slot_active. The phase patch is the SSA mirror of the
-// Redis counter and lands after the SandboxClaim CREATE, so the
-// webhook must admit the first slot-bearing claim while the phase
-// still reads idle. The slot-counter (not the webhook) enforces the
-// maxConcurrent cap.
-func TestCreateAdmitsFirstSlotClaimWithIdlePhase(t *testing.T) {
-	d, err := Decide(Request{
-		Operation:    OpCreate,
-		ClaimName:    "claim-session-1",
-		SandboxRef:   "sandbox-1",
-		HasSlotID:    true,
-		SandboxPhase: PhaseIdle,
-	})
-	if err != nil {
-		t.Fatalf("Decide: %v", err)
-	}
-	if !d.Allowed {
-		t.Errorf("first slot-bearing claim against idle Sandbox must be admitted: %v", d)
-	}
-}
-
-// spec: §4.6.1 — a session-mode (non-slot) duplicate must still be
-// rejected. HasSlotID=false leaves the original session-mode rule in
-// force.
-func TestCreateRejectsSessionDuplicateEvenWithSlotIDFlagDefault(t *testing.T) {
+// TestCreateRejectsConcurrentClaimWithNoExemption is the proposal 0002
+// regression: per-pod uniqueness has no concurrency exemption. A pool
+// with maxConcurrentSessions > 1 multiplexes its sessions onto the
+// single per-pod claim (§5.2), so a second non-terminal claim for the
+// same Sandbox is a duplicate regardless of any slot marker. The guard
+// reads no phase and accepts no slot signal. spec: §4.6.1, §5.2.
+func TestCreateRejectsConcurrentClaimWithNoExemption(t *testing.T) {
 	d, err := Decide(Request{
 		Operation:  OpCreate,
-		ClaimName:  "claim-2",
+		ClaimName:  "claim-pod-2",
 		SandboxRef: "sandbox-1",
-		HasSlotID:  false,
 		ExistingClaims: []ExistingClaim{
-			{Name: "claim-1", Status: ClaimBound},
+			{Name: "claim-pod-1", Status: ClaimBound},
 		},
 	})
 	if err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
 	if d.Allowed {
-		t.Errorf("session-mode duplicate must still be rejected when HasSlotID=false")
+		t.Errorf("a second non-terminal claim must be rejected with no concurrency exemption, got %v", d)
+	}
+	if d.Code != 403 {
+		t.Errorf("Code: want 403, got %d", d.Code)
 	}
 }
 
-func TestPatchAdmitsWhenSandboxClaimed(t *testing.T) {
+// spec: §4.6.1 — the first non-terminal sibling short-circuits the
+// rejection even when terminal siblings precede it in the list.
+func TestCreateRejectsWhenAnySiblingIsNonTerminal(t *testing.T) {
 	d, err := Decide(Request{
-		Operation:    OpPatch,
-		ClaimName:    "claim-1",
-		SandboxRef:   "sandbox-1",
-		SandboxPhase: PhaseClaimed,
+		Operation:  OpCreate,
+		ClaimName:  "claim-pod-2",
+		SandboxRef: "sandbox-1",
+		ExistingClaims: []ExistingClaim{
+			{Name: "claim-pod-released", Status: ClaimReleased},
+			{Name: "claim-pod-live", Status: ClaimRecycling},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
-	if !d.Allowed {
-		t.Errorf("PATCH with sandbox in claimed should be allowed, got %v", d)
+	if d.Allowed {
+		t.Errorf("a non-terminal sibling among terminal ones must reject the CREATE, got %v", d)
 	}
 }
 
-func TestPutAdmitsWhenSandboxClaimed(t *testing.T) {
-	d, err := Decide(Request{
-		Operation:    OpPut,
-		ClaimName:    "claim-1",
-		SandboxRef:   "sandbox-1",
-		SandboxPhase: PhaseClaimed,
-	})
-	if err != nil {
-		t.Fatalf("Decide: %v", err)
-	}
-	if !d.Allowed {
-		t.Errorf("PUT with sandbox in claimed should be allowed, got %v", d)
-	}
-}
-
-// TestPatchRejectsWhenSandboxNotClaimed covers the §4.6.1 line-384
-// stale-write rejection: a PATCH/PUT is rejected when the referenced
-// Sandbox is in a phase where the pod no longer holds an active claim —
-// it has been released back to the pool (idle/draining), reached a
-// terminal state (terminated/failed), or never reached claim (warming).
-func TestPatchRejectsWhenSandboxNotClaimed(t *testing.T) {
-	stalePhases := []SandboxPhase{
-		PhaseIdle, PhaseDraining,
-		PhaseTerminated, PhaseFailed, PhaseWarming, PhaseSDKConnecting,
-	}
-	for _, p := range stalePhases {
-		t.Run(string(p), func(t *testing.T) {
-			d, err := Decide(Request{
-				Operation:    OpPatch,
-				ClaimName:    "claim-1",
-				SandboxRef:   "sandbox-1",
-				SandboxPhase: p,
-			})
-			if err != nil {
-				t.Fatalf("Decide: %v", err)
-			}
-			if d.Allowed {
-				t.Errorf("PATCH with sandbox in %q should be rejected", p)
-			}
-			if d.Code != 403 {
-				t.Errorf("Code: want 403, got %d", d.Code)
-			}
-			if !strings.Contains(d.Reason, "SandboxClaim stale: referenced Sandbox sandbox-1") {
-				t.Errorf("Reason does not match spec §4.6.1 wording: %q", d.Reason)
-			}
-			if !strings.Contains(d.Reason, string(p)) {
-				t.Errorf("Reason should embed the observed phase %q: %q", p, d.Reason)
-			}
-		})
-	}
-}
-
-// TestPatchAdmitsSessionServingPhases is the F-6.2.7 regression: once the
-// §6.2 lines 83-94 setup chain is implemented, a PATCH/PUT to a `bound`
-// SandboxClaim whose Sandbox has advanced into a session-serving phase
-// must be admitted, not rejected as stale. Spec §4.6.3 line 591 states a
-// `bound` claim coexists with the Sandbox in `claimed` or the
-// claim→setup→attached chain. spec: §4.6.1 line 384, §4.6.3 line 591,
-// §6.2 lines 83-94.
-func TestPatchAdmitsSessionServingPhases_spec_6_2(t *testing.T) {
-	boundPhases := []SandboxPhase{
-		PhaseClaimed, PhaseReceivingUploads, PhaseFinalizingWorkspace,
-		PhaseRunningSetup, PhaseStartingSession, PhaseAttached, PhaseSlotActive,
-	}
-	for _, op := range []Operation{OpPatch, OpPut} {
-		for _, p := range boundPhases {
-			t.Run(string(op)+"/"+string(p), func(t *testing.T) {
-				d, err := Decide(Request{
-					Operation:    op,
-					ClaimName:    "claim-1",
-					SandboxRef:   "sandbox-1",
-					SandboxPhase: p,
-				})
-				if err != nil {
-					t.Fatalf("Decide: %v", err)
-				}
-				if !d.Allowed {
-					t.Errorf("%s with sandbox in session-serving phase %q should be allowed, got %v", op, p, d)
-				}
-				if d.Code != 200 {
-					t.Errorf("Code: want 200, got %d", d.Code)
-				}
-			})
-		}
-	}
-}
-
-func TestPatchAdmitsClaimUnderDeletion(t *testing.T) {
-	// A SandboxClaim being deleted is exempt from the staleness rule
-	// even when its referenced Sandbox is gone or past the claimed
-	// phase, so a finalizer-removal write can release the deletion.
-	for _, op := range []Operation{OpPatch, OpPut} {
-		t.Run(string(op), func(t *testing.T) {
-			d, err := Decide(Request{
-				Operation:     op,
-				ClaimName:     "claim-1",
-				SandboxRef:    "sandbox-gone",
-				SandboxPhase:  "",
-				UnderDeletion: true,
-			})
-			if err != nil {
-				t.Fatalf("Decide: %v", err)
-			}
-			if !d.Allowed {
-				t.Errorf("%s on a claim under deletion should be allowed, got %v", op, d)
-			}
-			if d.Code != 200 {
-				t.Errorf("Code: want 200, got %d", d.Code)
-			}
-		})
-	}
-}
-
+// spec: §4.6.1 — SandboxRef is required input; an empty ref is a
+// programming error surfaced as ErrMissingSandboxRef rather than a
+// rule-based rejection.
 func TestDecideRejectsMissingSandboxRef(t *testing.T) {
-	_, err := Decide(Request{Operation: OpCreate, ClaimName: "claim-1"})
+	_, err := Decide(Request{Operation: OpCreate, ClaimName: "claim-pod-1"})
 	if !errors.Is(err, ErrMissingSandboxRef) {
 		t.Errorf("expected ErrMissingSandboxRef, got %v", err)
 	}
 }
 
-func TestDecideRejectsUnsupportedOperation(t *testing.T) {
-	_, err := Decide(Request{Operation: "DELETE", SandboxRef: "sandbox-1"})
-	if err == nil {
-		t.Errorf("unsupported operation should return an error")
+// TestDecideRejectsNonCreateOperation guards the CREATE-only contract:
+// the webhook is registered on CREATE only, so any other operation
+// reaching Decide is a programming error. spec: §4.6.1 — PATCH/PUT are
+// admitted without inspection and are not registered with the webhook.
+func TestDecideRejectsNonCreateOperation(t *testing.T) {
+	for _, op := range []Operation{"PATCH", "PUT", "UPDATE", "DELETE", ""} {
+		t.Run(string(op), func(t *testing.T) {
+			_, err := Decide(Request{Operation: op, SandboxRef: "sandbox-1"})
+			if err == nil {
+				t.Errorf("operation %q should return an error from a CREATE-only guard", op)
+			}
+		})
 	}
 }
 
@@ -305,6 +170,7 @@ func TestSandboxClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
 	}
 }
 
+// spec: §4.6.3 — only released and failed are terminal binding states.
 func TestClaimStatusIsTerminal(t *testing.T) {
 	cases := map[ClaimStatus]bool{
 		ClaimBound:     false,
