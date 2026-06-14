@@ -6507,17 +6507,15 @@ func main() {
 		// default) instead of expiring every session at the single baked
 		// default. F-11.3.3.
 		WithSessionAgeResolver(sessionage.New(runtimes, pools)).
-		// spec: §11.3 line 199 / §6.2 lines 273-300 — the idle sweep
-		// expires a `running` session idle longer than its effective
-		// `maxIdleTimeSeconds`, honouring the per-runtime
-		// `limits.maxIdleTimeSeconds` and the §27.6 playground idle
-		// override. F-11.3.7.
-		WithIdleResolver(sessionidle.NewResolver(runtimes)).
-		// spec: §9.2 line 102 / §6.2 `input_required` row — pause the idle
-		// timer while a session waits on a pending elicitation or
-		// request_input so a session blocked on a human or peer is not
-		// reaped as idle. F-9.2.15.
-		WithIdlePauseChecker(sessionidle.NewPauseChecker(interactions, inputWaits))
+		// spec: §11.3 line 199 / §6.2 (maxClientIdleSeconds clock) — the
+		// idle sweep expires a clock-running session idle longer than its
+		// effective `maxClientIdleSeconds`, honouring the per-runtime /
+		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the pool's
+		// effective `maxSessionAgeSeconds`) and the §27.6 playground idle
+		// override. The clock runs in `running`, `input_required`, and
+		// `awaiting_client_action`; its pause table lives in the watchdog
+		// sweep, so no separate pause predicate is wired. F-11.3.7.
+		WithIdleResolver(sessionidle.NewResolver(runtimes, pools))
 	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the
