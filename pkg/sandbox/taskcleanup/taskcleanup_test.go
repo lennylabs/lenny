@@ -9,8 +9,9 @@ import (
 )
 
 // base returns an Inputs with a successful scrub, generous limits, and a
-// schedulable host: the canonical "reuse" case. Each test mutates the
-// fields relevant to its §6.2 edge.
+// schedulable host: the canonical non-preConnect "reuse" case, which now
+// holds the pod in `reserved`. Each test mutates the fields relevant to
+// its §6.2 / §6.39 edge.
 func base() Inputs {
 	return Inputs{
 		PreConnect:          false,
@@ -56,19 +57,43 @@ func TestDecideSpecEdges(t *testing.T) {
 		specLine    string
 	}{
 		{
-			name:       "line147_non_preconnect_reuse_idle",
+			name:       "non_preconnect_reuse_reserved",
 			mutate:     func(i *Inputs) {},
-			wantPhase:  state.Idle,
+			wantPhase:  state.Reserved,
 			wantReason: ReasonReuse,
-			specLine:   "147",
+			specLine:   "§5.2 line 449 (non-preConnect reserve reuse)",
 		},
 		{
-			name:        "line148_non_preconnect_scrub_warning_idle",
+			name:        "non_preconnect_scrub_warning_reserved",
 			mutate:      func(i *Inputs) { i.Scrub = ScrubFailed },
-			wantPhase:   state.Idle,
+			wantPhase:   state.Reserved,
 			wantWarning: true,
 			wantReason:  ReasonReuse,
-			specLine:    "148",
+			specLine:    "§5.2 (warn-policy reserve reuse)",
+		},
+		{
+			name: "non_preconnect_unschedulable_retire",
+			mutate: func(i *Inputs) {
+				i.PreConnect = false
+				i.HostSchedulable = false
+			},
+			wantPhase:  state.Draining,
+			wantRetire: true,
+			wantReason: ReasonHostUnschedulable,
+			specLine:   "§6.39 (non-preConnect cordon retire)",
+		},
+		{
+			name: "non_preconnect_warn_failed_unschedulable_retire_warning",
+			mutate: func(i *Inputs) {
+				i.PreConnect = false
+				i.HostSchedulable = false
+				i.Scrub = ScrubFailed
+			},
+			wantPhase:   state.Draining,
+			wantWarning: true,
+			wantRetire:  true,
+			wantReason:  ReasonHostUnschedulable,
+			specLine:    "§6.39 (non-preConnect cordon retire, warn)",
 		},
 		{
 			name: "line149_scrub_failures_exhausted_draining",
@@ -185,12 +210,12 @@ func TestDecideSpecEdges(t *testing.T) {
 				t.Errorf("spec line %s: Reason = %q, want %q", tc.specLine, got.Reason, tc.wantReason)
 			}
 			// Every recycle disposition is one of the coarse §6.2 occupancy
-			// phases the recycle edges target (re-warm, reserve/idle reuse,
-			// or retire). The former task_cleanup source phase no longer
-			// exists (spec §6.2, §6.37); the disposition driver selects the
-			// NextPhase directly.
+			// phases the recycle edges target (re-warm, reserve reuse, or
+			// retire). The former task_cleanup source phase no longer exists
+			// (spec §6.2, §6.37); the disposition driver selects the NextPhase
+			// directly.
 			switch got.NextPhase {
-			case state.SDKConnecting, state.Idle, state.Draining, state.Failed:
+			case state.SDKConnecting, state.Reserved, state.Draining, state.Failed:
 			default:
 				t.Errorf("spec line %s: disposition NextPhase %q is not a coarse §6.2 recycle outcome", tc.specLine, got.NextPhase)
 			}
@@ -254,16 +279,19 @@ func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	}
 }
 
-// TestDecideHostUnschedulableOnlyAffectsPreConnect verifies the line 181
-// fail-safe applies only to preConnect pods: a non-preConnect pod on a
-// cordoned node still returns to idle (it never re-warms), while a
-// preConnect pod drains.
-func TestDecideHostUnschedulableOnlyAffectsPreConnect(t *testing.T) {
+// TestDecideHostUnschedulableRetiresBothPoolTypes verifies the §6.39
+// host-node schedulability retire applies to both preConnect and
+// non-preConnect pools: a recycling pod on a cordoned node drains rather
+// than reserving (non-preConnect) or re-warming (preConnect), because
+// either reuse disposition would hand the next session a
+// soon-to-be-evicted pod.
+// spec: §6.39 (host-node schedulability retire on both pool types).
+func TestDecideHostUnschedulableRetiresBothPoolTypes(t *testing.T) {
 	nonPre := base()
 	nonPre.PreConnect = false
 	nonPre.HostSchedulable = false
-	if got := Decide(nonPre); got.NextPhase != state.Idle {
-		t.Errorf("non-preConnect cordoned: NextPhase = %q, want idle", got.NextPhase)
+	if got := Decide(nonPre); got.NextPhase != state.Draining || got.Reason != ReasonHostUnschedulable {
+		t.Errorf("non-preConnect cordoned: got %q/%q, want draining/host_unschedulable", got.NextPhase, got.Reason)
 	}
 
 	pre := base()
@@ -271,6 +299,18 @@ func TestDecideHostUnschedulableOnlyAffectsPreConnect(t *testing.T) {
 	pre.HostSchedulable = false
 	if got := Decide(pre); got.NextPhase != state.Draining || got.Reason != ReasonHostUnschedulable {
 		t.Errorf("preConnect cordoned: got %q/%q, want draining/host_unschedulable", got.NextPhase, got.Reason)
+	}
+
+	// A schedulable host re-establishes reuse: non-preConnect reserves,
+	// preConnect re-warms.
+	okNonPre := base()
+	if got := Decide(okNonPre); got.NextPhase != state.Reserved || got.Retire {
+		t.Errorf("non-preConnect schedulable: got %q retire=%v, want reserved reuse", got.NextPhase, got.Retire)
+	}
+	okPre := base()
+	okPre.PreConnect = true
+	if got := Decide(okPre); got.NextPhase != state.SDKConnecting || got.Retire {
+		t.Errorf("preConnect schedulable: got %q retire=%v, want sdk_connecting reuse", got.NextPhase, got.Retire)
 	}
 }
 
@@ -282,8 +322,8 @@ func TestDecideMaxScrubFailuresDefault(t *testing.T) {
 	in.Scrub = ScrubFailed
 	in.ScrubFailureCount = 2
 	in.MaxScrubFailures = 0 // unset -> default 3
-	if got := Decide(in); got.NextPhase != state.Idle {
-		t.Errorf("2/default-3 failures: NextPhase = %q, want idle [scrub_warning]", got.NextPhase)
+	if got := Decide(in); got.NextPhase != state.Reserved {
+		t.Errorf("2/default-3 failures: NextPhase = %q, want reserved [scrub_warning]", got.NextPhase)
 	}
 	// 3 failures with the default-3 limit: exhausted -> draining.
 	in.ScrubFailureCount = 3
@@ -299,19 +339,18 @@ func TestDecideNoUptimeCapWhenUnset(t *testing.T) {
 	in := base()
 	in.PodUptimeSeconds = 1 << 40
 	in.MaxPodUptimeSeconds = 0
-	if got := Decide(in); got.NextPhase != state.Idle || got.Retire {
-		t.Errorf("no uptime cap: got %q retire=%v, want idle reuse", got.NextPhase, got.Retire)
+	if got := Decide(in); got.NextPhase != state.Reserved || got.Retire {
+		t.Errorf("no uptime cap: got %q retire=%v, want reserved reuse", got.NextPhase, got.Retire)
 	}
 }
 
-// TestDecideCancelledScrubReusesThroughTaskCleanup verifies the §6.2
-// line 146 semantics at the disposition layer: a cancelled task that ran
-// its scrub successfully and is under its limits reuses the pod, exactly
-// like a completed task. The cancelled → task_cleanup edge itself is
-// asserted in the state package.
-func TestDecideCancelledScrubReusesThroughTaskCleanup(t *testing.T) {
-	in := base() // a cancelled task's scrub outcome feeds the same branch
-	if got := Decide(in); got.NextPhase != state.Idle {
-		t.Fatalf("cancelled-then-scrubbed reuse: NextPhase = %q, want idle", got.NextPhase)
+// TestDecideScrubbedReuseReserves verifies that a recycling pod that ran
+// its whole-pod scrub successfully and is under its limits reuses the pod
+// by reserving it for the pinned tenant (non-preConnect path).
+// spec: §5.2 (recycle lifecycle, line 449), §6.2 (recycle disposition).
+func TestDecideScrubbedReuseReserves(t *testing.T) {
+	in := base()
+	if got := Decide(in); got.NextPhase != state.Reserved {
+		t.Fatalf("scrubbed reuse: NextPhase = %q, want reserved", got.NextPhase)
 	}
 }

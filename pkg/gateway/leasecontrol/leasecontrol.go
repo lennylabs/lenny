@@ -427,6 +427,14 @@ type Service struct {
 	// CallConnectorTool returning codes.Unimplemented. F-9.1.2.
 	connectorTools ConnectorToolService
 
+	// scrubReports handles the §4.7 ReportSessionScrub / ReportPodScrub
+	// side effects: the sessionsServed and scrubFailureCount recycle-counter
+	// writes, the unhealthy-threshold drain ledger, and the §3.4 / §6.39
+	// recycle disposition that drives the claim binding-state patches. Nil
+	// leaves both scrub-report RPCs returning codes.Unimplemented (the
+	// §8.6-only GatewayControl deployment). spec: §4.7; §3.4; §6.39.
+	scrubReports ScrubReportService
+
 	// treeGranter bridges a §8.6 GRANTED token-budget extension onto the
 	// §8.2 per-tree delegation budget counter so the next
 	// `lenny/delegate_task` admission is gated against the expanded token
@@ -691,6 +699,14 @@ type Options struct {
 	// Nil leaves the three RPCs returning codes.Unimplemented. F-9.1.2.
 	ConnectorTools ConnectorToolService
 
+	// ScrubReports backs the §4.7 ReportSessionScrub / ReportPodScrub RPCs:
+	// the adapter's per-slot and whole-pod scrub reports reach the gateway
+	// recycle-counter writes, the unhealthy-threshold drain ledger, and the
+	// §3.4 / §6.39 recycle disposition through it. Nil leaves both RPCs
+	// returning codes.Unimplemented (the §8.6-only GatewayControl
+	// deployment). spec: §4.7; §3.4; §6.39.
+	ScrubReports ScrubReportService
+
 	// TreeBudget bridges a §8.6 GRANTED token-budget extension onto the
 	// §8.2 per-tree delegation budget counter (*treebudget.Reserver) so a
 	// post-grant `lenny/delegate_task` admission observes the raised token
@@ -737,6 +753,7 @@ func NewService(opts Options) (*Service, error) {
 	svc.defaultAutoMaxPerMinute = opts.DefaultAutoMaxPerMinute
 	svc.platformTools = opts.PlatformTools
 	svc.connectorTools = opts.ConnectorTools
+	svc.scrubReports = opts.ScrubReports
 	svc.treeGranter = opts.TreeBudget
 	return svc, nil
 }

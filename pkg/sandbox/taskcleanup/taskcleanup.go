@@ -1,26 +1,38 @@
 // SPDX-License-Identifier: MIT
 
-// Package taskcleanup implements the §6.2 task_cleanup disposition
-// branching (spec: spec/06_warm-pod-model.md lines 142-188). After a
-// task-mode pod finishes (or its task is cancelled) the pod enters
-// task_cleanup, runs the credential purge, cleanupCommands, and the
-// Lenny scrub, and then must advance to exactly one of:
+// Package taskcleanup implements the §6.2 recycle disposition branching
+// for a recycling session-mode pod (spec: spec/06_warm-pod-model.md
+// §6.2 recycle disposition, §6.39 host-node schedulability retire). When
+// a recycling pod's occupancy reaches zero the gateway patches the claim
+// to `recycling`, the adapter runs the credential purge, cleanupCommands,
+// and the Lenny whole-pod scrub and reports the binary outcome via
+// ReportPodScrub, and the disposition must advance the pod to exactly one
+// of:
 //
-//	idle                       (non-preConnect, scrub ok, not retiring)
-//	idle [scrub_warning]       (non-preConnect, scrub failed under warn)
-//	sdk_connecting             (preConnect, scrub ok, schedulable host)
-//	sdk_connecting [scrub_warning] (preConnect, warn-failed, schedulable)
-//	draining                   (a retirement limit reached, or cordoned host)
-//	draining [scrub_warning]   (preConnect, warn-failed, cordoned host)
-//	failed                     (onCleanupFailure: fail)
+//	reserved                       (non-preConnect, scrub ok, schedulable host, not retiring)
+//	reserved [scrub_warning]       (non-preConnect, warn-failed, schedulable host)
+//	sdk_connecting                 (preConnect, scrub ok, schedulable host)
+//	sdk_connecting [scrub_warning] (preConnect, warn-failed, schedulable host)
+//	draining                       (a retirement limit reached, or cordoned host)
+//	draining [scrub_warning]       (warn-failed on a cordoned host)
+//	failed                         (onScrubFailure: fail)
+//
+// The non-preConnect reuse path advances to `reserved` because, with the
+// per-pod occupancy claim, a successfully scrubbed pod is held for its
+// pinned tenant through the claim's `reserved` hold window rather than
+// returned straight to idle (spec: §5.2 recycle lifecycle, line 449). The
+// host-node-schedulability retire (§6.39) applies to BOTH pool types: a
+// recycling pod on a cordoned host node is retired rather than held in
+// `reserved` or re-warmed, because either disposition would hand the next
+// session a soon-to-be-evicted pod.
 //
 // Decide is a pure function so the branch table can be exhaustively
 // unit-tested against the spec edges. The driver that supplies the
 // inputs (the scrub outcome, the cumulative counters, and the
 // lenny.dev/host-schedulable pod label read at the moment of the
-// transition per spec line 181) and writes the resulting phase is the
-// gateway task path; this package holds no Kubernetes client and emits
-// no metrics, it only decides.
+// transition per §6.39) and writes the resulting binding state is the
+// gateway scrub-report handler; this package holds no Kubernetes client
+// and emits no metrics, it only decides.
 package taskcleanup
 
 import "github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -105,8 +117,12 @@ type Inputs struct {
 
 	// HostSchedulable reflects the lenny.dev/host-schedulable pod label:
 	// true only when the label reads "true". An absent or "false" label
-	// is fail-safe-unschedulable, so the caller passes false. spec: §6.2
-	// line 181 — "absent, which is treated as unschedulable".
+	// is fail-safe-unschedulable, so the caller passes false. The
+	// host-node-schedulability retire gates BOTH the preConnect re-warm
+	// reuse and the non-preConnect `reserved` reuse: a recycling pod on a
+	// cordoned host is retired rather than held or re-warmed. spec: §6.39
+	// ("absent, which is treated as unschedulable"; the trigger applies to
+	// non-preConnect pools as well).
 	HostSchedulable bool
 }
 
@@ -133,9 +149,12 @@ const (
 	// ReasonMaxUptimeExceeded: pod uptime reached maxPodUptimeSeconds.
 	// spec: §6.2 line 151.
 	ReasonMaxUptimeExceeded RetireReason = "max_uptime_exceeded"
-	// ReasonHostUnschedulable: a preConnect pod cannot re-warm because
-	// its host node is cordoned, so it drains instead of producing a
-	// soon-to-be-evicted idle pod. spec: §6.2 lines 152-153, 181.
+	// ReasonHostUnschedulable: the pod's host node is cordoned, so the
+	// recycle disposition retires it instead of producing a
+	// soon-to-be-evicted reserved or re-warmed pod. The trigger applies to
+	// both preConnect (re-warm) and non-preConnect (reserve) reuse paths.
+	// spec: §6.2 (recycle disposition), §6.39 (host-node schedulability
+	// retire).
 	ReasonHostUnschedulable RetireReason = "host_unschedulable"
 )
 
@@ -150,13 +169,13 @@ type Disposition struct {
 	NextPhase state.State
 
 	// ScrubWarning is true when the pod carries the scrub_warning
-	// annotation into NextPhase. It is set only on the reuse and
-	// cordon-drain paths under a warn-policy scrub failure (spec: §6.2
-	// lines 148/153/155, and line 183 — the annotation persists through
-	// the re-warm). The limit-based retirement drains (lines 149-151)
-	// and the fail-policy termination (line 156) clear it: the pod is
-	// leaving the pool for cause, so the warning is superseded and the
-	// spec brackets none of those edges with [scrub_warning].
+	// annotation into NextPhase. It is set only on the reuse (reserve or
+	// re-warm) and cordon-drain paths under a warn-policy scrub failure
+	// (spec: §6.2 recycle disposition — the annotation persists through the
+	// reserve and the re-warm). The limit-based retirement drains and the
+	// fail-policy termination clear it: the pod is leaving the pool for
+	// cause, so the warning is superseded and the spec brackets none of
+	// those edges with [scrub_warning].
 	ScrubWarning bool
 
 	// Retire is true when NextPhase removes the pod from the warm pool
@@ -167,13 +186,17 @@ type Disposition struct {
 	Reason RetireReason
 }
 
-// Decide maps the task_cleanup inputs to the single §6.2 disposition.
-// The precedence is: pending (wait) → fail-policy termination → scrub
-// exhaustion → count/uptime retirement → host-schedulable re-warm gate →
-// reuse. Higher-precedence retirement reasons short-circuit lower ones,
-// so a pod that has both failed its scrub (under warn, not exhausted)
-// and reached recycle.maxSessionsPerPod retires on session_count_limit
-// rather than re-entering the pool.
+// Decide maps the recycle-disposition inputs to the single §6.2
+// disposition. The precedence is: pending (wait) → fail-policy
+// termination → scrub exhaustion → count/uptime retirement →
+// host-schedulability retire gate → reuse (preConnect re-warm or
+// non-preConnect reserve). Higher-precedence retirement reasons
+// short-circuit lower ones, so a pod that has both failed its scrub
+// (under warn, not exhausted) and reached recycle.maxSessionsPerPod
+// retires on session_count_limit rather than re-entering the pool. The
+// host-schedulability retire (§6.39) sits below the limit retirements but
+// above every reuse path, so it preempts both the preConnect re-warm and
+// the non-preConnect reserve when the host node is cordoned.
 func Decide(in Inputs) Disposition {
 	if in.Scrub == ScrubPending {
 		return Disposition{} // Ready == false; the driver waits.
@@ -234,23 +257,15 @@ func Decide(in Inputs) Disposition {
 		}
 	}
 
-	// Not retiring on a limit. Non-preConnect pods return straight to
-	// idle (lines 147/148) and never re-warm, so node schedulability
-	// does not gate them.
-	if !in.PreConnect {
-		return Disposition{
-			Ready:        true,
-			NextPhase:    state.Idle,
-			ScrubWarning: warned,
-			Reason:       ReasonReuse,
-		}
-	}
-
-	// preConnect pods must re-warm the SDK before returning to idle, and
-	// re-warm only on a schedulable host (line 181 fail-safe): a cordoned
-	// host drains the pod instead of handing the next claim a
-	// soon-to-be-evicted idle pod (lines 152-153). The scrub_warning
-	// annotation persists through both the cordon-drain and the re-warm.
+	// Not retiring on a limit. §6.39 host-node schedulability retire: a
+	// recycling pod on a cordoned host is retired rather than reused, on
+	// BOTH preConnect and non-preConnect pools. Holding a non-preConnect
+	// pod in `reserved` or re-warming a preConnect pod on a node whose
+	// eviction is imminent would hand the next session a soon-to-be-evicted
+	// pod, so the disposition drains instead. The scrub_warning annotation
+	// persists onto the cordon-drain. An absent or "false" label reads as
+	// unschedulable (the caller passes HostSchedulable false), so this is
+	// fail-safe.
 	if !in.HostSchedulable {
 		return Disposition{
 			Ready:        true,
@@ -261,7 +276,25 @@ func Decide(in Inputs) Disposition {
 		}
 	}
 
-	// Lines 154/155: re-warm the SDK before idle.
+	// Reuse on a schedulable host. A non-preConnect pod is held for its
+	// pinned tenant through the claim's `reserved` hold window: with the
+	// per-pod occupancy claim a scrubbed pod is not returned straight to
+	// idle but reserved so a back-to-back same-tenant session rebinds
+	// without re-acquiring the pod (spec: §5.2 recycle lifecycle, line 449).
+	if !in.PreConnect {
+		return Disposition{
+			Ready:        true,
+			NextPhase:    state.Reserved,
+			ScrubWarning: warned,
+			Reason:       ReasonReuse,
+		}
+	}
+
+	// A preConnect pod re-warms the SDK before the claim enters `reserved`
+	// (the re-warm leg projects sdk_connecting); the disposition selects
+	// sdk_connecting and the gateway stamps rewarmStartedAt to anchor the
+	// re-warm watchdog. The scrub_warning annotation persists through the
+	// re-warm.
 	return Disposition{
 		Ready:        true,
 		NextPhase:    state.SDKConnecting,
