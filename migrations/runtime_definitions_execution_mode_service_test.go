@@ -25,16 +25,26 @@ const pgCheckViolation = "23514"
 // execution_mode CHECK to the (session, service) set, adds the
 // agent_pod_state recycle counters, drops the retired
 // sandbox_warm_pools.concurrency_style column (coupled with the
-// pkg/gateway/poolstore ConcurrencyStyle field removal in the same change)
-// behind a §10.5 Phase 3 DO $$ gate whose un-migrated predicate keys off the
-// out-of-vocabulary concurrency_style set so it never aborts on the legitimate
-// 'workspace'/'stateless' values the mode collapse maps forward, and renames
-// the task_policy JSONB columns to session_policy on both
+// pkg/gateway/poolstore ConcurrencyStyle field removal in the same change),
+// and renames the task_policy JSONB columns to session_policy on both
 // registries (the persistence layer now writes the §5.2 sessionPolicy
 // mirror). The down reverses each. The migration issues no COMMENT ON
 // statements: the stale mode-enum documentation lives in the '--' source
 // comments of 0033 and 0084, which are re-keyed in place
 // (TestStaleModeCommentsReKeyed_spec_5_2_12_6).
+//
+// The concurrency_style drop carries the §10.5 `-- phase3: not-required`
+// marker rather than a DO $$ un-migrated-rows gate, because the §5.2 mode
+// collapse re-expresses the former 'workspace'/'stateless' concurrency in pool
+// configuration (sessionPolicy.maxConcurrentSessions and execution_mode =
+// 'service') and stages no forward-data backfill, and sandbox_warm_pools is
+// empty in every pre-deployment install. A gate that counted un-migrated rows
+// would have no rows to count, and a gate re-keyed to pass on the
+// 'workspace'/'stateless' values (the only values a pre-collapse pool can
+// carry) would be a no-op against the only un-migrated data that can exist,
+// defeating the §10.5 fail-closed invariant rather than satisfying it. The
+// marker is the same empty-table opt-out migrations 0118 and 0129 use, and
+// scripts/lint-migrations.sh Pass 5 exempts a marked file from the gate.
 //
 // spec: 5.2 (execution modes), 12.6 (agent_pod_state schema)
 func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
@@ -50,29 +60,28 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"scrub_failure_count INTEGER",
 		"DROP COLUMN IF EXISTS concurrency_style",
 		"RENAME COLUMN task_policy TO session_policy",
-		// §10.5 line 417: the Phase 3 column drop is fronted by a DO $$
-		// preflight gate and declares the covering partial index in a
-		// -- gate-index: comment.
-		"DO $$",
-		"gate-index:",
+		// §10.5 line 430: the Phase 3 column drop carries the empty-table
+		// opt-out marker that exempts it from the un-migrated-rows gate.
+		"phase3: not-required",
 	} {
 		if !strings.Contains(ups, want) {
 			t.Errorf("0167 up missing %q", want)
 		}
 	}
-	// The Phase 3 gate's un-migrated predicate must match the proposal's data
-	// model: the mode collapse maps every known concurrency_style value
-	// ('', 'workspace', 'stateless') forward, so the gate must key off the
-	// out-of-vocabulary set and must NOT abort on the legitimate forward-mapped
-	// values. A gate keyed on `concurrency_style <> ''` would fence the
-	// proposal-mandated §5.2 CHECK re-key and §12.6 counter additions behind a
-	// precondition the proposal never establishes (legitimate pre-collapse rows
-	// necessarily carry 'stateless' or 'workspace').
-	if !strings.Contains(ups, "NOT IN ('', 'workspace', 'stateless')") {
-		t.Error("0167 up gate must count rows outside the ('', 'workspace', 'stateless') set the mode collapse maps forward")
+	// The concurrency_style drop must not carry a contrived DO $$ gate. The
+	// §5.2 mode collapse stages no forward-data backfill, so a gate over live
+	// data has no data to gate; re-keying it to pass on the only values a
+	// pre-collapse pool can carry ('workspace'/'stateless') would defeat the
+	// §10.5 fail-closed invariant rather than satisfy it. The empty-table
+	// marker is the §10.5-consistent treatment.
+	if strings.Contains(ups, "DO $$") {
+		t.Error("0167 up must not front the concurrency_style drop with a DO $$ gate; an empty-table reshape uses the -- phase3: not-required marker (no live data to migrate forward)")
+	}
+	if strings.Contains(ups, "NOT IN ('', 'workspace', 'stateless')") {
+		t.Error("0167 up must not gate on the out-of-vocabulary concurrency_style set; that predicate passes on the only un-migrated values that can exist ('workspace'/'stateless'), defeating the §10.5 gate")
 	}
 	if strings.Contains(ups, "concurrency_style <> ''") {
-		t.Error("0167 up gate must not abort on the legitimate 'stateless'/'workspace' values the §5.2 mode collapse maps forward")
+		t.Error("0167 up must not gate on concurrency_style <> ''; there is no forward-data backfill ahead of the drop, so no fail-closed gate is satisfiable — use the empty-table marker")
 	}
 	// max_concurrent survives as the service-mode per-pod bound: the up must
 	// not drop it.
@@ -335,27 +344,31 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 	}
 }
 
-// TestExecutionModeServiceGatePredicate_spec_5_2_10_5 applies the migration
-// chain through 0040 (which adds concurrency_style), populates
-// sandbox_warm_pools with rows carrying each legitimate pre-collapse value the
-// §5.2 mode collapse maps forward (”, 'workspace', 'stateless'), then applies
-// 0167 and asserts the §10.5 Phase 3 gate passes and drops the column. A second
-// run on a fresh database seeds an out-of-vocabulary value and asserts the gate
-// fails closed with a Phase 3 RAISE EXCEPTION, rolling back the whole 0167
-// up-file (the migration runner wraps it in one transaction) so the column
-// survives. This pins the corrected predicate: the gate must not abort on the
-// legitimate forward-mapped values, and it must abort on a value the collapse
-// cannot map.
+// TestExecutionModeServiceDropIsEmptyTableReshape_spec_5_2_10_5 pins the §10.5
+// treatment the concurrency_style drop carries: an empty-table reshape under the
+// `-- phase3: not-required` marker rather than a DO $$ un-migrated-rows gate. The
+// §5.2 mode collapse re-expresses the former 'workspace'/'stateless' concurrency
+// in pool configuration (sessionPolicy.maxConcurrentSessions and execution_mode =
+// 'service') and stages no forward-data backfill, and sandbox_warm_pools is empty
+// in every pre-deployment install, so there is no pool row to migrate forward.
+// The test applies the chain through 0040 (which adds concurrency_style), leaves
+// sandbox_warm_pools at its real pre-deployment state (no rows), applies 0167, and
+// asserts the column is dropped. A second subtest confirms the up-file carries no
+// DO $$ gate over concurrency_style: a gate keyed on the out-of-vocabulary set
+// would pass on the only values a pre-collapse pool can carry, and a gate keyed on
+// `concurrency_style <> ”` has no forward-data backfill ahead of it to satisfy,
+// so neither is a §10.5-consistent fail-closed gate. The empty-table marker is.
 //
-// diagnosis: a failure means migration 0167's Phase 3 gate predicate diverges
-// from the proposal's data model. If the populated-legitimate-values case
-// fails, the gate aborts on 'workspace'/'stateless' rows the mode collapse maps
-// forward and so fences the §5.2 CHECK re-key and §12.6 counter additions behind
-// a precondition the proposal never establishes. If the unknown-value case does
-// not abort, the fail-closed gate no longer guards an unmappable pool.
+// diagnosis: a failure means migration 0167's concurrency_style drop diverges
+// from its §10.5 treatment. If the empty-table apply fails, the drop did not run
+// against the table's real (empty) pre-deployment state. If the no-gate assertion
+// fails, the drop reintroduced a contrived DO $$ gate that either fences the
+// proposal-mandated §5.2 CHECK re-key and §12.6 counter additions on a populated
+// DB or passes on the only un-migrated values that can exist, neither of which is
+// the §10.5 fail-closed gate the marker correctly replaces.
 //
-// spec: 5.2 (execution modes), 10.5 (Phase 3 enforcement gate)
-func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
+// spec: 5.2 (execution modes), 10.5 (Phase 3 empty-table reshape)
+func TestExecutionModeServiceDropIsEmptyTableReshape_spec_5_2_10_5(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
 	}
@@ -372,58 +385,41 @@ func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
 		"0085_pool_task_policy.up.sql",
 	}
 
-	t.Run("gate passes on legitimate forward-mapped values", func(t *testing.T) {
+	t.Run("drop applies against the empty pre-deployment table", func(t *testing.T) {
 		pool, done := startGatePostgres(t, 15568)
 		defer done()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		applyMigrations(t, ctx, pool, preChain...)
-		// Every legitimate pre-collapse value the §5.2 mode collapse maps
-		// forward: '' (session), 'workspace' (session, maxConcurrentSessions > 1),
-		// and 'stateless' (service mode).
-		for name, style := range map[string]string{
-			"empty-pool":     "",
-			"workspace-pool": "workspace",
-			"stateless-pool": "stateless",
-		} {
-			insertPoolStyle(t, ctx, pool, name, style)
-		}
-		// 0167 applies cleanly: the gate does not abort on the forward-mapped
-		// values, and the column is dropped.
+		// sandbox_warm_pools is empty in every pre-deployment install: no pool
+		// row carries a concurrency_style value to migrate forward. 0167 applies
+		// as an empty-table reshape and drops the column.
 		applyMigrations(t, ctx, pool, "0167_runtime_definitions_execution_mode_service.up.sql")
 		if columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-			t.Error("0167 must drop concurrency_style when only forward-mapped values are present")
+			t.Error("0167 must drop concurrency_style as an empty-table reshape")
 		}
 	})
 
-	t.Run("gate fails closed on an unmappable value", func(t *testing.T) {
-		pool, done := startGatePostgres(t, 15569)
-		defer done()
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		applyMigrations(t, ctx, pool, preChain...)
-		// A value the mode collapse cannot map: the gate must fail closed.
-		insertPoolStyle(t, ctx, pool, "unmappable-pool", "legacy-unknown")
+	t.Run("up-file carries no DO $$ gate over concurrency_style", func(t *testing.T) {
 		up, err := migrations.FS.ReadFile("0167_runtime_definitions_execution_mode_service.up.sql")
 		if err != nil {
 			t.Fatalf("read 0167 up: %v", err)
 		}
-		_, err = pool.Exec(ctx, string(up))
-		if err == nil {
-			t.Fatal("0167 must abort when an unmappable concurrency_style value is present")
+		ups := string(up)
+		// The §5.2 collapse stages no forward-data backfill, so no DO $$
+		// un-migrated-rows gate over concurrency_style is §10.5-consistent: it
+		// either fences the proposal-mandated re-key on a populated DB or passes
+		// on the only un-migrated values that can exist. The marker is used.
+		if strings.Contains(ups, "DO $$") {
+			t.Error("0167 up must not gate the concurrency_style drop with a DO $$ block; the empty-table reshape uses the -- phase3: not-required marker")
 		}
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "Phase 3 gate failed") {
-			t.Fatalf("want Phase 3 gate RAISE EXCEPTION, got %v", err)
-		}
-		// The whole up-file rolled back in one transaction: the column survives.
-		if !columnExists(t, ctx, pool, "sandbox_warm_pools", "concurrency_style") {
-			t.Error("a gate abort must roll back the whole 0167 up-file, leaving concurrency_style intact")
+		if !strings.Contains(ups, "phase3: not-required") {
+			t.Error("0167 up must declare the -- phase3: not-required marker for the empty-table concurrency_style drop")
 		}
 	})
 }
 
-// startGatePostgres starts an embedded Postgres on the given port for a gate
+// startGatePostgres starts an embedded Postgres on the given port for a
 // subtest and returns a connected pool plus a cleanup closure.
 func startGatePostgres(t *testing.T, port uint32) (*pgxpool.Pool, func()) {
 	t.Helper()
@@ -448,17 +444,6 @@ func startGatePostgres(t *testing.T, port uint32) (*pgxpool.Pool, func()) {
 	return pool, func() {
 		pool.Close()
 		_ = pg.Stop()
-	}
-}
-
-// insertPoolStyle inserts a sandbox_warm_pools row with the given
-// concurrency_style, failing the test on error.
-func insertPoolStyle(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, style string) {
-	t.Helper()
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO sandbox_warm_pools (name, concurrency_style) VALUES ($1, $2)`,
-		name, style); err != nil {
-		t.Fatalf("insert pool %s (style %q): %v", name, style, err)
 	}
 }
 

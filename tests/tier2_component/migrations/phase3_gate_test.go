@@ -85,15 +85,15 @@ func scanPhase3(src string) phase3Violations {
 
 // TestPhase3MigrationsAreGuarded_spec_10_5_417 asserts that every Phase 3
 // contract migration in the tree drops columns idempotently and carries the
-// preflight gate. Migration 0167 (the §5.2 mode collapse) drops
-// sandbox_warm_pools.concurrency_style behind a DO $$ gate keyed on the
-// out-of-vocabulary value set, so this guard exercises a live Phase 3 file
-// and keeps later DROP COLUMN authors from shipping a contract migration
-// that re-runs unsafely or skips the un-migrated-rows gate. A migration that
-// reshapes an empty pre-deployment table (0118, 0129) drops columns that
-// never held data in any deployment; it declares itself out of scope with a
-// `-- phase3: not-required` marker and is exempt, because §10.5's gate has no
-// un-migrated rows to count there.
+// preflight gate, keeping later DROP COLUMN authors from shipping a contract
+// migration that re-runs unsafely or skips the un-migrated-rows gate. A
+// migration that reshapes an empty pre-deployment table (0118, 0129, and the
+// §5.2 mode-collapse migration 0167, which drops
+// sandbox_warm_pools.concurrency_style) drops columns that never held data in
+// any deployment; it declares itself out of scope with a `-- phase3:
+// not-required` marker and is exempt, because §10.5's gate has no un-migrated
+// rows to count there and the proposal stages no forward-data backfill ahead of
+// the drop.
 //
 // diagnosis: a failure means a Phase 3 contract migration (one that DROPs a
 // column from a table that held data under a prior release and does not carry

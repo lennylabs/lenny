@@ -42,45 +42,23 @@ ALTER TABLE runtime_definitions
         CHECK (execution_mode IN ('session', 'service'));
 
 -- Retire the concurrency_style pool column now that the §5.2 ConcurrencyStyle
--- field and its validators are removed. The mode collapse maps every legitimate
--- concurrency_style value forward into the (session, service) set: '' and
--- 'workspace' pools become session mode (the 'workspace' per-pod concurrency
--- moves to sessionPolicy.maxConcurrentSessions), and 'stateless' pools become
--- service mode (spec/05 §5.2: service mode is the former concurrencyStyle:
--- stateless). max_concurrent survives as the service-mode per-pod request bound.
+-- field and its validators are removed. The mode collapse replaces the column:
+-- the former 'workspace' per-pod concurrency is re-expressed as the new
+-- sessionPolicy.maxConcurrentSessions field (default 1) and the former
+-- 'stateless' value becomes execution_mode = 'service' (spec/05 §5.2: service
+-- mode is the former concurrencyStyle: stateless). The §5.2 collapse carries
+-- these values forward in pool configuration, not as a per-row SQL backfill, so
+-- this migration stages no UPDATE. max_concurrent survives as the service-mode
+-- per-pod request bound.
 --
--- §10.5 Phase 3 column drop. The drop is idempotent (DROP COLUMN IF EXISTS) so a
--- re-run is a no-op, and is fronted by a PL/pgSQL DO $$ preflight gate per §10.5
--- line 417. The gate's un-migrated predicate is a concurrency_style value the
--- mode collapse does not recognize: every known value ('', 'workspace',
--- 'stateless') maps forward, so the gate must NOT abort on them. It fails closed
--- only on an out-of-vocabulary value, which would indicate a pool the collapse
--- cannot map. The whole up-file runs in one transaction (pkg/schemamigrate,
--- migratepg.WithInstance), so a RAISE EXCEPTION here rolls back the entire
--- migration, gating the column drop without partially applying it.
--- gate-index: idx_sandbox_warm_pools_concurrency_style_unmapped
-CREATE INDEX IF NOT EXISTS idx_sandbox_warm_pools_concurrency_style_unmapped
-    ON sandbox_warm_pools (concurrency_style)
-    WHERE concurrency_style NOT IN ('', 'workspace', 'stateless');
-DO $$
-DECLARE remaining bigint;
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'sandbox_warm_pools'
-          AND column_name = 'concurrency_style'
-    ) THEN
-        SELECT COUNT(*) INTO remaining
-        FROM sandbox_warm_pools
-        WHERE concurrency_style NOT IN ('', 'workspace', 'stateless');
-        IF remaining > 0 THEN
-            RAISE EXCEPTION 'Phase 3 gate failed: % un-migrated rows remain in sandbox_warm_pools.concurrency_style (value outside the (workspace, stateless) set the §5.2 mode collapse maps forward). Resolve data migration before retrying.', remaining;
-        END IF;
-    END IF;
-END $$;
--- The covering gate index is dropped together with the column it guards.
-DROP INDEX IF EXISTS idx_sandbox_warm_pools_concurrency_style_unmapped;
+-- phase3: not-required (sandbox_warm_pools is empty in every deployment. The
+-- platform is pre-deployment with no deployments in the wild, so there is no
+-- pool row carrying a concurrency_style value to migrate forward. The §5.2
+-- mode collapse re-expresses concurrency in pool configuration and stages no
+-- forward-data backfill, so dropping concurrency_style is an empty-table
+-- reshape rather than a §10.5 contract drop over live data. The un-migrated-
+-- rows preflight gate has no rows to count, so it does not apply. The drop is
+-- idempotent (DROP COLUMN IF EXISTS) so a re-run is a no-op.)
 ALTER TABLE sandbox_warm_pools
     DROP COLUMN IF EXISTS concurrency_style;
 
