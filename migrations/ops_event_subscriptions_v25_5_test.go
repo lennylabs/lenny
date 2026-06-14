@@ -21,8 +21,13 @@ func TestOpsEventSubscriptionsV25_5Migration_spec_25_5(t *testing.T) {
 	up := string(b)
 	for _, want := range []string{
 		"ALTER TABLE ops_event_subscriptions",
-		"DROP COLUMN secret",
-		"DROP COLUMN types",
+		// §10.5 line 430: the Phase 3 column drops are idempotent (IF EXISTS).
+		"DROP COLUMN IF EXISTS secret",
+		"DROP COLUMN IF EXISTS types",
+		// §10.5 line 417: the drops are fronted by a DO $$ preflight gate that
+		// aborts when any un-migrated ops_event_subscriptions row remains.
+		"DO $$",
+		"RAISE EXCEPTION",
 		"ADD COLUMN types                       TEXT[] NOT NULL DEFAULT '{}'",
 		"ADD COLUMN severity                    TEXT[]",
 		"ADD COLUMN secret_hash                 TEXT NOT NULL",

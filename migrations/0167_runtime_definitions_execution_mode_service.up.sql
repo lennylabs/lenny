@@ -51,14 +51,41 @@ ALTER TABLE runtime_definitions
 -- this migration stages no UPDATE. max_concurrent survives as the service-mode
 -- per-pod request bound.
 --
--- phase3: not-required (sandbox_warm_pools is empty in every deployment. The
--- platform is pre-deployment with no deployments in the wild, so there is no
--- pool row carrying a concurrency_style value to migrate forward. The §5.2
--- mode collapse re-expresses concurrency in pool configuration and stages no
--- forward-data backfill, so dropping concurrency_style is an empty-table
--- reshape rather than a §10.5 contract drop over live data. The un-migrated-
--- rows preflight gate has no rows to count, so it does not apply. The drop is
--- idempotent (DROP COLUMN IF EXISTS) so a re-run is a no-op.)
+-- §10.5 Phase 3 column drop (spec §10.5 line 417). The drop is irreversible, so
+-- it is fronted by a PL/pgSQL DO $$ preflight gate that counts un-migrated rows
+-- and RAISE EXCEPTIONs when any remain. A non-default concurrency_style ('' is
+-- the 0040 default) is an un-migrated row: the §5.2 collapse stages no per-row
+-- SQL backfill, so a pool that still carries a 'workspace' or 'stateless' value
+-- (or any other) has not been re-expressed as sessionPolicy.maxConcurrentSessions
+-- or execution_mode = 'service', and dropping the column would lose that
+-- configuration. The gate fails closed on any such row. The whole up-file runs
+-- in one transaction (pkg/schemamigrate, migratepg.WithInstance), so a
+-- RAISE EXCEPTION here rolls back the entire migration, gating the column drop
+-- without partially applying it. The drop is idempotent (DROP COLUMN IF EXISTS),
+-- so a re-run after the gate passes is a no-op.
+-- gate-index: idx_sandbox_warm_pools_concurrency_style_unmigrated
+CREATE INDEX IF NOT EXISTS idx_sandbox_warm_pools_concurrency_style_unmigrated
+    ON sandbox_warm_pools (concurrency_style)
+    WHERE concurrency_style <> '';
+DO $$
+DECLARE remaining bigint;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sandbox_warm_pools'
+          AND column_name = 'concurrency_style'
+    ) THEN
+        SELECT COUNT(*) INTO remaining
+        FROM sandbox_warm_pools
+        WHERE concurrency_style <> '';
+        IF remaining > 0 THEN
+            RAISE EXCEPTION 'Phase 3 gate failed: % un-migrated rows remain in sandbox_warm_pools.concurrency_style. Resolve data migration before retrying.', remaining;
+        END IF;
+    END IF;
+END $$;
+-- The covering gate index is dropped together with the column it guards.
+DROP INDEX IF EXISTS idx_sandbox_warm_pools_concurrency_style_unmigrated;
 ALTER TABLE sandbox_warm_pools
     DROP COLUMN IF EXISTS concurrency_style;
 

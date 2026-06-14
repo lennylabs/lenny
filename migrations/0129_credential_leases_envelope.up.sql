@@ -41,14 +41,29 @@
 --                      user-backed lease, mirror
 --                      credential.Lease.CredentialKey.
 --
--- credential_leases has no rows in any deployment (the table was
--- created by migration 0038 in the same unreleased line), so the
--- conversion does not preserve or re-encrypt existing data.
+-- This conversion does not preserve or re-encrypt existing data: the plaintext
+-- JSONB lease body is reinterpreted as a ciphertext blob and the plaintext
+-- bearer token is dropped, with no per-row backfill.
 --
--- phase3: not-required (credential_leases is empty in every deployment, so
--- dropping lease_token is an empty-table reshape, not a §10.5 contract
--- drop. The un-migrated-rows preflight gate has no rows to count, so it
--- does not apply.)
+-- §10.5 Phase 3 column drop (spec §10.5 line 417). The DROP COLUMN lease_token
+-- is irreversible and the lease-body type change reinterprets stored bytes
+-- without decrypting them, so the up-file is fronted by a PL/pgSQL DO $$
+-- preflight gate that counts un-migrated rows and RAISE EXCEPTIONs when any
+-- remain. Any existing credential_leases row is un-migrated data: its plaintext
+-- body and bearer token are not converted forward, so applying the reshape
+-- would corrupt the body and lose the token. The gate fails closed on any such
+-- row. The whole up-file runs in one transaction, so a RAISE EXCEPTION rolls
+-- back the entire migration. The drop is idempotent (DROP COLUMN IF EXISTS) so a
+-- re-run after the gate passes is a no-op.
+-- gate-index: credential_leases_pkey
+DO $$
+DECLARE remaining bigint;
+BEGIN
+    SELECT COUNT(*) INTO remaining FROM credential_leases;
+    IF remaining > 0 THEN
+        RAISE EXCEPTION 'Phase 3 gate failed: % un-migrated rows remain in credential_leases (the §12.9 envelope conversion backfills no plaintext lease body or bearer token). Resolve data migration before retrying.', remaining;
+    END IF;
+END $$;
 
 ALTER TABLE credential_leases
     ALTER COLUMN lease TYPE BYTEA USING convert_to(lease::text, 'UTF8'),
@@ -59,7 +74,7 @@ ALTER TABLE credential_leases
 -- 0038 with it. lease_token_hash replaces it as the GetByToken lookup
 -- key so the plaintext bearer token is not stored.
 ALTER TABLE credential_leases
-    DROP COLUMN lease_token,
+    DROP COLUMN IF EXISTS lease_token,
     ADD COLUMN lease_token_hash TEXT,
     ADD COLUMN session_id     TEXT NOT NULL DEFAULT '',
     ADD COLUMN cred_source    TEXT NOT NULL DEFAULT '',

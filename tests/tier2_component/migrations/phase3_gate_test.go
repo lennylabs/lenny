@@ -21,32 +21,17 @@ var (
 	dropColumnIfExistsRe = regexp.MustCompile(`(?i)drop\s+column\s+if\s+exists`)
 	doBlockRe            = regexp.MustCompile(`(?i)do\s+\$\$`)
 	gateIndexRe          = regexp.MustCompile(`(?i)gate-index:`)
-	// phase3NotRequiredRe matches the author's machine-readable assertion
-	// that a DROP COLUMN is not a Phase 3 contract drop because the table
-	// carried no rows under any prior release (an empty pre-deployment table
-	// reshaped within the same unreleased line). §10.5's preflight gate
-	// exists for "every record that could have been written under the old
-	// schema"; a table that has never held data in any deployment has no such
-	// record, so the un-migrated-rows gate has no premise. The marker is
-	// required to opt out: an unmarked DROP COLUMN still trips the guard, so
-	// the default remains fail-closed.
-	phase3NotRequiredRe = regexp.MustCompile(`(?i)phase3:\s*not-required`)
 )
 
 // phase3Violations mirrors scripts/lint-migrations.sh Pass 5: a Phase 3
-// migration (an up-migration that DROPs a column from a table that held data
-// under a prior release) must drop idempotently and front the DDL with a
-// PL/pgSQL DO $$ preflight gate. The scan keeps line comments only for the
-// gate-index and phase3 markers; DROP/DO detection runs against the
+// migration (an up-migration that DROPs a column) must drop idempotently and
+// front the DDL with a PL/pgSQL DO $$ preflight gate. The scan keeps line
+// comments only for the gate-index marker; DROP/DO detection runs against the
 // comment-stripped body so a commented-out DROP does not count.
 //
-// A migration may declare its DROP COLUMN out of scope with a
-// `-- phase3: not-required` marker when the table is empty pre-deployment
-// (reshaped within the same unreleased line, with no rows in any
-// deployment). §10.5's gate counts un-migrated rows; a table that never held
-// data has none, so the gate's premise does not apply. The marker is
-// required to opt out, so an author who omits both the gate and the marker
-// still trips the guard (fail-closed default).
+// The gate requirement is unconditional: §10.5 line 417 mandates the DO $$
+// preflight block at the top of every Phase 3 up-migration regardless of the
+// expected row count. A migration that omits the gate trips the guard.
 //
 // spec: §10.5 line 417 (DO $$ preflight gate) + line 430 (DROP COLUMN IF
 // EXISTS idempotency).
@@ -68,12 +53,6 @@ func scanPhase3(src string) phase3Violations {
 	if total == 0 {
 		return phase3Violations{}
 	}
-	// An empty pre-deployment table reshape opts its DROP COLUMN out of the
-	// Phase 3 contract discipline with the `-- phase3: not-required` marker.
-	// The marker lives in a comment, so it is read from the raw source.
-	if phase3NotRequiredRe.MatchString(src) {
-		return phase3Violations{}
-	}
 	guarded := len(dropColumnIfExistsRe.FindAllString(stripped, -1))
 	return phase3Violations{
 		isPhase3:       true,
@@ -86,21 +65,18 @@ func scanPhase3(src string) phase3Violations {
 // TestPhase3MigrationsAreGuarded_spec_10_5_417 asserts that every Phase 3
 // contract migration in the tree drops columns idempotently and carries the
 // preflight gate, keeping later DROP COLUMN authors from shipping a contract
-// migration that re-runs unsafely or skips the un-migrated-rows gate. A
-// migration that reshapes an empty pre-deployment table (0118, 0129, and the
-// §5.2 mode-collapse migration 0167, which drops
-// sandbox_warm_pools.concurrency_style) drops columns that never held data in
-// any deployment; it declares itself out of scope with a `-- phase3:
-// not-required` marker and is exempt, because §10.5's gate has no un-migrated
-// rows to count there and the proposal stages no forward-data backfill ahead of
-// the drop.
+// migration that re-runs unsafely or skips the un-migrated-rows gate. The tree
+// has three Phase 3 (DROP COLUMN) migrations, each fronted by a DO $$ gate that
+// counts un-migrated rows: 0118 (ops_event_subscriptions secret/types reshape),
+// 0129 (credential_leases lease_token envelope conversion), and the §5.2
+// mode-collapse 0167 (sandbox_warm_pools.concurrency_style). §10.5 line 417's
+// gate requirement is unconditional: it applies to every migration that DROPs a
+// column regardless of the expected row count.
 //
 // diagnosis: a failure means a Phase 3 contract migration (one that DROPs a
-// column from a table that held data under a prior release and does not carry
-// the `-- phase3: not-required` empty-table marker) either drops without IF
-// EXISTS or omits the DO $$ preflight gate, so a re-run would fail or the
-// §10.5 un-migrated-rows guard is absent and the contract could run before
-// its data migration.
+// column) either drops without IF EXISTS or omits the DO $$ preflight gate, so
+// a re-run would fail or the §10.5 un-migrated-rows guard is absent and the
+// contract could run before its data migration.
 //
 // spec: §10.5 line 417 / line 430.
 func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
@@ -157,13 +133,6 @@ ALTER TABLE sessions DROP COLUMN IF EXISTS legacy_token;`
 		{"idempotent drop but no gate", `ALTER TABLE sessions DROP COLUMN IF EXISTS legacy_token;`, true, false, true, true},
 		{"gated but non-idempotent drop", "DO $$ BEGIN END $$;\nALTER TABLE sessions DROP COLUMN legacy_token;", true, true, false, true},
 		{"commented drop is not phase 3", "-- ALTER TABLE sessions DROP COLUMN legacy_token;\nALTER TABLE sessions ADD COLUMN note TEXT;", false, false, false, false},
-		// An empty pre-deployment table reshape opts out of the contract
-		// discipline with the marker; an ungated bare DROP is then exempt.
-		{"empty-table marker exempts bare drop", "-- phase3: not-required (table empty pre-deployment)\nALTER TABLE ops_event_subscriptions DROP COLUMN secret, DROP COLUMN types;", false, false, false, false},
-		// The marker only matters when a DROP COLUMN is present; on a
-		// non-dropping migration it is irrelevant and the scan still reports
-		// "not phase 3".
-		{"marker without a drop is still not phase 3", "-- phase3: not-required\nALTER TABLE sessions ADD COLUMN note TEXT;", false, false, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
