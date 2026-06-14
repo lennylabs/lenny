@@ -62,9 +62,9 @@ const (
 )
 
 // Inputs carries everything the §6.2 lines 147-156 disposition branch
-// reads. All counts are evaluated AFTER the just-finished task: a pod
-// that has run its last permitted task has TasksCompleted ==
-// MaxTasksPerPod.
+// reads. All counts are evaluated AFTER the just-finished session: a pod
+// that has served its last permitted session has SessionsServed ==
+// MaxSessionsPerPod.
 type Inputs struct {
 	// PreConnect is true when the pool's runtime declares
 	// capabilities.preConnect: true, so idle pods are SDK-warm and the
@@ -86,14 +86,15 @@ type Inputs struct {
 	// treated as DefaultMaxScrubFailures.
 	MaxScrubFailures int
 
-	// TasksCompleted is the count of tasks this pod has finished,
-	// INCLUDING the task that just completed.
-	TasksCompleted int
+	// SessionsServed is the count of sessions this pod has served,
+	// INCLUDING the session that just ended.
+	SessionsServed int
 
-	// MaxTasksPerPod is taskPolicy.maxTasksPerPod (required for a
-	// task-mode pool, >= 1). A value <= 0 disables the count-based cap
-	// (defensive; admission rejects such a pool).
-	MaxTasksPerPod int
+	// MaxSessionsPerPod is recycle.maxSessionsPerPod (required with no
+	// default when recycle.enabled: true, >= 1). A value <= 0 disables
+	// the count-based cap (defensive; admission rejects a recycling pool
+	// that omits it). spec: spec/05 §5.2 (recycle.maxSessionsPerPod).
+	MaxSessionsPerPod int
 
 	// PodUptimeSeconds is the pod's wall-clock uptime in seconds.
 	PodUptimeSeconds int64
@@ -123,9 +124,12 @@ const (
 	// ReasonScrubFailuresExhausted: the cumulative scrub-failure count
 	// reached maxScrubFailures. spec: §6.2 line 149.
 	ReasonScrubFailuresExhausted RetireReason = "scrub_failures_exhausted"
-	// ReasonMaxTasksReached: the pod completed maxTasksPerPod tasks.
-	// spec: §6.2 line 150.
-	ReasonMaxTasksReached RetireReason = "max_tasks_reached"
+	// ReasonSessionCountLimit: the pod's served-session count reached
+	// recycle.maxSessionsPerPod. The emitted lenny_pod_retirement_total
+	// {reason} value is the session_count_limit trigger from the spec/16
+	// retirement-reason vocabulary. spec: spec/06 §6.2 (recycle
+	// disposition), spec/16 §16.1 (retirement reason vocabulary).
+	ReasonSessionCountLimit RetireReason = "session_count_limit"
 	// ReasonMaxUptimeExceeded: pod uptime reached maxPodUptimeSeconds.
 	// spec: §6.2 line 151.
 	ReasonMaxUptimeExceeded RetireReason = "max_uptime_exceeded"
@@ -168,8 +172,8 @@ type Disposition struct {
 // exhaustion → count/uptime retirement → host-schedulable re-warm gate →
 // reuse. Higher-precedence retirement reasons short-circuit lower ones,
 // so a pod that has both failed its scrub (under warn, not exhausted)
-// and reached maxTasksPerPod retires on max_tasks_reached rather than
-// re-entering the pool.
+// and reached recycle.maxSessionsPerPod retires on session_count_limit
+// rather than re-entering the pool.
 func Decide(in Inputs) Disposition {
 	if in.Scrub == ScrubPending {
 		return Disposition{} // Ready == false; the driver waits.
@@ -210,13 +214,13 @@ func Decide(in Inputs) Disposition {
 		}
 	}
 
-	// Line 150: the pod completed its last permitted task.
-	if in.MaxTasksPerPod > 0 && in.TasksCompleted >= in.MaxTasksPerPod {
+	// Line 150: the pod served its last permitted session.
+	if in.MaxSessionsPerPod > 0 && in.SessionsServed >= in.MaxSessionsPerPod {
 		return Disposition{
 			Ready:     true,
 			NextPhase: state.Draining,
 			Retire:    true,
-			Reason:    ReasonMaxTasksReached,
+			Reason:    ReasonSessionCountLimit,
 		}
 	}
 

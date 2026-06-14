@@ -40,8 +40,8 @@ func (m *recordingMetrics) IncScrubFailureTotal(string) { m.scrubTotals++ }
 
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
-// spec: §6.2 line 150 — a pod that completes maxTasksPerPod tasks drains
-// with reason max_tasks_reached, and the retirement metric fires once.
+// spec: §6.2 line 150 — a pod that reaches its session-count cap drains
+// with reason session_count_limit, and the retirement metric fires once.
 func TestRecordCompletionRetiresAtMaxTasks_spec_6_2_150(t *testing.T) {
 	m := &recordingMetrics{}
 	e := taskdriver.NewEvaluator(taskdriver.Policy{MaxTasksPerPod: 2}, m)
@@ -54,11 +54,11 @@ func TestRecordCompletionRetiresAtMaxTasks_spec_6_2_150(t *testing.T) {
 	}
 	// Second task: at the cap, drains.
 	d = e.RecordCompletion(st, taskcleanup.ScrubSucceeded, true)
-	if !d.Retire || d.Reason != taskcleanup.ReasonMaxTasksReached {
-		t.Fatalf("task 2 disposition = %+v, want max_tasks_reached drain", d)
+	if !d.Retire || d.Reason != taskcleanup.ReasonSessionCountLimit {
+		t.Fatalf("task 2 disposition = %+v, want session_count_limit drain", d)
 	}
-	if len(m.retirements) != 1 || m.retirements[0].reason != taskcleanup.ReasonMaxTasksReached {
-		t.Errorf("retirement metric = %+v, want one max_tasks_reached", m.retirements)
+	if len(m.retirements) != 1 || m.retirements[0].reason != taskcleanup.ReasonSessionCountLimit {
+		t.Errorf("retirement metric = %+v, want one session_count_limit", m.retirements)
 	}
 	if st.TasksCompleted != 2 {
 		t.Errorf("TasksCompleted = %d, want 2", st.TasksCompleted)

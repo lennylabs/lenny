@@ -18,8 +18,8 @@ func base() Inputs {
 		OnCleanupFailure:    OnCleanupWarn,
 		ScrubFailureCount:   0,
 		MaxScrubFailures:    3,
-		TasksCompleted:      1,
-		MaxTasksPerPod:      100,
+		SessionsServed:      1,
+		MaxSessionsPerPod:   100,
 		PodUptimeSeconds:    10,
 		MaxPodUptimeSeconds: 0, // no cap
 		HostSchedulable:     true,
@@ -42,7 +42,9 @@ func TestDecidePendingWaits(t *testing.T) {
 }
 
 // TestDecideSpecEdges drives every enumerated §6.2 lines 147-156
-// disposition edge.
+// disposition edge, including the session_count_limit retirement reason
+// keyed to the spec/16 retirement-reason vocabulary.
+// spec: §6.2 lines 147-156 (recycle disposition), §16.1 (retirement reason vocabulary).
 func TestDecideSpecEdges(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -82,14 +84,14 @@ func TestDecideSpecEdges(t *testing.T) {
 			specLine:    "149",
 		},
 		{
-			name: "line150_max_tasks_reached_draining",
+			name: "line150_session_count_limit_draining",
 			mutate: func(i *Inputs) {
-				i.TasksCompleted = 100
-				i.MaxTasksPerPod = 100
+				i.SessionsServed = 100
+				i.MaxSessionsPerPod = 100
 			},
 			wantPhase:  state.Draining,
 			wantRetire: true,
-			wantReason: ReasonMaxTasksReached,
+			wantReason: ReasonSessionCountLimit,
 			specLine:   "150",
 		},
 		{
@@ -223,31 +225,32 @@ func TestDecideExhaustionBeatsRetirement(t *testing.T) {
 	in.Scrub = ScrubFailed
 	in.ScrubFailureCount = 3
 	in.MaxScrubFailures = 3
-	in.TasksCompleted = 100
-	in.MaxTasksPerPod = 100
+	in.SessionsServed = 100
+	in.MaxSessionsPerPod = 100
 	got := Decide(in)
 	if got.Reason != ReasonScrubFailuresExhausted {
-		t.Fatalf("exhaustion + max-tasks: Reason = %q, want %q", got.Reason, ReasonScrubFailuresExhausted)
+		t.Fatalf("exhaustion + session-count: Reason = %q, want %q", got.Reason, ReasonScrubFailuresExhausted)
 	}
 }
 
-// TestDecideMaxTasksBeatsReuseWithWarning verifies that a warn-policy
+// TestDecideSessionCountBeatsReuseWithWarning verifies that a warn-policy
 // scrub failure that has NOT exhausted maxScrubFailures but HAS reached
-// maxTasksPerPod retires on max_tasks_reached (the pod is leaving for
-// count, so the warning is superseded). spec: §6.2 lines 149-150.
-func TestDecideMaxTasksBeatsReuseWithWarning(t *testing.T) {
+// recycle.maxSessionsPerPod retires on session_count_limit (the pod is
+// leaving for count, so the warning is superseded).
+// spec: §6.2 lines 149-150 (recycle disposition precedence), §16.1 (session_count_limit reason).
+func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	in := base()
 	in.Scrub = ScrubFailed
 	in.ScrubFailureCount = 1
 	in.MaxScrubFailures = 3
-	in.TasksCompleted = 100
-	in.MaxTasksPerPod = 100
+	in.SessionsServed = 100
+	in.MaxSessionsPerPod = 100
 	got := Decide(in)
-	if got.NextPhase != state.Draining || got.Reason != ReasonMaxTasksReached {
-		t.Fatalf("warn-failed + max-tasks: got %q/%q, want draining/max_tasks_reached", got.NextPhase, got.Reason)
+	if got.NextPhase != state.Draining || got.Reason != ReasonSessionCountLimit {
+		t.Fatalf("warn-failed + session-count: got %q/%q, want draining/session_count_limit", got.NextPhase, got.Reason)
 	}
 	if got.ScrubWarning {
-		t.Errorf("warn-failed + max-tasks: ScrubWarning = true, want false (retired for count)")
+		t.Errorf("warn-failed + session-count: ScrubWarning = true, want false (retired for count)")
 	}
 }
 
