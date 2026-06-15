@@ -179,6 +179,81 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestInspectForRecycleRuntimeDefaultProfile verifies the §16.1 runtime_class
+// label falls back to the pool runtime's default §5.3 profile when the pool
+// carries no IsolationProfile override. A recycling pool with an empty
+// IsolationProfile mapped to a microvm-default runtime resolves to the kata
+// runtime_class rather than the empty/standard label.
+// spec: 5.3 (pool profile overrides the runtime default), 16.1 (runtime_class label)
+//
+// diagnosis: a failure means a pool relying on the runtime's default isolation
+// profile carries the wrong runtime_class on the recycle metrics, so the §16.1
+// scrub-failure and retirement series are mislabeled (or empty) for pools
+// without an explicit profile override.
+func TestInspectForRecycleRuntimeDefaultProfile_spec_16_1(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	pool := recyclingPool("agents", "rt", "", &runtimestore.RecyclePolicy{
+		Enabled: true, MaxSessionsPerPod: 50,
+	})
+	cl := fake.NewClientBuilder().
+		WithObjects(agentPod("pod-1", "agents", "true", now)).
+		Build()
+	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+		Client: cl, Namespace: testNS,
+		Pools: fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
+		Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
+			"rt": {Name: "rt", IsolationProfile: isolation.ProfileMicrovm},
+		}},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewPodInspector: %v", err)
+	}
+	policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+	if err != nil || !found {
+		t.Fatalf("InspectForRecycle = (found=%v, err=%v), want (true, nil)", found, err)
+	}
+	if policy.RuntimeClass != "kata" {
+		t.Errorf("RuntimeClass = %q, want kata (runtime default microvm profile)", policy.RuntimeClass)
+	}
+}
+
+// TestInspectForRecyclePoolProfileOverridesRuntimeDefault verifies the pool's
+// IsolationProfile override wins over the runtime default when both are set,
+// so the §16.1 runtime_class label reflects the pool's effective profile.
+// spec: 5.3 (pool profile overrides the runtime default), 16.1 (runtime_class label)
+//
+// diagnosis: a failure means the inspector ignores a pool's explicit isolation
+// override and labels the recycle metrics with the runtime default, so an
+// operator's per-pool profile choice is not reflected in the §16.1 series.
+func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	pool := recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
+		Enabled: true, MaxSessionsPerPod: 50,
+	})
+	cl := fake.NewClientBuilder().
+		WithObjects(agentPod("pod-1", "agents", "true", now)).
+		Build()
+	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+		Client: cl, Namespace: testNS,
+		Pools: fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
+		Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
+			"rt": {Name: "rt", IsolationProfile: isolation.ProfileMicrovm},
+		}},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewPodInspector: %v", err)
+	}
+	policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+	if err != nil || !found {
+		t.Fatalf("InspectForRecycle = (found=%v, err=%v), want (true, nil)", found, err)
+	}
+	if policy.RuntimeClass != "gvisor" {
+		t.Errorf("RuntimeClass = %q, want gvisor (pool override wins over runtime default)", policy.RuntimeClass)
+	}
+}
+
 // TestInspectForRecycleAbsentHostScheduleLabelFailsSafe verifies a missing
 // lenny.dev/host-schedulable label resolves to unschedulable, the §6.39
 // fail-safe so a cordoned-or-unknown host retires rather than reuses.
@@ -283,10 +358,64 @@ func TestInspectForRecyclePodGetErrorPropagates_spec_4_7(t *testing.T) {
 	}
 }
 
+// concurrentPool builds a recycling session-mode pool whose
+// sessionPolicy.maxConcurrentSessions is the §5.2 "Concurrent" preset bound,
+// the denominator of the ceil(maxConcurrentSessions/2) unhealthy threshold
+// the drain ledger resolves per pod.
+func concurrentPool(name string, maxConcurrent int) poolstore.Pool {
+	return poolstore.Pool{
+		Name:          name,
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions: maxConcurrent,
+			Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+		},
+	}
+}
+
+// recordNLeaks records n leaked session-scrub outcomes against podID through
+// the ledger, failing the test on any error.
+func recordNLeaks(t *testing.T, ledger leasecontrol.DrainLedger, podID string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := ledger.RecordLeak(context.Background(), podID); err != nil {
+			t.Fatalf("RecordLeak %d: %v", i, err)
+		}
+	}
+}
+
+// drainRequested reports whether the agent Pod carries the
+// lenny.dev/drain-request annotation the ledger stamps at the threshold.
+func drainRequested(t *testing.T, cl client.Client, podID string) bool {
+	t.Helper()
+	var got corev1.Pod
+	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podID}, &got); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	return got.Annotations[lennyv1.AnnotationDrainRequest] != ""
+}
+
+// mustDrainLedger builds a drain ledger over the supplied client and pool
+// fixtures, failing the test on a construction error.
+func mustDrainLedger(t *testing.T, cl client.Client, pools map[string]poolstore.Pool) leasecontrol.DrainLedger {
+	t.Helper()
+	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
+		Tracker:   slothealth.New(),
+		Client:    cl,
+		Namespace: testNS,
+		Pools:     fakePoolReader{pools: pools},
+		Now:       func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewDrainLedger: %v", err)
+	}
+	return ledger
+}
+
 // TestDrainLedgerStampsOnUnhealthyThreshold verifies the ledger stamps
 // lenny.dev/drain-request on the agent Pod once the pod crosses the §5.2
-// unhealthy threshold, and not before. A single-session pool (maxConcurrent
-// 1) crosses on the first leak.
+// unhealthy threshold, and not before. A single-session recycling pool
+// (maxConcurrentSessions 1) crosses on the first leak.
 // spec: 4.7 (leaked feeds the drain ledger), 4.6.3 (gateway stamps drain-request), 5.2 (unhealthy threshold)
 //
 // diagnosis: a failure means a leaked session does not drive the drain-request
@@ -296,51 +425,141 @@ func TestInspectForRecyclePodGetErrorPropagates_spec_4_7(t *testing.T) {
 func TestDrainLedgerStampsOnUnhealthyThreshold_spec_5_2(t *testing.T) {
 	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
-	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
-		Tracker: slothealth.New(), Client: cl, Namespace: testNS, MaxConcurrent: 1,
-		Now: func() time.Time { return time.Unix(0, 0) },
-	})
-	if err != nil {
-		t.Fatalf("NewDrainLedger: %v", err)
-	}
-	if err := ledger.RecordLeak(context.Background(), "pod-1"); err != nil {
-		t.Fatalf("RecordLeak: %v", err)
-	}
-	var got corev1.Pod
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
-		t.Fatalf("get pod: %v", err)
-	}
-	if got.Annotations[lennyv1.AnnotationDrainRequest] == "" {
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": concurrentPool("agents", 1)})
+	recordNLeaks(t, ledger, "pod-1", 1)
+	if !drainRequested(t, cl, "pod-1") {
 		t.Error("drain-request annotation not stamped after the unhealthy threshold was crossed")
 	}
 }
 
 // TestDrainLedgerBelowThresholdDoesNotStamp verifies a single leak on a
-// multi-session pool (threshold above one) does not yet drain the pod.
-// spec: 5.2 (ceil(maxConcurrent/2) unhealthy threshold)
+// recycling concurrent-session pool (the §5.2 "Concurrent" preset,
+// maxConcurrentSessions 4, threshold ceil(4/2)=2) does not yet drain the
+// pod: the ledger resolves the threshold against the pod's pool rather than
+// a fixed bound, so a recycling concurrent pool is not retired on its first
+// leaked slot.
+// spec: 5.2 (ceil(maxConcurrentSessions/2) unhealthy threshold), 3.4 (recycle disposition)
 //
-// diagnosis: a failure means a single leaked slot on a multi-session pod
-// drains the whole pod before the ceil(maxConcurrent/2) threshold is reached,
-// retiring a still-healthy pod.
+// diagnosis: a failure means a single leaked slot on a recycling
+// concurrent-session pod drains the whole pod before the
+// ceil(maxConcurrentSessions/2) threshold is reached, retiring a still-healthy
+// pod (the hard-wired maxConcurrent=1 regression).
 func TestDrainLedgerBelowThresholdDoesNotStamp_spec_5_2(t *testing.T) {
 	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
-	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
-		Tracker: slothealth.New(), Client: cl, Namespace: testNS, MaxConcurrent: 4,
-		Now: func() time.Time { return time.Unix(0, 0) },
-	})
-	if err != nil {
-		t.Fatalf("NewDrainLedger: %v", err)
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": concurrentPool("agents", 4)})
+	recordNLeaks(t, ledger, "pod-1", 1)
+	if drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request stamped below the ceil(maxConcurrentSessions/2) threshold")
 	}
+}
+
+// TestDrainLedgerStampsAtConcurrentThreshold verifies a recycling
+// concurrent-session pool (maxConcurrentSessions 8, threshold ceil(8/2)=4)
+// drains only once the pod accumulates four failed-or-leaked slots in the
+// window, not on the first leak. This pins the per-pod threshold resolution
+// the wiring regression broke by hard-wiring maxConcurrent=1.
+// spec: 5.2 (ceil(maxConcurrentSessions/2) unhealthy threshold), 4.7 (leaked feeds the ledger)
+//
+// diagnosis: a failure means the drain ledger resolves the wrong
+// maxConcurrentSessions for a recycling concurrent-session pool, draining
+// it either prematurely (a fixed-1 threshold) or never (a too-high
+// threshold), so the §5.2 whole-pod replacement trigger fires at the wrong
+// leak count.
+func TestDrainLedgerStampsAtConcurrentThreshold_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": concurrentPool("agents", 8)})
+	recordNLeaks(t, ledger, "pod-1", 3)
+	if drainRequested(t, cl, "pod-1") {
+		t.Fatal("drain-request stamped at 3 leaks, below the ceil(8/2)=4 threshold")
+	}
+	recordNLeaks(t, ledger, "pod-1", 1)
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped at 4 leaks, the ceil(8/2) threshold")
+	}
+}
+
+// TestDrainLedgerUnsetMaxConcurrentDefaultsToOne verifies a recycling pool
+// whose SessionPolicy leaves maxConcurrentSessions unset (the common
+// single-session recycling case) resolves to the §5.2 default bound of 1 and
+// drains on the first leak.
+// spec: 5.2 (default maxConcurrentSessions 1 when unset), 4.7 (leaked feeds the ledger)
+//
+// diagnosis: a failure means a single-session recycling pod with an unset
+// maxConcurrentSessions is treated as having a zero or negative threshold, so a
+// leaked single-session pod is never drained.
+func TestDrainLedgerUnsetMaxConcurrentDefaultsToOne_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	pool := poolstore.Pool{
+		Name:          "agents",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+		},
+	}
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": pool})
+	recordNLeaks(t, ledger, "pod-1", 1)
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped on the first leak with an unset maxConcurrentSessions (default 1)")
+	}
+}
+
+// TestDrainLedgerNoPoolLabelFailsClosed verifies a leak on a pod with no
+// lenny.dev/pool label surfaces an error rather than silently dropping the
+// leak: an unresolvable pod must not bypass the unhealthy-threshold ledger.
+// spec: 5.2 (recycle policy keyed on the pool), 4.7 (leaked feeds the ledger)
+//
+// diagnosis: a failure means a leaked session on a pod whose pool cannot be
+// resolved is silently swallowed, so a degraded pod accumulating leaks is
+// never drained.
+func TestDrainLedgerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "", "true", time.Unix(0, 0))
+	delete(pod.Labels, warmpool.LabelPool)
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	ledger := mustDrainLedger(t, cl, nil)
+	if err := ledger.RecordLeak(context.Background(), "pod-1"); err == nil {
+		t.Error("RecordLeak on a pod with no pool label: err = nil, want non-nil")
+	}
+}
+
+// TestDrainLedgerMissingPodFallsBackToDefaultBound verifies a leak on a pod
+// the apiserver no longer knows resolves to the §5.2 default
+// maxConcurrentSessions of 1 and crosses the threshold without erroring: a
+// concurrent retirement that removed the pod must not error the leak path nor
+// re-stamp a drain on a gone pod (StampDrainRequest tolerates NotFound).
+// spec: 3.4 (pod gone, nothing to drain), 5.2 (default maxConcurrentSessions 1)
+//
+// diagnosis: a failure means a leaked session racing a pod deletion errors the
+// scrub-report RPC instead of cleanly resolving the default bound, surfacing a
+// transient Internal to the adapter for a pod that no longer exists.
+func TestDrainLedgerMissingPodFallsBackToDefaultBound_spec_3_4(t *testing.T) {
+	cl := fake.NewClientBuilder().Build()
+	ledger := mustDrainLedger(t, cl, nil)
+	if err := ledger.RecordLeak(context.Background(), "ghost"); err != nil {
+		t.Fatalf("RecordLeak on a missing pod: %v", err)
+	}
+}
+
+// TestDrainLedgerMissingPoolFallsBackToDefaultBound verifies a leak on a pod
+// whose pool was deleted resolves to the §5.2 default maxConcurrentSessions of
+// 1 and stamps the drain on the first leak rather than erroring: a pool
+// deleted with its pods leaves the threshold well-defined.
+// spec: 3.4 (pool gone), 5.2 (default maxConcurrentSessions 1)
+//
+// diagnosis: a failure means a leaked session on a pod whose pool was deleted
+// errors the scrub-report RPC instead of draining the orphaned pod, so a
+// degraded pod in a torn-down pool is never drained.
+func TestDrainLedgerMissingPoolFallsBackToDefaultBound_spec_3_4(t *testing.T) {
+	pod := agentPod("pod-1", "deleted-pool", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	ledger := mustDrainLedger(t, cl, nil) // no pools => ErrNotFound on resolve
 	if err := ledger.RecordLeak(context.Background(), "pod-1"); err != nil {
-		t.Fatalf("RecordLeak: %v", err)
+		t.Fatalf("RecordLeak with a deleted pool: %v", err)
 	}
-	var got corev1.Pod
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
-		t.Fatalf("get pod: %v", err)
-	}
-	if got.Annotations[lennyv1.AnnotationDrainRequest] != "" {
-		t.Error("drain-request stamped below the ceil(maxConcurrent/2) threshold")
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped on the first leak under the default bound (deleted pool)")
 	}
 }
 
@@ -357,14 +576,17 @@ func TestNewSeamsRequireDeps_spec_4_7(t *testing.T) {
 	pools := fakePoolReader{}
 	runtimes := fakeRuntimeReader{}
 
-	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Client: cl, Namespace: testNS}); err == nil {
+	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Client: cl, Namespace: testNS, Pools: pools}); err == nil {
 		t.Error("NewDrainLedger with nil Tracker: err = nil, want non-nil")
 	}
-	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Namespace: testNS}); err == nil {
+	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Namespace: testNS, Pools: pools}); err == nil {
 		t.Error("NewDrainLedger with nil Client: err = nil, want non-nil")
 	}
-	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Client: cl}); err == nil {
+	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Client: cl, Pools: pools}); err == nil {
 		t.Error("NewDrainLedger with empty Namespace: err = nil, want non-nil")
+	}
+	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Client: cl, Namespace: testNS}); err == nil {
+		t.Error("NewDrainLedger with nil Pools: err = nil, want non-nil")
 	}
 	if _, err := recycle.NewPodInspector(recycle.PodInspectorOptions{Namespace: testNS, Pools: pools, Runtimes: runtimes}); err == nil {
 		t.Error("NewPodInspector with nil Client: err = nil, want non-nil")

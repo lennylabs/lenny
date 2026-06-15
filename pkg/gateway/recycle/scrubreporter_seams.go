@@ -89,22 +89,23 @@ func (s *recycleCounterStore) RecycleCounters(ctx context.Context, podID string)
 
 // drainLedger is the §5.2 unhealthy-threshold drain ledger: it records a
 // leaked session-scrub outcome in the in-memory slothealth tracker and,
-// once the pod crosses the §5.2 ceil(maxConcurrent/2) threshold within the
-// rolling window, stamps lenny.dev/drain-request on the agent Pod so the
-// WarmPoolController drains it. The threshold uses maxConcurrent: a
-// single-session recycling pod (the common case) crosses on the first
-// leak, which is the spec-intended behavior — a leaked single-session pod
-// is unhealthy and must drain rather than recycle.
+// once the pod crosses the §5.2 ceil(maxConcurrentSessions/2) threshold
+// within the rolling window, stamps lenny.dev/drain-request on the agent
+// Pod so the WarmPoolController drains it. The threshold denominator is the
+// pod's pool maxConcurrentSessions, resolved per pod at leak time: a
+// single-session recycling pod crosses on the first leak, and a recycling
+// concurrent-session pool (the §5.2 "Concurrent" preset, maxConcurrentSessions:
+// N with recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
 // The gateway never writes Sandbox.status itself (§4.6.3), so the drain is
 // routed through the annotation rather than a phase write; podclaim.
 // StampDrainRequest performs the §4.6.3 gateway-stamps-drain-request patch.
 type drainLedger struct {
-	tracker       *slothealth.Tracker
-	cl            client.Client
-	namespace     string
-	maxConcurrent int32
-	now           func() time.Time
+	tracker   *slothealth.Tracker
+	cl        client.Client
+	namespace string
+	pools     poolReader
+	now       func() time.Time
 }
 
 // DrainLedgerOptions configures a drain ledger.
@@ -112,23 +113,25 @@ type DrainLedgerOptions struct {
 	// Tracker accumulates per-pod leak/failure events over the §5.2
 	// rolling window. Required.
 	Tracker *slothealth.Tracker
-	// Client patches the agent Pod's lenny.dev/drain-request annotation.
-	// Required.
+	// Client patches the agent Pod's lenny.dev/drain-request annotation and
+	// reads its pool label to resolve the unhealthy threshold. Required.
 	Client client.Client
 	// Namespace is the agent namespace the pods live in. Required.
 	Namespace string
-	// MaxConcurrent is the pool's §5.2 maxConcurrentSessions, the
-	// denominator of the ceil(maxConcurrent/2) unhealthy threshold. A
-	// value below 1 is clamped to 1 by slothealth.UnhealthyThreshold, so a
-	// single-session pool drains on the first leak.
-	MaxConcurrent int32
+	// Pools resolves the pod's pool to its §5.2
+	// sessionPolicy.maxConcurrentSessions, the denominator of the
+	// ceil(maxConcurrentSessions/2) unhealthy threshold. Resolving it per
+	// pod keeps a recycling concurrent-session pool (the "Concurrent"
+	// preset) on its ceil(N/2) threshold rather than draining on the first
+	// leak. Required.
+	Pools poolReader
 	// Now overrides the clock for the drain-request stamp; nil uses wall
 	// time.
 	Now func() time.Time
 }
 
 // NewDrainLedger builds the §5.2 unhealthy-threshold drain ledger. Tracker,
-// Client, and Namespace are required.
+// Client, Namespace, and Pools are required.
 func NewDrainLedger(opts DrainLedgerOptions) (leasecontrol.DrainLedger, error) {
 	if opts.Tracker == nil {
 		return nil, errors.New("recycle: DrainLedger Tracker is required")
@@ -139,32 +142,88 @@ func NewDrainLedger(opts DrainLedgerOptions) (leasecontrol.DrainLedger, error) {
 	if opts.Namespace == "" {
 		return nil, errors.New("recycle: DrainLedger Namespace is required")
 	}
+	if opts.Pools == nil {
+		return nil, errors.New("recycle: DrainLedger Pools is required")
+	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &drainLedger{
-		tracker:       opts.Tracker,
-		cl:            opts.Client,
-		namespace:     opts.Namespace,
-		maxConcurrent: opts.MaxConcurrent,
-		now:           now,
+		tracker:   opts.Tracker,
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		pools:     opts.Pools,
+		now:       now,
 	}, nil
 }
 
 // RecordLeak records one leaked session-scrub outcome for podID and stamps
 // the drain-request annotation once the pod crosses the unhealthy
-// threshold. spec: §4.7 (leaked feeds the unhealthy-threshold ledger),
-// §4.6.3 (gateway stamps drain-request), §5.2 (unhealthy threshold).
+// threshold. The threshold denominator is the pod's pool
+// maxConcurrentSessions, resolved per pod: a recycling concurrent-session
+// pool drains at ceil(maxConcurrentSessions/2) failed-or-leaked slots, while
+// a single-session pool drains on the first leak. spec: §4.7 (leaked feeds
+// the unhealthy-threshold ledger), §4.6.3 (gateway stamps drain-request),
+// §5.2 (ceil(maxConcurrentSessions/2) unhealthy threshold).
 func (l *drainLedger) RecordLeak(ctx context.Context, podID string) error {
 	l.tracker.RecordLeak(podID)
-	if !l.tracker.Unhealthy(podID, l.maxConcurrent) {
+	maxConcurrent, err := l.maxConcurrentSessions(ctx, podID)
+	if err != nil {
+		return err
+	}
+	if !l.tracker.Unhealthy(podID, maxConcurrent) {
 		return nil
 	}
 	if err := podclaim.StampDrainRequest(ctx, l.cl, l.namespace, podID, l.now()); err != nil {
 		return fmt.Errorf("recycle: stamp drain-request for leaked pod %s: %w", podID, err)
 	}
 	return nil
+}
+
+// maxConcurrentSessions resolves the pod's pool §5.2
+// sessionPolicy.maxConcurrentSessions, the denominator of the
+// ceil(maxConcurrentSessions/2) unhealthy threshold. A pod or pool that no
+// longer resolves, or a pool with no SessionPolicy, falls back to 1 (the
+// §5.2 default one-session-per-pod bound), which slothealth.UnhealthyThreshold
+// clamps a sub-1 value to anyway. A missing pool label fails closed: a leak
+// on an unresolvable pod must not be silently dropped. spec: §5.2
+// (maxConcurrentSessions default 1).
+func (l *drainLedger) maxConcurrentSessions(ctx context.Context, podID string) (int32, error) {
+	var pod corev1.Pod
+	if err := l.cl.Get(ctx, client.ObjectKey{Namespace: l.namespace, Name: podID}, &pod); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// The pod is gone: nothing left to drain, fall back to the default
+			// bound so the threshold check is well-defined. spec: §3.4.
+			return 1, nil
+		}
+		return 0, fmt.Errorf("recycle: get pod %s for drain threshold: %w", podID, err)
+	}
+	poolName := pod.Labels[warmpool.LabelPool]
+	if poolName == "" {
+		return 0, fmt.Errorf("recycle: leaked pod %s carries no %s label", podID, warmpool.LabelPool)
+	}
+	pool, err := l.pools.Get(ctx, poolName)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			// The pool was deleted with the pod; the default bound keeps the
+			// threshold well-defined. spec: §3.4.
+			return 1, nil
+		}
+		return 0, fmt.Errorf("recycle: resolve pool %s for leaked pod %s: %w", poolName, podID, err)
+	}
+	return poolMaxConcurrentSessions(pool), nil
+}
+
+// poolMaxConcurrentSessions returns the pool's §5.2
+// sessionPolicy.maxConcurrentSessions, defaulting to 1 (the one-session-per-pod
+// bound) when the pool carries no SessionPolicy or leaves the field unset.
+// spec: §5.2 (maxConcurrentSessions default 1).
+func poolMaxConcurrentSessions(p poolstore.Pool) int32 {
+	if p.SessionPolicy == nil || p.SessionPolicy.MaxConcurrentSessions < 1 {
+		return 1
+	}
+	return int32(p.SessionPolicy.MaxConcurrentSessions)
 }
 
 // poolReader resolves a pool's §5.2 recycle policy and runtime reference.
@@ -282,7 +341,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		return leasecontrol.PodRecyclePolicy{}, false, nil
 	}
 
-	preConnect, err := i.preConnect(ctx, pool.RuntimeRef)
+	preConnect, runtimeProfile, err := i.resolveRuntime(ctx, pool.RuntimeRef)
 	if err != nil {
 		return leasecontrol.PodRecyclePolicy{}, false, err
 	}
@@ -296,27 +355,30 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		HostSchedulable:     hostSchedulable(pod.Labels),
 		PodUptimeSeconds:    podUptimeSeconds(pod.CreationTimestamp.Time, i.now()),
 		Pool:                poolName,
-		RuntimeClass:        runtimeClass(effectiveProfile(pool)),
+		RuntimeClass:        runtimeClass(effectiveProfile(pool, runtimeProfile)),
 	}, true, nil
 }
 
-// preConnect resolves the runtime's §5.1 capabilities.preConnect flag. A
-// runtime that no longer resolves (deleted between warm and recycle) is
-// treated as non-preConnect, which is the safe default: a non-preConnect
-// recycle never re-warms, so a stale resolution under-warms rather than
-// reserving an SDK-cold pod. spec: §6.2 (preConnect).
-func (i *podInspector) preConnect(ctx context.Context, runtimeRef string) (bool, error) {
+// resolveRuntime resolves the pool runtime's §5.1 capabilities.preConnect
+// flag and its §5.3 default isolation profile. A runtime that no longer
+// resolves (deleted between warm and recycle) is treated as non-preConnect
+// with an empty default profile: a non-preConnect recycle never re-warms, so
+// a stale resolution under-warms rather than reserving an SDK-cold pod, and
+// the empty default falls through to the pool's explicit profile (or an
+// empty runtime_class label) rather than guessing. spec: §6.2 (preConnect),
+// §5.3 (runtime default isolation profile).
+func (i *podInspector) resolveRuntime(ctx context.Context, runtimeRef string) (bool, isolation.Profile, error) {
 	if runtimeRef == "" {
-		return false, nil
+		return false, "", nil
 	}
 	rt, err := i.runtimes.Get(ctx, runtimeRef)
 	if err != nil {
 		if errors.Is(err, runtimestore.ErrNotFound) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, fmt.Errorf("recycle: resolve runtime %s: %w", runtimeRef, err)
+		return false, "", fmt.Errorf("recycle: resolve runtime %s: %w", runtimeRef, err)
 	}
-	return rt.Capabilities != nil && rt.Capabilities.PreConnect, nil
+	return rt.Capabilities != nil && rt.Capabilities.PreConnect, rt.IsolationProfile, nil
 }
 
 // poolRecyclePolicy returns the pool's §5.2 sessionPolicy.recycle when the
@@ -340,10 +402,18 @@ func onScrubFailure(d runtimestore.CleanupFailureDisposition) taskcleanup.Cleanu
 }
 
 // effectiveProfile resolves the pool's §5.3 isolation profile: the pool's
-// override when set, falling back to the pool runtime's default carried on
-// the row. The runtime_class label derives from it. spec: §5.3.
-func effectiveProfile(p poolstore.Pool) isolation.Profile {
-	return p.IsolationProfile
+// IsolationProfile override when set, falling back to the pool runtime's
+// default profile when the pool carries no override. poolstore.Pool.
+// IsolationProfile is documented as an override of the runtime default, so a
+// pool that did not set one resolves to the runtime default rather than the
+// zero profile. The §16.1 runtime_class label on the recycle metrics derives
+// from the result. spec: §5.3 (pool profile overrides the runtime default),
+// §16.1 (runtime_class label).
+func effectiveProfile(p poolstore.Pool, runtimeDefault isolation.Profile) isolation.Profile {
+	if p.IsolationProfile != "" {
+		return p.IsolationProfile
+	}
+	return runtimeDefault
 }
 
 // runtimeClass maps the §5.3 isolation profile to the Kubernetes

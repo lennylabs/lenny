@@ -172,6 +172,114 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 	}
 }
 
+// TestScrubReportServiceWiringResolvesPerPoolDrainThreshold exercises the
+// §5.2 unhealthy-threshold drain ledger end to end on a recycling
+// concurrent-session pool (the "Concurrent" preset, maxConcurrentSessions: 8,
+// threshold ceil(8/2)=4). It proves the gateway wiring resolves the drain
+// threshold against the pod's pool rather than a fixed maxConcurrent=1: a
+// single leaked session scrub leaves the pod undrained (no
+// lenny.dev/drain-request), and the pod is stamped only once it accumulates
+// four leaked sessions in the window.
+//
+// spec: §4.7 (ReportSessionScrub leaked feeds the drain ledger), §5.2
+// (ceil(maxConcurrentSessions/2) unhealthy threshold), §3.4 (recycle
+// disposition), §6.39 (gateway stamps drain-request).
+//
+// diagnosis: a failure means the gateway hard-wires the drain threshold to 1
+// instead of resolving the pod's pool maxConcurrentSessions, so a recycling
+// concurrent-session pod is drained on its first leaked slot rather than at
+// the ceil(maxConcurrentSessions/2) trigger, retiring a still-healthy pod.
+func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testing.T) {
+	env := envtest.Start(t)
+	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scrubWiringScheme(t)})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ctx := context.Background()
+	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: scrubWiringNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace: %v", err)
+	}
+
+	const podID = "pod-concurrent-1"
+	const poolName = "concurrent-agents"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podID,
+			Namespace: scrubWiringNS,
+			Labels: map[string]string{
+				labelPool:                    poolName,
+				"lenny.dev/host-schedulable": "true",
+			},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "busybox"}}},
+	}
+	if err := cl.Create(ctx, pod); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+
+	counters := memstore.New(func() time.Time { return time.Unix(0, 0) })
+	counters.Put(agentpodstate.PodState{PodID: podID, PoolID: poolName})
+
+	// A recycling concurrent-session pool: maxConcurrentSessions 8 yields a
+	// ceil(8/2)=4 unhealthy threshold, so the first three leaks must not drain.
+	pools := poolstore.NewMemory()
+	if err := pools.Create(ctx, poolstore.Pool{
+		Name:          poolName,
+		RuntimeRef:    "rt",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            8,
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled: true, AcknowledgeBestEffortScrub: true,
+				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "rt"}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+
+	svc := newScrubService(t, cl, counters, pools, runtimes)
+
+	reportLeak := func(sessionID string) {
+		t.Helper()
+		if _, err := svc.ReportSessionScrub(ctx, &adapterv1.ReportSessionScrubRequest{
+			PodId:     podID,
+			SessionId: &adapterv1.SessionId{Value: sessionID},
+			Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
+		}); err != nil {
+			t.Fatalf("ReportSessionScrub(%s) leaked: %v", sessionID, err)
+		}
+	}
+	drainStamped := func() bool {
+		t.Helper()
+		var got corev1.Pod
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: scrubWiringNS, Name: podID}, &got); err != nil {
+			t.Fatalf("get pod: %v", err)
+		}
+		return got.Annotations[lennyv1.AnnotationDrainRequest] != ""
+	}
+
+	// Three leaks are below the ceil(8/2)=4 threshold: a fixed-1 wiring would
+	// have drained on the first.
+	reportLeak("sess-1")
+	reportLeak("sess-2")
+	reportLeak("sess-3")
+	if drainStamped() {
+		t.Fatal("drain-request stamped at 3 leaks on a maxConcurrentSessions:8 pool, below the ceil(8/2)=4 threshold")
+	}
+	// The fourth leak crosses the threshold.
+	reportLeak("sess-4")
+	if !drainStamped() {
+		t.Error("drain-request not stamped at 4 leaks, the ceil(8/2) unhealthy threshold")
+	}
+}
+
 // newScrubService builds a leasecontrol.Service wired with the §4.7 scrub
 // reporter the gateway constructs in main, so the test drives the same
 // handlers the GatewayControl listener serves.

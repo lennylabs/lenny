@@ -8351,21 +8351,22 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // agent_pod_state recycle counters, the unhealthy-threshold drain ledger
 // over a fresh slothealth tracker, the §6.39 host-node schedulability pod
 // inspector, the §3.4 claim disposition driver, and the §16.1 retirement
-// metrics. The recycling pods this path serves are one-session-per-pod
-// (the concurrent-session model never recycles), so the drain ledger's
-// unhealthy threshold uses maxConcurrent 1: a leaked single-session pod is
-// unhealthy and drains on the first leak rather than recycling.
+// metrics. The drain ledger resolves each leaked pod's pool
+// maxConcurrentSessions through the pool store, so a single-session
+// recycling pod drains on the first leak while a recycling concurrent-session
+// pool (the §5.2 "Concurrent" preset, maxConcurrentSessions: N with
+// recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
 // disposition), §5.2 (scrub model), §6.39 (host-node schedulability
 // retire), §16.1 (recycle metrics).
 func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, agentNamespace string, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
-		Tracker:       slothealth.New(slothealth.WithClock(now)),
-		Client:        cl,
-		Namespace:     agentNamespace,
-		MaxConcurrent: 1,
-		Now:           now,
+		Tracker:   slothealth.New(slothealth.WithClock(now)),
+		Client:    cl,
+		Namespace: agentNamespace,
+		Pools:     pools,
+		Now:       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build drain ledger: %w", err)
