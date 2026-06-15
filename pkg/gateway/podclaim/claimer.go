@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // ErrNoIdlePod reports that the pool has no claimable idle Sandbox. The
@@ -41,6 +42,23 @@ type Claimer struct {
 	Client client.Client
 	// Namespace is the agent namespace the pool's Sandboxes live in.
 	Namespace string
+	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
+	// the rebind branch. Nil uses time.Now.
+	Now func() time.Time
+	// OnRebind is invoked with the rebound pod's identifier after a successful
+	// §3.2 acquisition-path rebind, so the gateway can cancel the holding
+	// replica's local hold-TTL timer. The rebind patch already changed the
+	// claim resourceVersion, so a missed cancellation only costs a no-op
+	// aborted expiry DELETE; the callback is an optimization. Nil is a no-op.
+	OnRebind func(podID string)
+}
+
+// now resolves the injected clock, defaulting to wall time.
+func (c *Claimer) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
 }
 
 // ClaimRequest identifies the session a pod is claimed for.
@@ -90,6 +108,19 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		return nil, fmt.Errorf("list sandboxes for pool %s: %w", req.Pool, err)
 	}
 
+	// §3.2 acquisition-path rebind branch: before acquiring a fresh idle pod,
+	// dispatch onto a pod the same tenant already holds in `reserved` within
+	// its hold window. A reserved pod is scrubbed (and, on preConnect pools,
+	// SDK-warm), so a same-tenant session rebinds it (`reserved → bound`) with
+	// no acquisition round trip. Any gateway replica may rebind; the rebinding
+	// replica re-reads the claim after its patch before dispatching. spec:
+	// §3.2, §4.6.1 (within-hold rebind).
+	if claim, rebound, err := c.rebindReserved(ctx, &list, req); err != nil {
+		return nil, err
+	} else if rebound {
+		return claim, nil
+	}
+
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if sb.Status.Phase != string(state.Idle) {
@@ -129,6 +160,117 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		return claim, nil
 	}
 	return nil, ErrNoIdlePod
+}
+
+// rebindReserved implements the §3.2 acquisition-path rebind: it finds a pod
+// the request's tenant holds in `reserved` within its hold window and
+// dispatches the session onto it by patching the claim `reserved → bound`,
+// returning the rebound claim. rebound is false when no eligible reserved pod
+// exists, in which case the caller falls through to normal idle acquisition.
+//
+// Eligibility: the per-pod claim is in the `reserved` binding state, pinned
+// to the request tenant (a reserved pod is pinned for its pinned tenant
+// alone), and its holdExpiresAt is still in the future. A claim whose hold
+// has already expired is left to the holder's expiry DELETE or the orphan GC;
+// rebinding an expired hold would race the DELETE for no benefit.
+//
+// The rebind patch (WriteRebindStatus) changes the claim resourceVersion, so
+// the holder's precondition-guarded hold-expiry DELETE fenced on the
+// reserved-patch version fails and aborts (§3.2 rebind-vs-hold-expiry race).
+// A WriteRebindStatus that loses to a concurrent expiry DELETE (the claim
+// vanished) is tolerated as not-rebound so the caller falls through to normal
+// acquisition. After a successful patch the claim is re-read so the returned
+// object reflects the post-rebind state the caller dispatches against, per
+// §3.2 ("the rebinding replica re-reads the claim after its patch before
+// dispatching").
+//
+// spec: §3.2 (within-hold rebind, any replica may rebind, re-read after
+// patch), §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound).
+func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList, req ClaimRequest) (*lennyv1.SandboxClaim, bool, error) {
+	now := c.now()
+	for i := range list.Items {
+		sb := &list.Items[i]
+		if sb.Status.Phase != string(state.Reserved) {
+			continue
+		}
+		claim, found, err := c.reservedClaimForTenant(ctx, sb.Name, req.TenantID, now)
+		if err != nil {
+			return nil, false, err
+		}
+		if !found {
+			continue
+		}
+		if err := WriteRebindStatus(ctx, c.Client, c.Namespace, claim.Name, c.now); err != nil {
+			if apierrors.IsNotFound(err) {
+				// A concurrent hold-expiry DELETE reclaimed the claim before the
+				// rebind patch landed; the pod is returning to idle. Fall through
+				// to normal acquisition rather than treating it as an error.
+				continue
+			}
+			return nil, false, fmt.Errorf("podclaim: rebind reserved claim %s: %w", claim.Name, err)
+		}
+		// §3.2: re-read the claim after the rebind patch so the dispatched
+		// object reflects the post-rebind `bound` state and resourceVersion.
+		rebound, reErr := c.claimByName(ctx, claim.Name)
+		if reErr != nil {
+			if apierrors.IsNotFound(reErr) {
+				// The claim vanished between the rebind patch and the re-read
+				// (a racing DELETE that lost its precondition would not delete,
+				// so this is the orphan GC or a manual delete); fall through.
+				continue
+			}
+			return nil, false, fmt.Errorf("podclaim: re-read rebound claim %s: %w", claim.Name, reErr)
+		}
+		// Cancel the holding replica's local hold-TTL timer (a no-op on a
+		// peer-held claim). The precondition guard already aborts a stale
+		// expiry DELETE, so this only avoids a wasted API call. spec: §3.2.
+		if c.OnRebind != nil {
+			c.OnRebind(sb.Name)
+		}
+		return rebound, true, nil
+	}
+	return nil, false, nil
+}
+
+// reservedClaimForTenant reads the per-pod claim for sandboxName and returns
+// it when it is a `reserved` claim pinned to tenantID with a hold window that
+// has not yet expired. found is false otherwise: no claim, a non-reserved
+// binding state (a racing rebind or expiry already moved it), a different
+// tenant pin, or an already-expired hold. The Sandbox phase having read
+// `reserved` is only a hint; the claim binding state is authoritative, so the
+// claim is re-checked here rather than trusted from the projection.
+func (c *Claimer) reservedClaimForTenant(ctx context.Context, sandboxName, tenantID string, now time.Time) (*lennyv1.SandboxClaim, bool, error) {
+	var claim lennyv1.SandboxClaim
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: ClaimName(sandboxName)}, &claim); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("podclaim: get reserved claim for sandbox %s: %w", sandboxName, err)
+	}
+	if claim.Status.Phase != string(claimstate.Reserved) {
+		return nil, false, nil
+	}
+	if claim.Spec.TenantID != tenantID {
+		// A reserved pod is held for its pinned tenant alone; never rebind it
+		// to a different tenant. spec: §3.2, §5.2 (tenant pinning).
+		return nil, false, nil
+	}
+	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(now) {
+		// The hold has expired (or carries no deadline); leave it to the
+		// holder's expiry DELETE or the orphan GC. spec: §3.2.
+		return nil, false, nil
+	}
+	return &claim, true, nil
+}
+
+// claimByName re-reads a SandboxClaim by its claim name. It backs the §3.2
+// post-rebind re-read so the caller dispatches against the current object.
+func (c *Claimer) claimByName(ctx context.Context, claimName string) (*lennyv1.SandboxClaim, error) {
+	var claim lennyv1.SandboxClaim
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: claimName}, &claim); err != nil {
+		return nil, err
+	}
+	return &claim, nil
 }
 
 // CreateClaim creates the per-pod occupancy SandboxClaim (§4.6.1) that

@@ -762,6 +762,32 @@ tests:
             name: LENNY_CLAIM_HOLD_TTL_SECONDS
             value: "30"
 
+  # spec: §12.4 / §6.57 (operator-tunable bounded slot-counter Postgres-fallback
+  # window) — gateway.slotCounterFallbackWindowSeconds renders into the
+  # LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS env var with the spec default 60s.
+  - it: renders the §12.4 slot-counter fallback window into LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+            value: "60"
+  - it: honors a gateway.slotCounterFallbackWindowSeconds override
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.slotCounterFallbackWindowSeconds: 120
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+            value: "120"
+
   # spec: §10.2 line 227 — the §8.6 GatewayControl listener verifies each
   # pod-presented projected SA token via a TokenReview, so the gateway SA
   # needs create on authentication.k8s.io/tokenreviews. F-10.2.10.
@@ -913,10 +939,12 @@ tests:
       #   §11.3 line 210, F-11.3.15 — checkpointBarrierAckTimeoutSeconds
       #   defaults to 90 and renders)
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
-      #   claimHoldTTLSeconds defaults to 10 and renders) = 81.
+      #   claimHoldTTLSeconds defaults to 10 and renders)
+      # + LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS (§12.4 / §6.57 —
+      #   slotCounterFallbackWindowSeconds defaults to 60 and renders) = 82.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 81
+          count: 82
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME

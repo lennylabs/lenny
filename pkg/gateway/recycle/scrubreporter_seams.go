@@ -48,6 +48,18 @@ import (
 // hold semantics, claimHoldTTLSeconds default 10s).
 const DefaultClaimHoldTTL = 10 * time.Second
 
+// HighClaimHoldTTLWarnSeconds is the advisory ceiling above which the gateway
+// warns at startup that gateway.claimHoldTTLSeconds is set high. A reserved
+// pod is counted as occupied for inventory and scaling (§4.6.2), so a hold
+// far longer than the spec default depresses apparent idle inventory and
+// delays retirement-limit evaluation at the next disposition. The value is
+// advisory only: a configured TTL above it is still honored. It is a
+// round-number multiple of the §4.6.1 default rather than a spec-fixed
+// constant, so it lives here as the one place the warning threshold is
+// defined. spec: §4.6.1 (configuration validation warns when the TTL is set
+// high), §4.6.2 (reserved pods counted as occupied).
+const HighClaimHoldTTLWarnSeconds = 60
+
 // CounterStore is the agent_pod_state subset the §4.7 recycle-counter seam
 // needs. *agentpodstate.Store (and its memstore/pgstore implementations)
 // satisfy it directly: the three methods are the same recycle-counter
@@ -487,6 +499,12 @@ type claimDispositionDriver struct {
 	holdTTL   time.Duration
 	now       func() time.Time
 	log       *slog.Logger
+	// holds receives the §3.2 reserved-hold token after a non-preConnect
+	// reserved patch so the coordinator arms the hold-TTL expiry timer. Nil
+	// disables the timer (the orphan GC still reclaims the reserved claim
+	// after holdExpiresAt plus a grace, §4.6.1), which keeps the disposition
+	// usable in unit tests that do not exercise the hold window.
+	holds HoldRegistrar
 }
 
 // ClaimDispositionDriverOptions configures the claim disposition driver.
@@ -507,6 +525,11 @@ type ClaimDispositionDriverOptions struct {
 	// pod's metadata is retained in the audit log for inspection). nil
 	// resolves to slog.Default().
 	Logger *slog.Logger
+	// Holds receives the §3.2 reserved-hold token after a non-preConnect
+	// reserved patch so the HoldCoordinator arms the hold-TTL expiry timer.
+	// Nil leaves expiry to the §4.6.1 orphan GC (after holdExpiresAt plus a
+	// grace) and is the default in tests that do not exercise the hold window.
+	Holds HoldRegistrar
 }
 
 // NewClaimDispositionDriver builds the §3.4 claim disposition driver.
@@ -536,6 +559,7 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 		holdTTL:   holdTTL,
 		now:       now,
 		log:       log,
+		holds:     opts.Holds,
 	}, nil
 }
 
@@ -598,11 +622,19 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 		}
 		return nil
 	}
-	if _, err := podclaim.WriteReservedStatus(ctx, d.cl, d.namespace, claim, d.holdTTL, d.now); err != nil {
+	hold, err := podclaim.WriteReservedStatus(ctx, d.cl, d.namespace, claim, d.holdTTL, d.now)
+	if err != nil {
 		if claimGone(err) {
 			return nil
 		}
 		return fmt.Errorf("recycle: reserve claim %s: %w", claim, err)
+	}
+	// Hand the §3.2 reserved-hold token to the coordinator so it arms the
+	// hold-TTL expiry timer (the precondition-guarded DELETE that returns the
+	// pod to idle). A nil registrar leaves the reserved claim for the §4.6.1
+	// orphan GC after holdExpiresAt plus a grace. spec: §3.2.
+	if d.holds != nil {
+		d.holds.Hold(podID, hold)
 	}
 	return nil
 }

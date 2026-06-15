@@ -378,6 +378,24 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			// CreationTimestamp.
 			continue
 		}
+		// §3.2 within-hold rebind: a same-tenant claim held in `reserved`
+		// within its hold window is dispatched onto with no acquisition round
+		// trip. The slot path consumes the hold by patching the claim
+		// `reserved → bound` before reserving the first slot; the rebind
+		// changes the resourceVersion so the holder's expiry DELETE aborts.
+		// A rebind that loses to a concurrent expiry DELETE (the claim
+		// vanished, or moved off `reserved`) re-reads as not-rebound and the
+		// pod is skipped for normal acquisition. spec: §3.2, §4.6.1.
+		if claim.Status.Phase == string(claimstate.Reserved) {
+			rebound, ok, err := c.rebindReservedSlot(ctx, claim)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			claim = rebound
+		}
 		res, conflict, err := c.reserveSlot(ctx, sb, claim, req, false)
 		if err != nil {
 			return nil, err
@@ -441,6 +459,44 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 		return nil, ErrTenantMismatch
 	}
 	return nil, ErrNoConcurrentSlot
+}
+
+// rebindReservedSlot consumes a §3.2 reserved hold on a concurrent-session
+// pod: when the same tenant holds the pod in `reserved` within its hold
+// window, it patches the claim `reserved → bound` and re-reads it so the slot
+// reservation lands on a `bound` claim. ok is false when the hold has expired
+// or a concurrent expiry DELETE / rebind moved the claim off `reserved`, in
+// which case the caller skips the pod (a slot can never be reserved on a
+// `reserved` claim because a reserved pod has zero active slots and must be
+// rebound first). The rebind changes the resourceVersion, so the holder's
+// precondition-guarded expiry DELETE aborts. spec: §3.2 (within-hold rebind),
+// §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound).
+func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.SandboxClaim) (*lennyv1.SandboxClaim, bool, error) {
+	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(c.now()) {
+		// The hold has expired (or carries no deadline); leave the claim to the
+		// holder's expiry DELETE or the orphan GC rather than racing it.
+		return nil, false, nil
+	}
+	if err := WriteRebindStatus(ctx, c.Client, c.Namespace, claim.Name, c.now); err != nil {
+		if apierrors.IsNotFound(err) {
+			// A concurrent expiry DELETE reclaimed the claim first; skip the pod.
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("podclaim: rebind reserved claim %s for slot: %w", claim.Name, err)
+	}
+	// §3.2: re-read the claim after the rebind patch so the slot reservation
+	// lands on the post-rebind `bound` object. The claim name is the
+	// authoritative key; req.SandboxRef on the claim spec names its pod.
+	rebound, found, err := c.podClaim(ctx, claim.Spec.SandboxRef)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found || rebound.Status.Phase != string(claimstate.Bound) {
+		// The claim vanished or was moved off `bound` between the patch and the
+		// re-read; skip rather than reserve a slot on an unstable claim.
+		return nil, false, nil
+	}
+	return rebound, true, nil
 }
 
 // podClaim reads the per-pod occupancy SandboxClaim (claim-<podName>) for

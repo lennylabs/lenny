@@ -2335,6 +2335,15 @@ gateway:
   # warns at startup when it is set high. Default 10s. Rendered into
   # LENNY_CLAIM_HOLD_TTL_SECONDS.
   claimHoldTTLSeconds: 10
+  # slotCounterFallbackWindowSeconds is the §12.4 / §6.57 bounded window
+  # during a Redis outage in which the §5.2 atomic slot counter gates
+  # intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under
+  # a per-pod advisory lock) instead of the Redis Lua counter. After this
+  # many seconds with Redis still unreachable, slot admission fails closed
+  # so a sustained Redis outage cannot keep the gateway gating capacity on
+  # the higher-latency Postgres path indefinitely. Default 60s. Rendered
+  # into LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS.
+  slotCounterFallbackWindowSeconds: 60
   # topologySpread opt-in (§4.1 / §17.1). When enabled the chart emits
   # spec.template.spec.topologySpreadConstraints on the gateway
   # Deployment so the scheduler distributes replicas across failure

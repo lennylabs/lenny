@@ -189,6 +189,25 @@ type Binder struct {
 	// symlink, etc.). Called only on the gateway extraction path. Nil is a
 	// no-op. spec: §7.4 line 462; §16.1 — F-7.4.11.
 	ExtractionAbort func(errorType string)
+	// HoldCanceller cancels the holding replica's local §3.2 reserved-hold
+	// expiry timer after a successful acquisition-path rebind, so the timer
+	// does not issue a wasted no-op DELETE. The rebind patch already changed
+	// the claim resourceVersion, so the precondition guard is the
+	// authoritative race resolver and a missed cancellation is harmless. Nil
+	// is a no-op (a deployment with no in-process hold coordinator, or a
+	// peer-held reserved claim). spec: §3.2.
+	HoldCanceller HoldCanceller
+	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
+	// the acquisition-path rebind branch. Nil uses time.Now.
+	Now func() time.Time
+}
+
+// HoldCanceller cancels a §3.2 reserved-hold expiry timer this replica holds
+// for the pod's claim. *recycle.HoldCoordinator satisfies it through Cancel;
+// the interface is defined at this consumer so podsession does not import the
+// recycle package. spec: §3.2 (within-hold rebind cancels the local timer).
+type HoldCanceller interface {
+	Cancel(podID string)
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -1217,7 +1236,18 @@ type negotiated struct {
 // The negotiated return value carries the handshake-reported metadata
 // (workspace root, etc.) the caller threads onto BindResult.
 func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
-	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
+	claimer := &podclaim.Claimer{
+		Client:    b.Client,
+		Namespace: b.Namespace,
+		Now:       b.Now,
+		// On a §3.2 acquisition-path rebind, cancel the holding replica's local
+		// hold-TTL timer so it does not issue a wasted no-op expiry DELETE.
+		OnRebind: func(podID string) {
+			if b.HoldCanceller != nil {
+				b.HoldCanceller.Cancel(podID)
+			}
+		},
+	}
 	req := podclaim.ClaimRequest{
 		Pool:      pool,
 		SessionID: sessionID,

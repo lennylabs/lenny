@@ -631,3 +631,91 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 		t.Error("pod drained despite maxPodUptimeSeconds=0 (uptime check must be disabled)")
 	}
 }
+
+// seedReservedSlotPod creates the per-pod claim for sandboxName, patches it
+// bound → recycling → reserved with the given hold TTL, so the §3.2 slot-path
+// rebind branch sees a reserved claim it can rebind.
+func seedReservedSlotPod(t *testing.T, c client.Client, sandboxName, tenantID string, now time.Time, holdTTL time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	name := podclaim.ClaimName(sandboxName)
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
+	}
+	if err := c.Create(ctx, claim); err != nil {
+		t.Fatalf("create claim %s: %v", name, err)
+	}
+	if err := podclaim.WriteBoundStatus(ctx, c, testNS, name); err != nil {
+		t.Fatalf("seed bound: %v", err)
+	}
+	clk := func() time.Time { return now }
+	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, clk); err != nil {
+		t.Fatalf("seed recycling: %v", err)
+	}
+	if _, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, holdTTL, clk); err != nil {
+		t.Fatalf("seed reserved: %v", err)
+	}
+}
+
+// TestClaimSlotRebindsReservedSamePodWithinHold verifies the §3.2 slot-path
+// rebind: a same-tenant slot request on a pod held in `reserved` within its
+// hold window rebinds the claim (reserved → bound) and reserves the first slot
+// on it, rather than acquiring a fresh idle pod.
+// spec: 3.2 (within-hold rebind, no acquisition round trip), 4.6.1 (reserved hold)
+//
+// diagnosis: a failure means a concurrent-session slot request re-acquires a
+// fresh pod instead of dispatching onto the same tenant's scrubbed, reserved
+// pod, so the reserved-hold latency optimization is lost on the slot path and a
+// reserved claim could acquire a stuck slot it never rebound to bound.
+func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	claimer, c, _ := slotClaimerFor(t,
+		concurrentSandbox("sbx-held", "reserved", "acme"),
+		concurrentSandbox("sbx-idle", "idle", ""),
+	)
+	claimer.Now = func() time.Time { return now.Add(5 * time.Second) } // within the hold
+	seedReservedSlotPod(t, c, "sbx-held", "acme", now, 30*time.Second)
+
+	res, err := claimer.ClaimSlot(context.Background(), slotReq("sess-2", "acme", 8))
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if res.SandboxName != "sbx-held" {
+		t.Errorf("slot landed on %q, want the rebound reserved pod sbx-held", res.SandboxName)
+	}
+	if res.FreshPod {
+		t.Error("rebind onto a reserved pod should not report FreshPod=true (no claim CREATE)")
+	}
+	stored := &lennyv1.SandboxClaim{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podclaim.ClaimName("sbx-held")}, stored); err != nil {
+		t.Fatalf("get rebound claim: %v", err)
+	}
+	if stored.Status.Phase != "bound" {
+		t.Errorf("rebound claim phase = %q, want bound", stored.Status.Phase)
+	}
+}
+
+// TestClaimSlotSkipsExpiredReservedHold verifies a reserved pod whose hold has
+// expired is not rebound on the slot path; the slot lands on a fresh idle pod.
+// spec: 3.2 (hold-expiry, no rebind of an expired hold)
+func TestClaimSlotSkipsExpiredReservedHold_spec_3_2(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	claimer, c, _ := slotClaimerFor(t,
+		concurrentSandbox("sbx-expired", "reserved", "acme"),
+		concurrentSandbox("sbx-idle", "idle", ""),
+	)
+	claimer.Now = func() time.Time { return now.Add(time.Minute) } // past the hold
+	seedReservedSlotPod(t, c, "sbx-expired", "acme", now, 10*time.Second)
+
+	res, err := claimer.ClaimSlot(context.Background(), slotReq("sess-3", "acme", 8))
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if res.SandboxName != "sbx-idle" {
+		t.Errorf("slot landed on %q, want the fresh idle pod sbx-idle (expired hold not rebound)", res.SandboxName)
+	}
+	if !res.FreshPod {
+		t.Error("a fresh idle acquisition should report FreshPod=true")
+	}
+}

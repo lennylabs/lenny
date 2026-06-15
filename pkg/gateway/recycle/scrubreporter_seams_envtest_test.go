@@ -122,6 +122,172 @@ func TestClaimDispositionRecycleNonPreConnectReserves_spec_3_4(t *testing.T) {
 	}
 }
 
+// captureRegistrar records the §3.2 reserved-hold tokens the disposition
+// driver hands it, so a test can assert the driver registers the hold timer
+// after a non-preConnect reserved patch.
+type captureRegistrar struct {
+	pods  []string
+	holds []podclaim.ReservedHold
+}
+
+func (r *captureRegistrar) Hold(podID string, hold podclaim.ReservedHold) {
+	r.pods = append(r.pods, podID)
+	r.holds = append(r.holds, hold)
+}
+
+// TestClaimDispositionRecycleNonPreConnectRegistersHold verifies the driver
+// hands the §3.2 reserved-hold token (the pod, and the UID/resourceVersion
+// observed at the reserved patch) to the HoldRegistrar so the coordinator
+// arms the hold-TTL expiry timer.
+// spec: 3.2 (reserved hold timer ownership), 4.6.1 (claimHoldTTLSeconds)
+//
+// diagnosis: a failure means a recycled non-preConnect pod is reserved but no
+// expiry timer is armed, so the pod is held until the slower orphan GC reclaims
+// it rather than returning to idle at holdExpiresAt plus the local grace.
+func TestClaimDispositionRecycleNonPreConnectRegistersHold_spec_3_2(t *testing.T) {
+	c := newEnvtestClient(t)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	reg := &captureRegistrar{}
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Now:   func() time.Time { return now },
+		Holds: reg,
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", false, false); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	if len(reg.pods) != 1 || reg.pods[0] != "pod-1" {
+		t.Fatalf("registrar saw pods %v, want [pod-1]", reg.pods)
+	}
+	got := getClaim(t, c, name)
+	if reg.holds[0].ResourceVersion != got.ResourceVersion {
+		t.Errorf("registered hold resourceVersion = %q, want the reserved-patch version %q", reg.holds[0].ResourceVersion, got.ResourceVersion)
+	}
+	if !reg.holds[0].HoldExpiresAt.Equal(now.Add(10 * time.Second)) {
+		t.Errorf("registered holdExpiresAt = %v, want %v", reg.holds[0].HoldExpiresAt, now.Add(10*time.Second))
+	}
+}
+
+// TestClaimDispositionRecyclePreConnectDoesNotRegisterHold verifies a
+// preConnect recycle stamps rewarmStartedAt only and does not register a hold
+// (the reserved patch follows asynchronously once the SDK reports warm).
+// spec: 3.2 (reserved hold timer ownership), 6.2 (preConnect re-warm)
+//
+// diagnosis: a failure means a preConnect pod's hold timer is armed before the
+// claim has even entered reserved, so the timer would delete a recycling claim
+// mid-re-warm.
+func TestClaimDispositionRecyclePreConnectDoesNotRegisterHold_spec_3_2(t *testing.T) {
+	c := newEnvtestClient(t)
+	seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	reg := &captureRegistrar{}
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, Now: func() time.Time { return now }, Holds: reg,
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", true, false); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	if len(reg.pods) != 0 {
+		t.Errorf("preConnect recycle registered holds %v, want none (reserved patch follows the re-warm)", reg.pods)
+	}
+}
+
+// TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer verifies the real
+// §3.2 coordinator (with its podclaim-wired DELETE seam) deletes a reserved
+// claim against the envtest API server once the hold TTL elapses, returning
+// the pod to idle. It exercises the NewHoldCoordinator constructor closures
+// end-to-end rather than the injected unit seams.
+// spec: 3.2 (precondition-guarded hold-expiry DELETE), 4.6.1 (reserved hold)
+//
+// diagnosis: a failure means the coordinator's wired DELETE seam does not
+// reclaim a reserved claim on expiry, so a recycled pod never returns to idle
+// without the slower orphan GC.
+func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing.T) {
+	c := newEnvtestClient(t)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	// Reserve the claim and capture the real hold token.
+	hold, err := podclaim.WriteReservedStatus(context.Background(), c, testNS, name, time.Second, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("WriteReservedStatus: %v", err)
+	}
+	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: testNS})
+	if err != nil {
+		t.Fatalf("NewHoldCoordinator: %v", err)
+	}
+	defer hc.Stop()
+	// Arm with an already-elapsed deadline so the timer fires at the grace
+	// period and the DELETE lands promptly.
+	hold.HoldExpiresAt = time.Now().Add(-time.Second)
+	hc.Hold("pod-1", hold)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var got lennyv1.SandboxClaim
+		err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got)
+		if apierrors.IsNotFound(err) {
+			return // the claim was deleted: the pod returns to idle
+		}
+		if err != nil {
+			t.Fatalf("get claim: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reserved claim was not deleted within 5s of hold expiry")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer verifies the real
+// coordinator's expiry DELETE aborts (the claim survives as bound) when a
+// rebind changed the resourceVersion before the timer fired, the §3.2
+// rebind-vs-hold-expiry precondition race exercised against the API server.
+// spec: 3.2 (rebind-vs-hold-expiry precondition race)
+//
+// diagnosis: a failure means the coordinator's DELETE is not fenced on the
+// reserved-patch resourceVersion, so a hold-expiry timer would delete a claim
+// a same-tenant session already rebound, dropping a live session's pod.
+func TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer_spec_3_2(t *testing.T) {
+	c := newEnvtestClient(t)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	hold, err := podclaim.WriteReservedStatus(context.Background(), c, testNS, name, time.Second, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("WriteReservedStatus: %v", err)
+	}
+	// A rebind lands first (any replica), changing the resourceVersion the
+	// stale hold token carries.
+	if err := podclaim.WriteRebindStatus(context.Background(), c, testNS, name, nil); err != nil {
+		t.Fatalf("WriteRebindStatus: %v", err)
+	}
+
+	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: testNS})
+	if err != nil {
+		t.Fatalf("NewHoldCoordinator: %v", err)
+	}
+	defer hc.Stop()
+	hold.HoldExpiresAt = time.Now().Add(-time.Second) // fire promptly
+	hc.Hold("pod-1", hold)
+
+	// Wait past the grace period; the claim must survive (the DELETE aborted)
+	// and remain bound.
+	time.Sleep(recycle.HoldExpiryGracePeriod + 500*time.Millisecond)
+	var got lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err != nil {
+		t.Fatalf("rebound claim must survive a stale expiry DELETE, got: %v", err)
+	}
+	if got.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("phase = %q, want bound (rebound claim intact after aborted expiry)", got.Status.Phase)
+	}
+}
+
 // TestClaimDispositionRecyclePreConnectStampsRewarm verifies the driver
 // stamps rewarmStartedAt on a recycling claim on a preConnect pool and
 // leaves the phase `recycling` so the projection enters sdk_connecting.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
@@ -250,5 +251,130 @@ func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 	}
 	if !apierrors.IsAlreadyExists(err) {
 		t.Errorf("second CreateClaim error = %v, want apierrors.IsAlreadyExists", err)
+	}
+}
+
+// reservedSandbox builds a Sandbox projecting the §6.2 `reserved` phase,
+// pinned to tenantID, the projection the §3.2 acquisition-path rebind branch
+// scans for.
+func reservedSandbox(name, tenantID string) *lennyv1.Sandbox {
+	sb := sandboxIn(testPool, name, "reserved")
+	sb.Status.TenantID = tenantID
+	if tenantID != "" {
+		sb.Labels[podclaim.LabelTenant] = tenantID
+	}
+	return sb
+}
+
+// seedReservedClaim creates the per-pod claim for podID, patches it bound →
+// recycling → reserved, and returns it. holdTTL sets holdExpiresAt at
+// reservedAt + holdTTL where reservedAt is the supplied now.
+func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, now time.Time, holdTTL time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	name := podclaim.ClaimName(podID)
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: tenantID},
+	}
+	if err := c.Create(ctx, claim); err != nil {
+		t.Fatalf("create claim %s: %v", name, err)
+	}
+	if err := podclaim.WriteBoundStatus(ctx, c, testNS, name); err != nil {
+		t.Fatalf("seed bound: %v", err)
+	}
+	clk := func() time.Time { return now }
+	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, clk); err != nil {
+		t.Fatalf("seed recycling: %v", err)
+	}
+	if _, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, holdTTL, clk); err != nil {
+		t.Fatalf("seed reserved: %v", err)
+	}
+}
+
+// TestClaimRebindsReservedPodWithinHold verifies the §3.2 acquisition-path
+// rebind branch: a same-tenant session dispatches onto a pod the tenant holds
+// in `reserved` within its hold window via a reserved → bound patch, with no
+// fresh idle-pod acquisition.
+// spec: 3.2 (within-hold rebind, no acquisition round trip), 4.6.1 (reserved hold)
+func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	c := newEnvtestClient(t, reservedSandbox("sbx-held", "acme"))
+	seedReservedClaim(t, c, "sbx-held", "acme", now, 30*time.Second)
+
+	var rebound []string
+	claimer := &podclaim.Claimer{
+		Client: c, Namespace: testNS,
+		Now:      func() time.Time { return now.Add(5 * time.Second) }, // within the 30s hold
+		OnRebind: func(podID string) { rebound = append(rebound, podID) },
+	}
+	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "sess-2", TenantID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if claim.Name != podclaim.ClaimName("sbx-held") {
+		t.Errorf("rebound onto claim %q, want the held pod's claim", claim.Name)
+	}
+	if claim.Status.Phase != "bound" {
+		t.Errorf("rebound claim phase = %q, want bound", claim.Status.Phase)
+	}
+	if len(rebound) != 1 || rebound[0] != "sbx-held" {
+		t.Errorf("OnRebind fired for %v, want [sbx-held]", rebound)
+	}
+}
+
+// TestClaimSkipsExpiredReservedHoldAndAcquiresIdle verifies a reserved pod
+// whose hold has expired is not rebound (it is left to the holder's expiry
+// DELETE or the orphan GC), so the claim falls through to a fresh idle
+// acquisition.
+// spec: 3.2 (hold-expiry, no rebind of an expired hold)
+func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	c := newEnvtestClient(t,
+		reservedSandbox("sbx-expired", "acme"),
+		sandboxIn(testPool, "sbx-idle", "idle"),
+	)
+	seedReservedClaim(t, c, "sbx-expired", "acme", now, 10*time.Second)
+
+	claimer := &podclaim.Claimer{
+		Client: c, Namespace: testNS,
+		Now: func() time.Time { return now.Add(time.Minute) }, // past the 10s hold
+	}
+	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "sess-3", TenantID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if claim.Spec.SandboxRef != "sbx-idle" {
+		t.Errorf("acquired %q, want the fresh idle pod sbx-idle (expired hold not rebound)", claim.Spec.SandboxRef)
+	}
+}
+
+// TestClaimDoesNotRebindReservedPodOfOtherTenant verifies a reserved pod
+// pinned to a different tenant is never rebound; the claim acquires its own
+// fresh idle pod instead.
+// spec: 3.2 (a reserved pod is held for its pinned tenant alone), 5.2 (tenant pinning)
+func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	c := newEnvtestClient(t,
+		reservedSandbox("sbx-globex", "globex"),
+		sandboxIn(testPool, "sbx-idle", "idle"),
+	)
+	seedReservedClaim(t, c, "sbx-globex", "globex", now, time.Minute)
+
+	claimer := &podclaim.Claimer{
+		Client: c, Namespace: testNS, Now: func() time.Time { return now.Add(5 * time.Second) },
+	}
+	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "sess-4", TenantID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if claim.Spec.SandboxRef != "sbx-idle" {
+		t.Errorf("acquired %q, want sbx-idle (cross-tenant reserved pod not rebound)", claim.Spec.SandboxRef)
 	}
 }

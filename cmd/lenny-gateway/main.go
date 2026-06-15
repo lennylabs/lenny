@@ -475,6 +475,12 @@ func main() {
 	dualStoreMaxSeconds := flag.Int("dual-store-unavailable-max-seconds",
 		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
 		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
+	claimHoldTTLSeconds := flag.Int("claim-hold-ttl-seconds",
+		envInt("LENNY_CLAIM_HOLD_TTL_SECONDS", int(recycle.DefaultClaimHoldTTL/time.Second)),
+		"§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod SandboxClaim to `reserved` and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS.")
+	slotCounterFallbackWindowSeconds := flag.Int("slot-counter-fallback-window-seconds",
+		envInt("LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
+		"§12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -1333,6 +1339,17 @@ func main() {
 	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
 		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
 	_ = delegationQuiescenceCfg
+
+	// §4.6.1: a high reserved-hold TTL holds a recycled pod out of its pinned
+	// tenant's claimable idle inventory (a reserved pod is counted as occupied
+	// for inventory and scaling, §4.6.2) and delays retirement-limit
+	// evaluation at the next disposition. Warn at startup when the operator
+	// sets it above the advisory ceiling so the inventory effect is visible in
+	// the logs; the value is honored regardless.
+	if *claimHoldTTLSeconds > recycle.HighClaimHoldTTLWarnSeconds {
+		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
+			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
+	}
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -2359,6 +2376,13 @@ func main() {
 		podBinder     *podsession.Binder
 		podRegistry   *podsession.Registry
 		checkpointSvc *checkpointer.Checkpointer
+		// holdCoordinator runs the §3.2 reserved-hold expiry timers on this
+		// replica. It is shared between the Binder (whose acquisition-path
+		// rebind cancels the local timer) and the scrub-report service (whose
+		// recycle disposition driver arms the timer after a reserved patch). It
+		// stays nil when --agent-namespace is unset (single-process dev) so
+		// the recycle path and the rebind branch are inert there.
+		holdCoordinator *recycle.HoldCoordinator
 		// clusterClient is the controller-runtime client used by the
 		// session-start path and by the §10.4 PDB poller (F-10.4.4). It
 		// stays nil when --agent-namespace is unset (single-process dev).
@@ -2462,15 +2486,35 @@ func main() {
 			// gates intra-pod slot admission on GetActiveSlotsByPod under a
 			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
 			// closed only after the bounded outage window.
+			// §12.4 / §6.57: the Postgres-fallback window is operator-tunable
+			// (gateway.slotCounterFallbackWindowSeconds) so the spec-default 60s
+			// bounded outage window is not hardcoded; a non-positive value keeps
+			// the default.
 			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination),
 				slotcounter.WithSlotSource(sessions),
-				slotcounter.WithFallbackSource(sessions))
+				slotcounter.WithFallbackSource(sessions),
+				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterFallbackWindowSeconds)*time.Second))
+		}
+		// §3.2 reserved-hold coordinator: arms the per-claim hold-TTL expiry
+		// timer after a recycle reserves the claim, and is cancelled on an
+		// acquisition-path rebind. Constructed here (with the cluster client and
+		// agent namespace available) and shared with the scrub-report service so
+		// the disposition driver and the rebind branch use one timer registry.
+		holdCoordinator, err = recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{
+			Client:    k8sClient,
+			Namespace: *agentNamespace,
+			Now:       clockinject.Now,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: §3.2 reserved-hold coordinator: %v", err)
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
 			Namespace:        *agentNamespace,
 			AdapterPort:      adapterGRPCPort,
 			AcceptedVersions: []string{adapter.ProtocolVersionV1},
+			HoldCanceller:    holdCoordinator,
+			Now:              clockinject.Now,
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
 				return adapterclient.Dial(addr, dialOpt, keepaliveOpt)
 			},
@@ -6484,8 +6528,19 @@ func main() {
 	// are configured; otherwise both scrub-report RPCs return Unimplemented
 	// (the §8.6-only GatewayControl deployment). F-4.7.
 	var scrubReports leasecontrol.ScrubReportService
+	holdTTL := time.Duration(*claimHoldTTLSeconds) * time.Second
 	if *grpcAddr != "" && clusterClient != nil && pgPool != nil && *agentNamespace != "" {
-		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, clockinject.Now)
+		// §3.2 reserved-hold coordinator (constructed alongside the Binder):
+		// after a non-preConnect recycle reserves the claim, the disposition
+		// driver hands it the hold token and the coordinator arms the per-claim
+		// hold-TTL expiry timer (the precondition-guarded DELETE that returns
+		// the pod to idle). It is replica-local; a holder crash leaves the
+		// reserved claim for the §4.6.1 orphan GC. It is stopped on shutdown so
+		// the in-process timers do not fire against a draining client.
+		if holdCoordinator != nil {
+			defer holdCoordinator.Stop()
+		}
+		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, holdCoordinator, clockinject.Now)
 		if err != nil {
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
@@ -8375,7 +8430,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
 // disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.39
 // (host-node schedulability retire), §16.1 (recycle metrics).
-func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
 		Tracker:   slotHealth,
 		Client:    cl,
@@ -8399,7 +8454,9 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 	driver, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
 		Client:    cl,
 		Namespace: agentNamespace,
+		HoldTTL:   holdTTL,
 		Now:       now,
+		Holds:     holds,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build claim disposition driver: %w", err)

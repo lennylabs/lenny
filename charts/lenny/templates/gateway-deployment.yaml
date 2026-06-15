@@ -676,6 +676,15 @@ spec:
             # the gateway warns at startup when it is set high.
             - name: LENNY_CLAIM_HOLD_TTL_SECONDS
               value: {{ .Values.gateway.claimHoldTTLSeconds | default 10 | quote }}
+            # §12.4 / §6.57 slotCounterFallbackWindowSeconds — the bounded
+            # window during a Redis outage in which the §5.2 slot counter
+            # gates intra-pod capacity on the Postgres fallback under a
+            # per-pod advisory lock. After this window with Redis still
+            # unreachable, slot admission fails closed so a sustained Redis
+            # outage cannot keep the gateway gating capacity on the
+            # higher-latency Postgres path indefinitely.
+            - name: LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+              value: {{ .Values.gateway.slotCounterFallbackWindowSeconds | default 60 | quote }}
             # §11.3 line 215 — credentials.expiryWarningLeadSeconds. The
             # renewal worker emits a structured warning log when a tracked
             # lease enters this window of its ExpiresAt. 0 disables.

@@ -402,7 +402,10 @@ func newScrubService(t *testing.T, cl client.Client, counters *memstore.Store, p
 // the §5.2 combined failed+leaked accounting.
 func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store, tracker *slothealth.Tracker) *leasecontrol.Service {
 	t.Helper()
-	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, func() time.Time { return time.Unix(0, 0) })
+	// holdTTL 0 falls back to the driver's DefaultClaimHoldTTL; nil HoldRegistrar
+	// leaves reserved-claim expiry to the §4.6.1 orphan GC (the wiring tests do
+	// not exercise the in-process hold timer).
+	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, 0, nil, func() time.Time { return time.Unix(0, 0) })
 	if err != nil {
 		t.Fatalf("newScrubReportService: %v", err)
 	}
