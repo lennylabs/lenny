@@ -763,9 +763,10 @@ tests:
             value: "30"
 
   # spec: §12.4 / §6.57 (operator-tunable bounded slot-counter Postgres-fallback
-  # window) — gateway.slotCounterFallbackWindowSeconds renders into the
-  # LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS env var with the spec default 60s.
-  - it: renders the §12.4 slot-counter fallback window into LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+  # window) — gateway.slotCounterPostgresFallbackMaxSeconds renders into the
+  # LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS env var with the spec
+  # default 60s.
+  - it: renders the §12.4 slot-counter fallback window into LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
     documentSelector:
       path: kind
       value: Deployment
@@ -773,19 +774,19 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+            name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
             value: "60"
-  - it: honors a gateway.slotCounterFallbackWindowSeconds override
+  - it: honors a gateway.slotCounterPostgresFallbackMaxSeconds override
     documentSelector:
       path: kind
       value: Deployment
     set:
-      gateway.slotCounterFallbackWindowSeconds: 120
+      gateway.slotCounterPostgresFallbackMaxSeconds: 120
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS
+            name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
             value: "120"
 
   # spec: §10.2 line 227 — the §8.6 GatewayControl listener verifies each
@@ -940,8 +941,8 @@ tests:
       #   defaults to 90 and renders)
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
       #   claimHoldTTLSeconds defaults to 10 and renders)
-      # + LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS (§12.4 / §6.57 —
-      #   slotCounterFallbackWindowSeconds defaults to 60 and renders) = 82.
+      # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 / §6.57 —
+      #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders) = 82.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
           count: 82

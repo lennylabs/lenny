@@ -478,9 +478,9 @@ func main() {
 	claimHoldTTLSeconds := flag.Int("claim-hold-ttl-seconds",
 		envInt("LENNY_CLAIM_HOLD_TTL_SECONDS", int(recycle.DefaultClaimHoldTTL/time.Second)),
 		"§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod SandboxClaim to `reserved` and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS.")
-	slotCounterFallbackWindowSeconds := flag.Int("slot-counter-fallback-window-seconds",
-		envInt("LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
-		"§12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_FALLBACK_WINDOW_SECONDS.")
+	slotCounterPostgresFallbackMaxSeconds := flag.Int("slot-counter-postgres-fallback-max-seconds",
+		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
+		"§12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -2487,13 +2487,13 @@ func main() {
 			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
 			// closed only after the bounded outage window.
 			// §12.4 / §6.57: the Postgres-fallback window is operator-tunable
-			// (gateway.slotCounterFallbackWindowSeconds) so the spec-default 60s
-			// bounded outage window is not hardcoded; a non-positive value keeps
-			// the default.
+			// (gateway.slotCounterPostgresFallbackMaxSeconds) so the spec-default
+			// 60s bounded outage window is not hardcoded; a non-positive value
+			// keeps the default.
 			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination),
 				slotcounter.WithSlotSource(sessions),
 				slotcounter.WithFallbackSource(sessions),
-				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterFallbackWindowSeconds)*time.Second))
+				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterPostgresFallbackMaxSeconds)*time.Second))
 		}
 		// §3.2 reserved-hold coordinator: arms the per-claim hold-TTL expiry
 		// timer after a recycle reserves the claim, and is cancelled on an
