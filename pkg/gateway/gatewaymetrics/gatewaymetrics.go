@@ -350,6 +350,25 @@ type Metrics struct {
 	// concurrent-workspace slots whose cleanup timed out and are leaked
 	// (not reclaimed until pod termination). Labels: `pod_id`, `pool`.
 	adapterLeakedSlots *prometheus.GaugeVec
+	// podScrubFailureTotal is the §5.2 aggregate
+	// `lenny_pod_scrub_failure_total` counter: incremented on every failed
+	// whole-pod scrub of a recycling session-mode pod, independent of
+	// whether the failure retires the pod. Labels: `pool`, `runtime_class`.
+	// spec: §5.2 (warn-policy scrub failure increments the aggregate
+	// counter alongside the per-pod gauge).
+	podScrubFailureTotal *prometheus.CounterVec
+	// podScrubFailureCount is the §16.1 per-pod
+	// `lenny_pod_scrub_failure_count` gauge: the cumulative scrub-failure
+	// count of a recycling session-mode pod, evaluated against
+	// recycle.maxScrubFailures at the recycle disposition. Labels:
+	// `k8s_pod_name`, `pool`, `runtime_class`. spec: §16.1.
+	podScrubFailureCount *prometheus.GaugeVec
+	// podRetirement is the §16.1 `lenny_pod_retirement_total` counter:
+	// retirements of a recycling session-mode pod at the recycle
+	// disposition, by reason. Labels: `reason` (frozen to
+	// session_count_limit | uptime_limit | scrub_failure_limit),
+	// `pool`, `runtime_class`. spec: §16.1, §16.1.1.
+	podRetirement *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -1850,6 +1869,40 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.2 — `lenny_pod_scrub_failure_total` is the aggregate count of
+	// failed whole-pod scrubs on a recycling session-mode pod, incremented
+	// on every failure regardless of whether it retires the pod. Labels:
+	// `pool`, `runtime_class` (both finite).
+	podScrubFailureTotal, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_scrub_failure_total",
+		Help: "Aggregate failed whole-pod scrubs on recycling session-mode pods (§5.2).",
+	}, []string{"pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 — `lenny_pod_scrub_failure_count` is the per-pod cumulative
+	// scrub-failure gauge, evaluated against recycle.maxScrubFailures at the
+	// recycle disposition. `k8s_pod_name` is sanctioned for this metric by
+	// §16.1; `pool` and `runtime_class` are finite.
+	podScrubFailureCount, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pod_scrub_failure_count",
+		Help: "Per-pod cumulative scrub-failure count on a recycling session-mode pod (§16.1).",
+	}, []string{"k8s_pod_name", "pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 — `lenny_pod_retirement_total` counts session-pool pod
+	// retirements at the recycle disposition by `reason`, frozen to the
+	// three lifecycle-limit triggers (session_count_limit, uptime_limit,
+	// scrub_failure_limit). Labels: `reason`, `pool`, `runtime_class` (all
+	// finite). spec: §16.1, §16.1.1.
+	podRetirement, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_retirement_total",
+		Help: "Session-pool pod retirements at the recycle disposition by reason (§16.1).",
+	}, []string{"reason", "pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -2632,6 +2685,7 @@ func New() (*Metrics, error) {
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
 		slotRehydration, slotPodReplacement, adapterLeakedSlots,
+		podScrubFailureTotal, podScrubFailureCount, podRetirement,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		resumeDeduplicated, barrierTargetSource,
 		coordinatorHandoffStale, coordinatorFenceRetry, coordinatorFenceRelinquished,
@@ -2870,6 +2924,9 @@ func New() (*Metrics, error) {
 		slotRehydration:                      slotRehydration,
 		slotPodReplacement:                   slotPodReplacement,
 		adapterLeakedSlots:                   adapterLeakedSlots,
+		podScrubFailureTotal:                 podScrubFailureTotal,
+		podScrubFailureCount:                 podScrubFailureCount,
+		podRetirement:                        podRetirement,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		resumeDeduplicated:                   resumeDeduplicated,
@@ -3966,6 +4023,44 @@ func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {
 		return
 	}
 	m.adapterLeakedSlots.WithLabelValues(podID, pool).Set(count)
+}
+
+// IncScrubFailureTotal increments the §5.2 `lenny_pod_scrub_failure_total`
+// aggregate counter for the (pool, runtimeClass) pair. The §4.7 recycle
+// disposition calls it on every failed whole-pod scrub of a recycling
+// session-mode pod, independent of whether the failure retires the pod.
+// spec: §5.2 (warn-policy scrub failure increments the aggregate counter).
+func (m *Metrics) IncScrubFailureTotal(pool, runtimeClass string) {
+	if m == nil {
+		return
+	}
+	m.podScrubFailureTotal.WithLabelValues(pool, runtimeClass).Inc()
+}
+
+// SetScrubFailureCount sets the §16.1 `lenny_pod_scrub_failure_count` gauge
+// for podID to count: the pod's cumulative scrub-failure count, evaluated
+// against recycle.maxScrubFailures at the recycle disposition. Labeled by
+// k8s_pod_name (sanctioned for this metric by §16.1), pool, runtime_class.
+// spec: §16.1.
+func (m *Metrics) SetScrubFailureCount(podID, pool, runtimeClass string, count int) {
+	if m == nil {
+		return
+	}
+	m.podScrubFailureCount.WithLabelValues(podID, pool, runtimeClass).Set(float64(count))
+}
+
+// IncRetirement increments the §16.1 `lenny_pod_retirement_total` counter
+// for the (reason, pool, runtimeClass) tuple. The §4.7 recycle disposition
+// calls it only for a reason in the frozen §16.1 vocabulary (the three
+// retirement-limit triggers: session_count_limit, uptime_limit,
+// scrub_failure_limit); the §6.39 cordon-drain and the fail-policy
+// termination drain without a retirement-counter increment. spec: §16.1,
+// §16.1.1.
+func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
+	if m == nil {
+		return
+	}
+	m.podRetirement.WithLabelValues(reason, pool, runtimeClass).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

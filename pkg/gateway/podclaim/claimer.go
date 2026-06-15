@@ -195,5 +195,13 @@ func DeleteClaim(ctx context.Context, cl client.Client, namespace, podName strin
 // per-pod name (claim-<podName>) replaces the former per-session name now
 // that the SandboxClaim is a per-pod occupancy claim (§4.6.1).
 func claimName(podName string) string {
+	return ClaimName(podName)
+}
+
+// ClaimName is the exported §4.6.1 deterministic SandboxClaim name for a
+// pod (`claim-<podName>`). The §4.7 recycle disposition driver resolves a
+// pod's claim by this name to patch its binding state, so the mapping lives
+// in one place rather than being re-derived by every caller.
+func ClaimName(podName string) string {
 	return "claim-" + podName
 }

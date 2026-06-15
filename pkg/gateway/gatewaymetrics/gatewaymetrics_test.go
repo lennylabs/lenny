@@ -51,6 +51,56 @@ func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {
 	}
 }
 
+// TestRecycleMetricsExposeSeries verifies the §4.7 recycle disposition
+// metrics — the aggregate scrub-failure counter, the per-pod scrub-failure
+// gauge, and the retirement counter — register and expose their §16.1
+// pool/runtime_class (and reason/k8s_pod_name) label dimensions on /metrics.
+// spec: 5.2 (lenny_pod_scrub_failure_total), 16.1 (lenny_pod_scrub_failure_count, lenny_pod_retirement_total)
+//
+// diagnosis: a failure means the gateway-side recycle observability the §4.7
+// ScrubReporter drives is not registered, so a retiring or scrub-failing pod
+// emits no metric and the §16.5 recycle alerts have no series to read.
+func TestRecycleMetricsExposeSeries_spec_16_1(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncScrubFailureTotal("agents", "gvisor")
+	m.SetScrubFailureCount("pod-1", "agents", "gvisor", 3)
+	m.IncRetirement("scrub_failure_limit", "agents", "gvisor")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_pod_scrub_failure_total{pool="agents",runtime_class="gvisor"} 1`,
+		`lenny_pod_scrub_failure_count{k8s_pod_name="pod-1",pool="agents",runtime_class="gvisor"} 3`,
+		`lenny_pod_retirement_total{pool="agents",reason="scrub_failure_limit",runtime_class="gvisor"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+// TestRecycleMetricsNilReceiverSafe verifies the recycle metric methods are
+// nil-receiver-safe, matching the rest of the *Metrics surface: a gateway
+// built without metrics passes a nil *Metrics and must not panic on a scrub
+// report.
+// spec: 16.1 (optional metrics sink)
+//
+// diagnosis: a failure means the recycle disposition panics when the gateway
+// runs without a metrics sink, taking down the scrub-report handler.
+func TestRecycleMetricsNilReceiverSafe_spec_16_1(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncScrubFailureTotal("agents", "gvisor")
+	m.SetScrubFailureCount("pod-1", "agents", "gvisor", 3)
+	m.IncRetirement("uptime_limit", "agents", "gvisor")
+}
+
 func TestHorizontalScalingGaugesExposeValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

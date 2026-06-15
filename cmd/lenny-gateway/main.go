@@ -251,6 +251,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
@@ -280,6 +281,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/sqlitestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
@@ -6460,7 +6462,22 @@ func main() {
 	if treeBudgetConcrete != nil {
 		leaseTreeGranter = treeBudgetConcrete
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
+	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
+	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
+	// and the §3.4 / §6.39 recycle disposition through the ScrubReporter. It
+	// needs the cluster client (Pods get, SandboxClaim status patch) and the
+	// Postgres agent_pod_state mirror (the recycle counters), so it is wired
+	// only when both --agent-namespace (clusterClient) and the Postgres pool
+	// are configured; otherwise both scrub-report RPCs return Unimplemented
+	// (the §8.6-only GatewayControl deployment). F-4.7.
+	var scrubReports leasecontrol.ScrubReportService
+	if *grpcAddr != "" && clusterClient != nil && pgPool != nil && *agentNamespace != "" {
+		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, *agentNamespace, clockinject.Now)
+		if err != nil {
+			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
+		}
+	}
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -8207,7 +8224,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -8242,6 +8259,11 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		// the §8.2 per-tree delegation budget counter so admission observes
 		// the raised pool. F-8.6.3.
 		TreeBudget: treeGranter,
+		// §4.7 — the adapter's per-slot and whole-pod scrub reports drive the
+		// recycle-counter writes, the unhealthy-threshold drain ledger, and the
+		// §3.4 / §6.39 recycle disposition. Nil leaves ReportSessionScrub and
+		// ReportPodScrub returning Unimplemented (the §8.6-only deployment).
+		ScrubReports: scrubReports,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
@@ -8321,6 +8343,62 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil
+}
+
+// newScrubReportService builds the §4.7 ScrubReporter that backs the
+// ReportSessionScrub and ReportPodScrub RPCs. It wires the five concrete
+// recycle seams (pkg/gateway/recycle) onto the gateway's dependencies: the
+// agent_pod_state recycle counters, the unhealthy-threshold drain ledger
+// over a fresh slothealth tracker, the §6.39 host-node schedulability pod
+// inspector, the §3.4 claim disposition driver, and the §16.1 retirement
+// metrics. The recycling pods this path serves are one-session-per-pod
+// (the concurrent-session model never recycles), so the drain ledger's
+// unhealthy threshold uses maxConcurrent 1: a leaked single-session pod is
+// unhealthy and drains on the first leak rather than recycling.
+//
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
+// disposition), §5.2 (scrub model), §6.39 (host-node schedulability
+// retire), §16.1 (recycle metrics).
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, agentNamespace string, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
+		Tracker:       slothealth.New(slothealth.WithClock(now)),
+		Client:        cl,
+		Namespace:     agentNamespace,
+		MaxConcurrent: 1,
+		Now:           now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build drain ledger: %w", err)
+	}
+	inspector, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+		Client:    cl,
+		Namespace: agentNamespace,
+		Pools:     pools,
+		Runtimes:  runtimes,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build pod inspector: %w", err)
+	}
+	driver, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client:    cl,
+		Namespace: agentNamespace,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build claim disposition driver: %w", err)
+	}
+	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters:  recycle.NewRecycleCounterStore(counters),
+		Ledger:    ledger,
+		Inspector: inspector,
+		Driver:    driver,
+		Metrics:   recycle.NewRetirementMetrics(metrics),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build scrub reporter: %w", err)
+	}
+	return reporter, nil
 }
 
 // leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning
