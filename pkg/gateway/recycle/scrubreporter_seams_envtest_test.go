@@ -15,6 +15,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recycle"
@@ -398,6 +399,10 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
+	// The claim must exist for the recycle boundary: the inspector skips
+	// (found=false) when the claim is gone, so seed the recycling claim the
+	// pod is bound to. spec: §3.4 (skip when the claim is gone).
+	seedRecyclingClaim(t, c, "pod-1")
 	// envtest stamps the server-side CreationTimestamp at Create; patch a
 	// deterministic one is not possible, so anchor uptime off the real
 	// creation time by reading it back and asserting a non-negative value.
@@ -427,5 +432,148 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 	}
 	if policy.PodUptimeSeconds < 0 {
 		t.Errorf("PodUptimeSeconds = %d, want >= 0", policy.PodUptimeSeconds)
+	}
+}
+
+// deleteClaim removes the per-pod SandboxClaim, simulating a concurrent
+// reclaim (a racing hold-expiry DELETE or the §4.6.1 orphan GC) that removes
+// the claim while the agent Pod object survives.
+func deleteClaim(t *testing.T, c client.Client, podID string) {
+	t.Helper()
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: testNS},
+	}
+	if err := c.Delete(context.Background(), claim); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("delete claim for %s: %v", podID, err)
+	}
+}
+
+// newDispositionDriver builds a claim disposition driver against the envtest
+// client with a fixed clock, the common construction the gone-claim tests
+// share.
+func newDispositionDriver(t *testing.T, c client.Client) leasecontrol.ClaimDispositionDriver {
+	t.Helper()
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS,
+		Now: func() time.Time { return time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	return d
+}
+
+// TestClaimDispositionRecycleNonPreConnectClaimGoneAgainstApiserver verifies a
+// non-preConnect Recycle whose claim was concurrently reclaimed (deleted while
+// the Pod survives) is a no-op rather than an error against a real API server:
+// WriteReservedStatus's status-subresource SSA cannot create the vanished claim
+// and returns NotFound, which the driver absorbs. spec: 3.4 (disposition skipped
+// when the claim is gone), 4.6.1 (orphan-GC crash recovery)
+//
+// diagnosis: a failure means a ReportPodScrub racing a hold-expiry DELETE or
+// the §4.6.1 orphan GC errors instead of skipping against a real apiserver, so
+// the adapter sees a failed ReportPodScrub for a pod whose claim was reclaimed.
+func TestClaimDispositionRecycleNonPreConnectClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	seedRecyclingClaim(t, c, "pod-1")
+	deleteClaim(t, c, "pod-1")
+	d := newDispositionDriver(t, c)
+	if err := d.Recycle(context.Background(), "pod-1", false, false); err != nil {
+		t.Fatalf("Recycle with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// TestClaimDispositionRecyclePreConnectClaimGoneAgainstApiserver verifies a
+// preConnect Recycle whose claim was concurrently reclaimed is a no-op against
+// a real API server: WriteRewarmStartedStatus does a get-first and returns a
+// wrapped NotFound, which the driver absorbs. spec: 6.2 (preConnect re-warm),
+// 3.4 (skip when the claim is gone)
+//
+// diagnosis: a failure means a preConnect ReportPodScrub racing a concurrent
+// reclaim errors instead of skipping, mapping to an Internal RPC error for a
+// pod whose claim no longer exists.
+func TestClaimDispositionRecyclePreConnectClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	seedRecyclingClaim(t, c, "pod-1")
+	deleteClaim(t, c, "pod-1")
+	d := newDispositionDriver(t, c)
+	if err := d.Recycle(context.Background(), "pod-1", true, false); err != nil {
+		t.Fatalf("preConnect Recycle with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// TestClaimDispositionRetireClaimGoneAgainstApiserver verifies a Retire whose
+// claim was concurrently reclaimed is a no-op against a real API server:
+// WriteDispositionStatus's status SSA returns NotFound (a status apply cannot
+// create the object), which the driver absorbs. spec: 3.4 (retire disposition
+// skipped when the claim is gone), 4.6.1 (orphan-GC crash recovery)
+//
+// diagnosis: a failure means a retiring ReportPodScrub racing the orphan GC's
+// reclaim of a recycling claim errors instead of skipping, so a coordinator
+// crash that left a recycling claim for the GC surfaces as a failed report.
+func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	seedRecyclingClaim(t, c, "pod-1")
+	deleteClaim(t, c, "pod-1")
+	d := newDispositionDriver(t, c)
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+		t.Fatalf("Retire with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// TestInspectForRecycleClaimGonePodPresentAgainstApiserver verifies the
+// inspector reports found=false when the SandboxClaim is gone while the agent
+// Pod object survives against a real API server, so the disposition is skipped
+// before any counter advances. spec: 3.4 (skip when the claim is gone), 4.6.1
+// (orphan GC reclaiming a recycling claim), 4.7 (concurrent-retirement no-op)
+//
+// diagnosis: a failure means the inspector's claim read does not work against a
+// real apiserver, so it advances counters and runs the disposition against a
+// claim the orphan GC or a hold-expiry DELETE already reclaimed.
+func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: "agents"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	seedRecyclingClaim(t, c, "pod-1")
+	deleteClaim(t, c, "pod-1")
+	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+		Client:    c,
+		Namespace: testNS,
+		Pools: fakePoolReader{pools: map[string]poolstore.Pool{
+			"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
+				Enabled: true, MaxSessionsPerPod: 50,
+			}),
+		}},
+		Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt": {Name: "rt"}}},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewPodInspector: %v", err)
+	}
+	_, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+	if err != nil {
+		t.Fatalf("InspectForRecycle with gone claim: err = %v, want nil", err)
+	}
+	if found {
+		t.Error("InspectForRecycle found = true with a gone claim, want false (skip)")
 	}
 }

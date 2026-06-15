@@ -3892,6 +3892,16 @@ func main() {
 	// ≤1/s per session. F-11.3.7.
 	activityStamper := sessionidle.NewStamper(sessions, clockinject.Now)
 
+	// spec: §5.2 (combined failed+leaked unhealthy threshold), §6.2
+	// (leaked-slot semantics) — a single per-pod fail/leak rolling-window
+	// tracker shared by the slot-bind-failure path (the sessionserver slot
+	// retry policy) and the §4.7 scrub-report drain ledger (adapter-reported
+	// slot-scrub leaks). Both feed one window so a pod crossing
+	// ceil(maxConcurrentSessions/2) on the combined count drains regardless of
+	// which path observed the degradation; instantiating two disjoint trackers
+	// would let the counts never combine.
+	slotHealth := slothealth.New(slothealth.WithClock(clockinject.Now))
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
@@ -4074,6 +4084,9 @@ func main() {
 		MidSessionUploadEnabled: *midSessionUploadEnabled,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
+		// §5.2 — the shared fail/leak tracker so the slot-bind-failure path and
+		// the §4.7 scrub-report drain ledger accumulate in one rolling window.
+		SlotHealth: slotHealth,
 		// §5.2 — whole-pod replacement counter, incremented when the
 		// concurrent-workspace slot retry policy drains an unhealthy pod
 		// (ceil(maxConcurrent/2) slots failed or leaked in the window).
@@ -6472,7 +6485,7 @@ func main() {
 	// (the §8.6-only GatewayControl deployment). F-4.7.
 	var scrubReports leasecontrol.ScrubReportService
 	if *grpcAddr != "" && clusterClient != nil && pgPool != nil && *agentNamespace != "" {
-		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, *agentNamespace, clockinject.Now)
+		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, clockinject.Now)
 		if err != nil {
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
@@ -8349,20 +8362,22 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // ReportSessionScrub and ReportPodScrub RPCs. It wires the five concrete
 // recycle seams (pkg/gateway/recycle) onto the gateway's dependencies: the
 // agent_pod_state recycle counters, the unhealthy-threshold drain ledger
-// over a fresh slothealth tracker, the §6.39 host-node schedulability pod
-// inspector, the §3.4 claim disposition driver, and the §16.1 retirement
-// metrics. The drain ledger resolves each leaked pod's pool
+// over the shared slothealth tracker (the same tracker the sessionserver
+// slot-bind-failure path feeds, so adapter-reported leaks and slot-bind
+// failures accumulate in one §5.2 rolling window), the §6.39 host-node
+// schedulability pod inspector, the §3.4 claim disposition driver, and the
+// §16.1 retirement metrics. The drain ledger resolves each leaked pod's pool
 // maxConcurrentSessions through the pool store, so a single-session
 // recycling pod drains on the first leak while a recycling concurrent-session
 // pool (the §5.2 "Concurrent" preset, maxConcurrentSessions: N with
 // recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
-// disposition), §5.2 (scrub model), §6.39 (host-node schedulability
-// retire), §16.1 (recycle metrics).
-func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, agentNamespace string, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+// disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.39
+// (host-node schedulability retire), §16.1 (recycle metrics).
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
-		Tracker:   slothealth.New(slothealth.WithClock(now)),
+		Tracker:   slotHealth,
 		Client:    cl,
 		Namespace: agentNamespace,
 		Pools:     pools,

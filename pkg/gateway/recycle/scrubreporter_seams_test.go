@@ -9,7 +9,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -19,6 +22,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -83,6 +87,40 @@ func agentPod(name, pool, hostSchedulable string, createdAt time.Time) *corev1.P
 	}
 }
 
+// recycleScheme registers lenny.dev/v1alpha1 and corev1 so the fake client can
+// read the SandboxClaim the inspector reads at the recycle boundary alongside
+// the agent Pod.
+func recycleScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := lennyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme lennyv1: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	return s
+}
+
+// recyclingClaim builds the per-pod SandboxClaim the inspector reads to
+// confirm the claim still exists at the recycle boundary. Its presence keeps
+// InspectForRecycle on the found=true path; deleting or omitting it is the
+// §4.6.1 gone-claim race.
+func recyclingClaim(podID string) *lennyv1.SandboxClaim {
+	return &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: "acme"},
+	}
+}
+
+// inspectorClient builds a fake client over the lenny.dev scheme seeded with
+// the supplied objects, the common construction the inspector unit tests share
+// now that InspectForRecycle reads the SandboxClaim.
+func inspectorClient(t *testing.T, objs ...client.Object) client.WithWatch {
+	t.Helper()
+	return fake.NewClientBuilder().WithScheme(recycleScheme(t)).WithObjects(objs...).Build()
+}
+
 // TestRecycleCounterStoreUnpacksAgentPodState verifies the agent_pod_state
 // adapter maps the RecycleCounters struct onto the leasecontrol tuple and
 // preserves the found flag and increment values.
@@ -136,9 +174,7 @@ func TestRecycleCounterStoreMissingPod_spec_4_7(t *testing.T) {
 func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	created := now.Add(-90 * time.Second)
-	cl := fake.NewClientBuilder().
-		WithObjects(agentPod("pod-1", "agents", "true", created)).
-		Build()
+	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", created), recyclingClaim("pod-1"))
 	pools := fakePoolReader{pools: map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 			Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
@@ -195,9 +231,7 @@ func TestInspectForRecycleRuntimeDefaultProfile_spec_16_1(t *testing.T) {
 	pool := recyclingPool("agents", "rt", "", &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
 	})
-	cl := fake.NewClientBuilder().
-		WithObjects(agentPod("pod-1", "agents", "true", now)).
-		Build()
+	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client: cl, Namespace: testNS,
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
@@ -231,9 +265,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 	pool := recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
 	})
-	cl := fake.NewClientBuilder().
-		WithObjects(agentPod("pod-1", "agents", "true", now)).
-		Build()
+	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client: cl, Namespace: testNS,
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
@@ -265,7 +297,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 func TestInspectForRecycleAbsentHostScheduleLabelFailsSafe_spec_6_39(t *testing.T) {
 	pod := agentPod("pod-1", "agents", "", time.Unix(0, 0))
 	delete(pod.Labels, warmpool.LabelHostSchedulable)
-	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	cl := inspectorClient(t, pod, recyclingClaim("pod-1"))
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
 			Enabled: true, MaxSessionsPerPod: 50,
@@ -299,6 +331,32 @@ func TestInspectForRecycleMissingPodIsNoOp_spec_3_4(t *testing.T) {
 	}
 }
 
+// TestInspectForRecycleClaimGonePodPresentIsNoOp verifies the inspector reports
+// found=false when the SandboxClaim has been concurrently reclaimed (a racing
+// hold-expiry DELETE or the §4.6.1 orphan GC) while the agent Pod object
+// survives, so the disposition is skipped before any counter advances.
+// spec: 3.4 (skip when the claim is gone), 4.6.1 (orphan GC reclaiming a recycling claim), 4.7 (concurrent-retirement no-op)
+//
+// diagnosis: a failure means the inspector advances counters and runs the
+// disposition against a claim that a hold-expiry DELETE or the orphan GC already
+// reclaimed, the opposite of the §4.7 skip the contract promises.
+func TestInspectForRecycleClaimGonePodPresentIsNoOp_spec_4_7(t *testing.T) {
+	// The Pod survives but no SandboxClaim is seeded: the gone-claim race.
+	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", time.Unix(0, 0)))
+	insp := mustInspector(t, cl, map[string]poolstore.Pool{
+		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
+			Enabled: true, MaxSessionsPerPod: 50,
+		}),
+	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
+	_, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+	if err != nil {
+		t.Fatalf("InspectForRecycle with gone claim: err = %v, want nil", err)
+	}
+	if found {
+		t.Error("found = true with a gone claim, want false (skip)")
+	}
+}
+
 // TestInspectForRecycleNonRecyclingPoolIsNoOp verifies a whole-pod scrub for
 // a pod in a non-recycling pool (no recycle block) reports found=false: the
 // pod is one-session-per-pod and is not a recycle candidate.
@@ -308,9 +366,7 @@ func TestInspectForRecycleMissingPodIsNoOp_spec_3_4(t *testing.T) {
 // recycle disposition, reserving or re-warming a pod the pool model retires on
 // session end.
 func TestInspectForRecycleNonRecyclingPoolIsNoOp_spec_5_2(t *testing.T) {
-	cl := fake.NewClientBuilder().
-		WithObjects(agentPod("pod-1", "agents", "true", time.Unix(0, 0))).
-		Build()
+	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", time.Unix(0, 0)), recyclingClaim("pod-1"))
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": {Name: "agents", RuntimeRef: "rt", ExecutionMode: runtimestore.ExecutionModeSession},
 	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
@@ -331,7 +387,7 @@ func TestInspectForRecycleNonRecyclingPoolIsNoOp_spec_5_2(t *testing.T) {
 func TestInspectForRecycleNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
 	pod := agentPod("pod-1", "", "true", time.Unix(0, 0))
 	delete(pod.Labels, warmpool.LabelPool)
-	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	cl := inspectorClient(t, pod, recyclingClaim("pod-1"))
 	insp := mustInspector(t, cl, nil, nil)
 	if _, found, err := insp.InspectForRecycle(context.Background(), "pod-1"); err == nil || found {
 		t.Fatalf("no pool label = (found=%v, err=%v), want (false, non-nil)", found, err)
@@ -685,6 +741,89 @@ func TestClaimDispositionRecycleScrubWarningStampFailureFailsClosed_spec_5_2(t *
 	if err := d.Recycle(context.Background(), "pod-1", false, true); err == nil {
 		t.Error("Recycle with a failing scrub-warning stamp: err = nil, want non-nil (fail closed)")
 	}
+}
+
+// claimNotFound is the NotFound the binding-state writers surface when the
+// SandboxClaim was concurrently reclaimed: the status-subresource SSA cannot
+// create the vanished object and WriteRewarmStartedStatus's get-first wraps a
+// NotFound.
+func claimNotFound(podID string) error {
+	return apierrors.NewNotFound(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxclaims"}, podclaim.ClaimName(podID))
+}
+
+// TestClaimDispositionRecycleNonPreConnectClaimGoneIsNoOp verifies a
+// non-preConnect Recycle whose claim was concurrently reclaimed is a no-op: the
+// WriteReservedStatus status-subresource SSA returns NotFound (a status apply
+// cannot create the object), which the driver absorbs as "nothing to recycle".
+// spec: 3.4 (disposition skipped when the claim is gone), 4.6.1 (orphan-GC crash recovery)
+//
+// diagnosis: a failure means a ReportPodScrub racing a hold-expiry DELETE errors
+// instead of skipping, so the adapter sees a failed report for a pod whose claim
+// was already reclaimed.
+func TestClaimDispositionRecycleNonPreConnectClaimGoneIsNoOp_spec_3_4(t *testing.T) {
+	base := fake.NewClientBuilder().Build()
+	cl := interceptor.NewClient(base, interceptor.Funcs{
+		SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return claimNotFound("pod-1")
+		},
+	})
+	d := mustDispositionDriver(t, cl)
+	if err := d.Recycle(context.Background(), "pod-1", false, false); err != nil {
+		t.Errorf("Recycle with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// TestClaimDispositionRecyclePreConnectClaimGoneIsNoOp verifies a preConnect
+// Recycle whose claim was concurrently reclaimed is a no-op:
+// WriteRewarmStartedStatus's get-first returns a wrapped NotFound, which the
+// driver absorbs. spec: 6.2 (preConnect re-warm), 3.4 (skip when the claim is gone)
+//
+// diagnosis: a failure means a preConnect ReportPodScrub racing a concurrent
+// reclaim maps to an Internal RPC error for a pod whose claim no longer exists.
+func TestClaimDispositionRecyclePreConnectClaimGoneIsNoOp_spec_3_4(t *testing.T) {
+	base := fake.NewClientBuilder().Build()
+	cl := interceptor.NewClient(base, interceptor.Funcs{
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			return claimNotFound("pod-1")
+		},
+	})
+	d := mustDispositionDriver(t, cl)
+	if err := d.Recycle(context.Background(), "pod-1", true, false); err != nil {
+		t.Errorf("preConnect Recycle with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// TestClaimDispositionRetireClaimGoneIsNoOp verifies a Retire whose claim was
+// concurrently reclaimed is a no-op: WriteDispositionStatus's status SSA returns
+// NotFound, which the driver absorbs. spec: 3.4 (retire skipped when the claim
+// is gone), 4.6.1 (orphan-GC crash recovery)
+//
+// diagnosis: a failure means a retiring ReportPodScrub racing the orphan GC's
+// reclaim of a recycling claim errors instead of skipping.
+func TestClaimDispositionRetireClaimGoneIsNoOp_spec_3_4(t *testing.T) {
+	base := fake.NewClientBuilder().Build()
+	cl := interceptor.NewClient(base, interceptor.Funcs{
+		SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return claimNotFound("pod-1")
+		},
+	})
+	d := mustDispositionDriver(t, cl)
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+		t.Errorf("Retire with gone claim: err = %v, want nil (no-op)", err)
+	}
+}
+
+// mustDispositionDriver builds a claim disposition driver around an arbitrary
+// client (so an error-injecting interceptor can be passed) with a fixed clock.
+func mustDispositionDriver(t *testing.T, cl client.Client) leasecontrol.ClaimDispositionDriver {
+	t.Helper()
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: cl, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	return d
 }
 
 // mustInspector builds a pod inspector around a fake.WithWatch client and the

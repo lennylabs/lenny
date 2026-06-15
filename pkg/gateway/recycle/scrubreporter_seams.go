@@ -24,9 +24,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
@@ -301,11 +303,17 @@ func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error
 }
 
 // InspectForRecycle resolves the recycle policy and pod facts for podID at
-// the recycle boundary. found is false when the pod is gone (a concurrent
-// retirement or the orphan GC reclaimed it), in which case the disposition
-// is skipped. A missing or "false" lenny.dev/host-schedulable label reads
-// as unschedulable, fail-safe per §6.39. spec: §6.39 (host-node
-// schedulability read via Pods get), §5.2 (recycle policy resolution).
+// the recycle boundary. found is false when the pod or its claim is gone (a
+// concurrent retirement or the §4.6.1 orphan GC reclaimed it), in which case
+// the disposition is skipped (nothing to recycle). The pod and the claim are
+// read up front so the common gone case is caught before any counter
+// advances; the residual TOCTOU window between this read and the disposition
+// write is absorbed by claimDispositionDriver, which treats a NotFound from
+// the binding-state writers as the same no-op. A missing or "false"
+// lenny.dev/host-schedulable label reads as unschedulable, fail-safe per
+// §6.39. spec: §6.39 (host-node schedulability read via Pods get), §5.2
+// (recycle policy resolution), §3.4 / §4.7 (skip when the pod or claim is
+// gone).
 func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (leasecontrol.PodRecyclePolicy, bool, error) {
 	var pod corev1.Pod
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podID}, &pod); err != nil {
@@ -314,6 +322,23 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 			return leasecontrol.PodRecyclePolicy{}, false, nil
 		}
 		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get pod %s: %w", podID, err)
+	}
+
+	// The claim can be reclaimed independently of the Pod object: a racing
+	// hold-expiry DELETE on a reserved claim, or the §4.6.1 orphan GC draining
+	// a `recycling` claim after a coordinator crash, removes the claim while
+	// the Pod still exists. A gone claim means there is nothing to recycle, so
+	// the disposition is skipped before any counter advances. The residual
+	// TOCTOU window between this read and the disposition write is absorbed by
+	// claimDispositionDriver, which treats a NotFound from the binding-state
+	// writers as the same no-op. spec: §3.4, §4.6.1, §4.7 (skip when the claim
+	// is gone).
+	var claim lennyv1.SandboxClaim
+	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return leasecontrol.PodRecyclePolicy{}, false, nil
+		}
+		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get claim for pod %s: %w", podID, err)
 	}
 
 	poolName := pod.Labels[warmpool.LabelPool]
@@ -514,6 +539,27 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 	}, nil
 }
 
+// claimGone reports whether a binding-state write failed because the
+// SandboxClaim no longer exists. The recycle disposition races a concurrent
+// reclaim of the claim: a hold-expiry DELETE on a reserved claim, or the
+// §4.6.1 orphan GC draining a `recycling` claim after a coordinator crash,
+// can remove the claim while the agent Pod object survives and the
+// ReportPodScrub disposition is still in flight. The §4.7 PodInspector
+// contract names this case ("found is false when the pod or its claim is
+// gone, in which case the disposition is skipped") and RecordPodScrub
+// absorbs it as a no-op, but the inspector's pre-write Pod check cannot close
+// the TOCTOU window between inspect and the status apply. The status-
+// subresource SSA in WriteReservedStatus/WriteDispositionStatus returns
+// NotFound (a status apply cannot create the object) and WriteRewarmStartedStatus
+// returns a wrapped NotFound from its get-first, so detecting NotFound here
+// makes a vanished claim "nothing left to recycle" rather than an error the
+// handler maps to Internal. spec: §3.4 (disposition skipped when the claim is
+// gone), §4.6.1 (orphan-GC crash recovery), §4.7 (concurrent-retirement
+// no-op).
+func claimGone(err error) bool {
+	return apierrors.IsNotFound(err)
+}
+
 // Recycle drives the §3.4 reuse disposition. A preConnect pool stamps
 // rewarmStartedAt on the recycling claim, anchoring the §6.2 re-warm
 // watchdog; the projection then enters sdk_connecting and the re-warm
@@ -530,7 +576,10 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 	// Stamp the residual-state marker before the binding-state patch so the
 	// annotation is on the pod by the time the projection re-enters the pool.
 	// A stamp failure aborts the recycle so a warn-policy pod never re-enters
-	// the pool without its marker (fail closed). spec: §5.2.
+	// the pool without its marker (fail closed). StampScrubWarning already
+	// tolerates a vanished pod (a NotFound patch is a no-op there), so a gone
+	// pod falls through to the gone-claim no-op below rather than erroring.
+	// spec: §5.2.
 	if scrubWarning {
 		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
 			return fmt.Errorf("recycle: stamp scrub-warning on pod %s: %w", podID, err)
@@ -542,11 +591,17 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 		// re-warm; the rewarm stamp only anchors the watchdog. spec: §6.2
 		// (preConnect re-warm on scrub_warning).
 		if err := podclaim.WriteRewarmStartedStatus(ctx, d.cl, d.namespace, claim, d.now); err != nil {
+			if claimGone(err) {
+				return nil
+			}
 			return fmt.Errorf("recycle: stamp rewarm-started on claim %s: %w", claim, err)
 		}
 		return nil
 	}
 	if _, err := podclaim.WriteReservedStatus(ctx, d.cl, d.namespace, claim, d.holdTTL, d.now); err != nil {
+		if claimGone(err) {
+			return nil
+		}
 		return fmt.Errorf("recycle: reserve claim %s: %w", claim, err)
 	}
 	return nil
@@ -568,7 +623,9 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 	// The §6.39 cordon-drain-under-warn path retains the residual-state
 	// marker on the draining pod; stamp it before the terminal write so the
 	// audit trail sees the annotation on the pod. A stamp failure aborts the
-	// retire (fail closed). spec: §6.39, §5.2.
+	// retire (fail closed). StampScrubWarning already tolerates a vanished pod
+	// (a NotFound patch is a no-op there), so a gone pod falls through to the
+	// gone-claim no-op below rather than erroring. spec: §6.39, §5.2.
 	if scrubWarning {
 		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
 			return fmt.Errorf("recycle: stamp scrub-warning on retiring pod %s: %w", podID, err)
@@ -580,6 +637,9 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 		disposition = claimstate.Failed
 	}
 	if err := podclaim.WriteDispositionStatus(ctx, d.cl, d.namespace, claim, disposition, d.now); err != nil {
+		if claimGone(err) {
+			return nil
+		}
 		return fmt.Errorf("recycle: write %s disposition on claim %s: %w", disposition, claim, err)
 	}
 	// §5.2: on a FAILED termination (onScrubFailure: fail), the failed pod's
@@ -588,7 +648,8 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 	// failure description are recorded here. detail may be empty; the reason is
 	// always present.
 	if failed {
-		d.log.LogAttrs(ctx, slog.LevelWarn, "recycle: pod retired on failed whole-pod scrub",
+		d.log.LogAttrs(
+			ctx, slog.LevelWarn, "recycle: pod retired on failed whole-pod scrub",
 			slog.String("pod_id", podID),
 			slog.String("reason", string(reason)),
 			slog.String("detail", detail),

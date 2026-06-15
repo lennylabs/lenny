@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -280,12 +281,128 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 	}
 }
 
+// TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks proves the §5.2
+// combined failed+leaked unhealthy threshold accumulates across the two paths
+// that observe pod degradation. The gateway shares one slothealth.Tracker
+// between the sessionserver slot-bind-failure path (which records
+// RecordFailure) and the §4.7 scrub-report drain ledger (which records
+// RecordLeak from ReportSessionScrub leaked outcomes). On a
+// maxConcurrentSessions:4 pool the threshold is ceil(4/2)=2, so one slot-bind
+// failure plus one adapter-reported leak must combine to drain the pod.
+//
+// spec: §5.2 (failed_slots + leaked_slots >= ceil(maxConcurrentSessions/2)),
+// §6.2 (leaked slots combine with failed slots in the rolling window), §4.7
+// (ReportSessionScrub leaked feeds the same ledger), §6.39 (gateway stamps
+// drain-request).
+//
+// diagnosis: a failure means the gateway wired two disjoint trackers, so the
+// adapter-leak count and the slot-bind-failure count never combine and a pod
+// degraded across both paths is never drained — the combined-accounting design
+// the proposal requires is unreachable.
+func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testing.T) {
+	env := envtest.Start(t)
+	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scrubWiringScheme(t)})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ctx := context.Background()
+	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: scrubWiringNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace: %v", err)
+	}
+
+	const podID = "pod-combined-1"
+	const poolName = "concurrent-agents"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podID,
+			Namespace: scrubWiringNS,
+			Labels: map[string]string{
+				labelPool:                    poolName,
+				"lenny.dev/host-schedulable": "true",
+			},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "busybox"}}},
+	}
+	if err := cl.Create(ctx, pod); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+
+	counters := memstore.New(func() time.Time { return time.Unix(0, 0) })
+	counters.Put(agentpodstate.PodState{PodID: podID, PoolID: poolName})
+
+	// maxConcurrentSessions 4 yields a ceil(4/2)=2 unhealthy threshold.
+	pools := poolstore.NewMemory()
+	if err := pools.Create(ctx, poolstore.Pool{
+		Name:          poolName,
+		RuntimeRef:    "rt",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled: true, AcknowledgeBestEffortScrub: true,
+				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "rt"}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+
+	// The shared tracker the gateway threads into both the sessionserver
+	// slot-failure path and the scrub-report drain ledger.
+	tracker := slothealth.New(slothealth.WithClock(func() time.Time { return time.Unix(0, 0) }))
+	svc := newScrubServiceWithTracker(t, cl, counters, pools, runtimes, tracker)
+
+	drainStamped := func() bool {
+		t.Helper()
+		var got corev1.Pod
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: scrubWiringNS, Name: podID}, &got); err != nil {
+			t.Fatalf("get pod: %v", err)
+		}
+		return got.Annotations[lennyv1.AnnotationDrainRequest] != ""
+	}
+
+	// One slot-bind failure observed by the sessionserver slot-retry path,
+	// recorded on the shared tracker. Below the ceil(4/2)=2 threshold alone.
+	tracker.RecordFailure(podID)
+	if drainStamped() {
+		t.Fatal("drain-request stamped after one slot-bind failure, below the ceil(4/2)=2 threshold")
+	}
+
+	// One adapter-reported leak via ReportSessionScrub feeds the same window.
+	// Combined with the slot-bind failure it reaches the threshold and drains.
+	if _, err := svc.ReportSessionScrub(ctx, &adapterv1.ReportSessionScrubRequest{
+		PodId:     podID,
+		SessionId: &adapterv1.SessionId{Value: "sess-leak"},
+		Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
+	}); err != nil {
+		t.Fatalf("ReportSessionScrub leaked: %v", err)
+	}
+	if !drainStamped() {
+		t.Error("drain-request not stamped after one slot-bind failure plus one adapter leak, the combined ceil(4/2)=2 threshold: the two paths use disjoint trackers")
+	}
+}
+
 // newScrubService builds a leasecontrol.Service wired with the §4.7 scrub
 // reporter the gateway constructs in main, so the test drives the same
 // handlers the GatewayControl listener serves.
 func newScrubService(t *testing.T, cl client.Client, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store) *leasecontrol.Service {
 	t.Helper()
-	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, scrubWiringNS, func() time.Time { return time.Unix(0, 0) })
+	return newScrubServiceWithTracker(t, cl, counters, pools, runtimes, slothealth.New())
+}
+
+// newScrubServiceWithTracker builds the scrub service over a caller-supplied
+// fail/leak tracker so a test can record slot-bind failures on the same
+// Tracker the gateway shares with the sessionserver slot-failure path, proving
+// the §5.2 combined failed+leaked accounting.
+func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store, tracker *slothealth.Tracker) *leasecontrol.Service {
+	t.Helper()
+	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, func() time.Time { return time.Unix(0, 0) })
 	if err != nil {
 		t.Fatalf("newScrubReportService: %v", err)
 	}

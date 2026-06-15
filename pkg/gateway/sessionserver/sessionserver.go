@@ -1453,6 +1453,18 @@ type Options struct {
 	// spec: §4.9 line 1220.
 	PreclaimMismatch func(pool, provider string)
 
+	// SlotHealth is the §5.2 per-pod fail/leak rolling-window tracker the
+	// slot retry policy reads to apply the ceil(maxConcurrentSessions/2)
+	// whole-pod replacement trigger. The gateway constructs a single Tracker
+	// and shares it with the §4.7 scrub-report drain ledger so adapter-reported
+	// slot-scrub leaks and gateway-observed slot-bind failures accumulate in
+	// one rolling window: a pod crossing the unhealthy threshold on the
+	// combined failed+leaked count drains regardless of which path observed the
+	// degradation. A nil tracker defaults to a fresh per-server Tracker (the
+	// standalone test path with no scrub-report ledger). spec: §5.2 (combined
+	// failed+leaked unhealthy threshold), §6.2 (leaked-slot semantics).
+	SlotHealth *slothealth.Tracker
+
 	// SlotReplacement, when set, increments
 	// lenny_slot_pod_replacement_total{pool} when the §5.2 concurrent-
 	// workspace slot retry policy drains an unhealthy pod (ceil(maxConcurrent
@@ -1619,7 +1631,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
 		credRouter:               opts.CredentialRouter,
 		preclaimMismatch:         opts.PreclaimMismatch,
-		slotHealth:               slothealth.New(),
+		slotHealth:               opts.SlotHealth,
 		slotStates:               slotstate.NewRegistry(),
 		slotReplacement:          opts.SlotReplacement,
 		slotLeakGauge:            opts.SlotLeakGauge,
@@ -1647,6 +1659,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 			opts.MaxConcurrentUploadsGlobal,
 			opts.MaxUploadBytesPerSession,
 		),
+	}
+	if s.slotHealth == nil {
+		// spec: §5.2 — default to a fresh per-server fail/leak tracker when no
+		// shared tracker is injected (the standalone test path with no §4.7
+		// scrub-report drain ledger). The gateway wiring injects a single
+		// Tracker so the slot-bind-failure and adapter-leak windows are one.
+		s.slotHealth = slothealth.New()
 	}
 	if s.callbackValidator == nil {
 		// spec: §14 lines 108-112 — the SSRF validator needs no external
