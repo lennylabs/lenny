@@ -620,15 +620,22 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // the count negative; a release that reaches zero deletes the claim
 // idempotently (a NotFound is a no-op).
 func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string) error {
+	if c.Counter == nil {
+		// The Redis counter (with its §12.4 Postgres fallback) is the only
+		// intra-pod occupancy record now that the gateway does not mirror the
+		// slot count onto Sandbox.status. Without it, release cannot tell
+		// whether sibling slots remain, so deleting the per-pod claim would
+		// over-release a pod that still hosts live slots. Fail closed, the same
+		// posture ClaimSlot takes on a nil counter. spec: §12.4 (every
+		// Redis-backed role has a durable fallback; the gate fails closed when
+		// it cannot decide).
+		return errors.New("podclaim: slot counter is required for concurrent-session slot release")
+	}
 	// §5.2 atomic slot release. The Redis counter is the source of truth —
 	// DECR clamped at zero.
-	remaining := int32(0)
-	if c.Counter != nil {
-		n, err := c.Counter.Release(ctx, sandboxName)
-		if err != nil {
-			return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
-		}
-		remaining = n
+	remaining, err := c.Counter.Release(ctx, sandboxName)
+	if err != nil {
+		return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
 	}
 
 	if remaining > 0 {

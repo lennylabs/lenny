@@ -386,6 +386,35 @@ func TestClaimSlotRequiresCounter(t *testing.T) {
 	}
 }
 
+// spec: §3.2, §5.2, §12.4
+// diagnosis: ReleaseSlot silently treated a nil Counter as "no slots remain"
+// and deleted the per-pod claim, over-releasing a pod that may still host
+// live slots. The Redis counter (with its §12.4 Postgres fallback) is the
+// only intra-pod occupancy record now that the gateway does not mirror the
+// slot count onto Sandbox.status, so release must fail closed on a nil
+// counter the same way ClaimSlot does — rather than carry a silent
+// Counter==nil allow path.
+func TestReleaseSlotRequiresCounter(t *testing.T) {
+	c := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+	ctx := context.Background()
+	// A per-pod claim exists for the pod; the silent nil path would delete it.
+	seed := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+	}
+	if err := c.Create(ctx, seed); err != nil {
+		t.Fatalf("seed per-pod claim: %v", err)
+	}
+	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
+	if err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1"); err == nil {
+		t.Error("ReleaseSlot with no Counter must fail closed")
+	}
+	// The fail-closed release must not have deleted the per-pod claim.
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a fail-closed ReleaseSlot must leave the per-pod claim intact")
+	}
+}
+
 // spec: §4.6.1, §5.2
 // diagnosis: a concurrent acquisition of the same idle pod opened two
 // per-pod claims. The deterministic claim-<podName> CREATE is the
@@ -670,7 +699,8 @@ func seedReservedSlotPod(t *testing.T, c client.Client, sandboxName, tenantID st
 // reserved claim could acquire a stuck slot it never rebound to bound.
 func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	claimer, c, _ := slotClaimerFor(t,
+	claimer, c, _ := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-held", "reserved", "acme"),
 		concurrentSandbox("sbx-idle", "idle", ""),
 	)
@@ -701,7 +731,8 @@ func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2(t *testing.T) {
 // spec: 3.2 (hold-expiry, no rebind of an expired hold)
 func TestClaimSlotSkipsExpiredReservedHold_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	claimer, c, _ := slotClaimerFor(t,
+	claimer, c, _ := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-expired", "reserved", "acme"),
 		concurrentSandbox("sbx-idle", "idle", ""),
 	)

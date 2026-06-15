@@ -2470,10 +2470,11 @@ func main() {
 		// §5.2 atomic slot counter. When Redis is wired, every
 		// concurrent-mode slot reservation goes through the Redis Lua
 		// GET-compare-INCR sequence so two gateway replicas racing on
-		// the same pod cannot transiently exceed maxConcurrent. With
-		// no Redis the SlotClaimer falls back to a race-prone SSA-only
-		// path that is unsafe for the production envelope; the
-		// fallback is retained only for tier-2 unit tests.
+		// the same pod cannot transiently exceed maxConcurrent. The
+		// counter (with its §12.4 Postgres fallback) is the only
+		// intra-pod capacity gate; a nil counter makes SlotClaimer
+		// ClaimSlot and ReleaseSlot fail closed rather than overrun or
+		// over-release the pod, so a concurrent-mode pool requires Redis.
 		var slotCounter *slotcounter.Counter
 		if redisClient != nil {
 			// §5.2 line 521: the SessionStore is the post-recovery
@@ -2524,8 +2525,9 @@ func main() {
 			// StartSession. A BindRequest that names no credential pools
 			// assigns nothing.
 			Credentials: credAssign,
-			// §5.2 atomic slot counter (Redis-backed); nil falls back
-			// to the SSA-only path documented on SlotClaimer.
+			// §5.2 atomic slot counter (Redis-backed) with its §12.4
+			// Postgres-outage fallback; nil makes concurrent-mode slot
+			// assignment and release fail closed (see SlotClaimer).
 			SlotCounter: slotCounter,
 			// §5.1 line 43 — log the runtime.integrationLevel.underdeclared
 			// warning when the adapter handshake observes a higher level

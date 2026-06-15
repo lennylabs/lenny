@@ -101,9 +101,11 @@ type Binder struct {
 	// production installs that expose --redis-url; the SlotClaimer
 	// constructed per BindSlot call carries it through so the Redis Lua
 	// GET-compare-INCR sequence enforces maxConcurrentSessions atomically
-	// across gateway replicas. It is required: a nil counter makes ClaimSlot
-	// fail closed (it returns a configuration error rather than degrading to
-	// an SSA-only path, which no longer exists). A Redis outage does not
+	// across gateway replicas. It is required: a nil counter makes both
+	// ClaimSlot and ReleaseSlot fail closed (each returns a configuration
+	// error rather than degrading to an SSA-only path, which no longer
+	// exists), so slot release cannot over-release a pod that still hosts
+	// live slots. A Redis outage does not
 	// disable the gate. It routes to the §12.4 Postgres-fallback capacity
 	// gate under a per-pod advisory lock, which fails closed after a bounded
 	// outage window. spec: §5.2, §12.4.
