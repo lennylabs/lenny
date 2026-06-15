@@ -209,7 +209,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var decision lifecycle.Decision
 	sdkWarm := r.resolveSDKWarm(ctx, &sb)
 	if sdkWarm.sdkWarmActive() {
-		in := sdkWarmInputs(&sb, obs, &pod, sdkWarm, time.Now())
+		// §6.1/§3.3: the watchdog clock and the non-failure terminus differ
+		// per edge. On the recycle re-warm edge the per-pod SandboxClaim
+		// carries a rewarmStartedAt stamp (binding state recycling); read it
+		// so sdkWarmInputs re-anchors the clock to the re-warm start and
+		// flips the success terminus to reserved. The edge distinction only
+		// matters while the pod sits in sdk_connecting, so the claim read is
+		// scoped to that phase: warm-fill entry (warming) and every phase
+		// past idle carry no re-warm anchor.
+		var rewarm *time.Time
+		if state.State(sb.Status.Phase) == state.SDKConnecting {
+			stamp, err := r.observeRewarm(ctx, &sb)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			rewarm = stamp
+		}
+		in := sdkWarmInputs(&sb, obs, &pod, sdkWarm, rewarm, time.Now())
 		decision = lifecycle.DecideSDKWarm(in)
 		if in.TimedOut() {
 			sdkConnectTimeoutTotal.WithLabelValues(sb.Spec.PoolRef).Inc()

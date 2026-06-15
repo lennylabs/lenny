@@ -10,8 +10,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// spec: §6.1 lines 30-69, §6.2 lines 89-98 — the SDK-warm warm path
-// routes through sdk_connecting with a watchdog.
+// spec: §6.1 (sdk_connecting watchdog, reserved terminus), §6.2 lines
+// 89-123, §3.3 — the SDK-warm warm path routes through sdk_connecting with
+// a watchdog. The phase has two non-failure termini: idle on the warm-fill
+// edge (this arm writes it) and reserved on the recycle re-warm edge (the
+// claim projection writes it, so this arm makes a clean no-action exit).
 func TestDecideSDKWarm_spec_6_1(t *testing.T) {
 	const timeout = 60 * time.Second
 	tests := []struct {
@@ -53,16 +56,51 @@ func TestDecideSDKWarm_spec_6_1(t *testing.T) {
 			want: lifecycle.Decision{},
 		},
 		{
-			name: "sdk_connecting becomes idle when ready",
+			name: "sdk_connecting becomes idle when ready (warm-fill edge)",
 			in:   lifecycle.SDKWarmInputs{Phase: state.SDKConnecting, Pod: lifecycle.PodReady},
 			want: lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Idle},
 		},
 		{
-			name: "sdk_connecting past watchdog budget fails",
+			// On the recycle re-warm edge the success terminus is reserved,
+			// written by the claim projection (OccupancyReconciler) when the
+			// gateway patches the claim recycling → reserved. The warm-fill
+			// arm takes no action on a ready pod so the two arms do not fight
+			// over the phase: sdk_connecting → reserved is a clean exit here.
+			name: "sdk_connecting ready on recycle edge takes no action (reserved terminus owned by claim projection)",
+			in:   lifecycle.SDKWarmInputs{Phase: state.SDKConnecting, Pod: lifecycle.PodReady, Recycle: true},
+			want: lifecycle.Decision{},
+		},
+		{
+			name: "sdk_connecting past watchdog budget fails (warm-fill edge)",
 			in: lifecycle.SDKWarmInputs{
 				Phase: state.SDKConnecting, Pod: lifecycle.PodNotReady,
 				SDKConnectElapsed: 90 * time.Second, SDKConnectTimeout: timeout,
 			},
+			want: lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Failed},
+		},
+		{
+			// The re-warm watchdog fires on the recycle edge exactly as on
+			// the warm-fill edge; the elapsed clock the reconciler supplies
+			// is measured from rewarmStartedAt, but the firing decision is
+			// the same.
+			name: "sdk_connecting past watchdog budget fails on recycle edge (re-warm watchdog)",
+			in: lifecycle.SDKWarmInputs{
+				Phase: state.SDKConnecting, Pod: lifecycle.PodNotReady,
+				SDKConnectElapsed: 90 * time.Second, SDKConnectTimeout: timeout, Recycle: true,
+			},
+			want: lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Failed},
+		},
+		{
+			name: "sdk_connecting still connecting within budget on recycle edge waits",
+			in: lifecycle.SDKWarmInputs{
+				Phase: state.SDKConnecting, Pod: lifecycle.PodNotReady,
+				SDKConnectElapsed: 10 * time.Second, SDKConnectTimeout: timeout, Recycle: true,
+			},
+			want: lifecycle.Decision{},
+		},
+		{
+			name: "sdk_connecting with dead pod fails on recycle edge",
+			in:   lifecycle.SDKWarmInputs{Phase: state.SDKConnecting, Pod: lifecycle.PodFailed, Recycle: true},
 			want: lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Failed},
 		},
 		{
@@ -124,5 +162,51 @@ func TestSDKWarmInputs_TimedOut_spec_6_1(t *testing.T) {
 	}
 	if within.TimedOut() {
 		t.Fatalf("within-budget pod must not report a timeout")
+	}
+	// The re-warm watchdog fires on the recycle edge identically: TimedOut
+	// is edge-agnostic (the reconciler re-anchors the elapsed clock per
+	// edge, not the firing predicate). spec: §6.1, §3.3.
+	rewarmTimedOut := lifecycle.SDKWarmInputs{
+		Phase: state.SDKConnecting, Pod: lifecycle.PodNotReady,
+		SDKConnectElapsed: 90 * time.Second, SDKConnectTimeout: 60 * time.Second, Recycle: true,
+	}
+	if !rewarmTimedOut.TimedOut() {
+		t.Fatalf("expected TimedOut for an over-budget recycle re-warm leg")
+	}
+}
+
+// TestDecideSDKWarmOnlyEmitsValidTransitions sweeps every phase and pod
+// observation across both the warm-fill and the recycle re-warm edge and
+// confirms each ActionSetPhase decision is a §6.2 transition the state
+// package recognizes, so neither leg can drive the Sandbox along an edge
+// the authoritative machine rejects (the recycle edge adds the reserved
+// terminus and the sdk_connecting → reserved clean exit).
+//
+// spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3
+func TestDecideSDKWarmOnlyEmitsValidTransitions(t *testing.T) {
+	observations := []lifecycle.PodObservation{
+		lifecycle.PodAbsent,
+		lifecycle.PodPending,
+		lifecycle.PodReady,
+		lifecycle.PodNotReady,
+		lifecycle.PodFailed,
+		lifecycle.PodSucceeded,
+	}
+	for _, phase := range state.All() {
+		for _, obs := range observations {
+			for _, recycle := range []bool{false, true} {
+				d := lifecycle.DecideSDKWarm(lifecycle.SDKWarmInputs{
+					Phase: phase, Pod: obs, Recycle: recycle,
+					SDKConnectElapsed: 90 * time.Second, SDKConnectTimeout: 60 * time.Second,
+				})
+				if d.Action != lifecycle.ActionSetPhase {
+					continue
+				}
+				if err := state.IsValid(phase, d.NextPhase); err != nil {
+					t.Errorf("DecideSDKWarm(phase=%q, obs=%v, recycle=%v) emits invalid transition %q → %q: %v",
+						phase, obs, recycle, phase, d.NextPhase, err)
+				}
+			}
+		}
 	}
 }

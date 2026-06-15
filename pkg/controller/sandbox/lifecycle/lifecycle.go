@@ -120,21 +120,39 @@ type SDKWarmInputs struct {
 	Phase state.State
 	// Pod is the reduced view of the backing Pod (same as Decide).
 	Pod PodObservation
-	// SDKConnectElapsed is how long the backing Pod has been Running,
-	// used as the §6.1 line 69 sdk_connecting watchdog clock (the SDK
-	// pre-connect begins when the pod starts running). Zero disables the
-	// watchdog (no observed start time yet).
+	// SDKConnectElapsed is how long the SDK-connect work on the current
+	// edge has been running, used as the §6.1 sdk_connecting watchdog
+	// clock. The reconciler re-anchors it per edge: on the warm-fill edge
+	// (warming → sdk_connecting) it is the pod's running time (pre-connect
+	// begins when the pod starts running); on the recycle re-warm edge it
+	// is measured from the claim's rewarmStartedAt stamp so neither the
+	// prior occupancy episode nor the whole-pod scrub counts against the
+	// re-warm budget. Zero disables the watchdog (no observed start time
+	// yet). spec: §6.1 (watchdog clock anchored at the entry into the
+	// SDK-connect work on the edge being measured), §3.3.
 	SDKConnectElapsed time.Duration
 	// SDKConnectTimeout is the §6.1 line 69 watchdog budget
 	// (sdkConnectTimeoutSeconds). Zero disables the watchdog.
 	SDKConnectTimeout time.Duration
+	// Recycle marks the §6.2 recycle re-warm edge: a recycling claim
+	// carrying SandboxClaim.status.rewarmStartedAt projects sdk_connecting
+	// while the preConnect SDK re-warms. On this edge the success terminus
+	// is reserved (the claim projection writes it when the gateway patches
+	// the claim recycling → reserved), so the warm-fill arm takes no action
+	// on a ready pod and only runs the re-warm watchdog. On the warm-fill
+	// edge (Recycle false) the success terminus is idle and this arm writes
+	// it. spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3.
+	Recycle bool
 }
 
 // TimedOut reports whether the decision DecideSDKWarm returned is the
-// §6.1 line 69 watchdog firing (sdk_connecting → failed because the SDK
-// hung past SDKConnectTimeout), so the reconciler increments
+// §6.1 watchdog firing (sdk_connecting → failed because the SDK hung past
+// SDKConnectTimeout), so the reconciler increments
 // lenny_warmpool_sdk_connect_timeout_total only for that transition and
-// not for a genuine pod failure.
+// not for a genuine pod failure. It covers both the warm-fill edge and
+// the recycle re-warm edge: the reconciler re-anchors SDKConnectElapsed
+// per edge, so the watchdog measures only the re-warm leg on a recycling
+// claim. spec: §6.1, §3.3.
 func (in SDKWarmInputs) TimedOut() bool {
 	return in.Phase == state.SDKConnecting &&
 		(in.Pod == PodPending || in.Pod == PodNotReady) &&
@@ -142,13 +160,18 @@ func (in SDKWarmInputs) TimedOut() bool {
 }
 
 // DecideSDKWarm maps an SDK-warm Sandbox's phase and observed Pod to the
-// next warm-path action (§6.1 lines 30-69, §6.2 lines 89-98). It routes
+// next warm-path action (§6.1 lines 30-69, §6.2 lines 89-123). It routes
 // the warm sequence through sdk_connecting: the pod warms to Running
 // (warming → sdk_connecting), pre-connects its SDK while the readiness
 // gate holds Pod.Ready False (sdk_connecting), and becomes claimable when
-// the gate flips on container readiness (sdk_connecting → idle). A pod
-// that hangs in sdk_connecting past the watchdog budget is retired to
-// failed. Phases past idle reuse the pod-warm Decide so SDK-warm and
+// the gate flips on container readiness. The sdk_connecting phase has two
+// non-failure termini: on the warm-fill edge the readiness flip projects
+// idle (this arm writes it); on the recycle re-warm edge (a recycling
+// claim carrying rewarmStartedAt, in.Recycle true) the success terminus is
+// reserved and the claim projection writes it, so this arm takes no action
+// on a ready pod and only runs the re-warm watchdog. A pod that hangs in
+// sdk_connecting past the watchdog budget is retired to failed on either
+// edge. Phases past idle reuse the pod-warm Decide so SDK-warm and
 // pod-warm share the retirement and teardown logic.
 //
 // The caller selects DecideSDKWarm only when the pool's runtime declares
@@ -176,17 +199,29 @@ func DecideSDKWarm(in SDKWarmInputs) Decision {
 	case state.SDKConnecting:
 		switch in.Pod {
 		case PodAbsent, PodFailed, PodSucceeded:
-			// §6.2 line 97: sdk_connecting → failed on a dead pod.
+			// §6.2: sdk_connecting → failed on a dead pod, on both the
+			// warm-fill and the recycle re-warm edge.
 			return setPhase(state.Failed)
 		case PodReady:
-			// §6.2 line 90: the readiness gate flipped (containers,
-			// including the pre-connected SDK, are ready) so the pod is
-			// idle and claimable.
+			if in.Recycle {
+				// §6.2 sdk_connecting → reserved (recycle re-warm edge):
+				// the success terminus is reserved and the claim projection
+				// (OccupancyReconciler) writes it when the gateway patches
+				// the claim recycling → reserved. The warm-fill arm leaves
+				// the ready pod untouched so the two arms do not fight over
+				// the phase; this is a clean exit, not idle.
+				return Decision{}
+			}
+			// §6.2 sdk_connecting → idle (warm-fill edge): the readiness
+			// gate flipped (containers, including the pre-connected SDK, are
+			// ready) so the pod is idle and claimable.
 			return setPhase(state.Idle)
 		default: // PodPending, PodNotReady — the SDK is still connecting.
 			if in.TimedOut() {
 				// §6.1 line 69 watchdog: the SDK hung in sdk_connecting
-				// past sdkConnectTimeoutSeconds. Retire the pod to failed.
+				// past sdkConnectTimeoutSeconds, measured from pod start on
+				// the warm-fill edge and from rewarmStartedAt on the recycle
+				// re-warm edge. Retire the pod to failed on either edge.
 				return setPhase(state.Failed)
 			}
 			return Decision{}
