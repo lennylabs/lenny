@@ -199,6 +199,183 @@ func TestClaimDispositionRetireFailed_spec_3_4(t *testing.T) {
 	}
 }
 
+// scrubWarningStamped reports whether the agent Pod carries the
+// lenny.dev/scrub-warning annotation the driver stamps on a warn-policy
+// reuse or cordon-drain.
+func scrubWarningStamped(t *testing.T, c client.Client, podID string) bool {
+	t.Helper()
+	var got corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podID}, &got); err != nil {
+		t.Fatalf("get pod %s: %v", podID, err)
+	}
+	return got.Annotations[lennyv1.AnnotationScrubWarning] != ""
+}
+
+// TestClaimDispositionRecycleNonPreConnectStampsScrubWarning verifies the
+// driver stamps the §5.2 lenny.dev/scrub-warning annotation on the agent Pod
+// when a warn-policy scrub failure reserves a non-preConnect pod, so the
+// residual-state marker re-enters the pool with the pod.
+// spec: 5.2 (warn policy returns the pod with a scrub_warning annotation), 3.4 (recycle disposition)
+//
+// diagnosis: a failure means a warn-policy non-preConnect pod re-enters the
+// pool with no residual-state marker, so an operator inspecting the reused pod
+// cannot tell its prior cleanup failed and the §5.2 warn contract is silently
+// dropped.
+func TestClaimDispositionRecycleNonPreConnectStampsScrubWarning_spec_5_2(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", false, true); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Reserved) {
+		t.Errorf("phase = %q, want reserved", got.Status.Phase)
+	}
+	if !scrubWarningStamped(t, c, "pod-1") {
+		t.Error("scrub-warning annotation not stamped on a warn-policy non-preConnect recycle")
+	}
+}
+
+// TestClaimDispositionRecyclePreConnectStampsScrubWarning verifies the driver
+// stamps the §5.2 scrub-warning annotation on a warn-policy preConnect recycle
+// before anchoring the re-warm, so the §6.2 marker persists through the
+// re-warm while the claim stays `recycling`.
+// spec: 5.2 (warn policy returns the pod with a scrub_warning annotation), 6.2 (annotation persists through the preConnect re-warm)
+//
+// diagnosis: a failure means a preConnect pod re-warms and re-enters the pool
+// with no residual-state marker, violating the §6.2 invariant that the
+// scrub_warning persists through the re-warm.
+func TestClaimDispositionRecyclePreConnectStampsScrubWarning_spec_6_2(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", true, true); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Recycling) {
+		t.Errorf("phase = %q, want recycling", got.Status.Phase)
+	}
+	if !scrubWarningStamped(t, c, "pod-1") {
+		t.Error("scrub-warning annotation not stamped on a warn-policy preConnect recycle")
+	}
+}
+
+// TestClaimDispositionRecycleCleanScrubLeavesNoMarker verifies a clean-scrub
+// recycle (scrubWarning false) does not stamp the scrub-warning annotation, so
+// a pod whose cleanup succeeded re-enters the pool unmarked.
+// spec: 5.2 (only a warn-policy failure marks the pod), 3.4 (recycle disposition)
+//
+// diagnosis: a failure means every recycled pod is marked scrub_warning even on
+// a clean scrub, so the marker no longer distinguishes residual-state risk.
+func TestClaimDispositionRecycleCleanScrubLeavesNoMarker_spec_5_2(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", false, false); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	if scrubWarningStamped(t, c, "pod-1") {
+		t.Error("scrub-warning annotation stamped on a clean-scrub recycle")
+	}
+}
+
+// TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning verifies the
+// §6.39 cordon-drain-under-warn path stamps the scrub-warning annotation on the
+// draining pod (scrubWarning true) so the residual-state marker is retained for
+// the audit trail while the claim drains to `released`.
+// spec: 6.39 (cordon-drain retains the scrub_warning marker), 5.2 (warn-policy marker)
+//
+// diagnosis: a failure means a warn-policy pod cordon-drained off an
+// unschedulable host loses its residual-state marker, so the audit trail cannot
+// tell the drained pod was carrying a failed-cleanup warning.
+func TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning_spec_6_39(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Retire(context.Background(), "pod-1", false, true, "host_unschedulable", ""); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
+		t.Errorf("phase = %q, want released", got.Status.Phase)
+	}
+	if !scrubWarningStamped(t, c, "pod-1") {
+		t.Error("scrub-warning annotation not stamped on the cordon-drain-under-warn retire")
+	}
+}
+
+// TestClaimDispositionRetireLimitLeavesNoMarker verifies a lifecycle-limit
+// retire (scrubWarning false) does not stamp the scrub-warning annotation: the
+// pod is leaving the pool for a limit reached, so the marker is superseded.
+// spec: 3.4 (limit retire clears the marker), 5.2 (warn marker scoped to reuse and cordon-drain)
+//
+// diagnosis: a failure means a clean-scrub limit retirement is mislabeled as a
+// residual-state warning, conflating a lifecycle limit with a failed cleanup in
+// the audit trail.
+func TestClaimDispositionRetireLimitLeavesNoMarker_spec_3_4(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+	c := newEnvtestClient(t, pod)
+	name := seedRecyclingClaim(t, c, "pod-1")
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", ""); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
+		t.Errorf("phase = %q, want released", got.Status.Phase)
+	}
+	if scrubWarningStamped(t, c, "pod-1") {
+		t.Error("scrub-warning annotation stamped on a clean-scrub limit retire")
+	}
+}
+
 // TestInspectForRecycleAgainstApiserver verifies the inspector resolves the
 // recycle policy and pod facts against a real API server, reading the
 // host-schedulable label off the seeded Pod.

@@ -659,6 +659,34 @@ func TestRetirementMetricsNilSinkIsNil_spec_16_1(t *testing.T) {
 	}
 }
 
+// TestClaimDispositionRecycleScrubWarningStampFailureFailsClosed verifies a
+// warn-policy recycle whose scrub-warning pod-annotation stamp fails aborts the
+// recycle rather than reserving the pod with the marker silently dropped: the
+// stamp runs first and a fault fails closed so a warn-policy pod never re-enters
+// the pool unmarked.
+// spec: 5.2 (warn-policy marker fails closed), 3.4 (recycle disposition)
+//
+// diagnosis: a failure means a transient Pods patch fault while stamping the
+// scrub-warning marker is swallowed and the pod is reserved anyway, so a
+// warn-policy pod re-enters the pool with no residual-state marker.
+func TestClaimDispositionRecycleScrubWarningStampFailureFailsClosed_spec_5_2(t *testing.T) {
+	base := fake.NewClientBuilder().Build()
+	cl := interceptor.NewClient(base, interceptor.Funcs{
+		Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+			return errors.New("apiserver unreachable")
+		},
+	})
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: cl, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	if err := d.Recycle(context.Background(), "pod-1", false, true); err == nil {
+		t.Error("Recycle with a failing scrub-warning stamp: err = nil, want non-nil (fail closed)")
+	}
+}
+
 // mustInspector builds a pod inspector around a fake.WithWatch client and the
 // supplied pool/runtime fixtures, failing the test on a construction error.
 func mustInspector(t *testing.T, cl client.WithWatch, pools map[string]poolstore.Pool, runtimes map[string]runtimestore.Runtime) leasecontrol.PodInspector {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -451,18 +452,22 @@ func podUptimeSeconds(createdAt, now time.Time) int64 {
 // projection drives sdk_connecting and the §6.2 re-warm completes
 // asynchronously, after which a later WriteReservedStatus reserves the
 // pod) and patches a non-preConnect pool directly to reserved; on a retire
-// it writes the terminal disposition (released vs failed).
+// it writes the terminal disposition (released vs failed). On a warn-policy
+// scrub failure it stamps the §5.2 lenny.dev/scrub-warning annotation on the
+// agent Pod so the residual-state marker re-enters the pool with the pod and
+// persists through the §6.2 preConnect re-warm.
 type claimDispositionDriver struct {
 	cl        client.Client
 	namespace string
 	holdTTL   time.Duration
 	now       func() time.Time
+	log       *slog.Logger
 }
 
 // ClaimDispositionDriverOptions configures the claim disposition driver.
 type ClaimDispositionDriverOptions struct {
-	// Client patches the SandboxClaim binding-state status subresource.
-	// Required.
+	// Client patches the SandboxClaim binding-state status subresource and
+	// the agent Pod's lenny.dev/scrub-warning annotation. Required.
 	Client client.Client
 	// Namespace is the agent namespace the claims live in. Required.
 	Namespace string
@@ -470,9 +475,13 @@ type ClaimDispositionDriverOptions struct {
 	// stamped as holdExpiresAt at the reserved patch. A non-positive value
 	// falls back to DefaultClaimHoldTTL.
 	HoldTTL time.Duration
-	// Now overrides the clock for the binding-state transition stamps; nil
-	// uses wall time.
+	// Now overrides the clock for the binding-state transition stamps and the
+	// scrub-warning annotation; nil uses wall time.
 	Now func() time.Time
+	// Logger records the §5.2 audit-trail line on a FAILED retire (the failed
+	// pod's metadata is retained in the audit log for inspection). nil
+	// resolves to slog.Default().
+	Logger *slog.Logger
 }
 
 // NewClaimDispositionDriver builds the §3.4 claim disposition driver.
@@ -488,11 +497,20 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 	if holdTTL <= 0 {
 		holdTTL = DefaultClaimHoldTTL
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
 	return &claimDispositionDriver{
 		cl:        opts.Client,
 		namespace: opts.Namespace,
 		holdTTL:   holdTTL,
-		now:       opts.Now,
+		now:       now,
+		log:       log,
 	}, nil
 }
 
@@ -501,13 +519,28 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 // watchdog; the projection then enters sdk_connecting and the re-warm
 // completes asynchronously, with the reserved patch following once the SDK
 // reports warm. A non-preConnect pool patches the claim directly to
-// reserved. spec: §5.2 (recycle lifecycle), §6.2 (preConnect re-warm).
-func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preConnect, _ bool) error {
+// reserved. When scrubWarning is true (a warn-policy scrub failure that
+// reuses the pod) it stamps the §5.2 lenny.dev/scrub-warning annotation on
+// the agent Pod first, so the residual-state marker re-enters the pool with
+// the pod and persists through the re-warm (the SDK re-initialization does
+// not clear it). spec: §5.2 (warn policy returns the pod with a
+// scrub_warning annotation), §6.2 (preConnect re-warm persists the
+// annotation).
+func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error {
+	// Stamp the residual-state marker before the binding-state patch so the
+	// annotation is on the pod by the time the projection re-enters the pool.
+	// A stamp failure aborts the recycle so a warn-policy pod never re-enters
+	// the pool without its marker (fail closed). spec: §5.2.
+	if scrubWarning {
+		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
+			return fmt.Errorf("recycle: stamp scrub-warning on pod %s: %w", podID, err)
+		}
+	}
 	claim := podclaim.ClaimName(podID)
 	if preConnect {
-		// The scrub_warning annotation persists through the re-warm via the
-		// recycling claim's existing status; the rewarm stamp only anchors
-		// the watchdog. spec: §6.2 (preConnect re-warm on scrub_warning).
+		// The scrub_warning annotation stamped above persists through the
+		// re-warm; the rewarm stamp only anchors the watchdog. spec: §6.2
+		// (preConnect re-warm on scrub_warning).
 		if err := podclaim.WriteRewarmStartedStatus(ctx, d.cl, d.namespace, claim, d.now); err != nil {
 			return fmt.Errorf("recycle: stamp rewarm-started on claim %s: %w", claim, err)
 		}
@@ -522,12 +555,25 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 // Retire writes the terminal §3.4 disposition on the claim so the
 // projection drains the pod. failed selects the claim's `failed` terminal
 // (the onScrubFailure: fail termination); every other retire is a drain to
-// `released` (the three lifecycle limits and the §6.39 cordon-drain). The
-// scrubWarning, reason, and detail are observability inputs the projection
-// and audit trail consume; the binding-state writer records the terminal
+// `released` (the three lifecycle limits and the §6.39 cordon-drain). When
+// scrubWarning is true (the §6.39 cordon-drain-under-warn path) it stamps the
+// §5.2 lenny.dev/scrub-warning annotation on the agent Pod so the
+// residual-state marker is retained on the draining pod for the audit trail.
+// reason and detail are the observability metadata the §5.2 audit trail
+// retains for a FAILED outcome; the binding-state writer records the terminal
 // phase. spec: §3.4 (retire disposition), §4.6.3 (released vs failed
-// terminals), §6.39.
-func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, _ bool, _ taskcleanup.RetireReason, _ string) error {
+// terminals), §6.39 (cordon-drain retains the scrub_warning marker), §5.2
+// (the failed pod's metadata is retained in the audit log).
+func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error {
+	// The §6.39 cordon-drain-under-warn path retains the residual-state
+	// marker on the draining pod; stamp it before the terminal write so the
+	// audit trail sees the annotation on the pod. A stamp failure aborts the
+	// retire (fail closed). spec: §6.39, §5.2.
+	if scrubWarning {
+		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
+			return fmt.Errorf("recycle: stamp scrub-warning on retiring pod %s: %w", podID, err)
+		}
+	}
 	claim := podclaim.ClaimName(podID)
 	disposition := claimstate.Released
 	if failed {
@@ -535,6 +581,18 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 	}
 	if err := podclaim.WriteDispositionStatus(ctx, d.cl, d.namespace, claim, disposition, d.now); err != nil {
 		return fmt.Errorf("recycle: write %s disposition on claim %s: %w", disposition, claim, err)
+	}
+	// §5.2: on a FAILED termination (onScrubFailure: fail), the failed pod's
+	// metadata is retained in the audit log for inspection. The terminal claim
+	// phase carries no detail string, so the reason and the adapter-supplied
+	// failure description are recorded here. detail may be empty; the reason is
+	// always present.
+	if failed {
+		d.log.LogAttrs(ctx, slog.LevelWarn, "recycle: pod retired on failed whole-pod scrub",
+			slog.String("pod_id", podID),
+			slog.String("reason", string(reason)),
+			slog.String("detail", detail),
+		)
 	}
 	return nil
 }

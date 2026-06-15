@@ -106,6 +106,40 @@ func StampDrainRequest(ctx context.Context, cl client.Client, namespace, podName
 	return nil
 }
 
+// StampScrubWarning stamps the §5.2 lenny.dev/scrub-warning annotation on the
+// recycling agent Pod named podName. The gateway stamps it when a whole-pod
+// scrub fails under the onScrubFailure: warn policy and the recycle
+// disposition reuses the pod (reserve, preConnect re-warm, or the §6.39
+// cordon-drain-under-warn). The marker records that the pod re-enters the pool
+// carrying residual-state risk; it persists through the §6.2 preConnect
+// re-warm because SDK readiness is orthogonal to residual-state risk. The
+// annotation value is the RFC3339Nano stamp instant so a re-stamp is
+// idempotent in effect and a consumer can age the marker.
+//
+// A JSON-merge patch is used (matching StampDrainRequest) so a missing pod
+// returns NotFound rather than being created annotation-only; an absent or
+// terminating pod is tolerated because a pod that is already gone needs no
+// marker. The gateway's `get`/`patch` on agent Pods grant covers this write;
+// the gateway never writes Sandbox.status itself (§4.6.3).
+//
+// spec: §5.2 (warn policy returns the pod with a scrub_warning annotation);
+// §6.2 (preConnect re-warm on scrub_warning persists the annotation); §4.6.3
+// (gateway patches agent Pod annotations, never Sandbox.status).
+func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName string, stampedAt time.Time) error {
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationScrubWarning, stampedAt.UTC().Format(time.RFC3339Nano))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp scrub-warning on pod %s: %w", podName, err)
+	}
+	return nil
+}
+
 // Concurrent-session claim sentinels.
 var (
 	// ErrNoConcurrentSlot reports that the pool can host no further slot:

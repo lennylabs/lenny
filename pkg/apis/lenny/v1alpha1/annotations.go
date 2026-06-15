@@ -37,4 +37,22 @@ const (
 	// drain-request; WarmPoolController-written drain); §5.2 (unhealthy
 	// threshold).
 	AnnotationDrainRequest = "lenny.dev/drain-request"
+
+	// AnnotationScrubWarning is stamped by the gateway on a recycling agent
+	// Pod when a whole-pod scrub fails under the §5.2 onScrubFailure: warn
+	// policy and the recycle disposition reuses the pod (returns it to the
+	// available pool, re-warms it on a preConnect pool, or cordon-drains it
+	// on an unschedulable host). The marker records that the pod re-enters
+	// the pool carrying residual-state risk from a failed cleanup; it
+	// persists through the §6.2 preConnect re-warm because the residual-state
+	// risk is orthogonal to SDK readiness. The §5.2 workspace materializer
+	// removes all files from /workspace/current before reuse regardless of
+	// the annotation. The gateway's `get`/`patch` on agent Pods grant covers
+	// this annotation write alongside the lenny.dev/drain-request stamp and
+	// the lenny.dev/tenant-id pin; the gateway never writes Sandbox.status
+	// itself (§4.6.3 ownership decomposition).
+	// spec: spec/05_runtime-registry-and-pool-model.md §5.2 (warn policy
+	// returns the pod with a scrub_warning annotation); spec/06_warm-pod-model.md
+	// §6.2 (preConnect re-warm on scrub_warning, persists through the re-warm).
+	AnnotationScrubWarning = "lenny.dev/scrub-warning"
 )
