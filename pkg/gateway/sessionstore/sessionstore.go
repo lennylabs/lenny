@@ -45,6 +45,29 @@ type Session struct {
 	// audit bucket, the reason is a specific cause string.
 	FailureReason string
 
+	// TerminatedAt and TerminatedReason carry the §7.2 / §8.8 Terminated
+	// session-condition fact, relocated off Sandbox.status.conditions by
+	// the §5.2 mode collapse: the gateway writes no Sandbox.status field
+	// and the WarmPoolController is the sole writer of Sandbox.status
+	// (§4.6.3), so the terminal-disposition fact lives on the session row
+	// and is read through the session API (§7.2 line 230). TerminatedAt
+	// is the wall-clock instant the session reached a terminal state
+	// (completed, failed, cancelled, expired); it is the zero time while
+	// the session is non-terminal. TerminatedReason is the coded reason
+	// string for the terminal disposition. spec: §6.49; §7.2 line 230;
+	// §8.8 session-level state mapping.
+	TerminatedAt     time.Time
+	TerminatedReason string
+
+	// SuspendedAt and SuspendedReason carry the §7.2 interrupt-suspension
+	// Suspended session-condition fact, relocated off
+	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
+	// is the wall-clock instant the session entered `suspended`; it is the
+	// zero time while the session is not suspended. SuspendedReason is the
+	// coded interrupt reason. spec: §6.49; §7.2 line 230; §8.8.
+	SuspendedAt     time.Time
+	SuspendedReason string
+
 	// RuntimeRef identifies the runtime this session targets. Stored
 	// at create-time and immutable across the session lifetime.
 	RuntimeRef string
@@ -85,6 +108,22 @@ type Session struct {
 	// Resolved at create time and frozen for the session lifetime per
 	// §7.1 line 75. Empty for the session-mode default.
 	ScrubPolicy string
+
+	// ConversationContinuity is the §7.1 line 74 sessionIsolationLevel
+	// envelope half the create response and GET /v1/sessions/{id}
+	// return: "platform" for session mode (the platform binds the
+	// session to a pod and preserves conversation context across
+	// messages for the session's lifetime) or "none" for service mode
+	// (the gateway routes each message to any ready replica and keeps no
+	// conversation context between messages, so clients of multi_turn
+	// runtimes re-inject context into each message's input). Resolved
+	// against the assigned pool at create time and frozen for the
+	// session lifetime per §7.1 line 75. Empty when the gateway has not
+	// resolved a pool, in which case the read path backfills "platform"
+	// for an empty execution_mode and "none" for execution_mode =
+	// "service", parallel to the ExecutionMode / ScrubPolicy backfill.
+	// spec: §7.1 line 74.
+	ConversationContinuity string
 
 	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
 	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
