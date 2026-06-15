@@ -106,6 +106,12 @@ type PoolManager interface {
 
 // ClaimOpts carries the per-claim parameters from §4.6.1 line 342.
 type ClaimOpts struct {
+	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
+	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
+	// sandboxRef, matching the §3.2 / §6.5 claim-spec contract: the claim's
+	// spec carries sandboxRef and tenantId. Empty leaves the claim
+	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
+	TenantID string
 	// RequiresDemotion signals that an SDK-warm pod must be demoted
 	// before use (§6.1 sdkWarmBlockingPaths).
 	RequiresDemotion bool

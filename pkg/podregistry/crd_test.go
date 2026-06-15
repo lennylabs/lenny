@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -166,6 +167,13 @@ func TestClaimPodPicksIdleAndCreatesPerPodClaim_spec_4_6_1(t *testing.T) {
 	if claim.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
+	// spec: §4.6.1 — the `bound` write stamps the binding-state-transition
+	// time the orphan GC keys its live-binding-state reclaim on, so a claim
+	// from this path is keyed on the binding transition rather than on its
+	// creation timestamp (the start of the whole occupancy episode).
+	if claim.Status.BindingStateTransitionTime == nil {
+		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
+	}
 	// The gateway path does NOT write Sandbox.status: the claimed Sandbox's
 	// stored phase stays idle until the WarmPoolController projects it, and
 	// no session/tenant is stamped on Sandbox.status.
@@ -248,19 +256,55 @@ func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
 	}
 }
 
-// spec: §12.6 (ReleasePod transitions to task_cleanup on completed)
-func TestReleasePodTransitionsByReason(t *testing.T) {
-	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "claimed"))
+// spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
+// a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
+// SandboxClaim and leaves Sandbox.status untouched: the WarmPoolController
+// projects the pod back to idle from the claim's absence. The release reason
+// no longer maps to a Sandbox phase.
+func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
+	cli := newFakeClient(t, seedSandbox("alpha", "echo-pool", "claimed"))
+	// Seed the per-pod claim the release deletes.
+	claim := &lennyv1.SandboxClaim{}
+	claim.Namespace = "lenny-agents"
+	claim.Name = "claim-alpha"
+	claim.Spec.SandboxRef = "alpha"
+	claim.Spec.TenantID = "acme"
+	if err := cli.Create(context.Background(), claim); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
 	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
 		t.Fatalf("ReleasePod: %v", err)
 	}
-	rec, _ := r.GetPod(context.Background(), "alpha")
-	if rec.State != "task_cleanup" {
-		t.Errorf("State = %q, want task_cleanup", rec.State)
+	// The per-pod claim is gone.
+	var got lennyv1.SandboxClaim
+	if err := cli.Get(context.Background(),
+		client.ObjectKey{Namespace: "lenny-agents", Name: "claim-alpha"}, &got); !apierrors.IsNotFound(err) {
+		t.Errorf("claim still present after release: err = %v, want NotFound", err)
 	}
-	if rec.TenantID != "" {
-		t.Errorf("TenantID = %q, want cleared", rec.TenantID)
+	// Sandbox.status is untouched: the gateway is not a Sandbox.status writer,
+	// so the stored phase stays as the WarmPoolController last projected it and
+	// no session/tenant is cleared on Sandbox.status here.
+	var sb lennyv1.Sandbox
+	if err := cli.Get(context.Background(),
+		client.ObjectKey{Namespace: "lenny-agents", Name: "alpha"}, &sb); err != nil {
+		t.Fatalf("get released sandbox: %v", err)
+	}
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("Sandbox.status.phase = %q, want claimed (unwritten by the gateway)", sb.Status.Phase)
+	}
+}
+
+// spec: §4.6.1 (release is idempotent). A release of a pod whose per-pod claim
+// is already gone (a double release, or a claim the orphan GC reclaimed) is a
+// no-op rather than an error.
+func TestReleasePodIdempotentForMissingClaim_spec_4_6_1(t *testing.T) {
+	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
+		t.Errorf("ReleasePod with no claim = %v, want nil (idempotent)", err)
 	}
 }
 

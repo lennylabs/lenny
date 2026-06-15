@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -174,8 +176,11 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 	// caller retries with a fresh idle pod via ErrClaimConflict.
 	claim := &lennyv1.SandboxClaim{}
 	claim.Namespace = pod.Namespace
-	claim.Name = claimName(pod.Name)
+	claim.Name = podclaim.ClaimName(pod.Name)
 	claim.Spec.SandboxRef = pod.Name
+	// The claim's spec carries sandboxRef and tenantId (§3.2 / §6.5
+	// claim-spec contract); stamp the tenant the pod is pinned to.
+	claim.Spec.TenantID = opts.TenantID
 	if err := m.Client.Create(ctx, claim); err != nil {
 		if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
 			return PodHandle{}, ErrClaimConflict
@@ -184,10 +189,14 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 	}
 	// §4.6.1: the claim is created spec-only; write the first `bound`
 	// binding state with a subsequent status patch (the status subresource
-	// is not writable by Create). A failure here deletes the partial claim
-	// so a retry is not blocked by a claim with empty status.
+	// is not writable by Create), stamping the binding-state-transition time
+	// the orphan GC keys its live-binding-state reclaim on, matching the
+	// canonical pkg/gateway/podclaim writer's field set. A failure here
+	// deletes the partial claim so a retry is not blocked by a claim with
+	// empty status.
 	statusOriginal := claim.DeepCopy()
 	claim.Status.Phase = string(claimstate.Bound)
+	claim.Status.BindingStateTransitionTime = &metav1.Time{Time: time.Now().UTC()}
 	if err := m.Client.Status().Patch(ctx, claim, client.MergeFrom(statusOriginal)); err != nil {
 		_ = m.Client.Delete(ctx, claim)
 		return PodHandle{}, fmt.Errorf("podlifecycle: claim Sandbox %q bound status: %w", pod.Name, err)
@@ -213,7 +222,7 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 func (m *AgentSandboxPodLifecycleManager) ReleasePod(ctx context.Context, handle PodHandle) error {
 	claim := &lennyv1.SandboxClaim{}
 	claim.Namespace = handle.Namespace
-	claim.Name = claimName(handle.SandboxName)
+	claim.Name = podclaim.ClaimName(handle.SandboxName)
 	if err := m.Client.Delete(ctx, claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -288,13 +297,6 @@ func (m *AgentSandboxPodLifecycleManager) findIdleSandbox(ctx context.Context, p
 		}
 	}
 	return nil, fmt.Errorf("%w: pool %s", ErrPodNotIdle, poolName)
-}
-
-// claimName is the §4.6.1 deterministic per-pod claim name. A single
-// claim per pod (`claim-<podName>`) means a second CREATE for the same pod
-// collides on AlreadyExists, which is the per-pod single-claim guard.
-func claimName(podName string) string {
-	return "claim-" + podName
 }
 
 // warmModeFromAnnotations reads the §6.1 warm mode the warming

@@ -115,7 +115,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.
 		AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{Client: c, Namespace: "agents"},
 	}
 
-	handle, err := m.ClaimPod(context.Background(), "p1", "sess-1", podlifecycle.ClaimOpts{})
+	handle, err := m.ClaimPod(context.Background(), "p1", "sess-1", podlifecycle.ClaimOpts{TenantID: "acme"})
 	if err != nil {
 		t.Fatalf("ClaimPod: %v", err)
 	}
@@ -131,8 +131,18 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.
 	if claim.Spec.SandboxRef != "pod-1" {
 		t.Errorf("claim SandboxRef = %q, want pod-1", claim.Spec.SandboxRef)
 	}
+	// The claim's spec carries sandboxRef and tenantId (§3.2 / §6.5
+	// claim-spec contract); the tenant from ClaimOpts is stamped on the claim.
+	if claim.Spec.TenantID != "acme" {
+		t.Errorf("claim TenantID = %q, want acme (claim-spec tenant pin)", claim.Spec.TenantID)
+	}
 	if claim.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
+	}
+	// spec: §4.6.1 — the `bound` write stamps the binding-state-transition
+	// time the orphan GC keys its live-binding-state reclaim on.
+	if claim.Status.BindingStateTransitionTime == nil {
+		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
 	}
 
 	// Sandbox.status is left untouched: the gateway is not a Sandbox.status
