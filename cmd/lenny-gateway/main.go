@@ -4172,6 +4172,12 @@ func main() {
 		// counts every attempt with its outcome. F-7.3.10.
 		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
 		IncSessionRetry:         gwMetrics.IncSessionRetry,
+		// spec: §16.1 / §16.1.1 — the watchdog's expiry sweeps fire
+		// Server.OnSessionExpired, which bumps the
+		// lenny_session_expiry_total{pool, reason} counter with the §16.1.1
+		// reason the watchdog resolved (max_idle_time | max_session_age).
+		// F-11.3.7.
+		IncSessionExpiry: gwMetrics.IncSessionExpiry,
 		// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9. Increment the
 		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side

@@ -50,6 +50,22 @@ const (
 	ReasonStartingTimeout = "STARTING_TIMEOUT"
 )
 
+// Session-expiry reason values — the §16.1.1 vocabulary the
+// `lenny_session_expiry_total{reason}` counter is labelled by. The watchdog is
+// the single producer; it stamps one of these on every `→ expired` edge it
+// drives and passes it to the SessionExpiryNotifier.
+const (
+	// ExpiryReasonMaxIdleTime is the §6.2 `maxClientIdleSeconds` idle-clock
+	// expiry: a clock-running session reclaimed for continuous client
+	// inactivity. It shares the `expiryReason` vocabulary of the §14
+	// `dev.lenny.session_expired` event. spec: §16.1.1; §6.2.
+	ExpiryReasonMaxIdleTime = "max_idle_time"
+	// ExpiryReasonMaxSessionAge is the §11.3 `maxSessionAge` age-cap expiry
+	// (and the §7.3 `awaiting_client_action` wall-clock deadline, which shares
+	// the age-cap series). spec: §16.1.1; §11.3 line 198.
+	ExpiryReasonMaxSessionAge = "max_session_age"
+)
+
 // ResumeTimeoutOutcome enumerates the two §6.2 line 246-254 outcomes the
 // watchdog records when a `resuming` row exceeds its 300s budget.
 const (
@@ -338,6 +354,29 @@ type AwaitingClientActionEntryNotifier interface {
 // F-6.2.14.
 type RetryAttemptNotifier interface {
 	OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session)
+}
+
+// SessionExpiryNotifier is an optional hook on TerminalHook implementations.
+// The watchdog invokes it on every platform expiry-clock transition it drives
+// (`→ expired`), so the §16.1 `lenny_session_expiry_total{reason}` counter sees
+// the termination. The watchdog resolves the §16.1.1 `reason` vocabulary from
+// the expiry edge that fired:
+//
+//   - `max_idle_time` on the §6.2 `maxClientIdleSeconds` idle-clock expiry, and
+//   - `max_session_age` on the §11.3 `maxSessionAge` age-cap expiry (and the
+//     §7.3 `awaiting_client_action` wall-clock deadline, whose reason shares the
+//     age-cap series per the §14 `expiryReason` vocabulary).
+//
+// pool is the session's §5.2 PoolRef (the metric's other label), empty for a
+// session whose pool was never resolved. The notification is best-effort: a nil
+// hook or one that does not implement the optional notifier silently no-ops, and
+// it never rolls back the watchdog's state transition.
+//
+// spec: §16.1 (lenny_session_expiry_total{reason}); §16.1.1 (reason
+// vocabulary); §6.2 (maxClientIdleSeconds clock); §11.3 line 199 (max client
+// idle row). F-11.3.7.
+type SessionExpiryNotifier interface {
+	OnSessionExpired(ctx context.Context, sess sessionstore.Session, reason string)
 }
 
 // ExpiryWarningNotifier is an optional hook on TerminalHook implementations.
@@ -797,6 +836,25 @@ func (w *Watchdog) notifyRetryAttempt(ctx context.Context, sess sessionstore.Ses
 	}
 }
 
+// notifySessionExpiry fires the SessionExpiryNotifier on the terminal hook when
+// one is wired, so the §16.1 `lenny_session_expiry_total{reason}` counter sees
+// the watchdog-driven `→ expired` transition. reason is the §16.1.1 vocabulary
+// value the caller resolved from the expiry edge (ExpiryReasonMaxIdleTime on the
+// idle-clock sweep, ExpiryReasonMaxSessionAge on the age-cap and
+// awaiting-action wall-clock sweeps). Best-effort: a nil hook or one that does
+// not implement the optional notifier silently no-ops.
+//
+// spec: §16.1 (lenny_session_expiry_total{reason}); §16.1.1 (reason
+// vocabulary). F-11.3.7.
+func (w *Watchdog) notifySessionExpiry(ctx context.Context, sess sessionstore.Session, reason string) {
+	if w.terminal == nil {
+		return
+	}
+	if n, ok := w.terminal.(SessionExpiryNotifier); ok {
+		n.OnSessionExpired(ctx, sess, reason)
+	}
+}
+
 // effectiveMaxResumeWindow resolves the §7.3 per-session
 // retryPolicy.maxResumeWindowSeconds override against the deployer cap.
 // A nil policy or zero value falls through to the platform cap; a
@@ -886,6 +944,11 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 				notifier.OnSessionExpiredFromAwaitingClientAction(ctx, updated)
 			}
 			res.Expirations++
+			// spec: §16.1.1 — the §7.3 awaiting_client_action wall-clock
+			// deadline is a `maxResumeWindowSeconds` reclamation; its
+			// `expired:deadline` failure reason shares the age-cap series, so
+			// the session_expiry counter stamps `max_session_age`. F-7.3.25.
+			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
 			w.recordCompleted(ctx, updated)
 		}
 	}
@@ -977,6 +1040,9 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 			if updated.State == session.StateExpired && updated.FailureReason == string(session.FailureExpiredIdle) {
 				res.IdleExpirations++
 				res.Expirations++
+				// spec: §16.1.1 — the idle-clock expiry stamps the
+				// `max_idle_time` reason on the session_expiry counter. F-11.3.7.
+				w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxIdleTime)
 				w.recordCompleted(ctx, updated)
 			}
 		}
@@ -1040,6 +1106,9 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		}
 		if updated.State == session.StateExpired {
 			res.Expirations++
+			// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
+			// `max_session_age` reason on the session_expiry counter.
+			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
 			w.recordCompleted(ctx, updated)
 		}
 	}

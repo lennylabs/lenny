@@ -338,6 +338,23 @@ func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Se
 	s.recordSessionRetry(ctx, sess)
 }
 
+// OnSessionExpired is the watchdog's platform-expiry-clock hook (§6.2
+// maxClientIdleSeconds idle clock, §11.3 maxSessionAge age cap, §7.3
+// awaiting_client_action wall-clock deadline). The watchdog fires it on every
+// `→ expired` transition it drives, with the §16.1.1 reason it resolved from
+// the expiry edge, so the §16.1 lenny_session_expiry_total{pool, reason}
+// counter sees the termination. Best-effort: a nil counter degrades to a no-op
+// without rolling back the watchdog's state transition.
+//
+// spec: §16.1 (lenny_session_expiry_total{reason}); §16.1.1 (reason
+// vocabulary); §6.2 (maxClientIdleSeconds clock); §11.3 line 199 (max client
+// idle row). F-11.3.7.
+func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, reason string) {
+	if s.incSessionExpiry != nil {
+		s.incSessionExpiry(sess.PoolRef, reason)
+	}
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts

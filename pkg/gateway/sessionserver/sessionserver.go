@@ -514,6 +514,12 @@ type Server struct {
 	// Nil disables the emission. spec: §16.1 catalog. F-7.3.10.
 	incSessionRetry func(failureClass string)
 
+	// incSessionExpiry, when set, increments the §16.1
+	// lenny_session_expiry_total{pool, reason} counter when the watchdog
+	// expires a session on a platform expiry clock. Nil disables the
+	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
+	incSessionExpiry func(pool, reason string)
+
 	// incWarmpoolWarmupFailure, when set, increments the §16.1 line 124
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
 	// warm-pool startup failure. Nil disables the emission. spec: §16.1
@@ -1562,6 +1568,15 @@ type Options struct {
 	// the emission. spec: §16.1 catalog. F-7.3.10.
 	IncSessionRetry func(failureClass string)
 
+	// IncSessionExpiry, when set, increments the §16.1
+	// lenny_session_expiry_total{pool, reason} counter when the watchdog
+	// terminates a session on a platform expiry clock. reason is the
+	// §16.1.1 vocabulary value the watchdog resolved from the expiry edge
+	// ("max_idle_time" for the §6.2 idle clock, "max_session_age" for the
+	// §11.3 age cap and the §7.3 awaiting_client_action deadline). Nil
+	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
+	IncSessionExpiry func(pool, reason string)
+
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1 line 124
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
 	// warm-pool startup failure. error_type is the §7.3 line 387
@@ -1680,6 +1695,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		envBlocklist:             envblock.New(opts.EnvVarBlocklist),
 		incSessionResumeAttempt:  opts.IncSessionResumeAttempt,
 		incSessionRetry:          opts.IncSessionRetry,
+		incSessionExpiry:         opts.IncSessionExpiry,
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
 		uploadTokenTTL:           opts.UploadTokenTTL,
 		uploadAborts:             newUploadAbortRegistry(),

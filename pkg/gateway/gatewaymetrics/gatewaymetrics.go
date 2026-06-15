@@ -262,6 +262,15 @@ type Metrics struct {
 	// every POST /v1/sessions/{id}/resume that passes the precondition
 	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
 	sessionResumeAttempts *prometheus.CounterVec
+	// sessionExpiry counts the §16.1
+	// `lenny_session_expiry_total{pool, reason}` counter: a session
+	// terminated by a platform expiry clock, by reason. The watchdog's
+	// expiry sweeps bump it once per `→ expired` transition with reason
+	// `max_idle_time` (the §6.2 maxClientIdleSeconds idle clock) or
+	// `max_session_age` (the §11.3 maxSessionAge age cap and the §7.3
+	// awaiting_client_action wall-clock deadline). spec: §16.1; §16.1.1
+	// (reason vocabulary). F-11.3.7.
+	sessionExpiry *prometheus.CounterVec
 	// warmpoolWarmupFailure is the §16.1 line 124
 	// `lenny_warmpool_warmup_failure_total{error_type}` counter:
 	// incremented whenever a warm-pool-side §6.3 startup phase
@@ -1668,6 +1677,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 — `lenny_session_expiry_total{pool, reason}` counts sessions
+	// terminated by a platform expiry clock. The reason label is the §16.1.1
+	// vocabulary (`max_session_age` | `max_idle_time`) the watchdog stamps on
+	// each `→ expired` transition. F-11.3.7.
+	sessionExpiry, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_expiry_total",
+		Help: "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time) (§16.1).",
+	}, []string{"pool", "reason"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 line 124 — `lenny_warmpool_warmup_failure_total{error_type}`
 	// counts warm-pool-side startup failures by §7.3 non-retryable
 	// failure category. F-7.5.9.
@@ -2721,7 +2741,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
 		sessionTimeToFirstToken, warmpoolClaims, warmpoolSDKDemotions, warmpoolSDKDemotionDuration,
-		sessionRetryTotal, sessionResumeAttempts,
+		sessionRetryTotal, sessionResumeAttempts, sessionExpiry,
 		warmpoolWarmupFailure,
 		workspaceSealDuration,
 		checkpointStorageFailure,
@@ -2952,6 +2972,7 @@ func New() (*Metrics, error) {
 		sessionRetryTotal:                    sessionRetryTotal,
 		deriveFailureAudit:                   deriveFailureAudit,
 		sessionResumeAttempts:                sessionResumeAttempts,
+		sessionExpiry:                        sessionExpiry,
 		warmpoolWarmupFailure:                warmpoolWarmupFailure,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
@@ -3471,6 +3492,22 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 		return
 	}
 	m.sessionResumeAttempts.WithLabelValues(pool, outcome).Inc()
+}
+
+// IncSessionExpiry increments the §16.1
+// `lenny_session_expiry_total{pool, reason}` counter for one session the
+// watchdog terminated on a platform expiry clock. reason is the §16.1.1
+// vocabulary value the watchdog resolved from the expiry edge — "max_idle_time"
+// for the §6.2 maxClientIdleSeconds idle clock or "max_session_age" for the
+// §11.3 maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
+// deadline. The pool label echoes the session's §5.2 PoolRef at expiry time
+// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1.
+// F-11.3.7.
+func (m *Metrics) IncSessionExpiry(pool, reason string) {
+	if m == nil {
+		return
+	}
+	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1 line 124

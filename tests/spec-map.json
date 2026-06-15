@@ -2125,10 +2125,13 @@
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
         "pkg/observability/metrics/catalog_test.go::TestLookupMetric",
+        "pkg/gateway/gatewaymetrics/retry_resume_test.go::TestSessionExpiryTotalExposes_F_11_3_7",
+        "tests/tier2_component/watchdog/expiry_counter_test.go::TestWatchdogSessionExpiryCounter_spec_16_1",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability"
       ],
       "packages": [
-        "pkg/observability/metrics"
+        "pkg/observability/metrics",
+        "pkg/gateway/gatewaymetrics"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
