@@ -79,6 +79,10 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | RPC | Description |
 |-----|-------------|
 | `ExtendLease` | Request a lease extension when the LLM proxy rejects a call for budget exhaustion. Response status: `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, or `REJECTED`. The adapter MUST NOT retry on `CEILING_REACHED` or `REJECTED`. |
+| `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release on a recycling or concurrent pod. The gateway increments the pod's served-session count and feeds the leak ledger. |
+| `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod. The gateway computes the recycle disposition from the outcome and `sessionPolicy`. |
+
+**Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no lifecycle-channel handshake between sessions. Your runtime exits at each session end as in the default mode; the adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, then reports through these RPCs.
 
 **Checkpoint and Interrupt are mutually exclusive.** The adapter maintains a per-session operation lock. Only one of these operations may execute at a time; the other is queued until the first completes.
 
@@ -150,7 +154,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `threadId` | string or null | Standard+ | Thread label. One implicit thread per session in v1. |
 | `delivery` | string or null | Standard+ | `"immediate"` or `"queued"` (default). Controls interrupt behavior. |
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
-| `slotId` | string or null | Concurrent | Present only in concurrent-workspace mode. Identifies the slot. |
+| `slotId` | string or null | Concurrent | Present only when `sessionPolicy.maxConcurrentSessions > 1`. Identifies the slot. |
 
 **Basic-level runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
 
@@ -184,7 +188,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
 | `id` | string | Matches the `id` of the `tool_call` this result responds to |
 | `content` | OutputPart[] | Result content |
 | `isError` | boolean | `true` if tool execution failed. Default `false`. |
-| `slotId` | string or null | Present only in concurrent-workspace mode |
+| `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1` |
 
 **Correlation:** Every `tool_result.id` matches a previously emitted `tool_call.id`. Results may arrive in any order when you have multiple outstanding tool calls. Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` --- your runtime must handle interleaved delivery.
 
@@ -275,7 +279,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
 | `id` | string | Unique call identifier. Used to correlate the inbound `tool_result`. Recommended format: `tc_` prefix with monotonic counter or random suffix. |
 | `name` | string | Tool name (e.g., `read_file`, `write_file`) |
 | `arguments` | object | Tool-specific parameters |
-| `slotId` | string or null | Present only in concurrent-workspace mode |
+| `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1` |
 
 **Built-in adapter-local tools:**
 
@@ -440,7 +444,7 @@ At the Standard and Full levels, you can optionally expose an HTTP health check 
 
 ## Adapter Manifest
 
-The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is read-only to the agent container, complete and authoritative when your binary starts, and regenerated per task execution in task mode.
+The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is read-only to the agent container, complete and authoritative when your binary starts, and regenerated per session. On a recycling pod the adapter regenerates the manifest and `mcpNonce` before the next session's binary is spawned.
 
 ```json
 {
@@ -492,7 +496,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
 | `sessionId` | The session identifier for this pod. |
-| `taskId` | The current task identifier. Regenerated per task in task mode. |
+| `taskId` | The session's external-protocol task identifier, frozen equal to the root task identifier. |
 | `mcpNonce` | Hex nonce for authenticating MCP connections. |
 | `observability.otlpEndpoint` | OTLP collector endpoint for runtime-emitted OpenTelemetry spans. |
 
@@ -515,7 +519,7 @@ On connection, the adapter sends `lifecycle_capabilities` first. The runtime rep
 {
   "type": "lifecycle_capabilities",
   "protocolVersion": "1.0",
-  "capabilities": ["checkpoint", "interrupt", "credential_rotation", "deadline_signal", "task_lifecycle"]
+  "capabilities": ["checkpoint", "interrupt", "credential_rotation", "deadline_signal"]
 }
 ```
 
@@ -539,8 +543,6 @@ On connection, the adapter sends `lifecycle_capabilities` first. The runtime rep
 | `interrupt_request` | `interruptId`, `deadlineMs` | Reach a safe stop point within `deadlineMs`. If no `interrupt_acknowledged` within deadline, adapter forces suspended anyway. |
 | `credentials_rotated` | `provider`, `credentialsPath`, `leaseId` | New credentials written; rebind and reply with `credentials_acknowledged`. |
 | `terminate` | `deadlineMs`, `reason` | Graceful shutdown. Exit within `deadlineMs`; SIGTERM on timeout. Always means process exit. |
-| `task_complete` | `taskId` | Between-task signal in task mode. Release task resources and reply with `task_complete_acknowledged`. |
-| `task_ready` | `taskId` | Scrub complete, new workspace materialized. Re-read adapter manifest and prepare for next `message` on stdin. |
 | `deadline_approaching` | `remainingMs`, `trigger` | Advance warning before forced termination. `trigger`: `"session_age"`, `"budget"`, or `"idle"`. |
 
 #### Runtime to Adapter
@@ -553,7 +555,6 @@ On connection, the adapter sends `lifecycle_capabilities` first. The runtime rep
 | `credentials_acknowledged` | `leaseId`, `provider` | Runtime has rebound to the new credential. |
 | `llm_request_started` | `requestId`, `provider` | Runtime is about to send an outbound LLM request (direct mode only). |
 | `llm_request_completed` | `requestId`, `provider`, `status` | Runtime's outbound LLM request completed. |
-| `task_complete_acknowledged` | `taskId` | Runtime has released task-specific resources. |
 
 Unknown messages must be silently ignored on both sides for forward compatibility.
 

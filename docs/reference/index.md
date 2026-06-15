@@ -19,6 +19,7 @@ This section contains lookup tables, schemas, and diagrams for cross-cutting con
 | [Error Catalog](error-catalog) | Complete table of every Lenny error code with category, HTTP status, retryability, description, and recommended client action. |
 | [Metrics Reference](metrics) | All Prometheus metrics emitted by Lenny components, including type, labels, emitting component, and associated alert rules. |
 | [State Machines](state-machines) | Mermaid diagrams and transition tables for session, pod, task, delegation, and pool upgrade lifecycles. |
+| [Execution Modes and Pod Lifecycle](execution-modes) | The `session` and `service` modes, the `sessionPolicy` settings matrix and presets, the residual-state and isolation table, the recycle lifecycle, and a decision guide. |
 | [Configuration Reference](configuration) | Complete `values.yaml` field reference organized by component, with types, defaults, and validation rules. |
 | [CloudEvents Catalog](cloudevents-catalog) | All CloudEvents types emitted by the platform (`dev.lenny.*`) with envelope, subject, and data-field schemas. |
 | [WorkspacePlan Schema](workspace-plan) | Session workspace declarative spec: sources, setup commands, env, timeouts, retries, callbacks, delegation lease. |

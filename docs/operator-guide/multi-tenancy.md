@@ -50,6 +50,25 @@ Multi-tenant mode is activated by:
 2. Creating tenant records via the admin API or bootstrap seed
 3. Setting `tenant_id` explicitly in API calls (if not using OIDC)
 
+### Pod Tenant Pinning and Reuse
+
+When a pod can serve more than one session over its lifetime, tenant isolation is enforced through pinning. Pinning is a derivation of the `sessionPolicy` rather than a mode-keyed rule:
+
+- A session-mode pod is pinned to a single tenant for its entire lifetime whenever `recycle.enabled: true` or `maxConcurrentSessions > 1`. The gateway stamps `lenny.dev/tenant-id` on the pod and never assigns it to a different tenant. The `lenny-tenant-label-immutability` webhook locks the label after it is set.
+- Service-mode pods are pinned by the tenant-affinity routing layer: the gateway records `tenantId` on first request, rejects a mismatched `tenantId`, and routes subsequent requests for the same tenant to a pinned pod.
+- The pin persists across the recycle-to-idle edge for the pod's lifetime. A pinned idle pod is claimable only by its pinned tenant.
+
+Cross-tenant reuse is permitted only on the sequential-reuse path (`maxConcurrentSessions: 1` with `recycle.enabled: true`) with `isolationProfile: microvm` and an explicit `recycle.allowCrossTenantReuse: true`, where the guest VM is restarted between tenants. Cross-tenant slot sharing when `maxConcurrentSessions > 1` is categorically prohibited regardless of isolation profile, and `recycle.allowCrossTenantReuse: true` is rejected on any pool whose Runtime is `workspaceTier: T4`. Service mode has no cross-tenant-reuse field, so cross-tenant reuse is structurally unrepresentable for service pools.
+
+A pod that serves more than one session carries residual state that survives between sessions. The vectors depend on the configuration:
+
+| Configuration | Scrub at session release | Residual state across sessions |
+|---|---|---|
+| One session per pod (`recycle.enabled: false`, `maxConcurrentSessions: 1`) | Pod terminated | None; pod is never reused |
+| Pod reuse (`recycle.enabled: true`, `maxConcurrentSessions: 1`) | Best-effort whole-pod scrub at occupancy zero | DNS cache, TCP `TIME_WAIT`, page cache, residual processes survive a best-effort scrub |
+| Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
+| Service (`executionMode: service`) | None | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
+
 ---
 
 ## PostgreSQL Row-Level Security

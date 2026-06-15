@@ -228,21 +228,21 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 |-----|---------|
 | `SandboxTemplate` | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy |
 | `SandboxWarmPool` | Manages warm pod inventory with configurable `minWarm`/`maxWarm` |
-| `Sandbox` | Represents a managed agent pod. Status subresource carries the state machine. |
-| `SandboxClaim` | Represents an active session-to-pod binding. Created by the gateway on pod claim. |
+| `Sandbox` | Represents a managed agent pod. Status subresource carries the coarse occupancy phase, projected from the claim. |
+| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates. |
 
 **Key responsibilities:**
 
 - Maintain warm pod counts between `minWarm` and `maxWarm` per pool.
-- Manage pod state transitions via CRD status subresource updates.
+- Project `Sandbox.status.phase` from the per-pod `SandboxClaim` (claim existence, binding state, and disposition) as a level-triggered occupancy projection. The WarmPoolController is the sole writer of `Sandbox.status`.
 - Handle node drains gracefully (checkpoint active sessions before eviction via preStop hook).
-- Garbage-collect orphaned pods and claims.
+- Garbage-collect orphaned pods and claims, keyed to the claim's binding-transition time and a creation-timestamp fallback.
 - Track certificate expiry on idle pods and proactively replace expiring pods.
 - Manage PodDisruptionBudgets for warm pods.
 
 **Leader election:** Runs as a multi-replica Deployment with Kubernetes Lease-based leader election. During failover (up to 25 seconds on crash), existing sessions continue unaffected; only new pod creation and pool reconciliation pause.
 
-**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using `SandboxClaim` resources with optimistic locking (`resourceVersion`-guarded compare-and-swap). This keeps the controller off the claim hot path entirely. A `ValidatingAdmissionWebhook` (`lenny-sandboxclaim-guard`) provides defense-in-depth against double-claims.
+**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
 
 ---
 

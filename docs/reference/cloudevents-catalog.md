@@ -70,7 +70,7 @@ Every event carries these CloudEvents attributes:
 | `dev.lenny.session_failed` | Session terminal state = `failed` | `session_id`, `error.code`, `error.message`, `usage` |
 | `dev.lenny.session_terminated` | Admin/system termination (external state = `completed`) | `session_id`, `reason`, `terminatedBy` |
 | `dev.lenny.session_cancelled` | User/runtime cancellation | `session_id`, `reason` |
-| `dev.lenny.session_expired` | `maxSessionAge` or `maxIdleTimeSeconds` hit | `session_id`, `expiryReason` |
+| `dev.lenny.session_expired` | `maxSessionAge` or `maxClientIdleSeconds` hit | `session_id`, `expiryReason` |
 | `dev.lenny.session_awaiting_action` | Session entered `awaiting_client_action` | `session_id`, `actionRequired`, `resumeUrl` |
 
 ### Delegation

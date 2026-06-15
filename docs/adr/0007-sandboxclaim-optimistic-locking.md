@@ -15,7 +15,17 @@ tags:
 
 ## Status
 
-**Accepted**
+**Accepted** (amended 2026-06-15 for per-pod claim granularity).
+
+## Amendment: per-pod claim granularity
+
+The session-service-execution-model proposal changes the `SandboxClaim` from a per-session binding to a per-pod occupancy claim with the deterministic name `claim-<podName>`. The core decision of this ADR is unchanged: at-most-one-active-claim fencing still rests on Kubernetes optimistic concurrency. The mechanics shift as follows:
+
+- The claim's spec is immutable after `CREATE`. Pod acquisition still races on `CREATE`, and the deterministic per-pod name resolves the race between gateway replicas exactly as the per-session `CREATE` did.
+- The `lenny-sandboxclaim-guard` webhook now intercepts `CREATE` only and rejects a second non-terminal claim for the same pod. It no longer gates `PATCH` or `PUT`: a `Sandbox.status.phase` accept-set cannot serialize the binding-state writes, because the occupancy projection sets the Sandbox to `claimed` from the claim's own `bound` binding state, so the first `bound` status patch lands while the referenced Sandbox is still `idle`.
+- Binding-state transitions (`bound`, `recycling`, `reserved`, and the terminal `released`/`failed`) are writes to the `SandboxClaim.status` subresource, serialized by the optimistic-concurrency UID and `resourceVersion` preconditions this ADR specifies. The reserved-hold expiry `DELETE` carries the UID and the `resourceVersion` observed at the `reserved` patch, so a same-tenant rebind that lands first wins the race and the expiry aborts on a precondition failure.
+
+The fencing rationale below is therefore retained; the references to `PATCH`/`PUT` admission gating describe the superseded per-session model.
 
 ## Context and problem statement
 

@@ -8,7 +8,7 @@ triggers:
 components:
   - platform
 symptoms:
-  - "two concurrent SandboxClaims raced; the §4.6.1 admission webhook rejected the loser"
+  - "two replicas raced to CREATE the per-pod SandboxClaim; the §4.6.1 admission webhook rejected the loser"
 tags:
   - chaos
 related: []
@@ -16,7 +16,7 @@ related: []
 
 # sandbox-claim-race
 
-two concurrent SandboxClaims raced; the §4.6.1 admission webhook rejected the loser.
+Two gateway replicas raced to `CREATE` the per-pod `SandboxClaim` (deterministic name `claim-<podName>`) for the same pod; the §4.6.1 `lenny-sandboxclaim-guard` admission webhook rejected the loser at `CREATE`.
 
 ## Trigger
 

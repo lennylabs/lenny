@@ -166,11 +166,13 @@ Runtimes declare capabilities that affect platform behavior. `capabilities.inter
 
 Each runtime is configured with an **execution mode** that determines how pods are used:
 
-**`session`** -- One session per pod. After the session completes, the pod is terminated and replaced. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory. This is the default mode.
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
-**`task`** -- Pods are reused across sequential tasks with workspace scrubbing between tasks. A fresh credential lease is assigned per task. The workspace is cleaned (`kill -9 -1` as sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush) between tasks. Deployers must explicitly acknowledge the residual state risk.
+- In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
+- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`.
+- With `maxConcurrentSessions > 1` the pod serves multiple simultaneous sessions, each in its own workspace directory (`/workspace/slots/{slotId}/current/`) with an independent credential lease. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
 
-**`concurrent`** -- Multiple simultaneous tasks on a single pod, multiplexed via slot IDs. Each slot gets its own workspace directory (`/workspace/slots/{slotId}/current/`) and independent credential lease. Useful for high-throughput, stateless or semi-stateless workloads.
+**`service`** -- The gateway routes each message to any ready replica rather than binding a session to a pod. Pods serve successive requests with no scrub and share process space, network stack, `/tmp`, and page cache across same-tenant concurrent requests. Service mode provides no cross-message conversation continuity: every message is self-contained. Service-mode pools are pinned to a single tenant by the tenant-affinity routing layer. Useful for high-throughput stateless workloads. See [Execution Modes and Pod Lifecycle](../reference/execution-modes.md) for the full settings matrix.
 
 ### Derived runtimes
 
@@ -182,7 +184,7 @@ A derived runtime can customize:
 
 - **`workspaceDefaults` and `setupCommands`** — appended to the base's (execution order: base → derived → client).
 - **`setupPolicy.timeoutSeconds`** — the gateway uses the maximum of base and derived, so a derived runtime cannot shorten a base-defined safety margin.
-- **`agentInterface`, `limits`, `supportedProviders`, `credentialCapabilities`, `labels`, `taskPolicy`, `publishedMetadata`**.
+- **`agentInterface`, `limits`, `supportedProviders`, `credentialCapabilities`, `labels`, `sessionPolicy`, `publishedMetadata`**.
 - **`delegationPolicyRef`** — restrict-only; the derived policy must be a subset of the base's.
 - **Pool configuration** — fully independent from the base, subject to the base's `allowedResourceClasses`.
 
@@ -461,7 +463,9 @@ Lenny uses MCP for client-facing interaction and agent-to-agent communication. I
 | ---------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway to pod (lifecycle control) | Custom gRPC/HTTP+mTLS | Lifecycle operations (workspace setup, checkpointing, credential assignment, session start/stop) are infrastructure plumbing that does not map to MCP's task-oriented semantics. A custom protocol keeps the adapter contract simple. |
 
-### MCP Tasks
+### Sessions and Tasks
+
+A **session** is the only client-facing unit of execution, and each session has exactly one execution. "Task" is the name external protocols and the delegation API give to that unit: an MCP Task and an A2A Task are the protocol surface of a session, and `lenny/delegate_task` creates a child session. The mapping is 1:1; there is no separate task object below the session.
 
 Lenny surfaces sessions as MCP Tasks to external clients. A Task represents a long-running operation with a defined state machine (submitted, working, input_required, completed, failed, cancelled). The gateway translates between Lenny's internal session state machine and the MCP Task state machine.
 

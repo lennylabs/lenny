@@ -142,7 +142,13 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 {
   "sessionId": "sess_01J5K9...",
   "uploadToken": "ut_abc123...",
-  "sessionIsolationLevel": "gvisor",
+  "sessionIsolationLevel": {
+    "executionMode": "session",
+    "isolationProfile": "gvisor",
+    "podReuse": false,
+    "residualStateWarning": false,
+    "conversationContinuity": "platform"
+  },
   "status": "created",
   "runtime": "claude-worker",
   "pool": "default-pool",
@@ -150,6 +156,8 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
   "expiresAt": "2026-04-09T10:05:00Z"
 }
 ```
+
+`sessionIsolationLevel` is an object describing the assigned pool's isolation posture. `executionMode` is `session` or `service`; `podReuse` and `residualStateWarning` are `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode; `scrubPolicy` is present only when `podReuse: true`; and `conversationContinuity` is `"platform"` for session mode and `"none"` for service mode. In service mode every message is self-contained, so a `multi_turn` runtime's client must re-inject any needed context into each message's `input`.
 
 **Error codes:**
 

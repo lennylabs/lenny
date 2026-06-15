@@ -89,7 +89,7 @@ stateDiagram-v2
 | `starting` | `StartSession` called. Agent binary launching. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |
 | `input_required` | Sub-state of `running` (not a peer state). Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. The session remains logically `running` while in this sub-state. |
-| `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxIdleTimeSeconds` timer paused. `perChildMaxAge` continues ticking. |
+| `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. |
 | `resume_pending` | Pod lost or released. Gateway is attempting to allocate a new pod. `maxResumeWindowSeconds` timer running. |
 | `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
@@ -135,7 +135,7 @@ stateDiagram-v2
 
 ## Pod state machine
 
-Pod states are internal to the platform and are NOT exposed via the client API. They track the pod's lifecycle from warm pool creation through session execution to termination.
+`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of the per-pod `SandboxClaim`: claim existence, the claim's binding state and disposition, and `sessionPolicy`. A pod with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted on a recycling pod under its limits projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted on a pod with `recycle.enabled: false`, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
 
 ### Pod-warm path diagram
 
@@ -166,7 +166,8 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> warming
     warming --> sdk_connecting : preConnect: true
-    sdk_connecting --> idle : SDK process connected
+    sdk_connecting --> idle : SDK process connected (warm-fill)
+    sdk_connecting --> reserved : SDK re-warm completes (recycle edge)
     sdk_connecting --> failed : Connection timeout / failure
     sdk_connecting --> terminated : SIGTERM received (graceful)
 
@@ -205,32 +206,34 @@ stateDiagram-v2
     }
 ```
 
-### Task-mode transitions
+### Recycle transitions (`recycle.enabled: true`)
+
+When occupancy reaches zero on a recycling pod, the gateway patches the claim's binding state to `recycling`, the whole-pod scrub runs while the pod projects `claimed`, and the recycle disposition decides whether to hold the pod or retire it. On preConnect pools a successful scrub report begins the SDK re-warm (the pod projects `sdk_connecting`) before the claim enters `reserved`.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
-| `attached` | `task_cleanup` | Task completes (adapter sends `task_complete`) |
-| `attached` | `cancelled` | Cancel signal received |
-| `attached` | `failed` | Pod crash (no retries) |
-| `attached` | `resume_pending` | Pod crash (retries remain) |
-| `cancelled` | `task_cleanup` | Cancellation acknowledged |
-| `task_cleanup` | `idle` | Scrub succeeds, limits not reached |
-| `task_cleanup` | `idle [scrub_warning]` | Scrub fails, `onCleanupFailure: warn`, below threshold |
-| `task_cleanup` | `draining` | Scrub fails beyond threshold, or task/uptime limit reached |
-| `task_cleanup` | `sdk_connecting` | `preConnect: true`, scrub succeeds, limits not reached |
-| `task_cleanup` | `failed` | `onCleanupFailure: fail` |
-| `idle` | `draining` | `maxPodUptimeSeconds` exceeded |
+| `claimed` | `claimed` | Occupancy zero, claim patched `bound → recycling`; whole-pod scrub running, bounded by the gateway-side scrub-report timeout |
+| `claimed` | `sdk_connecting` | `preConnect: true`, scrub reported (success or `scrub_warning`), disposition is recycle, host node schedulable; re-warm clock anchored at the re-warm-start stamp on the claim status |
+| `claimed` | `reserved` | `preConnect: false`, scrub reported, disposition is recycle; claim patched to `reserved` with no re-warm leg |
+| `sdk_connecting` | `reserved` | SDK re-warm completes within `sdkConnectTimeoutSeconds` measured from the re-warm-start stamp |
+| `sdk_connecting` | `failed` | Re-warm watchdog fires |
+| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, or an unschedulable host node |
+| `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
+| `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm |
+| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded while idle |
 | `draining` | `terminated` | Replacement provisioned |
 
-### Concurrent-workspace transitions
+The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
+
+### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
+
+A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while per-slot sub-states track each slot's progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
-| `idle` | `slot_active` | First slot assigned |
-| `slot_active` | `slot_active` | Additional slot assigned or slot completes |
-| `slot_active` | `idle` | Last active slot completes |
-| `slot_active` | `draining` | Slot failure threshold exceeded or uptime limit |
-| `idle` | `draining` | `maxPodUptimeSeconds` exceeded |
+| `idle` | `claimed` | First slot assigned |
+| `claimed` | `claimed` | Additional slot assigned or a slot completes while others remain |
+| `claimed` | `draining` | `ceil(maxConcurrentSessions/2)` slots fail or leak within a 5-minute window, or `maxPodUptimeSeconds` exceeded |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
 Per-slot sub-states: `slot_assigned` -> `receiving_uploads` -> `running` -> `slot_cleanup`.
@@ -239,7 +242,7 @@ Per-slot sub-states: `slot_assigned` -> `receiving_uploads` -> `running` -> `slo
 
 ## Task state machine (canonical)
 
-Lenny defines its own task states independent of any external protocol. External protocol adapters (MCP, A2A) map to/from these states at the boundary.
+The canonical task state machine is the session state machine above under the name external protocols give it. A session is the only unit of execution and each session has exactly one execution, so an MCP or A2A Task is the protocol surface of a session and `lenny/delegate_task` creates a child session. Lenny defines these states independently of any external protocol; external protocol adapters (MCP, A2A) map to and from them at the boundary.
 
 ### Diagram
 

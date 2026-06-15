@@ -113,7 +113,7 @@ message StartSessionRequest {
   SessionConfig config = 3;  // runtime-specific configuration
   CredentialSet credentials = 4;  // assigned credential leases
   map<string, string> labels = 5;
-  string execution_mode = 6;  // "session", "task", "concurrent-workspace"
+  string execution_mode = 6;  // "session" | "service"
 }
 ```
 

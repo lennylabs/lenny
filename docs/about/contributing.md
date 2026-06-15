@@ -191,7 +191,7 @@ The adapter translates between Lenny's control protocol and your agent binary's 
 | :----------- | :---------------------- | :------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------- |
 | **Basic**    | stdin/stdout JSON Lines          | Read messages from stdin, write output to stdout. ~50 lines of code.                        | Basic session lifecycle, workspace delivery, credential injection (environment variables).   |
 | **Standard** | stdin/stdout + MCP (Unix socket) | Basic + platform tool server over MCP (delegation, discovery, elicitation, output), connector tool access. | All of Basic, plus a platform tool server on a Unix socket and mid-session uploads.                     |
-| **Full**     | stdin/stdout + MCP (Unix socket) | All of Standard, plus lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse).  | Full platform integration including SDK-warm, checkpoint/restore, credential rotation. |
+| **Full**     | stdin/stdout + MCP (Unix socket) | All of Standard, plus lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain). Pod recycling requires no runtime cooperation and works at every level.  | Full platform integration including SDK-warm, checkpoint/restore, credential rotation. |
 
 ---
 

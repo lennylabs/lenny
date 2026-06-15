@@ -97,7 +97,7 @@ The chart deploys the following admission policies:
 
 6. **`lenny-tenant-label-immutability` webhook** -- Prevents mutation of the `lenny.dev/tenant-id` label to a different non-empty value on existing pods.
 
-7. **`lenny-sandboxclaim-guard` webhook** -- Prevents double-claim of pods by intercepting `CREATE`, `PATCH`, and `PUT` on `SandboxClaim` resources.
+7. **`lenny-sandboxclaim-guard` webhook** -- Prevents double-claim of pods by intercepting `CREATE` only on `SandboxClaim` resources, rejecting a second non-terminal claim for the same pod. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions rather than gated by the webhook, so the guard no longer intercepts `PATCH` or `PUT`.
 
 8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests on any of four conditions: reuse of the adapter UID or agent UID, inclusion of the `lenny-cred-readers` GID in `runAsGroup`/`supplementalGroups`, absent `runAsUser`/`runAsGroup`/`supplementalGroups` fields (which would inherit pod-level defaults including fsGroup), or a `volumeMounts` entry that references the credential tmpfs volume by name or mounts anything at the `/run/lenny` directory prefix. The fourth condition closes the fsGroup-inheritance side-channel that the first three cannot close on their own — fsGroup is applied by kubelet to every container regardless of explicit securityContext values, so rejecting the credential volumeMount is the cleanest barrier to credential-file access.
 
@@ -249,13 +249,14 @@ Agent namespaces use a strict default-deny networking model. See [Security](secu
 
 ### Tenant Pinning
 
-All execution modes pin pods to a single tenant:
+A pod that can serve more than one session is pinned to a single tenant. Pinning derives from the `sessionPolicy` rather than from a mode name:
 
-- **Session mode:** One session per pod; pod inherits the session's tenant
-- **Task mode:** Tenant ID recorded on first assignment; subsequent requests verified
-- **Concurrent mode:** Tenant pinned on first slot assignment
+- **One session per pod** (`recycle.enabled: false`, `maxConcurrentSessions: 1`): the pod inherits the session's tenant and terminates with it.
+- **Pod reuse** (`recycle.enabled: true`): the tenant ID is recorded on first assignment and the pin persists across the recycle-to-idle edge for the pod's lifetime; subsequent sessions are verified against it.
+- **Concurrent sessions** (`maxConcurrentSessions > 1`): the tenant is pinned on first slot assignment.
+- **Service mode:** the tenant-affinity routing layer pins each pod on first request and rejects a mismatched `tenantId`.
 
-Cross-tenant pod reuse is only permitted with `microvm` isolation and explicit `allowCrossTenantReuse: true`.
+Cross-tenant pod reuse is only permitted on the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation and explicit `recycle.allowCrossTenantReuse: true`.
 
 ### Tenant Label Immutability
 

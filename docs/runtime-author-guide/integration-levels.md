@@ -29,7 +29,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Credential rotation** | Pod restart, context lost unless checkpointed | Pod restart, brief pause | Rotated in place, no interruption |
 | **Advance deadline warning** | `shutdown` only, no advance notice | `shutdown` only | `deadline_approaching` signal before expiry |
 | **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the lifecycle channel |
-| **Pod reuse in task mode** | No (effectively `maxTasksPerPod: 1`) | No | Yes, via `task_complete` / `task_ready` handshake |
+| **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no runtime cooperation | Yes | Yes |
 
 ---
 
@@ -146,7 +146,6 @@ Somewhere around 150-200 lines, plus an MCP client library.
 | `interrupt` | Clean `interrupt_request` / `interrupt_acknowledged` so the runtime stops at a safe point |
 | `credential_rotation` | In-place `credentials_rotated` / `credentials_acknowledged` -- the session keeps going |
 | `deadline_signal` | `deadline_approaching` so the runtime can wrap up before it's terminated |
-| `task_lifecycle` | `task_complete` / `task_complete_acknowledged` / `task_ready` for pod reuse in task-mode pools |
 
 Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, an unimplemented interrupt becomes SIGTERM.
 
@@ -208,7 +207,6 @@ The stdin/stdout contract doesn't change. `message` / `response` / `heartbeat` /
    - `interrupt`: reach a safe stop point, reply `interrupt_acknowledged`.
    - `credential_rotation`: reload credentials from the new path, reply `credentials_acknowledged`.
    - `deadline_signal`: start wrapping up long-running work.
-   - `task_lifecycle`: release task resources on `task_complete`, prepare for the next one on `task_ready`.
 
 MCP doesn't change between Standard and Full -- the platform tool server behaves the same way.
 
