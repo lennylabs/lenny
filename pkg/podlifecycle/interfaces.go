@@ -40,13 +40,17 @@ type PoolReader interface {
 // spec: spec/04_system-components.md lines 340-345.
 type PodLifecycleManager interface {
 	PoolReader
-	// ClaimPod acquires an idle pod from poolName for sessionID,
-	// returning the claimed pod's handle. opts.RequiresDemotion = true
-	// signals that an SDK-warm pod's adapter must be demoted before
-	// the runtime is used (the §6.1 workspace plan includes
-	// sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
-	// priority class hint; opts.ClusterID is reserved for the
-	// multi-cluster v2 path.
+	// ClaimPod acquires an idle pod from poolName for sessionID by creating
+	// the §4.6.1 per-pod occupancy SandboxClaim (`claim-<podName>`) that
+	// guards acquisition; the returned handle references the claimed pod.
+	// The claim is keyed off the pod, not the session: the session-to-pod
+	// binding lives on the Postgres session row's pod_assignment column, and
+	// sessionID is carried on the handle for attribution alone.
+	// opts.RequiresDemotion = true signals that an SDK-warm pod's adapter
+	// must be demoted before the runtime is used (the §6.1 workspace plan
+	// includes sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
+	// priority class hint; opts.ClusterID is reserved for the multi-cluster
+	// v2 path.
 	ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error)
 	// ReleasePod releases a pod after its session ends. Concurrent
 	// failures (e.g., a pod already released) are not surfaced as
@@ -121,7 +125,11 @@ type PodHandle struct {
 	SandboxName string
 	// Namespace is the agent namespace the Sandbox lives in.
 	Namespace string
-	// SessionID is the session the pod is claimed for.
+	// SessionID is the session the claim was acquired for. The per-pod
+	// occupancy SandboxClaim (`claim-<SandboxName>`) is keyed off the pod,
+	// not the session, so this field is attribution only: the
+	// session-to-pod binding lives on the Postgres session row's
+	// pod_assignment column (§4.6.1).
 	SessionID string
 	// PoolName names the pool the pod was claimed from.
 	PoolName string
