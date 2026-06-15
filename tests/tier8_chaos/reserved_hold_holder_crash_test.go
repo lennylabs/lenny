@@ -54,20 +54,28 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 	}
 
 	const sandboxRef = "chaos-reserved-hold-sandbox"
-	const claimName = "chaos-reserved-hold-claim"
+	// The occupancy projection associates a claim with its Sandbox by the
+	// deterministic per-pod name claim-<podName> (observeClaim), so the
+	// holder-crash residue must use that name for the projection to read it
+	// back during the hold window. spec: §3.2, §6.5 (claim-<podName>).
+	const claimName = "claim-" + sandboxRef
 
-	// A Sandbox the orphan GC can transition. It starts claimed, the phase a
-	// pod sits in while it is held in `reserved` (a reserved pod projects the
-	// coarse `claimed`/active occupancy until the hold expires and the claim
-	// is deleted).
+	// A Sandbox the orphan GC can transition. It ends in the `reserved`
+	// phase: a held pod sits in `reserved` (scrubbed and SDK-warm, pinned to
+	// the tenant and excluded from idle inventory) until the hold expires and
+	// the claim is deleted, at which point the occupancy projection takes the
+	// reserved → idle edge. The projection drives the Sandbox to `reserved`
+	// only while it observes the deterministic claim in the reserved binding
+	// state, so the reserved claim is created and stamped first, then the
+	// Sandbox phase is stamped last. Stamping the Sandbox before the reserved
+	// claim exists would let a reconcile in the gap observe no-claim while the
+	// phase is already `reserved` and take the reserved → idle edge before the
+	// holder-crash residue is in place. spec: §6.2 (reserved → idle hold-expiry
+	// edge).
 	sandbox := sandboxManifest(sandboxRef, agentNamespace)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, sandbox) })
 	if out, err := c.ApplyStdin(t, sandbox); err != nil {
 		t.Fatalf("failed to create the target Sandbox: %v\n%s", err, out)
-	}
-	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandbox", sandboxRef,
-		"--subresource=status", "--type=merge", "-p", `{"status":{"phase":"claimed"}}`); err != nil {
-		t.Fatalf("failed to stamp the Sandbox claimed: %v\n%s", err, out)
 	}
 
 	// Create the claim, then patch its status to the holder-crash residue:
@@ -91,6 +99,15 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandboxclaim", claimName,
 		"--subresource=status", "--type=merge", "-p", statusPatch); err != nil {
 		t.Fatalf("failed to stamp the reserved binding state: %v\n%s", err, out)
+	}
+
+	// Stamp the Sandbox to `reserved` last, after the reserved claim exists, so
+	// the occupancy projection observes the held pod's phase and only takes the
+	// reserved → idle edge once the GC's precondition-guarded DELETE removes the
+	// claim.
+	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandbox", sandboxRef,
+		"--subresource=status", "--type=merge", "-p", `{"status":{"phase":"reserved"}}`); err != nil {
+		t.Fatalf("failed to stamp the Sandbox reserved: %v\n%s", err, out)
 	}
 
 	// The GC sweeps every 60s. Allow a couple of sweeps plus reconcile latency.
