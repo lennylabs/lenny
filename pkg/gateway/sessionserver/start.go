@@ -223,8 +223,17 @@ func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailed
 // envelope. details.reason distinguishes "no_idle_pods" (the pool holds
 // no pods) from "concurrent_slots_exhausted" (pods exist but every slot
 // is full). The code is the same one session-mode pod exhaustion uses.
-// spec: §5.2 line 519, §15.2.1 line 1017.
+//
+// The response carries a Retry-After header per the §15.2.1 catalog row, so a
+// client backs off with a deterministic budget. This holds for both the
+// onPoolExhausted: reject path (the immediate exhaustion) and the
+// onPoolExhausted: queue path: the §4.6.1 "Pool exhaustion behavior" paragraph
+// requires the queue-wait timeout to return WARM_POOL_EXHAUSTED with a
+// Retry-After header.
+// spec: §5.2 line 519, §15.2.1 line 1017 (Retry-After), §4.6.1 (queue-wait
+// timeout carries Retry-After).
 func (s *Server) writeWarmPoolExhausted(w http.ResponseWriter, reason string) {
+	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 	s.writeError(w, http.StatusServiceUnavailable, "WARM_POOL_EXHAUSTED",
 		"no warm pod or concurrent slot is available; retry with backoff",
 		map[string]any{"reason": reason})
@@ -1242,10 +1251,18 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			AgentInterface:          agentInterface,
 			MinPlatformVersion:      minPlatformVersion,
 		}
-		return s.bindSlotWithRetry(ctx, slotReq)
+		// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted slot
+		// acquisition in the per-pool claim FIFO and re-enter the slot-claim
+		// path as pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the
+		// first exhaustion. The slot retry policy itself surfaces the §5.2
+		// exhaustion sentinels unwrapped, which is the queue's retry signal.
+		return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+			func(ctx context.Context) (*podsession.BindResult, error) {
+				return s.bindSlotWithRetry(ctx, slotReq)
+			})
 	}
 	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.TenantID, row.RuntimeRef)
-	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
+	bindReq := podsession.BindRequest{
 		Pool:                     match.Pool,
 		SessionID:                row.ID,
 		TenantID:                 row.TenantID,
@@ -1266,7 +1283,17 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		// the §3.4 recycle disposition (patch claim bound → recycling, signal
 		// the whole-pod scrub) on a clean release rather than draining the pod.
 		Recycle: match.Recycle,
-	})
+	}
+	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
+	// acquisition in the per-pool claim FIFO and re-enter the claim path as
+	// pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the first
+	// exhaustion (ErrNoIdlePod after both the claim-path timeout and the
+	// Postgres fallback). A queued request holds no pod or claim between
+	// attempts, so the §7.1 atomicity contract is preserved.
+	result, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+		func(ctx context.Context) (*podsession.BindResult, error) {
+			return s.podBinder.Bind(ctx, bindReq)
+		})
 	if err != nil {
 		return nil, err
 	}

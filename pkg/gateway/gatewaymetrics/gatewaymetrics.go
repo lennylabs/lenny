@@ -288,6 +288,19 @@ type Metrics struct {
 	// fallback skip events. Labels: `reason` (`mirror_stale` or
 	// `apiserver_unreachable`).
 	podClaimFallbackSkipped *prometheus.CounterVec
+	// podClaimQueueDepth is the §4.6.1 / §16.1 per-pool claim-FIFO depth
+	// gauge: the number of onPoolExhausted: queue requests waiting for a pod
+	// to free in a pool. Labeled by `pool` (finite, the warm-pool registry).
+	podClaimQueueDepth *prometheus.GaugeVec
+	// podClaimQueueWait is the §4.6.1 / §16.1 per-pool claim-FIFO residency
+	// histogram: the wall-clock a queued request spent in the FIFO before it
+	// acquired a pod or timed out. Labeled by `pool`.
+	podClaimQueueWait *prometheus.HistogramVec
+	// podClaimTimeout counts the §4.6.1 / §16.1 onPoolExhausted: queue
+	// requests that exhausted their maxQueueWaitSeconds bound and returned
+	// WARM_POOL_EXHAUSTED. Labeled by `pool`. It backs the §16.5
+	// PodClaimQueueSaturated alert alongside the depth gauge.
+	podClaimTimeout *prometheus.CounterVec
 	// slotAssignmentConflict counts the §5.2 line 519 concurrent-mode
 	// slot reservation failures due to slot contention (a candidate pod
 	// was at its maxConcurrent bound). Labeled by `pool` (finite, the
@@ -1720,6 +1733,38 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_queue_depth{pool}` is the per-pool
+	// claim FIFO depth for onPoolExhausted: queue pools. The §16.5
+	// PodClaimQueueSaturated alert reads it against the pool's minWarm.
+	podClaimQueueDepth, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pod_claim_queue_depth",
+		Help: "Pod claim queue depth by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_queue_wait_seconds{pool}` is the
+	// residency a queued request spent in the FIFO before acquiring a pod or
+	// timing out. Buckets span the sub-second poll cadence through the 30s
+	// default maxQueueWaitSeconds and a slow tail to a tuned 120s bound.
+	podClaimQueueWait, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_pod_claim_queue_wait_seconds",
+		Help:    "Pod claim queue wait time by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120},
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_timeout_total{pool}` counts the
+	// onPoolExhausted: queue requests that exhausted maxQueueWaitSeconds and
+	// returned WARM_POOL_EXHAUSTED.
+	podClaimTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_claim_timeout_total",
+		Help: "Pod claim queue-wait timeouts by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §5.2 line 519 — `lenny_slot_assignment_conflict_total` increments
 	// when a concurrent-mode slot reservation found a candidate pod at
 	// its maxConcurrent bound. `pool` is bounded by the warm-pool
@@ -2681,6 +2726,7 @@ func New() (*Metrics, error) {
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
+		podClaimQueueDepth, podClaimQueueWait, podClaimTimeout,
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
@@ -2911,6 +2957,9 @@ func New() (*Metrics, error) {
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
 		slotAssignmentConflict:               slotAssignmentConflict,
+		podClaimQueueDepth:                   podClaimQueueDepth,
+		podClaimQueueWait:                    podClaimQueueWait,
+		podClaimTimeout:                      podClaimTimeout,
 		credentialPreclaimMismatch:           credentialPreclaimMismatch,
 		credentialLeaseAssignments:           credentialLeaseAssignments,
 		credentialRotation:                   credentialRotation,
@@ -3838,6 +3887,39 @@ func (m *Metrics) IncPodClaimFallbackSkipped(reason string) {
 		return
 	}
 	m.podClaimFallbackSkipped.WithLabelValues(reason).Inc()
+}
+
+// SetPodClaimQueueDepth publishes the §4.6.1 / §16.1
+// `lenny_pod_claim_queue_depth{pool}` gauge as a pool's onPoolExhausted:
+// queue FIFO grows and shrinks. Called by the gateway start path's claim
+// queue. spec: §4.6.1 (Pool exhaustion behavior), §16.1.
+func (m *Metrics) SetPodClaimQueueDepth(pool string, depth int) {
+	if m == nil {
+		return
+	}
+	m.podClaimQueueDepth.WithLabelValues(pool).Set(float64(depth))
+}
+
+// ObservePodClaimQueueWait observes the §4.6.1 / §16.1
+// `lenny_pod_claim_queue_wait_seconds{pool}` histogram with the residency a
+// queued request spent in the FIFO before acquiring a pod or timing out.
+// spec: §4.6.1 (Pool exhaustion behavior), §16.1.
+func (m *Metrics) ObservePodClaimQueueWait(pool string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.podClaimQueueWait.WithLabelValues(pool).Observe(seconds)
+}
+
+// IncPodClaimTimeout increments the §4.6.1 / §16.1
+// `lenny_pod_claim_timeout_total{pool}` counter when an onPoolExhausted:
+// queue request exhausts its maxQueueWaitSeconds bound. spec: §4.6.1 (Pool
+// exhaustion behavior), §16.1.
+func (m *Metrics) IncPodClaimTimeout(pool string) {
+	if m == nil {
+		return
+	}
+	m.podClaimTimeout.WithLabelValues(pool).Inc()
 }
 
 // IncSlotAssignmentConflict increments the §5.2 line 519

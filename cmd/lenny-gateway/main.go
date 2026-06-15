@@ -4140,6 +4140,12 @@ func main() {
 		SlotLeakGauge: func(pod, pool string, leaked int) {
 			gwMetrics.SetAdapterLeakedSlots(pod, pool, float64(leaked))
 		},
+		// §4.6.1 Pool exhaustion behavior, §16.1 — the per-pool claim FIFO
+		// metrics for onPoolExhausted: queue pools. The depth gauge and the
+		// timeout counter back the §16.5 PodClaimQueueSaturated alert.
+		SetPodClaimQueueDepth:    gwMetrics.SetPodClaimQueueDepth,
+		ObservePodClaimQueueWait: gwMetrics.ObservePodClaimQueueWait,
+		IncPodClaimTimeout:       gwMetrics.IncPodClaimTimeout,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,

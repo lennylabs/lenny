@@ -88,6 +88,52 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 }
 
+// spec: §5.2 / §4.6.1 (onPoolExhausted, maxQueueWaitSeconds folded from the
+// gateway-enforced mirror)
+// TestResolvePoolFoldsPoolExhaustionDisposition covers the queue-vs-reject
+// dispatch fields reaching the PoolMatch from the poolstore mirror so the
+// start path's claim queue reads the gateway-enforced values rather than the
+// always-empty CRD pair.
+func TestResolvePoolFoldsPoolExhaustionDisposition(t *testing.T) {
+	tmpl := sandboxTemplate("queue-tmpl", "queue-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("queue-pool", "queue-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"queue-pool": {OnPoolExhausted: "queue", MaxQueueWaitSeconds: 45},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "queue-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.OnPoolExhausted != "queue" {
+		t.Errorf("OnPoolExhausted = %q, want %q (from the mirror)", got.OnPoolExhausted, "queue")
+	}
+	if got.MaxQueueWaitSeconds != 45 {
+		t.Errorf("MaxQueueWaitSeconds = %d, want 45 (from the mirror)", got.MaxQueueWaitSeconds)
+	}
+}
+
+// spec: §5.2 (empty onPoolExhausted defaults to reject)
+// TestResolvePoolDefaultsToRejectWithoutMirror covers the absence of a queue
+// disposition: a pool with no mirror row (or an empty disposition) leaves
+// OnPoolExhausted empty, which the start path treats as reject.
+func TestResolvePoolDefaultsToRejectWithoutMirror(t *testing.T) {
+	tmpl := sandboxTemplate("reject-tmpl", "reject-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("reject-pool", "reject-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "reject-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.OnPoolExhausted != "" {
+		t.Errorf("OnPoolExhausted = %q, want empty (reject default) without a mirror row", got.OnPoolExhausted)
+	}
+	if got.MaxQueueWaitSeconds != 0 {
+		t.Errorf("MaxQueueWaitSeconds = %d, want 0 without a mirror row", got.MaxQueueWaitSeconds)
+	}
+}
+
 // spec: §5.2 (service mode, gateway-enforced routing capacity)
 // TestResolvePoolMirrorOverridesServiceMaxConcurrent covers the
 // service-mode capacity re-source: the poolstore mirror is authoritative

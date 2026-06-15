@@ -171,9 +171,17 @@ type Server struct {
 	// multi-tenant deployments). When false (single-tenant or no-OIDC
 	// dev), the gate retains the historical fall-through.
 	// spec: §10.2 lines 256–264, F-10.2.4.
-	multiTenant    bool
-	podBinder      *podsession.Binder
-	podRegistry    *podsession.Registry
+	multiTenant bool
+	podBinder   *podsession.Binder
+	podRegistry *podsession.Registry
+	// claimQueue is the §4.6.1 per-pool claim FIFO that backs
+	// sessionPolicy.onPoolExhausted: queue. On a `queue` pool the start path
+	// holds an exhausted acquisition in this FIFO for up to
+	// maxQueueWaitSeconds, re-entering acquisition as pods free; on a `reject`
+	// pool the queue is bypassed and the acquisition returns
+	// WARM_POOL_EXHAUSTED immediately. Always non-nil after New.
+	// spec: §4.6.1 (Pool exhaustion behavior), §5.2 (onPoolExhausted).
+	claimQueue     *podClaimQueue
 	fencer         CoordinationFencer
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
@@ -1479,6 +1487,27 @@ type Options struct {
 	// emission. spec: §6.2 line 179.
 	SlotLeakGauge func(pod, pool string, leaked int)
 
+	// QueuePollInterval is the cadence at which a §4.6.1 onPoolExhausted:queue
+	// request re-enters acquisition while it waits for a pod to free. Zero
+	// selects DefaultQueuePollInterval. Operator-tunable; the spec fixes the
+	// wait bound (maxQueueWaitSeconds), not the poll cadence. spec: §4.6.1.
+	QueuePollInterval time.Duration
+
+	// SetPodClaimQueueDepth, when set, publishes the §16.1
+	// lenny_pod_claim_queue_depth{pool} gauge as the per-pool claim FIFO grows
+	// and shrinks. Nil disables the emission. spec: §4.6.1, §16.1.
+	SetPodClaimQueueDepth func(pool string, depth int)
+	// ObservePodClaimQueueWait, when set, observes the §16.1
+	// lenny_pod_claim_queue_wait_seconds{pool} histogram when a queued request
+	// leaves the FIFO (acquired or timed out). Nil disables it. spec: §4.6.1,
+	// §16.1.
+	ObservePodClaimQueueWait func(pool string, seconds float64)
+	// IncPodClaimTimeout, when set, increments the §16.1
+	// lenny_pod_claim_timeout_total{pool} counter when a queued request
+	// exhausts its maxQueueWaitSeconds bound. Nil disables it. spec: §4.6.1,
+	// §16.1.
+	IncPodClaimTimeout func(pool string)
+
 	// ObserveStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm session startup latency (pod claim through
 	// agent session ready, excluding upload and workspace
@@ -1696,6 +1725,15 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
+	// §4.6.1 per-pool claim FIFO backing sessionPolicy.onPoolExhausted: queue.
+	// It shares the server clock so a test can drive the wait deadline, and it
+	// carries the §16.1 queue-metric callbacks. A `reject` pool never reaches
+	// the FIFO; the queue is consulted only after an acquisition exhausts both
+	// the claim-path timeout and the Postgres fallback.
+	s.claimQueue = newPodClaimQueue(opts.QueuePollInterval, s.clock)
+	s.claimQueue.onDepth = opts.SetPodClaimQueueDepth
+	s.claimQueue.onWait = opts.ObservePodClaimQueueWait
+	s.claimQueue.onTimeout = opts.IncPodClaimTimeout
 	if s.idFn == nil {
 		s.idFn = randomSessionID
 	}
@@ -2498,6 +2536,11 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
 	if sp := p.SessionPolicy; sp != nil {
 		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
+		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject
+		// choice and its wait bound from the session policy so the start
+		// path's claim queue reads the gateway-enforced values.
+		mirror.OnPoolExhausted = string(sp.OnPoolExhausted)
+		mirror.MaxQueueWaitSeconds = sp.MaxQueueWaitSeconds
 		if r := sp.Recycle; r != nil {
 			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
 			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)

@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -32,6 +34,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -908,5 +912,212 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 	}
 	if row.PodAssignment != "sbx-1" {
 		t.Errorf("after resume, PodAssignment = %q, want sbx-1", row.PodAssignment)
+	}
+}
+
+// poolBindQueuePool returns a poolstore pool that maps name onto runtimeRef
+// with sessionPolicy.onPoolExhausted: queue and the given wait bound, so the
+// §5.2 / §4.6.1 claim FIFO holds an exhausted request rather than rejecting it.
+func poolBindQueuePool(t *testing.T, name, runtimeRef string, waitSeconds int) poolstore.Store {
+	t.Helper()
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), poolstore.Pool{
+		Name:          name,
+		RuntimeRef:    runtimeRef,
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			OnPoolExhausted:     runtimestore.PoolExhaustedQueue,
+			MaxQueueWaitSeconds: waitSeconds,
+		},
+	}); err != nil {
+		t.Fatalf("create queue pool: %v", err)
+	}
+	return pools
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — queue holds the request in the
+// per-pool FIFO and re-enters acquisition as pods free); §5.2 (onPoolExhausted:
+// queue); §7.1 (session_id only on success).
+// diagnosis: a queue pool that does not re-enter acquisition would reject a
+// request a pod freeing within the wait bound should have served, so the queue
+// option would be inert. A failure here means the start path does not consult
+// the per-pool claim queue or the queue does not retry the bind.
+func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	// The pool starts with no idle Sandbox, so the first claim attempt
+	// exhausts both the claim path and (absent Postgres) the fallback.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-queue-1" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 30),
+		QueuePollInterval:       20 * time.Millisecond,
+	})
+
+	// Free a pod shortly after the request starts queueing so a poll re-enters
+	// acquisition and succeeds within the wait bound.
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		idle := podBindIdleSandbox("sbx-late", "echo-pool", "10.244.2.7")
+		idle.Status = lennyv1.SandboxStatus{}
+		if err := cluster.Create(context.Background(), idle); err != nil {
+			t.Errorf("create late idle sandbox: %v", err)
+			return
+		}
+		u := &unstructured.Unstructured{}
+		u.SetAPIVersion(lennyv1.GroupVersion.String())
+		u.SetKind("Sandbox")
+		u.SetName("sbx-late")
+		u.SetNamespace(podTestNS)
+		_ = unstructured.SetNestedField(u.Object, map[string]interface{}{
+			"phase": "idle", "podIP": "10.244.2.7",
+		}, "status")
+		if err := cluster.Status().Patch(context.Background(), u, client.Apply,
+			client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+			t.Errorf("seed late idle sandbox status: %v", err)
+		}
+	}()
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("queued start: status = %d, want 201 once a pod frees; body=%s", rr.Code, rr.Body.String())
+	}
+	binding, ok := registry.Get("sess-queue-1")
+	if !ok {
+		t.Fatal("registry holds no binding for the queued-then-served session")
+	}
+	if binding.SandboxName != "sbx-late" {
+		t.Errorf("binding sandbox = %q, want sbx-late (the pod that freed mid-wait)", binding.SandboxName)
+	}
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — queue-wait timeout returns
+// WARM_POOL_EXHAUSTED); §5.2 (maxQueueWaitSeconds bound); §15.1 (WARM_POOL_EXHAUSTED
+// carries a Retry-After header).
+// diagnosis: a queue pool whose wait bound elapses with no pod free must still
+// surface WARM_POOL_EXHAUSTED with Retry-After rather than hanging the client or
+// dropping the retry hint. A failure here means the wait bound is not enforced
+// or the timeout return value is not the exhaustion envelope.
+func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// No idle Sandbox is ever added, so the queue exhausts its (tiny) wait
+	// bound and returns WARM_POOL_EXHAUSTED.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	var timeouts int32
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-queue-timeout" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 1),
+		QueuePollInterval:       20 * time.Millisecond,
+		IncPodClaimTimeout:      func(string) { atomic.AddInt32(&timeouts, 1) },
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	srv.Handler().ServeHTTP(rr, req)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("queue timeout: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("queue timeout: WARM_POOL_EXHAUSTED must carry a Retry-After header (§15.1)")
+	}
+	// The 1s wait bound must actually be observed (not an immediate reject).
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("queue timeout returned after %s, want >= ~1s (the maxQueueWaitSeconds bound)", elapsed)
+	}
+	if atomic.LoadInt32(&timeouts) != 1 {
+		t.Errorf("queue timeout must increment lenny_pod_claim_timeout_total once, got %d", timeouts)
+	}
+	// §7.1: no session row is left behind on the atomic-create timeout.
+	if _, err := store.Get(context.Background(), "acme", "sess-queue-timeout"); err == nil {
+		t.Error("queue timeout must leave no session row (§7.1 atomicity)")
+	}
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — reject keeps the immediate-failure
+// behavior); §5.2 (onPoolExhausted default reject).
+// diagnosis: a reject pool that waited would change the documented behavior and
+// hide pool under-sizing behind a long wait. A failure here means the start
+// path queues a reject pool.
+func TestSessionStartRejectFailsImmediately(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	// No Pools store wired: the disposition is empty, which defaults to reject.
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-reject" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		QueuePollInterval:       20 * time.Millisecond,
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	srv.Handler().ServeHTTP(rr, req)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("reject pool: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	// A reject pool must not wait; the response is prompt (well under any
+	// queue wait bound).
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("reject pool returned after %s, want a prompt failure (no queueing)", elapsed)
 	}
 }

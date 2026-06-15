@@ -112,6 +112,17 @@ type PoolMatch struct {
 	// slot-claim path drains an over-uptime pod before its next slot
 	// assignment. Zero on non-concurrent pools.
 	MaxPodUptimeSeconds int64
+	// OnPoolExhausted is the §5.2 sessionPolicy.onPoolExhausted disposition
+	// folded in from the poolstore mirror: "reject" (or empty, the default)
+	// returns WARM_POOL_EXHAUSTED once the claim-path timeout and the
+	// Postgres fallback are exhausted; "queue" holds the request in the
+	// §4.6.1 per-pool claim queue for up to MaxQueueWaitSeconds after both
+	// paths are exhausted. spec: §5.2, §4.6.1 (Pool exhaustion behavior).
+	OnPoolExhausted string
+	// MaxQueueWaitSeconds is the §5.2 sessionPolicy.maxQueueWaitSeconds
+	// queue-wait bound applied when OnPoolExhausted is "queue". Zero falls
+	// back to the platform default. spec: §5.2, §4.6.1.
+	MaxQueueWaitSeconds int
 }
 
 // PoolPolicyMirror is the gateway-enforced subset of a pool's §5.2
@@ -132,6 +143,12 @@ type PoolPolicyMirror struct {
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
 	// §6.2 concurrent-workspace pod-uptime retirement cap.
 	MaxPodUptimeSeconds int64
+	// OnPoolExhausted is sessionPolicy.onPoolExhausted ("reject" | "queue");
+	// empty defaults to "reject". spec: §5.2 (Pool exhaustion behavior).
+	OnPoolExhausted string
+	// MaxQueueWaitSeconds is sessionPolicy.maxQueueWaitSeconds, the §5.2
+	// queue-wait bound when OnPoolExhausted is "queue". spec: §5.2.
+	MaxQueueWaitSeconds int
 }
 
 // PoolPolicyReader reads a pool's gateway-enforced §5.2 sessionPolicy
@@ -255,6 +272,11 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
 	m.MaxPodUptimeSeconds = mirror.MaxPodUptimeSeconds
+	// §5.2 / §4.6.1 pool-exhaustion disposition: the queue-vs-reject choice
+	// and its wait bound are gateway-enforced and live on the mirror, not the
+	// CRD pair. A pool with no mirror row keeps the "reject" default.
+	m.OnPoolExhausted = mirror.OnPoolExhausted
+	m.MaxQueueWaitSeconds = mirror.MaxQueueWaitSeconds
 	// The service-mode per-pod request capacity is gateway-enforced; the
 	// mirror is authoritative. A session-mode pool leaves it zero.
 	if mirror.MaxConcurrent > 0 {

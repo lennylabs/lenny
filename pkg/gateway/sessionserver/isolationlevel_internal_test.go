@@ -75,6 +75,19 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create service pool: %v", err)
 	}
+	// §5.2 / §4.6.1 onPoolExhausted: queue pool with a tuned wait bound, so
+	// the mirror surfaces the queue disposition to the start path.
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:          "queue-pool",
+		RuntimeRef:    "queue-runtime",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			OnPoolExhausted:     runtimestore.PoolExhaustedQueue,
+			MaxQueueWaitSeconds: 45,
+		},
+	}); err != nil {
+		t.Fatalf("create queue pool: %v", err)
+	}
 
 	m := poolPolicyMirror{pools: store}
 
@@ -100,6 +113,14 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	}
 	if got.MaxConcurrent != 16 {
 		t.Errorf("svc-pool MaxConcurrent = %d, want 16", got.MaxConcurrent)
+	}
+
+	got, found, err = m.PoolPolicy(ctx, "queue-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(queue-pool): found=%v err=%v", found, err)
+	}
+	if got.OnPoolExhausted != "queue" || got.MaxQueueWaitSeconds != 45 {
+		t.Errorf("queue-pool mirror = %+v, want onPoolExhausted=queue / maxQueueWaitSeconds=45", got)
 	}
 
 	// A missing pool reports found=false with no error so ResolvePool

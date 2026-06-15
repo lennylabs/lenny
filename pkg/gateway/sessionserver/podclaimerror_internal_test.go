@@ -104,6 +104,13 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 			if details["reason"] != tc.wantReason {
 				t.Errorf("details.reason = %v, want %q", details["reason"], tc.wantReason)
 			}
+			// spec: §15.2.1 line 1017 / §4.6.1 — the WARM_POOL_EXHAUSTED
+			// envelope carries a Retry-After header so a client backs off
+			// with a deterministic budget (both the reject path and the
+			// onPoolExhausted: queue timeout path).
+			if w.Header().Get("Retry-After") == "" {
+				t.Error("WARM_POOL_EXHAUSTED must carry a Retry-After header (§15.2.1, §4.6.1)")
+			}
 		})
 	}
 }
