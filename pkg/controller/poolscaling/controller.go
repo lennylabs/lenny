@@ -249,18 +249,20 @@ type DemotionRateSource interface {
 	PoolDemotionSignal(ctx context.Context, poolName string) (DemotionSignal, error)
 }
 
-// ModeFactorSource yields the observed-reuse multiplier the §5.2 line
-// 569 mode-adjusted scaling formula consumes as `mode_factor` for
-// task-mode pools. The production implementation reads the
-// `lenny_pod_session_reuse_count` histogram's median over a rolling 100-task
-// convergence window (§5.2 line 549). `ok=false` means the histogram
-// has not converged yet — the PoolScalingController falls back to the
-// pool's `maxTasksPerPod` (preConnect=false pools) or 1.0
-// (preConnect=true pools that should wait for observed reuse).
+// ModeFactorSource yields the observed-reuse multiplier the §5.2
+// mode-adjusted scaling formula consumes as `mode_factor` for recycling
+// session-mode pools. The production implementation reads the
+// `lenny_pod_session_reuse_count` histogram's median (the expected
+// sessions per pod lifetime) over a rolling 100-session convergence
+// window (§5.2). `ok=false` means the histogram has not converged yet —
+// the PoolScalingController falls back to the pool's
+// `recycle.maxSessionsPerPod` bound, or 1.0 for preConnect pools that
+// should wait for observed reuse rather than assume the configured
+// ceiling.
 //
-// spec: §5.2 lines 549, 569.
+// spec: §5.2 (execution mode scaling implications).
 type ModeFactorSource interface {
-	PoolTaskReuseMedian(ctx context.Context, poolName string) (median float64, ok bool, err error)
+	PoolSessionReuseMedian(ctx context.Context, poolName string) (median float64, ok bool, err error)
 }
 
 // Reconciler is the §4.6.2 PoolScalingController. It syncs pool
@@ -287,11 +289,12 @@ type Reconciler struct {
 	// circuit-breaker trip is unaffected. The binary wires
 	// mgr.GetEventRecorderFor.
 	Events record.EventRecorder
-	// ModeFactors supplies the §5.2 line 569 observed-reuse signal that
-	// drives the mode-adjusted formula's `mode_factor` for task-mode
+	// ModeFactors supplies the §5.2 observed-reuse signal that drives the
+	// mode-adjusted formula's `mode_factor` for recycling session-mode
 	// pools. When nil, the controller derives `mode_factor` from the
-	// pool's static maxTasksPerPod fallback per the §5.2 task-mode
-	// formula. spec: §5.2 lines 549, 569.
+	// pool's static recycle.maxSessionsPerPod fallback per the §5.2
+	// session-mode formula. spec: §5.2 (execution mode scaling
+	// implications).
 	ModeFactors ModeFactorSource
 	// Strategy computes the warm-pod floor. When nil, the default
 	// §4.6.2 formula is used.
@@ -1001,10 +1004,11 @@ func (r *Reconciler) resolveWarm(ctx context.Context, cfg PoolConfig) (warmDecis
 		SumActiveVariantWeights: cfg.SumActiveVariantWeights,
 		BootstrapMinWarm:        bootstrapFloor,
 	}
-	// spec: §5.2 line 549 — resolve `mode_factor` for the pool. Task and
-	// concurrent modes have a static fallback from the CRD spec
-	// (maxTasksPerPod, maxConcurrent); preConnect task pools that have
-	// converged on a task-reuse median override the static fallback.
+	// spec: §5.2 — resolve `mode_factor` for the pool. Recycling
+	// session-mode pools and service-mode pools have a static fallback
+	// from the CRD spec (recycle.maxSessionsPerPod, maxConcurrent);
+	// recycling pools that have converged on an observed session-reuse
+	// median override the static fallback.
 	mf, bf := resolveModeFactors(ctx, cfg, r.ModeFactors)
 	in.ModeFactor = mf
 	in.BurstModeFactor = bf

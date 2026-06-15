@@ -5,11 +5,25 @@ package warmpool
 import (
 	"context"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
+
+// ReservedPodsGaugeForTest reads the current §16.1
+// lenny_warmpool_reserved_pods gauge value for a pool so the package's
+// external (component) tests can assert the controller emitted it.
+func ReservedPodsGaugeForTest(pool string) float64 {
+	return testutil.ToFloat64(reservedPods.WithLabelValues(pool))
+}
+
+// ForgetReservedPodsForTest clears a pool's reserved-pods gauge series so
+// a component test can establish a clean baseline.
+func ForgetReservedPodsForTest(pool string) {
+	forgetReservedPods(pool)
+}
 
 // PodsOnNodeForTest exposes the §4.6.1 Node→Pod fan-out mapping for the
 // package's external tests.

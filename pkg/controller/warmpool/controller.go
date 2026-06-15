@@ -242,6 +242,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			r.fill.forget(req.NamespacedName.String(), req.NamespacedName.Name)
 			forgetPoolWarmingUp(req.NamespacedName.Name)
 			forgetIdlePods(req.NamespacedName.Name)
+			forgetReservedPods(req.NamespacedName.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -343,6 +344,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// against it (WarmPoolExhausted, WarmPoolLow, PodClaimQueueBacklog).
 	// spec: §16.1, §17.8.2 line 1101.
 	setIdlePods(pool.Name, decision.ReadyCount)
+
+	// Publish the §16.1 lenny_warmpool_reserved_pods gauge — the
+	// instantaneous count of pods whose claim sits in the §6.2 reserved
+	// hold window. Per §4.6.2 these pods are occupied and excluded from
+	// the claimable idle inventory the gauge above reports; surfacing the
+	// reserved count lets operators see how far a long
+	// gateway.claimHoldTTLSeconds depresses apparent idle inventory.
+	// spec: §16.1, §4.6.2.
+	setReservedPods(pool.Name, decision.ReservedCount)
 
 	// Track §4.6.1 cold-start fill: record the fill duration once the
 	// pool first reaches minWarm ready pods, and publish the grace-active

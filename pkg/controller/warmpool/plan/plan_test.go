@@ -99,7 +99,10 @@ func TestCompute(t *testing.T) {
 			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
 		},
 		{
-			name: "occupied, draining, and terminal pods are ignored",
+			// spec: §4.6.2 — a reserved pod is occupied: excluded from
+			// WarmCount/ReadyCount and surfaced separately in ReservedCount.
+			// Draining and terminal pods are ignored entirely.
+			name: "reserved counts occupied; draining and terminal ignored",
 			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
 				{Name: "i1", Phase: state.Idle},
 				{Name: "d1", Phase: state.Draining},
@@ -107,7 +110,31 @@ func TestCompute(t *testing.T) {
 				{Name: "t1", Phase: state.Terminated},
 				{Name: "r1", Phase: state.Reserved},
 			}},
-			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1},
+			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1, ReservedCount: 1},
+		},
+		{
+			// spec: §4.6.2 "reserved pods count as occupied" — a reserved
+			// pod depresses claimable idle inventory, so the planner must
+			// create the gap toward minWarm rather than treating the held
+			// pod as available.
+			name: "reserved pod does not count toward minWarm",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+			}},
+			want: plan.Plan{Create: 2, ReservedCount: 2},
+		},
+		{
+			// A reserved pod is never a drain candidate even above target:
+			// only idle pods drain. The planner sheds idle and leaves the
+			// reserved pod (held for its pinned tenant) untouched.
+			name: "reserved pod is not a drain candidate even above target",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1, ReservedCount: 2},
 		},
 		{
 			name: "cold pool with minWarm zero creates nothing",
