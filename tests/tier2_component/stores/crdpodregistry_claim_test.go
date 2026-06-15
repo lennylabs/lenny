@@ -28,6 +28,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/podregistry"
@@ -226,5 +227,118 @@ func TestCRDPodRegistryReleaseDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	// A second release is a no-op: the claim is already gone.
 	if err := r.ReleasePod(ctx, "alpha", podregistry.ReleaseCompleted); err != nil {
 		t.Errorf("second ReleasePod = %v, want nil (idempotent)", err)
+	}
+}
+
+// claimTestEnvIntercepted brings up an envtest API server like claimTestEnv
+// but wires the CRDPodRegistry over a verb-recording interceptor client, so a
+// test can assert the binding-state write is a status-subresource PATCH and
+// never a PUT/update. The returned counters are read after the claim runs.
+func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.CRDPodRegistry, client.Client, string) {
+	t.Helper()
+	env := envtest.Start(t)
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(lennyv1.AddToScheme(scheme))
+
+	// interceptor.NewClient wraps a client.WithWatch, so the base must be the
+	// watch-capable constructor (the plain client.New does not implement Watch).
+	base, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatalf("client.NewWithWatch: %v", err)
+	}
+	const ns = "lenny-agents"
+	if err := base.Create(context.Background(), &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: ns},
+	}); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	// The interceptor records the status-subresource verb each binding-state
+	// write issues. SSA apply lands on the wire as a PATCH (SubResourcePatch);
+	// a regression to Status().Update lands as SubResourceUpdate. The seeding
+	// helper writes Sandbox.status before the registry is built, so only the
+	// claim's binding-state write is counted.
+	c := interceptor.NewClient(base, interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, cl client.Client, sr string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			if sr == "status" {
+				*patches++
+			}
+			return cl.Status().Patch(ctx, obj, patch, opts...)
+		},
+		SubResourceUpdate: func(ctx context.Context, cl client.Client, sr string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if sr == "status" {
+				*updates++
+			}
+			return cl.Status().Update(ctx, obj, opts...)
+		},
+	})
+	r, err := podregistry.New(c, ns)
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	// Seed against the raw base client so the Sandbox.status write does not
+	// inflate the counters the test asserts on.
+	return r, base, ns
+}
+
+// spec: §12.6 line 424 (ClaimOpts carries RequiresDemotion, Priority,
+// ClusterID; v1 leaves them inert), §4.6.1 (first `bound` status patch),
+// §4.6.3 (gateway holds `get`/`patch` and no `update` on sandboxclaims/status).
+//
+// A claim with all the inert §12.6.424 opts set still succeeds via the per-pod
+// claim, and the binding-state write is a status-subresource PATCH. The
+// gateway ServiceAccount is granted `get`/`patch` and explicitly no `update`
+// on sandboxclaims/status, so a regression to client.Status().Update — which
+// issues an HTTP PUT the API server authorizes against `update` — would be
+// RBAC-denied in a live cluster. Envtest does not enforce RBAC, so the verb is
+// asserted directly via the interceptor.
+//
+// diagnosis: a failure means CRDPodRegistry.ClaimPod's binding-state write
+// reverted to a status PUT/update (the absent gateway verb), an inert
+// ClaimOpts field is no longer tolerated, or the per-pod claim was not written.
+func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) {
+	var patches, updates int
+	r, base, ns := claimTestEnvIntercepted(t, &patches, &updates)
+	ctx := context.Background()
+	const pool = "echo-pool"
+	seedIdleSandbox(t, ctx, base, ns, "alpha", pool)
+
+	prio := int32(5)
+	cid := podregistry.ClusterID("east-1")
+	rec, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
+		PoolID:           podregistry.PoolID(pool),
+		TenantID:         "acme",
+		SessionID:        "sess-1",
+		RequiresDemotion: true,
+		Priority:         &prio,
+		ClusterID:        &cid,
+	})
+	if err != nil {
+		t.Fatalf("ClaimPod with inert opts: %v", err)
+	}
+	if rec.State != "claimed" || rec.SessionID != "sess-1" {
+		t.Errorf("record = %+v, want claimed/sess-1", rec)
+	}
+
+	// The binding-state write must be a PATCH; a PUT requires the `update`
+	// verb the gateway is not granted on sandboxclaims/status.
+	if patches != 1 {
+		t.Errorf("status PATCH count = %d, want 1 (the gateway writes the binding state with a PATCH)", patches)
+	}
+	if updates != 0 {
+		t.Errorf("status UPDATE count = %d, want 0 (a PUT requires the `update` verb the gateway lacks)", updates)
+	}
+
+	// The claim landed in `bound` with the binding-state transition stamp.
+	var claim lennyv1.SandboxClaim
+	if err := base.Get(ctx, client.ObjectKey{Namespace: ns, Name: "claim-alpha"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
+	}
+	if claim.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
+	}
+	if claim.Status.BindingStateTransitionTime == nil {
+		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
 	}
 }

@@ -11,14 +11,12 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // CRDPodRegistry is the §12.6 v1 PodRegistry implementation: it
@@ -211,31 +209,38 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 	return nil, err
 }
 
-// claimViaSandboxClaim creates the per-pod SandboxClaim for sb and writes
-// its first `bound` binding state, stamping the binding-state-transition time
-// the §4.6.1 orphan GC keys its live-binding-state reclaim on, matching the
-// canonical pkg/gateway/podclaim writer's field set. An AlreadyExists/Forbidden
-// CREATE collision is returned as the raw API error so ClaimPod can branch on
-// it and advance to the next idle pod. A failure after the CREATE deletes the
-// partial claim so a retry is not blocked by a claim with empty status; the
-// §4.6.1 orphan GC reclaims any claim left behind by a crash via its
-// CREATE-before-status predicate.
+// claimViaSandboxClaim creates the per-pod SandboxClaim for sb and writes its
+// first `bound` binding state through the canonical pkg/gateway/podclaim
+// helpers, so this gateway-side path shares one writer with the live S19 claim
+// path: podclaim.CreateClaim performs the spec-only CREATE under the
+// deterministic claim-<podName> name, and podclaim.WriteBoundStatus stamps the
+// `bound` binding state plus the binding-state-transition time the §4.6.1
+// orphan GC keys its live-binding-state reclaim on.
+//
+// The bound status write is a Server-Side Apply PATCH on the
+// `sandboxclaims/status` subresource under the gateway field manager, because
+// the gateway ServiceAccount holds `get`/`patch` (and explicitly no `update`)
+// on that subresource (§4.6.3 ownership decomposition); a Status().Update
+// would issue an HTTP PUT the API server authorizes against the absent
+// `update` verb and would be RBAC-denied in a live cluster.
+//
+// An AlreadyExists/Forbidden CREATE collision is returned as the raw API error
+// so ClaimPod can branch on it and advance to the next idle pod. A failure
+// after the CREATE deletes the partial claim so a retry is not blocked by a
+// claim with empty status; the §4.6.1 orphan GC reclaims any claim left behind
+// by a crash via its CREATE-before-status predicate.
+//
+// spec: §4.6.1 (per-pod claim; first `bound` status patch), §4.6.3 (gateway
+// holds patch-only on sandboxclaims/status, no update verb).
 func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.Sandbox, tenantID string) error {
-	claim := &lennyv1.SandboxClaim{}
-	claim.Namespace = r.Namespace
-	claim.Name = podclaim.ClaimName(sb.Name)
-	claim.Spec.SandboxRef = sb.Name
-	claim.Spec.TenantID = tenantID
-	if err := r.Client.Create(ctx, claim); err != nil {
+	claim, err := podclaim.CreateClaim(ctx, r.Client, r.Namespace, sb.Name, podclaim.ClaimRequest{TenantID: tenantID})
+	if err != nil {
+		// CreateClaim wraps the API error with %w, so ClaimPod's
+		// apierrors.IsAlreadyExists / IsForbidden race branch still matches
+		// the underlying API status through the error chain.
 		return err
 	}
-	claim.Status.Phase = string(claimstate.Bound)
-	// spec: §4.6.1 — every binding-state write stamps the transition time so
-	// the orphan GC keys its live-binding-state reclaim on the binding
-	// transition rather than on the claim's creation time (the start of the
-	// whole occupancy episode).
-	claim.Status.BindingStateTransitionTime = &metav1.Time{Time: time.Now().UTC()}
-	if err := r.Client.Status().Update(ctx, claim); err != nil {
+	if err := podclaim.WriteBoundStatus(ctx, r.Client, r.Namespace, claim.Name); err != nil {
 		_ = r.Client.Delete(ctx, claim)
 		return fmt.Errorf("podregistry: write bound status for claim %s: %w", claim.Name, err)
 	}

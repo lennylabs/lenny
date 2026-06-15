@@ -119,131 +119,18 @@ func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 (ClaimPod picks an idle pod and creates the per-pod claim),
-// §4.6.3 (gateway is not a Sandbox.status writer), §3.3 (occupancy
-// projection): the claim is created with a `bound` binding state and the
-// returned record echoes the projected claimed phase, the pinned tenant,
-// and the requesting session, but Sandbox.status is left untouched for the
-// WarmPoolController to project.
-func TestClaimPodPicksIdleAndCreatesPerPodClaim_spec_4_6_1(t *testing.T) {
-	cli := newFakeClient(t,
-		seedSandbox("alpha", "echo-pool", "claimed"),
-		seedSandbox("bravo", "echo-pool", "idle"))
-	r, err := podregistry.New(cli, "lenny-agents")
-	if err != nil {
-		t.Fatalf("podregistry.New: %v", err)
-	}
-	rec, err := r.ClaimPod(context.Background(),
-		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
-	if err != nil {
-		t.Fatalf("ClaimPod: %v", err)
-	}
-	if rec.PodID != "bravo" {
-		t.Errorf("PodID = %q, want bravo (the idle one)", rec.PodID)
-	}
-	// The record echoes the claimed occupancy projection and claim metadata.
-	if rec.State != "claimed" {
-		t.Errorf("State = %q, want claimed (projected from the bound claim)", rec.State)
-	}
-	if rec.TenantID != "acme" {
-		t.Errorf("TenantID = %q, want acme (claim tenantId)", rec.TenantID)
-	}
-	if rec.SessionID != "s1" {
-		t.Errorf("SessionID = %q, want s1 (attribution echo)", rec.SessionID)
-	}
-	// The per-pod claim exists, carries sandboxRef + tenantId, and is in the
-	// `bound` binding state.
-	var claim lennyv1.SandboxClaim
-	if err := cli.Get(context.Background(),
-		client.ObjectKey{Namespace: "lenny-agents", Name: "claim-bravo"}, &claim); err != nil {
-		t.Fatalf("get per-pod claim: %v", err)
-	}
-	if claim.Spec.SandboxRef != "bravo" {
-		t.Errorf("claim SandboxRef = %q, want bravo", claim.Spec.SandboxRef)
-	}
-	if claim.Spec.TenantID != "acme" {
-		t.Errorf("claim TenantID = %q, want acme", claim.Spec.TenantID)
-	}
-	if claim.Status.Phase != "bound" {
-		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
-	}
-	// spec: §4.6.1 — the `bound` write stamps the binding-state-transition
-	// time the orphan GC keys its live-binding-state reclaim on, so a claim
-	// from this path is keyed on the binding transition rather than on its
-	// creation timestamp (the start of the whole occupancy episode).
-	if claim.Status.BindingStateTransitionTime == nil {
-		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
-	}
-	// The gateway path does NOT write Sandbox.status: the claimed Sandbox's
-	// stored phase stays idle until the WarmPoolController projects it, and
-	// no session/tenant is stamped on Sandbox.status.
-	var sb lennyv1.Sandbox
-	if err := cli.Get(context.Background(),
-		client.ObjectKey{Namespace: "lenny-agents", Name: "bravo"}, &sb); err != nil {
-		t.Fatalf("get claimed sandbox: %v", err)
-	}
-	if sb.Status.Phase != "idle" {
-		t.Errorf("Sandbox.status.phase = %q, want idle (unwritten by the gateway)", sb.Status.Phase)
-	}
-	if sb.Status.SessionID != "" || sb.Status.TenantID != "" {
-		t.Errorf("Sandbox.status session/tenant = %q/%q, want both empty (gateway is not a Sandbox.status writer)",
-			sb.Status.SessionID, sb.Status.TenantID)
-	}
-}
-
-// spec: §4.6.1 (a duplicate per-pod claim collides on AlreadyExists, so
-// ClaimPod skips the held pod and acquires the next idle pod): the second
-// claim for the same pool lands on a different pod because the first pod's
-// claim-<podName> already exists.
-func TestClaimPodSkipsPodWithExistingClaim_spec_4_6_1(t *testing.T) {
-	cli := newFakeClient(t,
-		seedSandbox("alpha", "echo-pool", "idle"),
-		seedSandbox("bravo", "echo-pool", "idle"))
-	// Pre-create the per-pod claim for alpha so its CREATE collides.
-	existing := &lennyv1.SandboxClaim{}
-	existing.Namespace = "lenny-agents"
-	existing.Name = "claim-alpha"
-	existing.Spec.SandboxRef = "alpha"
-	if err := cli.Create(context.Background(), existing); err != nil {
-		t.Fatalf("seed existing claim: %v", err)
-	}
-	r, err := podregistry.New(cli, "lenny-agents")
-	if err != nil {
-		t.Fatalf("podregistry.New: %v", err)
-	}
-	rec, err := r.ClaimPod(context.Background(),
-		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
-	if err != nil {
-		t.Fatalf("ClaimPod: %v", err)
-	}
-	if rec.PodID != "bravo" {
-		t.Errorf("PodID = %q, want bravo (alpha's claim already exists)", rec.PodID)
-	}
-}
-
-// spec: §12.6 line 424 (ClaimOpts carries RequiresDemotion, Priority,
-// ClusterID; v1 leaves them inert but a claim with all three set still
-// succeeds via the per-pod claim).
-func TestClaimOptsCarriesV1InertFields_spec_12_6_424(t *testing.T) {
-	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "idle"))
-	prio := int32(5)
-	cid := podregistry.ClusterID("east-1")
-	rec, err := r.ClaimPod(context.Background(), podregistry.ClaimOpts{
-		PoolID:           "echo-pool",
-		TenantID:         "acme",
-		SessionID:        "s1",
-		RequiresDemotion: true,
-		Priority:         &prio,
-		ClusterID:        &cid,
-	})
-	if err != nil {
-		t.Fatalf("ClaimPod with extended opts: %v", err)
-	}
-	if rec.State != "claimed" || rec.SessionID != "s1" {
-		t.Errorf("rec = %+v, want claimed/s1", rec)
-	}
-}
+// The happy-path ClaimPod assertions (the per-pod claim CREATE plus the
+// `bound` binding-state status patch, the projected claimed record, and the
+// untouched Sandbox.status) write the binding state through the canonical
+// pkg/gateway/podclaim Server-Side Apply PATCH (§4.6.3: the gateway holds
+// `get`/`patch` and no `update` on sandboxclaims/status), which the
+// controller-runtime fake client cannot round-trip. They run against a real
+// API server in the tier-2 component suite
+// (tests/tier2_component/stores/crdpodregistry_claim_test.go:
+// TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1,
+// TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1, and
+// TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3), which also
+// pins the write to a PATCH so a regression to Status().Update is caught.
 
 // spec: §4.6.1 (ClaimPod returns ErrPoolExhausted when nothing idle)
 func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
