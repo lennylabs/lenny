@@ -62,7 +62,15 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 		t.Fatalf("gatewaymetrics.New: %v", err)
 	}
 
-	born := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	tick := time.Now().UTC().Truncate(time.Microsecond)
+
+	// idleBorn places the running idle row past the 600s idle cap but under the
+	// 3600s age cap, so the idle sweep wins; ageBorn places the suspended row
+	// past the 3600s age cap. The two birth times must straddle the age cap
+	// because Tick runs sweepMaxAge before sweepIdle: a running row born past
+	// both caps would age-expire first and never reach the idle sweep. F-11.3.7.
+	idleBorn := tick.Add(-700 * time.Second)
+	ageBorn := tick.Add(-2 * time.Hour)
 
 	// idleRow runs the idle clock (running) with a tight idle cap; ageRow is
 	// suspended (idle clock paused) so only the maxSessionAge cap can expire
@@ -71,13 +79,13 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 	ageID := newUUID(t)
 	if err := store.Create(ctx, sessionstore.Session{
 		ID: idleID, TenantID: tenant, State: session.StateRunning,
-		RuntimeRef: "echo", PoolRef: "pool-idle", CreatedAt: born, UpdatedAt: born,
+		RuntimeRef: "echo", PoolRef: "pool-idle", CreatedAt: idleBorn, UpdatedAt: idleBorn,
 	}); err != nil {
 		t.Fatalf("create idle row: %v", err)
 	}
 	if err := store.Create(ctx, sessionstore.Session{
 		ID: ageID, TenantID: tenant, State: session.StateSuspended,
-		RuntimeRef: "echo", PoolRef: "pool-age", CreatedAt: born, UpdatedAt: born,
+		RuntimeRef: "echo", PoolRef: "pool-age", CreatedAt: ageBorn, UpdatedAt: ageBorn,
 	}); err != nil {
 		t.Fatalf("create age row: %v", err)
 	}
@@ -97,9 +105,10 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 		MaxFinalizingSeconds:           huge,
 	}, nil).WithTerminalHook(expiryTerminalHook{inc: m.IncSessionExpiry})
 
-	// Two hours after birth: the running row is well past the 600s idle cap and
-	// the suspended row is past the 3600s age cap.
-	res, err := w.Tick(ctx, born.Add(2*time.Hour))
+	// At the tick: the running row is past the 600s idle cap (born tick-700s)
+	// yet under the 3600s age cap, so the idle sweep claims it; the suspended
+	// row is past the 3600s age cap (born tick-2h), so the age sweep claims it.
+	res, err := w.Tick(ctx, tick)
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
