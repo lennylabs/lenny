@@ -294,6 +294,55 @@ func TestWriteSessionManifestWrites(t *testing.T) {
 	}
 }
 
+// TestWriteSessionManifestTaskIDFrozenToSessionID pins the §3.5 session/task
+// 1:1 freeze: when the gateway supplies no taskId the per-session manifest
+// freezes it to the session id (the session is its single execution).
+// spec: §3.5 (session/task 1:1, TaskID frozen), §4.17 (per-session manifest)
+func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-frozen"}); err != nil {
+		t.Fatalf("writeSessionManifest: %v", err)
+	}
+	m := readManifestForTest(t, dir)
+	if m.TaskID != "sess-frozen" {
+		t.Errorf("manifest taskId = %q, want the session id sess-frozen when the gateway supplies none", m.TaskID)
+	}
+}
+
+// TestWriteSessionManifestTaskIDStableAcrossRegeneration pins the §4.17
+// per-session manifest contract: regenerating the manifest for the same
+// session keeps taskId frozen to the supplied root task identifier. The
+// removed task-mode pods rewrote taskId before each between-task cycle; a
+// per-session manifest never does.
+// spec: §3.5 (TaskID frozen to root task), §4.17 (per-session manifest regen)
+func TestWriteSessionManifestTaskIDStableAcrossRegeneration(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	in := manifestInputs{sessionID: "sess-r", taskID: "task_root"}
+	for i := 0; i < 3; i++ {
+		if _, err := srv.writeSessionManifest(in); err != nil {
+			t.Fatalf("writeSessionManifest #%d: %v", i, err)
+		}
+		if m := readManifestForTest(t, dir); m.TaskID != "task_root" {
+			t.Errorf("regen #%d: manifest taskId = %q, want frozen task_root", i, m.TaskID)
+		}
+	}
+}
+
+func readManifestForTest(t *testing.T, dir string) Manifest {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	return m
+}
+
 func TestManifestExperimentContextNil(t *testing.T) {
 	if got := manifestExperimentContext(nil); got != nil {
 		t.Errorf("manifestExperimentContext(nil) = %v, want nil", got)

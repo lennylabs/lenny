@@ -43,7 +43,7 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 	// spec: §6.4 lines 401-405 — a slot-qualified upload stages into the
 	// slot's /workspace/slots/{slotId}/staging area. The staging directory
 	// is resolved from the first frame (every frame carries the same slot
-	// id); session/task mode uses the pod-global StagingDir.
+	// id); the single-session layout uses the pod-global StagingDir.
 	var stagingDir string
 	open := map[string]*os.File{}
 	closeAll := func() {
@@ -121,7 +121,7 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 // resolvePrepareStagingDir returns the staging directory PrepareWorkspace
 // streams uploads into. For a §6.4 concurrent slot it ensures the slot
 // tree exists and returns the slot's /workspace/slots/{slotId}/staging.
-// For the session/task base path it returns the pod-global StagingDir,
+// For the single-session base path it returns the pod-global StagingDir,
 // returning FailedPrecondition when unconfigured and creating it if
 // absent (mirroring the prior behavior).
 func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
@@ -175,7 +175,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// spec: §6.4 lines 401-405 — a slot-qualified finalize materializes
 	// into the slot's per-slot tree (/workspace/slots/{slotId}/staging
 	// promoted to /current) and creates that tree on first reference.
-	// Session/task mode uses the pod-global WorkspaceRoot/StagingDir.
+	// The single-session layout uses the pod-global WorkspaceRoot/StagingDir.
 	workspaceRoot, stagingDir := s.WorkspaceRoot, s.StagingDir
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		paths, perr := s.ensureSlotPaths(slotID)
@@ -332,8 +332,8 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
 	// spec: §6.4 line 404 — a slot-qualified setup runs against the slot's
-	// own /workspace/slots/{slotId}/current cwd. Session/task mode uses the
-	// pod-global WorkspaceRoot.
+	// own /workspace/slots/{slotId}/current cwd. The single-session layout
+	// uses the pod-global WorkspaceRoot.
 	workspaceRoot := s.WorkspaceRoot
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		paths, perr := s.ensureSlotPaths(slotID)

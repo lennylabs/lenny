@@ -112,7 +112,6 @@ lenny-compliance --binary ./my-agent --level full
 | `TestInterruptRequest` | `interrupt_request` -> `interrupt_acknowledged` |
 | `TestCredentialRotation` | `credentials_rotated` -> `credentials_acknowledged` |
 | `TestDeadlineApproaching` | Verify `deadline_approaching` is handled without error |
-| `TestTaskLifecycle` | `task_complete` -> `task_complete_acknowledged` -> `task_ready` |
 
 ---
 

@@ -98,8 +98,8 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	}
 	// spec: §6.4 lines 385-405 — a slot-qualified StartSession claims one
 	// of the pod's concurrent-workspace slots (its own per-slot tree and
-	// runtime) rather than the whole pod. Session/task mode (no slot id)
-	// takes the one-session-only base path below unchanged.
+	// runtime) rather than the whole pod. The single-session base path
+	// (maxConcurrentSessions == 1, no slot id) below is taken unchanged.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		resp, err := s.startSessionSlot(ctx, req, slotID)
 		spanErr = err

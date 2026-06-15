@@ -35,8 +35,8 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		return status.Error(codes.InvalidArgument, "Attach requires a session id on the first message")
 	}
 	// spec: §6.4 lines 401-405 — a slot-qualified Attach binds to the
-	// slot's own runtime and cwd; session/task mode (no slot id) uses the
-	// pod-global Runtime and WorkspaceRoot unchanged.
+	// slot's own runtime and cwd; the single-session layout (no slot id)
+	// uses the pod-global Runtime and WorkspaceRoot unchanged.
 	slotID := first.GetSlotId().GetValue()
 	if s.useSlot(slotID) {
 		if err := s.checkSlotSession(sessionID, slotID); err != nil {
