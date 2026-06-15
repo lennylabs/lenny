@@ -293,8 +293,12 @@ type RetirementMetrics interface {
 	// runtime_class). spec: §16.1 (lenny_pod_scrub_failure_count).
 	SetScrubFailureCount(podID, pool, runtimeClass string, count int)
 	// IncRetirement records one pod retirement by reason
-	// (lenny_pod_retirement_total{reason, pool, runtime_class}). spec:
-	// §16.1 (lenny_pod_retirement_total).
+	// (lenny_pod_retirement_total{reason, pool, runtime_class}). The caller
+	// emits it only for a reason in the frozen §16.1 vocabulary (the three
+	// retirement-limit triggers); the §6.39 cordon-drain and the fail-policy
+	// termination drain without a retirement-counter increment, so a sink
+	// never observes an out-of-vocabulary reason value. spec: §16.1
+	// (lenny_pod_retirement_total reason label set), §16.1.1.
 	IncRetirement(reason taskcleanup.RetireReason, pool, runtimeClass string)
 }
 
@@ -472,14 +476,28 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 }
 
 // applyDisposition drives a resolved disposition onto the claim binding
-// state and emits the retirement metric. A retire writes the terminal
-// disposition (failed vs released), carrying the scrub_warning the §6.39
-// cordon-drain-under-warn path computes and the adapter-supplied failure
-// detail for the audit trail; a reuse drives the recycle path. pool and
-// runtimeClass label lenny_pod_retirement_total. spec: §3.4, §6.39, §16.1.
+// state and emits the retirement metric for a reason in the §16.1 vocabulary.
+// A retire writes the terminal disposition (failed vs released), carrying the
+// scrub_warning the §6.39 cordon-drain-under-warn path computes and the
+// adapter-supplied failure detail for the audit trail; a reuse drives the
+// recycle path. pool and runtimeClass label lenny_pod_retirement_total, which
+// is incremented only for a reason the §16.1 inventory declares (the three
+// retirement-limit triggers); the §6.39 cordon-drain and the fail-policy
+// termination drain without a counter increment. spec: §3.4, §6.39, §16.1.
 func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d taskcleanup.Disposition) error {
 	if d.Retire {
-		r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
+		// lenny_pod_retirement_total{reason} is frozen to the three §16.1
+		// retirement-limit triggers (session_count_limit, uptime_limit,
+		// scrub_failure_limit). The §6.39 cordon-drain retire and the
+		// onScrubFailure: fail termination drive the drain but are not members
+		// of that vocabulary, so the counter is incremented only when the
+		// reason is one the inventory declares; emitting d.Reason for a
+		// non-vocabulary retire would widen the frozen label set. The audit
+		// trail below still receives the full reason. spec: spec/16 §16.1
+		// (retirement counter label set), §16.1.1 (reason vocabulary).
+		if d.Reason.CountsOnRetirementTotal() {
+			r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
+		}
 		// state.Failed is the onScrubFailure: fail termination → claim
 		// `failed`; every other retire (limit reached or §6.39 unschedulable
 		// host) is a drain → claim `released`. d.ScrubWarning is set only on

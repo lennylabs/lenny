@@ -126,8 +126,11 @@ type Inputs struct {
 	HostSchedulable bool
 }
 
-// RetireReason is a stable label for the disposition the driver records
-// on lenny_pod_retirement_total{reason} and in the audit trail.
+// RetireReason is a stable label for the disposition the driver records in
+// the audit trail. A reason that reports CountsOnRetirementTotal is also
+// emitted on lenny_pod_retirement_total{reason}; a reason outside that frozen
+// §16.1 vocabulary (the §6.39 cordon-drain, the fail-policy termination) is
+// recorded in the audit trail only and never on the retirement counter.
 type RetireReason string
 
 const (
@@ -160,10 +163,35 @@ const (
 	// recycle disposition retires it instead of producing a
 	// soon-to-be-evicted reserved or re-warmed pod. The trigger applies to
 	// both preConnect (re-warm) and non-preConnect (reserve) reuse paths.
-	// spec: §6.2 (recycle disposition), §6.39 (host-node schedulability
-	// retire).
+	// This reason is an operational drain driven by infrastructure rather than
+	// one of the three retirement-limit triggers, so it is NOT a member of the
+	// lenny_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
+	// reports false for it; the disposition still drives the drain and records
+	// the reason in the audit trail. spec: §6.2 (recycle disposition), §6.39
+	// (host-node schedulability retire), spec/16 §16.1.1 (retirement-reason
+	// vocabulary is the three limit triggers only).
 	ReasonHostUnschedulable RetireReason = "host_unschedulable"
 )
+
+// CountsOnRetirementTotal reports whether this reason is a member of the
+// §16.1 lenny_pod_retirement_total{reason} vocabulary, which the spec freezes
+// to exactly the three retirement-limit triggers: session_count_limit,
+// uptime_limit, and scrub_failure_limit. A retire whose reason is not one of
+// the three (the onScrubFailure: fail termination, which §16.1.1 classifies as
+// a failure carried on error_type rather than reason, and the §6.39
+// cordon-drain operational retire) drives the drain disposition and records
+// its reason in the audit trail but is not counted on the retirement counter,
+// so the emitter never widens the frozen label set. spec: spec/16 §16.1
+// (lenny_pod_retirement_total reason label set), §16.1.1 (reason is reserved
+// for the lifecycle limit triggers; failures use error_type).
+func (r RetireReason) CountsOnRetirementTotal() bool {
+	switch r {
+	case ReasonSessionCountLimit, ReasonMaxUptimeExceeded, ReasonScrubFailuresExhausted:
+		return true
+	default:
+		return false
+	}
+}
 
 // Disposition is the resolved §6.2 task_cleanup branch.
 type Disposition struct {
@@ -186,10 +214,15 @@ type Disposition struct {
 	ScrubWarning bool
 
 	// Retire is true when NextPhase removes the pod from the warm pool
-	// (draining or failed). It drives lenny_pod_retirement_total.
+	// (draining or failed). A retire whose Reason reports
+	// CountsOnRetirementTotal drives lenny_pod_retirement_total; a retire
+	// outside that frozen vocabulary (the §6.39 cordon-drain, the fail-policy
+	// termination) drains without incrementing the counter.
 	Retire bool
 
-	// Reason is the stable observability/audit label for the branch.
+	// Reason is the stable observability/audit label for the branch. Whether
+	// it is a member of the §16.1 lenny_pod_retirement_total{reason}
+	// vocabulary is reported by Reason.CountsOnRetirementTotal.
 	Reason RetireReason
 }
 

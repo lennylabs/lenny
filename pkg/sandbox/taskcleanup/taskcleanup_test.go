@@ -354,3 +354,41 @@ func TestDecideScrubbedReuseReserves(t *testing.T) {
 		t.Fatalf("scrubbed reuse: NextPhase = %q, want reserved", got.NextPhase)
 	}
 }
+
+// TestCountsOnRetirementTotalVocabulary verifies the
+// lenny_pod_retirement_total{reason} membership predicate matches the §16.1
+// frozen vocabulary exactly: the three retirement-limit triggers count, and
+// every operational or failure-driven retire (the §6.39 cordon-drain
+// host_unschedulable, the onScrubFailure: fail termination, and the non-retire
+// reuse label) is excluded so the emitter cannot widen the declared label set.
+// spec: spec/16 §16.1 (lenny_pod_retirement_total reason label set:
+// session_count_limit, uptime_limit, scrub_failure_limit), §16.1.1 (reason is
+// reserved for the lifecycle limit triggers; failures use error_type), §6.39
+// (cordon-drain is an operational retire outside the counter vocabulary).
+func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
+	counted := map[RetireReason]bool{
+		ReasonSessionCountLimit:      true,
+		ReasonMaxUptimeExceeded:      true,
+		ReasonScrubFailuresExhausted: true,
+		ReasonHostUnschedulable:      false,
+		ReasonCleanupFailPolicy:      false,
+		ReasonReuse:                  false,
+	}
+	for reason, want := range counted {
+		if got := reason.CountsOnRetirementTotal(); got != want {
+			t.Errorf("RetireReason(%q).CountsOnRetirementTotal() = %v, want %v", reason, got, want)
+		}
+	}
+
+	// Guard the frozen vocabulary against drift: the literal values the §16.1
+	// inventory declares are exactly these three. A rename of one of the three
+	// constants away from its spec value must fail here.
+	for _, reason := range []RetireReason{"session_count_limit", "uptime_limit", "scrub_failure_limit"} {
+		if !reason.CountsOnRetirementTotal() {
+			t.Errorf("spec/16 §16.1 reason %q is not counted; the vocabulary drifted", reason)
+		}
+	}
+	if RetireReason("host_unschedulable").CountsOnRetirementTotal() {
+		t.Errorf("host_unschedulable counts on the retirement total; it is outside the §16.1 vocabulary")
+	}
+}

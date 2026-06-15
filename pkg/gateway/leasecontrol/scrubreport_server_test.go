@@ -729,6 +729,89 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	}
 }
 
+// TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.39
+// cordon-drain retire drains the pod without incrementing
+// lenny_pod_retirement_total: the counter's reason label is frozen to the
+// three §16.1 limit triggers (session_count_limit, uptime_limit,
+// scrub_failure_limit) and host_unschedulable is outside that vocabulary, so
+// the disposition drives the drain and records the reason on the claim audit
+// trail but emits no retirement-counter increment with an out-of-vocabulary
+// label value. The driver still receives the cordon-drain retire.
+// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 6.39 (cordon-drain operational retire)
+//
+// diagnosis: a failure means the §6.39 cordon-drain emits
+// lenny_pod_retirement_total{reason="host_unschedulable"}, a fourth reason
+// value the §16.1 inventory does not declare, widening the frozen label set
+// and breaking the metric-catalog vocabulary contract.
+func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 100, HostSchedulable: false, // cordoned, no limit reached
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	// The pod is drained on the cordon-drain disposition.
+	if len(d.retires) != 1 || d.retires[0].reason != taskcleanup.ReasonHostUnschedulable {
+		t.Fatalf("retires = %+v, want one host_unschedulable cordon-drain", d.retires)
+	}
+	// But the retirement counter is NOT incremented: host_unschedulable is
+	// outside the §16.1 vocabulary.
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (host_unschedulable is outside the §16.1 vocabulary)", m.retirements)
+	}
+}
+
+// TestReporterPodScrubFailPolicyEmitsNoRetirementCounter verifies the
+// onScrubFailure: fail termination drains to the claim `failed` terminal
+// without incrementing lenny_pod_retirement_total: cleanup_fail_policy is a
+// failure-driven retire that §16.1.1 classifies under error_type rather than
+// the retirement-counter reason vocabulary, so the counter is not widened.
+// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (failures use error_type, not reason), 5.2 (onScrubFailure: fail)
+//
+// diagnosis: a failure means the fail-policy termination emits a
+// lenny_pod_retirement_total{reason="cleanup_fail_policy"} increment, a value
+// the §16.1 inventory does not declare.
+func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: taskcleanup.OnCleanupFail, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 100, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "shred failed"); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.retires) != 1 || !d.retires[0].failed || d.retires[0].reason != taskcleanup.ReasonCleanupFailPolicy {
+		t.Fatalf("retires = %+v, want one failed-terminal cleanup_fail_policy retire", d.retires)
+	}
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (cleanup_fail_policy is outside the §16.1 vocabulary)", m.retirements)
+	}
+	// The aggregate scrub-failure series still increments on the failed scrub.
+	if len(m.totals) != 1 {
+		t.Errorf("scrub-failure totals = %+v, want one (the failed scrub still counts on the aggregate)", m.totals)
+	}
+}
+
 // TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics verifies a clean
 // whole-pod scrub increments neither the aggregate lenny_pod_scrub_failure_total
 // counter nor the per-pod gauge, so a healthy reuse does not pollute the
